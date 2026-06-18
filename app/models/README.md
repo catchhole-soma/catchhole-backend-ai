@@ -17,3 +17,8 @@ These models should mirror the Spring/PostgreSQL schema, not redefine business o
 Current files:
 
 - `base.py`: shared SQLAlchemy declarative base for future ORM models.
+- `analysis_job.py`: analysis job state and metadata mapping.
+- `episode.py`: episode metadata and S3 content key mapping.
+- `upload_batch.py`: upload batch target mapping.
+- `upload_file.py`: uploaded file and detected episode range mapping.
+- `work.py`: work metadata mapping used by analysis jobs.
