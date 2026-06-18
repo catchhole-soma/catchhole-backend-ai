@@ -8,3 +8,7 @@ Expected future files:
 - `transaction.py`: transaction helpers, if needed
 
 This package is infrastructure-level code. Domain logic should stay in services, worker, or analysis packages.
+
+Current files:
+
+- `session.py`: creates a SQLAlchemy engine from `DATABASE_URL` and provides a cached session factory.
