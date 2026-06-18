@@ -87,6 +87,18 @@ pytest
 - `POST /api/v1/analysis-jobs/{analysis_job_id}/run`
 - `GET /api/v1/analysis-jobs/{analysis_job_id}/status`
 
+## 문서
+
+AI 서버 설계 문서는 `docs/`에서 관리합니다.
+
+| 문서 | 내용 |
+| --- | --- |
+| [Docs README](docs/README.md) | 문서 목록과 작성 기준 |
+| [Database Schema](docs/database-schema.md) | AI 서버가 참조하는 DB 스키마 초안 |
+| [Global](docs/global.md) | FastAPI 앱 구조, 설정, 예외 응답, 테스트 기준 |
+| [Analysis Job](docs/analysis-job.md) | 분석 작업 실행 API와 상태 모델 |
+| [Analysis Job Workflow](docs/analysis-job-workflow.md) | Spring 호출부터 Python worker 처리까지의 workflow |
+
 ## 예외 응답
 
 Python AI 서버의 실패 응답은 Spring 서버가 해석하기 쉽도록 공통 형태를 사용합니다.
