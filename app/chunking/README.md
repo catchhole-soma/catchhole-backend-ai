@@ -1,12 +1,75 @@
 # chunking
 
-Text normalization, episode splitting, and chunk splitting live here.
+원문 정규화, 회차 분리, 청킹, 근거 위치 계산을 담당하는 패키지입니다.
 
-Expected future files:
+청킹은 Python AI 서버가 담당합니다. Spring 서버는 업로드 파일과 분석 작업을 생성하고, Python AI 서버는 S3 원문을 읽어 분석 가능한 청크와 근거 위치 정보를 만듭니다.
 
-- `text_normalizer.py`: normalize line endings, whitespace, encoding artifacts
-- `episode_splitter.py`: split one uploaded file into one or more episodes
-- `chunk_splitter.py`: split episode text into deterministic chunks
-- `offsets.py`: calculate source offsets for evidence highlighting
+## 현재 구현
 
-Chunking is owned by the AI server. Spring stores uploads and analysis jobs, then Python produces chunks and evidence positions.
+- `text_normalizer.py`
+  - 줄바꿈을 `\n` 기준으로 통일합니다.
+  - BOM, zero-width space, NBSP, tab 같은 원문 노이즈를 정리합니다.
+  - 과도한 빈 줄은 최대 한 줄 간격으로 줄입니다.
+- `chunk_splitter.py`
+  - 정규화된 회차 원문을 문단 단위로 읽습니다.
+  - 문단을 묶어 기본 1000자 안팎의 청크를 만듭니다.
+  - 한 문단이 지나치게 길면 최대 1500자 기준으로 나눕니다.
+  - 각 청크에 원문 위치 정보를 함께 담습니다.
+
+## 청킹 기준
+
+현재 청킹은 AI나 외부 라이브러리를 사용하지 않는 규칙 기반 청킹입니다.
+
+- 기본 목표 길이: 1000자
+- 최대 길이: 1500자
+- 최소 길이: 300자
+- 기준 단위: 문단
+- 긴 문단 처리: 한 문단 내부에서 최대 길이 기준으로 분리
+
+웹소설 원고는 대사와 서술 흐름이 문단 단위로 이어지는 경우가 많기 때문에, 문장 단위로 너무 잘게 자르기보다 문단 경계를 우선 보존합니다.
+
+## 규칙 기반으로 시작하는 이유
+
+초기 MVP에서는 semantic chunking이나 외부 text splitter보다 재현 가능한 규칙 기반 방식을 우선 사용합니다.
+
+- 같은 원문을 넣으면 항상 같은 청크가 나와야 테스트와 디버깅이 쉽습니다.
+- 설정 후보의 원문 근거를 화면에 보여줘야 하므로 offset 계산을 직접 통제해야 합니다.
+- 웹소설 원고는 문단 단위로 장면, 대사, 서술 흐름이 이어지는 경우가 많아 문단 기준이 자연스럽습니다.
+- 외부 라이브러리를 쓰면 빠르게 시작할 수 있지만, 원문 offset 보정과 문단 보존 정책을 별도로 맞춰야 합니다.
+
+따라서 현재 구현은 `정규화된 원문 -> 문단 추출 -> 길이 기준 청크 생성 -> offset 저장` 흐름을 직접 관리합니다. 추후 검색 품질이나 LLM 입력 품질 문제가 확인되면 token 기반 청킹, overlap, semantic chunking을 검토할 수 있습니다.
+
+## 위치 정보
+
+청크는 나중에 설정 후보의 원문 근거를 보여주기 위해 위치 정보를 포함합니다.
+
+- `chunk_index`: 회차 안에서 몇 번째 청크인지
+- `start_offset`: 회차 원문 기준 청크 시작 위치
+- `end_offset`: 회차 원문 기준 청크 끝 위치
+- `paragraph_start_index`: 청크에 포함된 첫 문단 번호
+- `paragraph_end_index`: 청크에 포함된 마지막 문단 번호
+
+`chunk_text`는 문단을 다시 이어 붙인 문자열이 아니라, 원문에서 `start_offset:end_offset`으로 그대로 잘라낸 문자열입니다. 그래야 이후 LLM이 반환한 `evidence_quote` 위치를 검증하거나 보정할 때 원문 위치가 틀어지지 않습니다.
+
+## LLM 근거 위치 처리 기준
+
+LLM은 한 청크 안에서 여러 설정 후보를 추출할 수 있습니다. 이때 각 후보마다 `evidence_quote`, `paragraph_index`, `start_offset`, `end_offset` 같은 근거 정보를 요청할 수 있습니다.
+
+다만 LLM이 반환한 숫자 offset은 그대로 신뢰하지 않습니다. LLM은 원문 문구는 비교적 잘 복사해도, 문자 단위 위치 계산은 틀릴 수 있기 때문입니다.
+
+후속 구현에서는 다음 순서를 기본으로 둡니다.
+
+1. Python이 `episode_chunks.chunk_text`를 LLM에 전달합니다.
+2. LLM은 각 설정 후보마다 원문에서 그대로 복사한 `evidence_quote`를 반환합니다.
+3. LLM이 반환한 offset은 참고값으로만 사용합니다.
+4. Python이 `chunk_text` 안에서 `evidence_quote`를 다시 검색합니다.
+5. 검색된 chunk 내부 위치를 `episode_chunks.start_offset`과 더해 회차 전체 offset으로 보정합니다.
+6. 최종 저장에는 Python이 계산한 offset을 우선 사용합니다.
+
+즉, 청크는 LLM이 설정을 이해하기 위한 문맥 단위이고, 실제 화면에 표시할 근거 위치는 `evidence_quote`를 기반으로 Python이 다시 검증해 계산합니다.
+
+## 후속 작업
+
+- `episode_splitter.py`: 한 파일에 여러 회차가 들어온 경우 회차 단위로 분리
+- `offsets.py`: LLM이 반환한 `evidence_quote`를 청크 안에서 찾아 회차 전체 offset으로 보정
+- `episode_chunks` 저장 로직: 생성된 청크를 DB에 저장

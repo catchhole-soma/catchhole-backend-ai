@@ -87,6 +87,36 @@ pytest
 - `POST /api/v1/analysis-jobs/{analysis_job_id}/run`
 - `GET /api/v1/analysis-jobs/{analysis_job_id}/status`
 
+## 코드 구조 규칙
+
+FastAPI는 Spring처럼 계층 구조를 강제하지 않으므로, 프로젝트 안에서 다음 기준으로 역할을 나눕니다.
+
+- `app/api/routes`: 외부 요청을 받는 API 라우터입니다. Spring의 Controller에 가깝습니다.
+- `app/services`: 유스케이스 흐름을 조율합니다. Spring의 Service에 가깝습니다.
+- `app/worker`: 실제 분석 실행 흐름을 담당합니다. S3 조회, 청킹, LLM 호출 같은 작업이 연결됩니다.
+- `app/repositories`: DB 조회와 저장을 담당합니다. Spring의 Repository에 가깝습니다.
+- `app/models`: SQLAlchemy ORM 모델입니다. DB 테이블과 매핑됩니다.
+- `app/schemas`: FastAPI 요청/응답 모델입니다. Pydantic `BaseModel`을 사용합니다.
+- `app/mappers`: ORM 모델을 응답 schema로 변환합니다.
+
+### schema와 dataclass 사용 기준
+
+외부 API 경계와 내부 계산용 값을 구분하기 위해 다음 기준을 사용합니다.
+
+- Pydantic `BaseModel`
+  - FastAPI Request/Response에 사용합니다.
+  - Swagger 문서에 노출되거나 JSON 직렬화/검증이 필요한 값에 사용합니다.
+  - 위치: `app/schemas`
+- `dataclass`
+  - API로 직접 노출되지 않는 내부 알고리즘 결과에 사용합니다.
+  - 청킹 중간 결과, offset 계산 결과처럼 가볍고 불변에 가까운 값 객체에 사용합니다.
+  - 예: `Paragraph`, `EpisodeChunkDraft`
+- SQLAlchemy model
+  - DB 테이블과 직접 매핑되는 영속 객체에 사용합니다.
+  - 위치: `app/models`
+
+정리하면, API 입출력은 `schemas(BaseModel)`, 내부 순수 로직의 중간 결과는 `dataclass`, DB 테이블 매핑은 `models(SQLAlchemy)`를 기본으로 합니다.
+
 ## 예외 응답
 
 Python AI 서버의 실패 응답은 Spring 서버가 해석하기 쉽도록 공통 형태를 사용합니다.
