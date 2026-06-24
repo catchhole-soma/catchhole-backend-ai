@@ -65,8 +65,11 @@ pytest
 - `app/db/README.md`: DB session과 트랜잭션 경계
 - `app/embeddings/README.md`: 임베딩 대상 선정과 RAG 검색
 - `app/llm/README.md`: LLM client, prompt, 구조화 응답
+- `app/mappers/README.md`: 계층 간 객체 변환
 - `app/models/README.md`: SQLAlchemy ORM 모델
 - `app/repositories/README.md`: DB 조회와 저장 계층
+- `app/services/README.md`: 유스케이스 흐름 조율
+- `app/storage/README.md`: S3 같은 외부 object storage 접근
 - `app/queue/README.md`: queue consumer를 도입할 때의 책임
 
 ### schema와 dataclass 사용 기준

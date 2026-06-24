@@ -106,4 +106,5 @@ LLM은 한 청크 안에서 여러 설정 후보를 추출할 수 있습니다. 
 
 - `episode_splitter.py`: 한 파일에 여러 회차가 들어온 경우 회차 단위로 분리
 - `offsets.py`: LLM이 반환한 `evidence_quote`를 청크 안에서 찾아 회차 전체 offset으로 보정
-- S3 원문 로드 연결: `episodes.content_s3_key` 또는 `upload_files.storage_url` 기준으로 원문 조회
+- Worker claim 흐름에서 `EpisodeS3ChunkingService` 호출 연결
+- `upload_files.storage_url` 기준 원본 파일 로드는 필요한 시점에 별도 검토
