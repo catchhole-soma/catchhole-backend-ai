@@ -26,6 +26,6 @@ class EpisodeChunkRepository:
         return chunks
 
     def delete_by_episode_id(self, episode_id: UUID) -> None:
-        # force 재분석 또는 재청킹 시 같은 회차의 이전 청킹 결과를 정리한다.
+        # 재분석 또는 재청킹 시 같은 회차의 이전 청킹 결과를 정리한다.
         statement = delete(EpisodeChunk).where(EpisodeChunk.episode_id == episode_id)
         self.session.execute(statement)

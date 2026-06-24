@@ -51,6 +51,40 @@
 
 `chunk_text`는 문단을 다시 이어 붙인 문자열이 아니라, 원문에서 `start_offset:end_offset`으로 그대로 잘라낸 문자열입니다. 그래야 이후 LLM이 반환한 `evidence_quote` 위치를 검증하거나 보정할 때 원문 위치가 틀어지지 않습니다.
 
+## 청킹 결과 구조
+
+청킹 함수는 DB를 직접 알지 않는 `EpisodeChunkDraft`를 반환합니다. 이후 mapper 또는 service 계층에서 `episode_id`를 붙여 `episode_chunks` 저장용 구조로 변환합니다.
+
+아래 JSON은 API 응답 규격이 아니라, 저장 전 청킹 결과가 어떤 필드를 갖는지 설명하기 위한 예시입니다. 현재 흐름에서 Python이 청크 목록을 Spring에 응답으로 반환하지는 않습니다.
+
+```json
+{
+  "episode_id": "00000000-0000-0000-0000-000000000000",
+  "chunk_index": 0,
+  "chunk_text": "첫 번째 문단입니다.\n두 번째 문단입니다.",
+  "start_offset": 0,
+  "end_offset": 22,
+  "paragraph_start_index": 0,
+  "paragraph_end_index": 1,
+  "metadata_json": null
+}
+```
+
+## DB 저장 필드 매핑
+
+| 청킹 결과 | DB 컬럼 | 설명 |
+| --- | --- | --- |
+| 저장 시 주입 | `episode_chunks.episode_id` | 어떤 회차에서 생성된 청크인지 나타냅니다. |
+| `EpisodeChunkDraft.chunk_index` | `episode_chunks.chunk_index` | 회차 안에서의 청크 순서입니다. |
+| `EpisodeChunkDraft.chunk_text` | `episode_chunks.chunk_text` | LLM 입력과 근거 검색에 사용할 원문 조각입니다. |
+| `EpisodeChunkDraft.start_offset` | `episode_chunks.start_offset` | 회차 원문 기준 시작 위치입니다. |
+| `EpisodeChunkDraft.end_offset` | `episode_chunks.end_offset` | 회차 원문 기준 끝 위치입니다. |
+| `EpisodeChunkDraft.paragraph_start_index` | `episode_chunks.paragraph_start_index` | 청크에 포함된 첫 문단 번호입니다. |
+| `EpisodeChunkDraft.paragraph_end_index` | `episode_chunks.paragraph_end_index` | 청크에 포함된 마지막 문단 번호입니다. |
+| mapper/service에서 선택 입력 | `episode_chunks.metadata_json` | 전처리 태그, 업로드 방식 같은 부가 정보를 선택적으로 저장합니다. 기본값은 `null`입니다. |
+
+`embedding`은 기존 ERD 초안에 포함되어 있지만 이번 청킹 이슈에서는 구현하지 않습니다. 임베딩 모델, vector 차원, pgvector 인덱스 정책은 검색 PoC 이슈에서 함께 결정합니다.
+
 ## LLM 근거 위치 처리 기준
 
 LLM은 한 청크 안에서 여러 설정 후보를 추출할 수 있습니다. 이때 각 후보마다 `evidence_quote`, `paragraph_index`, `start_offset`, `end_offset` 같은 근거 정보를 요청할 수 있습니다.
@@ -72,4 +106,4 @@ LLM은 한 청크 안에서 여러 설정 후보를 추출할 수 있습니다. 
 
 - `episode_splitter.py`: 한 파일에 여러 회차가 들어온 경우 회차 단위로 분리
 - `offsets.py`: LLM이 반환한 `evidence_quote`를 청크 안에서 찾아 회차 전체 offset으로 보정
-- `episode_chunks` 저장 로직: 생성된 청크를 DB에 저장
+- S3 원문 로드 연결: `episodes.content_s3_key` 또는 `upload_files.storage_url` 기준으로 원문 조회
