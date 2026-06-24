@@ -1,17 +1,48 @@
+from collections.abc import Callable
 from uuid import UUID
 
-from app.domain.enums import AnalysisJobStatus, AnalysisStep
+from sqlalchemy.orm import Session
+
+from app.db.session import get_session_maker
+from app.domain.enums import AnalysisStep
+from app.repositories.analysis_job_repository import AnalysisJobRepository
 from app.schemas.analysis import AnalysisJobRunResponse
 
 
 class AnalysisJobWorker:
+    def __init__(self, session_factory: Callable[[], Session] | None = None) -> None:
+        self.session_factory = session_factory or get_session_maker()
+
     def run(self, analysis_job_id: UUID, force: bool = False) -> AnalysisJobRunResponse:
-        # TODO: analysis_jobs 조회 후 이미 처리 중인 잡인지 확인한다.
-        # TODO: episode/upload_file의 S3 key로 원문을 가져와 deterministic chunk를 생성한다.
-        # TODO: 추출 후보, 근거 quote, source_chunk_id, offset을 저장하고 잡 진행률을 갱신한다.
+        with self.session_factory() as session: #session을 열고, 블록이 끝나면 자동으로 정리
+            repository = AnalysisJobRepository(session)
+            analysis_job = repository.get_by_id_or_throw(analysis_job_id)
+            analysis_job.mark_running()
+            session.commit() #이후 with session.begin() 방식 고려
+
+        try:
+            self._run_analysis_steps(analysis_job_id, force)
+        except Exception as exc:
+            self._mark_failed(analysis_job_id, exc)
+            raise
+
         return AnalysisJobRunResponse(
             analysis_job_id=analysis_job_id,
-            status=AnalysisJobStatus.RUNNING,
+            status=analysis_job.status,
             current_step=AnalysisStep.LOADING,
-            message="Analysis job accepted. Worker persistence is not wired yet.",
+            message="Analysis job started.",
         )
+
+    def _run_analysis_steps(self, analysis_job_id: UUID, force: bool) -> None:
+        return None
+
+    def _mark_failed(self, analysis_job_id: UUID, exc: Exception) -> None:
+        with self.session_factory() as session:
+            repository = AnalysisJobRepository(session)
+            analysis_job = repository.get_by_id_or_throw(analysis_job_id)
+            analysis_job.mark_failed(self._error_message(exc))
+            session.commit()
+
+    def _error_message(self, exc: Exception) -> str:
+        message = str(exc) or exc.__class__.__name__
+        return message[:1000]

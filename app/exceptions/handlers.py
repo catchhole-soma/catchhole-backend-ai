@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -44,6 +44,6 @@ def _error_response(error_code: ErrorCode, detail: dict[str, Any]) -> JSONRespon
                 "code": error_code.value,
                 "detail": detail,
             },
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now().isoformat(),
         },
     )

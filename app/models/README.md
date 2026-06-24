@@ -1,15 +1,44 @@
 # models
 
-SQLAlchemy ORM models live here if the AI server reads/writes PostgreSQL directly.
+Python AI 서버가 PostgreSQL을 직접 읽거나 써야 할 때 사용하는 SQLAlchemy ORM 모델을 둡니다.
 
-Expected future models:
+## 기준
 
-- `AnalysisJob`
-- `Episode`
+이 패키지의 모델은 Spring 서버가 관리하는 PostgreSQL 스키마를 따라갑니다.
+
+- Python AI 서버는 사용자 요청의 주 소유자가 아닙니다.
+- 사용자 인증, 작품 소유권 검증, 사용자-facing API는 Spring 서버가 담당합니다.
+- Python 모델은 Spring/PostgreSQL 컬럼명을 임의로 재정의하지 않습니다.
+- Spring 엔티티의 컬럼명이 바뀌면 Python ORM 모델도 함께 맞춥니다.
+
+## 현재 파일
+
+- `base.py`
+  - SQLAlchemy ORM 모델들이 공통으로 사용하는 declarative base입니다.
+- `mixins.py`
+  - `created_at`, `updated_at` 같은 공통 timestamp 컬럼을 정의합니다.
+- `analysis_job.py`
+  - Spring의 `analysis_jobs` 테이블과 매핑됩니다.
+  - 분석 작업 상태, 현재 단계, 실패 사유, 요약 정보를 읽고 갱신할 때 사용합니다.
+- `episode.py`
+  - Spring의 `episodes` 테이블과 매핑됩니다.
+  - 회차 메타데이터와 S3 원문 key를 읽을 때 사용합니다.
+- `upload_batch.py`
+  - Spring의 `upload_batches` 테이블과 매핑됩니다.
+  - 업로드 묶음과 분석 작업의 연결 정보를 읽을 때 사용합니다.
+- `upload_file.py`
+  - Spring의 `upload_files` 테이블과 매핑됩니다.
+  - 업로드 파일의 저장 위치와 파싱 상태를 읽을 때 사용합니다.
+- `work.py`
+  - Spring의 `works` 테이블과 매핑됩니다.
+  - 분석 작업이 어느 작품에 속하는지 확인할 때 사용합니다.
+
+## 예정 모델
+
 - `EpisodeChunk`
-- `UploadBatch`
-- `UploadFile`
+  - 청킹 결과를 저장할 `episode_chunks` 테이블과 매핑할 예정입니다.
+  - 현재 Spring 쪽에 아직 엔티티가 없다면 후속으로 스키마 합의가 필요합니다.
 - `SettingCandidate`
+  - AI가 추출한 사용자 검토 전 설정 후보 저장에 사용할 예정입니다.
 - `RagEmbeddingTarget`
-
-These models should mirror the Spring/PostgreSQL schema, not redefine business ownership rules.
+  - 임베딩 대상 저장 또는 검색 흐름에 사용할 예정입니다.
