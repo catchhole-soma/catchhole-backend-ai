@@ -30,7 +30,7 @@ def _analysis_job() -> AnalysisJob:
         model_name=None,
         input_token_count=None,
         output_token_count=None,
-        summary_json={"chunkCount": 12},
+        summary_json='{"chunkCount": 12}',
         error_message=None,
         started_at=None,
         completed_at=None,

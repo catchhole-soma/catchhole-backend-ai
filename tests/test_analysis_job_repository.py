@@ -40,11 +40,11 @@ def test_analysis_job_change_step_updates_current_step() -> None:
 def test_analysis_job_mark_succeeded_updates_status_and_summary() -> None:
     analysis_job = _analysis_job()
 
-    analysis_job.mark_succeeded(summary={"candidateCount": 3})
+    analysis_job.mark_succeeded(summary_json='{"candidateCount": 3}')
 
     assert analysis_job.status == AnalysisJobStatus.SUCCEEDED
     assert analysis_job.current_step == "DONE"
-    assert analysis_job.summary_json == {"candidateCount": 3}
+    assert analysis_job.summary_json == '{"candidateCount": 3}'
     assert analysis_job.completed_at is not None
     assert analysis_job.error_message is None
 
