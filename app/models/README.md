@@ -23,6 +23,10 @@ Python AI 서버가 PostgreSQL을 직접 읽거나 써야 할 때 사용하는 S
 - `episode.py`
   - Spring의 `episodes` 테이블과 매핑됩니다.
   - 회차 메타데이터와 S3 원문 key를 읽을 때 사용합니다.
+- `episode_chunk.py`
+  - 청킹 결과를 저장할 `episode_chunks` 테이블과 매핑됩니다.
+  - LLM 입력 단위와 근거 위치 계산에 필요한 offset, 문단 범위를 저장합니다.
+  - 현재 Spring 쪽에는 아직 대응 엔티티가 없으므로 DB 스키마 반영 협의가 필요합니다.
 - `upload_batch.py`
   - Spring의 `upload_batches` 테이블과 매핑됩니다.
   - 업로드 묶음과 분석 작업의 연결 정보를 읽을 때 사용합니다.
@@ -35,9 +39,6 @@ Python AI 서버가 PostgreSQL을 직접 읽거나 써야 할 때 사용하는 S
 
 ## 예정 모델
 
-- `EpisodeChunk`
-  - 청킹 결과를 저장할 `episode_chunks` 테이블과 매핑할 예정입니다.
-  - 현재 Spring 쪽에 아직 엔티티가 없다면 후속으로 스키마 합의가 필요합니다.
 - `SettingCandidate`
   - AI가 추출한 사용자 검토 전 설정 후보 저장에 사용할 예정입니다.
 - `RagEmbeddingTarget`

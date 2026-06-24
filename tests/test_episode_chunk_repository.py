@@ -4,8 +4,8 @@ from app.models.episode_chunk import EpisodeChunk
 from app.repositories.episode_chunk_repository import EpisodeChunkRepository
 
 
-# save_all이 SQLAlchemy session.add_all로 청크 목록을 저장 요청하는지 확인한다.
 def test_save_all_adds_episode_chunks() -> None:
+    # split 결과로 만들어진 청크 목록을 session.add_all에 전달하는지 확인한다.
     session = FakeSession()
     repository = EpisodeChunkRepository(session)
     chunks = [_episode_chunk(chunk_index=0), _episode_chunk(chunk_index=1)]
@@ -16,8 +16,8 @@ def test_save_all_adds_episode_chunks() -> None:
     assert session.added_items == chunks
 
 
-# find_by_episode_id가 회차 기준 조회 쿼리를 만들고 결과 목록을 반환하는지 확인한다.
 def test_find_by_episode_id_returns_chunks() -> None:
+    # 회차별 청크를 조회할 때 Repository가 조회 쿼리를 만들고 결과 목록을 반환하는지 확인한다.
     chunks = [_episode_chunk(chunk_index=0), _episode_chunk(chunk_index=1)]
     session = FakeSession(scalar_items=chunks)
     repository = EpisodeChunkRepository(session)
@@ -28,8 +28,8 @@ def test_find_by_episode_id_returns_chunks() -> None:
     assert session.scalar_statement is not None
 
 
-# delete_by_episode_id가 회차 기준 삭제 쿼리를 session에 전달하는지 확인한다.
 def test_delete_by_episode_id_executes_delete_statement() -> None:
+    # force 재분석/재청킹을 위해 기존 청크 삭제 쿼리를 session에 전달하는지 확인한다.
     session = FakeSession()
     repository = EpisodeChunkRepository(session)
 
