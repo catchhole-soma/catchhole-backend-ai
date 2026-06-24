@@ -32,11 +32,12 @@ Repository는 SQLAlchemy session을 사용해 DB 접근만 담당합니다.
   - 회차별 청크 조회를 담당합니다.
   - 회차 기준 기존 청크 삭제를 담당합니다.
   - 새로 생성된 청크 목록 저장을 담당합니다.
+- `episode_repository.py`
+  - 회차 메타데이터 조회를 담당합니다.
+  - S3 원문 key를 읽기 위한 `Episode` 조회에 사용합니다.
 
 ## 예정 Repository
 
-- `EpisodeRepository`
-  - 회차 메타데이터 조회와 처리 상태 갱신을 담당할 예정입니다.
 - `UploadFileRepository`
   - 업로드 파일 메타데이터와 감지된 회차 범위 조회를 담당할 예정입니다.
 - `SettingCandidateRepository`
