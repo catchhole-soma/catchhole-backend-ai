@@ -49,12 +49,15 @@ pytest
 - `AWS_S3_BUCKET`: 회차 원문과 업로드 파일이 저장되는 S3 버킷
 - `AWS_SQS_QUEUE_URL`: 분석 잡 큐를 붙일 경우 사용할 SQS URL
 - `LLM_API_KEY`: 설정 추출/검증에 사용할 LLM API 키
+- `SPRING_INTERNAL_API_BASE_URL`: Spring 내부 Worker API base URL. 기본값 `http://localhost:8080`은 로컬 개발용 값입니다.
+- `SPRING_INTERNAL_API_KEY`: Spring 내부 Worker API 호출에 사용할 `X-Internal-Api-Key` 값
 
 ## API 초안
 
 - `GET /api/v1/health`
-- `POST /api/v1/analysis-jobs/{analysis_job_id}/run`
 - `GET /api/v1/analysis-jobs/{analysis_job_id}/status`
+
+분석 실행은 Python API가 `analysis_job_id`를 직접 받는 방식이 아니라, Python Worker가 Spring 내부 Worker API의 claim endpoint를 호출해 가져오는 방식으로 진행합니다.
 
 ## 패키지 문서
 
@@ -62,6 +65,7 @@ pytest
 
 - `app/analysis/README.md`: 설정 추출, 근거 위치 계산, 충돌 검사
 - `app/chunking/README.md`: 원문 정규화, 문단 분리, 청킹, offset 기준
+- `app/clients/README.md`: Spring 내부 API 같은 외부 HTTP client
 - `app/db/README.md`: DB session과 트랜잭션 경계
 - `app/embeddings/README.md`: 임베딩 대상 선정과 RAG 검색
 - `app/llm/README.md`: LLM client, prompt, 구조화 응답
@@ -70,6 +74,7 @@ pytest
 - `app/repositories/README.md`: DB 조회와 저장 계층
 - `app/services/README.md`: 유스케이스 흐름 조율
 - `app/storage/README.md`: S3 같은 외부 object storage 접근
+- `app/worker/README.md`: Spring claim 기반 Worker 실행 흐름과 상태/단계 정책
 - `app/queue/README.md`: queue consumer를 도입할 때의 책임
 
 ### schema와 dataclass 사용 기준
@@ -89,6 +94,26 @@ pytest
   - 위치: `app/models`
 
 정리하면, API 입출력은 `schemas(BaseModel)`, 내부 순수 로직의 중간 결과는 `dataclass`, DB 테이블 매핑은 `models(SQLAlchemy)`를 기본으로 합니다.
+
+### Python 네이밍/메서드 컨벤션
+
+Python에서는 이름 앞뒤의 `_` 개수에 따라 의미가 달라질 수 있습니다.
+
+- `_name`
+  - 내부 구현용 이름이라는 관례입니다.
+  - Java의 `private`처럼 접근을 강제로 막지는 않지만, 외부 계층에서 직접 호출하지 않는 것을 의미합니다.
+  - 예: `_headers()`, `_url()`, `_run_analysis_steps()`
+- `__name`
+  - name mangling이 적용됩니다.
+  - 클래스 내부 구현을 하위 클래스에서 실수로 덮어쓰는 것을 줄이고 싶을 때 사용합니다.
+  - 일반적인 private 용도로는 잘 사용하지 않습니다.
+- `__name__`
+  - Python이 특별한 의미로 사용하는 magic method 또는 dunder 이름입니다.
+  - 직접 임의로 만들기보다 Python 표준 프로토콜에서 정한 이름을 사용합니다.
+  - 예: `__init__`, `__enter__`, `__exit__`
+
+이 프로젝트에서는 일반적인 내부 helper 메서드는 `_name` 형식을 사용합니다.
+외부 계층에서 호출해야 하는 공개 메서드는 `_` 없이 작성합니다.
 
 ## 예외 응답
 

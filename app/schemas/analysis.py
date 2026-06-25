@@ -10,17 +10,6 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
-class AnalysisJobRunRequest(BaseModel):
-    force: bool = False
-
-
-class AnalysisJobRunResponse(BaseModel):
-    analysis_job_id: UUID
-    status: AnalysisJobStatus
-    current_step: AnalysisStep
-    message: str
-
-
 class AnalysisJobStatusResponse(BaseModel):
     analysis_job_id: UUID
     status: AnalysisJobStatus

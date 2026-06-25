@@ -21,8 +21,8 @@ Spring 기준으로는 Service 계층에 가깝습니다. Repository, storage, m
 ## 현재 파일
 
 - `analysis_job_service.py`
-  - 분석 작업 조회와 실행 진입점을 담당합니다.
-  - 현재 `run` API는 임시 구조이며, Spring claim 기반 Worker 흐름에서 정리할 예정입니다.
+  - 분석 작업 상태 조회를 담당합니다.
+  - 분석 실행은 Service가 직접 시작하지 않고, Worker가 Spring 내부 API를 통해 claim합니다.
 - `episode_chunk_service.py`
   - 이미 원문 텍스트를 알고 있는 상태에서 회차 청킹 결과를 저장합니다.
   - `normalize_text -> split_into_chunks -> EpisodeChunkMapper -> EpisodeChunkRepository` 흐름을 조율합니다.
@@ -34,5 +34,5 @@ Spring 기준으로는 Service 계층에 가깝습니다. Repository, storage, m
 ## 후속 작업
 
 - Spring claim payload 기반 Worker 실행 흐름에서 `EpisodeS3ChunkingService`를 호출합니다.
-- `analysis_jobs` 진행률, 완료, 실패 보고는 Spring 내부 API client가 생긴 뒤 연결합니다.
+- `analysis_jobs` 진행률, 완료, 실패 보고는 Spring 내부 API client를 통해 수행합니다.
 - `upload_files.storage_url` 기준 원본 파일 로드는 필요한 시점에 별도 Service 또는 메서드로 분리합니다.

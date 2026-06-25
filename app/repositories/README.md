@@ -20,14 +20,14 @@ Repository는 SQLAlchemy session을 사용해 DB 접근만 담당합니다.
 - 상태 전이 규칙 결정
 - API 요청/응답 변환
 
-상태 변경이 도메인 규칙에 가까운 경우에는 모델 메서드에 둡니다. 예를 들어 `AnalysisJob`의 `mark_running`, `mark_failed` 같은 메서드는 Repository가 아니라 도메인 모델이 담당합니다.
+분석 작업 상태 변경은 Spring 서버가 담당합니다. Python Worker는 DB row를 직접 바꾸지 않고 Spring 내부 Worker API로 진행률, 완료, 실패를 보고합니다.
 
 ## 현재 파일
 
 - `analysis_job_repository.py`
   - `analysis_jobs` 조회를 담당합니다.
   - 존재하지 않는 작업이면 `AppException`을 발생시킵니다.
-  - 실행 상태 변경 자체는 `AnalysisJob` 도메인 메서드가 담당합니다.
+  - 실행 상태 변경은 담당하지 않습니다.
 - `episode_chunk_repository.py`
   - 회차별 청크 조회를 담당합니다.
   - 회차 기준 기존 청크 삭제를 담당합니다.
