@@ -35,12 +35,13 @@ Repository는 SQLAlchemy session을 사용해 DB 접근만 담당합니다.
 - `episode_repository.py`
   - 회차 메타데이터 조회를 담당합니다.
   - S3 원문 key를 읽기 위한 `Episode` 조회에 사용합니다.
+- `setting_candidate_repository.py`
+  - AI가 추출한 사용자 검토 전 설정 후보 저장을 담당합니다.
+  - 같은 `analysis_job_id` 재실행 시 후보가 중복 저장되지 않도록 기존 후보 삭제 쿼리를 제공합니다.
 
 ## 예정 Repository
 
 - `UploadFileRepository`
   - 업로드 파일 메타데이터와 감지된 회차 범위 조회를 담당할 예정입니다.
-- `SettingCandidateRepository`
-  - AI가 추출한 사용자 검토 전 설정 후보 저장을 담당할 예정입니다.
 - `RagEmbeddingTargetRepository`
   - 임베딩 대상 저장 또는 검색 흐름을 담당할 예정입니다.

@@ -29,7 +29,6 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 ## 후속 작업
 
-- `setting_candidates` ORM 모델과 Repository에 저장 흐름을 연결합니다.
 - `evidence_quote`를 청크 내부 offset으로 다시 매핑합니다.
 - LLM 응답 JSON 검증 실패 시 재시도 정책을 추가합니다.
 - 기존 확정 설정과 비교하는 충돌 검사 흐름을 연결합니다.

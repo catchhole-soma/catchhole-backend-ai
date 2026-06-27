@@ -11,6 +11,10 @@ from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.services.episode_chunk_service import EpisodeChunkService
 from app.services.episode_s3_chunking_service import EpisodeS3ChunkingService
+from app.services.setting_candidate_service import (
+    SettingCandidateSaveItem,
+    SettingCandidateService,
+)
 from app.storage.s3 import S3TextObjectStorage
 
 # Worker 실행 결과를 담는 값 객체
@@ -73,11 +77,13 @@ class AnalysisJobWorker:
         spring_client: SpringWorkerApi | None = None,
         chunking_service: EpisodeChunkingApi | None = None,
         setting_extractor: SettingExtractorApi | None = None,
+        setting_candidate_service: SettingCandidateService | None = None,
         model_name: str | None = None,
     ) -> None:
         self.spring_client = spring_client or SpringWorkerClient.from_settings()
         self._chunking_service = chunking_service
         self._setting_extractor = setting_extractor
+        self._setting_candidate_service = setting_candidate_service
         self.model_name = model_name
 
     def run_once(self) -> WorkerRunResult:
@@ -125,7 +131,7 @@ class AnalysisJobWorker:
 
     def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
         chunk_count = 0
-        candidate_count = 0
+        save_items: list[SettingCandidateSaveItem] = []
 
         # Spring claim payload에 포함된 회차들을 순서대로 처리한다.
         for episode in payload.episodes:
@@ -141,14 +147,27 @@ class AnalysisJobWorker:
                     episode_no=episode.episode_no,
                     episode_title=episode.title,
                 )
-                candidate_count += len(extraction_result.candidates)
+                save_items.extend(
+                    SettingCandidateSaveItem(
+                        episode_id=episode.episode_id,
+                        candidate=candidate,
+                    )
+                    for candidate in extraction_result.candidates
+                )
+
+        # 3. 검증된 후보들을 setting_candidates에 저장하고, 실제 저장된 개수를 완료 요약에 사용한다.
+        saved_candidates = self._get_setting_candidate_service().replace_candidates_for_analysis_job(
+            work_id=payload.work_id,
+            analysis_job_id=payload.analysis_job_id,
+            save_items=save_items,
+        )
 
         #Python dict를 JSON 문자열로 바꿈
         summary_json = json.dumps(
             {
                 "episodeCount": len(payload.episodes),
                 "chunkCount": chunk_count,
-                "candidateCount": candidate_count,
+                "candidateCount": len(saved_candidates),
             },
             ensure_ascii=False,
         )
@@ -174,3 +193,11 @@ class AnalysisJobWorker:
         if self._setting_extractor is None:
             self._setting_extractor = CharacterSettingExtractor(model=self.model_name)
         return self._setting_extractor
+
+    # 검증된 설정 후보를 setting_candidates 테이블에 저장할 서비스를 필요할 때 초기화한다.
+    def _get_setting_candidate_service(self) -> SettingCandidateService:
+        if self._setting_candidate_service is None:
+            self._setting_candidate_service = SettingCandidateService(
+                session_factory=get_session_maker(),
+            )
+        return self._setting_candidate_service

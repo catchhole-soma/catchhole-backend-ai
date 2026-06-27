@@ -3,6 +3,7 @@ from uuid import UUID
 
 import pytest
 
+from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisEpisodePayload, WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunSummary
@@ -57,11 +58,17 @@ def test_worker_reports_fail_to_spring_when_analysis_fails() -> None:
 def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
     spring_client = FakeSpringWorkerClient(payload=_payload())
     chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 1레벨 바바리안이다.")])
-    setting_extractor = FakeSettingExtractor(candidate_counts=[2])
+    extracted_candidates = [
+        _candidate(chunking_service.chunks[0].id, attribute_name="level"),
+        _candidate(chunking_service.chunks[0].id, attribute_name="class"),
+    ]
+    setting_extractor = FakeSettingExtractor(candidate_groups=[extracted_candidates])
+    setting_candidate_service = FakeSettingCandidateService()
     worker = AnalysisJobWorker(
         spring_client=spring_client,
         chunking_service=chunking_service,
         setting_extractor=setting_extractor,
+        setting_candidate_service=setting_candidate_service,
     )
 
     result = worker.run_once()
@@ -76,6 +83,12 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
             "episode_title": "첫 번째 회차",
         }
     ]
+    assert setting_candidate_service.request == {
+        "work_id": WORK_ID,
+        "analysis_job_id": ANALYSIS_JOB_ID,
+        "episode_ids": [EPISODE_ID, EPISODE_ID],
+        "candidates": extracted_candidates,
+    }
     summary = json.loads(spring_client.complete_calls[0][1])
     assert summary == {
         "episodeCount": 1,
@@ -139,9 +152,9 @@ class FakeEpisodeChunkingService:
 
 
 class FakeSettingExtractor:
-    # 실제 OpenAI 호출 대신 chunk별 후보 개수만 흉내
-    def __init__(self, candidate_counts: list[int]) -> None:
-        self.candidate_counts = candidate_counts
+    # 실제 OpenAI 호출 대신 chunk별 추출 후보 목록만 흉내
+    def __init__(self, candidate_groups: list[list[ExtractedSettingCandidate]]) -> None:
+        self.candidate_groups = candidate_groups
         self.requests = []
 
     def extract_from_chunk(
@@ -159,13 +172,28 @@ class FakeSettingExtractor:
                 "episode_title": episode_title,
             }
         )
-        candidate_count = self.candidate_counts.pop(0)
-        return FakeExtractionResult(candidates=[object() for _ in range(candidate_count)])
+        candidates = self.candidate_groups.pop(0)
+        return FakeExtractionResult(candidates=candidates)
 
 
 class FakeExtractionResult:
-    def __init__(self, candidates: list[object]) -> None:
+    def __init__(self, candidates: list[ExtractedSettingCandidate]) -> None:
         self.candidates = candidates
+
+
+class FakeSettingCandidateService:
+    # 실제 DB 저장 대신 Worker가 전달한 저장 요청을 기록
+    def __init__(self) -> None:
+        self.request = None
+
+    def replace_candidates_for_analysis_job(self, work_id, analysis_job_id, save_items):
+        self.request = {
+            "work_id": work_id,
+            "analysis_job_id": analysis_job_id,
+            "episode_ids": [item.episode_id for item in save_items],
+            "candidates": [item.candidate for item in save_items],
+        }
+        return [item.candidate for item in save_items]
 
 
 def _payload() -> WorkerAnalysisJobPayload:
@@ -188,6 +216,26 @@ def _payload() -> WorkerAnalysisJobPayload:
                 char_count=1234,
             )
         ],
+    )
+
+
+def _candidate(source_chunk_id: UUID, attribute_name: str) -> ExtractedSettingCandidate:
+    return ExtractedSettingCandidate(
+        source_chunk_id=source_chunk_id,
+        entity_type="CHARACTER",
+        entity_name="비요른",
+        attribute_name=attribute_name,
+        attribute_value="1",
+        value_type="NUMBER",
+        value_json={"value": 1},
+        evidence_spans=[
+            ExtractedEvidenceSpan(
+                quote="비요른은 1레벨 바바리안이다.",
+                start_offset=None,
+                end_offset=None,
+            )
+        ],
+        confidence=0.9,
     )
 
 

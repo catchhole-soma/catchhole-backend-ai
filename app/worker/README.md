@@ -154,9 +154,12 @@ Spring claim
 - `CharacterSettingExtractor`
   - 저장된 chunk 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
   - LLM 응답 JSON을 `app/analysis/schemas.py` 기준으로 검증합니다.
+- `SettingCandidateService`
+  - 검증된 후보를 `setting_candidates` 저장 모델로 변환합니다.
+  - 같은 `analysis_job_id` 기준 기존 후보를 지운 뒤 새 후보를 저장합니다.
 
-현재 단계에서는 추출 후보를 `setting_candidates` 테이블에 저장하지 않고, 후보 개수만 완료 요약에 포함합니다.
-후보 저장, 검증 실패 재시도, 동일 인물 병합, 일회성 캐릭터 필터링은 후속 작업에서 연결합니다.
+현재 단계에서는 검증된 후보를 `setting_candidates` 테이블에 `PENDING_REVIEW` 상태로 저장합니다.
+검증 실패 재시도, 동일 인물 병합, 일회성 캐릭터 필터링은 후속 작업에서 연결합니다.
 
 ## 로컬 Worker 실행
 
