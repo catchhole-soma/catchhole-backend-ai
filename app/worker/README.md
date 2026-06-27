@@ -128,3 +128,32 @@ progress(currentStep=SETTING_EXTRACTION)
 - Python은 Spring 내부 API에 진행, 완료, 실패를 보고합니다.
 - `current_step`을 claim에서 보낼지, progress에서만 보낼지는 후속 협의 대상입니다.
 
+## 현재 연결된 실행 흐름
+
+`AnalysisJobWorker.run_once()`는 다음 순서로 한 개의 분석 작업을 처리합니다.
+
+```text
+Spring claim
+-> progress 보고
+-> episode별 S3 원문 청킹
+-> chunk별 캐릭터 설정 후보 추출
+-> summaryJson 생성
+-> Spring complete 보고
+```
+
+세부 책임은 다음 파일로 나뉩니다.
+
+- `analysis_job_worker.py`
+  - claim된 payload의 episode 목록을 순회합니다.
+  - episode별 청킹 서비스와 chunk별 설정 추출기를 호출합니다.
+  - 생성된 episode/chunk/candidate 개수를 `summaryJson`으로 모아 Spring에 완료 보고합니다.
+- `EpisodeS3ChunkingService`
+  - episode_id로 DB의 episode를 조회합니다.
+  - episode의 `content_s3_key`로 S3 원문을 읽습니다.
+  - 읽은 원문을 `EpisodeChunkService`에 넘겨 기존 chunk 삭제 후 새 chunk 저장을 수행합니다.
+- `CharacterSettingExtractor`
+  - 저장된 chunk 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
+  - LLM 응답 JSON을 `app/analysis/schemas.py` 기준으로 검증합니다.
+
+현재 단계에서는 추출 후보를 `setting_candidates` 테이블에 저장하지 않고, 후보 개수만 완료 요약에 포함합니다.
+후보 저장, 검증 실패 재시도, 동일 인물 병합, 일회성 캐릭터 필터링은 후속 작업에서 연결합니다.

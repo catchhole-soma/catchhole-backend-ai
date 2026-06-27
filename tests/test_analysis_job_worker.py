@@ -1,7 +1,9 @@
+import json
 from uuid import UUID
 
 import pytest
 
+from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisEpisodePayload, WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunSummary
 
@@ -52,6 +54,37 @@ def test_worker_reports_fail_to_spring_when_analysis_fails() -> None:
     assert spring_client.fail_calls == [(ANALYSIS_JOB_ID, "LLM response parse failed.")]
 
 
+def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
+    spring_client = FakeSpringWorkerClient(payload=_payload())
+    chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 1레벨 바바리안이다.")])
+    setting_extractor = FakeSettingExtractor(candidate_counts=[2])
+    worker = AnalysisJobWorker(
+        spring_client=spring_client,
+        chunking_service=chunking_service,
+        setting_extractor=setting_extractor,
+    )
+
+    result = worker.run_once()
+
+    assert result.claimed is True
+    assert chunking_service.requested_episode_ids == [EPISODE_ID]
+    assert setting_extractor.requests == [
+        {
+            "source_chunk_id": chunking_service.chunks[0].id,
+            "chunk_text": "비요른은 1레벨 바바리안이다.",
+            "episode_no": 1,
+            "episode_title": "첫 번째 회차",
+        }
+    ]
+    summary = json.loads(spring_client.complete_calls[0][1])
+    assert summary == {
+        "episodeCount": 1,
+        "chunkCount": 1,
+        "candidateCount": 2,
+    }
+    assert spring_client.fail_calls == []
+
+
 class SuccessfulAnalysisJobWorker(AnalysisJobWorker):
     def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
         return WorkerRunSummary(
@@ -94,6 +127,47 @@ class FakeSpringWorkerClient:
         self.fail_calls.append((analysis_job_id, error_message))
 
 
+class FakeEpisodeChunkingService:
+    # 실제 S3/DB 청킹 대신 Worker가 episode_id를 넘겼는지 기록
+    def __init__(self, chunks: list[EpisodeChunk]) -> None:
+        self.chunks = chunks
+        self.requested_episode_ids: list[UUID] = []
+
+    def replace_chunks_from_s3_content(self, episode_id: UUID) -> list[EpisodeChunk]:
+        self.requested_episode_ids.append(episode_id)
+        return self.chunks
+
+
+class FakeSettingExtractor:
+    # 실제 OpenAI 호출 대신 chunk별 후보 개수만 흉내
+    def __init__(self, candidate_counts: list[int]) -> None:
+        self.candidate_counts = candidate_counts
+        self.requests = []
+
+    def extract_from_chunk(
+        self,
+        source_chunk_id: UUID,
+        chunk_text: str,
+        episode_no: int | None = None,
+        episode_title: str | None = None,
+    ):
+        self.requests.append(
+            {
+                "source_chunk_id": source_chunk_id,
+                "chunk_text": chunk_text,
+                "episode_no": episode_no,
+                "episode_title": episode_title,
+            }
+        )
+        candidate_count = self.candidate_counts.pop(0)
+        return FakeExtractionResult(candidates=[object() for _ in range(candidate_count)])
+
+
+class FakeExtractionResult:
+    def __init__(self, candidates: list[object]) -> None:
+        self.candidates = candidates
+
+
 def _payload() -> WorkerAnalysisJobPayload:
     return WorkerAnalysisJobPayload(
         analysis_job_id=ANALYSIS_JOB_ID,
@@ -114,4 +188,20 @@ def _payload() -> WorkerAnalysisJobPayload:
                 char_count=1234,
             )
         ],
+    )
+
+
+def _chunk(chunk_index: int, chunk_text: str) -> EpisodeChunk:
+    return EpisodeChunk(
+        id=UUID(f"00000000-0000-0000-0000-00000000010{chunk_index}"),
+        episode_id=EPISODE_ID,
+        chunk_index=chunk_index,
+        chunk_text=chunk_text,
+        start_offset=0,
+        end_offset=len(chunk_text),
+        paragraph_start_index=0,
+        paragraph_end_index=0,
+        metadata_json=None,
+        created_at=None,
+        updated_at=None,
     )
