@@ -49,6 +49,8 @@ pytest
 - `AWS_S3_BUCKET`: 회차 원문과 업로드 파일이 저장되는 S3 버킷
 - `AWS_SQS_QUEUE_URL`: 분석 잡 큐를 붙일 경우 사용할 SQS URL
 - `LLM_API_KEY`: 설정 추출/검증에 사용할 LLM API 키
+- `LLM_MODEL`: 설정 추출에 사용할 LLM 모델명
+- `OPENAI_RESPONSES_API_URL`: OpenAI Responses API endpoint
 - `SPRING_INTERNAL_API_BASE_URL`: Spring 내부 Worker API base URL. 기본값 `http://localhost:8080`은 로컬 개발용 값입니다.
 - `SPRING_INTERNAL_API_KEY`: Spring 내부 Worker API 호출에 사용할 `X-Internal-Api-Key` 값
 
@@ -83,17 +85,20 @@ pytest
 
 - Pydantic `BaseModel`
   - FastAPI Request/Response에 사용합니다.
-  - Swagger 문서에 노출되거나 JSON 직렬화/검증이 필요한 값에 사용합니다.
-  - 위치: `app/schemas`
+  - Spring 내부 API payload처럼 외부 경계에서 JSON 직렬화/검증이 필요한 값에 사용합니다.
+  - LLM 응답 JSON처럼 외부에서 들어온 불안정한 구조를 검증해야 하는 경우에도 사용합니다.
+  - API 계약용 schema 위치: `app/schemas`
+  - 특정 도메인 내부에서만 쓰는 검증 schema는 해당 패키지 안에 둘 수 있습니다.
+    - 예: `app/analysis/schemas.py`
 - `dataclass`
   - API로 직접 노출되지 않는 내부 알고리즘 결과에 사용합니다.
-  - 청킹 중간 결과, offset 계산 결과처럼 가볍고 불변에 가까운 값 객체에 사용합니다.
-  - 예: `Paragraph`, `EpisodeChunkDraft`
+  - 이미 검증된 값을 내부에서 전달하는 가볍고 불변에 가까운 값 객체에 사용합니다.
+  - 예: `Paragraph`, `EpisodeChunkDraft`, `LlmTextResponse`
 - SQLAlchemy model
   - DB 테이블과 직접 매핑되는 영속 객체에 사용합니다.
   - 위치: `app/models`
 
-정리하면, API 입출력은 `schemas(BaseModel)`, 내부 순수 로직의 중간 결과는 `dataclass`, DB 테이블 매핑은 `models(SQLAlchemy)`를 기본으로 합니다.
+정리하면, API 입출력과 외부 JSON 검증 경계는 `BaseModel`, 내부 순수 로직의 중간 결과는 `dataclass`, DB 테이블 매핑은 `models(SQLAlchemy)`를 기본으로 합니다.
 
 ### Python 네이밍/메서드 컨벤션
 

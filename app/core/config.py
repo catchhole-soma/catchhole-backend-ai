@@ -21,6 +21,8 @@ class Settings(BaseSettings):
 
     # LLM API key
     llm_api_key: str = ""
+    llm_model: str = "gpt-4.1-mini"
+    openai_responses_api_url: str = "https://api.openai.com/v1/responses"
 
     #Spring 내부 API 주소와 내부 API key를 읽음
     spring_internal_api_base_url: str = "http://localhost:8080"
