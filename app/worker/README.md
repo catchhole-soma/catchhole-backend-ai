@@ -157,3 +157,34 @@ Spring claim
 
 현재 단계에서는 추출 후보를 `setting_candidates` 테이블에 저장하지 않고, 후보 개수만 완료 요약에 포함합니다.
 후보 저장, 검증 실패 재시도, 동일 인물 병합, 일회성 캐릭터 필터링은 후속 작업에서 연결합니다.
+
+## 로컬 Worker 실행
+
+`AnalysisJobWorker.run_once()`는 분석 작업 하나만 처리하는 함수입니다.
+따라서 로컬에서 Worker를 계속 실행하려면 runner script가 반복 호출을 담당합니다.
+
+```bash
+.venv/bin/python scripts/run_analysis_worker.py
+```
+
+실행 흐름은 다음과 같습니다.
+
+```text
+scripts/run_analysis_worker.py
+-> AnalysisJobWorker 생성
+-> run_once 반복 호출
+-> claim할 job이 없으면 idle sleep
+-> job이 있으면 청킹/설정 추출/완료 보고 수행
+```
+
+수동 확인 시에는 한 번만 claim을 시도할 수 있습니다.
+
+```bash
+.venv/bin/python scripts/run_analysis_worker.py --once
+```
+
+테스트나 로컬 점검에서는 반복 횟수를 제한할 수 있습니다.
+
+```bash
+.venv/bin/python scripts/run_analysis_worker.py --max-iterations 3
+```
