@@ -1,5 +1,8 @@
 from uuid import UUID
 
+import pytest
+
+from app.analysis.exceptions import LlmExtractionError
 from app.analysis.setting_extractor import CharacterSettingExtractor
 from app.llm.responses import LlmTextResponse
 
@@ -31,6 +34,46 @@ def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
     assert candidate.value_type == "NUMBER"
     assert candidate.value_json == {"value": 12}
     assert candidate.evidence_spans[0].quote == "카엘은 12레벨 검사"
+
+
+def test_extract_from_chunk_retries_when_json_parse_fails(tmp_path) -> None:
+    # 첫 응답이 JSON이 아니어도 다음 응답이 정상이면 추출이 성공해야 한다.
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
+    llm_client = RetryThenSuccessClient()
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        prompt_path=prompt_path,
+        max_attempts=2,
+    )
+
+    result = extractor.extract_from_chunk(
+        source_chunk_id=CHUNK_ID,
+        chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+    )
+
+    assert llm_client.call_count == 2
+    assert result.candidates[0].entity_name == "카엘"
+
+
+def test_extract_from_chunk_raises_error_after_max_attempts(tmp_path) -> None:
+    # 모든 시도가 실패하면 잘못된 응답을 저장 단계로 넘기지 않고 전용 예외를 던진다.
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
+    llm_client = AlwaysInvalidJsonClient()
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        prompt_path=prompt_path,
+        max_attempts=2,
+    )
+
+    with pytest.raises(LlmExtractionError):
+        extractor.extract_from_chunk(
+            source_chunk_id=CHUNK_ID,
+            chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+        )
+
+    assert llm_client.call_count == 2
 
 
 class FakeTextGenerationClient:
@@ -68,3 +111,42 @@ class FakeTextGenerationClient:
             }
             """
         )
+
+
+class RetryThenSuccessClient:
+    # 첫 호출만 깨진 응답을 주고, 두 번째 호출부터 정상 JSON을 주는 fake client
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def create_text_response(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None = None,
+        max_output_tokens: int = 1500,
+    ) -> LlmTextResponse:
+        self.call_count += 1
+        if self.call_count == 1:
+            return LlmTextResponse(text="이 응답은 JSON이 아닙니다.")
+        return FakeTextGenerationClient().create_text_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            max_output_tokens=max_output_tokens,
+        )
+
+
+class AlwaysInvalidJsonClient:
+    # 최대 재시도 이후 실패 흐름을 확인하기 위해 계속 깨진 응답을 주는 fake client
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def create_text_response(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None = None,
+        max_output_tokens: int = 1500,
+    ) -> LlmTextResponse:
+        self.call_count += 1
+        return LlmTextResponse(text="이 응답은 끝까지 JSON이 아닙니다.")

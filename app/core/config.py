@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gpt-4.1-mini"
     openai_responses_api_url: str = "https://api.openai.com/v1/responses"
+    # LLM 응답 JSON 파싱/검증 실패 시 전체 시도 횟수
+    llm_extraction_max_attempts: int = 3
 
     #Spring 내부 API 주소와 내부 API key를 읽음
     spring_internal_api_base_url: str = "http://localhost:8080"
