@@ -27,6 +27,10 @@ Python AI 서버가 PostgreSQL을 직접 읽거나 써야 할 때 사용하는 S
   - 청킹 결과를 저장할 `episode_chunks` 테이블과 매핑됩니다.
   - LLM 입력 단위와 근거 위치 계산에 필요한 offset, 문단 범위를 저장합니다.
   - 현재 Spring 쪽에는 아직 대응 엔티티가 없으므로 DB 스키마 반영 협의가 필요합니다.
+- `setting_candidate.py`
+  - Spring의 `setting_candidates` 테이블과 매핑됩니다.
+  - LLM이 추출한 사용자 검토 전 설정 후보를 저장합니다.
+  - `review_status`는 최초 저장 시 `PENDING_REVIEW`로 둡니다.
 - `upload_batch.py`
   - Spring의 `upload_batches` 테이블과 매핑됩니다.
   - 업로드 묶음과 분석 작업의 연결 정보를 읽을 때 사용합니다.
@@ -39,7 +43,5 @@ Python AI 서버가 PostgreSQL을 직접 읽거나 써야 할 때 사용하는 S
 
 ## 예정 모델
 
-- `SettingCandidate`
-  - AI가 추출한 사용자 검토 전 설정 후보 저장에 사용할 예정입니다.
 - `RagEmbeddingTarget`
   - 임베딩 대상 저장 또는 검색 흐름에 사용할 예정입니다.

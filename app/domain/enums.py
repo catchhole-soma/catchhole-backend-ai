@@ -35,3 +35,21 @@ class EpisodeProcessingStatus(StrEnum):
     ANALYZING = "ANALYZING"
     ANALYZED = "ANALYZED"
     FAILED = "FAILED"
+
+
+class SettingEntityType(StrEnum):
+    CHARACTER = "CHARACTER"
+
+
+class SettingValueType(StrEnum):
+    STRING = "STRING"
+    NUMBER = "NUMBER"
+    BOOLEAN = "BOOLEAN"
+    JSON = "JSON"
+    UNKNOWN = "UNKNOWN"
+
+
+class SettingCandidateReviewStatus(StrEnum):
+    PENDING_REVIEW = "PENDING_REVIEW"
+    CONFIRMED = "CONFIRMED"
+    DISMISSED = "DISMISSED"
