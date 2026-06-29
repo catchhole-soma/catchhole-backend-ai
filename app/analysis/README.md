@@ -22,10 +22,11 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 - `setting_extractor.py`
   - 청크 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
-  - prompt 로드, user prompt 구성, JSON 파싱, schema 검증을 담당합니다.
+  - prompt 로드, user prompt 구성, JSON 파싱, schema 검증, 검증 실패 재시도를 담당합니다.
 - `schemas.py`
   - LLM에서 받은 설정 후보 JSON을 검증하기 위한 Python 내부 schema를 정의합니다.
   - FastAPI 응답 DTO가 아니라, 외부 LLM 출력이 저장 가능한 구조인지 확인하는 경계 객체입니다.
+  - 필수 필드 누락, 잘못된 값 타입, 빈 근거 문장 등은 이 단계에서 걸러집니다.
 - `exceptions.py`
   - Analysis 내부 흐름에서만 사용하는 예외를 정의합니다.
   - FastAPI 응답용 공통 예외와 분리해 Worker가 분석 실패 사유를 구분할 수 있게 합니다.
