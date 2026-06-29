@@ -1,9 +1,14 @@
 import json
+import logging
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
+from pydantic import ValidationError
+
+from app.analysis.exceptions import LlmExtractionError
 from app.analysis.schemas import CharacterSettingExtractionResult
+from app.core.config import get_settings
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.responses import LlmTextResponse
 
@@ -11,6 +16,8 @@ from app.llm.responses import LlmTextResponse
 DEFAULT_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "llm" / "prompts" / "character_setting_extraction.md"
 )
+# 이 파일 전용 로그 객체를 만든다 
+logger = logging.getLogger(__name__)
 
 
 # CharacterSettingExtractor가 기대하는 LLM client 규격
@@ -32,12 +39,18 @@ class CharacterSettingExtractor:
         llm_client: TextGenerationClient | None = None,
         prompt_path: Path = DEFAULT_PROMPT_PATH,
         model: str | None = None,
+        max_attempts: int | None = None,
     ) -> None:
         # 실제 실행에서는 OpenAI client를 쓰고, 테스트에서는 fake client를 주입
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
         # 특정 추출 작업에서만 모델을 바꾸고 싶을 때 사용한다, 없으면 LLM client 기본 모델을 쓴다
         self.model = model
+        self.max_attempts = (
+            get_settings().llm_extraction_max_attempts if max_attempts is None else max_attempts
+        )
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1.")
 
     def extract_from_chunk(
         self,
@@ -46,15 +59,42 @@ class CharacterSettingExtractor:
         episode_no: int | None = None,
         episode_title: str | None = None,
     ) -> CharacterSettingExtractionResult:
+        system_prompt = self._load_system_prompt()
+        user_prompt = self._build_user_prompt(
+            source_chunk_id=source_chunk_id,
+            chunk_text=chunk_text,
+            episode_no=episode_no,
+            episode_title=episode_title,
+        )
+
+        # LLM 응답은 JSON 형식을 항상 지키지 않을 수 있으므로 파싱/검증 실패만 재시도
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                # 예외가 없다면 정상적으로 return 
+                return self._extract_once(system_prompt, user_prompt)
+            except (json.JSONDecodeError, ValidationError) as exc:
+                last_error = exc
+                if attempt == self.max_attempts:
+                    # 최대 반복횟수가 되면 for문 종료 후 아래의 LlmExtractionError을 만든다.
+                    break
+                logger.warning(
+                    "LLM extraction response validation failed. retrying attempt=%s/%s error=%s",
+                    attempt,
+                    self.max_attempts,
+                    _error_message(exc),
+                )
+
+        raise LlmExtractionError(
+            "LLM extraction failed after "
+            f"{self.max_attempts} attempts: {_error_message(last_error)}"
+        ) from last_error
+
+    def _extract_once(self, system_prompt: str, user_prompt: str) -> CharacterSettingExtractionResult:
         # 시스템 프롬프트 + 사용자 프롬프트를 조합하여 LLM에 요청
         response = self.llm_client.create_text_response(
-            system_prompt=self._load_system_prompt(),
-            user_prompt=self._build_user_prompt(
-                source_chunk_id=source_chunk_id,
-                chunk_text=chunk_text,
-                episode_no=episode_no,
-                episode_title=episode_title,
-            ),
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             model=self.model,
         )
         # LLM이 준 텍스트를 JSON으로 파싱한 뒤, 우리 내부 schema에 맞는지 검증한다.
@@ -102,3 +142,10 @@ def _parse_json_object(text: str) -> dict:
             content = content[start : end + 1]
 
     return json.loads(content)
+
+
+def _error_message(exc: Exception | None) -> str:
+    if exc is None:
+        return "unknown error"
+    message = str(exc) or exc.__class__.__name__
+    return message[:500]
