@@ -4,6 +4,9 @@
 
 Spring 기준으로는 비동기 작업 executor 또는 batch worker에 가깝습니다.
 
+여러 패키지를 가로지르는 전체 흐름도는 [AI Worker Workflow](../../docs/ai-worker-workflow.md)를 기준으로 확인합니다.
+이 문서는 Worker 패키지의 책임과 상태/단계 정책을 중심으로 설명합니다.
+
 ## 역할
 
 - Spring 내부 Worker API를 통해 실행할 분석 작업을 claim합니다.
