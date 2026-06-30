@@ -9,6 +9,7 @@ Python AI Worker의 문서 위치와 작성 기준을 정리합니다.
 | 문서 | 내용 |
 | --- | --- |
 | [AI Worker Workflow](ai-worker-workflow.md) | Spring claim 이후 Python Worker가 청킹, LLM 추출, 후보 저장, 완료/실패 보고를 수행하는 흐름 |
+| [FastAPI Role Review](fastapi-role-review.md) | FastAPI를 health check 수준으로 유지할지, Worker-only 구조로 제거할지 검토하는 기준 |
 
 ## Java Docs와의 책임 구분
 
@@ -26,6 +27,7 @@ Python AI Worker의 문서 위치와 작성 기준을 정리합니다.
 - 단일 패키지 내부 동작은 해당 패키지의 `README.md`에 둡니다.
 - 후속 논의/TODO는 Python Worker 내부 구현에 영향을 주는 경우에만 이 저장소에 남깁니다.
 - Java와 Python의 계약이 바뀌는 내용은 Java docs를 기준으로 갱신하고, Python 문서에서는 해당 계약을 소비하는 방식만 설명합니다.
+- Python 내부 실행 방식처럼 repo 구조에 영향을 주는 미확정 정책은 이 디렉터리에 검토 문서로 남깁니다.
 
 ## 문서 추가 판단 기준
 

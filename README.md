@@ -15,6 +15,7 @@ CatchHole의 원고 분석 기능을 담당하는 Python AI 서버입니다.
 
 자세한 기준은 [docs/README.md](docs/README.md)를 확인합니다.
 현재 Worker 전체 처리 흐름은 [docs/ai-worker-workflow.md](docs/ai-worker-workflow.md)를 기준으로 읽습니다.
+FastAPI 유지/축소 여부는 [docs/fastapi-role-review.md](docs/fastapi-role-review.md)에 검토 기준을 남깁니다.
 
 ## 로컬 실행
 
@@ -25,6 +26,13 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 uvicorn app.main:app --reload
+```
+
+위 FastAPI 실행은 health check와 임시 HTTP route 확인용입니다.
+실제 분석 실행은 Worker runner를 기준으로 합니다.
+
+```bash
+.venv/bin/python scripts/run_analysis_worker.py
 ```
 
 Mac에서 Anaconda Python을 사용할 경우:
@@ -84,12 +92,13 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `SPRING_INTERNAL_API_BASE_URL`: Spring 내부 Worker API base URL. 기본값 `http://localhost:8080`은 로컬 개발용 값입니다.
 - `SPRING_INTERNAL_API_KEY`: Spring 내부 Worker API 호출에 사용할 `X-Internal-Api-Key` 값
 
-## API 초안
+## FastAPI API 초안
 
 - `GET /api/v1/health`
 - `GET /api/v1/analysis-jobs/{analysis_job_id}/status`
 
 분석 실행은 Python API가 `analysis_job_id`를 직접 받는 방식이 아니라, Python Worker가 Spring 내부 Worker API의 claim endpoint를 호출해 가져오는 방식으로 진행합니다.
+따라서 FastAPI route는 현재 분석 실행 경로가 아니라 보조 HTTP 인터페이스로 봅니다.
 
 ## 패키지 문서
 
