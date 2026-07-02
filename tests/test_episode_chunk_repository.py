@@ -29,7 +29,7 @@ def test_find_by_episode_id_returns_chunks() -> None:
 
 
 def test_delete_by_episode_id_executes_delete_statement() -> None:
-    # force 재분석/재청킹을 위해 기존 청크 삭제 쿼리를 session에 전달하는지 확인한다.
+    # 같은 회차를 다시 청킹할 때 기존 청크 삭제 쿼리를 session에 전달하는지 확인한다.
     session = FakeSession()
     repository = EpisodeChunkRepository(session)
 
