@@ -12,7 +12,6 @@
 - 스탯
 - 스킬
 - 아이템
-- 능력치
 - 시간대 또는 회차별 상태 변화
 
 규칙:
@@ -22,9 +21,34 @@
 - `entity_type`은 현재 `CHARACTER`만 사용합니다.
 - `value_type`은 `STRING`, `NUMBER`, `BOOLEAN`, `JSON`, `UNKNOWN` 중 하나를 사용합니다.
 - `source_chunk_id`는 입력으로 받은 값을 그대로 사용합니다.
-- `evidence_spans[].quote`에는 실제 원문 일부를 그대로 넣습니다.
-- offset을 확실히 알 수 없으면 `start_offset`, `end_offset`은 null로 둡니다.
+- `attribute_name`은 백엔드의 `factKey`로 저장되므로 아래 규칙만 사용합니다.
+  - 나이: `age`
+  - 레벨: `level`
+  - 스탯: `stats.<스탯명>`
+  - 스킬: `skills.<스킬명>`
+  - 아이템: `items.<아이템명>`
+  - 상태: `status.<상태명>`
+  - 시간 또는 사건: `time.<시간 또는 사건명>`
+- 여러 스킬, 아이템, 스탯, 상태를 모두 `skills`, `items`, `stats`, `status` 같은 같은 이름으로 묶지 않습니다.
+- `attribute_value`는 목록/검토 화면에서 보여줄 짧은 요약 문자열입니다. 식별자나 로직 판단 기준으로 쓰지 않습니다.
+- `value_json`은 실제 값의 source of truth입니다.
+- 나이와 레벨처럼 단일 숫자 값은 `value_json.value`에 숫자로 넣습니다.
+- 스탯, 스킬, 아이템, 상태, 시간 값은 `value_json`에 구조화된 JSON으로 넣습니다.
+- 원문에서 확인되지 않은 `value_json` 필드는 만들지 않습니다.
+- `evidence_spans[].quote`에는 실제 원문 일부를 요약하거나 의역하지 말고 그대로 복사합니다.
+- `evidence_spans[].quote`는 위치 보정 기준값이므로 가능한 한 짧고 정확한 원문 구간을 사용합니다.
+- offset은 Python Worker가 다시 계산하므로 `start_offset`, `end_offset`은 null로 둡니다.
 - 응답은 설명 문장 없이 JSON 객체 하나만 반환합니다.
+
+`attribute_name`과 `value_json` 예시:
+
+- 레벨: `"attribute_name": "level"`, `"value_type": "NUMBER"`, `"value_json": {"value": 12}`
+- 나이: `"attribute_name": "age"`, `"value_type": "NUMBER"`, `"value_json": {"value": 17}`
+- 스탯: `"attribute_name": "stats.strength"`, `"value_type": "NUMBER"`, `"value_json": {"name": "strength", "label": "근력", "value": 80}`
+- 스킬: `"attribute_name": "skills.파이어볼"`, `"value_type": "JSON"`, `"value_json": {"name": "파이어볼", "level": 3, "effect": "화염 속성 공격"}`
+- 아이템: `"attribute_name": "items.화염검"`, `"value_type": "JSON"`, `"value_json": {"name": "화염검", "type": "weapon", "equipped": true}`
+- 상태: `"attribute_name": "status.부상"`, `"value_type": "JSON"`, `"value_json": {"name": "부상", "description": "왼팔 골절"}`
+- 시간 또는 사건: `"attribute_name": "time.첫전투"`, `"value_type": "JSON"`, `"value_json": {"name": "첫전투", "description": "화염검술을 처음 사용함"}`
 
 응답 형식:
 
@@ -34,11 +58,11 @@
       "source_chunk_id": "입력받은 청크 UUID",
       "entity_type": "CHARACTER",
       "entity_name": "캐릭터명",
-      "attribute_name": "level | age | stats | skills | items | ability | status 등",
+      "attribute_name": "age | level | stats.<스탯명> | skills.<스킬명> | items.<아이템명> | status.<상태명> | time.<시간 또는 사건명>",
       "attribute_value": "목록에서 보여줄 요약값",
       "value_type": "STRING | NUMBER | BOOLEAN | JSON | UNKNOWN",
       "value_json": {
-        "value": "구조화 값"
+        "value": "실제 구조화 값"
       },
       "evidence_spans": [
         {

@@ -56,8 +56,16 @@ def test_worker_reports_fail_to_spring_when_analysis_fails() -> None:
 
 
 def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
+    # 실제 OpenAI 호출은 FakeSettingExtractor로 대체한다.
+    # 여기서는 "LLM 결과가 이미 나왔다"는 가정 아래 Worker가 저장 전에 quote offset을 보정하는지 본다.
+    chunk_text = (
+        "던전의 입구에는 축축한 안개가 내려앉아 있었다.\n\n"
+        "비요른은 1레벨 바바리안이다. 그는 낡은 도끼를 고쳐 쥐고 통로 안쪽을 노려보았다."
+    )
     spring_client = FakeSpringWorkerClient(payload=_payload())
-    chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 1레벨 바바리안이다.")])
+    chunking_service = FakeEpisodeChunkingService(
+        chunks=[_chunk(0, chunk_text, start_offset=100)]
+    )
     extracted_candidates = [
         _candidate(chunking_service.chunks[0].id, attribute_name="level"),
         _candidate(chunking_service.chunks[0].id, attribute_name="class"),
@@ -76,19 +84,25 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
     assert result.claimed is True
     assert chunking_service.requested_episode_ids == [EPISODE_ID]
     assert setting_extractor.requests == [
-        {
-            "source_chunk_id": chunking_service.chunks[0].id,
-            "chunk_text": "비요른은 1레벨 바바리안이다.",
-            "episode_no": 1,
-            "episode_title": "첫 번째 회차",
-        }
+            {
+                "source_chunk_id": chunking_service.chunks[0].id,
+                "chunk_text": chunk_text,
+                "episode_no": 1,
+                "episode_title": "첫 번째 회차",
+            }
     ]
     assert setting_candidate_service.request == {
         "work_id": WORK_ID,
         "analysis_job_id": ANALYSIS_JOB_ID,
         "episode_ids": [EPISODE_ID, EPISODE_ID],
-        "candidates": extracted_candidates,
+        "candidate_count": 2,
     }
+    saved_candidate = setting_candidate_service.saved_candidates[0]
+    expected_start_offset = 100 + chunk_text.index("비요른은 1레벨 바바리안이다.")
+    assert saved_candidate.attribute_name == "level"
+    assert saved_candidate.evidence_spans[0].start_offset == expected_start_offset
+    assert saved_candidate.evidence_spans[0].end_offset == expected_start_offset + len("비요른은 1레벨 바바리안이다.")
+    assert extracted_candidates[0].evidence_spans[0].start_offset is None
     summary = json.loads(spring_client.complete_calls[0][1])
     assert summary == {
         "episodeCount": 1,
@@ -185,15 +199,17 @@ class FakeSettingCandidateService:
     # 실제 DB 저장 대신 Worker가 전달한 저장 요청을 기록
     def __init__(self) -> None:
         self.request = None
+        self.saved_candidates: list[ExtractedSettingCandidate] = []
 
     def replace_candidates_for_analysis_job(self, work_id, analysis_job_id, save_items):
+        self.saved_candidates = [item.candidate for item in save_items]
         self.request = {
             "work_id": work_id,
             "analysis_job_id": analysis_job_id,
             "episode_ids": [item.episode_id for item in save_items],
-            "candidates": [item.candidate for item in save_items],
+            "candidate_count": len(save_items),
         }
-        return [item.candidate for item in save_items]
+        return self.saved_candidates
 
 
 def _payload() -> WorkerAnalysisJobPayload:
@@ -239,14 +255,14 @@ def _candidate(source_chunk_id: UUID, attribute_name: str) -> ExtractedSettingCa
     )
 
 
-def _chunk(chunk_index: int, chunk_text: str) -> EpisodeChunk:
+def _chunk(chunk_index: int, chunk_text: str, start_offset: int = 0) -> EpisodeChunk:
     return EpisodeChunk(
         id=UUID(f"00000000-0000-0000-0000-00000000010{chunk_index}"),
         episode_id=EPISODE_ID,
         chunk_index=chunk_index,
         chunk_text=chunk_text,
-        start_offset=0,
-        end_offset=len(chunk_text),
+        start_offset=start_offset,
+        end_offset=start_offset + len(chunk_text),
         paragraph_start_index=0,
         paragraph_end_index=0,
         metadata_json=None,

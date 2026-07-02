@@ -4,6 +4,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.enums import AnalysisStep
+from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.setting_extractor import CharacterSettingExtractor
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.db.session import get_session_maker
@@ -147,12 +148,18 @@ class AnalysisJobWorker:
                     episode_no=episode.episode_no,
                     episode_title=episode.title,
                 )
+                # 설정 후보들을 추출한 후 그 데이터를 그대로 넣고, 청크의 원문과 청크의 시작 지점을 넘겨주어 근거 위치 보정
+                resolved_candidates = resolve_candidate_evidence_offsets(
+                    candidates=extraction_result.candidates,
+                    chunk_text=chunk.chunk_text,
+                    chunk_start_offset=chunk.start_offset,
+                )
                 save_items.extend(
                     SettingCandidateSaveItem(
                         episode_id=episode.episode_id,
                         candidate=candidate,
                     )
-                    for candidate in extraction_result.candidates
+                    for candidate in resolved_candidates
                 )
 
         # 3. 검증된 후보들을 setting_candidates에 저장하고, 실제 저장된 개수를 완료 요약에 사용한다.
