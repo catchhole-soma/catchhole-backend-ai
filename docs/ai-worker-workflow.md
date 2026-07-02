@@ -11,6 +11,7 @@ Spring claim
 -> episode별 S3 원문 로드
 -> 원문 정규화/청킹
 -> chunk별 LLM 설정 후보 추출
+-> evidence quote 위치 보정
 -> setting_candidates 저장
 -> Spring complete/fail 보고
 ```
@@ -45,19 +46,20 @@ flowchart TD
     R --> S["저장된 chunk 순회"]
     S --> T["CharacterSettingExtractor.extract_from_chunk()"]
     T --> U["prompt 구성"]
-    U --> V["OpenAITextClient.generate_text()"]
+    U --> V["OpenAIResponsesClient.create_text_response()"]
     V --> W["LLM JSON parse / schema 검증 / 재시도"]
-    W --> X["SettingCandidateService.replace_candidates()"]
-    X --> Y["SettingCandidateMapper.to_entity()"]
-    Y --> Z["SettingCandidateRepository.save_all()"]
+    W --> X["evidence_span_resolver.py로 quote offset 보정"]
+    X --> Y["SettingCandidateService.replace_candidates()"]
+    Y --> Z["SettingCandidateMapper.to_entity()"]
+    Z --> AA["SettingCandidateRepository.save_all()"]
 
-    Z --> AA["WorkerRunSummary 생성"]
-    AA --> AB["SpringWorkerClient.complete()"]
-    AB --> AC["WorkerRunResult(claimed=true) 반환"]
+    AA --> AB["WorkerRunSummary 생성"]
+    AB --> AC["SpringWorkerClient.complete()"]
+    AC --> AD["WorkerRunResult(claimed=true) 반환"]
 
-    C --> AD{"처리 중 예외 발생?"}
-    AD -- "예" --> AE["SpringWorkerClient.fail(errorMessage)"]
-    AE --> AF["예외 다시 전파"]
+    C --> AE{"처리 중 예외 발생?"}
+    AE -- "예" --> AF["SpringWorkerClient.fail(errorMessage)"]
+    AF --> AG["예외 다시 전파"]
 ```
 
 ## 단계별 설명
@@ -113,7 +115,31 @@ episode_id로 DB episode 조회
 
 현재 추출 결과는 바로 확정 설정이 아니라, 사용자 검토 전 상태인 `setting_candidates` 후보로 저장됩니다.
 
-### 5. setting_candidates 저장
+프롬프트는 Spring의 설정 확정 흐름과 맞도록 아래 출력 계약을 요구합니다.
+
+- `attribute_name`은 `age`, `level`, `stats.<스탯명>`, `skills.<스킬명>`, `items.<아이템명>`, `status.<상태명>`, `time.<시간 또는 사건명>` 형태로 반환합니다.
+- `attribute_value`는 목록/검토 화면 표시용 summary이며, 식별자나 로직 판단 기준으로 사용하지 않습니다.
+- `value_json`은 실제 값의 source of truth입니다. 나이/레벨은 `{"value": number}` 형태를 우선 사용합니다.
+- `evidence_spans[].quote`는 원문 일부를 요약/의역하지 않고 그대로 복사합니다.
+- `evidence_spans[].start_offset`, `end_offset`은 LLM 값이 아니라 Python 후처리에서 다시 계산합니다.
+
+### 5. evidence quote 위치 보정
+
+`AnalysisJobWorker`는 LLM 추출 결과를 저장하기 전에 `evidence_spans[].quote` 위치를 보정합니다.
+
+처리 기준은 다음과 같습니다.
+
+```text
+LLM이 반환한 quote
+-> chunk_text exact match 검색
+-> 실패 시 공백/줄바꿈 정규화 기반 검색
+-> chunk 내부 위치에 episode_chunks.start_offset 더하기
+-> 회차 전체 원문 기준 start_offset/end_offset 저장
+```
+
+LLM이 반환한 숫자 offset은 참고하지 않습니다. quote를 찾지 못하면 후보 자체는 저장하되, 잘못된 위치를 저장하지 않도록 `start_offset`, `end_offset`은 `null`로 둡니다.
+
+### 6. setting_candidates 저장
 
 `SettingCandidateService`는 검증된 LLM 추출 결과를 DB 저장 모델로 변환합니다.
 
@@ -122,11 +148,12 @@ episode_id로 DB episode 조회
 - `analysis_job_id`와 연결합니다.
 - `work_id`, `episode_id`, `source_chunk_id`를 함께 저장합니다.
 - `entity_name`, `attribute_name`, `attribute_value`, `value_json`, `evidence_spans`를 후보 단위로 저장합니다.
+- `evidence_spans[].start_offset`, `end_offset`은 회차 전체 원문 기준 위치입니다.
 - 후보는 기본적으로 `PENDING_REVIEW` 상태입니다.
 
 사용자가 후보를 승인/수정/반려하는 흐름은 Spring 사용자-facing API가 담당합니다.
 
-### 6. 완료/실패 보고
+### 7. 완료/실패 보고
 
 모든 episode/chunk 처리가 끝나면 Python Worker는 `SpringWorkerClient.complete()`를 호출합니다.
 
@@ -155,6 +182,7 @@ episode_id로 DB episode 조회
 | 원문 정규화/청킹 | Python |
 | `episode_chunks` 저장 | Python |
 | LLM 호출과 JSON 검증/재시도 | Python |
+| evidence quote 위치 보정 | Python |
 | `setting_candidates` 후보 저장 | Python |
 | 사용자 후보 조회/수정/승인/반려 | Spring |
 | `SUCCEEDED` / `FAILED` 상태 반영 | Spring 내부 API 호출을 통해 처리 |
@@ -175,12 +203,13 @@ episode_id로 DB episode 조회
    - 원문 정규화, 청킹, 기존 chunk 교체 저장 흐름을 봅니다.
 6. `app/analysis/setting_extractor.py`
    - LLM 프롬프트 구성, 호출, JSON 검증, 재시도 흐름을 봅니다.
-7. `app/services/setting_candidate_service.py`
+7. `app/analysis/evidence_span_resolver.py`
+   - LLM이 반환한 quote를 chunk 원문에서 찾아 회차 전체 기준 offset으로 보정하는 흐름을 봅니다.
+8. `app/services/setting_candidate_service.py`
    - 검증된 추출 결과가 `setting_candidates`로 저장되는 흐름을 봅니다.
 
 ## 후속 작업
 
-- `NVM-224`: `evidence_spans[].quote`를 실제 chunk 원문에서 찾아 offset을 보정합니다.
 - `NVM-225`: known characters context와 캐릭터명 정규화 전략을 정리합니다.
 - `NVM-141`: `episode_chunks` 임베딩과 pgvector Top-K 검색 PoC를 구현합니다.
 - Queue/SQS consumer 도입은 API polling 방식의 한계가 확인된 뒤 검토합니다.
