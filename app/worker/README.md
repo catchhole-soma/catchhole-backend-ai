@@ -140,6 +140,7 @@ Spring claim
 -> progress 보고
 -> episode별 S3 원문 청킹
 -> chunk별 캐릭터 설정 후보 추출
+-> evidence quote 위치 보정
 -> summaryJson 생성
 -> Spring complete 보고
 ```
@@ -157,6 +158,10 @@ Spring claim
 - `CharacterSettingExtractor`
   - 저장된 chunk 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
   - LLM 응답 JSON을 `app/analysis/schemas.py` 기준으로 검증합니다.
+- `evidence_span_resolver.py`
+  - LLM이 반환한 `evidence_spans[].quote`를 chunk 원문에서 다시 찾습니다.
+  - quote 위치를 `episode_chunks.start_offset`과 더해 회차 전체 기준 offset으로 보정합니다.
+  - quote를 찾지 못하면 잘못된 위치를 저장하지 않도록 offset을 `null`로 둡니다.
 - `SettingCandidateService`
   - 검증된 후보를 `setting_candidates` 저장 모델로 변환합니다.
   - 같은 `analysis_job_id` 기준 기존 후보를 지운 뒤 새 후보를 저장합니다.
