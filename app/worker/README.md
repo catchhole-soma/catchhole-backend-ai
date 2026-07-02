@@ -199,3 +199,32 @@ scripts/run_analysis_worker.py
 ```bash
 .venv/bin/python scripts/run_analysis_worker.py --max-iterations 3
 ```
+
+## 로컬 텍스트 Debug 실행
+
+Spring, DB, S3 없이 로컬 텍스트 파일 하나만으로 청킹부터 설정 후보 추출, 근거 위치 보정까지
+확인하려면 `scripts/run_episode_text_analysis_debug.py`를 사용합니다.
+
+```bash
+.venv/bin/python scripts/run_episode_text_analysis_debug.py \
+  --text-file ./samples/episode-1.txt \
+  --episode-no 1 \
+  --episode-title "1화" \
+  --max-chunks 1 \
+  --output-json ./tmp/episode-1-debug.json
+```
+
+이 runner는 다음 단계만 수행합니다.
+
+```text
+로컬 txt 파일 읽기
+-> 원문 정규화
+-> chunk draft 생성
+-> 가상 chunk_id 부여
+-> chunk별 설정 후보 LLM 추출
+-> evidence quote offset 보정
+-> 콘솔/JSON 파일로 결과 출력
+```
+
+`episodeId`, `workId`, `analysisJobId`는 넘기지 않으면 가상 UUID로 생성합니다.
+처음 프롬프트와 offset을 점검할 때는 `--max-chunks 1`로 LLM 호출 범위를 줄입니다.

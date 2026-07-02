@@ -35,6 +35,21 @@ uvicorn app.main:app --reload
 .venv/bin/python scripts/run_analysis_worker.py
 ```
 
+S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 후보 추출, 근거 위치 보정을
+확인하려면 다음 runner를 사용합니다.
+
+```bash
+.venv/bin/python scripts/run_episode_text_analysis_debug.py \
+  --text-file ./samples/episode-1.txt \
+  --episode-no 1 \
+  --episode-title "1화" \
+  --max-chunks 1 \
+  --output-json ./tmp/episode-1-debug.json
+```
+
+`episodeId`, `workId`, `analysisJobId`는 넘기지 않으면 실행할 때마다 가상 UUID를 생성합니다.
+이 runner는 `episode_chunks`나 `setting_candidates`에 저장하지 않고, 결과를 콘솔과 JSON 파일로만 출력합니다.
+
 Mac에서 Anaconda Python을 사용할 경우:
 
 ```bash
