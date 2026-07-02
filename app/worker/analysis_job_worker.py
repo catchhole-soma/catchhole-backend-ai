@@ -23,6 +23,9 @@ class WorkerRunResult:
     claimed: bool
     analysis_job_id: UUID | None
     message: str
+    work_id: UUID | None = None
+    work_title: str | None = None
+    episode_count: int | None = None
 
 # 실제 분석 실행 후 Spring에 완료 보고할 요약 정보
 @dataclass(frozen=True)
@@ -54,7 +57,11 @@ class SpringWorkerApi(Protocol):
 
 # Worker가 회차 원문을 읽고 청킹 결과를 저장할 때 기대하는 규격(테스트를 위한 목적이 커서 이후에 구현 완료되면 바로 주입 가능)
 class EpisodeChunkingApi(Protocol):
-    def replace_chunks_from_s3_content(self, episode_id: UUID) -> list[EpisodeChunk]:
+    def replace_chunks_from_s3_content(
+        self,
+        episode_id: UUID,
+        content_s3_key: str,
+    ) -> list[EpisodeChunk]:
         pass
 
 
@@ -127,6 +134,9 @@ class AnalysisJobWorker:
             claimed=True,
             analysis_job_id=payload.analysis_job_id,
             message="Analysis job completed.",
+            work_id=payload.work_id,
+            work_title=payload.work_title,
+            episode_count=len(payload.episodes),
         )
 
     def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
@@ -136,7 +146,10 @@ class AnalysisJobWorker:
         # Spring claim payload에 포함된 회차들을 순서대로 처리한다.
         for episode in payload.episodes:
             # 1. Episode.content_s3_key 기준으로 S3 원문을 읽고 episode_chunks를 재생성한다.
-            chunks = self._get_chunking_service().replace_chunks_from_s3_content(episode.episode_id)
+            chunks = self._get_chunking_service().replace_chunks_from_s3_content(
+                episode_id=episode.episode_id,
+                content_s3_key=episode.content_s3_key,
+            )
             chunk_count += len(chunks)
 
             # 2. 저장된 chunk를 LLM 추출기에 넘겨 설정 후보를 생성한다.
@@ -182,7 +195,6 @@ class AnalysisJobWorker:
         if self._chunking_service is None:
             session_factory = get_session_maker()
             self._chunking_service = EpisodeS3ChunkingService(
-                session_factory=session_factory,
                 storage=S3TextObjectStorage.from_settings(),
                 chunk_service=EpisodeChunkService(session_factory=session_factory),
             )

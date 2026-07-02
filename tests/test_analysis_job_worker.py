@@ -74,7 +74,12 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
     result = worker.run_once()
 
     assert result.claimed is True
+    assert result.analysis_job_id == ANALYSIS_JOB_ID
+    assert result.work_id == WORK_ID
+    assert result.work_title == "빛나는 검사 로맨스"
+    assert result.episode_count == 1
     assert chunking_service.requested_episode_ids == [EPISODE_ID]
+    assert chunking_service.requested_content_s3_keys == ["works/work-id/episodes/episode-id.txt"]
     assert setting_extractor.requests == [
         {
             "source_chunk_id": chunking_service.chunks[0].id,
@@ -141,13 +146,19 @@ class FakeSpringWorkerClient:
 
 
 class FakeEpisodeChunkingService:
-    # 실제 S3/DB 청킹 대신 Worker가 episode_id를 넘겼는지 기록
+    # 실제 S3/DB 청킹 대신 Worker가 claim payload의 episode_id/content_s3_key를 넘겼는지 기록
     def __init__(self, chunks: list[EpisodeChunk]) -> None:
         self.chunks = chunks
         self.requested_episode_ids: list[UUID] = []
+        self.requested_content_s3_keys: list[str] = []
 
-    def replace_chunks_from_s3_content(self, episode_id: UUID) -> list[EpisodeChunk]:
+    def replace_chunks_from_s3_content(
+        self,
+        episode_id: UUID,
+        content_s3_key: str,
+    ) -> list[EpisodeChunk]:
         self.requested_episode_ids.append(episode_id)
+        self.requested_content_s3_keys.append(content_s3_key)
         return self.chunks
 
 

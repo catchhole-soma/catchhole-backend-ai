@@ -83,6 +83,9 @@ def _print_result(result: WorkerRunResult) -> None:
     print(
         f"claimed={result.claimed} "
         f"analysis_job_id={result.analysis_job_id} "
+        f"work_id={result.work_id} "
+        f"work_title={result.work_title} "
+        f"episode_count={result.episode_count} "
         f"message={result.message}",
         flush=True,
     )
