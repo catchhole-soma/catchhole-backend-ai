@@ -58,6 +58,7 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 ```
 
 `main` 브랜치에 push되면 GitHub Actions가 GHCR에 `ghcr.io/catchhole-soma/catchhole-backend-ai:main`과 short SHA 태그를 발행합니다.
+이미지 발행 후 백엔드 저장소의 EC2 배포 workflow를 호출하려면 AI 저장소의 Repository Secrets에 `BACKEND_DEPLOY_TOKEN`을 설정합니다.
 
 ## 환경 변수
 
