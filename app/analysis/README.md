@@ -23,6 +23,10 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - `setting_extractor.py`
   - 청크 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
   - prompt 로드, user prompt 구성, JSON 파싱, schema 검증, 검증 실패 재시도를 담당합니다.
+- `evidence_span_resolver.py`
+  - LLM이 반환한 `evidence_spans[].quote`를 청크 원문에서 다시 찾아 offset을 보정합니다.
+  - exact match를 우선 사용하고, 실패하면 공백/줄바꿈 정규화 기반 검색을 시도합니다.
+  - quote를 찾지 못하면 잘못된 위치를 저장하지 않도록 offset을 null로 유지합니다.
 - `schemas.py`
   - LLM에서 받은 설정 후보 JSON을 검증하기 위한 Python 내부 schema를 정의합니다.
   - FastAPI 응답 DTO가 아니라, 외부 LLM 출력이 저장 가능한 구조인지 확인하는 경계 객체입니다.
@@ -40,5 +44,4 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 ## 후속 작업
 
-- `evidence_quote`를 청크 내부 offset으로 다시 매핑합니다.
 - 기존 확정 설정과 비교하는 충돌 검사 흐름을 연결합니다.
