@@ -42,6 +42,31 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 아직 사용처가 `CharacterSettingExtractor` 하나뿐이므로 공통 util로 분리하지 않았습니다.
 다만 이후 Worker 실패 보고, Spring 내부 API 실패 보고, S3/DB 처리 실패 등에서 같은 규칙이 필요해지면 `app/core/error_messages.py` 같은 공통 helper로 분리합니다.
 
+## 재시도 기준
+
+`CharacterSettingExtractor`는 LLM 응답이 JSON으로 파싱되지 않거나, `app/analysis/schemas.py`의 Pydantic schema 검증에 실패한 경우에만 재시도합니다.
+
+예를 들어 다음 경우는 재시도 대상입니다.
+
+- JSON 문법이 깨진 응답
+- 필수 필드 누락
+- UUID 형식 오류
+- `value_type` enum 범위 밖 값
+- `confidence`가 0~1 범위를 벗어난 값
+
+반대로 프롬프트 정책상 좋지 않은 값이더라도 schema상 문자열로 유효하면 현재는 재시도하지 않습니다.
+
+예를 들어 다음 값은 현재 schema 검증만으로는 통과할 수 있습니다.
+
+- `attribute_name: "items"`
+- `attribute_name: "status"`
+- `attribute_name: "time. 이름 부여"`
+- `attribute_name: "skills.리더십"`
+- `confidence: 0.0`
+
+이런 정책 위반을 재시도 또는 후보 제외 조건으로 만들려면 `ExtractedSettingCandidate`에 attribute 규칙 validator를 추가하거나, schema 검증 이후 별도 policy validation 단계를 둡니다.
+
 ## 후속 작업
 
 - 기존 확정 설정과 비교하는 충돌 검사 흐름을 연결합니다.
+- 프롬프트 정책 위반 후보를 schema validator, 후처리 필터, LLM 재시도 중 어디에서 다룰지 결정합니다.
