@@ -41,6 +41,24 @@ http://localhost:8000/redoc
 pytest
 ```
 
+## Docker 실행
+
+컨테이너 이미지는 기본적으로 Spring 내부 API에서 분석 작업을 claim하는 Worker를 실행합니다.
+
+```bash
+docker build -t catchhole-ai:local .
+docker run --rm --env-file .env catchhole-ai:local
+```
+
+FastAPI 서버를 확인해야 할 때는 command를 override합니다.
+
+```bash
+docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
+  uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+`main` 브랜치에 push되면 GitHub Actions가 GHCR에 `ghcr.io/catchhole-soma/catchhole-backend-ai:main`과 short SHA 태그를 발행합니다.
+
 ## 환경 변수
 
 `.env.example`을 참고해 `.env`를 생성합니다.
