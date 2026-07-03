@@ -215,6 +215,7 @@ LLM이 반환한 숫자 offset은 참고하지 않습니다. quote를 찾지 못
 
 ## 후속 작업
 
-- `NVM-225`: `AMBIGUOUS` 중 화자/대명사 후보에 한해 adjacent chunk를 참고하는 resolver fallback을 검토합니다.
+- `NVM-225`: 현재 작업은 `knownCharacters` 기반 기본 매칭까지만 처리하고, `나`, `그`, `그녀`, `주인공` 같은 지칭어 후보는 보수적으로 `AMBIGUOUS`로 남깁니다.
+- 후속 작업에서는 `entity_name="미상"` 후보만 대상으로 previous/current/next chunk를 참고하는 fallback resolver를 검토합니다. 해소 성공 시 실제 캐릭터명으로 치환하고, 실패 시 `setting_candidates` 저장 전 폐기하는 방향입니다.
 - `NVM-141`: `episode_chunks` 임베딩과 pgvector Top-K 검색 PoC를 구현합니다.
 - Queue/SQS consumer 도입은 API polling 방식의 한계가 확인된 뒤 검토합니다.
