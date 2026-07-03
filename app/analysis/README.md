@@ -9,6 +9,7 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - 원문 청크를 입력으로 받아 설정 후보를 추출합니다.
 - LLM 응답 JSON을 Python 내부 검증 schema로 확인합니다.
 - 추출 결과를 `setting_candidates` 저장 구조에 맞는 중간 결과로 정리합니다.
+- 추출 후보의 캐릭터명 표현을 기존 캐릭터 목록과 비교해 매칭 상태를 계산합니다.
 - 후속 단계에서 근거 위치 계산, 충돌 검사, 요약 생성 로직을 연결합니다.
 
 다음 책임은 Analysis에 넣지 않습니다.
@@ -27,6 +28,9 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
   - LLM이 반환한 `evidence_spans[].quote`를 청크 원문에서 다시 찾아 offset을 보정합니다.
   - exact match를 우선 사용하고, 실패하면 공백/줄바꿈 정규화 기반 검색을 시도합니다.
   - quote를 찾지 못하면 잘못된 위치를 저장하지 않도록 offset을 null로 유지합니다.
+- `character_name_resolver.py`
+  - `KnownCharacter` 목록과 추출 후보의 `raw_entity_mention`, `entity_name`을 비교합니다.
+  - 기존 캐릭터 하나와 확실히 연결되면 `MATCHED`, 후보가 없으면 `UNRESOLVED`, 대명사/복수 후보처럼 위험하면 `AMBIGUOUS`를 반환합니다.
 - `schemas.py`
   - LLM에서 받은 설정 후보 JSON을 검증하기 위한 Python 내부 schema를 정의합니다.
   - FastAPI 응답 DTO가 아니라, 외부 LLM 출력이 저장 가능한 구조인지 확인하는 경계 객체입니다.
@@ -66,7 +70,20 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 이런 정책 위반을 재시도 또는 후보 제외 조건으로 만들려면 `ExtractedSettingCandidate`에 attribute 규칙 validator를 추가하거나, schema 검증 이후 별도 policy validation 단계를 둡니다.
 
+## 캐릭터명 매칭 정책
+
+LLM은 기존 캐릭터 DB와의 확정 매칭을 하지 않습니다. LLM은 원문에 실제 나온 표현인 `raw_entity_mention`과 원문 맥락에서 정리한 표시 후보명인 `entity_name`만 반환합니다.
+
+저장 직전 Python resolver가 known characters context를 받아 다음 기준으로 매칭합니다.
+
+- 기존 캐릭터 이름 또는 별칭과 정확히 1개만 연결되면 `MATCHED`로 저장하고 `matched_character_id`를 채웁니다.
+- 기존 후보가 없으면 `UNRESOLVED`로 저장합니다.
+- `나`, `내 캐릭터`, `주인공`, `그`, `그녀` 같은 지칭어이거나 여러 기존 캐릭터에 걸리면 `AMBIGUOUS`로 저장합니다.
+
+현재 worker 기본 흐름은 Spring claim payload의 `knownCharacters`를 resolver에 전달합니다. 별도 테스트나 대체 실행 경로에서는 `SettingCandidateService`의 provider 훅으로 known characters를 주입할 수 있습니다.
+
 ## 후속 작업
 
 - 기존 확정 설정과 비교하는 충돌 검사 흐름을 연결합니다.
 - 프롬프트 정책 위반 후보를 schema validator, 후처리 필터, LLM 재시도 중 어디에서 다룰지 결정합니다.
+- `AMBIGUOUS` 중 화자/대명사 후보에 한해 adjacent chunk를 참고하는 resolver fallback을 검토합니다.

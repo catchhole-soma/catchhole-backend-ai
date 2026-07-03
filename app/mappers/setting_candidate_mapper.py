@@ -1,8 +1,14 @@
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+from app.analysis.character_name_resolver import CharacterNameMatch
 from app.analysis.schemas import ExtractedSettingCandidate
-from app.domain.enums import SettingCandidateReviewStatus, SettingEntityType, SettingValueType
+from app.domain.enums import (
+    SettingCandidateMatchStatus,
+    SettingCandidateReviewStatus,
+    SettingEntityType,
+    SettingValueType,
+)
 from app.models.setting_candidate import SettingCandidate
 
 
@@ -13,7 +19,12 @@ class SettingCandidateMapper:
         episode_id: UUID | None,
         analysis_job_id: UUID,
         candidate: ExtractedSettingCandidate,
+        character_match: CharacterNameMatch | None = None,
     ) -> SettingCandidate:
+        character_match = character_match or CharacterNameMatch(
+            matched_character_id=None,
+            match_status=SettingCandidateMatchStatus.UNRESOLVED,
+        )
         return SettingCandidate(
             id=uuid4(),
             work_id=work_id,
@@ -22,6 +33,9 @@ class SettingCandidateMapper:
             analysis_job_id=analysis_job_id,
             entity_type=SettingEntityType(candidate.entity_type),
             entity_name=candidate.entity_name,
+            raw_entity_mention=candidate.raw_entity_mention or candidate.entity_name,
+            matched_character_id=character_match.matched_character_id,
+            match_status=character_match.match_status,
             attribute_name=candidate.attribute_name,
             attribute_value=candidate.attribute_value,
             value_type=SettingValueType(candidate.value_type),

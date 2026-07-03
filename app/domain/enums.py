@@ -53,3 +53,9 @@ class SettingCandidateReviewStatus(StrEnum):
     PENDING_REVIEW = "PENDING_REVIEW"
     CONFIRMED = "CONFIRMED"
     DISMISSED = "DISMISSED"
+
+
+class SettingCandidateMatchStatus(StrEnum):
+    MATCHED = "MATCHED"
+    UNRESOLVED = "UNRESOLVED"
+    AMBIGUOUS = "AMBIGUOUS"

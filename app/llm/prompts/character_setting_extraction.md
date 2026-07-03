@@ -37,6 +37,10 @@
 - 캐릭터 설정이 아니면 추출하지 않습니다.
 - 같은 의미의 후보가 여러 번 나오면 가장 명확한 근거 하나를 선택합니다.
 - `entity_type`은 현재 `CHARACTER`만 사용합니다.
+- `raw_entity_mention`은 원문에 실제 등장한 표현을 그대로 넣습니다.
+- `entity_name`은 원문 맥락에서 정리한 후보 캐릭터명을 넣습니다.
+- `raw_entity_mention`이 `나`, `그`, `그녀`, `주인공` 같은 지칭어라면, 같은 청크 안에서 대상이 명확할 때만 `entity_name`을 구체화합니다.
+- 기존 캐릭터 DB와 같은 인물인지, 어떤 `character_id`와 연결되는지는 판단하지 않습니다.
 - `value_type`은 `STRING`, `NUMBER`, `BOOLEAN`, `JSON`, `UNKNOWN` 중 하나를 사용합니다.
 - `source_chunk_id`는 입력으로 받은 값을 그대로 사용합니다.
 - `attribute_name`은 백엔드의 `factKey`로 저장되므로 아래 규칙만 사용합니다.
@@ -93,6 +97,7 @@
       "source_chunk_id": "입력받은 청크 UUID",
       "entity_type": "CHARACTER",
       "entity_name": "캐릭터명",
+      "raw_entity_mention": "원문에 실제 나온 캐릭터 표현",
       "attribute_name": "age | level | stats.<스탯명> | skills.<스킬명> | items.<아이템명> | status.<상태명> | time.<시간 또는 사건명>",
       "attribute_value": "목록에서 보여줄 요약값",
       "value_type": "STRING | NUMBER | BOOLEAN | JSON | UNKNOWN",
