@@ -80,6 +80,8 @@ flowchart TD
 
 Spring이 claim 가능한 `PENDING` 작업을 찾으면 `RUNNING`으로 바꾸고, Python에 `WorkerAnalysisJobPayload`를 반환합니다. claim할 작업이 없으면 Python은 오류로 처리하지 않고 `claimed=false` 결과를 반환합니다.
 
+payload에는 분석 대상 `episodes`와 캐릭터명 매칭에 사용할 기존 캐릭터 목록인 `knownCharacters`가 함께 포함됩니다.
+
 이 단계에서 Python은 `analysis_jobs` 테이블을 직접 수정하지 않습니다.
 
 ### 3. 회차 원문 로드와 청킹
@@ -148,6 +150,8 @@ LLM이 반환한 숫자 offset은 참고하지 않습니다. quote를 찾지 못
 - `analysis_job_id`와 연결합니다.
 - `work_id`, `episode_id`, `source_chunk_id`를 함께 저장합니다.
 - `entity_name`, `attribute_name`, `attribute_value`, `value_json`, `evidence_spans`를 후보 단위로 저장합니다.
+- `raw_entity_mention`은 원문에 실제 등장한 캐릭터 표현이고, 없으면 `entity_name`으로 fallback해 저장합니다.
+- Spring claim payload의 `knownCharacters`와 후보 이름을 비교해 `matched_character_id`, `match_status`를 저장합니다.
 - `evidence_spans[].start_offset`, `end_offset`은 회차 전체 원문 기준 위치입니다.
 - 후보는 기본적으로 `PENDING_REVIEW` 상태입니다.
 
@@ -210,6 +214,6 @@ LLM이 반환한 숫자 offset은 참고하지 않습니다. quote를 찾지 못
 
 ## 후속 작업
 
-- `NVM-225`: known characters context와 캐릭터명 정규화 전략을 정리합니다.
+- `NVM-225`: `AMBIGUOUS` 중 화자/대명사 후보에 한해 adjacent chunk를 참고하는 resolver fallback을 검토합니다.
 - `NVM-141`: `episode_chunks` 임베딩과 pgvector Top-K 검색 PoC를 구현합니다.
 - Queue/SQS consumer 도입은 API polling 방식의 한계가 확인된 뒤 검토합니다.

@@ -5,6 +5,7 @@ from uuid import UUID
 
 from app.domain.enums import AnalysisStep
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
+from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.setting_extractor import CharacterSettingExtractor
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.db.session import get_session_maker
@@ -180,6 +181,14 @@ class AnalysisJobWorker:
             work_id=payload.work_id,
             analysis_job_id=payload.analysis_job_id,
             save_items=save_items,
+            known_characters=[
+                KnownCharacter(
+                    character_id=character.character_id,
+                    name=character.name,
+                    aliases=tuple(character.aliases),
+                )
+                for character in payload.known_characters
+            ],
         )
 
         #Python dict를 JSON 문자열로 바꿈

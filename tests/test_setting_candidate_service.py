@@ -1,6 +1,8 @@
 from uuid import UUID
 
+from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
+from app.domain.enums import SettingCandidateMatchStatus
 from app.models.setting_candidate import SettingCandidate
 from app.services.setting_candidate_service import (
     SettingCandidateSaveItem,
@@ -20,6 +22,9 @@ def test_replace_candidates_for_analysis_job_deletes_old_candidates_and_saves_ne
     service = SettingCandidateService(
         session_factory=lambda: session,
         repository_factory=lambda session: repository,
+        known_character_provider=lambda work_id: [
+            KnownCharacter(character_id=UUID("00000000-0000-0000-0000-000000000005"), name="비요른")
+        ],
     )
 
     saved_candidates = service.replace_candidates_for_analysis_job(
@@ -38,6 +43,8 @@ def test_replace_candidates_for_analysis_job_deletes_old_candidates_and_saves_ne
     assert saved_candidates == repository.saved_candidates
     assert repository.saved_candidates[0].work_id == WORK_ID
     assert repository.saved_candidates[0].episode_id == EPISODE_ID
+    assert repository.saved_candidates[0].matched_character_id == UUID("00000000-0000-0000-0000-000000000005")
+    assert repository.saved_candidates[0].match_status == SettingCandidateMatchStatus.MATCHED
     assert session.committed is True
     assert session.rolled_back is False
 
@@ -47,6 +54,7 @@ def _candidate() -> ExtractedSettingCandidate:
         source_chunk_id=CHUNK_ID,
         entity_type="CHARACTER",
         entity_name="비요른",
+        raw_entity_mention="비요른",
         attribute_name="level",
         attribute_value="1",
         value_type="NUMBER",

@@ -31,6 +31,7 @@ Python AI 서버가 PostgreSQL을 직접 읽거나 써야 할 때 사용하는 S
   - Spring의 `setting_candidates` 테이블과 매핑됩니다.
   - LLM이 추출한 사용자 검토 전 설정 후보를 저장합니다.
   - `evidence_spans[].start_offset`, `end_offset`은 Python Worker가 quote를 다시 찾아 계산한 회차 전체 원문 기준 위치입니다. quote를 찾지 못하면 `null`로 저장될 수 있습니다.
+  - `raw_entity_mention`, `matched_character_id`, `match_status`로 LLM 원문 표현과 기존 캐릭터 매칭 결과를 저장합니다.
   - `review_status`는 최초 저장 시 `PENDING_REVIEW`로 둡니다.
 - `upload_batch.py`
   - Spring의 `upload_batches` 테이블과 매핑됩니다.
