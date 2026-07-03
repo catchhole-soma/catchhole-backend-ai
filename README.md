@@ -5,6 +5,18 @@ CatchHole의 원고 분석 기능을 담당하는 Python AI 서버입니다.
 프로젝트 전체 ERD와 분석 workflow는 Spring 백엔드 저장소의 `docs/`에서 관리합니다.
 이 저장소에서는 Python 서버 실행 방법과 패키지별 책임만 정리합니다.
 
+## 문서 기준
+
+문서 책임은 다음 기준으로 나눕니다.
+
+- 프로젝트 전체 ERD, 사용자-facing API, 도메인 정책은 Spring 백엔드 저장소의 `docs/`에서 관리합니다.
+- Python repo의 `docs/`는 Python Worker 내부 실행 흐름처럼 여러 Python 패키지를 가로지르는 내용을 정리합니다.
+- 특정 패키지 내부 책임은 각 `app/*/README.md`에 정리합니다.
+
+자세한 기준은 [docs/README.md](docs/README.md)를 확인합니다.
+현재 Worker 전체 처리 흐름은 [docs/ai-worker-workflow.md](docs/ai-worker-workflow.md)를 기준으로 읽습니다.
+FastAPI 유지/축소 여부는 [docs/fastapi-role-review.md](docs/fastapi-role-review.md)에 검토 기준을 남깁니다.
+
 ## 로컬 실행
 
 Python 3.12 이상을 사용합니다.
@@ -14,6 +26,13 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 uvicorn app.main:app --reload
+```
+
+위 FastAPI 실행은 health check와 임시 HTTP route 확인용입니다.
+실제 분석 실행은 Worker runner를 기준으로 합니다.
+
+```bash
+.venv/bin/python scripts/run_analysis_worker.py
 ```
 
 Mac에서 Anaconda Python을 사용할 경우:
@@ -73,12 +92,13 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `SPRING_INTERNAL_API_BASE_URL`: Spring 내부 Worker API base URL. 기본값 `http://localhost:8080`은 로컬 개발용 값입니다.
 - `SPRING_INTERNAL_API_KEY`: Spring 내부 Worker API 호출에 사용할 `X-Internal-Api-Key` 값
 
-## API 초안
+## FastAPI API 초안
 
 - `GET /api/v1/health`
 - `GET /api/v1/analysis-jobs/{analysis_job_id}/status`
 
 분석 실행은 Python API가 `analysis_job_id`를 직접 받는 방식이 아니라, Python Worker가 Spring 내부 Worker API의 claim endpoint를 호출해 가져오는 방식으로 진행합니다.
+따라서 FastAPI route는 현재 분석 실행 경로가 아니라 보조 HTTP 인터페이스로 봅니다.
 
 ## 패키지 문서
 
@@ -89,10 +109,12 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `app/clients/README.md`: Spring 내부 API 같은 외부 HTTP client
 - `app/db/README.md`: DB session과 트랜잭션 경계
 - `app/embeddings/README.md`: 임베딩 대상 선정과 RAG 검색
+- `app/exceptions/README.md`: FastAPI 공통 예외 응답과 ErrorCode 매핑
 - `app/llm/README.md`: LLM client, prompt, 구조화 응답
 - `app/mappers/README.md`: 계층 간 객체 변환
 - `app/models/README.md`: SQLAlchemy ORM 모델
 - `app/repositories/README.md`: DB 조회와 저장 계층
+- `app/schemas/README.md`: FastAPI/Spring 내부 API JSON schema
 - `app/services/README.md`: 유스케이스 흐름 조율
 - `app/storage/README.md`: S3 같은 외부 object storage 접근
 - `app/worker/README.md`: Spring claim 기반 Worker 실행 흐름과 상태/단계 정책
