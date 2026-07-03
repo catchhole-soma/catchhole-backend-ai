@@ -49,13 +49,14 @@ flowchart TD
     U --> V["OpenAIResponsesClient.create_text_response()"]
     V --> W["LLM JSON parse / schema 검증 / 재시도"]
     W --> X["evidence_span_resolver.py로 quote offset 보정"]
-    X --> Y["SettingCandidateService.replace_candidates()"]
-    Y --> Z["SettingCandidateMapper.to_entity()"]
-    Z --> AA["SettingCandidateRepository.save_all()"]
+    X --> Y["character_name_resolver.py로 기존 캐릭터 매칭"]
+    Y --> Z["SettingCandidateService.replace_candidates()"]
+    Z --> AA["SettingCandidateMapper.to_entity()"]
+    AA --> AB["SettingCandidateRepository.save_all()"]
 
-    AA --> AB["WorkerRunSummary 생성"]
-    AB --> AC["SpringWorkerClient.complete()"]
-    AC --> AD["WorkerRunResult(claimed=true) 반환"]
+    AB --> AC["WorkerRunSummary 생성"]
+    AC --> AD["SpringWorkerClient.complete()"]
+    AD --> AH["WorkerRunResult(claimed=true) 반환"]
 
     C --> AE{"처리 중 예외 발생?"}
     AE -- "예" --> AF["SpringWorkerClient.fail(errorMessage)"]

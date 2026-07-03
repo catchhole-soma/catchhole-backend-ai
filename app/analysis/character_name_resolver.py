@@ -16,10 +16,6 @@ class KnownCharacter:
     # 대표 이름
     name: str
 
-    # 별명/이명/다른 표기
-    # 기본값은 빈 튜플
-    aliases: tuple[str, ...] = ()
-
 
 # 캐릭터 이름 매칭 결과.
 @dataclass(frozen=True)
@@ -78,7 +74,7 @@ def resolve_candidate_character(
             match_status=SettingCandidateMatchStatus.UNRESOLVED,
         )
 
-    # 정규화된 mention을 기존 캐릭터 이름/별명 목록과 비교한다.
+    # 정규화된 mention을 기존 캐릭터 이름 목록과 비교한다.
     matches = _find_matches(normalized_mention, known_characters)
 
     # 정확히 한 명만 매칭되면 성공.
@@ -141,42 +137,27 @@ def _find_matches(
 
     # 기존 캐릭터 목록을 하나씩 확인한다.
     for character in known_characters:
-        # 대표 이름과 별명을 모두 후보 이름으로 본다.
-        for name in _candidate_names(character):
-            # 기존 캐릭터 이름도 같은 방식으로 정규화한다.
-            normalized_name = normalize_character_name(name)
+        # 기존 캐릭터 이름도 같은 방식으로 정규화한다.
+        normalized_name = normalize_character_name(character.name)
 
-            # 빈 이름은 비교하지 않는다.
-            if not normalized_name:
-                continue
+        # 빈 이름은 비교하지 않는다.
+        if not normalized_name:
+            continue
 
-            # 1차: 완전 일치 매칭.
-            # 예: mention="김철수", name="김철수"
-            if normalized_mention == normalized_name:
-                matched_ids.add(character.character_id)
-                continue
+        # 1차: 완전 일치 매칭.
+        # 예: mention="김철수", name="김철수"
+        if normalized_mention == normalized_name:
+            matched_ids.add(character.character_id)
+            continue
 
-            # 2차: 포함 관계 매칭.
-            # 예: mention="철수", name="김철수"
-            # 예: mention="김철수 검사", name="김철수"
-            if _is_containment_match(normalized_mention, normalized_name):
-                matched_ids.add(character.character_id)
+        # 2차: 포함 관계 매칭.
+        # 예: mention="철수", name="김철수"
+        # 예: mention="김철수 검사", name="김철수"
+        if _is_containment_match(normalized_mention, normalized_name):
+            matched_ids.add(character.character_id)
 
     # set을 list로 바꿔 반환한다.
     return list(matched_ids)
-
-
-def _candidate_names(character: KnownCharacter) -> tuple[str, ...]:
-    # 캐릭터의 대표 이름과 별명들을 하나의 튜플로 합친다.
-    # *character.aliases는 튜플 안의 원소들을 펼치는 문법이다.
-    #
-    # 예:
-    # character.name = "김철수"
-    # character.aliases = ("철수", "검은 검사")
-    #
-    # 반환:
-    # ("김철수", "철수", "검은 검사")
-    return (character.name, *character.aliases)
 
 
 def _is_containment_match(
