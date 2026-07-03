@@ -38,10 +38,39 @@ def test_resolve_candidate_character_uses_raw_mention_for_long_source_expression
     assert match.matched_character_id == AINAR_ID
 
 
+def test_resolve_candidate_character_uses_entity_name_when_raw_mention_is_descriptive() -> None:
+    # raw mention은 원문 표현이라 기존 이름과 직접 매칭되지 않을 수 있다.
+    # 이때 raw가 대명사성 표현이 아니고 entity_name이 한 명과만 맞으면 LLM의 정리명을 살린다.
+    match = resolve_candidate_character(
+        _candidate(
+            entity_name="아이나르",
+            raw_entity_mention="프넬린의 두 번째 딸",
+        ),
+        [KnownCharacter(character_id=AINAR_ID, name="아이나르")],
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.MATCHED
+    assert match.matched_character_id == AINAR_ID
+
+
 def test_resolve_candidate_character_marks_pronouns_ambiguous() -> None:
     match = resolve_candidate_character(
         _candidate(entity_name="비요른 얀델", raw_entity_mention="나"),
         [KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")],
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
+def test_resolve_candidate_character_marks_conflicting_raw_and_entity_matches_ambiguous() -> None:
+    # raw mention과 entity_name이 서로 다른 기존 캐릭터로 매칭되면 자동 연결하지 않는다.
+    match = resolve_candidate_character(
+        _candidate(entity_name="아이나르", raw_entity_mention="비요른"),
+        [
+            KnownCharacter(character_id=AINAR_ID, name="아이나르"),
+            KnownCharacter(character_id=BJORN_ID, name="비요른"),
+        ],
     )
 
     assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS

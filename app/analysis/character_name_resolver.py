@@ -51,47 +51,75 @@ def resolve_candidate_character(
     candidate: ExtractedSettingCandidate,
     known_characters: list[KnownCharacter],
 ) -> CharacterNameMatch:
-    # LLM이 추출한 후보에서 매칭에 사용할 이름 표현을 고른다.
-    # raw_entity_mention이 있으면 원문 표현을 우선 사용하고,
-    # 없으면 entity_name을 사용한다.
-    mention = _resolve_match_source(candidate)
+    # raw_entity_mention은 원문에 실제 나온 표현이고,
+    # entity_name은 LLM이 같은 청크 문맥에서 정리한 후보 이름이다.
+    # 둘을 모두 매칭해보고, 서로 충돌하지 않을 때만 기존 캐릭터와 연결한다.
+    normalized_raw_mention = normalize_character_name(candidate.raw_entity_mention)
+    normalized_entity_name = normalize_character_name(candidate.entity_name)
 
-    # 비교하기 쉽도록 이름을 정규화한다.
-    # 예: '  “김 철수”  ' -> '김 철수'
-    normalized_mention = normalize_character_name(mention)
-
-    # "그", "그녀", "주인공" 같은 표현은 특정 캐릭터를 확정하기 어렵다.
-    if normalized_mention in AMBIGUOUS_MENTIONS:
+    # "나", "그녀", "주인공" 같은 원문 표현은 LLM이 entity_name을 추론했더라도
+    # 화자/지칭 대상이 항상 안전하게 확정되는 것은 아니므로 자동 매칭하지 않는다.
+    if _is_ambiguous_mention(normalized_raw_mention):
         return CharacterNameMatch(
             matched_character_id=None,
             match_status=SettingCandidateMatchStatus.AMBIGUOUS,
         )
 
-    # 이름이 비어 있으면 매칭할 수 없으므로 UNRESOLVED 처리한다.
-    if not normalized_mention:
+    # raw mention이 없고 entity_name 자체도 대명사성 표현이면 확정할 수 없다.
+    if not normalized_raw_mention and _is_ambiguous_mention(normalized_entity_name):
+        return CharacterNameMatch(
+            matched_character_id=None,
+            match_status=SettingCandidateMatchStatus.AMBIGUOUS,
+        )
+
+    raw_matches = _find_matches(normalized_raw_mention, known_characters)
+    entity_matches = _find_matches(normalized_entity_name, known_characters)
+
+    # raw mention이 여러 기존 캐릭터에 걸리면 어느 인물인지 확정할 수 없다.
+    if len(raw_matches) > 1:
+        return CharacterNameMatch(
+            matched_character_id=None,
+            match_status=SettingCandidateMatchStatus.AMBIGUOUS,
+        )
+
+    if len(raw_matches) == 1:
+        raw_match_id = raw_matches[0]
+
+        # raw와 entity_name이 서로 다른 기존 캐릭터로 해석되면 충돌이다.
+        if len(entity_matches) == 1 and entity_matches[0] != raw_match_id:
+            return CharacterNameMatch(
+                matched_character_id=None,
+                match_status=SettingCandidateMatchStatus.AMBIGUOUS,
+            )
+
+        # raw가 한 명으로 확정되면 entity_name이 없거나 덜 정확해도 raw를 우선한다.
+        return CharacterNameMatch(
+            matched_character_id=raw_match_id,
+            match_status=SettingCandidateMatchStatus.MATCHED,
+        )
+
+    # raw로는 못 찾았지만 entity_name이 여러 기존 캐릭터에 걸리면 애매하다.
+    if len(entity_matches) > 1:
+        return CharacterNameMatch(
+            matched_character_id=None,
+            match_status=SettingCandidateMatchStatus.AMBIGUOUS,
+        )
+
+    # raw가 불분명한 지시어(나, 그, 그녀)가 아니고 entity_name만 정확히 한 명과 매칭되면 살린다.
+    if len(entity_matches) == 1:
+        return CharacterNameMatch(
+            matched_character_id=entity_matches[0],
+            match_status=SettingCandidateMatchStatus.MATCHED,
+        )
+
+    # raw와 entity_name 모두 비어 있거나, 기존 캐릭터 중 누구와도 연결되지 않는다.
+    if not normalized_raw_mention and not normalized_entity_name:
         return CharacterNameMatch(
             matched_character_id=None,
             match_status=SettingCandidateMatchStatus.UNRESOLVED,
         )
 
-    # 정규화된 mention을 기존 캐릭터 이름 목록과 비교한다.
-    matches = _find_matches(normalized_mention, known_characters)
-
-    # 정확히 한 명만 매칭되면 성공.
-    if len(matches) == 1:
-        return CharacterNameMatch(
-            matched_character_id=matches[0],
-            match_status=SettingCandidateMatchStatus.MATCHED,
-        )
-
-    # 여러 명이 매칭되면 누구인지 확정할 수 없으므로 AMBIGUOUS.
-    if len(matches) > 1:
-        return CharacterNameMatch(
-            matched_character_id=None,
-            match_status=SettingCandidateMatchStatus.AMBIGUOUS,
-        )
-
-    # 아무도 매칭되지 않으면 UNRESOLVED.
+    # 둘 다 매칭 실패.
     return CharacterNameMatch(
         matched_character_id=None,
         match_status=SettingCandidateMatchStatus.UNRESOLVED,
@@ -119,13 +147,8 @@ def normalize_character_name(value: str | None) -> str:
     return normalized.casefold()
 
 
-def _resolve_match_source(candidate: ExtractedSettingCandidate) -> str:
-    # raw_entity_mention은 원문에 실제로 나온 표현이다.
-    # 예: "그 남자", "흑발의 소년", "철수"
-    #
-    # entity_name은 LLM이 정리한 이름일 수 있다.
-    # raw_entity_mention이 있으면 대명사/수식어 여부 판단에 더 좋으므로 우선 사용한다.
-    return candidate.raw_entity_mention or candidate.entity_name
+def _is_ambiguous_mention(normalized_mention: str) -> bool:
+    return normalized_mention in AMBIGUOUS_MENTIONS
 
 
 def _find_matches(
