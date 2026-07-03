@@ -235,7 +235,6 @@ def _payload() -> WorkerAnalysisJobPayload:
             {
                 "characterId": "00000000-0000-0000-0000-000000000005",
                 "name": "비요른 얀델",
-                "aliases": ["비요른"],
             }
         ],
         episodes=[

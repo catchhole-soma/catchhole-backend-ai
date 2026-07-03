@@ -54,7 +54,6 @@ class WorkerAnalysisKnownCharacterPayload(BaseModel):
 
     character_id: UUID = Field(alias="characterId")
     name: str
-    aliases: list[str] = Field(default_factory=list)
 
 
 # Spring이 Worker에게 내려주는 분석 job 전체 payload

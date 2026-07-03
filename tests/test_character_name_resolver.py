@@ -24,16 +24,6 @@ def test_resolve_candidate_character_matches_exact_name() -> None:
     assert match.matched_character_id == AINAR_ID
 
 
-def test_resolve_candidate_character_matches_alias() -> None:
-    match = resolve_candidate_character(
-        _candidate(entity_name="비요른"),
-        [KnownCharacter(character_id=BJORN_ID, name="비요른 얀델", aliases=("비요른",))],
-    )
-
-    assert match.match_status == SettingCandidateMatchStatus.MATCHED
-    assert match.matched_character_id == BJORN_ID
-
-
 def test_resolve_candidate_character_uses_raw_mention_for_long_source_expression() -> None:
     # 원문 mention에 긴 수식어가 붙어도 기존 캐릭터명이 그 안에 하나만 포함되면 매칭한다.
     match = resolve_candidate_character(

@@ -172,7 +172,6 @@ class AnalysisJobWorker:
                 KnownCharacter(
                     character_id=character.character_id,
                     name=character.name,
-                    aliases=tuple(character.aliases),
                 )
                 for character in payload.known_characters
             ],
