@@ -74,16 +74,58 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 LLM은 기존 캐릭터 DB와의 확정 매칭을 하지 않습니다. LLM은 원문에 실제 나온 표현인 `raw_entity_mention`과 원문 맥락에서 정리한 표시 후보명인 `entity_name`만 반환합니다.
 
-저장 직전 Python resolver가 known characters context를 받아 다음 기준으로 매칭합니다.
+저장 직전 Python resolver가 Spring claim payload의 `knownCharacters`를 받아 다음 순서로 매칭합니다.
 
-- `raw_entity_mention`과 `entity_name`을 모두 기존 캐릭터 이름과 비교합니다.
-- `raw_entity_mention`이 기존 캐릭터 1명과 매칭되면 우선 `MATCHED`로 저장하고 `matched_character_id`를 채웁니다.
-- 단, `raw_entity_mention`과 `entity_name`이 서로 다른 기존 캐릭터 1명씩으로 매칭되면 충돌로 보고 `AMBIGUOUS`로 저장합니다.
-- `raw_entity_mention`이 `나`, `내 캐릭터`, `주인공`, `그`, `그녀` 같은 지칭어이면 `entity_name`이 매칭되더라도 자동 확정하지 않고 `AMBIGUOUS`로 저장합니다.
-- `raw_entity_mention`이 매칭되지 않아도, 대명사성 표현이 아니고 `entity_name`이 기존 캐릭터 1명과 매칭되면 `MATCHED`로 저장합니다.
-- 여러 기존 캐릭터에 걸리면 `AMBIGUOUS`, 아무 후보도 없으면 `UNRESOLVED`로 저장합니다.
+```text
+raw_entity_mention 정규화
+entity_name 정규화
+knownCharacters 이름을 한 번 정규화
+-> raw match 후보 계산
+-> entity match 후보 계산
+-> 아래 우선순위로 match_status 결정
+```
 
-현재 worker 기본 흐름은 Spring claim payload의 `knownCharacters`를 resolver에 전달합니다. 별도 테스트나 대체 실행 경로에서는 `SettingCandidateService`의 provider 훅으로 known characters를 주입할 수 있습니다.
+`raw_entity_mention`은 원문에 실제 등장한 표현이므로 우선권을 갖습니다. `entity_name`은 LLM이 같은 청크 문맥에서 정리한 후보명이므로, raw가 명확하지 않거나 충돌 여부를 확인할 때 보조로 사용합니다.
+
+| 상황 | 결과 | 이유 |
+| --- | --- | --- |
+| `raw_entity_mention`이 `나`, `내 캐릭터`, `주인공`, `그`, `그녀` 같은 지칭어 | `AMBIGUOUS` | 같은 청크에서 LLM이 `entity_name`을 추론했더라도 화자/지칭 대상이 항상 안전하게 확정되지는 않기 때문 |
+| `raw_entity_mention` 없음 + `entity_name`도 지칭어 | `AMBIGUOUS` | 비교 가능한 명확한 캐릭터명이 없음 |
+| raw가 기존 캐릭터 여러 명과 매칭 | `AMBIGUOUS` | 어느 캐릭터인지 하나로 확정할 수 없음 |
+| raw가 기존 캐릭터 1명과 매칭 + entity가 다른 기존 캐릭터 1명과 매칭 | `AMBIGUOUS` | 원문 표현과 LLM 정리명이 서로 다른 캐릭터를 가리키는 충돌 |
+| raw가 기존 캐릭터 1명과 매칭 + entity가 없거나 같은 캐릭터와 매칭 | `MATCHED` | 원문 표현을 우선해 `matched_character_id`를 채움 |
+| raw는 매칭 실패 + entity가 기존 캐릭터 여러 명과 매칭 | `AMBIGUOUS` | LLM 정리명만으로도 하나를 고를 수 없음 |
+| raw는 매칭 실패 + raw가 지칭어가 아님 + entity가 기존 캐릭터 1명과 매칭 | `MATCHED` | 원문 표현은 설명형이지만 LLM 정리명이 한 명과만 연결됨 |
+| raw와 entity 모두 기존 캐릭터와 매칭 실패 | `UNRESOLVED` | 기존 캐릭터와 연결할 근거가 없음. 신규 캐릭터 후보일 수 있음 |
+
+매칭 방식은 완전 일치를 먼저 보고, 이후 한쪽 이름이 다른 쪽에 포함되는 경우를 확인합니다. 단, 한 글자 이름/표현은 오탐이 많으므로 포함 관계 매칭에서 제외합니다.
+
+### adjacent chunk fallback 적용 시 변경 지점
+
+현재 PR에서는 현재 청크 안에서만 캐릭터명을 판단합니다. 따라서 `raw_entity_mention`이 `나`, `그`, `그녀`, `주인공` 같은 지칭어이면 `entity_name`이 있더라도 `character_name_resolver.py`에서 즉시 `AMBIGUOUS`로 반환합니다.
+
+후속 작업에서 previous/current/next chunk를 덧대는 fallback을 적용한다면, 이 early return 지점이 바뀌어야 합니다.
+
+적용 방향은 다음과 같이 봅니다.
+
+```text
+현재:
+raw_entity_mention이 지칭어
+-> 즉시 AMBIGUOUS
+
+후속 fallback 적용 후:
+raw_entity_mention이 지칭어 + entity_name이 "미상" 같은 placeholder
+-> previous/current/next chunk로 지칭 대상 해소 시도
+-> 해소 성공: entity_name을 실제 후보명으로 치환한 뒤 일반 매칭 로직으로 진행
+-> 해소 실패: setting_candidates 저장 전 폐기
+
+raw_entity_mention이 지칭어 + entity_name이 이미 구체 후보명
+-> fallback을 다시 호출하지 않고 entity_name 기준 매칭 정책으로 넘길지 검토
+```
+
+이 fallback은 설정 후보 추출을 다시 하는 단계가 아니라, 이미 추출된 후보의 주체만 해소하는 좁은 resolver로 두는 것이 안전합니다. previous/next chunk는 판단 문맥으로만 사용하고, `source_chunk_id`, `evidence_spans`, offset 기준은 후보가 실제 추출된 current chunk를 유지합니다.
+
+이 정책을 구현하려면 `raw_entity_mention`이 지칭어일 때 무조건 `AMBIGUOUS`로 끝내는 현재 분기를 분리해야 합니다. 특히 fallback으로 해소된 후보를 `MATCHED` 또는 `UNRESOLVED`로 넘길 수 있도록, `character_name_resolver.py`에 "지칭어지만 이미 context-resolved 된 후보"를 구분할 입력 또는 중간 단계가 필요합니다.
 
 ## 후속 작업
 
