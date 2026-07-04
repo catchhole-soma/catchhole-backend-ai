@@ -55,9 +55,52 @@ def test_resolve_candidate_character_uses_entity_name_when_raw_mention_is_descri
     assert match.matched_character_id == AINAR_ID
 
 
-def test_resolve_candidate_character_marks_pronouns_ambiguous() -> None:
+def test_resolve_candidate_character_matches_pronoun_when_entity_name_matches_one_character() -> None:
     match = resolve_candidate_character(
         _candidate(entity_name="비요른 얀델", raw_entity_mention="나"),
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.MATCHED
+    assert match.matched_character_id == BJORN_ID
+
+
+def test_resolve_candidate_character_marks_pronoun_ambiguous_when_entity_matches_multiple_characters() -> None:
+    match = resolve_candidate_character(
+        _candidate(entity_name="비요른", raw_entity_mention="그"),
+        _known_characters(
+            KnownCharacter(character_id=BJORN_ID, name="비요른 얀델"),
+            KnownCharacter(character_id=OTHER_BJORN_ID, name="비요른 라프손"),
+        ),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
+def test_resolve_candidate_character_marks_pronoun_unresolved_when_entity_does_not_match_known_character() -> None:
+    match = resolve_candidate_character(
+        _candidate(entity_name="새 인물", raw_entity_mention="그녀"),
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.UNRESOLVED
+    assert match.matched_character_id is None
+
+
+def test_resolve_candidate_character_marks_pronoun_placeholder_ambiguous() -> None:
+    match = resolve_candidate_character(
+        _candidate(entity_name="미상", raw_entity_mention="나"),
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
+def test_resolve_candidate_character_marks_pronoun_entity_name_ambiguous() -> None:
+    match = resolve_candidate_character(
+        _candidate(entity_name="그", raw_entity_mention="나"),
         _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
     )
 

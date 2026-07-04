@@ -89,48 +89,60 @@ knownCharacters 이름을 한 번 정규화
 
 | 상황 | 결과 | 이유 |
 | --- | --- | --- |
-| `raw_entity_mention`이 `나`, `내 캐릭터`, `주인공`, `그`, `그녀` 같은 지칭어 | `AMBIGUOUS` | 같은 청크에서 LLM이 `entity_name`을 추론했더라도 화자/지칭 대상이 항상 안전하게 확정되지는 않기 때문 |
+| `raw_entity_mention`이 `나`, `내 캐릭터`, `주인공`, `그`, `그녀` 같은 지칭어 + entity가 기존 캐릭터 1명과 매칭 | `MATCHED` | 같은 청크에서 LLM이 구체화한 후보명이 기존 캐릭터 하나와 유일하게 연결되면 문맥 추론을 살림 |
+| `raw_entity_mention`이 지칭어 + entity가 기존 캐릭터 여러 명과 매칭 | `AMBIGUOUS` | LLM 정리명만으로도 하나를 고를 수 없음 |
+| `raw_entity_mention`이 지칭어 + entity가 없거나 `미상`/지칭어 같은 placeholder | `AMBIGUOUS` | 후속 adjacent chunk fallback으로 해소할 대상 |
+| `raw_entity_mention`이 지칭어 + entity가 기존 캐릭터와 매칭 실패 | `UNRESOLVED` | 기존 캐릭터와 연결할 근거는 없지만 신규 캐릭터 후보일 수 있음 |
 | `raw_entity_mention` 없음 + `entity_name`도 지칭어 | `AMBIGUOUS` | 비교 가능한 명확한 캐릭터명이 없음 |
 | raw가 기존 캐릭터 여러 명과 매칭 | `AMBIGUOUS` | 어느 캐릭터인지 하나로 확정할 수 없음 |
 | raw가 기존 캐릭터 1명과 매칭 + entity가 다른 기존 캐릭터 1명과 매칭 | `AMBIGUOUS` | 원문 표현과 LLM 정리명이 서로 다른 캐릭터를 가리키는 충돌 |
 | raw가 기존 캐릭터 1명과 매칭 + entity가 없거나 같은 캐릭터와 매칭 | `MATCHED` | 원문 표현을 우선해 `matched_character_id`를 채움 |
 | raw는 매칭 실패 + entity가 기존 캐릭터 여러 명과 매칭 | `AMBIGUOUS` | LLM 정리명만으로도 하나를 고를 수 없음 |
-| raw는 매칭 실패 + raw가 지칭어가 아님 + entity가 기존 캐릭터 1명과 매칭 | `MATCHED` | 원문 표현은 설명형이지만 LLM 정리명이 한 명과만 연결됨 |
+| raw는 매칭 실패 + entity가 기존 캐릭터 1명과 매칭 | `MATCHED` | 원문 표현은 설명형이거나 지칭어일 수 있지만 LLM 정리명이 한 명과만 연결됨 |
 | raw와 entity 모두 기존 캐릭터와 매칭 실패 | `UNRESOLVED` | 기존 캐릭터와 연결할 근거가 없음. 신규 캐릭터 후보일 수 있음 |
 
 매칭 방식은 완전 일치를 먼저 보고, 이후 한쪽 이름이 다른 쪽에 포함되는 경우를 확인합니다. 단, 한 글자 이름/표현은 오탐이 많으므로 포함 관계 매칭에서 제외합니다.
 
 ### adjacent chunk fallback 적용 시 변경 지점
 
-현재 PR에서는 현재 청크 안에서만 캐릭터명을 판단합니다. 따라서 `raw_entity_mention`이 `나`, `그`, `그녀`, `주인공` 같은 지칭어이면 `entity_name`이 있더라도 `character_name_resolver.py`에서 즉시 `AMBIGUOUS`로 반환합니다.
+현재 PR에서는 현재 청크 안에서만 캐릭터명을 판단합니다. `raw_entity_mention`이 `나`, `그`, `그녀`, `주인공` 같은 지칭어라도 `entity_name`이 기존 캐릭터 1명과 유일하게 매칭되면 `MATCHED`로 반환합니다.
 
-후속 작업에서 previous/current/next chunk를 덧대는 fallback을 적용한다면, 이 early return 지점이 바뀌어야 합니다.
+후속 작업에서 previous/current/next chunk를 덧대는 fallback을 적용한다면, placeholder 또는 지칭어만 남은 후보를 먼저 해소하는 단계가 추가되어야 합니다.
 
 적용 방향은 다음과 같이 봅니다.
 
 ```text
 현재:
-raw_entity_mention이 지칭어
--> 즉시 AMBIGUOUS
+raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터 1명과 매칭
+-> MATCHED
+
+raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터 여러 명과 매칭
+-> AMBIGUOUS
+
+raw_entity_mention이 지칭어 + entity_name이 "미상" 또는 지칭어 같은 placeholder
+-> AMBIGUOUS
+
+raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터와 매칭 실패
+-> UNRESOLVED
 
 후속 fallback 적용 후:
-raw_entity_mention이 지칭어 + entity_name이 "미상" 같은 placeholder
+raw_entity_mention이 지칭어 + entity_name이 "미상" 또는 지칭어 같은 placeholder
 -> previous/current/next chunk로 지칭 대상 해소 시도
 -> 해소 성공: entity_name을 실제 후보명으로 치환한 뒤 일반 매칭 로직으로 진행
 -> 해소 실패: setting_candidates 저장 전 폐기
 
 raw_entity_mention이 지칭어 + entity_name이 이미 구체 후보명
--> fallback을 다시 호출하지 않고 entity_name 기준 매칭 정책으로 넘길지 검토
+-> 현재는 fallback을 다시 호출하지 않고 entity_name 기준 매칭 정책으로 진행
 ```
 
 이 fallback은 설정 후보 추출을 다시 하는 단계가 아니라, 이미 추출된 후보의 주체만 해소하는 좁은 resolver로 두는 것이 안전합니다. previous/next chunk는 판단 문맥으로만 사용하고, `source_chunk_id`, `evidence_spans`, offset 기준은 후보가 실제 추출된 current chunk를 유지합니다.
 
-이 정책을 구현하려면 `raw_entity_mention`이 지칭어일 때 무조건 `AMBIGUOUS`로 끝내는 현재 분기를 분리해야 합니다. 특히 fallback으로 해소된 후보를 `MATCHED` 또는 `UNRESOLVED`로 넘길 수 있도록, `character_name_resolver.py`에 "지칭어지만 이미 context-resolved 된 후보"를 구분할 입력 또는 중간 단계가 필요합니다.
+fallback으로 해소된 후보를 `MATCHED` 또는 `UNRESOLVED`로 넘길 수 있도록, 후속 작업에서는 fallback 결과를 일반 매칭 로직에 다시 태우는 연결 지점이 필요합니다.
 
 ## 후속 작업
 
 - 기존 확정 설정과 비교하는 충돌 검사 흐름을 연결합니다.
 - 프롬프트 정책 위반 후보를 schema validator, 후처리 필터, LLM 재시도 중 어디에서 다룰지 결정합니다.
-- `나`, `그`, `그녀`, `주인공` 같은 지칭어 후보는 현재 PR에서 보수적으로 `AMBIGUOUS`로 남깁니다.
+- `나`, `그`, `그녀`, `주인공` 같은 지칭어 후보 중 `entity_name`이 기존 캐릭터 1명과 유일하게 매칭되는 경우는 `MATCHED`로 저장합니다.
 - 후속 작업에서는 중요한 설정 후보지만 현재 청크만으로 주체를 해소하지 못한 경우 `entity_name="미상"`으로 받고, previous/current/next chunk 문맥을 추가로 참고하는 fallback resolver를 검토합니다.
 - fallback으로도 캐릭터명을 해소하지 못한 `미상` 후보는 `setting_candidates`에 저장하지 않고 폐기하며, 폐기 개수를 worker summary에 남기는 방향을 검토합니다.

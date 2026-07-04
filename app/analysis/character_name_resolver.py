@@ -42,7 +42,7 @@ class CharacterNameMatch:
 
 
 # 특정 인물을 명확히 가리킨다고 보기 어려운 표현들.
-# 이런 표현은 기존 캐릭터와 바로 연결하지 않고 AMBIGUOUS 처리한다.
+# 단, entity_name이 기존 캐릭터 1명과 유일하게 매칭되면 LLM의 문맥 추론을 살린다.
 AMBIGUOUS_MENTIONS = {
     "나",
     "내",
@@ -57,6 +57,15 @@ AMBIGUOUS_MENTIONS = {
     "그 사람",
     "이 사람",
     "저 사람",
+}
+
+PLACEHOLDER_ENTITY_NAMES = {
+    "미상",
+    "불명",
+    "불명확",
+    "알 수 없음",
+    "추론 불가",
+    "unknown",
 }
 
 
@@ -86,16 +95,12 @@ def resolve_candidate_character(
     # raw_entity_mention은 원문에 실제 나온 표현이고,
     # entity_name은 LLM이 같은 청크 문맥에서 정리한 후보 이름이다.
     # 둘을 모두 매칭해보고, 서로 충돌하지 않을 때만 기존 캐릭터와 연결한다.
+    #
+    # 기본 우선순위는 raw를 더 강하게 보지만,
+    # raw가 "나", "그" 같은 지칭어라면 raw 자체로는 캐릭터를 특정할 수 없다.
+    # 이때는 LLM이 정리한 entity_name이 기존 캐릭터 1명과만 연결되는지 확인한다.
     normalized_raw_mention = normalize_character_name(candidate.raw_entity_mention)
     normalized_entity_name = normalize_character_name(candidate.entity_name)
-
-    # "나", "그녀", "주인공" 같은 원문 표현은 LLM이 entity_name을 추론했더라도
-    # 화자/지칭 대상이 항상 안전하게 확정되는 것은 아니므로 자동 매칭하지 않는다.
-    if _is_ambiguous_mention(normalized_raw_mention):
-        return CharacterNameMatch(
-            matched_character_id=None,
-            match_status=SettingCandidateMatchStatus.AMBIGUOUS,
-        )
 
     # raw mention이 없고 entity_name 자체도 대명사성 표현이면 확정할 수 없다.
     if not normalized_raw_mention and _is_ambiguous_mention(normalized_entity_name):
@@ -107,7 +112,38 @@ def resolve_candidate_character(
     raw_matches = _find_matches(normalized_raw_mention, known_characters)
     entity_matches = _find_matches(normalized_entity_name, known_characters)
 
+    # "나", "그녀", "주인공" 같은 원문 표현은 raw만으로는 확정할 수 없다.
+    # 다만 프롬프트가 같은 청크 문맥에서 entity_name을 구체화했다면 그 추론을 활용한다.
+    if _is_ambiguous_mention(normalized_raw_mention):
+        # 지칭어라도 entity_name이 기존 캐릭터 1명과 유일하게 매칭되면,
+        # LLM이 청크 문맥에서 주체를 해소했다고 보고 MATCHED로 둔다.
+        if len(entity_matches) == 1:
+            return CharacterNameMatch(
+                matched_character_id=entity_matches[0],
+                match_status=SettingCandidateMatchStatus.MATCHED,
+            )
+
+        # entity_name도 여러 기존 캐릭터에 걸리거나, "미상"/지칭어처럼
+        # 아직 주체가 풀리지 않은 값이면 사용자 검토 또는 후속 fallback 대상으로 남긴다.
+        if (
+            len(entity_matches) > 1
+            or _is_unresolved_placeholder(normalized_entity_name)
+            or _is_ambiguous_mention(normalized_entity_name)
+        ):
+            return CharacterNameMatch(
+                matched_character_id=None,
+                match_status=SettingCandidateMatchStatus.AMBIGUOUS,
+            )
+
+        # 지칭어의 주체를 LLM이 구체 이름으로 정리했지만 기존 캐릭터 목록에는 없을 수 있다.
+        # 이 경우는 새 캐릭터 후보 가능성이 있으므로 UNRESOLVED로 저장한다.
+        return CharacterNameMatch(
+            matched_character_id=None,
+            match_status=SettingCandidateMatchStatus.UNRESOLVED,
+        )
+
     # raw mention이 여러 기존 캐릭터에 걸리면 어느 인물인지 확정할 수 없다.
+    # 예: raw="비요른"이 "비요른 얀델", "비요른 라프손" 모두에 포함되는 경우.
     if len(raw_matches) > 1:
         return CharacterNameMatch(
             matched_character_id=None,
@@ -131,6 +167,7 @@ def resolve_candidate_character(
         )
 
     # raw로는 못 찾았지만 entity_name이 여러 기존 캐릭터에 걸리면 애매하다.
+    # raw가 설명형 표현이고 entity_name만으로도 여러 후보가 나오면 자동 연결하지 않는다.
     if len(entity_matches) > 1:
         return CharacterNameMatch(
             matched_character_id=None,
@@ -138,6 +175,7 @@ def resolve_candidate_character(
         )
 
     # raw가 불분명한 지시어(나, 그, 그녀)가 아니고 entity_name만 정확히 한 명과 매칭되면 살린다.
+    # 예: raw="프넬린의 두 번째 딸", entity_name="아이나르".
     if len(entity_matches) == 1:
         return CharacterNameMatch(
             matched_character_id=entity_matches[0],
@@ -181,6 +219,10 @@ def normalize_character_name(value: str | None) -> str:
 
 def _is_ambiguous_mention(normalized_mention: str) -> bool:
     return normalized_mention in AMBIGUOUS_MENTIONS
+
+
+def _is_unresolved_placeholder(normalized_name: str) -> bool:
+    return not normalized_name or normalized_name in PLACEHOLDER_ENTITY_NAMES
 
 
 def _find_matches(
