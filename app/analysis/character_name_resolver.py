@@ -17,6 +17,19 @@ class KnownCharacter:
     name: str
 
 
+# 매칭 비교에 사용할 수 있도록 이름을 미리 정규화한 캐릭터 정보.
+@dataclass(frozen=True)
+class NormalizedKnownCharacter:
+    # 기존 캐릭터 ID
+    character_id: UUID
+
+    # 대표 이름
+    name: str
+
+    # normalize_character_name(name) 결과
+    normalized_name: str
+
+
 # 캐릭터 이름 매칭 결과.
 @dataclass(frozen=True)
 class CharacterNameMatch:
@@ -47,9 +60,28 @@ AMBIGUOUS_MENTIONS = {
 }
 
 
+def normalize_known_characters(
+    known_characters: list[KnownCharacter],
+) -> list[NormalizedKnownCharacter]:
+    # 대표 이름 정규화는 한 번만 수행하고 재사용한다.
+    normalized_characters: list[NormalizedKnownCharacter] = []
+    for character in known_characters:
+        normalized_name = normalize_character_name(character.name)
+        if not normalized_name:
+            continue
+        normalized_characters.append(
+            NormalizedKnownCharacter(
+                character_id=character.character_id,
+                name=character.name,
+                normalized_name=normalized_name,
+            )
+        )
+    return normalized_characters
+
+
 def resolve_candidate_character(
     candidate: ExtractedSettingCandidate,
-    known_characters: list[KnownCharacter],
+    known_characters: list[NormalizedKnownCharacter],
 ) -> CharacterNameMatch:
     # raw_entity_mention은 원문에 실제 나온 표현이고,
     # entity_name은 LLM이 같은 청크 문맥에서 정리한 후보 이름이다.
@@ -153,30 +185,23 @@ def _is_ambiguous_mention(normalized_mention: str) -> bool:
 
 def _find_matches(
     normalized_mention: str,
-    known_characters: list[KnownCharacter],
+    known_characters: list[NormalizedKnownCharacter],
 ) -> list[UUID]:
     # 중복 매칭을 막기 위해 set 사용.
     matched_ids: set[UUID] = set()
 
     # 기존 캐릭터 목록을 하나씩 확인한다.
     for character in known_characters:
-        # 기존 캐릭터 이름도 같은 방식으로 정규화한다.
-        normalized_name = normalize_character_name(character.name)
-
-        # 빈 이름은 비교하지 않는다.
-        if not normalized_name:
-            continue
-
         # 1차: 완전 일치 매칭.
         # 예: mention="김철수", name="김철수"
-        if normalized_mention == normalized_name:
+        if normalized_mention == character.normalized_name:
             matched_ids.add(character.character_id)
             continue
 
         # 2차: 포함 관계 매칭.
         # 예: mention="철수", name="김철수"
         # 예: mention="김철수 검사", name="김철수"
-        if _is_containment_match(normalized_mention, normalized_name):
+        if _is_containment_match(normalized_mention, character.normalized_name):
             matched_ids.add(character.character_id)
 
     # set을 list로 바꿔 반환한다.

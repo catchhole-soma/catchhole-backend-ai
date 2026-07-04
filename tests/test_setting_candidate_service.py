@@ -22,9 +22,6 @@ def test_replace_candidates_for_analysis_job_deletes_old_candidates_and_saves_ne
     service = SettingCandidateService(
         session_factory=lambda: session,
         repository_factory=lambda session: repository,
-        known_character_provider=lambda work_id: [
-            KnownCharacter(character_id=UUID("00000000-0000-0000-0000-000000000005"), name="비요른")
-        ],
     )
 
     saved_candidates = service.replace_candidates_for_analysis_job(
@@ -35,6 +32,9 @@ def test_replace_candidates_for_analysis_job_deletes_old_candidates_and_saves_ne
                 episode_id=EPISODE_ID,
                 candidate=_candidate(),
             )
+        ],
+        known_characters=[
+            KnownCharacter(character_id=UUID("00000000-0000-0000-0000-000000000005"), name="비요른")
         ],
     )
 

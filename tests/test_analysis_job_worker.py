@@ -218,7 +218,7 @@ class FakeSettingCandidateService:
         work_id,
         analysis_job_id,
         save_items,
-        known_characters=None,
+        known_characters,
     ):
         self.saved_candidates = [item.candidate for item in save_items]
         self.request = {
@@ -226,7 +226,7 @@ class FakeSettingCandidateService:
             "analysis_job_id": analysis_job_id,
             "episode_ids": [item.episode_id for item in save_items],
             "known_character_names": [
-                character.name for character in known_characters or []
+                character.name for character in known_characters
             ],
             "candidate_count": len(save_items),
         }

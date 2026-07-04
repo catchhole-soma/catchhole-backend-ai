@@ -2,6 +2,8 @@ from uuid import UUID
 
 from app.analysis.character_name_resolver import (
     KnownCharacter,
+    NormalizedKnownCharacter,
+    normalize_known_characters,
     normalize_character_name,
     resolve_candidate_character,
 )
@@ -17,7 +19,7 @@ CHUNK_ID = UUID("00000000-0000-0000-0000-000000000201")
 def test_resolve_candidate_character_matches_exact_name() -> None:
     match = resolve_candidate_character(
         _candidate(entity_name="아이나르"),
-        [KnownCharacter(character_id=AINAR_ID, name="아이나르")],
+        _known_characters(KnownCharacter(character_id=AINAR_ID, name="아이나르")),
     )
 
     assert match.match_status == SettingCandidateMatchStatus.MATCHED
@@ -31,7 +33,7 @@ def test_resolve_candidate_character_uses_raw_mention_for_long_source_expression
             entity_name="아이나르",
             raw_entity_mention="프넬린의 두 번째 딸 아이나르",
         ),
-        [KnownCharacter(character_id=AINAR_ID, name="아이나르")],
+        _known_characters(KnownCharacter(character_id=AINAR_ID, name="아이나르")),
     )
 
     assert match.match_status == SettingCandidateMatchStatus.MATCHED
@@ -46,7 +48,7 @@ def test_resolve_candidate_character_uses_entity_name_when_raw_mention_is_descri
             entity_name="아이나르",
             raw_entity_mention="프넬린의 두 번째 딸",
         ),
-        [KnownCharacter(character_id=AINAR_ID, name="아이나르")],
+        _known_characters(KnownCharacter(character_id=AINAR_ID, name="아이나르")),
     )
 
     assert match.match_status == SettingCandidateMatchStatus.MATCHED
@@ -56,7 +58,7 @@ def test_resolve_candidate_character_uses_entity_name_when_raw_mention_is_descri
 def test_resolve_candidate_character_marks_pronouns_ambiguous() -> None:
     match = resolve_candidate_character(
         _candidate(entity_name="비요른 얀델", raw_entity_mention="나"),
-        [KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")],
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
     )
 
     assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
@@ -67,10 +69,10 @@ def test_resolve_candidate_character_marks_conflicting_raw_and_entity_matches_am
     # raw mention과 entity_name이 서로 다른 기존 캐릭터로 매칭되면 자동 연결하지 않는다.
     match = resolve_candidate_character(
         _candidate(entity_name="아이나르", raw_entity_mention="비요른"),
-        [
+        _known_characters(
             KnownCharacter(character_id=AINAR_ID, name="아이나르"),
             KnownCharacter(character_id=BJORN_ID, name="비요른"),
-        ],
+        ),
     )
 
     assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
@@ -80,10 +82,10 @@ def test_resolve_candidate_character_marks_conflicting_raw_and_entity_matches_am
 def test_resolve_candidate_character_marks_multiple_matches_ambiguous() -> None:
     match = resolve_candidate_character(
         _candidate(entity_name="비요른"),
-        [
+        _known_characters(
             KnownCharacter(character_id=BJORN_ID, name="비요른 얀델"),
             KnownCharacter(character_id=OTHER_BJORN_ID, name="비요른 라프손"),
-        ],
+        ),
     )
 
     assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
@@ -93,7 +95,7 @@ def test_resolve_candidate_character_marks_multiple_matches_ambiguous() -> None:
 def test_resolve_candidate_character_marks_missing_match_unresolved() -> None:
     match = resolve_candidate_character(
         _candidate(entity_name="새 인물"),
-        [KnownCharacter(character_id=AINAR_ID, name="아이나르")],
+        _known_characters(KnownCharacter(character_id=AINAR_ID, name="아이나르")),
     )
 
     assert match.match_status == SettingCandidateMatchStatus.UNRESOLVED
@@ -102,6 +104,23 @@ def test_resolve_candidate_character_marks_missing_match_unresolved() -> None:
 
 def test_normalize_character_name_trims_wrapping_punctuation_and_spaces() -> None:
     assert normalize_character_name("  “비요른   얀델”  ") == "비요른 얀델"
+
+
+def test_normalize_known_characters_prepares_names_once() -> None:
+    known_characters = normalize_known_characters(
+        [
+            KnownCharacter(character_id=BJORN_ID, name="  “비요른   얀델”  "),
+            KnownCharacter(character_id=OTHER_BJORN_ID, name="   "),
+        ]
+    )
+
+    assert len(known_characters) == 1
+    assert known_characters[0].character_id == BJORN_ID
+    assert known_characters[0].normalized_name == "비요른 얀델"
+
+
+def _known_characters(*characters: KnownCharacter) -> list[NormalizedKnownCharacter]:
+    return normalize_known_characters(list(characters))
 
 
 def _candidate(

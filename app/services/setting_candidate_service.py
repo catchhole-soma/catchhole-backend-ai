@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.analysis.character_name_resolver import (
     KnownCharacter,
+    normalize_known_characters,
     resolve_candidate_character,
 )
 from app.analysis.schemas import ExtractedSettingCandidate
@@ -26,24 +27,19 @@ class SettingCandidateService:
         session_factory: Callable[[], Session], # 아무 인자도 안 받고 Session을 반환
         # Session을 인자로 Repository를 반환 암시
         repository_factory: Callable[[Session], SettingCandidateRepository] = SettingCandidateRepository,
-        known_character_provider: Callable[[UUID], list[KnownCharacter]] | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.repository_factory = repository_factory
-        self.known_character_provider = known_character_provider or (lambda work_id: [])
 
     def replace_candidates_for_analysis_job(
         self,
         work_id: UUID,
         analysis_job_id: UUID,
         save_items: list[SettingCandidateSaveItem],
-        known_characters: list[KnownCharacter] | None = None,
+        known_characters: list[KnownCharacter],
     ) -> list[SettingCandidate]:
-        known_characters = (
-            self.known_character_provider(work_id)
-            if known_characters is None
-            else known_characters
-        )
+        normalized_known_characters = normalize_known_characters(known_characters)
+
         # LLM 검증을 통과한 내부 후보 객체를 setting_candidates 저장 모델로 변환한다.
         candidates = [
             SettingCandidateMapper.to_entity(
@@ -53,7 +49,7 @@ class SettingCandidateService:
                 candidate=item.candidate,
                 character_match=resolve_candidate_character(
                     item.candidate,
-                    known_characters,
+                    normalized_known_characters,
                 ),
             )
             for item in save_items
