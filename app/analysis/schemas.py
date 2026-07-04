@@ -20,6 +20,7 @@ class ExtractedSettingCandidate(BaseModel):
     # 캐릭터 설정 관련으로만 받음
     entity_type: Literal["CHARACTER"] = "CHARACTER"
     entity_name: str = Field(min_length=1, max_length=100)
+    raw_entity_mention: str | None = Field(default=None, max_length=100)
     attribute_name: str = Field(min_length=1, max_length=100)
     # 목록/검색 표시용 요약값
     attribute_value: str | None = None

@@ -20,6 +20,7 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 `character_setting_extraction.md`는 Spring의 설정 확정 흐름과 맞도록 다음 계약을 둡니다.
 
 - `attribute_name`은 백엔드의 `factKey`로 저장됩니다.
+- `raw_entity_mention`은 원문에 실제 등장한 표현이고, `entity_name`은 원문 맥락에서 정리한 후보 캐릭터명입니다.
 - 나이/레벨은 `age`, `level` 고정 key를 사용합니다.
 - 여러 항목이 공존하는 값은 `stats.<스탯명>`, `skills.<스킬명>`, `items.<아이템명>`, `status.<상태명>`, `time.<시간 또는 사건명>`처럼 구체 key를 포함합니다.
 - `attribute_value`는 목록/검토 화면 표시용 summary이며, 로직 판단 기준으로 사용하지 않습니다.

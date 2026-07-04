@@ -100,6 +100,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "work_id": WORK_ID,
         "analysis_job_id": ANALYSIS_JOB_ID,
         "episode_ids": [EPISODE_ID, EPISODE_ID],
+        "known_character_names": ["비요른 얀델"],
         "candidate_count": 2,
     }
     saved_candidate = setting_candidate_service.saved_candidates[0]
@@ -212,12 +213,21 @@ class FakeSettingCandidateService:
         self.request = None
         self.saved_candidates: list[ExtractedSettingCandidate] = []
 
-    def replace_candidates_for_analysis_job(self, work_id, analysis_job_id, save_items):
+    def replace_candidates_for_analysis_job(
+        self,
+        work_id,
+        analysis_job_id,
+        save_items,
+        known_characters,
+    ):
         self.saved_candidates = [item.candidate for item in save_items]
         self.request = {
             "work_id": work_id,
             "analysis_job_id": analysis_job_id,
             "episode_ids": [item.episode_id for item in save_items],
+            "known_character_names": [
+                character.name for character in known_characters
+            ],
             "candidate_count": len(save_items),
         }
         return self.saved_candidates
@@ -232,6 +242,12 @@ def _payload() -> WorkerAnalysisJobPayload:
         batch_id=BATCH_ID,
         model_name="gpt-4.1-mini",
         current_step="SETTING_EXTRACTION",
+        known_characters=[
+            {
+                "characterId": "00000000-0000-0000-0000-000000000005",
+                "name": "비요른 얀델",
+            }
+        ],
         episodes=[
             WorkerAnalysisEpisodePayload(
                 episode_id=EPISODE_ID,

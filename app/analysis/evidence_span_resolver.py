@@ -68,29 +68,29 @@ def resolve_evidence_span_offsets(
     return span.model_copy(update={"start_offset": None, "end_offset": None})
 
 
-def _find_exact_range(text: str, quote: str) -> tuple[int, int] | None:
-    # quote가 text 안에 그대로 존재하는지 찾는다.
+def _find_exact_range(chunk_text: str, quote: str) -> tuple[int, int] | None:
+    # quote가 chunk_text 안에 그대로 존재하는지 찾는다.
     # str.find()는 찾으면 시작 인덱스를 반환하고, 못 찾으면 -1을 반환한다.
-    start = text.find(quote)
+    start = chunk_text.find(quote)
 
     # quote를 찾지 못한 경우
     if start < 0:
         return None
 
     # Python의 slice 방식처럼 end는 마지막 글자의 다음 위치로 둔다.
-    # 예: text[start:end]
+    # 예: chunk_text[start:end]
     return start, start + len(quote)
 
 
-def _find_whitespace_normalized_range(text: str, quote: str) -> tuple[int, int] | None:
+def _find_whitespace_normalized_range(chunk_text: str, quote: str) -> tuple[int, int] | None:
     # 원문과 quote의 공백 차이를 무시하고 찾기 위한 함수.
     # 예:
-    # text  = "그는   검을\n들었다"
-    # quote = "그는 검을 들었다"
+    # chunk_text = "그는   검을\n들었다"
+    # quote      = "그는 검을 들었다"
     # exact match는 실패하지만, 공백 정규화 후에는 매칭될 수 있다.
 
-    # text를 공백 정규화하면서, 정규화 문자별 원문 범위도 기록한다.
-    normalized_text = _normalize_whitespace_with_ranges(text)
+    # chunk_text를 공백 정규화하면서, 정규화 문자별 원문 범위도 기록한다.
+    normalized_chunk_text = _normalize_whitespace_with_ranges(chunk_text)
 
     # quote도 같은 방식으로 공백 정규화한다.
     # quote 쪽은 위치 복원이 필요 없으므로 .text만 사용한다.
@@ -100,8 +100,8 @@ def _find_whitespace_normalized_range(text: str, quote: str) -> tuple[int, int] 
     if not normalized_quote:
         return None
 
-    # 정규화된 text 안에서 정규화된 quote를 찾는다.
-    normalized_start = normalized_text.text.find(normalized_quote)
+    # 정규화된 chunk_text 안에서 정규화된 quote를 찾는다.
+    normalized_start = normalized_chunk_text.text.find(normalized_quote)
 
     # 정규화된 문자열에서도 찾지 못한 경우
     if normalized_start < 0:
@@ -112,13 +112,13 @@ def _find_whitespace_normalized_range(text: str, quote: str) -> tuple[int, int] 
 
     # 정규화 문자열의 시작 위치를 원문 위치로 되돌린다.
     # ranges[normalized_start]는 정규화된 첫 문자가 원문에서 차지한 범위.
-    start = normalized_text.ranges[normalized_start][0]
+    start = normalized_chunk_text.ranges[normalized_start][0]
 
     # 정규화 문자열의 마지막 문자가 원문에서 끝난 위치를 사용한다.
     # normalized_end는 exclusive라서 마지막 문자는 normalized_end - 1.
-    end = normalized_text.ranges[normalized_end - 1][1]
+    end = normalized_chunk_text.ranges[normalized_end - 1][1]
 
-    # 최종적으로 원문 text 기준의 (start, end)를 반환한다.
+    # 최종적으로 원문 chunk_text 기준의 (start, end)를 반환한다.
     return start, end
 
 
