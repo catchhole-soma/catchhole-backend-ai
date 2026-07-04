@@ -4,6 +4,11 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.analysis.character_name_resolver import (
+    KnownCharacter,
+    normalize_known_characters,
+    resolve_candidate_character,
+)
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.mappers.setting_candidate_mapper import SettingCandidateMapper
 from app.models.setting_candidate import SettingCandidate
@@ -31,7 +36,10 @@ class SettingCandidateService:
         work_id: UUID,
         analysis_job_id: UUID,
         save_items: list[SettingCandidateSaveItem],
+        known_characters: list[KnownCharacter],
     ) -> list[SettingCandidate]:
+        normalized_known_characters = normalize_known_characters(known_characters)
+
         # LLM 검증을 통과한 내부 후보 객체를 setting_candidates 저장 모델로 변환한다.
         candidates = [
             SettingCandidateMapper.to_entity(
@@ -39,6 +47,10 @@ class SettingCandidateService:
                 episode_id=item.episode_id,
                 analysis_job_id=analysis_job_id,
                 candidate=item.candidate,
+                character_match=resolve_candidate_character(
+                    item.candidate,
+                    normalized_known_characters,
+                ),
             )
             for item in save_items
         ]

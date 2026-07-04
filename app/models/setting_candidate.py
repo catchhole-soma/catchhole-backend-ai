@@ -6,7 +6,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domain.enums import SettingCandidateReviewStatus, SettingEntityType, SettingValueType
+from app.domain.enums import (
+    SettingCandidateMatchStatus,
+    SettingCandidateReviewStatus,
+    SettingEntityType,
+    SettingValueType,
+)
 from app.models.base import Base
 from app.models.mixins import TimestampMixin
 
@@ -21,6 +26,9 @@ class SettingCandidate(TimestampMixin, Base):
     analysis_job_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
     entity_type: Mapped[SettingEntityType] = mapped_column(String(30))
     entity_name: Mapped[str] = mapped_column(String(100))
+    raw_entity_mention: Mapped[str | None] = mapped_column(String(100))
+    matched_character_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
+    match_status: Mapped[SettingCandidateMatchStatus] = mapped_column(String(30))
     attribute_name: Mapped[str] = mapped_column(String(100))
     attribute_value: Mapped[str | None] = mapped_column(Text)
     value_type: Mapped[SettingValueType] = mapped_column(String(30))

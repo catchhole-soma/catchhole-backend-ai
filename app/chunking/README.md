@@ -52,7 +52,7 @@
 - `paragraph_start_index`: 청크에 포함된 첫 문단 번호
 - `paragraph_end_index`: 청크에 포함된 마지막 문단 번호
 
-`chunk_text`는 문단을 다시 이어 붙인 문자열이 아니라, 원문에서 `start_offset:end_offset`으로 그대로 잘라낸 문자열입니다. 그래야 이후 LLM이 반환한 `evidence_quote` 위치를 검증하거나 보정할 때 원문 위치가 틀어지지 않습니다.
+`chunk_text`는 문단을 다시 이어 붙인 문자열이 아니라, 원문에서 `start_offset:end_offset`으로 그대로 잘라낸 문자열입니다. 그래야 이후 LLM이 반환한 `evidence_spans[].quote` 위치를 검증하거나 보정할 때 원문 위치가 틀어지지 않습니다.
 
 ## 청킹 결과 구조
 
@@ -90,24 +90,62 @@
 
 ## LLM 근거 위치 처리 기준
 
-LLM은 한 청크 안에서 여러 설정 후보를 추출할 수 있습니다. 이때 각 후보마다 `evidence_quote`, `paragraph_index`, `start_offset`, `end_offset` 같은 근거 정보를 요청할 수 있습니다.
+LLM은 한 청크 안에서 여러 설정 후보를 추출할 수 있습니다. 현재 저장 구조에서는 각 후보의 `evidence_spans[].quote`, `start_offset`, `end_offset`으로 원문 근거를 표현합니다.
 
 다만 LLM이 반환한 숫자 offset은 그대로 신뢰하지 않습니다. LLM은 원문 문구는 비교적 잘 복사해도, 문자 단위 위치 계산은 틀릴 수 있기 때문입니다.
 
-후속 구현에서는 다음 순서를 기본으로 둡니다.
+현재 구현은 다음 순서를 기본으로 둡니다.
 
 1. Python이 `episode_chunks.chunk_text`를 LLM에 전달합니다.
-2. LLM은 각 설정 후보마다 원문에서 그대로 복사한 `evidence_quote`를 반환합니다.
-3. LLM이 반환한 offset은 참고값으로만 사용합니다.
-4. Python이 `chunk_text` 안에서 `evidence_quote`를 다시 검색합니다.
-5. 검색된 chunk 내부 위치를 `episode_chunks.start_offset`과 더해 회차 전체 offset으로 보정합니다.
-6. 최종 저장에는 Python이 계산한 offset을 우선 사용합니다.
+2. LLM은 각 설정 후보마다 원문에서 그대로 복사한 `evidence_spans[].quote`를 반환합니다.
+3. LLM이 반환한 offset은 참고하지 않습니다.
+4. Python이 `chunk_text` 안에서 quote를 다시 검색합니다.
+5. exact match에 실패하면 줄바꿈/연속 공백을 공백 하나로 정규화해 다시 검색합니다.
+6. 검색된 chunk 내부 위치를 `episode_chunks.start_offset`과 더해 회차 전체 offset으로 보정합니다.
+7. quote를 찾지 못하면 후보는 저장하되 `start_offset`, `end_offset`은 `null`로 둡니다.
 
-즉, 청크는 LLM이 설정을 이해하기 위한 문맥 단위이고, 실제 화면에 표시할 근거 위치는 `evidence_quote`를 기반으로 Python이 다시 검증해 계산합니다.
+즉, 청크는 LLM이 설정을 이해하기 위한 문맥 단위이고, 실제 화면에 표시할 근거 위치는 `evidence_spans[].quote`를 기반으로 Python이 다시 검증해 계산합니다.
+
+근거 위치 보정 구현은 `app/analysis/evidence_span_resolver.py`에 있습니다. 저장되는 offset은 chunk 내부 기준이 아니라 회차 전체 원문 기준이며, `end_offset`은 Python slice처럼 exclusive 값입니다.
+
+## Offset 기준과 화면 하이라이트
+
+현재 `episode_chunks.start_offset`, `episode_chunks.end_offset`, `evidence_spans[].start_offset`, `evidence_spans[].end_offset`은 Python이 청킹에 사용한 회차 원문 기준입니다.
+
+현재 Python 흐름은 S3에서 읽은 원문을 `normalize_text()`로 정리한 뒤 청킹합니다. 따라서 offset은 사용자가 업로드한 원본 파일 그대로의 문자 위치라기보다, Python 정규화 이후의 회차 원문 기준으로 이해해야 합니다.
+
+`evidence_span_resolver.py`의 공백 정규화 검색은 LLM이 반환한 quote의 줄바꿈/연속 공백 차이를 보정하기 위한 장치입니다. 즉, `chunk_text` 안에서 quote를 찾기 위한 국소적인 보정이며, S3 원본 전체를 정규화 전 위치로 되돌리는 매핑은 아닙니다.
+
+프론트에서 원문 하이라이트를 안정적으로 하려면 화면에 표시하는 원문과 저장된 offset의 기준 원문이 같아야 합니다.
+
+권장 방향은 다음과 같습니다.
+
+1. Spring 업로드 단계에서 분석/조회용 회차 원문을 정규화합니다.
+2. 정규화된 회차 원문을 `Episode.content_s3_key` 대상 S3 object로 저장합니다.
+3. Python은 S3에서 읽은 텍스트를 다시 큰 폭으로 정규화하지 않고 청킹합니다.
+4. `episode_chunks`와 `evidence_spans`의 offset은 모두 `content_s3_key` 원문 기준으로 계산합니다.
+5. 사용자가 올린 원본 파일 그대로가 필요하면 `upload_files.storage_url` 또는 별도 original file key로 보존합니다.
+
+이렇게 하면 분석, 근거 위치 계산, 프론트 하이라이트가 모두 같은 텍스트 기준을 공유합니다. 반대로 원본 파일 그대로의 화면에서 하이라이트해야 한다면, raw text와 normalized text 사이의 offset mapping을 별도로 저장하거나 계산해야 합니다.
+
+## 후속 논의
+
+- quote를 찾지 못한 설정 후보를 어떻게 처리할지 결정해야 합니다.
+  - 현재는 후보를 저장하되 `start_offset`, `end_offset`을 `null`로 둡니다.
+  - 대안은 후보 제외, LLM 재시도, 낮은 confidence 처리입니다.
+- 프론트에서 offset을 어떻게 사용할지 결정해야 합니다.
+  - 원문 상세 화면에서 `start_offset:end_offset` 범위를 하이라이트할 수 있습니다.
+  - 사용자에게는 문자 위치보다 문단 번호, 주변 문맥, quote를 함께 보여주는 편이 더 자연스러울 수 있습니다.
+  - 이를 위해 `paragraph_start_index`, `paragraph_end_index` 또는 quote 주변 context를 API 응답에 포함할지 검토합니다.
+- 정규화 책임을 Spring 업로드 단계로 옮길지 결정해야 합니다.
+  - 현재 Python이 S3 원문을 읽은 뒤 `normalize_text()`를 수행합니다.
+  - 하이라이트 기준을 단순화하려면 Spring이 S3 저장 전에 분석/조회용 회차 원문을 정규화하는 방향이 유리합니다.
+  - 원본 파일 보존이 필요하면 원본 파일 key와 분석용 content key를 분리합니다.
+- 재시도와 디버그 관측성을 보강할지 결정해야 합니다.
+  - 현재 debug JSON만으로는 LLM 재시도 여부를 확인할 수 없습니다.
+  - chunk별 attempt count, 실패 사유, 모델명, token usage, quote match 실패 개수를 debug 출력 또는 JSON에 남길지 검토합니다.
 
 ## 후속 작업
 
 - `episode_splitter.py`: 한 파일에 여러 회차가 들어온 경우 회차 단위로 분리
-- `offsets.py`: LLM이 반환한 `evidence_quote`를 청크 안에서 찾아 회차 전체 offset으로 보정
-- Worker claim 흐름에서 `EpisodeS3ChunkingService` 호출 연결
 - `upload_files.storage_url` 기준 원본 파일 로드는 필요한 시점에 별도 검토

@@ -33,4 +33,8 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
 
 현재 단계에서는 prompt로 JSON 응답을 요구하고, Python schema로 결과를 검증합니다.
 
-LLM JSON 검증 실패 시 재시도하거나, OpenAI Structured Outputs의 JSON schema 강제를 적용하는 작업은 후속 이슈에서 다룹니다.
+JSON 파싱 실패 또는 Python schema 검증 실패는 `CharacterSettingExtractor`에서 재시도합니다. 다만 프롬프트 정책 위반까지 강제하지는 않습니다.
+
+예를 들어 `attribute_name`이 `items`처럼 suffix 없이 오거나, `confidence`가 `0.0`인 응답은 프롬프트상 원하지 않는 값이지만 현재 schema만으로는 통과할 수 있습니다.
+
+OpenAI Structured Outputs의 JSON schema 강제, attribute policy validator, chunk별 재시도 이력 기록은 후속 이슈에서 다룹니다.

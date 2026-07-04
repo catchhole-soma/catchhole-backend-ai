@@ -47,6 +47,15 @@ class WorkerAnalysisEpisodePayload(BaseModel):
     content_hash: str | None = Field(default=None, alias="contentHash")
     char_count: int = Field(alias="charCount")
 
+
+# Spring이 Worker에게 내려주는 기존 캐릭터 정보 DTO
+class WorkerAnalysisKnownCharacterPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    character_id: UUID = Field(alias="characterId")
+    name: str
+
+
 # Spring이 Worker에게 내려주는 분석 job 전체 payload
 class WorkerAnalysisJobPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -58,4 +67,8 @@ class WorkerAnalysisJobPayload(BaseModel):
     batch_id: UUID = Field(alias="batchId")
     model_name: str | None = Field(default=None, alias="modelName")
     current_step: str | None = Field(default=None, alias="currentStep")
+    known_characters: list[WorkerAnalysisKnownCharacterPayload] = Field(
+        default_factory=list,
+        alias="knownCharacters",
+    )
     episodes: list[WorkerAnalysisEpisodePayload]

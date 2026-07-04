@@ -140,6 +140,7 @@ Spring claim
 -> progress 보고
 -> episode별 S3 원문 청킹
 -> chunk별 캐릭터 설정 후보 추출
+-> evidence quote 위치 보정
 -> summaryJson 생성
 -> Spring complete 보고
 ```
@@ -157,6 +158,10 @@ Spring claim
 - `CharacterSettingExtractor`
   - 저장된 chunk 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
   - LLM 응답 JSON을 `app/analysis/schemas.py` 기준으로 검증합니다.
+- `evidence_span_resolver.py`
+  - LLM이 반환한 `evidence_spans[].quote`를 chunk 원문에서 다시 찾습니다.
+  - quote 위치를 `episode_chunks.start_offset`과 더해 회차 전체 기준 offset으로 보정합니다.
+  - quote를 찾지 못하면 잘못된 위치를 저장하지 않도록 offset을 `null`로 둡니다.
 - `SettingCandidateService`
   - 검증된 후보를 `setting_candidates` 저장 모델로 변환합니다.
   - 같은 `analysis_job_id` 기준 기존 후보를 지운 뒤 새 후보를 저장합니다.
@@ -194,3 +199,42 @@ scripts/run_analysis_worker.py
 ```bash
 .venv/bin/python scripts/run_analysis_worker.py --max-iterations 3
 ```
+
+## 로컬 텍스트 Debug 실행
+
+Spring, DB, S3 없이 로컬 텍스트 파일 하나만으로 청킹부터 설정 후보 추출, 근거 위치 보정까지
+확인하려면 `scripts/run_episode_text_analysis_debug.py`를 사용합니다.
+
+```bash
+.venv/bin/python scripts/run_episode_text_analysis_debug.py \
+  --text-file ./samples/episode-1.txt \
+  --episode-no 1 \
+  --episode-title "1화" \
+  --max-chunks 1 \
+  --output-json ./tmp/episode-1-debug.json
+```
+
+이 runner는 다음 단계만 수행합니다.
+
+```text
+로컬 txt 파일 읽기
+-> 원문 정규화
+-> chunk draft 생성
+-> 가상 chunk_id 부여
+-> chunk별 설정 후보 LLM 추출
+-> evidence quote offset 보정
+-> 콘솔/JSON 파일로 결과 출력
+```
+
+`episodeId`, `workId`, `analysisJobId`는 넘기지 않으면 가상 UUID로 생성합니다.
+처음 프롬프트와 offset을 점검할 때는 `--max-chunks 1`로 LLM 호출 범위를 줄입니다.
+
+현재 debug JSON은 최종 청킹 결과와 최종 설정 후보만 저장합니다.
+
+- LLM 재시도 횟수
+- 재시도 실패 사유
+- 모델명
+- token usage
+- chunk별 quote match 실패 개수 요약
+
+위 값은 아직 구조화해서 저장하지 않습니다. 재시도 여부는 실행 중 warning 로그로만 확인할 수 있으므로, 프롬프트/모델 비교 실험을 반복할 때는 debug 출력 확장을 후속으로 검토합니다.
