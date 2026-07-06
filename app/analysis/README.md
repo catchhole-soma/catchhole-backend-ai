@@ -115,6 +115,18 @@ knownCharacters 이름을 한 번 정규화
 
 현재 구현은 fallback 대상 후보를 current chunk 기준으로 묶고, previous/current/next chunk 문맥과 함께 LLM subject resolver에 전달합니다.
 
+fallback 진입/처리 기준:
+
+| 상황 | fallback 호출 | 처리 |
+| --- | --- | --- |
+| raw가 지칭어이고 entity가 기존 캐릭터 1명과 매칭 | 호출하지 않음 | 기존 매칭 로직에서 `MATCHED` |
+| raw가 지칭어이고 entity가 기존 캐릭터 여러 명과 매칭 | 호출하지 않음 | 기존 매칭 로직에서 `AMBIGUOUS` |
+| raw가 지칭어이고 entity가 기존 캐릭터와 매칭 실패 | 호출하지 않음 | 신규 캐릭터 가능성이 있으므로 `UNRESOLVED` |
+| raw가 지칭어이고 entity가 없거나 `미상`/지칭어 같은 placeholder | 호출함 | previous/current/next chunk로 주체만 재판단 |
+| fallback 응답의 `resolved_entity_name`이 구체 이름 | - | candidate의 `entity_name`만 치환하고 기존 매칭 로직으로 진행 |
+| fallback 응답의 `resolved_entity_name`이 null | - | 잘못된 placeholder 후보가 저장되지 않도록 폐기 |
+| fallback 응답의 `resolved_entity_name`이 `미상`, `그녀`, `주인공` 같은 placeholder/지칭어 | - | 실제 해소 실패로 보고 폐기 |
+
 ```text
 raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터 1명과 매칭
 -> MATCHED

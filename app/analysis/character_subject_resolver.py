@@ -92,25 +92,25 @@ class CharacterSubjectResolver:
             return SubjectResolutionResult(candidates=candidates)
 
         # 같은 current chunk에서 나온 fallback 대상들은 한 번의 LLM 호출로 같이 판단한다.
-        response = self._request_resolution(
+        resolution_response = self._request_resolution(
             context=context,
             targets=fallback_targets,
             known_characters=known_characters,
         )
         # LLM 응답을 candidate_id 기준 dict로 바꿔 원래 후보와 다시 연결한다.
-        resolved_by_id = {
-            item.candidate_id: item
-            for item in response.resolutions
+        resolution_by_candidate_id = {
+            resolution_item.candidate_id: resolution_item
+            for resolution_item in resolution_response.resolutions
         }
 
-        resolved_candidates_by_id: dict[str, ExtractedSettingCandidate] = {}
+        resolved_candidate_by_id: dict[str, ExtractedSettingCandidate] = {}
         resolved_count = 0
         discarded_count = 0
 
-        for indexed_candidate in fallback_targets:
+        for fallback_target in fallback_targets:
             # 프롬프트 계약상 모든 candidate_id가 돌아와야 한다.
             # 그래도 누락되면 해소 실패로 보고 미상 후보를 저장하지 않는다.
-            resolution = resolved_by_id.get(indexed_candidate.candidate_id)
+            resolution = resolution_by_candidate_id.get(fallback_target.candidate_id)
             if resolution is None:
                 discarded_count += 1
                 continue
@@ -118,8 +118,8 @@ class CharacterSubjectResolver:
             resolved_entity_name = _usable_resolved_entity_name(resolution.resolved_entity_name)
             if resolved_entity_name:
                 # entity_name만 치환하고 attribute/evidence/source_chunk 정보는 기존 후보를 유지한다.
-                resolved_candidates_by_id[indexed_candidate.candidate_id] = (
-                    indexed_candidate.candidate.model_copy(
+                resolved_candidate_by_id[fallback_target.candidate_id] = (
+                    fallback_target.candidate.model_copy(
                         update={"entity_name": resolved_entity_name}
                     )
                 )
@@ -127,18 +127,18 @@ class CharacterSubjectResolver:
             else:
                 discarded_count += 1
 
-        target_ids = {target.candidate_id for target in fallback_targets}
+        fallback_target_ids = {target.candidate_id for target in fallback_targets}
         # 최종적으로 저장 흐름에 넘길 후보 목록(기존 순서도 보장한다.)
         final_candidates: list[ExtractedSettingCandidate] = []
-        #원래 candidates 리스트에 다시 같은 임시표를 붙여서 LLM 응답과 대조
+        # 원래 candidates 리스트에 다시 같은 임시표를 붙여서 LLM 응답과 대조한다.
         for indexed_candidate in _index_candidates(candidates):
             # fallback 대상이 아니었다면 그대로 넣는다.
-            if indexed_candidate.candidate_id not in target_ids:
+            if indexed_candidate.candidate_id not in fallback_target_ids:
                 final_candidates.append(indexed_candidate.candidate)
                 continue
-            
-            # fallback 대상임으로 바뀐 entity_name을 가진 수정된 것으로 치환해준다.
-            resolved_candidate = resolved_candidates_by_id.get(indexed_candidate.candidate_id)
+
+            # fallback 대상이라면 바뀐 entity_name을 가진 수정본으로 치환한다.
+            resolved_candidate = resolved_candidate_by_id.get(indexed_candidate.candidate_id)
             # fallback에 성공해서 entity_name이 치환된 후보가 있다면 넣는다.
             if resolved_candidate is not None:
                 final_candidates.append(resolved_candidate)

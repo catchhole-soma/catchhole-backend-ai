@@ -415,6 +415,18 @@ fallback 호출 단위:
 
 fallback은 설정 후보를 다시 추출하지 않습니다. LLM은 입력 candidates의 `candidate_id`별로 주체명만 판단합니다.
 
+fallback 진입/처리 기준:
+
+| 상황 | fallback 호출 | 처리 |
+| --- | --- | --- |
+| raw가 지칭어이고 entity가 기존 캐릭터 1명과 매칭 | 호출하지 않음 | 기존 매칭 로직에서 `MATCHED` |
+| raw가 지칭어이고 entity가 기존 캐릭터 여러 명과 매칭 | 호출하지 않음 | 기존 매칭 로직에서 `AMBIGUOUS` |
+| raw가 지칭어이고 entity가 기존 캐릭터와 매칭 실패 | 호출하지 않음 | 신규 캐릭터 가능성이 있으므로 `UNRESOLVED` |
+| raw가 지칭어이고 entity가 없거나 `미상`/지칭어 같은 placeholder | 호출함 | previous/current/next chunk로 주체만 재판단 |
+| fallback 응답의 `resolved_entity_name`이 구체 이름 | - | candidate의 `entity_name`만 치환하고 기존 매칭 로직으로 진행 |
+| fallback 응답의 `resolved_entity_name`이 null | - | 잘못된 placeholder 후보가 저장되지 않도록 폐기 |
+| fallback 응답의 `resolved_entity_name`이 `미상`, `그녀`, `주인공` 같은 placeholder/지칭어 | - | 실제 해소 실패로 보고 폐기 |
+
 응답 처리:
 
 | 응답 | 처리 |
