@@ -219,9 +219,49 @@ character_name_resolver가 기존 캐릭터 목록과 비교해 MATCHED / UNRESO
 
 이 경우 placeholder 후보는 `setting_candidates` 저장 전에 제외합니다. LLM이 `resolved_entity_name`에 `"미상"` 또는 `"그녀"` 같은 문자열을 넣어도 같은 방식으로 제외합니다.
 
+### subject fallback trace 정책
+
+현재 저장/출력 구조에서는 fallback 전체 개수만 summary로 확인할 수 있습니다.
+
+```text
+subjectFallbackCallCount
+subjectFallbackResolvedCount
+subjectFallbackDiscardedCount
+```
+
+따라서 어떤 후보가 fallback 대상이었는지, 어떤 chunk에서 fallback이 호출됐는지, 폐기된 후보가 무엇이었는지는 최종 `settingCandidates[]`만으로는 알 수 없습니다. 최종 후보에는 fallback 성공 후의 `entity_name`만 남고, fallback 실패 후보는 저장 전에 제외되기 때문입니다.
+
+후보별 fallback 이력을 확인하려면 별도 trace 구조가 필요합니다.
+
+예시:
+
+```json
+{
+  "chunk_index": 7,
+  "source_chunk_id": "chunk-id",
+  "candidate_id": "candidate-0",
+  "raw_entity_mention": "나는",
+  "original_entity_name": "미상",
+  "resolved_entity_name": "비요른 얀델",
+  "result": "RESOLVED",
+  "discard_reason": null
+}
+```
+
+다만 이 trace를 어디까지 남길지는 정책 결정이 필요합니다.
+
+| 선택지 | 장점 | 주의점 |
+| --- | --- | --- |
+| debug runner JSON에만 남김 | 로컬 검증과 PR 리뷰에 충분하고 DB 영향이 없음 | 운영 이력으로는 조회할 수 없음 |
+| Worker summary JSON에 요약/샘플만 남김 | 분석 job 단위 관측성이 생김 | summary가 커질 수 있어 개수 제한 정책 필요 |
+| `setting_candidates.raw_ai_result_json`에 후보별 trace를 남김 | 저장된 후보와 fallback 이력을 함께 볼 수 있음 | 실패 후 폐기된 후보는 저장 후보가 없어 남기기 어려움 |
+| 별도 로그/실패 이력 테이블에 남김 | 운영 디버깅에 가장 강함 | 스키마와 보존 기간 정책이 필요 |
+
+현재 구현은 trace를 저장하지 않고 count만 남깁니다. 후보별 fallback 위치와 폐기 사유를 제품/운영에서 조회해야 한다면, 위 선택지 중 하나를 정한 뒤 debug 출력, Worker summary, DB 저장 범위를 함께 조정합니다.
+
 ## 후속 작업
 
 - 기존 확정 설정과 비교하는 충돌 검사 흐름을 연결합니다.
 - 프롬프트 정책 위반 후보를 schema validator, 후처리 필터, LLM 재시도 중 어디에서 다룰지 결정합니다.
 - subject fallback의 prompt 품질과 호출 단위가 충분한지 실제 원문으로 검증합니다.
-- fallback에서 폐기된 후보를 로그/summary 이상으로 별도 추적할 필요가 있는지 검토합니다.
+- fallback에서 폐기된 후보와 해소된 후보의 trace를 debug JSON, Worker summary, DB 중 어디에 남길지 정책을 결정합니다.

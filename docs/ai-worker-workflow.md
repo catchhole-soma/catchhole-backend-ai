@@ -445,6 +445,32 @@ previous/next chunk는 판단 문맥으로만 사용합니다. `source_chunk_id`
 - 웹소설은 대화, 회상, 시점 전환이 섞일 수 있습니다.
 - 잘못된 자동 매칭은 후보 누락보다 데이터 오염 위험이 큽니다.
 
+현재 Worker summary에는 fallback 호출/해소/폐기 개수만 남깁니다. 어떤 후보가 fallback 대상이었는지, 어떤 chunk에서 해소됐는지, 어떤 후보가 폐기됐는지는 최종 `settingCandidates[]`만으로는 알 수 없습니다.
+
+후보별 fallback 위치를 확인하려면 별도 trace가 필요합니다.
+
+```json
+{
+  "chunk_index": 7,
+  "source_chunk_id": "chunk-id",
+  "candidate_id": "candidate-0",
+  "raw_entity_mention": "나는",
+  "original_entity_name": "미상",
+  "resolved_entity_name": "비요른 얀델",
+  "result": "RESOLVED",
+  "discard_reason": null
+}
+```
+
+trace 저장 위치는 아직 정책 결정이 필요합니다.
+
+| 선택지 | 용도 | 주의점 |
+| --- | --- | --- |
+| debug runner JSON | 로컬 검증과 PR 리뷰 | 운영 조회 불가 |
+| Worker summary JSON | job 단위 관측성 | summary 크기 제한 필요 |
+| `setting_candidates.raw_ai_result_json` | 저장 후보별 이력 확인 | 폐기 후보는 연결할 row가 없음 |
+| 별도 로그/실패 이력 테이블 | 운영 디버깅 | 스키마/보존 기간 정책 필요 |
+
 ### 8. 캐릭터명 매칭
 
 LLM은 기존 캐릭터 DB와 확정 매칭하지 않습니다. Python resolver가 Spring claim payload의 `knownCharacters`와 후보의 `raw_entity_mention`, `entity_name`을 비교해 `matched_character_id`, `match_status`를 계산합니다.
