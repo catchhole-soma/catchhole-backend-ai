@@ -141,6 +141,7 @@ Spring claim
 -> episode별 S3 원문 청킹
 -> chunk별 캐릭터 설정 후보 추출
 -> evidence quote 위치 보정
+-> 지칭어/placeholder 후보 subject fallback
 -> summaryJson 생성
 -> Spring complete 보고
 ```
@@ -162,6 +163,9 @@ Spring claim
   - LLM이 반환한 `evidence_spans[].quote`를 chunk 원문에서 다시 찾습니다.
   - quote 위치를 `episode_chunks.start_offset`과 더해 회차 전체 기준 offset으로 보정합니다.
   - quote를 찾지 못하면 잘못된 위치를 저장하지 않도록 offset을 `null`로 둡니다.
+- `CharacterSubjectResolver`
+  - `raw_entity_mention`이 지칭어이고 `entity_name`이 `미상`/지칭어인 후보를 current chunk 기준으로 묶어 LLM에 전달합니다.
+  - previous/current/next chunk 문맥으로 주체만 해소하고, 실패한 placeholder 후보는 저장하지 않도록 제외합니다.
 - `SettingCandidateService`
   - 검증된 후보를 `setting_candidates` 저장 모델로 변환합니다.
   - 같은 `analysis_job_id` 기준 기존 후보를 지운 뒤 새 후보를 저장합니다.

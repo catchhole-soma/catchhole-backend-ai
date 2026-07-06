@@ -31,6 +31,10 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - `character_name_resolver.py`
   - `KnownCharacter` 목록과 추출 후보의 `raw_entity_mention`, `entity_name`을 비교합니다.
   - 기존 캐릭터 하나와 확실히 연결되면 `MATCHED`, 후보가 없으면 `UNRESOLVED`, 대명사/복수 후보처럼 위험하면 `AMBIGUOUS`를 반환합니다.
+- `character_subject_resolver.py`
+  - `raw_entity_mention`이 지칭어이고 `entity_name`이 `미상`/지칭어 같은 placeholder인 후보를 LLM으로 한 번 더 해소합니다.
+  - 같은 current chunk에서 나온 fallback 대상 후보를 묶어 previous/current/next chunk 문맥과 함께 한 번에 전달합니다.
+  - 설정 후보를 다시 추출하지 않고 주체만 판단하며, 실패한 placeholder 후보는 저장 전 폐기합니다.
 - `schemas.py`
   - LLM에서 받은 설정 후보 JSON을 검증하기 위한 Python 내부 schema를 정의합니다.
   - FastAPI 응답 DTO가 아니라, 외부 LLM 출력이 저장 가능한 구조인지 확인하는 경계 객체입니다.
@@ -91,7 +95,7 @@ knownCharacters 이름을 한 번 정규화
 | --- | --- | --- |
 | `raw_entity_mention`이 `나`, `내 캐릭터`, `주인공`, `그`, `그녀` 같은 지칭어 + entity가 기존 캐릭터 1명과 매칭 | `MATCHED` | 같은 청크에서 LLM이 구체화한 후보명이 기존 캐릭터 하나와 유일하게 연결되면 문맥 추론을 살림 |
 | `raw_entity_mention`이 지칭어 + entity가 기존 캐릭터 여러 명과 매칭 | `AMBIGUOUS` | LLM 정리명만으로도 하나를 고를 수 없음 |
-| `raw_entity_mention`이 지칭어 + entity가 없거나 `미상`/지칭어 같은 placeholder | `AMBIGUOUS` | 후속 adjacent chunk fallback으로 해소할 대상 |
+| `raw_entity_mention`이 지칭어 + entity가 없거나 `미상`/지칭어 같은 placeholder | LLM subject fallback 대상 | previous/current/next chunk 문맥으로 주체만 해소한 뒤 일반 매칭 로직으로 진행 |
 | `raw_entity_mention`이 지칭어 + entity가 기존 캐릭터와 매칭 실패 | `UNRESOLVED` | 기존 캐릭터와 연결할 근거는 없지만 신규 캐릭터 후보일 수 있음 |
 | `raw_entity_mention` 없음 + `entity_name`도 지칭어 | `AMBIGUOUS` | 비교 가능한 명확한 캐릭터명이 없음 |
 | raw가 기존 캐릭터 여러 명과 매칭 | `AMBIGUOUS` | 어느 캐릭터인지 하나로 확정할 수 없음 |
@@ -103,16 +107,15 @@ knownCharacters 이름을 한 번 정규화
 
 매칭 방식은 완전 일치를 먼저 보고, 이후 한쪽 이름이 다른 쪽에 포함되는 경우를 확인합니다. 단, 한 글자 이름/표현은 오탐이 많으므로 포함 관계 매칭에서 제외합니다.
 
-### adjacent chunk fallback 적용 시 변경 지점
+### adjacent chunk subject fallback
 
-현재 PR에서는 현재 청크 안에서만 캐릭터명을 판단합니다. `raw_entity_mention`이 `나`, `그`, `그녀`, `주인공` 같은 지칭어라도 `entity_name`이 기존 캐릭터 1명과 유일하게 매칭되면 `MATCHED`로 반환합니다.
+`raw_entity_mention`이 `나`, `나는`, `그`, `그녀는`, `주인공` 같은 지칭어이고 `entity_name`이 `미상`/지칭어 같은 placeholder인 후보는 current chunk만으로 주체가 풀리지 않은 상태입니다.
 
-후속 작업에서 previous/current/next chunk를 덧대는 fallback을 적용한다면, placeholder 또는 지칭어만 남은 후보를 먼저 해소하는 단계가 추가되어야 합니다.
+이 경우 단순히 주변 청크에서 기존 캐릭터 이름을 문자열로 찾지 않습니다. 주변에 이름이 등장한다는 사실만으로 지칭 대상을 확정하면 잘못된 캐릭터 설정이 저장될 수 있기 때문입니다.
 
-적용 방향은 다음과 같이 봅니다.
+현재 구현은 fallback 대상 후보를 current chunk 기준으로 묶고, previous/current/next chunk 문맥과 함께 LLM subject resolver에 전달합니다.
 
 ```text
-현재:
 raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터 1명과 매칭
 -> MATCHED
 
@@ -120,29 +123,93 @@ raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터 여러 명과 
 -> AMBIGUOUS
 
 raw_entity_mention이 지칭어 + entity_name이 "미상" 또는 지칭어 같은 placeholder
--> AMBIGUOUS
+-> 같은 current chunk의 fallback 대상 후보를 batch로 묶음
+-> previous/current/next chunk와 knownCharacters를 LLM subject resolver에 전달
+-> resolved_entity_name이 구체 캐릭터명이면 entity_name만 치환한 뒤 일반 매칭 로직으로 진행
+-> resolved_entity_name이 null, "미상", "그녀" 같은 placeholder/지칭어이면 저장 전 폐기
 
 raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터와 매칭 실패
 -> UNRESOLVED
 
-후속 fallback 적용 후:
-raw_entity_mention이 지칭어 + entity_name이 "미상" 또는 지칭어 같은 placeholder
--> previous/current/next chunk로 지칭 대상 해소 시도
--> 해소 성공: entity_name을 실제 후보명으로 치환한 뒤 일반 매칭 로직으로 진행
--> 해소 실패: setting_candidates 저장 전 폐기
-
 raw_entity_mention이 지칭어 + entity_name이 이미 구체 후보명
--> 현재는 fallback을 다시 호출하지 않고 entity_name 기준 매칭 정책으로 진행
+-> fallback을 호출하지 않고 entity_name 기준 매칭 정책으로 진행
 ```
 
-이 fallback은 설정 후보 추출을 다시 하는 단계가 아니라, 이미 추출된 후보의 주체만 해소하는 좁은 resolver로 두는 것이 안전합니다. previous/next chunk는 판단 문맥으로만 사용하고, `source_chunk_id`, `evidence_spans`, offset 기준은 후보가 실제 추출된 current chunk를 유지합니다.
+fallback은 설정 후보 추출을 다시 하는 단계가 아니라, 이미 추출된 후보의 주체만 해소하는 좁은 resolver입니다. previous/next chunk는 판단 문맥으로만 사용하고, `source_chunk_id`, `evidence_spans`, offset 기준은 후보가 실제 추출된 current chunk를 유지합니다.
 
-fallback으로 해소된 후보를 `MATCHED` 또는 `UNRESOLVED`로 넘길 수 있도록, 후속 작업에서는 fallback 결과를 일반 매칭 로직에 다시 태우는 연결 지점이 필요합니다.
+LLM subject resolver는 `MATCHED`, `UNRESOLVED`, `AMBIGUOUS` 같은 최종 매칭 상태를 판단하지 않습니다. LLM이 확실한 주체명만 `resolved_entity_name`으로 반환하면 Python이 후보의 `entity_name`만 치환하고, 이후 기존 `character_name_resolver`가 `knownCharacters`와 비교해 최종 `matched_character_id`, `match_status`를 계산합니다.
+
+`resolved_entity_name`에는 `미상`, `불명`, `unknown`, `나`, `그`, `그녀`, `주인공` 같은 placeholder/지칭어가 들어오면 안 됩니다. LLM이 이런 값을 반환하더라도 Python은 실제 해소 실패로 보고 해당 fallback 후보를 저장하지 않습니다.
+
+예시 입력:
+
+```json
+{
+  "known_characters": [
+    {
+      "character_id": "00000000-0000-0000-0000-000000000101",
+      "name": "비요른 얀델"
+    }
+  ],
+  "context": {
+    "previous_chunk": "비요른 얀델은 낡은 도끼를 들고 있었다.",
+    "current_chunk": "나는 1레벨 바바리안으로 깨어났다.",
+    "next_chunk": "주변에는 다른 인물이 없었다."
+  },
+  "candidates": [
+    {
+      "candidate_id": "candidate-0",
+      "raw_entity_mention": "나는",
+      "entity_name": "미상",
+      "attribute_name": "level",
+      "attribute_value": "1",
+      "evidence_quotes": ["나는 1레벨 바바리안으로 깨어났다."]
+    }
+  ]
+}
+```
+
+예시 응답:
+
+```json
+{
+  "resolutions": [
+    {
+      "candidate_id": "candidate-0",
+      "resolved_entity_name": "비요른 얀델",
+      "reason": "앞뒤 문맥에서 1인칭 서술 주체가 비요른 얀델로 이어진다."
+    }
+  ]
+}
+```
+
+처리 결과:
+
+```text
+candidate-0.entity_name = "비요른 얀델"로 치환
+attribute/value/evidence/source_chunk는 유지
+character_name_resolver가 기존 캐릭터 목록과 비교해 MATCHED / UNRESOLVED / AMBIGUOUS 계산
+```
+
+해소할 수 없는 경우:
+
+```json
+{
+  "resolutions": [
+    {
+      "candidate_id": "candidate-0",
+      "resolved_entity_name": null,
+      "reason": "앞뒤 문맥만으로 주체를 특정할 수 없다."
+    }
+  ]
+}
+```
+
+이 경우 placeholder 후보는 `setting_candidates` 저장 전에 제외합니다. LLM이 `resolved_entity_name`에 `"미상"` 또는 `"그녀"` 같은 문자열을 넣어도 같은 방식으로 제외합니다.
 
 ## 후속 작업
 
 - 기존 확정 설정과 비교하는 충돌 검사 흐름을 연결합니다.
 - 프롬프트 정책 위반 후보를 schema validator, 후처리 필터, LLM 재시도 중 어디에서 다룰지 결정합니다.
-- `나`, `그`, `그녀`, `주인공` 같은 지칭어 후보 중 `entity_name`이 기존 캐릭터 1명과 유일하게 매칭되는 경우는 `MATCHED`로 저장합니다.
-- 후속 작업에서는 중요한 설정 후보지만 현재 청크만으로 주체를 해소하지 못한 경우 `entity_name="미상"`으로 받고, previous/current/next chunk 문맥을 추가로 참고하는 fallback resolver를 검토합니다.
-- fallback으로도 캐릭터명을 해소하지 못한 `미상` 후보는 `setting_candidates`에 저장하지 않고 폐기하며, 폐기 개수를 worker summary에 남기는 방향을 검토합니다.
+- subject fallback의 prompt 품질과 호출 단위가 충분한지 실제 원문으로 검증합니다.
+- fallback에서 폐기된 후보를 로그/summary 이상으로 별도 추적할 필요가 있는지 검토합니다.

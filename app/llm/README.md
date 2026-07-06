@@ -28,6 +28,8 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
   - LLM 호출 결과를 내부에서 전달하기 위한 `dataclass` 값 객체를 둡니다.
 - `prompts/character_setting_extraction.md`
   - 캐릭터 중심 설정 후보 추출 prompt입니다.
+- `prompts/character_subject_resolution.md`
+  - 지칭어/placeholder 후보의 주체만 해소하는 fallback prompt입니다.
 
 ## 현재 추출 방식
 
@@ -38,3 +40,14 @@ JSON 파싱 실패 또는 Python schema 검증 실패는 `CharacterSettingExtrac
 예를 들어 `attribute_name`이 `items`처럼 suffix 없이 오거나, `confidence`가 `0.0`인 응답은 프롬프트상 원하지 않는 값이지만 현재 schema만으로는 통과할 수 있습니다.
 
 OpenAI Structured Outputs의 JSON schema 강제, attribute policy validator, chunk별 재시도 이력 기록은 후속 이슈에서 다룹니다.
+
+## 현재 subject fallback 방식
+
+`CharacterSubjectResolver`는 설정 후보를 다시 추출하지 않고, 이미 추출된 후보 중 지칭어 + placeholder 후보만 대상으로 LLM을 추가 호출합니다.
+
+- 호출 단위는 current chunk 기준 batch입니다.
+- 같은 current chunk에서 나온 fallback 후보는 한 번의 호출로 묶습니다.
+- 입력 문맥은 previous/current/next chunk로 제한합니다.
+- 응답은 후보별 `resolved_entity_name`만 받습니다.
+- `resolved_entity_name`이 null이거나 placeholder/지칭어이면 해소 실패로 보고 저장 후보에서 제외합니다.
+- `MATCHED`, `UNRESOLVED`, `AMBIGUOUS` 같은 최종 매칭 상태는 Python의 `character_name_resolver`가 계산합니다.

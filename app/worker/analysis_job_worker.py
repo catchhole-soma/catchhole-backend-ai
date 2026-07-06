@@ -6,7 +6,13 @@ from uuid import UUID
 from app.domain.enums import AnalysisStep
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.character_name_resolver import KnownCharacter
+from app.analysis.schemas import ExtractedSettingCandidate
 from app.analysis.setting_extractor import CharacterSettingExtractor
+from app.analysis.character_subject_resolver import (
+    CharacterSubjectResolver,
+    SubjectResolutionChunkContext,
+    SubjectResolutionResult,
+)
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.db.session import get_session_maker
 from app.models.episode_chunk import EpisodeChunk
@@ -38,12 +44,15 @@ class WorkerRunSummary:
 
 # SpringWorkerClient가 가져야 하는 메서드 규격
 class SpringWorkerApi(Protocol):
+    # Spring 내부 API에서 처리 가능한 analysis job 하나를 점유한다.
     def claim(self, model_name: str | None = None, current_step: str | None = None) -> WorkerAnalysisJobPayload | None:
         pass
 
+    # claim 직후 현재 Worker가 어떤 단계에 진입했는지 Spring에 보고한다.
     def report_progress(self, analysis_job_id: UUID, current_step: str) -> None:
         pass
 
+    # 모든 episode/chunk 분석과 후보 저장이 끝난 뒤 성공 결과를 Spring에 보고한다.
     def complete(
         self,
         analysis_job_id: UUID,
@@ -53,12 +62,14 @@ class SpringWorkerApi(Protocol):
     ) -> None:
         pass
 
+    # 분석 중 예외가 발생하면 Spring에 실패 사유를 보고한다.
     def fail(self, analysis_job_id: UUID, error_message: str) -> None:
         pass
 
 
 # Worker가 회차 원문을 읽고 청킹 결과를 저장할 때 기대하는 규격(테스트를 위한 목적이 커서 이후에 구현 완료되면 바로 주입 가능)
 class EpisodeChunkingApi(Protocol):
+    # episode의 content_s3_key로 S3 원문을 읽고, 기존 chunk를 교체 저장한 뒤 새 chunk 목록을 반환한다.
     def replace_chunks_from_s3_content(
         self,
         episode_id: UUID,
@@ -69,6 +80,7 @@ class EpisodeChunkingApi(Protocol):
 
 # Worker가 chunk 하나에서 설정 후보를 추출할 때 기대하는 규격(테스트를 위한 목적이 커서 이후에 구현 완료되면 바로 주입 가능)
 class SettingExtractorApi(Protocol):
+    # chunk_text를 LLM에 전달해 캐릭터 설정 후보를 추출한다.
     def extract_from_chunk(
         self,
         source_chunk_id: UUID,
@@ -79,6 +91,17 @@ class SettingExtractorApi(Protocol):
         pass
 
 
+class SubjectResolverApi(Protocol):
+    # 지칭어/placeholder 후보만 앞뒤 chunk 문맥으로 해소하고 저장 가능한 후보 목록을 반환한다.
+    def resolve_candidates(
+        self,
+        context: SubjectResolutionChunkContext,
+        candidates: list[ExtractedSettingCandidate],
+        known_characters: list[KnownCharacter],
+    ) -> SubjectResolutionResult:
+        pass
+
+
 # 분석 job 하나를 claim하고, 진행/완료/실패 보고까지 수행하는 Worker
 class AnalysisJobWorker:
     def __init__(
@@ -86,12 +109,14 @@ class AnalysisJobWorker:
         spring_client: SpringWorkerApi | None = None,
         chunking_service: EpisodeChunkingApi | None = None,
         setting_extractor: SettingExtractorApi | None = None,
+        subject_resolver: SubjectResolverApi | None = None,
         setting_candidate_service: SettingCandidateService | None = None,
         model_name: str | None = None,
     ) -> None:
         self.spring_client = spring_client or SpringWorkerClient.from_settings()
         self._chunking_service = chunking_service
         self._setting_extractor = setting_extractor
+        self._subject_resolver = subject_resolver
         self._setting_candidate_service = setting_candidate_service
         self.model_name = model_name
 
@@ -143,7 +168,18 @@ class AnalysisJobWorker:
 
     def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
         chunk_count = 0
+        subject_fallback_call_count = 0
+        subject_fallback_resolved_count = 0
+        subject_fallback_discarded_count = 0
         save_items: list[SettingCandidateSaveItem] = []
+        # claim payload의 기존 캐릭터 목록은 모든 episode/chunk에서 같은 기준으로 재사용한다.
+        known_characters = [
+            KnownCharacter(
+                character_id=character.character_id,
+                name=character.name,
+            )
+            for character in payload.known_characters
+        ]
 
         # Spring claim payload에 포함된 회차들을 순서대로 처리한다.
         for episode in payload.episodes:
@@ -155,7 +191,7 @@ class AnalysisJobWorker:
             chunk_count += len(chunks)
 
             # 2. 저장된 chunk를 LLM 추출기에 넘겨 설정 후보를 생성한다.
-            for chunk in chunks:
+            for index, chunk in enumerate(chunks):
                 extraction_result = self._get_setting_extractor().extract_from_chunk(
                     source_chunk_id=chunk.id,
                     chunk_text=chunk.chunk_text,
@@ -168,12 +204,29 @@ class AnalysisJobWorker:
                     chunk_text=chunk.chunk_text,
                     chunk_start_offset=chunk.start_offset,
                 )
+                # 현재 chunk에서 나온 후보 중 "나/그녀/미상"처럼 주체가 풀리지 않은 후보만
+                # previous/current/next chunk 문맥으로 한 번 더 판단한다.
+                subject_resolution_result = self._get_subject_resolver().resolve_candidates(
+                    context=SubjectResolutionChunkContext(
+                        # 현재 chunk의 앞뒤 텍스트만 꺼내 resolver 입력으로 넘긴다.
+                        previous_chunk_text=chunks[index - 1].chunk_text if index > 0 else None,
+                        current_chunk_text=chunk.chunk_text,
+                        next_chunk_text=chunks[index + 1].chunk_text if index + 1 < len(chunks) else None,
+                    ),
+                    candidates=resolved_candidates,
+                    known_characters=known_characters,
+                )
+                # resolver는 저장 가능한 최종 후보 목록과 fallback 처리 개수를 함께 반환한다.
+                # 해소 실패한 placeholder 후보는 result.candidates에서 제외되므로 아래 save_items에도 들어가지 않는다.
+                subject_fallback_call_count += subject_resolution_result.fallback_call_count
+                subject_fallback_resolved_count += subject_resolution_result.fallback_resolved_count
+                subject_fallback_discarded_count += subject_resolution_result.fallback_discarded_count
                 save_items.extend(
                     SettingCandidateSaveItem(
                         episode_id=episode.episode_id,
                         candidate=candidate,
                     )
-                    for candidate in resolved_candidates
+                    for candidate in subject_resolution_result.candidates
                 )
 
         # 3. 검증된 후보들을 setting_candidates에 저장하고, 실제 저장된 개수를 완료 요약에 사용한다.
@@ -181,13 +234,7 @@ class AnalysisJobWorker:
             work_id=payload.work_id,
             analysis_job_id=payload.analysis_job_id,
             save_items=save_items,
-            known_characters=[
-                KnownCharacter(
-                    character_id=character.character_id,
-                    name=character.name,
-                )
-                for character in payload.known_characters
-            ],
+            known_characters=known_characters,
         )
 
         #Python dict를 JSON 문자열로 바꿈
@@ -196,6 +243,9 @@ class AnalysisJobWorker:
                 "episodeCount": len(payload.episodes),
                 "chunkCount": chunk_count,
                 "candidateCount": len(saved_candidates),
+                "subjectFallbackCallCount": subject_fallback_call_count,
+                "subjectFallbackResolvedCount": subject_fallback_resolved_count,
+                "subjectFallbackDiscardedCount": subject_fallback_discarded_count,
             },
             ensure_ascii=False,
         )
@@ -220,6 +270,12 @@ class AnalysisJobWorker:
         if self._setting_extractor is None:
             self._setting_extractor = CharacterSettingExtractor(model=self.model_name)
         return self._setting_extractor
+
+    def _get_subject_resolver(self) -> SubjectResolverApi:
+        if self._subject_resolver is None:
+            # 지칭어/placeholder 후보의 주체 해소를 맡는 기본 resolver를 필요할 때 초기화한다.
+            self._subject_resolver = CharacterSubjectResolver(model=self.model_name)
+        return self._subject_resolver
 
     # 검증된 설정 후보를 setting_candidates 테이블에 저장할 서비스를 필요할 때 초기화한다.
     def _get_setting_candidate_service(self) -> SettingCandidateService:
