@@ -86,10 +86,17 @@ class CharacterSubjectResolver:
         candidates: list[ExtractedSettingCandidate],
         known_characters: list[KnownCharacter],
     ) -> SubjectResolutionResult:
+        # raw 표현도 없고 entity_name도 "미상/나/그녀"처럼 불분명한 후보는
+        # fallback에 보낼 원문 지칭 표현이 없으므로 저장 후보에서 먼저 제외한다.
+        candidate_pool, pre_discarded_count = _filter_candidates_with_subject(candidates)
+
         # 명확한 캐릭터명 후보는 기존 name resolver로 충분하므로 fallback 대상에서 제외한다.
-        fallback_targets = _build_fallback_targets(candidates)
+        fallback_targets = _build_fallback_targets(candidate_pool)
         if not fallback_targets:
-            return SubjectResolutionResult(candidates=candidates)
+            return SubjectResolutionResult(
+                candidates=candidate_pool,
+                fallback_discarded_count=pre_discarded_count,
+            )
 
         # 같은 current chunk에서 나온 fallback 대상들은 한 번의 LLM 호출로 같이 판단한다.
         resolution_response = self._request_resolution(
@@ -105,7 +112,7 @@ class CharacterSubjectResolver:
 
         resolved_candidate_by_id: dict[str, ExtractedSettingCandidate] = {}
         resolved_count = 0
-        discarded_count = 0
+        discarded_count = pre_discarded_count
 
         for fallback_target in fallback_targets:
             # 프롬프트 계약상 모든 candidate_id가 돌아와야 한다.
@@ -131,7 +138,7 @@ class CharacterSubjectResolver:
         # 최종적으로 저장 흐름에 넘길 후보 목록(기존 순서도 보장한다.)
         final_candidates: list[ExtractedSettingCandidate] = []
         # 원래 candidates 리스트에 다시 같은 임시표를 붙여서 LLM 응답과 대조한다.
-        for indexed_candidate in _index_candidates(candidates):
+        for indexed_candidate in _index_candidates(candidate_pool):
             # fallback 대상이 아니었다면 그대로 넣는다.
             if indexed_candidate.candidate_id not in fallback_target_ids:
                 final_candidates.append(indexed_candidate.candidate)
@@ -205,12 +212,44 @@ def _build_fallback_targets(
     ]
 
 
+def _filter_candidates_with_subject(
+    candidates: list[ExtractedSettingCandidate],
+) -> tuple[list[ExtractedSettingCandidate], int]:
+    # raw/entity 둘 다 주체 판단에 쓸 수 없는 후보는 저장해도 검토자가 해소할 근거가 없다.
+    filtered_candidates: list[ExtractedSettingCandidate] = []
+    discarded_count = 0
+
+    for candidate in candidates:
+        if _should_discard_without_subject(candidate):
+            discarded_count += 1
+            continue
+        filtered_candidates.append(candidate)
+
+    return filtered_candidates, discarded_count
+
+
 def _index_candidates(candidates: Iterable[ExtractedSettingCandidate]) -> list[_IndexedCandidate]:
     # 원본 후보에는 임시 ID가 없으므로 chunk 내부 순서를 기반으로 안정적인 candidate_id를 만든다.
     return [
         _IndexedCandidate(candidate_id=f"candidate-{index}", candidate=candidate)
         for index, candidate in enumerate(candidates)
     ]
+
+
+def _should_discard_without_subject(candidate: ExtractedSettingCandidate) -> bool:
+    normalized_raw_mention = normalize_character_name(candidate.raw_entity_mention)
+    if normalized_raw_mention:
+        return False
+
+    normalized_entity_name = normalize_character_name(candidate.entity_name)
+
+    # raw가 없는데 entity_name까지 비어 있거나 placeholder/지칭어라면
+    # "누구의 설정인지 모르는 후보"라서 fallback 없이 저장 전 제외한다.
+    return (
+        not normalized_entity_name
+        or normalized_entity_name in PLACEHOLDER_ENTITY_NAMES
+        or normalized_entity_name in AMBIGUOUS_MENTIONS
+    )
 
 
 def _is_fallback_target(candidate: ExtractedSettingCandidate) -> bool:
