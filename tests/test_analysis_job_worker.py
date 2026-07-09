@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
+from app.analysis.character_subject_resolver import SubjectResolutionResult
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisEpisodePayload, WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunSummary
@@ -114,8 +115,84 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "episodeCount": 1,
         "chunkCount": 1,
         "candidateCount": 2,
+        "subjectFallbackCallCount": 0,
+        "subjectFallbackResolvedCount": 0,
+        "subjectFallbackDiscardedCount": 0,
     }
     assert spring_client.fail_calls == []
+
+
+def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
+    current_chunk_text = "나는 1레벨 바바리안으로 깨어났다."
+    resolved_candidate = _candidate(
+        UUID("00000000-0000-0000-0000-000000000100"),
+        attribute_name="level",
+        entity_name="비요른 얀델",
+        raw_entity_mention="나",
+        quote="나는 1레벨 바바리안으로 깨어났다.",
+    )
+    spring_client = FakeSpringWorkerClient(payload=_payload())
+    chunking_service = FakeEpisodeChunkingService(
+        chunks=[
+            _chunk(0, "비요른 얀델은 낡은 도끼를 들고 있었다."),
+            _chunk(1, current_chunk_text),
+            _chunk(2, "주변에는 다른 인물이 없었다."),
+        ]
+    )
+    setting_extractor = FakeSettingExtractor(
+        candidate_groups=[
+            [],
+            [
+                _candidate(
+                    chunking_service.chunks[1].id,
+                    attribute_name="level",
+                    entity_name="미상",
+                    raw_entity_mention="나",
+                    quote="나는 1레벨 바바리안으로 깨어났다.",
+                )
+            ],
+            [],
+        ]
+    )
+    subject_resolver = FakeSubjectResolver(
+        result=SubjectResolutionResult(
+            candidates=[resolved_candidate],
+            fallback_call_count=1,
+            fallback_resolved_count=1,
+            fallback_discarded_count=0,
+        )
+    )
+    setting_candidate_service = FakeSettingCandidateService()
+    worker = AnalysisJobWorker(
+        spring_client=spring_client,
+        chunking_service=chunking_service,
+        setting_extractor=setting_extractor,
+        subject_resolver=subject_resolver,
+        setting_candidate_service=setting_candidate_service,
+    )
+
+    result = worker.run_once()
+
+    assert result.claimed is True
+    assert subject_resolver.requests == [
+        {
+            "previous_chunk_text": "비요른 얀델은 낡은 도끼를 들고 있었다.",
+            "current_chunk_text": current_chunk_text,
+            "next_chunk_text": "주변에는 다른 인물이 없었다.",
+            "candidate_count": 1,
+            "known_character_names": ["비요른 얀델"],
+        }
+    ]
+    assert setting_candidate_service.saved_candidates == [resolved_candidate]
+    summary = json.loads(spring_client.complete_calls[0][1])
+    assert summary == {
+        "episodeCount": 1,
+        "chunkCount": 3,
+        "candidateCount": 1,
+        "subjectFallbackCallCount": 1,
+        "subjectFallbackResolvedCount": 1,
+        "subjectFallbackDiscardedCount": 0,
+    }
 
 
 class SuccessfulAnalysisJobWorker(AnalysisJobWorker):
@@ -233,6 +310,34 @@ class FakeSettingCandidateService:
         return self.saved_candidates
 
 
+class FakeSubjectResolver:
+    def __init__(self, result: SubjectResolutionResult) -> None:
+        self.result = result
+        self.requests = []
+
+    def resolve_candidates(
+        self,
+        context,
+        candidates,
+        known_characters,
+    ) -> SubjectResolutionResult:
+        if not candidates:
+            return SubjectResolutionResult(candidates=[])
+
+        self.requests.append(
+            {
+                "previous_chunk_text": context.previous_chunk_text,
+                "current_chunk_text": context.current_chunk_text,
+                "next_chunk_text": context.next_chunk_text,
+                "candidate_count": len(candidates),
+                "known_character_names": [
+                    character.name for character in known_characters
+                ],
+            }
+        )
+        return self.result
+
+
 def _payload() -> WorkerAnalysisJobPayload:
     return WorkerAnalysisJobPayload(
         analysis_job_id=ANALYSIS_JOB_ID,
@@ -262,18 +367,25 @@ def _payload() -> WorkerAnalysisJobPayload:
     )
 
 
-def _candidate(source_chunk_id: UUID, attribute_name: str) -> ExtractedSettingCandidate:
+def _candidate(
+    source_chunk_id: UUID,
+    attribute_name: str,
+    entity_name: str = "비요른",
+    raw_entity_mention: str | None = None,
+    quote: str = "비요른은 1레벨 바바리안이다.",
+) -> ExtractedSettingCandidate:
     return ExtractedSettingCandidate(
         source_chunk_id=source_chunk_id,
         entity_type="CHARACTER",
-        entity_name="비요른",
+        entity_name=entity_name,
+        raw_entity_mention=raw_entity_mention,
         attribute_name=attribute_name,
         attribute_value="1",
         value_type="NUMBER",
         value_json={"value": 1},
         evidence_spans=[
             ExtractedEvidenceSpan(
-                quote="비요른은 1레벨 바바리안이다.",
+                quote=quote,
                 start_offset=None,
                 end_offset=None,
             )

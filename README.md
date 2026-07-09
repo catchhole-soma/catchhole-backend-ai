@@ -35,8 +35,8 @@ uvicorn app.main:app --reload
 .venv/bin/python scripts/run_analysis_worker.py
 ```
 
-S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 후보 추출, 근거 위치 보정을
-확인하려면 다음 runner를 사용합니다.
+S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 후보 추출, 근거 위치 보정,
+지칭어 subject fallback, 캐릭터 매칭 상태 계산을 확인하려면 다음 runner를 사용합니다.
 
 ```bash
 .venv/bin/python scripts/run_episode_text_analysis_debug.py \
@@ -44,11 +44,14 @@ S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 
   --episode-no 1 \
   --episode-title "1화" \
   --max-chunks 1 \
+  --known-characters-json ./samples/known-characters.json \
   --output-json ./tmp/episode-1-debug.json
 ```
 
 `episodeId`, `workId`, `analysisJobId`는 넘기지 않으면 실행할 때마다 가상 UUID를 생성합니다.
-이 runner는 `episode_chunks`나 `setting_candidates`에 저장하지 않고, 결과를 콘솔과 JSON 파일로만 출력합니다.
+`--known-characters-json`을 넘기면 Spring claim payload의 `knownCharacters`처럼 기존 캐릭터 목록을 주입해
+`matched_character_id`, `match_status`까지 확인할 수 있습니다. 이 runner는 `episode_chunks`나
+`setting_candidates`에 저장하지 않고, 결과를 콘솔과 JSON 파일로만 출력합니다.
 
 Mac에서 Anaconda Python을 사용할 경우:
 
