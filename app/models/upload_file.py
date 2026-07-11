@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Integer, String
+from sqlalchemy import BigInteger, Integer, String
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,7 +17,7 @@ class UploadFile(TimestampMixin, Base):
     original_filename: Mapped[str] = mapped_column(String(255))
     mime_type: Mapped[str | None] = mapped_column(String(100))
     storage_url: Mapped[str | None] = mapped_column(String(512))
-    file_size: Mapped[int] = mapped_column(Integer)
+    file_size: Mapped[int] = mapped_column(BigInteger)
     detected_episode_start_no: Mapped[int | None] = mapped_column(Integer)
     detected_episode_end_no: Mapped[int | None] = mapped_column(Integer)
     detected_episode_count: Mapped[int | None] = mapped_column(Integer)

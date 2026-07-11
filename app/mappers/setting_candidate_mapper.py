@@ -47,8 +47,6 @@ class SettingCandidateMapper:
             confidence=_to_decimal(candidate.confidence),
             review_status=SettingCandidateReviewStatus.PENDING_REVIEW,
             raw_ai_result_json=candidate.model_dump(mode="json"),
-            created_at=None,
-            updated_at=None,
         )
 
 
