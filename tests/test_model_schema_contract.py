@@ -1,3 +1,4 @@
+from pgvector.sqlalchemy import VECTOR
 from sqlalchemy import BigInteger
 
 from app.models.episode_chunk import EpisodeChunk
@@ -29,3 +30,14 @@ def test_episode_chunk_timestamps_are_not_nullable() -> None:
     assert EpisodeChunk.__table__.c.updated_at.nullable is False
     assert EpisodeChunk.__table__.c.created_at.default is not None
     assert EpisodeChunk.__table__.c.updated_at.default is not None
+
+
+def test_episode_chunk_embedding_columns_match_flyway_schema() -> None:
+    embedding_column = EpisodeChunk.__table__.c.embedding
+
+    assert isinstance(embedding_column.type, VECTOR)
+    assert embedding_column.type.dim == 1536
+    assert embedding_column.nullable is True
+    assert EpisodeChunk.__table__.c.embedding_model.type.length == 100
+    assert EpisodeChunk.__table__.c.embedding_version.type.length == 50
+    assert EpisodeChunk.__table__.c.embedded_at.nullable is True
