@@ -107,6 +107,10 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `LLM_API_KEY`: 설정 추출/검증에 사용할 LLM API 키
 - `LLM_MODEL`: 설정 추출에 사용할 LLM 모델명
 - `OPENAI_RESPONSES_API_URL`: OpenAI Responses API endpoint
+- `EMBEDDING_MODEL`: 청크와 검색 query에 공통으로 사용할 embedding 모델명
+- `EMBEDDING_DIMENSIONS`: pgvector 컬럼과 일치해야 하는 embedding 차원. 현재 1536
+- `EMBEDDING_VERSION`: embedding 생성 로직의 재생성 판단용 버전
+- `OPENAI_EMBEDDINGS_API_URL`: OpenAI Embeddings API endpoint
 - `SPRING_INTERNAL_API_BASE_URL`: Spring 내부 Worker API base URL. 기본값 `http://localhost:8080`은 로컬 개발용 값입니다.
 - `SPRING_INTERNAL_API_KEY`: Spring 내부 Worker API 호출에 사용할 `X-Internal-Api-Key` 값
 

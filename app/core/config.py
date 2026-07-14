@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,6 +26,13 @@ class Settings(BaseSettings):
     openai_responses_api_url: str = "https://api.openai.com/v1/responses"
     # LLM 응답 JSON 파싱/검증 실패 시 전체 시도 횟수
     llm_extraction_max_attempts: int = 3
+
+    # 청크와 검색 query가 함께 사용하는 embedding 계약
+    embedding_model: str = "text-embedding-3-small"
+    # DB의 episode_chunks.embedding vector(1536)과 반드시 동일해야 함
+    embedding_dimensions: Literal[1536] = 1536
+    embedding_version: str = "v1"
+    openai_embeddings_api_url: str = "https://api.openai.com/v1/embeddings"
 
     #Spring 내부 API 주소와 내부 API key를 읽음
     spring_internal_api_base_url: str = "http://localhost:8080"
