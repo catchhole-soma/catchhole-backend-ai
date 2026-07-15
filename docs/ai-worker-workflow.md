@@ -1,6 +1,6 @@
 # AI Worker Workflow
 
-Python AI Worker가 Spring 내부 Worker API로 분석 작업을 claim한 뒤, S3 원문을 읽고 청킹/LLM 추출/후보 저장/완료 보고까지 수행하는 흐름을 정리합니다.
+Python AI Worker가 Spring 내부 Worker API로 분석 작업을 claim한 뒤, S3 원문을 읽고 청킹/임베딩/LLM 추출/후보 저장/완료 보고까지 수행하는 흐름을 정리합니다.
 
 프로젝트 전체 분석 job 생성, 업로드 batch와 episode 연결, 사용자-facing 조회/수정/확정 API는 Spring 백엔드 문서가 기준입니다. 이 문서는 Spring 문서의 "Python AI Worker" 구간을 Python 코드 기준으로 자세히 펼친 문서입니다.
 
@@ -12,6 +12,7 @@ Spring claim
 -> episode별 S3 원문 raw text 조회
 -> 분석 기준 원문으로 normalize
 -> 정규화 원문 기준 paragraph/chunk offset 계산
+-> 저장된 chunk_text batch 임베딩 및 episode_chunks 갱신
 -> chunk_text를 LLM에 전달
 -> LLM 설정 후보 JSON 파싱/검증
 -> quote를 chunk_text에서 다시 찾아 evidence offset 보정
@@ -71,7 +72,12 @@ flowchart TD
     P --> Q["기존 episode_chunks 삭제"]
     Q --> R["새 episode_chunks 저장"]
 
-    R --> S["저장된 chunk 순회"]
+    R --> RA["chunk_text 목록<br/>OpenAI Embeddings API 호출"]
+    RA --> RB{"임베딩 생성/저장 성공?"}
+    RB -- "예" --> RC["embedding, model, version,<br/>embedded_at 갱신"]
+    RB -- "아니오" --> RD["실패 로그 기록<br/>embedding은 NULL 유지"]
+    RC --> S["저장된 chunk 순회"]
+    RD --> S
     S --> T["LLM user prompt 구성<br/>metadata + chunk_text"]
     T --> U["OpenAI Responses API 호출"]
     U --> V{"JSON parse / schema 검증 성공?"}
@@ -98,7 +104,7 @@ flowchart TD
     AH --> AI["기존 캐릭터 매칭 상태 계산<br/>MATCHED / UNRESOLVED / AMBIGUOUS"]
     AI --> AJ["analysis_job_id 기준<br/>기존 setting_candidates 삭제"]
     AJ --> AK["새 setting_candidates 저장"]
-    AK --> AL["summaryJson 생성<br/>episodeCount, chunkCount, candidateCount"]
+    AK --> AL["summaryJson 생성<br/>chunk/embedding/candidate 처리 개수"]
     AL --> AM["SpringWorkerClient.complete()"]
     AM --> AN["WorkerRunResult(claimed=true) 반환"]
 
@@ -118,6 +124,9 @@ sequenceDiagram
     participant Chunking as EpisodeS3ChunkingService
     participant Storage as S3TextObjectStorage
     participant ChunkService as EpisodeChunkService
+    participant EmbeddingService as ChunkEmbeddingService
+    participant EmbeddingsAPI as OpenAI Embeddings API
+    participant ChunkRepo as EpisodeChunkRepository
     participant Extractor as CharacterSettingExtractor
     participant LLM as OpenAIResponsesClient
     participant Evidence as evidence_span_resolver
@@ -144,6 +153,18 @@ sequenceDiagram
             ChunkService->>ChunkService: split_into_chunks(normalized_text)
             ChunkService->>ChunkService: delete old chunks + save new chunks
             ChunkService-->>Worker: List<EpisodeChunk>
+
+            Worker->>EmbeddingService: embed_chunks(chunks)
+            EmbeddingService->>EmbeddingsAPI: create embeddings(chunk_text list)
+            alt 임베딩 성공
+                EmbeddingsAPI-->>EmbeddingService: vectors + model + usage
+                EmbeddingService->>ChunkRepo: update_embeddings(updates)
+                ChunkRepo-->>EmbeddingService: updated chunks
+                EmbeddingService-->>Worker: ChunkEmbeddingResult
+            else API 또는 DB 갱신 실패
+                EmbeddingService--xWorker: exception
+                Worker->>Worker: 실패 개수/로그 기록 후 계속
+            end
 
             loop chunk in chunks
                 Worker->>Extractor: extract_from_chunk(sourceChunkId, chunkText, episodeNo, title)
@@ -296,6 +317,17 @@ raw_text
 - chunk 저장은 episode 단위로 즉시 일어납니다.
 - 이후 LLM 추출이나 후보 저장에서 실패하면 Spring에는 fail을 보고하지만, 이미 성공적으로 저장된 `episode_chunks`는 별도 보상 삭제를 하지 않습니다.
 - 같은 episode를 다시 처리하면 기존 chunk를 삭제하고 새 chunk로 교체하므로 chunk가 중복 누적되지 않습니다.
+
+### 4.5. 저장된 chunk batch 임베딩
+
+`ChunkEmbeddingService.embed_chunks()`는 한 회차에서 방금 저장한 청크 텍스트 목록을 OpenAI Embeddings API에 한 번에 전달합니다. 응답 벡터는 `data[].index` 기준 입력 순서로 검증된 뒤 다음 필드에 저장됩니다.
+
+- `embedding`
+- `embedding_model`
+- `embedding_version`
+- `embedded_at`
+
+API 호출은 DB 세션을 열기 전에 수행하며, 임베딩 필드 갱신은 회차 단위의 짧은 트랜잭션으로 처리합니다. API 호출이나 저장에 실패하면 Worker는 해당 회차의 청크 수를 `embeddingFailedChunkCount`에 기록하고 설정 후보 추출을 계속합니다. 따라서 분석 작업은 성공할 수 있지만 일부 청크의 `embedding`은 `NULL`일 수 있으며, 이 청크는 backfill 대상입니다.
 
 ### 5. chunk별 LLM 설정 후보 추출
 
@@ -562,6 +594,8 @@ save_items 전체 수집
 {
   "episodeCount": 3,
   "chunkCount": 18,
+  "embeddedChunkCount": 15,
+  "embeddingFailedChunkCount": 3,
   "candidateCount": 42,
   "subjectFallbackCallCount": 4,
   "subjectFallbackResolvedCount": 3,
@@ -589,6 +623,7 @@ save_items 전체 수집
 | 단계 | 저장 대상 | 저장 시점 | 트랜잭션/부수효과 |
 | --- | --- | --- | --- |
 | chunk 교체 | `episode_chunks` | episode별 S3 원문을 읽은 직후 | 해당 episode의 기존 chunk 삭제 후 새 chunk 저장 |
+| chunk 임베딩 | `episode_chunks` 임베딩 필드 | episode별 chunk 교체 직후 | 외부 API 호출 후 별도 트랜잭션으로 갱신, 실패 시 NULL 유지하고 분석 계속 |
 | 후보 수집 | Python 메모리 `save_items` | chunk별 LLM 추출 후 | DB 저장 전까지 메모리에 누적 |
 | 후보 교체 | `setting_candidates` | 모든 episode/chunk 처리 완료 후 | `analysis_job_id` 기준 기존 후보 삭제 후 새 후보 저장 |
 | 작업 완료 | Spring `analysis_jobs` | 후보 저장 성공 후 | Spring 내부 complete API 호출 |
@@ -612,6 +647,7 @@ save_items 전체 수집
 | S3 원문 읽기 | Python |
 | 원문 정규화/청킹 | Python |
 | `episode_chunks` 저장 | Python |
+| chunk 임베딩 생성과 저장 | Python |
 | LLM 호출과 JSON 검증/재시도 | Python |
 | evidence quote 위치 보정 | Python |
 | 지칭어 subject fallback | Python |
@@ -636,21 +672,27 @@ save_items 전체 수집
    - claim payload의 `content_s3_key`로 S3 원문을 읽는 흐름을 봅니다.
 6. `app/services/episode_chunk_service.py`
    - 원문 정규화, 청킹, 기존 chunk 교체 저장 흐름을 봅니다.
-7. `app/chunking/text_normalizer.py`
+7. `app/embeddings/service.py`
+   - 저장된 청크를 batch 임베딩하고 DB에 반영하는 트랜잭션 경계를 봅니다.
+8. `app/embeddings/client.py`
+   - OpenAI 응답의 순서, 개수, 차원 검증 흐름을 봅니다.
+9. `app/repositories/episode_chunk_repository.py`
+   - 임베딩 관련 필드만 갱신하고 누락된 청크를 거부하는 흐름을 봅니다.
+10. `app/chunking/text_normalizer.py`
    - `raw_text`가 분석 기준 문자열로 바뀌는 규칙을 봅니다.
-8. `app/chunking/chunk_splitter.py`
+11. `app/chunking/chunk_splitter.py`
    - 문단 offset과 chunk offset이 어떻게 계산되는지 봅니다.
-9. `app/analysis/setting_extractor.py`
+12. `app/analysis/setting_extractor.py`
    - LLM 프롬프트 구성, 호출, JSON 검증, 재시도 흐름을 봅니다.
-10. `app/analysis/evidence_span_resolver.py`
+13. `app/analysis/evidence_span_resolver.py`
     - LLM이 반환한 quote를 chunk 원문에서 찾아 회차 전체 기준 offset으로 보정하는 흐름을 봅니다.
-11. `app/analysis/character_subject_resolver.py`
+14. `app/analysis/character_subject_resolver.py`
     - 지칭어 + placeholder 후보를 current chunk 기준 batch로 LLM에 보내 주체만 해소하는 흐름을 봅니다.
-12. `app/analysis/character_name_resolver.py`
+15. `app/analysis/character_name_resolver.py`
     - `raw_entity_mention`, `entity_name`, `knownCharacters`로 기존 캐릭터 매칭 상태를 계산하는 흐름을 봅니다.
-13. `app/services/setting_candidate_service.py`
+16. `app/services/setting_candidate_service.py`
     - 검증된 추출 결과가 `setting_candidates`로 저장되는 흐름을 봅니다.
-14. `app/mappers/setting_candidate_mapper.py`
+17. `app/mappers/setting_candidate_mapper.py`
     - LLM 후보와 매칭 결과가 DB 모델 필드로 어떻게 옮겨지는지 봅니다.
 
 ## adjacent chunk fallback 적용 지점

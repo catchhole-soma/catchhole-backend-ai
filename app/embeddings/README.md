@@ -2,16 +2,17 @@
 
 임베딩 생성과 pgvector 검색 흐름을 두는 패키지입니다.
 
-현재 OpenAI Embeddings API Client와 모델·차원·버전 설정까지 구현되어 있습니다. 아직 설정 후보 추출/청크 저장 흐름에는 연결하지 않았으며, 설정 후보의 근거 표시는 `setting_candidates.source_chunk_id`, `evidence_spans`, `episode_chunks`의 원문 위치 정보를 우선 사용합니다.
+현재 OpenAI Embeddings API Client와 모델·차원·버전 설정, 청크 임베딩 저장 서비스까지 구현되어 있습니다. Worker는 회차별 청크를 저장한 직후 `chunk_text` 목록을 한 번에 임베딩하고, 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.
 
 다만 오류 리포트에 RAG를 붙이는 방향으로 결정되면, 사용자가 제보한 오류 내용이나 분석 결과의 의심 지점과 의미적으로 가까운 원문 chunk를 찾아야 합니다. 이 경우에는 단순 offset/quote 기반 근거 표시만으로는 부족하므로 `episode_chunks`에 대한 임베딩과 pgvector 검색 흐름이 필요합니다.
 
 ## 역할
 
-후속 `NVM-141` 작업에서 다음 책임을 이 패키지에 둡니다.
+`NVM-141`에서 다음 책임을 이 패키지에 둡니다.
 
 - `episode_chunks.chunk_text`를 임베딩합니다.
 - pgvector 저장/검색에 필요한 provider client를 감쌉니다.
+- 생성된 벡터와 모델·버전·생성 시각을 저장합니다.
 - 사용자 질문, 오류 리포트 내용, 신규 문장과 관련된 기존 원문 chunk를 Top-K로 조회합니다.
 - 작품, 회차, 캐릭터 같은 필터 조건을 검색에 적용할지 검토합니다.
 
@@ -31,6 +32,19 @@
 
 - `client.py`: OpenAI Embeddings API 호출과 응답 차원 검증
 - `responses.py`: batch embedding 응답 내부 값 객체
+- `service.py`: 청크 목록 임베딩과 `episode_chunks` 갱신 트랜잭션 관리
+
+## 생성과 저장 흐름
+
+```text
+episode별 chunk 교체 저장
+-> chunk_text 목록을 OpenAI Embeddings API에 한 번에 전달
+-> 응답 index 기준으로 입력 순서 복원 및 차원 검증
+-> embedding / embedding_model / embedding_version / embedded_at 갱신
+-> commit
+```
+
+외부 API를 기다리는 동안 DB 트랜잭션을 점유하지 않도록 벡터 생성 후 세션을 엽니다. API나 DB 갱신에 실패하면 해당 회차 청크의 임베딩은 `NULL`로 남기고 Worker는 설정 후보 추출을 계속합니다. 실패한 청크는 후속 backfill 대상입니다.
 
 ## OpenAI Embeddings API 응답 예시
 
@@ -61,14 +75,13 @@
 
 `client.py`는 `data[].index`를 기준으로 벡터를 입력 순서대로 정렬하고, 응답 개수와 벡터 차원을 검증합니다. 이후 벡터와 모델명, 토큰 수, 원본 응답을 `EmbeddingBatchResponse`로 변환합니다.
 
-## 예상 파일
+## 후속 파일
 
-- `targets.py`: 어떤 원문 chunk를 임베딩할지 결정
 - `search.py`: pgvector 기반 Top-K 검색
 - `report_context.py`: 오류 리포트 RAG에 넘길 검색 context 구성
 
 ## 후속 논의
 
-- 모든 `episode_chunks`를 임베딩할지, 특정 분석 대상만 임베딩할지 결정해야 합니다.
-- 추출용 chunk 크기와 검색용 chunk 크기를 동일하게 가져갈지 분리할지 검토해야 합니다.
-- 임베딩 모델, vector 차원, pgvector index 정책은 `NVM-141`에서 함께 결정합니다.
+- 현재는 분석 작업에서 새로 만든 모든 `episode_chunks`를 같은 청킹 단위로 임베딩합니다.
+- API 요청 크기 제한을 고려한 backfill batch 크기는 후속 작업에서 정합니다.
+- pgvector index와 Top-K 필터/정렬 정책은 검색 구현 시 검증합니다.

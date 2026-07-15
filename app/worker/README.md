@@ -139,6 +139,7 @@ progress(currentStep=SETTING_EXTRACTION)
 Spring claim
 -> progress 보고
 -> episode별 S3 원문 청킹
+-> episode별 저장 청크 batch 임베딩 및 DB 반영
 -> chunk별 캐릭터 설정 후보 추출
 -> evidence quote 위치 보정
 -> 지칭어/placeholder 후보 subject fallback
@@ -150,8 +151,8 @@ Spring claim
 
 - `analysis_job_worker.py`
   - claim된 payload의 episode 목록을 순회합니다.
-  - episode별 청킹 서비스와 chunk별 설정 추출기를 호출합니다.
-  - 생성된 episode/chunk/candidate 개수를 `summaryJson`으로 모아 Spring에 완료 보고합니다.
+  - episode별 청킹·임베딩 서비스와 chunk별 설정 추출기를 호출합니다.
+  - 생성된 episode/chunk/embedding/candidate 개수를 `summaryJson`으로 모아 Spring에 완료 보고합니다.
 - `EpisodeS3ChunkingService`
   - episode_id로 DB의 episode를 조회합니다.
   - episode의 `content_s3_key`로 S3 원문을 읽습니다.
@@ -159,6 +160,10 @@ Spring claim
 - `CharacterSettingExtractor`
   - 저장된 chunk 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
   - LLM 응답 JSON을 `app/analysis/schemas.py` 기준으로 검증합니다.
+- `ChunkEmbeddingService`
+  - episode의 저장된 청크 텍스트를 한 번에 임베딩합니다.
+  - 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.
+  - 실패 시 Worker가 오류를 기록하고 설정 후보 추출을 계속하므로, 해당 임베딩은 후속 backfill 대상이 됩니다.
 - `evidence_span_resolver.py`
   - LLM이 반환한 `evidence_spans[].quote`를 chunk 원문에서 다시 찾습니다.
   - quote 위치를 `episode_chunks.start_offset`과 더해 회차 전체 기준 offset으로 보정합니다.

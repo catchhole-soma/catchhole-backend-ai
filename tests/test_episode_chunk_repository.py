@@ -1,7 +1,13 @@
+from datetime import datetime
 from uuid import uuid4
 
+import pytest
+
 from app.models.episode_chunk import EpisodeChunk
-from app.repositories.episode_chunk_repository import EpisodeChunkRepository
+from app.repositories.episode_chunk_repository import (
+    EpisodeChunkEmbeddingUpdate,
+    EpisodeChunkRepository,
+)
 
 
 def test_save_all_adds_episode_chunks() -> None:
@@ -38,6 +44,59 @@ def test_delete_by_episode_id_executes_delete_statement() -> None:
     assert session.executed_statement is not None
 
 
+def test_update_embeddings_updates_only_embedding_fields_in_request_order() -> None:
+    # 조회 결과 순서와 무관하게 요청한 청크 순서대로 임베딩 필드만 갱신하는 흐름을 검증한다.
+    first_chunk = _episode_chunk(chunk_index=0)
+    second_chunk = _episode_chunk(chunk_index=1)
+    embedded_at = datetime(2026, 7, 15, 12, 0, 0)
+    session = FakeSession(scalar_items=[second_chunk, first_chunk])
+    repository = EpisodeChunkRepository(session)
+    embedding_updates = [
+        _embedding_update(first_chunk, [0.1, 0.2], embedded_at),
+        _embedding_update(second_chunk, [0.3, 0.4], embedded_at),
+    ]
+
+    updated_chunks = repository.update_embeddings(embedding_updates)
+
+    assert updated_chunks == [first_chunk, second_chunk]
+    assert first_chunk.embedding == [0.1, 0.2]
+    assert second_chunk.embedding == [0.3, 0.4]
+    assert first_chunk.embedding_model == "text-embedding-3-small"
+    assert first_chunk.embedding_version == "v1"
+    assert first_chunk.embedded_at == embedded_at
+    assert session.scalar_statement is not None
+
+
+def test_update_embeddings_rejects_missing_chunk_before_updating_any_chunk() -> None:
+    # 재청킹 등으로 대상 하나가 사라졌다면 일부 청크만 갱신하지 않고 전체 요청을 거부하는지 검증한다.
+    existing_chunk = _episode_chunk(chunk_index=0)
+    missing_chunk = _episode_chunk(chunk_index=1)
+    session = FakeSession(scalar_items=[existing_chunk])
+    repository = EpisodeChunkRepository(session)
+    embedding_updates = [
+        _embedding_update(existing_chunk, [0.1], datetime.now()),
+        _embedding_update(missing_chunk, [0.2], datetime.now()),
+    ]
+
+    with pytest.raises(ValueError, match="Embedding update targets do not exist"):
+        repository.update_embeddings(embedding_updates)
+
+    assert existing_chunk.embedding is None
+
+
+def test_update_embeddings_rejects_duplicate_chunk_ids() -> None:
+    # 같은 청크를 한 저장 요청에서 중복 갱신하는 잘못된 입력을 조회 전에 차단하는지 검증한다.
+    chunk = _episode_chunk(chunk_index=0)
+    update = _embedding_update(chunk, [0.1], datetime.now())
+    session = FakeSession(scalar_items=[chunk])
+    repository = EpisodeChunkRepository(session)
+
+    with pytest.raises(ValueError, match="Duplicate chunk IDs"):
+        repository.update_embeddings([update, update])
+
+    assert session.scalar_statement is None
+
+
 def _episode_chunk(chunk_index: int) -> EpisodeChunk:
     return EpisodeChunk(
         id=uuid4(),
@@ -51,6 +110,20 @@ def _episode_chunk(chunk_index: int) -> EpisodeChunk:
         metadata_json=None,
         created_at=None,
         updated_at=None,
+    )
+
+
+def _embedding_update(
+    chunk: EpisodeChunk,
+    embedding: list[float],
+    embedded_at: datetime,
+) -> EpisodeChunkEmbeddingUpdate:
+    return EpisodeChunkEmbeddingUpdate(
+        chunk_id=chunk.id,
+        embedding=embedding,
+        embedding_model="text-embedding-3-small",
+        embedding_version="v1",
+        embedded_at=embedded_at,
     )
 
 

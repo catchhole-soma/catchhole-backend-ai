@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import json
+import logging
 from typing import Protocol
 from uuid import UUID
 
@@ -15,6 +16,7 @@ from app.analysis.character_subject_resolver import (
 )
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.db.session import get_session_maker
+from app.embeddings.service import ChunkEmbeddingResult, ChunkEmbeddingService
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.services.episode_chunk_service import EpisodeChunkService
@@ -24,6 +26,8 @@ from app.services.setting_candidate_service import (
     SettingCandidateService,
 )
 from app.storage.s3 import S3TextObjectStorage
+
+logger = logging.getLogger(__name__)
 
 # Worker 실행 결과를 담는 값 객체
 @dataclass(frozen=True)
@@ -78,6 +82,12 @@ class EpisodeChunkingApi(Protocol):
         pass
 
 
+# Worker가 저장된 청크의 임베딩 생성과 DB 반영을 요청할 때 기대하는 규격
+class ChunkEmbeddingApi(Protocol):
+    def embed_chunks(self, chunks: list[EpisodeChunk]) -> ChunkEmbeddingResult:
+        pass
+
+
 # Worker가 chunk 하나에서 설정 후보를 추출할 때 기대하는 규격(테스트를 위한 목적이 커서 이후에 구현 완료되면 바로 주입 가능)
 class SettingExtractorApi(Protocol):
     # chunk_text를 LLM에 전달해 캐릭터 설정 후보를 추출한다.
@@ -108,6 +118,7 @@ class AnalysisJobWorker:
         self,
         spring_client: SpringWorkerApi | None = None,
         chunking_service: EpisodeChunkingApi | None = None,
+        chunk_embedding_service: ChunkEmbeddingApi | None = None,
         setting_extractor: SettingExtractorApi | None = None,
         subject_resolver: SubjectResolverApi | None = None,
         setting_candidate_service: SettingCandidateService | None = None,
@@ -115,6 +126,7 @@ class AnalysisJobWorker:
     ) -> None:
         self.spring_client = spring_client or SpringWorkerClient.from_settings()
         self._chunking_service = chunking_service
+        self._chunk_embedding_service = chunk_embedding_service
         self._setting_extractor = setting_extractor
         self._subject_resolver = subject_resolver
         self._setting_candidate_service = setting_candidate_service
@@ -168,6 +180,8 @@ class AnalysisJobWorker:
 
     def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
         chunk_count = 0
+        embedded_chunk_count = 0
+        embedding_failed_chunk_count = 0
         subject_fallback_call_count = 0
         subject_fallback_resolved_count = 0
         subject_fallback_discarded_count = 0
@@ -190,7 +204,21 @@ class AnalysisJobWorker:
             )
             chunk_count += len(chunks)
 
-            # 2. 저장된 chunk를 LLM 추출기에 넘겨 설정 후보를 생성한다.
+            # 2. 저장된 청크들을 한 번에 임베딩한다. 실패한 청크는 NULL 상태로 남겨
+            # 이후 backfill할 수 있게 하고, 현재 분석의 설정 후보 추출은 계속한다.
+            try:
+                embedding_result = self._get_chunk_embedding_service().embed_chunks(chunks)
+                embedded_chunk_count += embedding_result.embedded_chunk_count
+            except Exception:
+                embedding_failed_chunk_count += len(chunks)
+                logger.exception(
+                    "Chunk embedding failed; setting extraction will continue. "
+                    "episode_id=%s chunk_count=%s",
+                    episode.episode_id,
+                    len(chunks),
+                )
+
+            # 3. 저장된 chunk를 LLM 추출기에 넘겨 설정 후보를 생성한다.
             for index, chunk in enumerate(chunks):
                 extraction_result = self._get_setting_extractor().extract_from_chunk(
                     source_chunk_id=chunk.id,
@@ -229,7 +257,7 @@ class AnalysisJobWorker:
                     for candidate in subject_resolution_result.candidates
                 )
 
-        # 3. 검증된 후보들을 setting_candidates에 저장하고, 실제 저장된 개수를 완료 요약에 사용한다.
+        # 4. 검증된 후보들을 setting_candidates에 저장하고, 실제 저장된 개수를 완료 요약에 사용한다.
         saved_candidates = self._get_setting_candidate_service().replace_candidates_for_analysis_job(
             work_id=payload.work_id,
             analysis_job_id=payload.analysis_job_id,
@@ -242,6 +270,8 @@ class AnalysisJobWorker:
             {
                 "episodeCount": len(payload.episodes),
                 "chunkCount": chunk_count,
+                "embeddedChunkCount": embedded_chunk_count,
+                "embeddingFailedChunkCount": embedding_failed_chunk_count,
                 "candidateCount": len(saved_candidates),
                 "subjectFallbackCallCount": subject_fallback_call_count,
                 "subjectFallbackResolvedCount": subject_fallback_resolved_count,
@@ -264,6 +294,14 @@ class AnalysisJobWorker:
                 chunk_service=EpisodeChunkService(session_factory=session_factory),
             )
         return self._chunking_service
+
+    # 저장된 청크의 벡터를 생성하고 episode_chunks에 반영할 서비스를 초기화한다.
+    def _get_chunk_embedding_service(self) -> ChunkEmbeddingApi:
+        if self._chunk_embedding_service is None:
+            self._chunk_embedding_service = ChunkEmbeddingService(
+                session_factory=get_session_maker(),
+            )
+        return self._chunk_embedding_service
 
     # llm에 넣을 프롬프트와 api호출을 할 서비스(CharacterSettingExtractor)를 초기화 하는 작업만 한다.
     def _get_setting_extractor(self) -> SettingExtractorApi:
