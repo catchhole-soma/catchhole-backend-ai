@@ -86,7 +86,7 @@
 | `EpisodeChunkDraft.paragraph_end_index` | `episode_chunks.paragraph_end_index` | 청크에 포함된 마지막 문단 번호입니다. |
 | mapper/service에서 선택 입력 | `episode_chunks.metadata_json` | 전처리 태그, 업로드 방식 같은 부가 정보를 선택적으로 저장합니다. 기본값은 `null`입니다. |
 
-`embedding`은 기존 ERD 초안에 포함되어 있지만 이번 청킹 이슈에서는 구현하지 않습니다. 임베딩 모델, vector 차원, pgvector 인덱스 정책은 검색 PoC 이슈에서 함께 결정합니다.
+`embedding`은 청킹 자체의 결과가 아니라, 저장된 청크를 입력으로 `ChunkEmbeddingService`가 생성하는 후속 값입니다. 현재 Flyway V1의 `vector(1536)` 컬럼과 HNSW cosine 인덱스, Python 모델 매핑 및 신규 청크 임베딩 저장까지 구현되어 있습니다. pgvector Top-K 검색과 품질 검증은 NVM-141의 후속 PR에서 연결합니다.
 
 ## LLM 근거 위치 처리 기준
 

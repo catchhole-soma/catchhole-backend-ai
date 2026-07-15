@@ -126,11 +126,11 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 
 각 패키지의 세부 책임은 패키지 내부 README에서 관리합니다.
 
-- `app/analysis/README.md`: 설정 추출, 근거 위치 계산, 충돌 검사
+- `app/analysis/README.md`: 설정 추출, 근거 위치 계산, 캐릭터 주체 해소
 - `app/chunking/README.md`: 원문 정규화, 문단 분리, 청킹, offset 기준
 - `app/clients/README.md`: Spring 내부 API 같은 외부 HTTP client
 - `app/db/README.md`: DB session과 트랜잭션 경계
-- `app/embeddings/README.md`: 임베딩 대상 선정과 RAG 검색
+- `app/embeddings/README.md`: 청크 임베딩 생성·저장과 pgvector Top-K 검색 기반
 - `app/exceptions/README.md`: FastAPI 공통 예외 응답과 ErrorCode 매핑
 - `app/llm/README.md`: LLM client, prompt, 구조화 응답
 - `app/mappers/README.md`: 계층 간 객체 변환

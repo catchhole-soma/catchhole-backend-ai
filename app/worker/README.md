@@ -143,6 +143,7 @@ Spring claim
 -> chunk별 캐릭터 설정 후보 추출
 -> evidence quote 위치 보정
 -> 지칭어/placeholder 후보 subject fallback
+-> setting_candidates 교체 저장
 -> summaryJson 생성
 -> Spring complete 보고
 ```
@@ -163,7 +164,8 @@ Spring claim
 - `ChunkEmbeddingService`
   - episode의 저장된 청크 텍스트를 한 번에 임베딩합니다.
   - 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.
-  - 실패 시 Worker가 오류를 기록하고 설정 후보 추출을 계속하므로, 해당 임베딩은 후속 backfill 대상이 됩니다.
+  - 현재는 임베딩 단계의 예외를 Worker가 기록하고 설정 후보 추출을 계속하므로, commit되지 않은 임베딩은 후속 backfill 대상이 됩니다.
+  - 외부 API 실패와 청크 누락 같은 데이터 정합성 실패를 구분하는 정책은 후속 작업으로 남아 있습니다.
 - `evidence_span_resolver.py`
   - LLM이 반환한 `evidence_spans[].quote`를 chunk 원문에서 다시 찾습니다.
   - quote 위치를 `episode_chunks.start_offset`과 더해 회차 전체 기준 offset으로 보정합니다.
@@ -176,7 +178,7 @@ Spring claim
   - 같은 `analysis_job_id` 기준 기존 후보를 지운 뒤 새 후보를 저장합니다.
 
 현재 단계에서는 검증된 후보를 `setting_candidates` 테이블에 `PENDING_REVIEW` 상태로 저장합니다.
-검증 실패 재시도, 동일 인물 병합, 일회성 캐릭터 필터링은 후속 작업에서 연결합니다.
+LLM 응답의 JSON 파싱·schema 검증 실패 재시도는 현재 연결되어 있습니다. 동일 인물 병합과 일회성 캐릭터 필터링은 후속 작업에서 다룹니다.
 
 ## 로컬 Worker 실행
 
