@@ -270,6 +270,7 @@ subjectFallbackDiscardedCount
 
 - NVM-143에서 설정 후보와 기존 fact, 직접 근거, pgvector Top-K 결과를 조합합니다.
 - NVM-144에서 NVM-143이 모은 검증 문맥을 기준으로 최종 충돌 여부를 판정합니다.
+- 설정 추출 재시도와 subject fallback을 포함한 LLM token usage를 Worker 단위로 집계해 Spring 완료 보고에 연결합니다.
 - 프롬프트 정책 위반 후보를 schema validator, 후처리 필터, LLM 재시도 중 어디에서 다룰지 결정합니다.
 - subject fallback의 prompt 품질과 호출 단위가 충분한지 실제 원문으로 검증합니다.
 - fallback에서 폐기된 후보와 해소된 후보의 trace를 debug JSON, Worker summary, DB 중 어디에 남길지 정책을 결정합니다.

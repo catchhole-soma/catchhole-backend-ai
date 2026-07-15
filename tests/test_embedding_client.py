@@ -119,8 +119,18 @@ def test_from_settings_uses_embedding_contract() -> None:
 
 
 def test_settings_reject_dimensions_that_do_not_match_database_vector() -> None:
-    with pytest.raises(ValidationError):
-        Settings(embedding_dimensions=1024)  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="must match episode_chunks.embedding"):
+        Settings(embedding_dimensions=1024)
+
+
+def test_settings_parses_embedding_dimensions_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_DIMENSIONS", "1536")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.embedding_dimensions == 1536
 
 
 def _client(

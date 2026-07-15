@@ -31,6 +31,27 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
 - `prompts/character_subject_resolution.md`
   - 지칭어/placeholder 후보의 주체만 해소하는 fallback prompt입니다.
 
+## 토큰 사용량 상태
+
+`OpenAIResponsesClient`는 OpenAI 응답의 `usage.input_tokens`, `usage.output_tokens`를 읽어 `LlmTextResponse`에 담습니다. 여기까지는 구현되어 있지만, 현재 설정 추출 흐름은 다음 단계에서 token usage를 전달하지 않습니다.
+
+```text
+OpenAIResponsesClient
+-> LlmTextResponse(input_token_count, output_token_count)
+-> CharacterSettingExtractor / CharacterSubjectResolver에서 응답 text만 사용
+-> WorkerRunSummary에는 합산되지 않음
+-> Spring complete 요청의 inputTokenCount / outputTokenCount는 None
+```
+
+따라서 현재 `analysis_jobs.input_token_count`, `output_token_count`에는 설정 추출 LLM 사용량이 저장되지 않습니다. 후속 토큰 집계 작업에서는 다음 호출을 모두 합산해야 합니다.
+
+- 청크별 설정 후보 추출 호출
+- JSON 파싱 또는 schema 검증 실패로 다시 호출한 재시도
+- 지칭어/placeholder 후보를 처리하는 subject fallback 호출
+- 임베딩 호출의 입력 토큰
+
+성공한 마지막 호출만이 아니라 실제 비용이 발생한 재시도까지 포함해야 합니다. 분석 작업이 최종 실패한 경우에는 현재 Spring fail API에 토큰 필드가 없으므로, 실패 작업의 사용량 보존 범위와 API 계약도 함께 결정해야 합니다.
+
 ## 현재 추출 방식
 
 현재 단계에서는 prompt로 JSON 응답을 요구하고, Python schema로 결과를 검증합니다.

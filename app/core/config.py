@@ -1,6 +1,6 @@
 from functools import lru_cache
-from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # .env 또는 환경변수에서 설정값을 읽어오는 클래스 
@@ -30,9 +30,18 @@ class Settings(BaseSettings):
     # 청크와 검색 query가 함께 사용하는 embedding 계약
     embedding_model: str = "text-embedding-3-small"
     # DB의 episode_chunks.embedding vector(1536)과 반드시 동일해야 함
-    embedding_dimensions: Literal[1536] = 1536
+    embedding_dimensions: int = 1536
     embedding_version: str = "v1"
     openai_embeddings_api_url: str = "https://api.openai.com/v1/embeddings"
+
+    @field_validator("embedding_dimensions")
+    @classmethod
+    def validate_embedding_dimensions(cls, embedding_dimensions: int) -> int:
+        if embedding_dimensions != 1536:
+            raise ValueError(
+                "EMBEDDING_DIMENSIONS must match episode_chunks.embedding vector(1536)."
+            )
+        return embedding_dimensions
 
     #Spring 내부 API 주소와 내부 API key를 읽음
     spring_internal_api_base_url: str = "http://localhost:8080"
