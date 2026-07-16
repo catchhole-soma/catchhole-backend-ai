@@ -7,6 +7,7 @@ from app.models.episode_chunk import EpisodeChunk
 from app.repositories.episode_chunk_repository import (
     EpisodeChunkEmbeddingUpdate,
     EpisodeChunkRepository,
+    EpisodeChunkSearchResult,
 )
 
 
@@ -97,6 +98,96 @@ def test_update_embeddings_rejects_duplicate_chunk_ids() -> None:
     assert session.scalar_statement is None
 
 
+def test_search_similar_chunks_returns_results_with_episode_number_and_similarity() -> None:
+    # DB 조회 row를 이후 Service가 사용할 검색 결과 객체로 변환하는지 확인한다.
+    chunk = _episode_chunk(chunk_index=0)
+    session = FakeSession(execute_rows=[(chunk, 7, 0.82)])
+    repository = EpisodeChunkRepository(session)
+    work_id = uuid4()
+
+    results = repository.search_similar_chunks(
+        query_embedding=[0.1, 0.2],
+        work_id=work_id,
+        embedding_model="text-embedding-3-small",
+        embedding_version="v1",
+        top_k=3,
+    )
+
+    assert results == [
+        EpisodeChunkSearchResult(
+            chunk=chunk,
+            episode_no=7,
+            similarity=0.82,
+        )
+    ]
+    assert session.executed_statement is not None
+
+
+def test_search_similar_chunks_applies_scope_and_cosine_top_k_conditions() -> None:
+    # 작품·회차·제외 ID·임베딩 계약과 cosine Top-K 조건이 SQL에 모두 포함되는지 검증한다.
+    session = FakeSession()
+    repository = EpisodeChunkRepository(session)
+
+    repository.search_similar_chunks(
+        query_embedding=[0.1, 0.2],
+        work_id=uuid4(),
+        embedding_model="text-embedding-3-small",
+        embedding_version="v1",
+        top_k=5,
+        episode_no_from=2,
+        episode_no_to=8,
+        excluded_chunk_ids=[uuid4(), uuid4()],
+    )
+
+    statement = session.executed_statement
+    assert statement is not None
+    sql = str(statement)
+    assert "JOIN episodes" in sql
+    assert "episodes.work_id" in sql
+    assert "episodes.episode_no >=" in sql
+    assert "episodes.episode_no <=" in sql
+    assert "episode_chunks.id NOT IN" in sql
+    assert "episode_chunks.embedding IS NOT NULL" in sql
+    assert "episode_chunks.embedding_model" in sql
+    assert "episode_chunks.embedding_version" in sql
+    assert "<=>" in sql
+    assert "ORDER BY" in sql
+    assert statement._limit_clause.value == 5
+
+
+@pytest.mark.parametrize(
+    ("query_embedding", "top_k", "episode_no_from", "episode_no_to", "message"),
+    [
+        ([], 5, None, None, "Query embedding must not be empty"),
+        ([0.1], 0, None, None, "Top-K must be greater than zero"),
+        ([0.1], 5, 9, 3, "Episode number range is invalid"),
+    ],
+)
+def test_search_similar_chunks_rejects_invalid_conditions_before_query(
+    query_embedding: list[float],
+    top_k: int,
+    episode_no_from: int | None,
+    episode_no_to: int | None,
+    message: str,
+) -> None:
+    # DB가 해석하기 어려운 빈 벡터·잘못된 개수·역전된 회차 범위를 조회 전에 차단한다.
+    session = FakeSession()
+    repository = EpisodeChunkRepository(session)
+
+    with pytest.raises(ValueError, match=message):
+        repository.search_similar_chunks(
+            query_embedding=query_embedding,
+            work_id=uuid4(),
+            embedding_model="text-embedding-3-small",
+            embedding_version="v1",
+            top_k=top_k,
+            episode_no_from=episode_no_from,
+            episode_no_to=episode_no_to,
+        )
+
+    assert session.executed_statement is None
+
+
 def _episode_chunk(chunk_index: int) -> EpisodeChunk:
     return EpisodeChunk(
         id=uuid4(),
@@ -138,8 +229,13 @@ class FakeScalarResult:
 
 class FakeSession:
     # 실제 DB session 대신 Repository가 호출한 메서드와 전달된 값을 기록한다.
-    def __init__(self, scalar_items: list[EpisodeChunk] | None = None) -> None:
+    def __init__(
+        self,
+        scalar_items: list[EpisodeChunk] | None = None,
+        execute_rows: list[tuple[EpisodeChunk, int, float]] | None = None,
+    ) -> None:
         self.scalar_items = scalar_items or []
+        self.execute_rows = execute_rows or []
         self.added_items: list[EpisodeChunk] = []
         self.scalar_statement = None
         self.executed_statement = None
@@ -151,5 +247,15 @@ class FakeSession:
         self.scalar_statement = statement
         return FakeScalarResult(self.scalar_items)
 
-    def execute(self, statement) -> None:
+    def execute(self, statement):
         self.executed_statement = statement
+        return FakeExecuteResult(self.execute_rows)
+
+
+class FakeExecuteResult:
+    # SQLAlchemy execute(...).all()의 row 목록 반환 흐름을 흉내 낸다.
+    def __init__(self, rows: list[tuple[EpisodeChunk, int, float]]) -> None:
+        self.rows = rows
+
+    def all(self) -> list[tuple[EpisodeChunk, int, float]]:
+        return self.rows
