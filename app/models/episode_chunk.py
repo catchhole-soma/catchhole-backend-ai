@@ -1,6 +1,8 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Integer, Text
+from pgvector.sqlalchemy import VECTOR
+from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -21,3 +23,7 @@ class EpisodeChunk(TimestampMixin, Base):
     paragraph_start_index: Mapped[int] = mapped_column(Integer)
     paragraph_end_index: Mapped[int] = mapped_column(Integer)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB)
+    embedding: Mapped[list[float] | None] = mapped_column(VECTOR(1536))
+    embedding_model: Mapped[str | None] = mapped_column(String(100))
+    embedding_version: Mapped[str | None] = mapped_column(String(50))
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))

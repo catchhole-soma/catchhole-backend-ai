@@ -31,8 +31,11 @@ Spring 기준으로는 Service 계층에 가깝습니다. Repository, storage, m
   - `Episode.content_s3_key`를 조회해 S3 원문을 읽습니다.
   - 읽은 원문을 `EpisodeChunkService`에 넘겨 청킹 저장을 수행합니다.
 
+## 현재 연결 상태
+
+- Spring claim payload 기반 Worker가 episode별로 `EpisodeS3ChunkingService`를 호출합니다.
+- `analysis_jobs` 진행률, 완료, 실패는 DB를 직접 변경하지 않고 Spring 내부 API client를 통해 보고합니다.
+
 ## 후속 작업
 
-- Spring claim payload 기반 Worker 실행 흐름에서 `EpisodeS3ChunkingService`를 호출합니다.
-- `analysis_jobs` 진행률, 완료, 실패 보고는 Spring 내부 API client를 통해 수행합니다.
 - `upload_files.storage_url` 기준 원본 파일 로드는 필요한 시점에 별도 Service 또는 메서드로 분리합니다.

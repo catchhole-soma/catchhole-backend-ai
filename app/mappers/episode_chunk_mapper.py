@@ -21,6 +21,4 @@ class EpisodeChunkMapper:
             paragraph_start_index=draft.paragraph_start_index,
             paragraph_end_index=draft.paragraph_end_index,
             metadata_json=metadata_json,
-            created_at=None,
-            updated_at=None,
         )

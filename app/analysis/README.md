@@ -9,8 +9,9 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - 원문 청크를 입력으로 받아 설정 후보를 추출합니다.
 - LLM 응답 JSON을 Python 내부 검증 schema로 확인합니다.
 - 추출 결과를 `setting_candidates` 저장 구조에 맞는 중간 결과로 정리합니다.
+- 근거 문장을 원문에서 다시 찾아 회차 전체 기준 위치를 계산합니다.
 - 추출 후보의 캐릭터명 표현을 기존 캐릭터 목록과 비교해 매칭 상태를 계산합니다.
-- 후속 단계에서 근거 위치 계산, 충돌 검사, 요약 생성 로직을 연결합니다.
+- NVM-143의 검증 근거 수집과 NVM-144의 충돌 판정은 후속 단계에서 연결합니다.
 
 다음 책임은 Analysis에 넣지 않습니다.
 
@@ -267,7 +268,9 @@ subjectFallbackDiscardedCount
 
 ## 후속 작업
 
-- 기존 확정 설정과 비교하는 충돌 검사 흐름을 연결합니다.
+- NVM-143에서 설정 후보와 기존 fact, 직접 근거, pgvector Top-K 결과를 조합합니다.
+- NVM-144에서 NVM-143이 모은 검증 문맥을 기준으로 최종 충돌 여부를 판정합니다.
+- 설정 추출 재시도와 subject fallback을 포함한 LLM token usage를 Worker 단위로 집계해 Spring 완료 보고에 연결합니다.
 - 프롬프트 정책 위반 후보를 schema validator, 후처리 필터, LLM 재시도 중 어디에서 다룰지 결정합니다.
 - subject fallback의 prompt 품질과 호출 단위가 충분한지 실제 원문으로 검증합니다.
 - fallback에서 폐기된 후보와 해소된 후보의 trace를 debug JSON, Worker summary, DB 중 어디에 남길지 정책을 결정합니다.

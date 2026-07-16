@@ -19,14 +19,16 @@ Python AI 서버가 PostgreSQL을 직접 읽거나 써야 할 때 사용하는 S
   - `created_at`, `updated_at` 같은 공통 timestamp 컬럼을 정의합니다.
 - `analysis_job.py`
   - Spring의 `analysis_jobs` 테이블과 매핑됩니다.
-  - 분석 작업 상태, 현재 단계, 실패 사유, 요약 정보를 읽고 갱신할 때 사용합니다.
+  - 보조 상태 조회 API에서 분석 작업 상태, 현재 단계, 실패 사유와 요약 정보를 읽습니다.
+  - 진행·완료·실패 상태 변경은 Python이 DB에 직접 반영하지 않고 Spring 내부 Worker API로 보고합니다.
 - `episode.py`
   - Spring의 `episodes` 테이블과 매핑됩니다.
   - 회차 메타데이터와 S3 원문 key를 읽을 때 사용합니다.
 - `episode_chunk.py`
   - 청킹 결과를 저장할 `episode_chunks` 테이블과 매핑됩니다.
   - LLM 입력 단위와 근거 위치 계산에 필요한 offset, 문단 범위를 저장합니다.
-  - 현재 Spring 쪽에는 아직 대응 엔티티가 없으므로 DB 스키마 반영 협의가 필요합니다.
+  - `vector(1536)` 임베딩과 모델·버전·생성 시각을 저장합니다.
+  - 별도 Java Entity 없이 Spring Flyway V1이 테이블을 생성하고 Python SQLAlchemy가 읽고 씁니다.
 - `setting_candidate.py`
   - Spring의 `setting_candidates` 테이블과 매핑됩니다.
   - LLM이 추출한 사용자 검토 전 설정 후보를 저장합니다.
@@ -43,7 +45,6 @@ Python AI 서버가 PostgreSQL을 직접 읽거나 써야 할 때 사용하는 S
   - Spring의 `works` 테이블과 매핑됩니다.
   - 분석 작업이 어느 작품에 속하는지 확인할 때 사용합니다.
 
-## 예정 모델
+## 후속 확장
 
-- `RagEmbeddingTarget`
-  - 임베딩 대상 저장 또는 검색 흐름에 사용할 예정입니다.
+NVM-141의 검색 결과는 별도 DB 테이블이나 `RagEmbeddingTarget` 모델을 추가하지 않고 내부 DTO로 반환합니다. `SettingCandidate`와 기존 fact를 조합하는 검증 문맥 객체는 NVM-143에서 검색 인터페이스가 확정된 뒤 정의합니다.
