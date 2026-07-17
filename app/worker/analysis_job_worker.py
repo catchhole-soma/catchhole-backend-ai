@@ -4,7 +4,6 @@ import logging
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.enums import AnalysisStep
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.schemas import ExtractedSettingCandidate
@@ -16,11 +15,12 @@ from app.analysis.character_subject_resolver import (
 )
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.db.session import get_session_maker
+from app.domain.enums import AnalysisStep
+from app.embeddings.exceptions import RecoverableEmbeddingProviderError
 from app.embeddings.services.episode_chunk_embedding import (
     EpisodeChunkEmbeddingResult,
     EpisodeChunkEmbeddingService,
 )
-from app.embeddings.exceptions import RecoverableEmbeddingProviderError
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.services.episode_chunk_service import EpisodeChunkService
@@ -171,7 +171,7 @@ class AnalysisJobWorker:
                 error_message=self._error_message(exc),
             )
             raise
-        
+
         # 분석 job 하나를 정상적으로 처리했음을 반환
         return WorkerRunResult(
             claimed=True,
@@ -209,9 +209,11 @@ class AnalysisJobWorker:
             chunk_count += len(chunks)
 
             # 2. 저장된 청크들을 한 번에 임베딩한다. 일시적인 provider 장애일 때만
-            # NULL 상태로 남겨 backfill 대상으로 두고, 현재 설정 후보 추출을 계속한다.
+            # NULL 상태로 남기고 현재 설정 후보 추출을 계속한다.
             try:
-                embedding_result = self._get_episode_chunk_embedding_service().embed_chunks(chunks)
+                embedding_result = (
+                    self._get_episode_chunk_embedding_service().embed_chunks(chunks)
+                )
                 embedded_chunk_count += embedding_result.embedded_chunk_count
             except RecoverableEmbeddingProviderError:
                 embedding_failed_chunk_count += len(chunks)
@@ -269,7 +271,7 @@ class AnalysisJobWorker:
             known_characters=known_characters,
         )
 
-        #Python dict를 JSON 문자열로 바꿈
+        # 분석 결과 개수를 Spring 완료 API에 전달할 JSON 문자열로 만든다.
         summary_json = json.dumps(
             {
                 "episodeCount": len(payload.episodes),
@@ -288,7 +290,7 @@ class AnalysisJobWorker:
     def _error_message(self, exc: Exception) -> str:
         message = str(exc) or exc.__class__.__name__
         return message[:1000]
-    
+
     # S3에 접근해서 에피소드 원문을 청크로 나눌 EpisodeS3ChunkingService를 초기화 하는 작업만 한다.
     def _get_chunking_service(self) -> EpisodeChunkingApi:
         if self._chunking_service is None:

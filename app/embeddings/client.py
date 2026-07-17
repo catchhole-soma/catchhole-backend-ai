@@ -33,7 +33,7 @@ class OpenAIEmbeddingsClient:
         self.embeddings_api_url = embeddings_api_url
         self.http_client = http_client or httpx.Client(timeout=60)
 
-    @classmethod #첫 번째 인자로 클래스 자체를 자동으로 전달
+    @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "OpenAIEmbeddingsClient":
         """애플리케이션 설정값으로 임베딩 클라이언트를 생성한다.
 
@@ -51,8 +51,8 @@ class OpenAIEmbeddingsClient:
 
     def create_embedding(self, text: str) -> list[float]:
         """단일 문자열을 임베딩하고 생성된 벡터 하나를 반환한다.
-        검색 query 하나를 임베딩 해서 단건 조회하는 경우를 위함
-        예) query_vector = client.create_embedding("주인공의 나이가 달라짐")
+
+        검색 query 하나를 임베딩해 단건 조회하는 경우에 사용한다.
         """
 
         return self.create_embeddings([text]).embeddings[0]
@@ -81,8 +81,12 @@ class OpenAIEmbeddingsClient:
                 },
             )
             response.raise_for_status()
-        except httpx.TransportError as exc:
-            # timeout·연결 실패는 청크를 NULL로 남긴 뒤 backfill할 수 있는 일시적 장애다.
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            # timeout·네트워크·원격 protocol 오류는 재호출로 회복될 수 있는 장애다.
             raise RecoverableEmbeddingProviderError(
                 "Embedding provider connection failed temporarily."
             ) from exc
@@ -92,7 +96,7 @@ class OpenAIEmbeddingsClient:
                 raise RecoverableEmbeddingProviderError(
                     f"Embedding provider failed temporarily: status={exc.response.status_code}"
                 ) from exc
-            # 400·401·403처럼 재처리로 해결되지 않는 요청·인증 오류는 분석을 실패시킨다.
+            # 위 상태를 제외한 4xx는 같은 요청의 재호출로 해결되지 않으므로 그대로 전달한다.
             raise
 
         payload = response.json()

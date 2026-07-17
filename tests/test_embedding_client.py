@@ -64,14 +64,31 @@ def test_create_embeddings_requires_api_key() -> None:
         client.create_embedding("query")
 
 
-def test_create_embeddings_wraps_transport_error_as_recoverable() -> None:
-    # timeout·연결 실패가 Worker에서 후속 backfill 가능한 provider 장애로 구분되는지 확인한다.
-    def raise_connection_error(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection failed", request=request)
+@pytest.mark.parametrize(
+    "error_type",
+    [httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError],
+)
+def test_create_embeddings_wraps_temporary_transport_error_as_recoverable(
+    error_type: type[httpx.TransportError],
+) -> None:
+    # 일시적인 전송 오류가 Worker에서 계속 처리할 수 있는 provider 장애로 구분되는지 확인한다.
+    def raise_temporary_error(request: httpx.Request) -> httpx.Response:
+        raise error_type("temporary failure", request=request)
 
-    client = _client(handler=raise_connection_error)
+    client = _client(handler=raise_temporary_error)
 
     with pytest.raises(RecoverableEmbeddingProviderError, match="temporarily"):
+        client.create_embedding("query")
+
+
+def test_create_embeddings_keeps_configuration_transport_error_fatal() -> None:
+    # 잘못된 URL protocol 같은 구성 오류는 일시적 장애로 오인하지 않고 그대로 전달한다.
+    def raise_unsupported_protocol(request: httpx.Request) -> httpx.Response:
+        raise httpx.UnsupportedProtocol("unsupported protocol", request=request)
+
+    client = _client(handler=raise_unsupported_protocol)
+
+    with pytest.raises(httpx.UnsupportedProtocol):
         client.create_embedding("query")
 
 
@@ -88,11 +105,11 @@ def test_create_embeddings_wraps_retryable_http_status_as_recoverable(
         client.create_embedding("query")
 
 
-@pytest.mark.parametrize("status_code", [400, 401, 403])
+@pytest.mark.parametrize("status_code", [400, 401, 403, 404, 422])
 def test_create_embeddings_keeps_non_retryable_http_status_fatal(
     status_code: int,
 ) -> None:
-    # 잘못된 요청과 인증·권한 오류는 backfill로 해결되지 않으므로 원래 HTTP 예외를 전달한다.
+    # 잘못된 요청과 인증·권한 오류는 같은 요청의 재호출로 해결되지 않으므로 그대로 전달한다.
     client = _client(
         handler=lambda request: httpx.Response(status_code, request=request),
     )

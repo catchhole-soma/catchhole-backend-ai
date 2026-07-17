@@ -86,7 +86,7 @@
 | `EpisodeChunkDraft.paragraph_end_index` | `episode_chunks.paragraph_end_index` | 청크에 포함된 마지막 문단 번호입니다. |
 | mapper/service에서 선택 입력 | `episode_chunks.metadata_json` | 전처리 태그, 업로드 방식 같은 부가 정보를 선택적으로 저장합니다. 기본값은 `null`입니다. |
 
-`embedding`은 청킹 자체의 결과가 아니라, 저장된 청크를 입력으로 `EpisodeChunkEmbeddingService`가 생성하는 후속 값입니다. 현재 Flyway V1의 `vector(1536)` 컬럼과 HNSW cosine 인덱스, Python 모델 매핑, 신규 청크 임베딩 저장 및 범용 Top-K 검색까지 구현되어 있습니다. 실제 PostgreSQL 왕복 테스트와 검색 품질 검증은 NVM-141의 후속 작업으로 남아 있습니다.
+`embedding`은 청킹 자체의 결과가 아니라, 저장된 청크를 입력으로 `EpisodeChunkEmbeddingService`가 생성하는 후속 값입니다. 현재 Flyway V1의 `vector(1536)` 컬럼과 HNSW cosine 인덱스, Python 모델 매핑, 신규 청크 임베딩 저장, 범용 Top-K 검색과 실제 PostgreSQL 통합 테스트까지 구현되어 있습니다. 실제 OpenAI API와 샘플 원고를 사용한 의미 검색 품질 검증은 NVM-143에서 query·검색 범위 정책을 정한 뒤 진행합니다.
 
 ## LLM 근거 위치 처리 기준
 

@@ -139,7 +139,8 @@ class EpisodeChunkRepository:
 
         # pgvector의 cosine distance는 값이 작을수록 가깝다. 화면과 후속 로직에서
         # 직관적으로 사용할 수 있도록 반환 값은 1 - distance인 similarity로 바꾼다.
-        cosine_distance = EpisodeChunk.embedding.cosine_distance(query_embedding) #DB에 보낼 “계산 공식”이 만들어짐
+        # 아래 호출은 값을 즉시 계산하지 않고 DB의 <=> 연산으로 변환될 SQL 표현식을 만든다.
+        cosine_distance = EpisodeChunk.embedding.cosine_distance(query_embedding)
         similarity = (literal(1.0) - cosine_distance).label("similarity")
 
         # EpisodeChunk에는 work_id와 episode_no가 없으므로 Episode를 JOIN한다.

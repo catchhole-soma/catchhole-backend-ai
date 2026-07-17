@@ -65,6 +65,7 @@ class EpisodeChunkEmbeddingService:
             [chunk.chunk_text for chunk in chunks]
         )
         embedded_at = self.now_factory()
+        # 응답 벡터를 입력 청크와 1:1로 묶고, 개수가 다르면 즉시 예외를 발생시킨다.
         embedding_updates = [
             EpisodeChunkEmbeddingUpdate(
                 chunk_id=chunk.id,
@@ -73,7 +74,7 @@ class EpisodeChunkEmbeddingService:
                 embedding_version=self.embedding_client.version,
                 embedded_at=embedded_at,
             )
-            for chunk, embedding in zip(chunks, response.embeddings, strict=True) # 청크와 벡터를 입력 순서대로 1:1로 묶고, 개수가 다르면 예외를 발생시킨다.
+            for chunk, embedding in zip(chunks, response.embeddings, strict=True)
         ]
 
         with self.session_factory() as session:

@@ -29,11 +29,17 @@
 - Worker 연결, 실패 개수 요약, 관련 단위 테스트와 문서화
 - 검색 문장의 단건 임베딩과 cosine similarity 기반 Top-K 조회
 - 작품·회차 범위·제외 청크·임베딩 모델 및 버전 필터
+- 실제 PostgreSQL·pgvector를 사용하는 Repository 통합 테스트
+- 임베딩 실패를 복구 가능한 provider 장애와 작업 중단 오류로 구분하는 정책
 
-NVM-141에 남은 범위:
+이번 PR에서 의도적으로 제외한 범위:
 
-- 실제 pgvector 검색 테스트와 샘플 원고 품질 확인
-- 기존 청크 backfill 및 재처리 방법
+- 실제 OpenAI API와 샘플 원고를 사용하는 의미 검색 품질 PoC
+  - NVM-143에서 설정 후보별 query 생성 방식과 검색 범위가 정해진 뒤 검증합니다.
+- 기존 청크 backfill 자동화
+  - 현재 PR에서는 구현하지 않으며 실제 재처리 대상이 생기면 별도 운영 작업으로 설계합니다.
+
+현재 `EpisodeChunkVectorSearchService`는 Service·Repository 테스트까지 연결되어 있지만 Worker나 FastAPI route에서 직접 호출하지 않습니다. NVM-143의 retrieval orchestration이 설정 후보와 DB 근거를 확인한 뒤 보완 검색이 필요할 때 이 Service를 호출하는 것이 다음 연결 지점입니다.
 
 ## 현재 판단
 
@@ -93,15 +99,17 @@ episode별 chunk 교체 저장
 -> commit
 ```
 
-외부 API를 기다리는 동안 DB 트랜잭션을 점유하지 않도록 벡터 생성 후 세션을 엽니다. Worker는 timeout·연결 실패·HTTP 408/409/429/5xx를 `RecoverableEmbeddingProviderError`로 받아 임베딩 실패 개수를 기록하고 설정 후보 추출을 계속합니다. 이때 벡터가 저장되지 않은 청크는 `NULL`로 남으며 후속 backfill 대상입니다.
+외부 API를 기다리는 동안 DB 트랜잭션을 점유하지 않도록 벡터 생성 후 세션을 엽니다. Worker는 timeout·네트워크·원격 protocol 오류와 HTTP 408/409/429/5xx를 `RecoverableEmbeddingProviderError`로 받아 해당 회차의 전체 청크를 임베딩 실패로 기록하고 설정 후보 추출을 계속합니다. API 호출과 DB 반영이 batch 단위이므로 해당 회차의 벡터 일부만 부분 저장되는 일은 없습니다.
 
-API Key 누락, HTTP 400/401/403, 응답 개수·index·차원 불일치, 중복·누락된 chunk ID, DB 연결·갱신 실패는 Worker가 삼키지 않습니다. 해당 예외는 `run_once()`까지 전파되어 Spring에 analysis job 실패로 보고됩니다. 중복 청크 ID는 불필요한 OpenAI 비용을 쓰지 않도록 Service에서 API 호출 전에 차단하고, Repository도 직접 호출될 때를 대비해 같은 정합성 검사를 유지합니다.
+벡터가 저장되지 않은 청크는 `NULL`로 남아 검색 대상에서 제외됩니다. 현재 자동 backfill은 없으므로 해당 벡터를 복구하려면 분석 작업을 다시 실행하거나 별도 재처리 기능이 필요합니다. 누락 개수는 `embeddingFailedChunkCount`로 완료 요약에 남습니다.
+
+API Key 누락, 408·409·429를 제외한 HTTP 4xx, 응답 JSON·개수·index·차원 불일치, 중복·누락된 chunk ID, DB 연결·갱신 실패는 Worker가 삼키지 않습니다. 해당 예외는 `run_once()`까지 전파되어 Spring에 analysis job 실패로 보고되며, 이 경우 현재 회차의 LLM 설정 후보 추출과 이후 회차 처리는 실행되지 않습니다. 중복 청크 ID는 불필요한 OpenAI 비용을 쓰지 않도록 Service에서 API 호출 전에 차단하고, Repository도 직접 호출될 때를 대비해 같은 정합성 검사를 유지합니다.
 
 | 실패 유형 | 예시 | Worker 처리 |
 | --- | --- | --- |
-| 복구 가능한 provider 장애 | timeout, 연결 실패, 408, 409, 429, 5xx | 임베딩 실패 집계 후 설정 추출 계속 |
-| 요청·인증 오류 | API Key 누락, 400, 401, 403 | analysis job 실패 |
-| 응답 계약 오류 | 벡터 개수·index·차원 불일치 | analysis job 실패 |
+| 복구 가능한 provider 장애 | timeout, 네트워크·원격 protocol 오류, 408, 409, 429, 5xx | 임베딩 실패 집계 후 설정 추출 계속 |
+| 요청·인증 오류 | API Key 누락, 복구 대상으로 정한 상태 외의 4xx | analysis job 실패 |
+| 응답 계약 오류 | JSON 파싱, 벡터 개수·index·차원 불일치 | analysis job 실패 |
 | 데이터 정합성 오류 | 중복 chunk ID, 저장 대상 chunk 누락 | analysis job 실패 |
 | DB 오류 | 연결·조회·UPDATE·commit 실패 | rollback 후 analysis job 실패 |
 
@@ -145,6 +153,8 @@ query text와 작품·회차·제외 청크 조건 입력
 
 검색 문장을 임베딩하는 동안에는 DB 세션을 열지 않습니다. Repository는 같은 embedding model·version으로 생성된 청크만 비교하며, 결과는 chunk ID, episode ID와 번호, chunk index와 text, similarity를 포함합니다.
 
+위 Worker 실패 정책은 신규 청크 batch 임베딩에만 적용됩니다. 아직 실행 흐름에 연결되지 않은 `EpisodeChunkVectorSearchService`는 query 임베딩이나 DB 검색 실패를 자체적으로 삼키지 않고 호출자에게 그대로 전달하며, NVM-143에서 검색 실패 처리 정책을 결정합니다.
+
 ## 실제 PostgreSQL 통합 테스트
 
 Repository 단위 테스트는 SQL 구성과 결과 변환을 빠르게 확인하고, `tests/integration/test_episode_chunk_vector_search_repository.py`는 실제 PostgreSQL과 pgvector가 벡터 거리·정렬·필터를 처리하는지 확인합니다.
@@ -162,6 +172,6 @@ PGVECTOR_TEST_DATABASE_URL=postgresql+psycopg://myuser:secret@localhost:15432/my
 
 ## 후속 구현 방향
 
-- HNSW와 `vector_cosine_ops` 인덱스는 Flyway V1에 구성되어 있고 실제 pgvector 검색 통합 테스트도 연결되었습니다. 후속 작업에서는 샘플 원고 검색 품질을 검증합니다.
-- 현재는 분석 작업에서 새로 만든 모든 `episode_chunks`를 같은 청킹 단위로 임베딩합니다. API 요청 크기를 고려한 backfill batch와 재처리 정책은 후속 작업에서 정합니다.
+- HNSW와 `vector_cosine_ops` 인덱스는 Flyway V1에 구성되어 있고 실제 pgvector 검색 통합 테스트도 연결되었습니다. 실제 OpenAI 기반 샘플 품질은 NVM-143의 query·범위 정책이 정해진 뒤 검증합니다.
+- 현재는 분석 작업에서 새로 만든 모든 `episode_chunks`를 같은 청킹 단위로 임베딩합니다. 기존 청크 backfill 자동화는 이번 PR 범위에서 제외했으며, 필요해지면 API 요청 크기와 운영 재처리 정책을 포함한 별도 작업으로 설계합니다.
 - NVM-143은 이 범용 검색 결과에 직접 source chunk, 기존 fact, 인접 문맥을 조합해 NVM-144에 넘길 검증 문맥을 만듭니다.
