@@ -4,7 +4,7 @@ from uuid import UUID
 import pytest
 
 from app.embeddings.responses import EmbeddingBatchResponse
-from app.embeddings.service import ChunkEmbeddingService
+from app.embeddings.services.episode_chunk_embedding import EpisodeChunkEmbeddingService
 from app.models.episode_chunk import EpisodeChunk
 from app.repositories.episode_chunk_repository import EpisodeChunkEmbeddingUpdate
 
@@ -24,7 +24,7 @@ def test_embed_chunks_generates_vectors_before_updating_and_commits() -> None:
     )
     session = FakeSession()
     repositories: list[FakeEpisodeChunkRepository] = []
-    service = ChunkEmbeddingService(
+    service = EpisodeChunkEmbeddingService(
         session_factory=lambda: session,
         embedding_client=embedding_client,
         repository_factory=lambda current_session: _repository(current_session, repositories),
@@ -68,7 +68,7 @@ def test_embed_chunks_skips_api_and_database_when_chunks_are_empty() -> None:
         session_factory_call_count += 1
         return FakeSession()
 
-    service = ChunkEmbeddingService(
+    service = EpisodeChunkEmbeddingService(
         session_factory=session_factory,
         embedding_client=embedding_client,
     )
@@ -90,7 +90,7 @@ def test_embed_chunks_does_not_open_database_session_when_api_fails() -> None:
         session_factory_call_count += 1
         return FakeSession()
 
-    service = ChunkEmbeddingService(
+    service = EpisodeChunkEmbeddingService(
         session_factory=session_factory,
         embedding_client=embedding_client,
     )
@@ -110,7 +110,7 @@ def test_embed_chunks_rolls_back_when_database_update_fails() -> None:
         )
     )
     session = FakeSession()
-    service = ChunkEmbeddingService(
+    service = EpisodeChunkEmbeddingService(
         session_factory=lambda: session,
         embedding_client=embedding_client,
         repository_factory=lambda current_session: FailingEpisodeChunkRepository(current_session),

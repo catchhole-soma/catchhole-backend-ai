@@ -15,7 +15,7 @@ from app.repositories.episode_chunk_repository import (
 
 
 @dataclass(frozen=True)
-class ChunkEmbeddingResult:
+class EpisodeChunkEmbeddingResult:
     """청크 임베딩 한 묶음의 처리 결과다."""
 
     embedded_chunk_count: int
@@ -23,7 +23,7 @@ class ChunkEmbeddingResult:
 
 
 class EmbeddingClientApi(Protocol):
-    """ChunkEmbeddingService가 임베딩 클라이언트에 요구하는 최소 규격이다."""
+    """EpisodeChunkEmbeddingService가 임베딩 클라이언트에 요구하는 최소 규격이다."""
 
     version: str
 
@@ -31,7 +31,7 @@ class EmbeddingClientApi(Protocol):
         pass
 
 
-class ChunkEmbeddingService:
+class EpisodeChunkEmbeddingService:
     """저장된 청크 텍스트를 임베딩하고 벡터와 생성 정보를 DB에 반영한다."""
 
     def __init__(
@@ -46,11 +46,11 @@ class ChunkEmbeddingService:
         self.repository_factory = repository_factory
         self.now_factory = now_factory
 
-    def embed_chunks(self, chunks: list[EpisodeChunk]) -> ChunkEmbeddingResult:
+    def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult:
         """청크 순서대로 벡터를 생성하고 임베딩 필드만 한 트랜잭션으로 갱신한다."""
 
         if not chunks:
-            return ChunkEmbeddingResult(embedded_chunk_count=0)
+            return EpisodeChunkEmbeddingResult(embedded_chunk_count=0)
 
         # 외부 API를 기다리는 동안 DB 트랜잭션을 점유하지 않도록 먼저 벡터를 생성한다.
         response = self.embedding_client.create_embeddings(
@@ -77,7 +77,7 @@ class ChunkEmbeddingService:
                 session.rollback()
                 raise
 
-        return ChunkEmbeddingResult(
+        return EpisodeChunkEmbeddingResult(
             embedded_chunk_count=len(updated_chunks),
             input_token_count=response.input_token_count,
         )

@@ -33,6 +33,8 @@ Repository는 SQLAlchemy session을 사용해 DB 접근만 담당합니다.
   - 회차 기준 기존 청크 삭제를 담당합니다.
   - 새로 생성된 청크 목록 저장을 담당합니다.
   - 저장된 청크의 임베딩 관련 필드만 일괄 갱신합니다.
+  - pgvector cosine distance를 이용해 작품·회차 범위 안의 유사 청크 Top-K를 조회합니다.
+  - 제외할 청크와 현재 embedding model·version 조건을 적용합니다.
 - `episode_repository.py`
   - 회차 메타데이터 조회를 담당합니다.
   - S3 원문 key를 읽기 위한 `Episode` 조회에 사용합니다.
@@ -44,5 +46,3 @@ Repository는 SQLAlchemy session을 사용해 DB 접근만 담당합니다.
 
 - `UploadFileRepository`
   - 업로드 파일 메타데이터와 감지된 회차 범위 조회를 담당할 예정입니다.
-- `EpisodeChunkRepository`의 Top-K 검색 메서드
-  - pgvector 거리 계산과 작품/회차 필터를 담당할 예정입니다.

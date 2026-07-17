@@ -161,7 +161,7 @@ Spring claim
 - `CharacterSettingExtractor`
   - 저장된 chunk 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
   - LLM 응답 JSON을 `app/analysis/schemas.py` 기준으로 검증합니다.
-- `ChunkEmbeddingService`
+- `EpisodeChunkEmbeddingService`
   - episode의 저장된 청크 텍스트를 한 번에 임베딩합니다.
   - 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.
   - 현재는 임베딩 단계의 예외를 Worker가 기록하고 설정 후보 추출을 계속하므로, commit되지 않은 임베딩은 후속 backfill 대상이 됩니다.

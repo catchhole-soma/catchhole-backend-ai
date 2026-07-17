@@ -2,7 +2,7 @@
 
 청크 임베딩 생성·저장과 범용 pgvector 검색 흐름을 두는 패키지입니다.
 
-현재 OpenAI Embeddings API Client와 모델·차원·버전 설정, 청크 임베딩 저장 서비스까지 구현되어 있습니다. Worker는 회차별 청크를 저장한 직후 `chunk_text` 목록을 한 번에 임베딩하고, 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.
+현재 OpenAI Embeddings API Client와 모델·차원·버전 설정, 청크 임베딩 저장 서비스, 범용 Top-K 검색 Service까지 구현되어 있습니다. Worker는 회차별 청크를 저장한 직후 `chunk_text` 목록을 한 번에 임베딩하고, 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.
 
 오류 리포트는 RDB에서 직접 찾을 수 없는 과거 사건과 상태 변화의 원문 근거를 보완하기 위해 이 검색 기반을 사용합니다. NVM-141은 query text와 기본 검색 조건을 받아 유사 청크를 반환하는 범용 검색까지만 담당하며, `SettingCandidate`를 기준으로 검색어와 범위를 정하는 retrieval orchestration은 NVM-143에서 담당합니다.
 
@@ -27,11 +27,11 @@
 - OpenAI Embeddings API 호출과 응답 순서·개수·차원 검증
 - 회차별 신규 청크의 batch 임베딩 생성과 메타데이터 저장
 - Worker 연결, 실패 개수 요약, 관련 단위 테스트와 문서화
+- 검색 문장의 단건 임베딩과 cosine similarity 기반 Top-K 조회
+- 작품·회차 범위·제외 청크·임베딩 모델 및 버전 필터
 
 NVM-141에 남은 범위:
 
-- query text 임베딩과 cosine similarity 기반 Top-K Repository/Service
-- 작품·회차 범위·제외 chunk ID 필터와 검색 결과 DTO
 - 실제 pgvector 검색 테스트와 샘플 원고 품질 확인
 - 기존 청크 backfill 및 재처리 방법
 
@@ -41,17 +41,46 @@ NVM-141에 남은 범위:
 
 예를 들어 설정 후보 상세 화면에서 "이 설정이 어느 원문에서 나왔는지"를 보여주는 경우에는 이미 저장된 `source_chunk_id`와 `evidence_spans[].quote`, 보정된 `start_offset` / `end_offset`을 사용할 수 있습니다. 이때 필요한 작업은 임베딩보다 quote를 실제 원문에서 찾아 offset을 보정하는 것입니다.
 
-반면 챗봇, 유사 장면 검색, 신규 회차와 기존 원문 비교, 오류 리포트 RAG처럼 "의미적으로 비슷한 원문을 찾아야 하는 기능"에는 임베딩 검색이 필요합니다.
+반면 AI 채팅, 유사 장면 검색, 신규 회차와 기존 원문 비교, 오류 리포트 RAG처럼 "의미적으로 비슷한 원문을 찾아야 하는 기능"에는 임베딩 검색이 필요합니다.
 
-오류 리포트 RAG의 경우 사용자가 항상 정확한 원문 문장을 입력하지 않을 수 있습니다. 예를 들어 "캐릭터 설정이 앞 회차와 다른 것 같다" 또는 "이 분석 결과가 원문과 맞지 않는 것 같다"처럼 추상적인 상황이 들어오면, 해당 문장과 관련 있는 원문 chunk를 의미 검색으로 찾아 리포트 판단 근거에 포함해야 합니다.
+## 사용 시나리오와 책임 경계
 
-따라서 임베딩은 오류 리포트가 참고할 원문 context를 검색하기 위한 기반 기능으로 우선 검토합니다.
+### 오류 리포트의 보완 근거 검색
+
+오류 감지는 먼저 RDB의 구조화된 정보와 직접 연결된 원문 근거를 사용합니다. `SettingCandidate.source_chunk_id`, 관련 `CharacterFact`, 기존에 저장된 설정만으로 충돌을 설명할 수 있다면 벡터 검색은 필수가 아닙니다.
+
+반면 RDB에 구조화되지 않은 중간 사건이 있거나 직접 근거만으로 판단이 애매한 경우에는 과거 원문을 의미 검색해 근거를 보완합니다. 예를 들어 스탯 감소가 단순 오류인지 저주·부상·디버프 때문인지, 나이 감소가 설정 충돌인지 회상·회귀 장면인지 확인하려면 관련 사건이 포함된 과거 청크를 찾아야 합니다.
+
+```text
+SettingCandidate와 직접 source chunk 확인
+-> 관련 CharacterFact와 구조화된 DB 근거 조회
+-> 근거가 없거나 판단이 애매하면 query와 회차 범위 생성
+-> EpisodeChunkVectorSearchService로 과거 원문 Top-K 조회
+-> 직접 근거, DB fact, 검색 청크를 함께 충돌 판정에 전달
+```
+
+이 fallback 여부와 검색 query를 결정하는 책임은 NVM-143의 retrieval orchestration에 있습니다. `EpisodeChunkVectorSearchService`는 근거가 충분한지 판단하지 않고, 전달받은 문장과 범위로 유사 청크를 반환하는 범용 기능만 담당합니다. 최종 충돌 판정은 NVM-144의 책임입니다.
+
+### AI 채팅의 원문 문맥 검색
+
+후속 AI 채팅 기능에서도 같은 범용 검색 기반을 재사용할 수 있습니다. 채팅 기능은 사용자의 질문을 query text로 사용하거나 검색용 문장으로 확장하고, 현재 작품과 공개 가능한 회차 범위를 지정해 관련 원문 Top-K를 가져온 뒤 답변 LLM의 문맥으로 제공할 수 있습니다.
+
+```text
+사용자 질문
+-> 채팅 orchestration에서 검색 query와 작품·회차 범위 결정
+-> EpisodeChunkVectorSearchService 호출
+-> 관련 원문 Top-K를 답변 근거로 구성
+-> 답변 생성
+```
+
+오류 리포트와 AI 채팅은 검색 이후의 정책은 다르지만, query embedding 생성과 `episode_chunks`의 pgvector Top-K 조회는 동일하게 재사용합니다.
 
 ## 현재 파일
 
 - `client.py`: OpenAI Embeddings API 호출과 응답 차원 검증
 - `responses.py`: batch embedding 응답 내부 값 객체
-- `service.py`: 청크 목록 임베딩과 `episode_chunks` 갱신 트랜잭션 관리
+- `services/episode_chunk_embedding.py`: 청크 목록 임베딩과 `episode_chunks` 갱신 트랜잭션 관리
+- `services/episode_chunk_vector_search.py`: 검색 문장 임베딩과 범용 pgvector Top-K 조회 연결
 
 ## 생성과 저장 흐름
 
@@ -96,11 +125,19 @@ episode별 chunk 교체 저장
 
 `client.py`는 `data[].index`를 기준으로 벡터를 입력 순서대로 정렬하고, 응답 개수와 벡터 차원을 검증합니다. 이후 벡터와 모델명, 토큰 수, 원본 응답을 `EmbeddingBatchResponse`로 변환합니다.
 
+## 검색 흐름
+
+```text
+query text와 작품·회차·제외 청크 조건 입력
+-> 저장된 청크와 동일한 모델로 query embedding 생성
+-> EpisodeChunkRepository의 pgvector cosine distance 검색 호출
+-> distance 오름차순 Top-K를 similarity와 함께 반환
+```
+
+검색 문장을 임베딩하는 동안에는 DB 세션을 열지 않습니다. Repository는 같은 embedding model·version으로 생성된 청크만 비교하며, 결과는 chunk ID, episode ID와 번호, chunk index와 text, similarity를 포함합니다.
+
 ## 후속 구현 방향
 
-- `search.py`에서 query text를 동일 모델로 임베딩하고 pgvector Top-K 검색을 호출합니다.
-- Repository는 query vector와 작품·회차·제외 청크 조건만 받아 cosine distance를 계산합니다.
-- 검색 결과는 chunk ID, episode ID와 번호, chunk index와 text, similarity를 내부 DTO로 반환합니다.
 - HNSW와 `vector_cosine_ops` 인덱스는 Flyway V1에 구성되어 있으므로, 후속 PR에서는 실제 검색 쿼리와 품질을 검증합니다.
 - 현재는 분석 작업에서 새로 만든 모든 `episode_chunks`를 같은 청킹 단위로 임베딩합니다. API 요청 크기를 고려한 backfill batch와 재처리 정책은 후속 작업에서 정합니다.
 - NVM-143은 이 범용 검색 결과에 직접 source chunk, 기존 fact, 인접 문맥을 조합해 NVM-144에 넘길 검증 문맥을 만듭니다.

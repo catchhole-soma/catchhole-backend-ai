@@ -5,7 +5,7 @@ import pytest
 
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.analysis.character_subject_resolver import SubjectResolutionResult
-from app.embeddings.service import ChunkEmbeddingResult
+from app.embeddings.services.episode_chunk_embedding import EpisodeChunkEmbeddingResult
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisEpisodePayload, WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunSummary
@@ -73,12 +73,12 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         _candidate(chunking_service.chunks[0].id, attribute_name="class"),
     ]
     setting_extractor = FakeSettingExtractor(candidate_groups=[extracted_candidates])
-    chunk_embedding_service = FakeChunkEmbeddingService()
+    episode_chunk_embedding_service = FakeEpisodeChunkEmbeddingService()
     setting_candidate_service = FakeSettingCandidateService()
     worker = AnalysisJobWorker(
         spring_client=spring_client,
         chunking_service=chunking_service,
-        chunk_embedding_service=chunk_embedding_service,
+        episode_chunk_embedding_service=episode_chunk_embedding_service,
         setting_extractor=setting_extractor,
         setting_candidate_service=setting_candidate_service,
     )
@@ -92,7 +92,9 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
     assert result.episode_count == 1
     assert chunking_service.requested_episode_ids == [EPISODE_ID]
     assert chunking_service.requested_content_s3_keys == ["works/work-id/episodes/episode-id.txt"]
-    assert chunk_embedding_service.requested_chunk_ids == [[chunking_service.chunks[0].id]]
+    assert episode_chunk_embedding_service.requested_chunk_ids == [
+        [chunking_service.chunks[0].id]
+    ]
     assert setting_extractor.requests == [
             {
                 "source_chunk_id": chunking_service.chunks[0].id,
@@ -168,12 +170,12 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
             fallback_discarded_count=0,
         )
     )
-    chunk_embedding_service = FakeChunkEmbeddingService()
+    episode_chunk_embedding_service = FakeEpisodeChunkEmbeddingService()
     setting_candidate_service = FakeSettingCandidateService()
     worker = AnalysisJobWorker(
         spring_client=spring_client,
         chunking_service=chunking_service,
-        chunk_embedding_service=chunk_embedding_service,
+        episode_chunk_embedding_service=episode_chunk_embedding_service,
         setting_extractor=setting_extractor,
         subject_resolver=subject_resolver,
         setting_candidate_service=setting_candidate_service,
@@ -209,7 +211,7 @@ def test_worker_continues_setting_extraction_when_chunk_embedding_fails() -> Non
     # 임베딩 실패를 요약에 기록하면서도 기존 설정 후보 추출과 작업 완료를 계속하는 정책을 검증한다.
     spring_client = FakeSpringWorkerClient(payload=_payload())
     chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 전사다.")])
-    chunk_embedding_service = FakeChunkEmbeddingService(
+    episode_chunk_embedding_service = FakeEpisodeChunkEmbeddingService(
         error=RuntimeError("embedding API failed")
     )
     setting_extractor = FakeSettingExtractor(candidate_groups=[[]])
@@ -218,7 +220,7 @@ def test_worker_continues_setting_extraction_when_chunk_embedding_fails() -> Non
     worker = AnalysisJobWorker(
         spring_client=spring_client,
         chunking_service=chunking_service,
-        chunk_embedding_service=chunk_embedding_service,
+        episode_chunk_embedding_service=episode_chunk_embedding_service,
         setting_extractor=setting_extractor,
         subject_resolver=subject_resolver,
         setting_candidate_service=setting_candidate_service,
@@ -302,17 +304,17 @@ class FakeEpisodeChunkingService:
         return self.chunks
 
 
-class FakeChunkEmbeddingService:
+class FakeEpisodeChunkEmbeddingService:
     # 실제 OpenAI/DB 호출 대신 Worker가 청킹 직후 임베딩을 요청했는지 기록한다.
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
         self.requested_chunk_ids: list[list[UUID]] = []
 
-    def embed_chunks(self, chunks: list[EpisodeChunk]) -> ChunkEmbeddingResult:
+    def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult:
         self.requested_chunk_ids.append([chunk.id for chunk in chunks])
         if self.error is not None:
             raise self.error
-        return ChunkEmbeddingResult(embedded_chunk_count=len(chunks))
+        return EpisodeChunkEmbeddingResult(embedded_chunk_count=len(chunks))
 
 
 class FakeSettingExtractor:

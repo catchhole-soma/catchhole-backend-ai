@@ -16,7 +16,10 @@ from app.analysis.character_subject_resolver import (
 )
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.db.session import get_session_maker
-from app.embeddings.service import ChunkEmbeddingResult, ChunkEmbeddingService
+from app.embeddings.services.episode_chunk_embedding import (
+    EpisodeChunkEmbeddingResult,
+    EpisodeChunkEmbeddingService,
+)
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.services.episode_chunk_service import EpisodeChunkService
@@ -83,8 +86,8 @@ class EpisodeChunkingApi(Protocol):
 
 
 # Worker가 저장된 청크의 임베딩 생성과 DB 반영을 요청할 때 기대하는 규격
-class ChunkEmbeddingApi(Protocol):
-    def embed_chunks(self, chunks: list[EpisodeChunk]) -> ChunkEmbeddingResult:
+class EpisodeChunkEmbeddingApi(Protocol):
+    def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult:
         pass
 
 
@@ -118,7 +121,7 @@ class AnalysisJobWorker:
         self,
         spring_client: SpringWorkerApi | None = None,
         chunking_service: EpisodeChunkingApi | None = None,
-        chunk_embedding_service: ChunkEmbeddingApi | None = None,
+        episode_chunk_embedding_service: EpisodeChunkEmbeddingApi | None = None,
         setting_extractor: SettingExtractorApi | None = None,
         subject_resolver: SubjectResolverApi | None = None,
         setting_candidate_service: SettingCandidateService | None = None,
@@ -126,7 +129,7 @@ class AnalysisJobWorker:
     ) -> None:
         self.spring_client = spring_client or SpringWorkerClient.from_settings()
         self._chunking_service = chunking_service
-        self._chunk_embedding_service = chunk_embedding_service
+        self._episode_chunk_embedding_service = episode_chunk_embedding_service
         self._setting_extractor = setting_extractor
         self._subject_resolver = subject_resolver
         self._setting_candidate_service = setting_candidate_service
@@ -207,7 +210,7 @@ class AnalysisJobWorker:
             # 2. 저장된 청크들을 한 번에 임베딩한다. 실패한 청크는 NULL 상태로 남겨
             # 이후 backfill할 수 있게 하고, 현재 분석의 설정 후보 추출은 계속한다.
             try:
-                embedding_result = self._get_chunk_embedding_service().embed_chunks(chunks)
+                embedding_result = self._get_episode_chunk_embedding_service().embed_chunks(chunks)
                 embedded_chunk_count += embedding_result.embedded_chunk_count
             except Exception:
                 embedding_failed_chunk_count += len(chunks)
@@ -296,12 +299,12 @@ class AnalysisJobWorker:
         return self._chunking_service
 
     # 저장된 청크의 벡터를 생성하고 episode_chunks에 반영할 서비스를 초기화한다.
-    def _get_chunk_embedding_service(self) -> ChunkEmbeddingApi:
-        if self._chunk_embedding_service is None:
-            self._chunk_embedding_service = ChunkEmbeddingService(
+    def _get_episode_chunk_embedding_service(self) -> EpisodeChunkEmbeddingApi:
+        if self._episode_chunk_embedding_service is None:
+            self._episode_chunk_embedding_service = EpisodeChunkEmbeddingService(
                 session_factory=get_session_maker(),
             )
-        return self._chunk_embedding_service
+        return self._episode_chunk_embedding_service
 
     # llm에 넣을 프롬프트와 api호출을 할 서비스(CharacterSettingExtractor)를 초기화 하는 작업만 한다.
     def _get_setting_extractor(self) -> SettingExtractorApi:
