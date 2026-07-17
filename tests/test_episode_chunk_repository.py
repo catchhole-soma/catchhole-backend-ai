@@ -159,6 +159,26 @@ def test_search_similar_chunks_applies_scope_and_cosine_top_k_conditions() -> No
     assert statement._limit_clause.value == 5
 
 
+def test_search_similar_chunks_enables_iterative_hnsw_scan_before_query() -> None:
+    # 필터로 HNSW 후보가 제외되더라도 Top-K를 채우도록 검색 전에 추가 탐색을 활성화한다.
+    session = FakeSession()
+    repository = EpisodeChunkRepository(session)
+
+    repository.search_similar_chunks(
+        query_embedding=[0.1, 0.2],
+        work_id=uuid4(),
+        embedding_model="text-embedding-3-small",
+        embedding_version="v1",
+        top_k=5,
+    )
+
+    assert len(session.executed_statements) == 2
+    assert str(session.executed_statements[0]) == (
+        "SET LOCAL hnsw.iterative_scan = strict_order"
+    )
+    assert session.executed_statements[1] is session.executed_statement
+
+
 @pytest.mark.parametrize(
     ("query_embedding", "top_k", "episode_no_from", "episode_no_to", "message"),
     [
@@ -243,6 +263,7 @@ class FakeSession:
         self.added_items: list[EpisodeChunk] = []
         self.scalar_statement = None
         self.executed_statement = None
+        self.executed_statements = []
 
     def add_all(self, items: list[EpisodeChunk]) -> None:
         self.added_items.extend(items)
@@ -252,6 +273,7 @@ class FakeSession:
         return FakeScalarResult(self.scalar_items)
 
     def execute(self, statement):
+        self.executed_statements.append(statement)
         self.executed_statement = statement
         return FakeExecuteResult(self.execute_rows)
 

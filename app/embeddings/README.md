@@ -153,6 +153,8 @@ query text와 작품·회차·제외 청크 조건 입력
 
 검색 문장을 임베딩하는 동안에는 DB 세션을 열지 않습니다. Repository는 같은 embedding model·version으로 생성된 청크만 비교하며, 결과는 chunk ID, episode ID와 번호, chunk index와 text, similarity를 포함합니다.
 
+HNSW는 전체 `episode_chunks`를 대상으로 근사 후보를 먼저 찾은 뒤 작품·회차·모델·버전 필터를 적용하므로, 기본 검색만 사용하면 조건에 맞는 청크가 충분해도 Top-K보다 적게 반환될 수 있습니다. Repository는 검색 트랜잭션에만 `hnsw.iterative_scan = strict_order`를 적용해 필터 후 결과가 부족할 때 추가 후보를 탐색하고 cosine distance 순서를 유지합니다.
+
 위 Worker 실패 정책은 신규 청크 batch 임베딩에만 적용됩니다. 아직 실행 흐름에 연결되지 않은 `EpisodeChunkVectorSearchService`는 query 임베딩이나 DB 검색 실패를 자체적으로 삼키지 않고 호출자에게 그대로 전달하며, NVM-143에서 검색 실패 처리 정책을 결정합니다.
 
 ## 실제 PostgreSQL 통합 테스트

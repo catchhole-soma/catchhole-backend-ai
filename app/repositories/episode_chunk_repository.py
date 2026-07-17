@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, literal, select
+from sqlalchemy import delete, literal, select, text
 from sqlalchemy.orm import Session
 
 from app.embeddings.exceptions import EmbeddingDataIntegrityError
@@ -167,6 +167,12 @@ class EpisodeChunkRepository:
             statement = statement.where(EpisodeChunk.id.not_in(excluded_chunk_ids))
 
         statement = statement.order_by(cosine_distance).limit(top_k)
+
+        # 전역 HNSW 후보에 작품·회차·모델 필터를 적용한 뒤 결과가 부족하면
+        # 같은 트랜잭션 안에서 추가 후보를 탐색해 거리 순서대로 Top-K를 채운다.
+        self.session.execute(
+            text("SET LOCAL hnsw.iterative_scan = strict_order")
+        )
         rows = self.session.execute(statement).all()
 
         # SQL row를 Repository 밖에서 DB 컬럼 구조를 몰라도 되는 내부 결과 객체로 변환한다.

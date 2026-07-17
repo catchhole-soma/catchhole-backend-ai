@@ -45,6 +45,9 @@ def test_pgvector_search_orders_chunks_by_cosine_similarity_and_work() -> None:
             embedding_version=EMBEDDING_VERSION,
             top_k=2,
         )
+        iterative_scan = session.scalar(
+            text("SELECT current_setting('hnsw.iterative_scan')")
+        )
 
     assert [result.chunk.id for result in results] == [
         SAME_CHUNK_ID,
@@ -53,6 +56,7 @@ def test_pgvector_search_orders_chunks_by_cosine_similarity_and_work() -> None:
     assert [result.episode_no for result in results] == [1, 2]
     assert results[0].similarity == pytest.approx(1.0)
     assert results[1].similarity == pytest.approx(0.8)
+    assert iterative_scan == "strict_order"
 
 
 def test_pgvector_search_applies_episode_range_and_excluded_chunk_ids() -> None:
