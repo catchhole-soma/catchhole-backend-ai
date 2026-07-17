@@ -5,6 +5,10 @@ import pytest
 
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.analysis.character_subject_resolver import SubjectResolutionResult
+from app.embeddings.exceptions import (
+    EmbeddingDataIntegrityError,
+    RecoverableEmbeddingProviderError,
+)
 from app.embeddings.services.episode_chunk_embedding import EpisodeChunkEmbeddingResult
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisEpisodePayload, WorkerAnalysisJobPayload
@@ -207,12 +211,12 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
     }
 
 
-def test_worker_continues_setting_extraction_when_chunk_embedding_fails() -> None:
-    # 임베딩 실패를 요약에 기록하면서도 기존 설정 후보 추출과 작업 완료를 계속하는 정책을 검증한다.
+def test_worker_continues_setting_extraction_when_embedding_provider_temporarily_fails() -> None:
+    # 일시적인 provider 장애만 요약에 기록하고 설정 후보 추출과 작업 완료를 계속하는지 검증한다.
     spring_client = FakeSpringWorkerClient(payload=_payload())
     chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 전사다.")])
     episode_chunk_embedding_service = FakeEpisodeChunkEmbeddingService(
-        error=RuntimeError("embedding API failed")
+        error=RecoverableEmbeddingProviderError("embedding API failed temporarily")
     )
     setting_extractor = FakeSettingExtractor(candidate_groups=[[]])
     subject_resolver = FakeSubjectResolver(result=SubjectResolutionResult(candidates=[]))
@@ -243,6 +247,31 @@ def test_worker_continues_setting_extraction_when_chunk_embedding_fails() -> Non
         "subjectFallbackDiscardedCount": 0,
     }
     assert spring_client.fail_calls == []
+
+
+def test_worker_fails_analysis_when_chunk_embedding_data_is_inconsistent() -> None:
+    # 중복·누락 청크 같은 정합성 오류를 삼키지 않고 Spring 실패 보고까지 전파하는지 검증한다.
+    spring_client = FakeSpringWorkerClient(payload=_payload())
+    chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 전사다.")])
+    episode_chunk_embedding_service = FakeEpisodeChunkEmbeddingService(
+        error=EmbeddingDataIntegrityError("embedding update target is missing")
+    )
+    setting_extractor = FakeSettingExtractor(candidate_groups=[[]])
+    worker = AnalysisJobWorker(
+        spring_client=spring_client,
+        chunking_service=chunking_service,
+        episode_chunk_embedding_service=episode_chunk_embedding_service,
+        setting_extractor=setting_extractor,
+    )
+
+    with pytest.raises(EmbeddingDataIntegrityError, match="target is missing"):
+        worker.run_once()
+
+    assert setting_extractor.requests == []
+    assert spring_client.complete_calls == []
+    assert spring_client.fail_calls == [
+        (ANALYSIS_JOB_ID, "embedding update target is missing")
+    ]
 
 
 class SuccessfulAnalysisJobWorker(AnalysisJobWorker):

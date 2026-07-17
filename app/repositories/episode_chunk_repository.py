@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import delete, literal, select
 from sqlalchemy.orm import Session
 
+from app.embeddings.exceptions import EmbeddingDataIntegrityError
 from app.models.episode import Episode
 from app.models.episode_chunk import EpisodeChunk
 
@@ -68,7 +69,9 @@ class EpisodeChunkRepository:
 
         # 같은 청크를 한 요청에서 두 번 갱신하는 잘못된 입력을 미리 차단한다.
         if len(set(target_chunk_ids)) != len(target_chunk_ids):
-            raise ValueError("Duplicate chunk IDs exist in embedding updates.")
+            raise EmbeddingDataIntegrityError(
+                "Duplicate chunk IDs exist in embedding updates."
+            )
 
         # 갱신 대상을 한 번에 조회하고, 청크 ID로 바로 찾을 수 있게 구성한다.
         statement = select(EpisodeChunk).where(EpisodeChunk.id.in_(target_chunk_ids))
@@ -86,7 +89,9 @@ class EpisodeChunkRepository:
         if missing_chunk_ids:
             # 누락된 청크를 로그와 오류 메시지에서 바로 확인할 수 있도록 ID 목록을 남긴다.
             missing_ids = ", ".join(str(chunk_id) for chunk_id in missing_chunk_ids)
-            raise ValueError(f"Embedding update targets do not exist: {missing_ids}")
+            raise EmbeddingDataIntegrityError(
+                f"Embedding update targets do not exist: {missing_ids}"
+            )
 
         # 검증을 마친 요청 순서대로 ORM 객체의 임베딩 필드만 변경한다.
         # Session이 변경을 추적하므로 호출한 Service가 commit할 때 UPDATE가 실행된다.
@@ -134,7 +139,7 @@ class EpisodeChunkRepository:
 
         # pgvector의 cosine distance는 값이 작을수록 가깝다. 화면과 후속 로직에서
         # 직관적으로 사용할 수 있도록 반환 값은 1 - distance인 similarity로 바꾼다.
-        cosine_distance = EpisodeChunk.embedding.cosine_distance(query_embedding)
+        cosine_distance = EpisodeChunk.embedding.cosine_distance(query_embedding) #DB에 보낼 “계산 공식”이 만들어짐
         similarity = (literal(1.0) - cosine_distance).label("similarity")
 
         # EpisodeChunk에는 work_id와 episode_no가 없으므로 Episode를 JOIN한다.

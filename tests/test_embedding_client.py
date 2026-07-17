@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.embeddings.client import OpenAIEmbeddingsClient
+from app.embeddings.exceptions import RecoverableEmbeddingProviderError
 
 
 def test_create_embeddings_calls_openai_api_and_orders_response_by_index() -> None:
@@ -60,6 +61,43 @@ def test_create_embeddings_requires_api_key() -> None:
     )
 
     with pytest.raises(ValueError, match="LLM_API_KEY"):
+        client.create_embedding("query")
+
+
+def test_create_embeddings_wraps_transport_error_as_recoverable() -> None:
+    # timeout·연결 실패가 Worker에서 후속 backfill 가능한 provider 장애로 구분되는지 확인한다.
+    def raise_connection_error(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection failed", request=request)
+
+    client = _client(handler=raise_connection_error)
+
+    with pytest.raises(RecoverableEmbeddingProviderError, match="temporarily"):
+        client.create_embedding("query")
+
+
+@pytest.mark.parametrize("status_code", [408, 409, 429, 500, 503])
+def test_create_embeddings_wraps_retryable_http_status_as_recoverable(
+    status_code: int,
+) -> None:
+    # 요청 제한과 provider 서버 오류를 인증·요청 오류와 다른 예외로 변환하는지 검증한다.
+    client = _client(
+        handler=lambda request: httpx.Response(status_code, request=request),
+    )
+
+    with pytest.raises(RecoverableEmbeddingProviderError, match=f"status={status_code}"):
+        client.create_embedding("query")
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 403])
+def test_create_embeddings_keeps_non_retryable_http_status_fatal(
+    status_code: int,
+) -> None:
+    # 잘못된 요청과 인증·권한 오류는 backfill로 해결되지 않으므로 원래 HTTP 예외를 전달한다.
+    client = _client(
+        handler=lambda request: httpx.Response(status_code, request=request),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
         client.create_embedding("query")
 
 

@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.embeddings.exceptions import EmbeddingDataIntegrityError
 from app.models.episode_chunk import EpisodeChunk
 from app.repositories.episode_chunk_repository import (
     EpisodeChunkEmbeddingUpdate,
@@ -79,7 +80,10 @@ def test_update_embeddings_rejects_missing_chunk_before_updating_any_chunk() -> 
         _embedding_update(missing_chunk, [0.2], datetime.now()),
     ]
 
-    with pytest.raises(ValueError, match="Embedding update targets do not exist"):
+    with pytest.raises(
+        EmbeddingDataIntegrityError,
+        match="Embedding update targets do not exist",
+    ):
         repository.update_embeddings(embedding_updates)
 
     assert existing_chunk.embedding is None
@@ -92,7 +96,7 @@ def test_update_embeddings_rejects_duplicate_chunk_ids() -> None:
     session = FakeSession(scalar_items=[chunk])
     repository = EpisodeChunkRepository(session)
 
-    with pytest.raises(ValueError, match="Duplicate chunk IDs"):
+    with pytest.raises(EmbeddingDataIntegrityError, match="Duplicate chunk IDs"):
         repository.update_embeddings([update, update])
 
     assert session.scalar_statement is None

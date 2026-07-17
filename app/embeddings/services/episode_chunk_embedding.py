@@ -6,6 +6,7 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from app.embeddings.client import OpenAIEmbeddingsClient
+from app.embeddings.exceptions import EmbeddingDataIntegrityError
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.models.episode_chunk import EpisodeChunk
 from app.repositories.episode_chunk_repository import (
@@ -51,6 +52,13 @@ class EpisodeChunkEmbeddingService:
 
         if not chunks:
             return EpisodeChunkEmbeddingResult(embedded_chunk_count=0)
+
+        # 같은 청크를 중복 전달한 오류는 OpenAI 호출 비용이 발생하기 전에 차단한다.
+        chunk_ids = [chunk.id for chunk in chunks]
+        if len(set(chunk_ids)) != len(chunk_ids):
+            raise EmbeddingDataIntegrityError(
+                "Duplicate chunk IDs exist in embedding request."
+            )
 
         # 외부 API를 기다리는 동안 DB 트랜잭션을 점유하지 않도록 먼저 벡터를 생성한다.
         response = self.embedding_client.create_embeddings(

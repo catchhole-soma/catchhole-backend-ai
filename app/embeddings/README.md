@@ -78,6 +78,7 @@ SettingCandidate와 직접 source chunk 확인
 ## 현재 파일
 
 - `client.py`: OpenAI Embeddings API 호출과 응답 차원 검증
+- `exceptions.py`: 복구 가능한 provider 장애와 청크 데이터 정합성 오류 구분
 - `responses.py`: batch embedding 응답 내부 값 객체
 - `services/episode_chunk_embedding.py`: 청크 목록 임베딩과 `episode_chunks` 갱신 트랜잭션 관리
 - `services/episode_chunk_vector_search.py`: 검색 문장 임베딩과 범용 pgvector Top-K 조회 연결
@@ -92,9 +93,17 @@ episode별 chunk 교체 저장
 -> commit
 ```
 
-외부 API를 기다리는 동안 DB 트랜잭션을 점유하지 않도록 벡터 생성 후 세션을 엽니다. 현재 Worker는 API 호출이나 DB 갱신 중 발생한 예외를 임베딩 실패로 집계하고 설정 후보 추출을 계속합니다. 임베딩 갱신이 commit되지 않은 청크는 `NULL`로 남으며 후속 backfill 대상입니다.
+외부 API를 기다리는 동안 DB 트랜잭션을 점유하지 않도록 벡터 생성 후 세션을 엽니다. Worker는 timeout·연결 실패·HTTP 408/409/429/5xx를 `RecoverableEmbeddingProviderError`로 받아 임베딩 실패 개수를 기록하고 설정 후보 추출을 계속합니다. 이때 벡터가 저장되지 않은 청크는 `NULL`로 남으며 후속 backfill 대상입니다.
 
-현재는 임베딩 단계의 모든 예외를 같은 방식으로 처리합니다. 외부 API의 일시적 실패는 분석을 계속하되, 중복·누락된 chunk ID처럼 데이터 정합성을 나타내는 실패는 분석 작업에 전파하도록 예외 유형을 구분하는 작업이 남아 있습니다.
+API Key 누락, HTTP 400/401/403, 응답 개수·index·차원 불일치, 중복·누락된 chunk ID, DB 연결·갱신 실패는 Worker가 삼키지 않습니다. 해당 예외는 `run_once()`까지 전파되어 Spring에 analysis job 실패로 보고됩니다. 중복 청크 ID는 불필요한 OpenAI 비용을 쓰지 않도록 Service에서 API 호출 전에 차단하고, Repository도 직접 호출될 때를 대비해 같은 정합성 검사를 유지합니다.
+
+| 실패 유형 | 예시 | Worker 처리 |
+| --- | --- | --- |
+| 복구 가능한 provider 장애 | timeout, 연결 실패, 408, 409, 429, 5xx | 임베딩 실패 집계 후 설정 추출 계속 |
+| 요청·인증 오류 | API Key 누락, 400, 401, 403 | analysis job 실패 |
+| 응답 계약 오류 | 벡터 개수·index·차원 불일치 | analysis job 실패 |
+| 데이터 정합성 오류 | 중복 chunk ID, 저장 대상 chunk 누락 | analysis job 실패 |
+| DB 오류 | 연결·조회·UPDATE·commit 실패 | rollback 후 analysis job 실패 |
 
 ## OpenAI Embeddings API 응답 예시
 

@@ -20,6 +20,7 @@ from app.embeddings.services.episode_chunk_embedding import (
     EpisodeChunkEmbeddingResult,
     EpisodeChunkEmbeddingService,
 )
+from app.embeddings.exceptions import RecoverableEmbeddingProviderError
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.services.episode_chunk_service import EpisodeChunkService
@@ -207,15 +208,15 @@ class AnalysisJobWorker:
             )
             chunk_count += len(chunks)
 
-            # 2. 저장된 청크들을 한 번에 임베딩한다. 실패한 청크는 NULL 상태로 남겨
-            # 이후 backfill할 수 있게 하고, 현재 분석의 설정 후보 추출은 계속한다.
+            # 2. 저장된 청크들을 한 번에 임베딩한다. 일시적인 provider 장애일 때만
+            # NULL 상태로 남겨 backfill 대상으로 두고, 현재 설정 후보 추출을 계속한다.
             try:
                 embedding_result = self._get_episode_chunk_embedding_service().embed_chunks(chunks)
                 embedded_chunk_count += embedding_result.embedded_chunk_count
-            except Exception:
+            except RecoverableEmbeddingProviderError:
                 embedding_failed_chunk_count += len(chunks)
                 logger.exception(
-                    "Chunk embedding failed; setting extraction will continue. "
+                    "Chunk embedding provider failed temporarily; setting extraction will continue. "
                     "episode_id=%s chunk_count=%s",
                     episode.episode_id,
                     len(chunks),
