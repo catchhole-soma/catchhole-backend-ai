@@ -136,8 +136,23 @@ query text와 작품·회차·제외 청크 조건 입력
 
 검색 문장을 임베딩하는 동안에는 DB 세션을 열지 않습니다. Repository는 같은 embedding model·version으로 생성된 청크만 비교하며, 결과는 chunk ID, episode ID와 번호, chunk index와 text, similarity를 포함합니다.
 
+## 실제 PostgreSQL 통합 테스트
+
+Repository 단위 테스트는 SQL 구성과 결과 변환을 빠르게 확인하고, `tests/integration/test_episode_chunk_vector_search_repository.py`는 실제 PostgreSQL과 pgvector가 벡터 거리·정렬·필터를 처리하는지 확인합니다.
+
+통합 테스트는 `PGVECTOR_TEST_DATABASE_URL`이 없으면 자동으로 건너뜁니다. 로컬에서는 Spring 저장소와 같은 pgvector 이미지를 실행한 뒤 다음처럼 검증합니다.
+
+```bash
+docker compose -f ../catchhole-backend-java/compose.yaml up -d postgres
+
+PGVECTOR_TEST_DATABASE_URL=postgresql+psycopg://myuser:secret@localhost:15432/mydatabase \
+  .venv/bin/pytest -m integration -q
+```
+
+테스트는 현재 연결 안에 `episodes`, `episode_chunks` 임시 테이블과 HNSW cosine 인덱스를 만들고 종료 시 transaction rollback으로 모두 제거합니다. 따라서 같은 DB의 기존 테이블과 데이터는 수정하지 않습니다.
+
 ## 후속 구현 방향
 
-- HNSW와 `vector_cosine_ops` 인덱스는 Flyway V1에 구성되어 있으므로, 후속 PR에서는 실제 검색 쿼리와 품질을 검증합니다.
+- HNSW와 `vector_cosine_ops` 인덱스는 Flyway V1에 구성되어 있고 실제 pgvector 검색 통합 테스트도 연결되었습니다. 후속 작업에서는 샘플 원고 검색 품질을 검증합니다.
 - 현재는 분석 작업에서 새로 만든 모든 `episode_chunks`를 같은 청킹 단위로 임베딩합니다. API 요청 크기를 고려한 backfill batch와 재처리 정책은 후속 작업에서 정합니다.
 - NVM-143은 이 범용 검색 결과에 직접 source chunk, 기존 fact, 인접 문맥을 조합해 NVM-144에 넘길 검증 문맥을 만듭니다.
