@@ -3,7 +3,7 @@ from uuid import UUID
 import pytest
 
 from app.analysis.exceptions import LlmExtractionError
-from app.analysis.setting_extractor import CharacterSettingExtractor
+from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
 from app.llm.responses import LlmTextResponse
 
 CHUNK_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -35,6 +35,47 @@ def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
     assert candidate.value_type == "NUMBER"
     assert candidate.value_json == {"value": 12}
     assert candidate.evidence_spans[0].quote == "카엘은 12레벨 검사"
+
+
+def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts() -> None:
+    llm_client = RecordingTextGenerationClient()
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        max_attempts=1,
+    )
+
+    result = extractor.extract_from_chunk(
+        source_chunk_id=CHUNK_ID,
+        chunk_text="카엘은 화염검술을 익혔고 지능은 17이다.",
+        schema_hints=(
+            CharacterSettingSchemaHint(
+                schema_key="stats.mental_power",
+                display_name="정신력",
+                attribute_pattern=None,
+                aliases=("정신력", "mental_power"),
+                value_type="NUMBER",
+            ),
+            CharacterSettingSchemaHint(
+                schema_key="skills.skill",
+                display_name="스킬",
+                attribute_pattern="skill.*",
+                aliases=(),
+                value_type="JSON",
+            ),
+        ),
+    )
+
+    assert result.candidates == []
+    assert '"schemaKey": "stats.mental_power"' in llm_client.user_prompt
+    assert '"displayName": "정신력"' in llm_client.user_prompt
+    assert '"aliases": [' in llm_client.user_prompt
+    assert '"mental_power"' in llm_client.user_prompt
+    assert '"attributePattern": "skill.*"' in llm_client.user_prompt
+    assert '"valueType": "JSON"' in llm_client.user_prompt
+    assert "canonical schemaKey" in llm_client.user_prompt
+    assert "stats.지능, time.첫전투" in llm_client.user_prompt
+    assert "skill.<스킬명>" in llm_client.system_prompt
+    assert "item.<아이템명>" in llm_client.system_prompt
 
 
 def test_extract_from_chunk_retries_when_json_parse_fails(tmp_path) -> None:
@@ -154,6 +195,23 @@ class FakeTextGenerationClient:
             }
             """
         )
+
+
+class RecordingTextGenerationClient:
+    def __init__(self) -> None:
+        self.system_prompt = ""
+        self.user_prompt = ""
+
+    def create_text_response(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None = None,
+        max_output_tokens: int = 1500,
+    ) -> LlmTextResponse:
+        self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
+        return LlmTextResponse(text='{"candidates": []}')
 
 
 class RetryThenSuccessClient:

@@ -5,6 +5,7 @@ import pytest
 
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.analysis.character_subject_resolver import SubjectResolutionResult
+from app.analysis.setting_extractor import CharacterSettingSchemaHint
 from app.embeddings.service import ChunkEmbeddingResult
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisEpisodePayload, WorkerAnalysisJobPayload
@@ -14,6 +15,22 @@ ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
 WORK_ID = UUID("00000000-0000-0000-0000-000000000002")
 BATCH_ID = UUID("00000000-0000-0000-0000-000000000003")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000004")
+SCHEMA_HINTS = (
+    CharacterSettingSchemaHint(
+        schema_key="stats.strength",
+        display_name="근력",
+        attribute_pattern=None,
+        aliases=("근력", "힘", "strength"),
+        value_type="NUMBER",
+    ),
+    CharacterSettingSchemaHint(
+        schema_key="stats.strength",
+        display_name="작품 근력",
+        attribute_pattern=None,
+        aliases=("완력",),
+        value_type="NUMBER",
+    ),
+)
 
 
 def test_worker_returns_without_error_when_claimable_job_does_not_exist() -> None:
@@ -99,6 +116,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
                 "chunk_text": chunk_text,
                 "episode_no": 1,
                 "episode_title": "첫 번째 회차",
+                "schema_hints": SCHEMA_HINTS,
             }
     ]
     assert setting_candidate_service.request == {
@@ -192,6 +210,7 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         }
     ]
     assert setting_candidate_service.saved_candidates == [resolved_candidate]
+    assert all(request["schema_hints"] == SCHEMA_HINTS for request in setting_extractor.requests)
     summary = json.loads(spring_client.complete_calls[0][1])
     assert summary == {
         "episodeCount": 1,
@@ -327,6 +346,7 @@ class FakeSettingExtractor:
         chunk_text: str,
         episode_no: int | None = None,
         episode_title: str | None = None,
+        schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
     ):
         self.requests.append(
             {
@@ -334,6 +354,7 @@ class FakeSettingExtractor:
                 "chunk_text": chunk_text,
                 "episode_no": episode_no,
                 "episode_title": episode_title,
+                "schema_hints": schema_hints,
             }
         )
         candidates = self.candidate_groups.pop(0)
@@ -408,6 +429,22 @@ def _payload() -> WorkerAnalysisJobPayload:
         batch_id=BATCH_ID,
         model_name="gpt-4.1-mini",
         current_step="SETTING_EXTRACTION",
+        character_setting_schemas=[
+            {
+                "schemaKey": "stats.strength",
+                "displayName": "근력",
+                "attributePattern": None,
+                "aliases": ["근력", "힘", "strength"],
+                "valueType": "NUMBER",
+            },
+            {
+                "schemaKey": "stats.strength",
+                "displayName": "작품 근력",
+                "attributePattern": None,
+                "aliases": ["완력"],
+                "valueType": "NUMBER",
+            }
+        ],
         known_characters=[
             {
                 "characterId": "00000000-0000-0000-0000-000000000005",

@@ -82,7 +82,7 @@ def test_resolve_candidate_evidence_offsets_resolves_all_candidate_spans() -> No
         source_chunk_id=CHUNK_ID,
         entity_type="CHARACTER",
         entity_name="카엘",
-        attribute_name="skills.화염검술",
+        attribute_name="skill.화염검술",
         attribute_value="화염검술",
         value_type="JSON",
         value_json={"name": "화염검술"},

@@ -16,9 +16,10 @@ from app.analysis.character_subject_resolver import (
 )
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.schemas import ExtractedSettingCandidate
-from app.analysis.setting_extractor import CharacterSettingExtractor
+from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
 from app.chunking.chunk_splitter import EpisodeChunkDraft, split_into_chunks
 from app.chunking.text_normalizer import normalize_text
+from app.schemas.worker import WorkerAnalysisCharacterSettingSchemaPayload
 
 # 로컬에서 텍스트 파일을 넣으면 청킹 -> llm로 설정후보 추출 -> 인용문 offset 보정 -> fall back 흐름 -> Setting_candidates 응답값을 json 파일로 주는 테스트 코드
 # 실행 방법은 README.md 참고
@@ -49,6 +50,7 @@ def run_episode_text_analysis_debug(
     max_chunks: int | None,
     known_characters: list[KnownCharacter],
     output_json: Path | None,
+    schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
 ) -> dict:
     raw_text = text_file.read_text(encoding="utf-8")
     normalized_text = normalize_text(raw_text)
@@ -78,6 +80,7 @@ def run_episode_text_analysis_debug(
         flush=True,
     )
     print(f"known_characters={len(known_characters)}", flush=True)
+    print(f"character_setting_schemas={len(schema_hints)}", flush=True)
 
     all_candidates: list[DebugCandidate] = []
     subject_fallback_call_count = 0
@@ -98,6 +101,7 @@ def run_episode_text_analysis_debug(
             chunk_text=draft.chunk_text,
             episode_no=episode_no,
             episode_title=episode_title,
+            schema_hints=schema_hints,
         )
         resolved_candidates = resolve_candidate_evidence_offsets(
             candidates=extraction_result.candidates,
@@ -175,6 +179,9 @@ def main() -> None:
         max_chunks=args.max_chunks,
         known_characters=_load_known_characters(args.known_characters_json),
         output_json=args.output_json,
+        schema_hints=_load_character_setting_schema_hints(
+            args.character_setting_schemas_json
+        ),
     )
 
 
@@ -206,6 +213,15 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Optional JSON file with known characters. "
             "Accepts characterId/character_id/id and name fields."
+        ),
+    )
+    parser.add_argument(
+        "--character-setting-schemas-json",
+        type=Path,
+        default=None,
+        help=(
+            "Optional JSON array with Spring claim characterSettingSchemas entries. "
+            "Accepts schemaKey, displayName, attributePattern, aliases, and valueType."
         ),
     )
     parser.add_argument(
@@ -269,6 +285,33 @@ def _load_known_characters(path: Path | None) -> list[KnownCharacter]:
             )
         )
     return known_characters
+
+
+def _load_character_setting_schema_hints(
+    path: Path | None,
+) -> tuple[CharacterSettingSchemaHint, ...]:
+    if path is None:
+        return ()
+
+    raw_items = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw_items, list):
+        raise ValueError("--character-setting-schemas-json must be a JSON array.")
+
+    # 로컬 입력도 실제 claim DTO로 검증해 필드 alias와 타입 계약을 운영 경로와 맞춘다.
+    schemas = [
+        WorkerAnalysisCharacterSettingSchemaPayload.model_validate(raw_item)
+        for raw_item in raw_items
+    ]
+    return tuple(
+        CharacterSettingSchemaHint(
+            schema_key=schema.schema_key,
+            display_name=schema.display_name,
+            attribute_pattern=schema.attribute_pattern,
+            aliases=tuple(schema.aliases),
+            value_type=schema.value_type,
+        )
+        for schema in schemas
+    )
 
 
 def _print_candidate_preview(candidates: list[ExtractedSettingCandidate]) -> None:
