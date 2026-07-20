@@ -1,9 +1,26 @@
+import re
 from uuid import UUID
 
 from app.worker.analysis_job_worker import WorkerRunResult
-from scripts.run_analysis_worker import run_worker_loop
+from scripts.run_analysis_worker import _print_result, run_worker_loop
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
+
+
+def test_print_result_prefixes_timestamp_when_job_does_not_exist(capsys) -> None:
+    _print_result(
+        WorkerRunResult(
+            claimed=False,
+            analysis_job_id=None,
+            message="Claimable analysis job does not exist.",
+        )
+    )
+
+    output = capsys.readouterr().out.strip()
+
+    assert re.match(r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\] ", output)
+    assert "claimed=False" in output
+    assert "message=Claimable analysis job does not exist." in output
 
 
 def test_run_worker_loop_repeats_run_once_and_sleeps_when_job_does_not_exist() -> None:
