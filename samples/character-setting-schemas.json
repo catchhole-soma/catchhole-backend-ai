@@ -1,0 +1,9 @@
+[
+  {
+    "schemaKey": "skills.skill",
+    "displayName": "스킬",
+    "attributePattern": "skill.*",
+    "aliases": [],
+    "valueType": "JSON"
+  }
+]

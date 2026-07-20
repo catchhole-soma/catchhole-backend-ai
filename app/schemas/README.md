@@ -27,6 +27,7 @@ Spring 기준으로는 Request/Response DTO에 가깝습니다.
   - Python Worker와 Spring 내부 Worker API 사이에서 사용하는 request/response payload를 정의합니다.
   - `modelName`, `analysisJobId`, `contentS3Key` 같은 Spring JSON 필드를 Python 코드에서는 `model_name`, `analysis_job_id`, `content_s3_key`로 다룰 수 있게 alias를 둡니다.
   - claim payload의 `knownCharacters`는 Python에서 `known_characters`로 받고, 설정 후보 캐릭터명 매칭 resolver에 전달합니다.
+  - claim payload의 `characterSettingSchemas`는 Python에서 `character_setting_schemas`로 받습니다. 각 항목은 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`만 포함하며, 필드가 없는 이전 payload는 빈 목록으로 처리합니다.
 
 ## 다른 값 객체와의 구분
 

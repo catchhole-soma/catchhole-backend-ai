@@ -45,6 +45,7 @@ S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 
   --episode-title "1화" \
   --max-chunks 1 \
   --known-characters-json ./samples/known-characters.json \
+  --character-setting-schemas-json ./samples/character-setting-schemas.json \
   --output-json ./tmp/episode-1-debug.json
 ```
 
@@ -52,6 +53,22 @@ S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 
 `--known-characters-json`을 넘기면 Spring claim payload의 `knownCharacters`처럼 기존 캐릭터 목록을 주입해
 `matched_character_id`, `match_status`까지 확인할 수 있습니다. 이 runner는 `episode_chunks`나
 `setting_candidates`에 저장하지 않고, 결과를 콘솔과 JSON 파일로만 출력합니다.
+
+`--character-setting-schemas-json`에는 Spring claim payload의 `characterSettingSchemas`와 같은 배열을
+넘깁니다. 각 항목은 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`을 포함하며,
+모든 chunk의 설정 추출 prompt에 schema hint로 전달됩니다.
+
+```json
+[
+  {
+    "schemaKey": "skills.skill",
+    "displayName": "스킬",
+    "attributePattern": "skill.*",
+    "aliases": [],
+    "valueType": "JSON"
+  }
+]
+```
 
 Mac에서 Anaconda Python을 사용할 경우:
 
