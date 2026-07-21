@@ -4,7 +4,6 @@ import logging
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.enums import AnalysisStep
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.schemas import ExtractedSettingCandidate
@@ -16,7 +15,12 @@ from app.analysis.character_subject_resolver import (
 )
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.db.session import get_session_maker
-from app.embeddings.service import ChunkEmbeddingResult, ChunkEmbeddingService
+from app.domain.enums import AnalysisStep
+from app.embeddings.exceptions import RecoverableEmbeddingProviderError
+from app.embeddings.services.episode_chunk_embedding import (
+    EpisodeChunkEmbeddingResult,
+    EpisodeChunkEmbeddingService,
+)
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.services.episode_chunk_service import EpisodeChunkService
@@ -83,8 +87,8 @@ class EpisodeChunkingApi(Protocol):
 
 
 # Worker가 저장된 청크의 임베딩 생성과 DB 반영을 요청할 때 기대하는 규격
-class ChunkEmbeddingApi(Protocol):
-    def embed_chunks(self, chunks: list[EpisodeChunk]) -> ChunkEmbeddingResult:
+class EpisodeChunkEmbeddingApi(Protocol):
+    def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult:
         pass
 
 
@@ -118,7 +122,7 @@ class AnalysisJobWorker:
         self,
         spring_client: SpringWorkerApi | None = None,
         chunking_service: EpisodeChunkingApi | None = None,
-        chunk_embedding_service: ChunkEmbeddingApi | None = None,
+        episode_chunk_embedding_service: EpisodeChunkEmbeddingApi | None = None,
         setting_extractor: SettingExtractorApi | None = None,
         subject_resolver: SubjectResolverApi | None = None,
         setting_candidate_service: SettingCandidateService | None = None,
@@ -126,7 +130,7 @@ class AnalysisJobWorker:
     ) -> None:
         self.spring_client = spring_client or SpringWorkerClient.from_settings()
         self._chunking_service = chunking_service
-        self._chunk_embedding_service = chunk_embedding_service
+        self._episode_chunk_embedding_service = episode_chunk_embedding_service
         self._setting_extractor = setting_extractor
         self._subject_resolver = subject_resolver
         self._setting_candidate_service = setting_candidate_service
@@ -167,7 +171,7 @@ class AnalysisJobWorker:
                 error_message=self._error_message(exc),
             )
             raise
-        
+
         # 분석 job 하나를 정상적으로 처리했음을 반환
         return WorkerRunResult(
             claimed=True,
@@ -204,15 +208,17 @@ class AnalysisJobWorker:
             )
             chunk_count += len(chunks)
 
-            # 2. 저장된 청크들을 한 번에 임베딩한다. 실패한 청크는 NULL 상태로 남겨
-            # 이후 backfill할 수 있게 하고, 현재 분석의 설정 후보 추출은 계속한다.
+            # 2. 저장된 청크들을 한 번에 임베딩한다. 일시적인 provider 장애일 때만
+            # NULL 상태로 남기고 현재 설정 후보 추출을 계속한다.
             try:
-                embedding_result = self._get_chunk_embedding_service().embed_chunks(chunks)
+                embedding_result = (
+                    self._get_episode_chunk_embedding_service().embed_chunks(chunks)
+                )
                 embedded_chunk_count += embedding_result.embedded_chunk_count
-            except Exception:
+            except RecoverableEmbeddingProviderError:
                 embedding_failed_chunk_count += len(chunks)
                 logger.exception(
-                    "Chunk embedding failed; setting extraction will continue. "
+                    "Chunk embedding provider failed temporarily; setting extraction will continue. "
                     "episode_id=%s chunk_count=%s",
                     episode.episode_id,
                     len(chunks),
@@ -265,7 +271,7 @@ class AnalysisJobWorker:
             known_characters=known_characters,
         )
 
-        #Python dict를 JSON 문자열로 바꿈
+        # 분석 결과 개수를 Spring 완료 API에 전달할 JSON 문자열로 만든다.
         summary_json = json.dumps(
             {
                 "episodeCount": len(payload.episodes),
@@ -284,7 +290,7 @@ class AnalysisJobWorker:
     def _error_message(self, exc: Exception) -> str:
         message = str(exc) or exc.__class__.__name__
         return message[:1000]
-    
+
     # S3에 접근해서 에피소드 원문을 청크로 나눌 EpisodeS3ChunkingService를 초기화 하는 작업만 한다.
     def _get_chunking_service(self) -> EpisodeChunkingApi:
         if self._chunking_service is None:
@@ -296,12 +302,12 @@ class AnalysisJobWorker:
         return self._chunking_service
 
     # 저장된 청크의 벡터를 생성하고 episode_chunks에 반영할 서비스를 초기화한다.
-    def _get_chunk_embedding_service(self) -> ChunkEmbeddingApi:
-        if self._chunk_embedding_service is None:
-            self._chunk_embedding_service = ChunkEmbeddingService(
+    def _get_episode_chunk_embedding_service(self) -> EpisodeChunkEmbeddingApi:
+        if self._episode_chunk_embedding_service is None:
+            self._episode_chunk_embedding_service = EpisodeChunkEmbeddingService(
                 session_factory=get_session_maker(),
             )
-        return self._chunk_embedding_service
+        return self._episode_chunk_embedding_service
 
     # llm에 넣을 프롬프트와 api호출을 할 서비스(CharacterSettingExtractor)를 초기화 하는 작업만 한다.
     def _get_setting_extractor(self) -> SettingExtractorApi:

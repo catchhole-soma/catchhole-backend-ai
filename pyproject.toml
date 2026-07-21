@@ -30,6 +30,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: requires an external PostgreSQL with pgvector",
+]
 
 [tool.ruff]
 line-length = 100
