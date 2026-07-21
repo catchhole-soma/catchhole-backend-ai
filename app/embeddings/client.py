@@ -1,6 +1,7 @@
 import httpx
 
 from app.core.config import Settings, get_settings
+from app.embeddings.exceptions import RecoverableEmbeddingProviderError
 from app.embeddings.responses import EmbeddingBatchResponse
 
 
@@ -32,7 +33,7 @@ class OpenAIEmbeddingsClient:
         self.embeddings_api_url = embeddings_api_url
         self.http_client = http_client or httpx.Client(timeout=60)
 
-    @classmethod #첫 번째 인자로 클래스 자체를 자동으로 전달
+    @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "OpenAIEmbeddingsClient":
         """애플리케이션 설정값으로 임베딩 클라이언트를 생성한다.
 
@@ -50,8 +51,8 @@ class OpenAIEmbeddingsClient:
 
     def create_embedding(self, text: str) -> list[float]:
         """단일 문자열을 임베딩하고 생성된 벡터 하나를 반환한다.
-        검색 query 하나를 임베딩 해서 단건 조회하는 경우를 위함
-        예) query_vector = client.create_embedding("주인공의 나이가 달라짐")
+
+        검색 query 하나를 임베딩해 단건 조회하는 경우에 사용한다.
         """
 
         return self.create_embeddings([text]).embeddings[0]
@@ -59,26 +60,44 @@ class OpenAIEmbeddingsClient:
     def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
         """여러 문자열(청크들)을 한 요청으로 임베딩하고 검증된 배치 결과를 반환한다.
 
-        HTTP 오류는 ``httpx.HTTPStatusError``로 전달하고, 입력 또는 응답 형식이
-        계약과 다르면 ``ValueError``를 발생시킨다.
+        일시적인 네트워크·provider 오류는 ``RecoverableEmbeddingProviderError``로
+        변환한다. 복구 불가능한 HTTP 오류와 입력·응답 계약 오류는 그대로 전달한다.
         """
 
         self._validate_inputs(inputs)
 
-        response = self.http_client.post(
-            self.embeddings_api_url,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
-                "input": inputs,
-                "dimensions": self.dimensions,
-                "encoding_format": "float",
-            },
-        )
-        response.raise_for_status()
+        try:
+            response = self.http_client.post(
+                self.embeddings_api_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "input": inputs,
+                    "dimensions": self.dimensions,
+                    "encoding_format": "float",
+                },
+            )
+            response.raise_for_status()
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            # timeout·네트워크·원격 protocol 오류는 재호출로 회복될 수 있는 장애다.
+            raise RecoverableEmbeddingProviderError(
+                "Embedding provider connection failed temporarily."
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            if self._is_recoverable_http_status(exc.response.status_code):
+                # 요청 제한과 provider 서버 장애는 현재 분석의 설정 추출과 분리한다.
+                raise RecoverableEmbeddingProviderError(
+                    f"Embedding provider failed temporarily: status={exc.response.status_code}"
+                ) from exc
+            # 위 상태를 제외한 4xx는 같은 요청의 재호출로 해결되지 않으므로 그대로 전달한다.
+            raise
 
         payload = response.json()
         embeddings = self._extract_embeddings(payload, len(inputs))
@@ -99,6 +118,12 @@ class OpenAIEmbeddingsClient:
             raise ValueError("Embedding inputs must not be empty.")
         if any(not text.strip() for text in inputs):
             raise ValueError("Embedding input text must not be blank.")
+
+    @staticmethod
+    def _is_recoverable_http_status(status_code: int) -> bool:
+        """잠시 후 재처리할 가치가 있는 HTTP 상태인지 판단한다."""
+
+        return status_code in {408, 409, 429} or status_code >= 500
 
     def _extract_embeddings(self, payload: dict, expected_count: int) -> list[list[float]]:
         """API 응답에서 벡터를 꺼내 입력 순서로 정렬하고 개수와 차원을 검증한다.

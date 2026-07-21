@@ -166,11 +166,12 @@ Spring claim
   - schema hint는 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType` 다섯 필드만 가진 prompt 입력 전용 값입니다.
   - `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않으며 기존 응답 shape도 변경하지 않습니다.
   - fuzzy alias 매칭이나 schema 자동 생성은 하지 않고, 명시적인 미등록 설정은 검토 후보로 보존합니다.
-- `ChunkEmbeddingService`
+- `EpisodeChunkEmbeddingService`
   - episode의 저장된 청크 텍스트를 한 번에 임베딩합니다.
   - 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.
-  - 현재는 임베딩 단계의 예외를 Worker가 기록하고 설정 후보 추출을 계속하므로, commit되지 않은 임베딩은 후속 backfill 대상이 됩니다.
-  - 외부 API 실패와 청크 누락 같은 데이터 정합성 실패를 구분하는 정책은 후속 작업으로 남아 있습니다.
+  - timeout·네트워크·원격 protocol 오류와 HTTP 408/409/429/5xx만 복구 가능한 provider 장애로 분류하며, Worker는 실패 개수를 기록하고 설정 후보 추출을 계속합니다.
+  - 요청·인증·응답 계약·데이터 정합성·DB 오류는 Worker가 삼키지 않고 analysis job 실패로 전파합니다.
+  - 복구 가능한 provider 장애로 commit되지 않은 임베딩은 `NULL`로 남고 벡터 검색 대상에서 제외됩니다. 자동 backfill은 현재 구현하지 않으므로 완료 요약의 `embeddingFailedChunkCount`로 누락을 확인해야 합니다.
 - `evidence_span_resolver.py`
   - LLM이 반환한 `evidence_spans[].quote`를 chunk 원문에서 다시 찾습니다.
   - quote 위치를 `episode_chunks.start_offset`과 더해 회차 전체 기준 offset으로 보정합니다.
