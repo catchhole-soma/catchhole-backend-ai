@@ -1,6 +1,8 @@
 from decimal import Decimal
 from uuid import UUID
 
+import pytest
+
 from app.analysis.character_name_resolver import CharacterNameMatch
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.domain.enums import (
@@ -75,3 +77,59 @@ def test_to_entity_maps_extracted_candidate_to_setting_candidate() -> None:
     assert entity.raw_ai_result_json["raw_entity_mention"] == "나"
     assert entity.created_at is None
     assert entity.updated_at is None
+
+
+def test_to_entity_uses_entity_name_stripped_during_extraction_validation() -> None:
+    candidate = ExtractedSettingCandidate(
+        source_chunk_id=CHUNK_ID,
+        entity_type="CHARACTER",
+        entity_name="\t비요른\n",
+        raw_entity_mention="비요른",
+        attribute_name="level",
+        attribute_value="1",
+        value_type="NUMBER",
+        value_json={"value": 1},
+        evidence_spans=[
+            ExtractedEvidenceSpan(
+                quote="비요른은 1레벨 바바리안이다.",
+                start_offset=0,
+                end_offset=18,
+            )
+        ],
+        confidence=0.95,
+    )
+    assert candidate.entity_name == "비요른"
+
+    entity = SettingCandidateMapper.to_entity(
+        work_id=WORK_ID,
+        episode_id=EPISODE_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        candidate=candidate,
+    )
+
+    assert entity.entity_name == "비요른"
+    assert entity.raw_ai_result_json["entity_name"] == "비요른"
+
+
+def test_to_entity_rejects_whitespace_only_entity_name() -> None:
+    # mapper의 최종 방어선은 Pydantic 검증을 우회한 내부 객체도 거절한다.
+    candidate = ExtractedSettingCandidate.model_construct(
+        source_chunk_id=CHUNK_ID,
+        entity_type="CHARACTER",
+        entity_name="\t\n",
+        raw_entity_mention=None,
+        attribute_name="level",
+        attribute_value="1",
+        value_type="NUMBER",
+        value_json={"value": 1},
+        evidence_spans=[ExtractedEvidenceSpan(quote="그는 1레벨이다.")],
+        confidence=0.95,
+    )
+
+    with pytest.raises(ValueError, match="entity_name must contain non-whitespace characters"):
+        SettingCandidateMapper.to_entity(
+            work_id=WORK_ID,
+            episode_id=EPISODE_ID,
+            analysis_job_id=ANALYSIS_JOB_ID,
+            candidate=candidate,
+        )

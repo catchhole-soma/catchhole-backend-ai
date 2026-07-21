@@ -7,7 +7,7 @@ from uuid import UUID
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.schemas import ExtractedSettingCandidate
-from app.analysis.setting_extractor import CharacterSettingExtractor
+from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
 from app.analysis.character_subject_resolver import (
     CharacterSubjectResolver,
     SubjectResolutionChunkContext,
@@ -101,6 +101,7 @@ class SettingExtractorApi(Protocol):
         chunk_text: str,
         episode_no: int | None = None,
         episode_title: str | None = None,
+        schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
     ):
         pass
 
@@ -198,6 +199,18 @@ class AnalysisJobWorker:
             )
             for character in payload.known_characters
         ]
+        # Backend가 보낸 순서와 중복을 유지한 immutable tuple을 job당 한 번 만들고,
+        # 모든 chunk에 재사용해 같은 분석 job 안에서 prompt 기준이 달라지지 않게 한다.
+        schema_hints = tuple(
+            CharacterSettingSchemaHint(
+                schema_key=schema.schema_key,
+                display_name=schema.display_name,
+                attribute_pattern=schema.attribute_pattern,
+                aliases=tuple(schema.aliases),
+                value_type=schema.value_type,
+            )
+            for schema in payload.character_setting_schemas
+        )
 
         # Spring claim payload에 포함된 회차들을 순서대로 처리한다.
         for episode in payload.episodes:
@@ -231,6 +244,7 @@ class AnalysisJobWorker:
                     chunk_text=chunk.chunk_text,
                     episode_no=episode.episode_no,
                     episode_title=episode.title,
+                    schema_hints=schema_hints,
                 )
                 # 설정 후보들을 추출한 후 그 데이터를 그대로 넣고, 청크의 원문과 청크의 시작 지점을 넘겨주어 근거 위치 보정
                 resolved_candidates = resolve_candidate_evidence_offsets(

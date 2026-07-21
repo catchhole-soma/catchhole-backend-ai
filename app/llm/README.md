@@ -58,7 +58,7 @@ OpenAIResponsesClient
 
 JSON 파싱 실패 또는 Python schema 검증 실패는 `CharacterSettingExtractor`에서 재시도합니다. 다만 프롬프트 정책 위반까지 강제하지는 않습니다.
 
-예를 들어 `attribute_name`이 `items`처럼 suffix 없이 오거나, `confidence`가 `0.0`인 응답은 프롬프트상 원하지 않는 값이지만 현재 schema만으로는 통과할 수 있습니다.
+예를 들어 `attribute_name`이 `item`처럼 suffix 없이 오거나, `confidence`가 `0.0`인 응답은 프롬프트상 원하지 않는 값이지만 현재 schema만으로는 통과할 수 있습니다.
 
 OpenAI Structured Outputs의 JSON schema 강제, attribute policy validator, chunk별 재시도 이력 기록은 후속 이슈에서 다룹니다.
 

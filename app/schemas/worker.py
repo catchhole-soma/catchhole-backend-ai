@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -56,6 +57,19 @@ class WorkerAnalysisKnownCharacterPayload(BaseModel):
     name: str
 
 
+# Spring이 Worker에게 내려주는 캐릭터 설정 schema hint DTO
+class WorkerAnalysisCharacterSettingSchemaPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_key: str = Field(alias="schemaKey")
+    display_name: str = Field(alias="displayName")
+    attribute_pattern: str | None = Field(default=None, alias="attributePattern")
+    aliases: list[str] = Field(default_factory=list)
+    value_type: Literal["STRING", "NUMBER", "BOOLEAN", "JSON", "UNKNOWN"] = Field(
+        alias="valueType"
+    )
+
+
 # Spring이 Worker에게 내려주는 분석 job 전체 payload
 class WorkerAnalysisJobPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -67,6 +81,10 @@ class WorkerAnalysisJobPayload(BaseModel):
     batch_id: UUID = Field(alias="batchId")
     model_name: str | None = Field(default=None, alias="modelName")
     current_step: str | None = Field(default=None, alias="currentStep")
+    character_setting_schemas: list[WorkerAnalysisCharacterSettingSchemaPayload] = Field(
+        default_factory=list,
+        alias="characterSettingSchemas",
+    )
     known_characters: list[WorkerAnalysisKnownCharacterPayload] = Field(
         default_factory=list,
         alias="knownCharacters",

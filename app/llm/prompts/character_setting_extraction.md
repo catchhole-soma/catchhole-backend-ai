@@ -16,14 +16,14 @@
 
 추출 제외 규칙:
 - 단순 감정, 장면 묘사, 독백, 분위기는 추출하지 않습니다.
-- `skills.*`는 기술명, 능력명, 마법명, 전투기술명처럼 식별 가능한 경우에만 사용합니다.
-- 직업, 종족, 역할, 칭호, 성격, 태도, 투지, 리더십은 `skills.*`로 저장하지 않습니다.
+- `skill.*`는 기술명, 능력명, 마법명, 전투기술명처럼 식별 가능한 경우에만 사용합니다.
+- 직업, 종족, 역할, 칭호, 성격, 태도, 투지, 리더십은 `skill.*`로 저장하지 않습니다.
 - 다만 캐릭터에게 지속적으로 적용되는 신분, 상태, 제약, 소속, 정체성, 저주, 부상, 변신, 각성, 계약, 임무, 호명, 이름 확정은 `status.*` 또는 `time.*`로 저장할 수 있습니다.
 - `stats.*`는 시스템창, 설정표, 명시적 수치 또는 고정 능력치에만 사용합니다.
 - `age`는 실제 나이, `level`은 캐릭터 레벨에만 사용합니다.
 - 출생 순서, 가족 관계, 서열은 `age`가 아닙니다.
 - 아이템 레벨, 장비 레벨, 위험도는 캐릭터 `level`이 아닙니다.
-- `items.*`는 실제 소유/장착/선택/획득/사용한 구체 아이템에만 사용합니다.
+- `item.*`는 실제 소유/장착/선택/획득/사용한 구체 아이템에만 사용합니다.
 - 단순 아이템 목록, 선택 가능한 후보 목록, 일반 장비 범주는 저장하지 않습니다.
 - 세계관 규칙이나 제도는 특정 캐릭터에게 직접 적용된 사실일 때만 후보로 저장합니다.
 - 애매하거나 특정 캐릭터에게 귀속할 수 없으면 후보를 반환하지 않습니다.
@@ -43,22 +43,29 @@
 - 기존 캐릭터 DB와 같은 인물인지, 어떤 `character_id`와 연결되는지는 판단하지 않습니다.
 - `value_type`은 `STRING`, `NUMBER`, `BOOLEAN`, `JSON`, `UNKNOWN` 중 하나를 사용합니다.
 - `source_chunk_id`는 입력으로 받은 값을 그대로 사용합니다.
-- `attribute_name`은 백엔드의 `factKey`로 저장되므로 아래 규칙만 사용합니다.
+- user prompt의 `character_setting_schemas`는 현재 작품에서 사용할 수 있는 schema hint입니다.
+- `attributePattern`이 null인 schema의 `schemaKey`, `displayName`, `aliases`와 원문 속성이 명확히 대응하면 `attribute_name`에는 canonical `schemaKey`를, `value_type`에는 schema의 `valueType`을 사용합니다.
+- `attributePattern`이 있는 schema는 registry용 `schemaKey`를 그대로 출력하지 않고, pattern의 `*`를 원문에 나온 구체 명칭으로 바꾼 key와 schema의 `valueType`을 사용합니다.
+- schema와 정확히 대응하지 않는 속성을 유사한 alias로 추측하거나 가장 가까운 schema로 자동 정규화하지 않습니다.
+- schema에 등록되지 않았더라도 원문에 명시된 유효한 설정은 `stats.지능`, `time.첫전투`처럼 의미가 드러나는 key로 검토 후보에 보존합니다. Backend 확정 단계에서 schema 미매칭으로 거절될 수 있습니다.
+- `attribute_name`은 먼저 `SettingCandidate.attributeName`에 저장되는 후보 key입니다.
+- Backend confirm에서 exact/alias match는 canonical `schemaKey`를, pattern match는 구체 `attribute_name`을 `CharacterFact.factKey`로 확정하므로 아래 규칙만 사용합니다.
   - 나이: `age`
   - 레벨: `level`
   - 스탯: `stats.<스탯명>`
-  - 스킬: `skills.<스킬명>`
-  - 아이템: `items.<아이템명>`
+  - 스킬: `skill.<스킬명>`
+  - 아이템: `item.<아이템명>`
   - 상태: `status.<상태명>`
   - 시간 또는 사건: `time.<시간 또는 사건명>`
-- 여러 스킬, 아이템, 스탯, 상태를 모두 `skills`, `items`, `stats`, `status` 같은 이름으로 묶지 않습니다.
-- `status`, `items`, `skills`, `stats`, `time`처럼 점 뒤 명칭이 없는 값은 반환하지 않습니다.
+- 여러 스킬, 아이템, 스탯, 상태를 모두 `skill`, `item`, `stats`, `status` 같은 이름으로 묶지 않습니다.
+- `status`, `item`, `skill`, `stats`, `time`처럼 점 뒤 명칭이 없는 값은 반환하지 않습니다.
 - 점 뒤 `<명칭>`은 한국어 명사구를 우선 사용하고, 공백은 `_`로 바꿉니다.
 - 영어, 숫자, 기호가 원문 고유명사인 경우에만 원문 표기를 유지합니다.
 - `attribute_value`는 목록/검토 화면에서 보여줄 짧은 요약 문자열입니다. 식별자나 로직 판단 기준으로 쓰지 않습니다.
 - `value_json`은 실제 값의 source of truth입니다.
 - 나이와 레벨처럼 단일 숫자 값은 `value_json.value`에 숫자로 넣습니다.
 - 스탯, 스킬, 아이템, 상태, 시간 값은 `value_json`에 구조화된 JSON으로 넣습니다.
+- `skill.*`, `item.*`, `status.*`, `time.*` 같은 동적 JSON 후보의 `value_json.name`에는 점 뒤 구체 명칭을 넣습니다.
 - 원문에서 확인되지 않은 `value_json` 필드는 만들지 않습니다.
 - `confidence`는 근거가 명확할수록 높게 둡니다.
   - 시스템창/설정표처럼 직접 수치가 나온 경우: 0.9~1.0
@@ -75,18 +82,18 @@
 - 레벨: `"attribute_name": "level"`, `"value_type": "NUMBER"`, `"value_json": {"value": 12}`
 - 나이: `"attribute_name": "age"`, `"value_type": "NUMBER"`, `"value_json": {"value": 17}`
 - 스탯: `"attribute_name": "stats.근력"`, `"value_type": "NUMBER"`, `"value_json": {"name": "근력", "label": "근력", "value": 80}`
-- 스킬: `"attribute_name": "skills.파이어볼"`, `"value_type": "JSON"`, `"value_json": {"name": "파이어볼", "level": 3, "effect": "화염 속성 공격"}`
-- 아이템: `"attribute_name": "items.화염검"`, `"value_type": "JSON"`, `"value_json": {"name": "화염검", "type": "weapon", "equipped": true}`
+- 스킬: `"attribute_name": "skill.파이어볼"`, `"value_type": "JSON"`, `"value_json": {"name": "파이어볼", "level": 3, "effect": "화염 속성 공격"}`
+- 아이템: `"attribute_name": "item.화염검"`, `"value_type": "JSON"`, `"value_json": {"name": "화염검", "type": "weapon", "equipped": true}`
 - 상태: `"attribute_name": "status.부상"`, `"value_type": "JSON"`, `"value_json": {"name": "부상", "description": "왼팔 골절"}`
 - 시간 또는 사건: `"attribute_name": "time.첫전투"`, `"value_type": "JSON"`, `"value_json": {"name": "첫전투", "description": "화염검술을 처음 사용함"}`
 - 이름 확정: `"attribute_name": "time.이름_확정"`, `"value_type": "JSON"`, `"value_json": {"name": "이름 확정", "description": "인물이 특정 이름으로 불리기 시작함"}`
 
 잘못된 예시:
 
-- `"attribute_name": "skills.리더십"`: 원문에서 명시적 스킬명이 아니면 추상 성향입니다.
+- `"attribute_name": "skill.리더십"`: 원문에서 명시적 스킬명이 아니면 추상 성향입니다.
 - `"attribute_name": "age"`, `"attribute_value": "두 번째 딸"`: 출생 순서이지 나이가 아닙니다.
 - `"attribute_name": "level"`, `"attribute_value": "아이템 레벨 +12"`: 아이템 레벨은 캐릭터 레벨이 아닙니다.
-- `"attribute_name": "items"`: 구체 아이템명이 없으므로 잘못된 key입니다.
+- `"attribute_name": "item"`: 구체 아이템명이 없으므로 잘못된 key입니다.
 - `"attribute_name": "time. 이름 부여"`: 점 뒤에 공백이 있으므로 잘못된 key입니다.
 
 응답 형식:
@@ -98,7 +105,7 @@
       "entity_type": "CHARACTER",
       "entity_name": "캐릭터명",
       "raw_entity_mention": "원문에 실제 나온 캐릭터 표현",
-      "attribute_name": "age | level | stats.<스탯명> | skills.<스킬명> | items.<아이템명> | status.<상태명> | time.<시간 또는 사건명>",
+      "attribute_name": "age | level | stats.<스탯명> | skill.<스킬명> | item.<아이템명> | status.<상태명> | time.<시간 또는 사건명>",
       "attribute_value": "목록에서 보여줄 요약값",
       "value_type": "STRING | NUMBER | BOOLEAN | JSON | UNKNOWN",
       "value_json": {

@@ -1,6 +1,7 @@
 import argparse
 import time
 from collections.abc import Callable
+from datetime import datetime
 
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunResult
 
@@ -81,6 +82,7 @@ def _parse_args() -> argparse.Namespace:
 def _print_result(result: WorkerRunResult) -> None:
     # 운영 로깅 전 단계의 단순 출력, 로컬에서 claim 여부와 job id를 바로 확인하기 위함
     print(
+        f"[{datetime.now().astimezone().isoformat(timespec='seconds')}] "
         f"claimed={result.claimed} "
         f"analysis_job_id={result.analysis_job_id} "
         f"work_id={result.work_id} "

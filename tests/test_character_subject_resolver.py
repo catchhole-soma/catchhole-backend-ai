@@ -47,7 +47,7 @@ def test_resolve_candidates_discards_subjectless_placeholder_candidates(tmp_path
     candidates = [
         _candidate(entity_name="미상", raw_entity_mention=None, attribute_name="level"),
         _candidate(entity_name="나", raw_entity_mention=None, attribute_name="status.각성"),
-        _candidate(entity_name="비요른", raw_entity_mention=None, attribute_name="items.도끼"),
+        _candidate(entity_name="비요른", raw_entity_mention=None, attribute_name="item.도끼"),
     ]
 
     result = resolver.resolve_candidates(
@@ -57,7 +57,7 @@ def test_resolve_candidates_discards_subjectless_placeholder_candidates(tmp_path
     )
 
     assert llm_client.call_count == 0
-    assert [candidate.attribute_name for candidate in result.candidates] == ["items.도끼"]
+    assert [candidate.attribute_name for candidate in result.candidates] == ["item.도끼"]
     assert result.fallback_call_count == 0
     assert result.fallback_resolved_count == 0
     assert result.fallback_discarded_count == 2
@@ -94,7 +94,7 @@ def test_resolve_candidates_batches_targets_and_discards_unresolved_items(tmp_pa
     )
     candidates = [
         _candidate(entity_name="미상", raw_entity_mention="나는", attribute_name="level"),
-        _candidate(entity_name="미상", raw_entity_mention="그녀는", attribute_name="items.검"),
+        _candidate(entity_name="미상", raw_entity_mention="그녀는", attribute_name="item.검"),
         _candidate(entity_name="미상", raw_entity_mention="주인공", attribute_name="status.각성"),
         _candidate(entity_name="비요른", raw_entity_mention="비요른", attribute_name="status.부상"),
     ]

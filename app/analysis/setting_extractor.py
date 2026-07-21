@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import json
 import logging
 from pathlib import Path
@@ -18,6 +19,15 @@ DEFAULT_PROMPT_PATH = (
 )
 # 이 파일 전용 로그 객체를 만든다 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CharacterSettingSchemaHint:
+    schema_key: str
+    display_name: str
+    attribute_pattern: str | None
+    aliases: tuple[str, ...]
+    value_type: str
 
 
 # CharacterSettingExtractor가 기대하는 LLM client 규격
@@ -58,6 +68,7 @@ class CharacterSettingExtractor:
         chunk_text: str,
         episode_no: int | None = None,
         episode_title: str | None = None,
+        schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
     ) -> CharacterSettingExtractionResult:
         system_prompt = self._load_system_prompt()
         user_prompt = self._build_user_prompt(
@@ -65,6 +76,7 @@ class CharacterSettingExtractor:
             chunk_text=chunk_text,
             episode_no=episode_no,
             episode_title=episode_title,
+            schema_hints=schema_hints,
         )
 
         # LLM 응답은 JSON 형식을 항상 지키지 않을 수 있으므로 파싱/검증 실패만 재시도
@@ -109,6 +121,7 @@ class CharacterSettingExtractor:
         chunk_text: str,
         episode_no: int | None,
         episode_title: str | None,
+        schema_hints: tuple[CharacterSettingSchemaHint, ...],
     ) -> str:
         # source_chunk_id는 이후 setting_candidates.source_chunk_id로 이어질 근거 식별값이다.
         metadata = {
@@ -116,8 +129,29 @@ class CharacterSettingExtractor:
             "episode_no": episode_no,
             "episode_title": episode_title,
         }
+        schema_summary = [
+            {
+                "schemaKey": hint.schema_key,
+                "displayName": hint.display_name,
+                "attributePattern": hint.attribute_pattern,
+                "aliases": list(hint.aliases),
+                "valueType": hint.value_type,
+            }
+            for hint in schema_hints
+        ]
         return (
             "다음 회차 청크에서 캐릭터 설정 후보를 추출하세요.\n\n"
+            "character_setting_schema_rules:\n"
+            "- attributePattern이 null인 schema의 schemaKey, displayName 또는 aliases와 명확히 "
+            "대응하면 attribute_name에는 canonical schemaKey를, value_type에는 valueType을 "
+            "사용하세요.\n"
+            "- attributePattern이 있는 동적 설정은 schemaKey가 아니라 pattern의 *를 구체 "
+            "명칭으로 바꾼 attribute_name과 schema의 valueType을 사용하세요.\n"
+            "- schema에 등록되지 않았지만 원문에 명시된 설정은 stats.지능, time.첫전투처럼 "
+            "의미가 드러나는 key로 검토 후보에 보존하세요. 가까운 schema로 추측해 바꾸거나 "
+            "버리지 마세요. 이 후보는 Backend 확정 시 거절될 수 있습니다.\n\n"
+            "character_setting_schemas:\n"
+            f"{json.dumps(schema_summary, ensure_ascii=False, indent=2)}\n\n"
             f"metadata:\n{json.dumps(metadata, ensure_ascii=False)}\n\n" # Python dict를 JSON 문자열로 바꿈
             f"chunk_text:\n{chunk_text}"
         )

@@ -21,6 +21,10 @@ class SettingCandidateMapper:
         candidate: ExtractedSettingCandidate,
         character_match: CharacterNameMatch | None = None,
     ) -> SettingCandidate:
+        entity_name = candidate.entity_name.strip()
+        if not entity_name:
+            raise ValueError("entity_name must contain non-whitespace characters.")
+
         character_match = character_match or CharacterNameMatch(
             matched_character_id=None,
             match_status=SettingCandidateMatchStatus.UNRESOLVED,
@@ -32,7 +36,7 @@ class SettingCandidateMapper:
             source_chunk_id=candidate.source_chunk_id,
             analysis_job_id=analysis_job_id,
             entity_type=SettingEntityType(candidate.entity_type),
-            entity_name=candidate.entity_name,
+            entity_name=entity_name,
             raw_entity_mention=candidate.raw_entity_mention or candidate.entity_name,
             matched_character_id=character_match.matched_character_id,
             match_status=character_match.match_status,

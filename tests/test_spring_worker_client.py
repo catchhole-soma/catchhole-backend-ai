@@ -4,6 +4,7 @@ from uuid import UUID
 import httpx
 
 from app.clients.spring_worker_client import INTERNAL_API_KEY_HEADER, SpringWorkerClient
+from app.schemas.worker import WorkerAnalysisJobPayload
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
 WORK_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -22,6 +23,17 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
     assert payload.analysis_job_id == ANALYSIS_JOB_ID
     assert payload.work_id == WORK_ID
     assert payload.episodes[0].episode_id == EPISODE_ID
+    assert payload.character_setting_schemas[0].schema_key == "stats.strength"
+    assert payload.character_setting_schemas[0].aliases == ["근력", "힘", "strength"]
+    assert payload.character_setting_schemas[1].attribute_pattern == "skill.*"
+    assert payload.character_setting_schemas[1].value_type == "JSON"
+    assert set(payload.character_setting_schemas[0].model_dump()) == {
+        "schema_key",
+        "display_name",
+        "attribute_pattern",
+        "aliases",
+        "value_type",
+    }
     request = requests[0]
     assert request.headers[INTERNAL_API_KEY_HEADER] == "test-api-key"
     assert request.url.path == "/api/internal/v1/analysis-jobs/claim"
@@ -38,6 +50,21 @@ def test_claim_returns_none_when_spring_returns_no_content() -> None:
     payload = client.claim()
 
     assert payload is None
+
+
+def test_claim_payload_defaults_character_setting_schemas_when_older_spring_omits_field() -> None:
+    payload = WorkerAnalysisJobPayload.model_validate(
+        {
+            "analysisJobId": str(ANALYSIS_JOB_ID),
+            "jobType": "SETTING_EXTRACTION",
+            "workId": str(WORK_ID),
+            "workTitle": "빛나는 검사 로맨스",
+            "batchId": str(BATCH_ID),
+            "episodes": [],
+        }
+    )
+
+    assert payload.character_setting_schemas == []
 
 
 # 진행 상태 보고 API를 PATCH로 올바른 URL과 Body로 호출하는지 확인
@@ -113,6 +140,22 @@ def _claim_response(request: httpx.Request, requests: list[httpx.Request]) -> ht
                 "batchId": str(BATCH_ID),
                 "modelName": "gpt-4.1-mini",
                 "currentStep": "원문 청킹",
+                "characterSettingSchemas": [
+                    {
+                        "schemaKey": "stats.strength",
+                        "displayName": "근력",
+                        "attributePattern": None,
+                        "aliases": ["근력", "힘", "strength"],
+                        "valueType": "NUMBER",
+                    },
+                    {
+                        "schemaKey": "skills.skill",
+                        "displayName": "스킬",
+                        "attributePattern": "skill.*",
+                        "aliases": [],
+                        "valueType": "JSON",
+                    },
+                ],
                 "episodes": [
                     {
                         "episodeId": str(EPISODE_ID),

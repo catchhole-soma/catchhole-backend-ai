@@ -24,6 +24,7 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 - `setting_extractor.py`
   - 청크 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
+  - Spring claim DTO를 Worker가 변환한 immutable schema hint를 user prompt에 포함합니다.
   - prompt 로드, user prompt 구성, JSON 파싱, schema 검증, 검증 실패 재시도를 담당합니다.
 - `evidence_span_resolver.py`
   - LLM이 반환한 `evidence_spans[].quote`를 청크 원문에서 다시 찾아 offset을 보정합니다.
@@ -67,10 +68,10 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 예를 들어 다음 값은 현재 schema 검증만으로는 통과할 수 있습니다.
 
-- `attribute_name: "items"`
+- `attribute_name: "item"`
 - `attribute_name: "status"`
 - `attribute_name: "time. 이름 부여"`
-- `attribute_name: "skills.리더십"`
+- `attribute_name: "skill.리더십"`
 - `confidence: 0.0`
 
 이런 정책 위반을 재시도 또는 후보 제외 조건으로 만들려면 `ExtractedSettingCandidate`에 attribute 규칙 validator를 추가하거나, schema 검증 이후 별도 policy validation 단계를 둡니다.
