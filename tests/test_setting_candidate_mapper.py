@@ -79,7 +79,7 @@ def test_to_entity_maps_extracted_candidate_to_setting_candidate() -> None:
     assert entity.updated_at is None
 
 
-def test_to_entity_strips_entity_name_before_persistence() -> None:
+def test_to_entity_uses_entity_name_stripped_during_extraction_validation() -> None:
     candidate = ExtractedSettingCandidate(
         source_chunk_id=CHUNK_ID,
         entity_type="CHARACTER",
@@ -98,6 +98,7 @@ def test_to_entity_strips_entity_name_before_persistence() -> None:
         ],
         confidence=0.95,
     )
+    assert candidate.entity_name == "비요른"
 
     entity = SettingCandidateMapper.to_entity(
         work_id=WORK_ID,
@@ -107,11 +108,12 @@ def test_to_entity_strips_entity_name_before_persistence() -> None:
     )
 
     assert entity.entity_name == "비요른"
-    assert entity.raw_ai_result_json["entity_name"] == "\t비요른\n"
+    assert entity.raw_ai_result_json["entity_name"] == "비요른"
 
 
 def test_to_entity_rejects_whitespace_only_entity_name() -> None:
-    candidate = ExtractedSettingCandidate(
+    # mapper의 최종 방어선은 Pydantic 검증을 우회한 내부 객체도 거절한다.
+    candidate = ExtractedSettingCandidate.model_construct(
         source_chunk_id=CHUNK_ID,
         entity_type="CHARACTER",
         entity_name="\t\n",

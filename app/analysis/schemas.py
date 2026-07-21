@@ -1,7 +1,7 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
 # 후보가 원문 어디에서 나왔는지 보여주기 위한 근거 정보
@@ -19,7 +19,10 @@ class ExtractedSettingCandidate(BaseModel):
     source_chunk_id: UUID
     # 캐릭터 설정 관련으로만 받음
     entity_type: Literal["CHARACTER"] = "CHARACTER"
-    entity_name: str = Field(min_length=1, max_length=100)
+    entity_name: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+    ]
     raw_entity_mention: str | None = Field(default=None, max_length=100)
     attribute_name: str = Field(min_length=1, max_length=100)
     # 목록/검색 표시용 요약값

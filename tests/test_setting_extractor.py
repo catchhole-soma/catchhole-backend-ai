@@ -118,6 +118,25 @@ def test_extract_from_chunk_retries_when_required_field_is_missing(tmp_path) -> 
     assert result.candidates[0].source_chunk_id == CHUNK_ID
 
 
+def test_extract_from_chunk_retries_when_entity_name_is_whitespace_only(tmp_path) -> None:
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
+    llm_client = WhitespaceEntityNameThenSuccessClient()
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        prompt_path=prompt_path,
+        max_attempts=2,
+    )
+
+    result = extractor.extract_from_chunk(
+        source_chunk_id=CHUNK_ID,
+        chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+    )
+
+    assert llm_client.call_count == 2
+    assert result.candidates[0].entity_name == "카엘"
+
+
 def test_extract_from_chunk_raises_error_when_required_field_keeps_missing(tmp_path) -> None:
     # 필수 필드 누락이 계속되면 후보 저장 단계로 넘기지 않고 최종 실패 처리한다.
     prompt_path = tmp_path / "prompt.md"
@@ -261,6 +280,53 @@ class MissingFieldThenSuccessClient:
                       "entity_name": "카엘",
                       "attribute_name": "level",
                       "attribute_value": "12",
+                      "value_json": {"value": 12},
+                      "evidence_spans": [
+                        {
+                          "quote": "카엘은 12레벨 검사",
+                          "start_offset": null,
+                          "end_offset": null
+                        }
+                      ],
+                      "confidence": 0.9
+                    }
+                  ]
+                }
+                """
+            )
+        return FakeTextGenerationClient().create_text_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            max_output_tokens=max_output_tokens,
+        )
+
+
+class WhitespaceEntityNameThenSuccessClient:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def create_text_response(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None = None,
+        max_output_tokens: int = 1500,
+    ) -> LlmTextResponse:
+        self.call_count += 1
+        if self.call_count == 1:
+            return LlmTextResponse(
+                text="""
+                {
+                  "candidates": [
+                    {
+                      "source_chunk_id": "00000000-0000-0000-0000-000000000001",
+                      "entity_type": "CHARACTER",
+                      "entity_name": "   ",
+                      "raw_entity_mention": "카엘",
+                      "attribute_name": "level",
+                      "attribute_value": "12",
+                      "value_type": "NUMBER",
                       "value_json": {"value": 12},
                       "evidence_spans": [
                         {
