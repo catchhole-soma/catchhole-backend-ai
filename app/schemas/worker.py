@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.enums import EpisodeProcessingStatus
+
 # Worker가 Spring 서버에 job claim 요청
 class WorkerAnalysisJobClaimRequest(BaseModel):
     # Python 필드명과 JSON alias를 둘 다 허용한다, 예: model_name or modelName 모두 가능
@@ -18,6 +20,8 @@ class WorkerAnalysisJobProgressRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     # 현재 진행 단계, 빈 문자열은 허용 x
     current_step: str = Field(alias="currentStep", min_length=1, max_length=100)
+    # 사람이 읽는 currentStep과 별개로 Spring Episode에 적용할 명시적 상태
+    episode_status: EpisodeProcessingStatus = Field(alias="episodeStatus")
 
 # Worker가 분석 성공을 Spring에 보고할 때 쓰는 DTO
 class WorkerAnalysisJobCompleteRequest(BaseModel):

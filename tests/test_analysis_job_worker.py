@@ -11,6 +11,7 @@ from app.embeddings.exceptions import (
     RecoverableEmbeddingProviderError,
 )
 from app.embeddings.services.episode_chunk_embedding import EpisodeChunkEmbeddingResult
+from app.domain.enums import EpisodeProcessingStatus
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisEpisodePayload, WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunSummary
@@ -59,7 +60,9 @@ def test_worker_reports_progress_and_complete_to_spring() -> None:
 
     assert result.claimed is True
     assert result.analysis_job_id == ANALYSIS_JOB_ID
-    assert spring_client.progress_calls == [(ANALYSIS_JOB_ID, "SETTING_EXTRACTION")]
+    assert spring_client.progress_calls == [
+        (ANALYSIS_JOB_ID, "SETTING_EXTRACTION", EpisodeProcessingStatus.ANALYZING)
+    ]
     assert spring_client.complete_calls == [
         (ANALYSIS_JOB_ID, '{"candidateCount": 0}', 10, 2),
     ]
@@ -73,7 +76,9 @@ def test_worker_reports_fail_to_spring_when_analysis_fails() -> None:
     with pytest.raises(RuntimeError):
         worker.run_once()
 
-    assert spring_client.progress_calls == [(ANALYSIS_JOB_ID, "SETTING_EXTRACTION")]
+    assert spring_client.progress_calls == [
+        (ANALYSIS_JOB_ID, "SETTING_EXTRACTION", EpisodeProcessingStatus.ANALYZING)
+    ]
     assert spring_client.complete_calls == []
     assert spring_client.fail_calls == [(ANALYSIS_JOB_ID, "LLM response parse failed.")]
 
@@ -311,7 +316,7 @@ class FakeSpringWorkerClient:
     def __init__(self, payload: WorkerAnalysisJobPayload | None) -> None:
         self.payload = payload
         self.claim_called = False
-        self.progress_calls: list[tuple[UUID, str]] = []
+        self.progress_calls: list[tuple[UUID, str, EpisodeProcessingStatus]] = []
         self.complete_calls: list[tuple[UUID, str | None, int | None, int | None]] = []
         self.fail_calls: list[tuple[UUID, str]] = []
 
@@ -319,8 +324,13 @@ class FakeSpringWorkerClient:
         self.claim_called = True
         return self.payload
 
-    def report_progress(self, analysis_job_id: UUID, current_step: str) -> None:
-        self.progress_calls.append((analysis_job_id, current_step))
+    def report_progress(
+        self,
+        analysis_job_id: UUID,
+        current_step: str,
+        episode_status: EpisodeProcessingStatus,
+    ) -> None:
+        self.progress_calls.append((analysis_job_id, current_step, episode_status))
 
     def complete(
         self,

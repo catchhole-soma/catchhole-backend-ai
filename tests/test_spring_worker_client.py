@@ -4,6 +4,7 @@ from uuid import UUID
 import httpx
 
 from app.clients.spring_worker_client import INTERNAL_API_KEY_HEADER, SpringWorkerClient
+from app.domain.enums import EpisodeProcessingStatus
 from app.schemas.worker import WorkerAnalysisJobPayload
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -72,12 +73,19 @@ def test_report_progress_calls_spring_progress_api() -> None:
     requests: list[httpx.Request] = []
     client = _client(lambda request: _empty_success_response(request, requests))
 
-    client.report_progress(analysis_job_id=ANALYSIS_JOB_ID, current_step="설정 추출")
+    client.report_progress(
+        analysis_job_id=ANALYSIS_JOB_ID,
+        current_step="설정 추출",
+        episode_status=EpisodeProcessingStatus.ANALYZING,
+    )
 
     request = requests[0]
     assert request.method == "PATCH"
     assert request.url.path == f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}/progress"
-    assert json.loads(request.content) == {"currentStep": "설정 추출"}
+    assert json.loads(request.content) == {
+        "currentStep": "설정 추출",
+        "episodeStatus": "ANALYZING",
+    }
 
 
 # 완료 보고 API를 POST로 올바른 URL과 Body로 호출하는지 확인

@@ -15,7 +15,7 @@ from app.analysis.character_subject_resolver import (
 )
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.db.session import get_session_maker
-from app.domain.enums import AnalysisStep
+from app.domain.enums import AnalysisStep, EpisodeProcessingStatus
 from app.embeddings.exceptions import RecoverableEmbeddingProviderError
 from app.embeddings.services.episode_chunk_embedding import (
     EpisodeChunkEmbeddingResult,
@@ -57,7 +57,12 @@ class SpringWorkerApi(Protocol):
         pass
 
     # claim 직후 현재 Worker가 어떤 단계에 진입했는지 Spring에 보고한다.
-    def report_progress(self, analysis_job_id: UUID, current_step: str) -> None:
+    def report_progress(
+        self,
+        analysis_job_id: UUID,
+        current_step: str,
+        episode_status: EpisodeProcessingStatus,
+    ) -> None:
         pass
 
     # 모든 episode/chunk 분석과 후보 저장이 끝난 뒤 성공 결과를 Spring에 보고한다.
@@ -156,6 +161,7 @@ class AnalysisJobWorker:
             self.spring_client.report_progress(
                 analysis_job_id=payload.analysis_job_id,
                 current_step=AnalysisStep.SETTING_EXTRACTION.value,
+                episode_status=EpisodeProcessingStatus.ANALYZING,
             )
             # 실제 분석 로직
             summary = self._run_analysis_steps(payload)
