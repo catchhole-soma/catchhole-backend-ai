@@ -60,7 +60,7 @@ flowchart TD
     F --> G["runner가 idle sleep 후 다시 claim 시도"]
 
     E -- "있음" --> H["WorkerAnalysisJobPayload 수신<br/>analysisJobId, work, episodes,<br/>knownCharacters, characterSettingSchemas"]
-    H --> I["SpringWorkerClient.report_progress()<br/>currentStep=SETTING_EXTRACTION"]
+    H --> I["SpringWorkerClient.report_progress()<br/>currentStep=SETTING_EXTRACTION<br/>episodeStatus=ANALYZING"]
     I --> J["payload.episodes 순회"]
 
     J --> K["contentS3Key 확인"]
@@ -143,7 +143,7 @@ sequenceDiagram
         Worker-->>Runner: WorkerRunResult(claimed=false)
     else claim 성공
         Spring-->>Worker: WorkerAnalysisJobPayload
-        Worker->>Spring: report_progress(SETTING_EXTRACTION)
+        Worker->>Spring: report_progress(SETTING_EXTRACTION, ANALYZING)
 
         loop episode in payload.episodes
             Worker->>Chunking: replace_chunks_from_s3_content(episodeId, contentS3Key)

@@ -69,6 +69,15 @@ claim 요청의 `currentStep`은 claim 성공 직후 `AnalysisJob.start(modelNam
 PATCH /api/internal/v1/analysis-jobs/{analysisJobId}/progress
 ```
 
+progress 요청은 표시 문구인 `currentStep`과 대상 회차에 적용할 `episodeStatus`를 함께 보냅니다. Spring은 `currentStep` 문자열에서 회차 상태를 추론하지 않습니다.
+
+```json
+{
+  "currentStep": "SETTING_EXTRACTION",
+  "episodeStatus": "ANALYZING"
+}
+```
+
 따라서 현재 구조에서는 두 지점 모두 `current_step`을 바꿀 수 있습니다.
 
 - claim 시점: 작업을 `RUNNING`으로 만들면서 초기 단계 기록
@@ -107,8 +116,9 @@ claim(currentStep=SETTING_EXTRACTION)
 ```text
 claim()
 -> status = RUNNING
-progress(currentStep=SETTING_EXTRACTION)
+progress(currentStep=SETTING_EXTRACTION, episodeStatus=ANALYZING)
 -> current_step = SETTING_EXTRACTION
+-> Episode.status = ANALYZING
 ```
 
 장점:
@@ -129,6 +139,7 @@ progress(currentStep=SETTING_EXTRACTION)
 - `status`는 Spring이 관리합니다.
 - Python은 DB row를 직접 변경하지 않습니다.
 - Python은 Spring 내부 API에 진행, 완료, 실패를 보고합니다.
+- progress 보고에는 `currentStep`과 명시적인 `EpisodeProcessingStatus`를 함께 전달합니다.
 - `current_step`을 claim에서 보낼지, progress에서만 보낼지는 후속 협의 대상입니다.
 
 ## 현재 연결된 실행 흐름
