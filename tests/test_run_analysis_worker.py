@@ -58,9 +58,34 @@ def test_run_worker_loop_repeats_run_once_and_sleeps_when_job_does_not_exist() -
     assert sleeps == [3.0]
 
 
+def test_run_worker_loop_continues_after_one_job_fails() -> None:
+    worker = FakeWorker(
+        results=[
+            RuntimeError("first episode failed"),
+            WorkerRunResult(
+                claimed=True,
+                analysis_job_id=ANALYSIS_JOB_ID,
+                message="Analysis job completed.",
+            ),
+        ]
+    )
+    sleeps: list[float] = []
+
+    results = run_worker_loop(
+        worker=worker,
+        idle_sleep_seconds=3.0,
+        max_iterations=2,
+        sleeper=sleeps.append,
+    )
+
+    assert worker.run_count == 2
+    assert [result.analysis_job_id for result in results] == [ANALYSIS_JOB_ID]
+    assert sleeps == [3.0]
+
+
 class FakeWorker:
     # 실제 Worker 대신 run_once 결과만 순서대로 반환한다.
-    def __init__(self, results: list[WorkerRunResult]) -> None:
+    def __init__(self, results: list[WorkerRunResult | Exception]) -> None:
         self.results = results
         self.run_count = 0
 
@@ -68,4 +93,6 @@ class FakeWorker:
         # 미리 준비한 결과를 하나씩 반환해서 runner loop만 독립적으로 테스트한다.
         result = self.results[self.run_count]
         self.run_count += 1
+        if isinstance(result, Exception):
+            raise result
         return result
