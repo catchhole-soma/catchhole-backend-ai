@@ -1,14 +1,58 @@
+from typing import Any
+
+import pytest
+
 from app.core.config import Settings
 from app.storage.s3 import S3TextObjectStorage
 
 
 def test_from_settings_creates_s3_text_storage() -> None:
-    settings = Settings(aws_s3_bucket="catchhole-manuscripts", aws_region="ap-northeast-2")
+    settings = Settings(
+        _env_file=None,
+        aws_s3_bucket="catchhole-manuscripts",
+        aws_region="ap-northeast-2",
+        aws_access_key_id="test-access-key",
+        aws_secret_access_key="test-secret-key",
+    )
 
     storage = S3TextObjectStorage.from_settings(settings)
 
     assert storage.bucket == "catchhole-manuscripts"
     assert storage.region == "ap-northeast-2"
+    assert storage.access_key_id == "test-access-key"
+    assert storage.secret_access_key == "test-secret-key"
+
+
+def test_get_text_creates_s3_client_with_settings_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeS3Client(body_text="자격 증명 테스트 원고입니다.")
+    request: dict[str, Any] = {}
+
+    def create_client(service_name: str, **kwargs: Any) -> FakeS3Client:
+        request["service_name"] = service_name
+        request.update(kwargs)
+        return client
+
+    monkeypatch.setattr("app.storage.s3.boto3.client", create_client)
+    storage = S3TextObjectStorage.from_settings(
+        Settings(
+            _env_file=None,
+            aws_s3_bucket="catchhole-manuscripts",
+            aws_region="ap-northeast-2",
+            aws_access_key_id="test-access-key",
+            aws_secret_access_key="test-secret-key",
+        )
+    )
+
+    storage.get_text("works/work-id/episodes/episode-id.txt")
+
+    assert request == {
+        "service_name": "s3",
+        "region_name": "ap-northeast-2",
+        "aws_access_key_id": "test-access-key",
+        "aws_secret_access_key": "test-secret-key",
+    }
 
 
 def test_get_text_reads_utf8_text_from_s3_object() -> None:

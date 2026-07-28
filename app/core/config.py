@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # AWS 설정
     aws_region: str = "ap-northeast-2"
     aws_s3_bucket: str = ""
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
     aws_sqs_queue_url: str = ""
 
     # LLM API key
