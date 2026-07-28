@@ -13,7 +13,8 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 
 - `character_setting_extraction.md`
   - 웹소설 회차 청크에서 캐릭터 중심 설정 후보를 추출하기 위한 prompt입니다.
-  - `setting_candidates` 저장 구조를 고려해 `source_chunk_id`, `entity_type`, `attribute_name`, `value_json`, `evidence_spans` 등을 반환하도록 요구합니다.
+  - `setting_candidates` 저장 구조를 고려해 `entity_type`, `attribute_name`, `value_json`, `evidence_spans` 등을 반환하도록 요구합니다.
+  - `source_chunk_id`는 LLM 출력에 맡기지 않고 응답 파싱 후 현재 입력 `EpisodeChunk.id`로 주입합니다.
 - `character_subject_resolution.md`
   - 이미 추출된 설정 후보 중 지칭어/placeholder 주체만 해소하기 위한 prompt입니다.
   - 설정 후보를 다시 추출하지 않고, current chunk 기준으로 묶인 후보들의 `resolved_entity_name`만 반환하도록 요구합니다.
@@ -33,6 +34,7 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 - 미등록이지만 원문에 명시된 설정은 검토 후보로 보존하며, 가까운 schema로 fuzzy 정규화하지 않습니다.
 - `attribute_value`는 목록/검토 화면 표시용 summary이며, 로직 판단 기준으로 사용하지 않습니다.
 - `value_json`은 실제 값의 source of truth입니다. 나이/레벨은 `{"value": number}` 형태를 우선 사용합니다.
+- `source_chunk_id`는 prompt 출력 필드가 아니며 Python Worker가 현재 입력 chunk ID로 결정합니다.
 - `evidence_spans[].quote`는 위치 보정 기준이므로 원문 일부를 요약/의역하지 않고 그대로 복사해야 합니다.
 - `evidence_spans[].start_offset`, `end_offset`은 LLM이 계산하지 않고 Python Worker가 quote 검색으로 보정합니다.
 

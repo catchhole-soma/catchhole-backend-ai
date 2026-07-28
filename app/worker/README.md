@@ -150,8 +150,8 @@ progress(currentStep=SETTING_EXTRACTION, episodeStatus=ANALYZING)
 Spring claim
 -> progress 보고
 -> characterSettingSchemas를 immutable schema hint로 변환
--> episode별 S3 원문 청킹
--> episode별 저장 청크 batch 임베딩 및 DB 반영
+-> 단일 episode S3 원문 청킹
+-> 해당 episode의 저장 청크 batch 임베딩 및 DB 반영
 -> chunk별 캐릭터 설정 후보 추출
 -> evidence quote 위치 보정
 -> 지칭어/placeholder 후보 subject fallback
@@ -163,9 +163,9 @@ Spring claim
 세부 책임은 다음 파일로 나뉩니다.
 
 - `analysis_job_worker.py`
-  - claim된 payload의 episode 목록을 순회합니다.
+  - claim된 payload의 단일 episode를 처리합니다.
   - claim의 `characterSettingSchemas`를 Backend가 보낸 순서와 중복을 유지한 immutable schema hint tuple로 job당 한 번 변환해 모든 chunk 추출에 전달합니다.
-  - episode별 청킹·임베딩 서비스와 chunk별 설정 추출기를 호출합니다.
+  - 해당 episode의 청킹·임베딩 서비스와 chunk별 설정 추출기를 호출합니다.
   - 생성된 episode/chunk/embedding/candidate 개수를 `summaryJson`으로 모아 Spring에 완료 보고합니다.
 - `EpisodeS3ChunkingService`
   - episode_id로 DB의 episode를 조회합니다.
@@ -173,6 +173,7 @@ Spring claim
   - 읽은 원문을 `EpisodeChunkService`에 넘겨 기존 chunk 삭제 후 새 chunk 저장을 수행합니다.
 - `CharacterSettingExtractor`
   - 저장된 chunk 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
+  - LLM 응답의 `source_chunk_id`는 사용하지 않고 현재 입력 chunk ID로 강제합니다.
   - LLM 응답 JSON을 `app/analysis/schemas.py` 기준으로 검증합니다.
   - schema hint는 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType` 다섯 필드만 가진 prompt 입력 전용 값입니다.
   - `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않으며 기존 응답 shape도 변경하지 않습니다.
@@ -214,6 +215,7 @@ scripts/run_analysis_worker.py
 -> run_once 반복 호출
 -> claim할 job이 없으면 idle sleep
 -> job이 있으면 청킹/설정 추출/완료 보고 수행
+-> 개별 job 실패는 Spring에 보고한 뒤 로그와 idle sleep을 남기고 다음 claim 계속
 ```
 
 수동 확인 시에는 한 번만 claim을 시도할 수 있습니다.
@@ -221,6 +223,8 @@ scripts/run_analysis_worker.py
 ```bash
 .venv/bin/python scripts/run_analysis_worker.py --once
 ```
+
+`--once`에서는 실패 예외가 프로세스 종료 상태로 전달됩니다. 기본 장기 실행 모드에서만 개별 job 실패를 격리하고 다음 claim을 계속합니다.
 
 테스트나 로컬 점검에서는 반복 횟수를 제한할 수 있습니다.
 

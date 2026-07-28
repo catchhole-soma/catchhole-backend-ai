@@ -25,7 +25,7 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - `setting_extractor.py`
   - 청크 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
   - Spring claim DTO를 Worker가 변환한 immutable schema hint를 user prompt에 포함합니다.
-  - prompt 로드, user prompt 구성, JSON 파싱, schema 검증, 검증 실패 재시도를 담당합니다.
+  - prompt 로드, user prompt 구성, JSON 파싱, 결정적 `source_chunk_id` 주입, schema 검증, 검증 실패 재시도를 담당합니다.
 - `evidence_span_resolver.py`
   - LLM이 반환한 `evidence_spans[].quote`를 청크 원문에서 다시 찾아 offset을 보정합니다.
   - exact match를 우선 사용하고, 실패하면 공백/줄바꿈 정규화 기반 검색을 시도합니다.
@@ -55,16 +55,18 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 ## 재시도 기준
 
 `CharacterSettingExtractor`는 LLM 응답이 JSON으로 파싱되지 않거나, `app/analysis/schemas.py`의 Pydantic schema 검증에 실패한 경우에만 재시도합니다.
+설정 후보 배열이 응답 중간에 잘리는 위험을 줄이기 위해 각 추출 요청의 `max_output_tokens`는 4000으로 고정합니다.
 
 예를 들어 다음 경우는 재시도 대상입니다.
 
 - JSON 문법이 깨진 응답
 - 필수 필드 누락
-- UUID 형식 오류
 - `value_type` enum 범위 밖 값
 - `confidence`가 0~1 범위를 벗어난 값
 
 반대로 프롬프트 정책상 좋지 않은 값이더라도 schema상 문자열로 유효하면 현재는 재시도하지 않습니다.
+
+`source_chunk_id`는 이 재시도 정책의 예외입니다. LLM이 생성할 필드가 아니라 호출자가 이미 알고 있는 `EpisodeChunk.id`이므로, 응답에 값이 없거나 잘못된 UUID가 있어도 현재 입력 ID로 덮어쓴 뒤 검증합니다. 따라서 LLM의 UUID 복사 실수로 같은 요청을 반복하지 않습니다.
 
 예를 들어 다음 값은 현재 schema 검증만으로는 통과할 수 있습니다.
 
