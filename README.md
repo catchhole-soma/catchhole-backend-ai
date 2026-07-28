@@ -122,6 +122,7 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `AWS_REGION`: S3 client가 사용할 AWS 리전
 - `AWS_S3_BUCKET`: 회차 원문과 업로드 파일이 저장되는 S3 버킷
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`: 둘 다 설정하면 S3 client에 명시적으로 전달하는 선택 자격 증명. 비워 두면 boto3 기본 credential provider chain을 사용합니다.
+- `AWS_SESSION_TOKEN`: STS 등 임시 자격 증명을 사용할 때 access key, secret key와 함께 전달하는 선택 세션 토큰입니다.
 - `AWS_SQS_QUEUE_URL`: 분석 잡 큐를 붙일 경우 사용할 SQS URL
 - `LLM_API_KEY`: 설정 추출/검증에 사용할 LLM API 키
 - `LLM_MODEL`: 설정 추출에 사용할 LLM 모델명

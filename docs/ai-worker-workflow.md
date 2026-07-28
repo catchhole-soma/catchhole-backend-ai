@@ -248,7 +248,7 @@ content_s3_key 있음
 -> EpisodeChunkService.replace_episode_chunks(episode_id, raw_text)
 ```
 
-S3 client는 `AWS_ACCESS_KEY_ID`와 `AWS_SECRET_ACCESS_KEY`가 둘 다 설정된 경우에만 해당 값을 명시적으로 사용합니다. 둘 중 하나라도 없으면 AWS CLI profile, IAM role 등을 포함한 boto3 기본 credential provider chain에 맡깁니다. 실제 비밀값은 저장소 문서나 `.env.example`에 기록하지 않습니다.
+S3 client는 `AWS_ACCESS_KEY_ID`와 `AWS_SECRET_ACCESS_KEY`가 둘 다 설정된 경우에만 해당 값을 명시적으로 사용합니다. `AWS_SESSION_TOKEN`도 설정되어 있으면 STS 등 임시 자격 증명의 일부로 함께 전달합니다. access key와 secret key 중 하나라도 없으면 AWS CLI profile, IAM role 등을 포함한 boto3 기본 credential provider chain에 맡깁니다. 실제 비밀값은 저장소 문서나 `.env.example`에 기록하지 않습니다.
 
 `normalize_text(raw_text)`는 다음 규칙으로 분석 기준 원문을 만듭니다.
 
