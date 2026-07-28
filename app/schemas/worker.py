@@ -93,4 +93,4 @@ class WorkerAnalysisJobPayload(BaseModel):
         default_factory=list,
         alias="knownCharacters",
     )
-    episodes: list[WorkerAnalysisEpisodePayload]
+    episode: WorkerAnalysisEpisodePayload

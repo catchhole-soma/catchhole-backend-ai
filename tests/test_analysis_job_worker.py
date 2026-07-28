@@ -492,17 +492,15 @@ def _payload() -> WorkerAnalysisJobPayload:
                 "name": "비요른 얀델",
             }
         ],
-        episodes=[
-            WorkerAnalysisEpisodePayload(
-                episode_id=EPISODE_ID,
-                episode_no=1,
-                title="첫 번째 회차",
-                content_s3_key="works/work-id/episodes/episode-id.txt",
-                content_s3_version=None,
-                content_hash="hash",
-                char_count=1234,
-            )
-        ],
+        episode=WorkerAnalysisEpisodePayload(
+            episode_id=EPISODE_ID,
+            episode_no=1,
+            title="첫 번째 회차",
+            content_s3_key="works/work-id/episodes/episode-id.txt",
+            content_s3_version=None,
+            content_hash="hash",
+            char_count=1234,
+        ),
     )
 
 

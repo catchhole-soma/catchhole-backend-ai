@@ -23,7 +23,7 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
     assert payload is not None
     assert payload.analysis_job_id == ANALYSIS_JOB_ID
     assert payload.work_id == WORK_ID
-    assert payload.episodes[0].episode_id == EPISODE_ID
+    assert payload.episode.episode_id == EPISODE_ID
     assert payload.character_setting_schemas[0].schema_key == "stats.strength"
     assert payload.character_setting_schemas[0].aliases == ["근력", "힘", "strength"]
     assert payload.character_setting_schemas[1].attribute_pattern == "skill.*"
@@ -61,7 +61,15 @@ def test_claim_payload_defaults_character_setting_schemas_when_older_spring_omit
             "workId": str(WORK_ID),
             "workTitle": "빛나는 검사 로맨스",
             "batchId": str(BATCH_ID),
-            "episodes": [],
+            "episode": {
+                "episodeId": str(EPISODE_ID),
+                "episodeNo": 1,
+                "title": "첫 번째 회차",
+                "contentS3Key": "works/work-id/episodes/episode-id.txt",
+                "contentS3Version": None,
+                "contentHash": "hash",
+                "charCount": 1234,
+            },
         }
     )
 
@@ -164,17 +172,15 @@ def _claim_response(request: httpx.Request, requests: list[httpx.Request]) -> ht
                         "valueType": "JSON",
                     },
                 ],
-                "episodes": [
-                    {
-                        "episodeId": str(EPISODE_ID),
-                        "episodeNo": 1,
-                        "title": "첫 번째 회차",
-                        "contentS3Key": "works/work-id/episodes/episode-id.txt",
-                        "contentS3Version": None,
-                        "contentHash": "hash",
-                        "charCount": 1234,
-                    }
-                ],
+                "episode": {
+                    "episodeId": str(EPISODE_ID),
+                    "episodeNo": 1,
+                    "title": "첫 번째 회차",
+                    "contentS3Key": "works/work-id/episodes/episode-id.txt",
+                    "contentS3Version": None,
+                    "contentHash": "hash",
+                    "charCount": 1234,
+                },
             },
             "error": None,
             "timestamp": "2026-06-25T00:00:00",

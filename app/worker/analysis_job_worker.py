@@ -65,7 +65,7 @@ class SpringWorkerApi(Protocol):
     ) -> None:
         pass
 
-    # 모든 episode/chunk 분석과 후보 저장이 끝난 뒤 성공 결과를 Spring에 보고한다.
+    # 단일 episode의 chunk 분석과 후보 저장이 끝난 뒤 성공 결과를 Spring에 보고한다.
     def complete(
         self,
         analysis_job_id: UUID,
@@ -186,7 +186,7 @@ class AnalysisJobWorker:
             message="Analysis job completed.",
             work_id=payload.work_id,
             work_title=payload.work_title,
-            episode_count=len(payload.episodes),
+            episode_count=1,
         )
 
     def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
@@ -197,7 +197,7 @@ class AnalysisJobWorker:
         subject_fallback_resolved_count = 0
         subject_fallback_discarded_count = 0
         save_items: list[SettingCandidateSaveItem] = []
-        # claim payload의 기존 캐릭터 목록은 모든 episode/chunk에서 같은 기준으로 재사용한다.
+        # claim payload의 기존 캐릭터 목록은 모든 chunk에서 같은 기준으로 재사용한다.
         known_characters = [
             KnownCharacter(
                 character_id=character.character_id,
@@ -218,70 +218,69 @@ class AnalysisJobWorker:
             for schema in payload.character_setting_schemas
         )
 
-        # Spring claim payload에 포함된 회차들을 순서대로 처리한다.
-        for episode in payload.episodes:
-            # 1. Episode.content_s3_key 기준으로 S3 원문을 읽고 episode_chunks를 재생성한다.
-            chunks = self._get_chunking_service().replace_chunks_from_s3_content(
-                episode_id=episode.episode_id,
-                content_s3_key=episode.content_s3_key,
+        episode = payload.episode
+        # 1. Episode.content_s3_key 기준으로 S3 원문을 읽고 episode_chunks를 재생성한다.
+        chunks = self._get_chunking_service().replace_chunks_from_s3_content(
+            episode_id=episode.episode_id,
+            content_s3_key=episode.content_s3_key,
+        )
+        chunk_count += len(chunks)
+
+        # 2. 저장된 청크들을 한 번에 임베딩한다. 일시적인 provider 장애일 때만
+        # NULL 상태로 남기고 현재 설정 후보 추출을 계속한다.
+        try:
+            embedding_result = (
+                self._get_episode_chunk_embedding_service().embed_chunks(chunks)
             )
-            chunk_count += len(chunks)
+            embedded_chunk_count += embedding_result.embedded_chunk_count
+        except RecoverableEmbeddingProviderError:
+            embedding_failed_chunk_count += len(chunks)
+            logger.exception(
+                "Chunk embedding provider failed temporarily; setting extraction will continue. "
+                "episode_id=%s chunk_count=%s",
+                episode.episode_id,
+                len(chunks),
+            )
 
-            # 2. 저장된 청크들을 한 번에 임베딩한다. 일시적인 provider 장애일 때만
-            # NULL 상태로 남기고 현재 설정 후보 추출을 계속한다.
-            try:
-                embedding_result = (
-                    self._get_episode_chunk_embedding_service().embed_chunks(chunks)
+        # 3. 저장된 chunk를 LLM 추출기에 넘겨 설정 후보를 생성한다.
+        for index, chunk in enumerate(chunks):
+            extraction_result = self._get_setting_extractor().extract_from_chunk(
+                source_chunk_id=chunk.id,
+                chunk_text=chunk.chunk_text,
+                episode_no=episode.episode_no,
+                episode_title=episode.title,
+                schema_hints=schema_hints,
+            )
+            # 설정 후보들을 추출한 후 그 데이터를 그대로 넣고, 청크의 원문과 청크의 시작 지점을 넘겨주어 근거 위치 보정
+            resolved_candidates = resolve_candidate_evidence_offsets(
+                candidates=extraction_result.candidates,
+                chunk_text=chunk.chunk_text,
+                chunk_start_offset=chunk.start_offset,
+            )
+            # 현재 chunk에서 나온 후보 중 "나/그녀/미상"처럼 주체가 풀리지 않은 후보만
+            # previous/current/next chunk 문맥으로 한 번 더 판단한다.
+            subject_resolution_result = self._get_subject_resolver().resolve_candidates(
+                context=SubjectResolutionChunkContext(
+                    # 현재 chunk의 앞뒤 텍스트만 꺼내 resolver 입력으로 넘긴다.
+                    previous_chunk_text=chunks[index - 1].chunk_text if index > 0 else None,
+                    current_chunk_text=chunk.chunk_text,
+                    next_chunk_text=chunks[index + 1].chunk_text if index + 1 < len(chunks) else None,
+                ),
+                candidates=resolved_candidates,
+                known_characters=known_characters,
+            )
+            # resolver는 저장 가능한 최종 후보 목록과 fallback 처리 개수를 함께 반환한다.
+            # 해소 실패한 placeholder 후보는 result.candidates에서 제외되므로 아래 save_items에도 들어가지 않는다.
+            subject_fallback_call_count += subject_resolution_result.fallback_call_count
+            subject_fallback_resolved_count += subject_resolution_result.fallback_resolved_count
+            subject_fallback_discarded_count += subject_resolution_result.fallback_discarded_count
+            save_items.extend(
+                SettingCandidateSaveItem(
+                    episode_id=episode.episode_id,
+                    candidate=candidate,
                 )
-                embedded_chunk_count += embedding_result.embedded_chunk_count
-            except RecoverableEmbeddingProviderError:
-                embedding_failed_chunk_count += len(chunks)
-                logger.exception(
-                    "Chunk embedding provider failed temporarily; setting extraction will continue. "
-                    "episode_id=%s chunk_count=%s",
-                    episode.episode_id,
-                    len(chunks),
-                )
-
-            # 3. 저장된 chunk를 LLM 추출기에 넘겨 설정 후보를 생성한다.
-            for index, chunk in enumerate(chunks):
-                extraction_result = self._get_setting_extractor().extract_from_chunk(
-                    source_chunk_id=chunk.id,
-                    chunk_text=chunk.chunk_text,
-                    episode_no=episode.episode_no,
-                    episode_title=episode.title,
-                    schema_hints=schema_hints,
-                )
-                # 설정 후보들을 추출한 후 그 데이터를 그대로 넣고, 청크의 원문과 청크의 시작 지점을 넘겨주어 근거 위치 보정
-                resolved_candidates = resolve_candidate_evidence_offsets(
-                    candidates=extraction_result.candidates,
-                    chunk_text=chunk.chunk_text,
-                    chunk_start_offset=chunk.start_offset,
-                )
-                # 현재 chunk에서 나온 후보 중 "나/그녀/미상"처럼 주체가 풀리지 않은 후보만
-                # previous/current/next chunk 문맥으로 한 번 더 판단한다.
-                subject_resolution_result = self._get_subject_resolver().resolve_candidates(
-                    context=SubjectResolutionChunkContext(
-                        # 현재 chunk의 앞뒤 텍스트만 꺼내 resolver 입력으로 넘긴다.
-                        previous_chunk_text=chunks[index - 1].chunk_text if index > 0 else None,
-                        current_chunk_text=chunk.chunk_text,
-                        next_chunk_text=chunks[index + 1].chunk_text if index + 1 < len(chunks) else None,
-                    ),
-                    candidates=resolved_candidates,
-                    known_characters=known_characters,
-                )
-                # resolver는 저장 가능한 최종 후보 목록과 fallback 처리 개수를 함께 반환한다.
-                # 해소 실패한 placeholder 후보는 result.candidates에서 제외되므로 아래 save_items에도 들어가지 않는다.
-                subject_fallback_call_count += subject_resolution_result.fallback_call_count
-                subject_fallback_resolved_count += subject_resolution_result.fallback_resolved_count
-                subject_fallback_discarded_count += subject_resolution_result.fallback_discarded_count
-                save_items.extend(
-                    SettingCandidateSaveItem(
-                        episode_id=episode.episode_id,
-                        candidate=candidate,
-                    )
-                    for candidate in subject_resolution_result.candidates
-                )
+                for candidate in subject_resolution_result.candidates
+            )
 
         # 4. 검증된 후보들을 setting_candidates에 저장하고, 실제 저장된 개수를 완료 요약에 사용한다.
         saved_candidates = self._get_setting_candidate_service().replace_candidates_for_analysis_job(
@@ -294,7 +293,7 @@ class AnalysisJobWorker:
         # 분석 결과 개수를 Spring 완료 API에 전달할 JSON 문자열로 만든다.
         summary_json = json.dumps(
             {
-                "episodeCount": len(payload.episodes),
+                "episodeCount": 1,
                 "chunkCount": chunk_count,
                 "embeddedChunkCount": embedded_chunk_count,
                 "embeddingFailedChunkCount": embedding_failed_chunk_count,
