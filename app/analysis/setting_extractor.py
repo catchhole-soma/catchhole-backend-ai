@@ -72,7 +72,6 @@ class CharacterSettingExtractor:
     ) -> CharacterSettingExtractionResult:
         system_prompt = self._load_system_prompt()
         user_prompt = self._build_user_prompt(
-            source_chunk_id=source_chunk_id,
             chunk_text=chunk_text,
             episode_no=episode_no,
             episode_title=episode_title,
@@ -84,7 +83,7 @@ class CharacterSettingExtractor:
         for attempt in range(1, self.max_attempts + 1):
             try:
                 # 예외가 없다면 정상적으로 return 
-                return self._extract_once(system_prompt, user_prompt)
+                return self._extract_once(system_prompt, user_prompt, source_chunk_id)
             except (json.JSONDecodeError, ValidationError) as exc:
                 last_error = exc
                 if attempt == self.max_attempts:
@@ -102,30 +101,40 @@ class CharacterSettingExtractor:
             f"{self.max_attempts} attempts: {_error_message(last_error)}"
         ) from last_error
 
-    def _extract_once(self, system_prompt: str, user_prompt: str) -> CharacterSettingExtractionResult:
+    def _extract_once(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        source_chunk_id: UUID,
+    ) -> CharacterSettingExtractionResult:
         # 시스템 프롬프트 + 사용자 프롬프트를 조합하여 LLM에 요청
         response = self.llm_client.create_text_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=self.model,
+            max_output_tokens=4000,
         )
-        # LLM이 준 텍스트를 JSON으로 파싱한 뒤, 우리 내부 schema에 맞는지 검증한다.
-        return CharacterSettingExtractionResult.model_validate(_parse_json_object(response.text))
+        # source_chunk_id는 Worker가 이미 알고 있는 식별자이므로 LLM 응답을 신뢰하지 않고
+        # 현재 입력 chunk ID로 강제한 뒤 내부 schema를 검증한다.
+        payload = _parse_json_object(response.text)
+        candidates = payload.get("candidates")
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                if isinstance(candidate, dict):
+                    candidate["source_chunk_id"] = str(source_chunk_id)
+        return CharacterSettingExtractionResult.model_validate(payload)
 
     def _load_system_prompt(self) -> str:
         return self.prompt_path.read_text(encoding="utf-8")
 
     def _build_user_prompt(
         self,
-        source_chunk_id: UUID,
         chunk_text: str,
         episode_no: int | None,
         episode_title: str | None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...],
     ) -> str:
-        # source_chunk_id는 이후 setting_candidates.source_chunk_id로 이어질 근거 식별값이다.
         metadata = {
-            "source_chunk_id": str(source_chunk_id),
             "episode_no": episode_no,
             "episode_title": episode_title,
         }

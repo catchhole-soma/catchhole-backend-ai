@@ -10,7 +10,7 @@ CHUNK_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
-    # LLM이 정상 JSON을 반환하면 내부 schema로 검증된 설정 후보를 돌려준다.
+    # LLM의 source_chunk_id가 잘못되어도 Worker 입력 ID로 보정해 검증된 후보를 돌려준다.
     prompt_path = tmp_path / "prompt.md"
     prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
     extractor = CharacterSettingExtractor(
@@ -186,15 +186,16 @@ class FakeTextGenerationClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
     ) -> LlmTextResponse:
-        # extractor가 system prompt와 source_chunk_id를 실제 요청에 포함하는지 같이 확인한다.
+        # source_chunk_id는 LLM이 만들 값이 아니므로 prompt에 노출하지 않는다.
         assert "JSON만 반환하세요." in system_prompt
-        assert str(CHUNK_ID) in user_prompt
+        assert str(CHUNK_ID) not in user_prompt
+        assert max_output_tokens == 4000
         return LlmTextResponse(
             text="""
             {
               "candidates": [
                 {
-                  "source_chunk_id": "00000000-0000-0000-0000-000000000001",
+                  "source_chunk_id": "c80fc205-7fdd-8ab0-8b351745a174",
                   "entity_type": "CHARACTER",
                   "entity_name": "카엘",
                   "attribute_name": "level",
