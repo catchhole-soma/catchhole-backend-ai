@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     aws_s3_bucket: str = ""
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
+    aws_session_token: str | None = None
     aws_sqs_queue_url: str = ""
 
     # LLM API key

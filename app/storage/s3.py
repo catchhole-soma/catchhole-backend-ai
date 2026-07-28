@@ -12,6 +12,7 @@ class S3TextObjectStorage:
     region: str # AWS 리전
     access_key_id: str | None = None
     secret_access_key: str | None = None
+    session_token: str | None = None
     client: Any | None = None # S3 client 객체, client는 아무 객체나 또는 None 가능
     
     
@@ -32,6 +33,7 @@ class S3TextObjectStorage:
             region=settings.aws_region,
             access_key_id=settings.aws_access_key_id,
             secret_access_key=settings.aws_secret_access_key,
+            session_token=settings.aws_session_token,
         )
 
     # S3 object key를 받아 해당 파일 내용을 문자열로 반환
@@ -43,6 +45,8 @@ class S3TextObjectStorage:
                 aws_access_key_id=self.access_key_id,
                 aws_secret_access_key=self.secret_access_key,
             )
+            if self.session_token:
+                client_options["aws_session_token"] = self.session_token
         client = self.client or boto3.client("s3", **client_options)
         # S3에서 객체를 가져옴
         response = client.get_object(Bucket=self.bucket, Key=key)
