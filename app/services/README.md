@@ -33,7 +33,7 @@ Spring 기준으로는 Service 계층에 가깝습니다. Repository, storage, m
 
 ## 현재 연결 상태
 
-- Spring claim payload 기반 Worker가 episode별로 `EpisodeS3ChunkingService`를 호출합니다.
+- Spring claim payload 기반 Worker가 단일 episode에 `EpisodeS3ChunkingService`를 호출합니다.
 - `analysis_jobs` 진행률, 완료, 실패는 DB를 직접 변경하지 않고 Spring 내부 API client를 통해 보고합니다.
 
 ## 후속 작업

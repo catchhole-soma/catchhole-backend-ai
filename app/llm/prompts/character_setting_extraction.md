@@ -42,7 +42,6 @@
 - `raw_entity_mention`이 `나`, `그`, `그녀`, `주인공` 같은 지칭어라면, 같은 청크 안에서 대상이 명확할 때만 `entity_name`을 구체화합니다.
 - 기존 캐릭터 DB와 같은 인물인지, 어떤 `character_id`와 연결되는지는 판단하지 않습니다.
 - `value_type`은 `STRING`, `NUMBER`, `BOOLEAN`, `JSON`, `UNKNOWN` 중 하나를 사용합니다.
-- `source_chunk_id`는 입력으로 받은 값을 그대로 사용합니다.
 - user prompt의 `character_setting_schemas`는 현재 작품에서 사용할 수 있는 schema hint입니다.
 - `attributePattern`이 null인 schema의 `schemaKey`, `displayName`, `aliases`와 원문 속성이 명확히 대응하면 `attribute_name`에는 canonical `schemaKey`를, `value_type`에는 schema의 `valueType`을 사용합니다.
 - `attributePattern`이 있는 schema는 registry용 `schemaKey`를 그대로 출력하지 않고, pattern의 `*`를 원문에 나온 구체 명칭으로 바꾼 key와 schema의 `valueType`을 사용합니다.
@@ -101,7 +100,6 @@
 {
   "candidates": [
     {
-      "source_chunk_id": "입력받은 청크 UUID",
       "entity_type": "CHARACTER",
       "entity_name": "캐릭터명",
       "raw_entity_mention": "원문에 실제 나온 캐릭터 표현",

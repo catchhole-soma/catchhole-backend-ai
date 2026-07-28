@@ -21,7 +21,14 @@ def run_worker_loop(
     while max_iterations is None or iteration < max_iterations:
         iteration += 1
         # run_once는 Spring claim부터 분석 완료/실패 보고까지 job 하나만 처리
-        result = worker.run_once()
+        try:
+            result = worker.run_once()
+        except Exception as exc:
+            # run_once가 해당 job의 실패 상태를 Spring에 보고한 뒤 예외를 다시 던져도
+            # 장기 실행 Worker는 다음 회차 job을 계속 claim한다.
+            _print_failure(exc)
+            sleeper(idle_sleep_seconds)
+            continue
         results.append(result)
 
         _print_result(result)
@@ -89,6 +96,15 @@ def _print_result(result: WorkerRunResult) -> None:
         f"work_title={result.work_title} "
         f"episode_count={result.episode_count} "
         f"message={result.message}",
+        flush=True,
+    )
+
+
+def _print_failure(exc: Exception) -> None:
+    message = str(exc) or exc.__class__.__name__
+    print(
+        f"[{datetime.now().astimezone().isoformat(timespec='seconds')}] "
+        f"worker_iteration_failed error={message[:1000]}",
         flush=True,
     )
 

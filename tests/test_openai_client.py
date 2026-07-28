@@ -6,6 +6,19 @@ import pytest
 from app.llm.openai_client import OpenAIResponsesClient
 
 
+def test_default_http_client_uses_120_second_read_timeout() -> None:
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        responses_api_url="https://api.openai.test/v1/responses",
+    )
+
+    try:
+        assert client.http_client.timeout.read == 120
+    finally:
+        client.http_client.close()
+
+
 def test_create_text_response_calls_openai_responses_api() -> None:
     requests: list[httpx.Request] = []
     client = OpenAIResponsesClient(

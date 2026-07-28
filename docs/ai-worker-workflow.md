@@ -8,8 +8,8 @@ Python AI Worker가 Spring 내부 Worker API로 분석 작업을 claim한 뒤, S
 
 ```text
 Spring claim
--> claim payload의 episodes/knownCharacters/characterSettingSchemas 수신
--> episode별 S3 원문 raw text 조회
+-> claim payload의 단일 episode/knownCharacters/characterSettingSchemas 수신
+-> 해당 episode의 S3 원문 raw text 조회
 -> 분석 기준 원문으로 normalize
 -> 정규화 원문 기준 paragraph/chunk offset 계산
 -> 저장된 chunk_text batch 임베딩 및 episode_chunks 갱신
@@ -45,6 +45,7 @@ Python Worker는 `analysis_jobs.status`를 DB에서 직접 바꾸지 않습니�
 - offset은 원본 업로드 파일 기준이 아니라 `normalize_text()` 이후의 정규화된 회차 원문 기준입니다.
 - `chunk_text`는 문단을 새로 이어 붙인 값이 아니라 정규화 원문에서 잘라낸 slice입니다.
 - LLM이 반환한 숫자 offset은 신뢰하지 않고, `quote`를 실제 `chunk_text`에서 찾아 다시 계산합니다.
+- LLM이 반환한 `source_chunk_id`는 신뢰하지 않고, Pydantic 검증 전에 Worker 입력 `EpisodeChunk.id`로 강제합니다.
 - 캐릭터명 매칭은 LLM이 DB 매칭을 직접 하는 것이 아니라, Python resolver가 `knownCharacters`와 비교해 계산합니다.
 
 ## 전체 흐름
@@ -59,9 +60,9 @@ flowchart TD
     E -- "없음" --> F["WorkerRunResult(claimed=false) 반환"]
     F --> G["runner가 idle sleep 후 다시 claim 시도"]
 
-    E -- "있음" --> H["WorkerAnalysisJobPayload 수신<br/>analysisJobId, work, episodes,<br/>knownCharacters, characterSettingSchemas"]
-    H --> I["SpringWorkerClient.report_progress()<br/>currentStep=SETTING_EXTRACTION"]
-    I --> J["payload.episodes 순회"]
+    E -- "있음" --> H["WorkerAnalysisJobPayload 수신<br/>analysisJobId, work, episode,<br/>knownCharacters, characterSettingSchemas"]
+    H --> I["SpringWorkerClient.report_progress()<br/>currentStep=SETTING_EXTRACTION<br/>episodeStatus=ANALYZING"]
+    I --> J["payload.episode 처리"]
 
     J --> K["contentS3Key 확인"]
     K -->|"없음"| KX["INVALID_REQUEST 예외"]
@@ -98,9 +99,7 @@ flowchart TD
     AD --> AE
     AE --> AEF["save_items에 후보 추가"]
 
-    AEF --> AF{"모든 episode/chunk 처리 완료?"}
-    AF -- "아니오" --> J
-    AF -- "예" --> AG["knownCharacters 이름을 한 번 정규화"]
+    AEF --> AG["모든 chunk 처리 완료<br/>knownCharacters 이름을 한 번 정규화"]
     AG --> AH["raw_entity_mention/entity_name 정규화"]
     AH --> AI["기존 캐릭터 매칭 상태 계산<br/>MATCHED / UNRESOLVED / AMBIGUOUS"]
     AI --> AJ["analysis_job_id 기준<br/>기존 setting_candidates 삭제"]
@@ -111,7 +110,9 @@ flowchart TD
 
     C --> ERR{"처리 중 예외 발생?"}
     ERR -- "예" --> FAIL["SpringWorkerClient.fail(errorMessage)"]
-    FAIL --> RAISE["예외 다시 전파<br/>현재 runner loop도 중단"]
+    FAIL --> RAISE["예외 다시 전파"]
+    RAISE --> WAIT["runner가 실패 로그·idle sleep 후<br/>다음 Job claim 계속"]
+    WAIT --> C
 ```
 
 ## Sequence
@@ -143,46 +144,44 @@ sequenceDiagram
         Worker-->>Runner: WorkerRunResult(claimed=false)
     else claim 성공
         Spring-->>Worker: WorkerAnalysisJobPayload
-        Worker->>Spring: report_progress(SETTING_EXTRACTION)
+        Worker->>Spring: report_progress(SETTING_EXTRACTION, ANALYZING)
 
-        loop episode in payload.episodes
-            Worker->>Chunking: replace_chunks_from_s3_content(episodeId, contentS3Key)
-            Chunking->>Storage: get_text(contentS3Key)
-            Storage-->>Chunking: raw_text
-            Chunking->>ChunkService: replace_episode_chunks(episodeId, raw_text)
-            ChunkService->>ChunkService: normalize_text(raw_text)
-            ChunkService->>ChunkService: split_into_chunks(normalized_text)
-            ChunkService->>ChunkService: delete old chunks + save new chunks
-            ChunkService-->>Worker: List<EpisodeChunk>
+        Worker->>Chunking: replace_chunks_from_s3_content(episodeId, contentS3Key)
+        Chunking->>Storage: get_text(contentS3Key)
+        Storage-->>Chunking: raw_text
+        Chunking->>ChunkService: replace_episode_chunks(episodeId, raw_text)
+        ChunkService->>ChunkService: normalize_text(raw_text)
+        ChunkService->>ChunkService: split_into_chunks(normalized_text)
+        ChunkService->>ChunkService: delete old chunks + save new chunks
+        ChunkService-->>Worker: List<EpisodeChunk>
 
-            Worker->>EmbeddingService: embed_chunks(chunks)
-            EmbeddingService->>EmbeddingsAPI: create embeddings(chunk_text list)
-            alt 임베딩 성공
-                EmbeddingsAPI-->>EmbeddingService: vectors + model + usage
-                EmbeddingService->>ChunkRepo: update_embeddings(updates)
-                ChunkRepo-->>EmbeddingService: updated chunks
-                EmbeddingService-->>Worker: EpisodeChunkEmbeddingResult
-            else 일시적인 provider 장애
-                EmbeddingService--xWorker: RecoverableEmbeddingProviderError
-                Worker->>Worker: 실패 개수/로그 기록 후 계속
-            else 요청·응답 계약·정합성·DB 오류
-                EmbeddingService--xWorker: fatal exception
-                Worker->>Spring: fail(analysisJobId, errorMessage)
-            end
+        Worker->>EmbeddingService: embed_chunks(chunks)
+        EmbeddingService->>EmbeddingsAPI: create embeddings(chunk_text list)
+        alt 임베딩 성공
+            EmbeddingsAPI-->>EmbeddingService: vectors + model + usage
+            EmbeddingService->>ChunkRepo: update_embeddings(updates)
+            ChunkRepo-->>EmbeddingService: updated chunks
+            EmbeddingService-->>Worker: EpisodeChunkEmbeddingResult
+        else 일시적인 provider 장애
+            EmbeddingService--xWorker: RecoverableEmbeddingProviderError
+            Worker->>Worker: 실패 개수/로그 기록 후 계속
+        else 요청·응답 계약·정합성·DB 오류
+            EmbeddingService--xWorker: fatal exception
+            Worker->>Spring: fail(analysisJobId, errorMessage)
+        end
 
-            loop chunk in chunks
-                Worker->>Extractor: extract_from_chunk(sourceChunkId, chunkText, episodeNo, title, schemaHints)
-                Extractor->>Extractor: system/user prompt 구성
-                Extractor->>LLM: create_text_response()
-                LLM-->>Extractor: text response
-                Extractor->>Extractor: JSON parse + schema validation
-                Extractor-->>Worker: CharacterSettingExtractionResult
-                Worker->>Evidence: resolve_candidate_evidence_offsets(candidates, chunkText, chunkStartOffset)
-                Evidence-->>Worker: offset 보정된 candidates
-                Worker->>Subject: resolve_candidates(previous/current/next, candidates, knownCharacters)
-                Subject-->>Worker: subject fallback 적용 candidates
-                Worker->>Worker: save_items에 후보 누적
-            end
+        loop chunk in chunks
+            Worker->>Extractor: extract_from_chunk(sourceChunkId, chunkText, episodeNo, title, schemaHints)
+            Extractor->>Extractor: system/user prompt 구성
+            Extractor->>LLM: create_text_response()
+            LLM-->>Extractor: text response
+            Extractor->>Extractor: JSON parse + sourceChunkId 강제 + schema validation
+            Extractor-->>Worker: CharacterSettingExtractionResult
+            Worker->>Evidence: resolve_candidate_evidence_offsets(candidates, chunkText, chunkStartOffset)
+            Evidence-->>Worker: offset 보정된 candidates
+            Worker->>Subject: resolve_candidates(previous/current/next, candidates, knownCharacters)
+            Subject-->>Worker: subject fallback 적용 candidates
+            Worker->>Worker: save_items에 후보 누적
         end
 
         Worker->>CandidateService: replace_candidates_for_analysis_job(workId, analysisJobId, saveItems, knownCharacters)
@@ -199,6 +198,8 @@ sequenceDiagram
     alt 처리 중 예외
         Worker->>Spring: fail(errorMessage)
         Worker-->>Runner: raise exception
+        Runner->>Runner: 실패 로그 + idle sleep
+        Runner->>Worker: 다음 run_once()
     end
 ```
 
@@ -213,9 +214,9 @@ sequenceDiagram
 - `--idle-sleep-seconds`: claim할 작업이 없을 때 다음 polling 전 대기 시간입니다.
 - `--model-name`: Spring claim payload와 LLM extractor에 사용할 모델명을 넘깁니다.
 
-claim 결과가 없으면 Worker는 오류로 처리하지 않고 `WorkerRunResult(claimed=false)`를 반환합니다. 반복 실행 모드에서는 이 경우에만 sleep 후 다시 claim합니다.
+claim 결과가 없으면 Worker는 오류로 처리하지 않고 `WorkerRunResult(claimed=false)`를 반환합니다. 반복 실행 모드에서는 claim 결과가 없거나 개별 Job이 실패했을 때 sleep 후 다시 claim합니다.
 
-claim 결과가 있으면 Spring은 해당 작업을 `RUNNING`으로 전환한 payload를 반환합니다. Python은 `analysis_jobs` 테이블을 직접 수정하지 않습니다.
+claim 결과가 있으면 Spring은 단일 회차 작업을 `RUNNING`으로 전환한 payload를 반환합니다. Python은 `analysis_jobs` 테이블을 직접 수정하지 않습니다.
 
 payload에서 Python이 직접 사용하는 값:
 
@@ -223,9 +224,9 @@ payload에서 Python이 직접 사용하는 값:
 | --- | --- |
 | `analysis_job_id` | 후보 저장 연결, complete/fail 보고 |
 | `work_id`, `work_title` | 후보 저장, runner 출력 |
-| `episodes[].episode_id` | chunk 저장, 후보 episode 연결 |
-| `episodes[].episode_no`, `episodes[].title` | LLM user prompt metadata |
-| `episodes[].content_s3_key` | S3 원문 조회 |
+| `episode.episode_id` | chunk 저장, 후보 episode 연결 |
+| `episode.episode_no`, `episode.title` | LLM user prompt metadata |
+| `episode.content_s3_key` | S3 원문 조회 |
 | `knownCharacters[].character_id`, `name` | 기존 캐릭터 매칭 |
 | `characterSettingSchemas[]` | Backend 배열의 순서와 중복을 유지한 immutable schema hint tuple로 job당 한 번 변환한 뒤 모든 chunk prompt에 전달 |
 
@@ -246,6 +247,8 @@ content_s3_key 있음
 -> raw_text
 -> EpisodeChunkService.replace_episode_chunks(episode_id, raw_text)
 ```
+
+S3 client는 `AWS_ACCESS_KEY_ID`와 `AWS_SECRET_ACCESS_KEY`가 둘 다 설정된 경우에만 해당 값을 명시적으로 사용합니다. `AWS_SESSION_TOKEN`도 설정되어 있으면 STS 등 임시 자격 증명의 일부로 함께 전달합니다. access key와 secret key 중 하나라도 없으면 AWS CLI profile, IAM role 등을 포함한 boto3 기본 credential provider chain에 맡깁니다. 실제 비밀값은 저장소 문서나 `.env.example`에 기록하지 않습니다.
 
 `normalize_text(raw_text)`는 다음 규칙으로 분석 기준 원문을 만듭니다.
 
@@ -364,7 +367,7 @@ character_setting_schemas:
 ]
 
 metadata:
-{"source_chunk_id": "episode_chunks.id", "episode_no": 1, "episode_title": "1화"}
+{"episode_no": 1, "episode_title": "1화"}
 
 chunk_text:
 LLM이 분석할 청크 원문
@@ -376,6 +379,7 @@ LLM이 분석할 청크 원문
 - 동적 schema는 registry `schemaKey`가 아니라 `attributePattern`의 `*`를 구체 명칭으로 바꾼 key를 사용합니다.
 - schema에 없는 명시적 설정은 가까운 schema로 추측해 바꾸거나 버리지 않고 검토 후보로 보존합니다. Backend 확정 단계에서는 schema 미매칭으로 거절될 수 있습니다.
 - fuzzy alias 매칭이나 schema 자동 생성은 수행하지 않습니다.
+- 설정 후보 배열의 응답 잘림을 줄이기 위해 추출 호출에는 `max_output_tokens=4000`을 사용합니다.
 
 LLM 응답 처리:
 
@@ -383,19 +387,21 @@ LLM 응답 처리:
 2. JSON 코드블록으로 감싼 경우 바깥 fence를 제거합니다.
 3. 앞뒤 설명 문장이 섞인 경우 첫 JSON 객체 범위를 잘라냅니다.
 4. `json.loads()`로 파싱합니다.
-5. `CharacterSettingExtractionResult` Pydantic schema로 검증합니다.
+5. 각 후보의 `source_chunk_id`를 현재 입력 `EpisodeChunk.id`로 덮어씁니다.
+6. `CharacterSettingExtractionResult` Pydantic schema로 검증합니다.
 
 재시도 기준:
 
 - JSON 문법이 깨진 경우 재시도합니다.
-- 필수 필드 누락, UUID 형식 오류, enum 범위 오류, confidence 범위 오류처럼 schema 검증에 실패하면 재시도합니다.
+- 필수 필드 누락, enum 범위 오류, confidence 범위 오류처럼 schema 검증에 실패하면 재시도합니다.
+- `source_chunk_id` 누락·오형식은 Worker가 결정적으로 보정하므로 재시도 사유가 아닙니다.
 - schema상 유효한 문자열이지만 프롬프트 정책상 애매한 값은 현재 재시도하지 않습니다.
 
 LLM 출력 계약:
 
 | 필드 | 역할 |
 | --- | --- |
-| `source_chunk_id` | 후보가 나온 chunk 식별자 |
+| `source_chunk_id` | Worker가 현재 입력 `EpisodeChunk.id`로 주입하는 후보 근거 식별자. LLM 값은 사용하지 않음 |
 | `entity_type` | 현재는 캐릭터 중심 |
 | `entity_name` | LLM이 청크 문맥에서 정리한 후보 캐릭터명 |
 | `raw_entity_mention` | 원문에 실제 등장한 표현 |
@@ -573,7 +579,7 @@ LLM은 기존 캐릭터 DB와 확정 매칭하지 않습니다. Python resolver�
 
 ### 9. setting_candidates 교체 저장
 
-LLM 추출과 evidence offset 보정은 chunk별로 진행하지만, `setting_candidates` 저장은 모든 episode/chunk 처리가 끝난 뒤 analysis job 단위로 한 번 수행합니다.
+LLM 추출과 evidence offset 보정은 chunk별로 진행하지만, `setting_candidates` 저장은 단일 episode의 모든 chunk 처리가 끝난 뒤 analysis job 단위로 한 번 수행합니다.
 
 처리 흐름:
 
@@ -595,7 +601,7 @@ save_items 전체 수집
 | --- | --- |
 | `work_id` | claim payload의 work ID |
 | `episode_id` | 후보가 나온 episode ID |
-| `source_chunk_id` | LLM 입력 chunk ID |
+| `source_chunk_id` | Worker가 주입한 현재 입력 chunk ID |
 | `analysis_job_id` | claim한 analysis job ID |
 | `entity_name` | LLM이 정리한 후보 캐릭터명 |
 | `raw_entity_mention` | 원문 표현. 없으면 `entity_name`으로 fallback |
@@ -621,7 +627,7 @@ save_items 전체 수집
 
 ```json
 {
-  "episodeCount": 3,
+  "episodeCount": 1,
   "chunkCount": 18,
   "embeddedChunkCount": 15,
   "embeddingFailedChunkCount": 3,
@@ -648,16 +654,16 @@ save_items 전체 수집
 1. `SpringWorkerClient.fail(analysis_job_id, error_message)`를 호출합니다.
 2. error message는 최대 1000자로 잘라 Spring에 전달합니다.
 3. 예외는 다시 밖으로 전파합니다.
-4. 현재 `run_worker_loop()`는 `run_once()` 예외를 잡지 않으므로, 연속 실행 모드에서도 worker 프로세스가 중단될 수 있습니다.
+4. 장기 실행 runner는 예외를 기록하고 idle sleep한 뒤 다음 회차 Job을 claim합니다. `--once` 실행은 예외를 그대로 종료 상태로 전달합니다.
 
 ## 저장 부수효과와 트랜잭션 경계
 
 | 단계 | 저장 대상 | 저장 시점 | 트랜잭션/부수효과 |
 | --- | --- | --- | --- |
-| chunk 교체 | `episode_chunks` | episode별 S3 원문을 읽은 직후 | 해당 episode의 기존 chunk 삭제 후 새 chunk 저장 |
-| chunk 임베딩 | `episode_chunks` 임베딩 필드 | episode별 chunk 교체 직후 | 외부 API 호출 후 별도 트랜잭션으로 갱신, 실패 시 NULL 유지하고 분석 계속 |
+| chunk 교체 | `episode_chunks` | 단일 episode의 S3 원문을 읽은 직후 | 해당 episode의 기존 chunk 삭제 후 새 chunk 저장 |
+| chunk 임베딩 | `episode_chunks` 임베딩 필드 | 해당 episode의 chunk 교체 직후 | 외부 API 호출 후 별도 트랜잭션으로 갱신, 실패 시 NULL 유지하고 분석 계속 |
 | 후보 수집 | Python 메모리 `save_items` | chunk별 LLM 추출 후 | DB 저장 전까지 메모리에 누적 |
-| 후보 교체 | `setting_candidates` | 모든 episode/chunk 처리 완료 후 | `analysis_job_id` 기준 기존 후보 삭제 후 새 후보 저장 |
+| 후보 교체 | `setting_candidates` | 단일 episode의 모든 chunk 처리 완료 후 | `analysis_job_id` 기준 기존 후보 삭제 후 새 후보 저장 |
 | 작업 완료 | Spring `analysis_jobs` | 후보 저장 성공 후 | Spring 내부 complete API 호출 |
 | 작업 실패 | Spring `analysis_jobs` | 처리 중 예외 발생 후 | Spring 내부 fail API 호출 |
 

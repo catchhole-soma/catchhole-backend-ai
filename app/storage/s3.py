@@ -10,6 +10,9 @@ from app.core.config import Settings, get_settings
 class S3TextObjectStorage:
     bucket: str # S3 버킷 이름
     region: str # AWS 리전
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    session_token: str | None = None
     client: Any | None = None # S3 client 객체, client는 아무 객체나 또는 None 가능
     
     
@@ -25,12 +28,26 @@ class S3TextObjectStorage:
         """
         settings = settings or get_settings()
         # cls는 현재 클래스, 즉 S3TextObjectStorage를 의미
-        return cls(bucket=settings.aws_s3_bucket, region=settings.aws_region)
+        return cls(
+            bucket=settings.aws_s3_bucket,
+            region=settings.aws_region,
+            access_key_id=settings.aws_access_key_id,
+            secret_access_key=settings.aws_secret_access_key,
+            session_token=settings.aws_session_token,
+        )
 
     # S3 object key를 받아 해당 파일 내용을 문자열로 반환
     def get_text(self, key: str) -> str:
         # 테스트에서는 fake client를 주입하고, 실제 실행에서는 boto3 client를 생성
-        client = self.client or boto3.client("s3", region_name=self.region)
+        client_options = {"region_name": self.region}
+        if self.access_key_id and self.secret_access_key:
+            client_options.update(
+                aws_access_key_id=self.access_key_id,
+                aws_secret_access_key=self.secret_access_key,
+            )
+            if self.session_token:
+                client_options["aws_session_token"] = self.session_token
+        client = self.client or boto3.client("s3", **client_options)
         # S3에서 객체를 가져옴
         response = client.get_object(Bucket=self.bucket, Key=key)
         # read()로 bytes를 읽고, decode("utf-8")로 문자열로 변환

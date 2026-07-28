@@ -3,6 +3,7 @@ from uuid import UUID
 import httpx
 
 from app.core.config import Settings, get_settings
+from app.domain.enums import EpisodeProcessingStatus
 from app.schemas.worker import (
     WorkerAnalysisJobClaimRequest,
     WorkerAnalysisJobCompleteRequest,
@@ -58,8 +59,16 @@ class SpringWorkerClient:
         return WorkerAnalysisJobPayload.model_validate(response.json()["data"])
 
     # Spring에 보낼 진행 상태 보고 요청 DTO
-    def report_progress(self, analysis_job_id: UUID, current_step: str) -> None:
-        request = WorkerAnalysisJobProgressRequest(current_step=current_step)
+    def report_progress(
+        self,
+        analysis_job_id: UUID,
+        current_step: str,
+        episode_status: EpisodeProcessingStatus,
+    ) -> None:
+        request = WorkerAnalysisJobProgressRequest(
+            current_step=current_step,
+            episode_status=episode_status,
+        )
         
         # Spring 내부 API에 PATCH 요청
         response = self.http_client.patch(

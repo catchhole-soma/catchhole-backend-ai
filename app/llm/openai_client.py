@@ -19,7 +19,7 @@ class OpenAIResponsesClient:
         # 기본값은 https://api.openai.com/v1/responses, 테스트에서는 fake URL을 넣을 수 있음
         self.responses_api_url = responses_api_url
         # 실제 HTTP 요청을 보내는 도구, 테스트에서는 MockTransport가 들어간 client를 주입
-        self.http_client = http_client or httpx.Client(timeout=60)
+        self.http_client = http_client or httpx.Client(timeout=120)
 
     # .env에서 읽은 설정값으로 client를 만드는 생성 보조 함수
     @classmethod

@@ -4,6 +4,7 @@ from uuid import UUID
 import httpx
 
 from app.clients.spring_worker_client import INTERNAL_API_KEY_HEADER, SpringWorkerClient
+from app.domain.enums import EpisodeProcessingStatus
 from app.schemas.worker import WorkerAnalysisJobPayload
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -22,7 +23,7 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
     assert payload is not None
     assert payload.analysis_job_id == ANALYSIS_JOB_ID
     assert payload.work_id == WORK_ID
-    assert payload.episodes[0].episode_id == EPISODE_ID
+    assert payload.episode.episode_id == EPISODE_ID
     assert payload.character_setting_schemas[0].schema_key == "stats.strength"
     assert payload.character_setting_schemas[0].aliases == ["근력", "힘", "strength"]
     assert payload.character_setting_schemas[1].attribute_pattern == "skill.*"
@@ -60,7 +61,15 @@ def test_claim_payload_defaults_character_setting_schemas_when_older_spring_omit
             "workId": str(WORK_ID),
             "workTitle": "빛나는 검사 로맨스",
             "batchId": str(BATCH_ID),
-            "episodes": [],
+            "episode": {
+                "episodeId": str(EPISODE_ID),
+                "episodeNo": 1,
+                "title": "첫 번째 회차",
+                "contentS3Key": "works/work-id/episodes/episode-id.txt",
+                "contentS3Version": None,
+                "contentHash": "hash",
+                "charCount": 1234,
+            },
         }
     )
 
@@ -72,12 +81,19 @@ def test_report_progress_calls_spring_progress_api() -> None:
     requests: list[httpx.Request] = []
     client = _client(lambda request: _empty_success_response(request, requests))
 
-    client.report_progress(analysis_job_id=ANALYSIS_JOB_ID, current_step="설정 추출")
+    client.report_progress(
+        analysis_job_id=ANALYSIS_JOB_ID,
+        current_step="설정 추출",
+        episode_status=EpisodeProcessingStatus.ANALYZING,
+    )
 
     request = requests[0]
     assert request.method == "PATCH"
     assert request.url.path == f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}/progress"
-    assert json.loads(request.content) == {"currentStep": "설정 추출"}
+    assert json.loads(request.content) == {
+        "currentStep": "설정 추출",
+        "episodeStatus": "ANALYZING",
+    }
 
 
 # 완료 보고 API를 POST로 올바른 URL과 Body로 호출하는지 확인
@@ -156,17 +172,15 @@ def _claim_response(request: httpx.Request, requests: list[httpx.Request]) -> ht
                         "valueType": "JSON",
                     },
                 ],
-                "episodes": [
-                    {
-                        "episodeId": str(EPISODE_ID),
-                        "episodeNo": 1,
-                        "title": "첫 번째 회차",
-                        "contentS3Key": "works/work-id/episodes/episode-id.txt",
-                        "contentS3Version": None,
-                        "contentHash": "hash",
-                        "charCount": 1234,
-                    }
-                ],
+                "episode": {
+                    "episodeId": str(EPISODE_ID),
+                    "episodeNo": 1,
+                    "title": "첫 번째 회차",
+                    "contentS3Key": "works/work-id/episodes/episode-id.txt",
+                    "contentS3Version": None,
+                    "contentHash": "hash",
+                    "charCount": 1234,
+                },
             },
             "error": None,
             "timestamp": "2026-06-25T00:00:00",
