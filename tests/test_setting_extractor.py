@@ -89,9 +89,7 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
     assert "설정의 주체를 가리키는 최소 표현" in llm_client.system_prompt
     assert "실제 캐릭터명이 명확히 연결되면 반드시 해당 이름" in llm_client.system_prompt
     assert "현재 청크만으로 한 캐릭터를 유일하게 특정할 수 없을 때만" in llm_client.system_prompt
-    assert "신체 부위, 행동, 사물 표현은 `raw_entity_mention`으로 사용하지 않습니다" in (
-        llm_client.system_prompt
-    )
+    assert "설정의 주체 자체를 가리키는 최소 표현만 사용합니다" in llm_client.system_prompt
     assert "`나`, `그`, `그녀`, `주인공` 같은 지칭어를 넣지 않습니다" in (
         llm_client.system_prompt
     )
