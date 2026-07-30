@@ -62,6 +62,13 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
                 aliases=(),
                 value_type="JSON",
             ),
+            CharacterSettingSchemaHint(
+                schema_key="profile.species",
+                display_name="종족",
+                attribute_pattern=None,
+                aliases=("종족", "species", "race"),
+                value_type="STRING",
+            ),
         ),
     )
 
@@ -72,8 +79,17 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
     assert '"mental_power"' in llm_client.user_prompt
     assert '"attributePattern": "skill.*"' in llm_client.user_prompt
     assert '"valueType": "JSON"' in llm_client.user_prompt
+    assert '"schemaKey": "profile.species"' in llm_client.user_prompt
+    assert '"valueType": "STRING"' in llm_client.user_prompt
     assert "canonical schemaKey" in llm_client.user_prompt
-    assert "stats.지능, time.첫전투" in llm_client.user_prompt
+    assert "후보에서 제외" in llm_client.user_prompt
+    assert "time.첫전투" not in llm_client.user_prompt
+    assert "profile.<프로필명>" in llm_client.system_prompt
+    assert "subject resolver용 임시값 `미상`" in llm_client.system_prompt
+    assert "원문에서 주체를 가리키는 최소 표현" in llm_client.system_prompt
+    assert "`나`, `그`, `그녀`, `주인공` 같은 지칭어는 넣지 않습니다" in llm_client.system_prompt
+    assert "타임라인에 해당하는 정보는 현재 추출하지 않습니다" in llm_client.system_prompt
+    assert "time.<시간 또는 사건명>" not in llm_client.system_prompt
     assert "skill.<스킬명>" in llm_client.system_prompt
     assert "item.<아이템명>" in llm_client.system_prompt
 
