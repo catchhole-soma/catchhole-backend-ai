@@ -112,7 +112,7 @@ class SettingExtractorApi(Protocol):
 
 
 class SubjectResolverApi(Protocol):
-    # 지칭어/placeholder 후보만 앞뒤 chunk 문맥으로 해소하고 저장 가능한 후보 목록을 반환한다.
+    # 구체 entity_name을 얻지 못한 후보를 앞뒤 chunk 문맥으로 해소해 반환한다.
     def resolve_candidates(
         self,
         context: SubjectResolutionChunkContext,
@@ -195,7 +195,7 @@ class AnalysisJobWorker:
         embedding_failed_chunk_count = 0
         subject_fallback_call_count = 0
         subject_fallback_resolved_count = 0
-        subject_fallback_discarded_count = 0
+        subject_fallback_unresolved_count = 0
         save_items: list[SettingCandidateSaveItem] = []
         # claim payload의 기존 캐릭터 목록은 모든 chunk에서 같은 기준으로 재사용한다.
         known_characters = [
@@ -269,11 +269,11 @@ class AnalysisJobWorker:
                 candidates=resolved_candidates,
                 known_characters=known_characters,
             )
-            # resolver는 저장 가능한 최종 후보 목록과 fallback 처리 개수를 함께 반환한다.
-            # 해소 실패한 placeholder 후보는 result.candidates에서 제외되므로 아래 save_items에도 들어가지 않는다.
+            # resolver는 해소 실패 후보도 표준 placeholder로 유지한다.
+            # 최종 MATCHED/UNRESOLVED/AMBIGUOUS 판정은 저장 Service의 기존 name resolver가 담당한다.
             subject_fallback_call_count += subject_resolution_result.fallback_call_count
             subject_fallback_resolved_count += subject_resolution_result.fallback_resolved_count
-            subject_fallback_discarded_count += subject_resolution_result.fallback_discarded_count
+            subject_fallback_unresolved_count += subject_resolution_result.fallback_unresolved_count
             save_items.extend(
                 SettingCandidateSaveItem(
                     episode_id=episode.episode_id,
@@ -300,7 +300,7 @@ class AnalysisJobWorker:
                 "candidateCount": len(saved_candidates),
                 "subjectFallbackCallCount": subject_fallback_call_count,
                 "subjectFallbackResolvedCount": subject_fallback_resolved_count,
-                "subjectFallbackDiscardedCount": subject_fallback_discarded_count,
+                "subjectFallbackUnresolvedCount": subject_fallback_unresolved_count,
             },
             ensure_ascii=False,
         )
@@ -336,7 +336,7 @@ class AnalysisJobWorker:
 
     def _get_subject_resolver(self) -> SubjectResolverApi:
         if self._subject_resolver is None:
-            # 지칭어/placeholder 후보의 주체 해소를 맡는 기본 resolver를 필요할 때 초기화한다.
+            # 구체 entity_name을 얻지 못한 후보의 주체 해소 resolver를 필요할 때 초기화한다.
             self._subject_resolver = CharacterSubjectResolver(model=self.model_name)
         return self._subject_resolver
 

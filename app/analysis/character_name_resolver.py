@@ -81,14 +81,36 @@ AMBIGUOUS_MENTIONS = {
     "저 사람",
 }
 
+UNKNOWN_ENTITY_NAME = "미상"
+
 PLACEHOLDER_ENTITY_NAMES = {
-    "미상",
+    UNKNOWN_ENTITY_NAME,
     "불명",
     "불명확",
     "알 수 없음",
     "추론 불가",
     "unknown",
 }
+
+# LLM이 entity_name에 지칭어를 잘못 넣으면서 붙일 수 있는 흔한 한국어 조사.
+# "주인공은", "그 남자는"도 각각 "주인공", "그 남자"와 같은 지칭어로 본다.
+AMBIGUOUS_MENTION_PARTICLES = (
+    "에게서",
+    "한테서",
+    "에게",
+    "한테",
+    "께",
+    "으로",
+    "로",
+    "은",
+    "는",
+    "이",
+    "가",
+    "을",
+    "를",
+    "의",
+    "도",
+)
 
 
 def normalize_known_characters(
@@ -124,8 +146,9 @@ def resolve_candidate_character(
     normalized_raw_mention = normalize_character_name(candidate.raw_entity_mention)
     normalized_entity_name = normalize_character_name(candidate.entity_name)
 
-    # raw mention이 없고 entity_name 자체도 대명사성 표현이면 확정할 수 없다.
-    if not normalized_raw_mention and _is_ambiguous_mention(normalized_entity_name):
+    # subject fallback 이후에도 구체 이름을 얻지 못한 후보는 raw 표현의 형태와 관계없이
+    # 새 캐릭터 후보로 해석하지 않고 사용자가 연결을 해소해야 하는 상태로 둔다.
+    if not _is_concrete_normalized_character_name(normalized_entity_name):
         return CharacterNameMatch(
             matched_character_id=None,
             match_status=SettingCandidateMatchStatus.AMBIGUOUS,
@@ -145,13 +168,8 @@ def resolve_candidate_character(
                 match_status=SettingCandidateMatchStatus.MATCHED,
             )
 
-        # entity_name도 여러 기존 캐릭터에 걸리거나, "미상"/지칭어처럼
-        # 아직 주체가 풀리지 않은 값이면 사용자 검토 또는 후속 fallback 대상으로 남긴다.
-        if (
-            len(entity_matches) > 1
-            or _is_unresolved_placeholder(normalized_entity_name)
-            or _is_ambiguous_mention(normalized_entity_name)
-        ):
+        # entity_name이 여러 기존 캐릭터에 걸리면 사용자가 연결을 해소하도록 남긴다.
+        if len(entity_matches) > 1:
             return CharacterNameMatch(
                 matched_character_id=None,
                 match_status=SettingCandidateMatchStatus.AMBIGUOUS,
@@ -239,12 +257,31 @@ def normalize_character_name(value: str | None) -> str:
     return normalized.casefold()
 
 
+def is_concrete_character_name(value: str | None) -> bool:
+    """placeholder나 지칭어가 아닌 저장 가능한 구체 캐릭터명인지 확인한다."""
+
+    return _is_concrete_normalized_character_name(normalize_character_name(value))
+
+
+def _is_concrete_normalized_character_name(normalized_name: str) -> bool:
+    return (
+        bool(normalized_name)
+        and normalized_name not in PLACEHOLDER_ENTITY_NAMES
+        and not _is_ambiguous_mention(normalized_name)
+    )
+
+
 def _is_ambiguous_mention(normalized_mention: str) -> bool:
-    return normalized_mention in AMBIGUOUS_MENTIONS
+    if normalized_mention in AMBIGUOUS_MENTIONS:
+        return True
 
-
-def _is_unresolved_placeholder(normalized_name: str) -> bool:
-    return not normalized_name or normalized_name in PLACEHOLDER_ENTITY_NAMES
+    # 조사 두 개가 결합된 "주인공에게는" 같은 표현도 단계적으로 제거해 확인한다.
+    return any(
+        len(normalized_mention) > len(particle)
+        and normalized_mention.endswith(particle)
+        and _is_ambiguous_mention(normalized_mention[: -len(particle)])
+        for particle in AMBIGUOUS_MENTION_PARTICLES
+    )
 
 
 def _find_matches(

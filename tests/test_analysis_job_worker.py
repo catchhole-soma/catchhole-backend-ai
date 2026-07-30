@@ -122,13 +122,13 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         [chunking_service.chunks[0].id]
     ]
     assert setting_extractor.requests == [
-            {
-                "source_chunk_id": chunking_service.chunks[0].id,
-                "chunk_text": chunk_text,
-                "episode_no": 1,
-                "episode_title": "첫 번째 회차",
-                "schema_hints": SCHEMA_HINTS,
-            }
+        {
+            "source_chunk_id": chunking_service.chunks[0].id,
+            "chunk_text": chunk_text,
+            "episode_no": 1,
+            "episode_title": "첫 번째 회차",
+            "schema_hints": SCHEMA_HINTS,
+        }
     ]
     assert setting_candidate_service.request == {
         "work_id": WORK_ID,
@@ -152,7 +152,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "candidateCount": 2,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
-        "subjectFallbackDiscardedCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
     }
     assert spring_client.fail_calls == []
 
@@ -194,7 +194,7 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
             candidates=[resolved_candidate],
             fallback_call_count=1,
             fallback_resolved_count=1,
-            fallback_discarded_count=0,
+            fallback_unresolved_count=0,
         )
     )
     episode_chunk_embedding_service = FakeEpisodeChunkEmbeddingService()
@@ -231,8 +231,49 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         "candidateCount": 1,
         "subjectFallbackCallCount": 1,
         "subjectFallbackResolvedCount": 1,
-        "subjectFallbackDiscardedCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
     }
+
+
+def test_worker_preserves_subject_fallback_unresolved_candidate() -> None:
+    # fallback이 주체를 특정하지 못해도 후보를 버리지 않고 저장 Service까지 전달한다.
+    current_chunk_text = "의사는 아니지만 내겐 블랙아웃 증상이 있다."
+    spring_client = FakeSpringWorkerClient(payload=_payload())
+    chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, current_chunk_text)])
+    unresolved_candidate = _candidate(
+        chunking_service.chunks[0].id,
+        attribute_name="status.블랙아웃",
+        entity_name="미상",
+        raw_entity_mention="내려다 본 손",
+        quote="내겐 블랙아웃 증상이 있다.",
+    )
+    subject_resolver = FakeSubjectResolver(
+        result=SubjectResolutionResult(
+            candidates=[unresolved_candidate],
+            fallback_call_count=1,
+            fallback_resolved_count=0,
+            fallback_unresolved_count=1,
+        )
+    )
+    setting_candidate_service = FakeSettingCandidateService()
+    worker = AnalysisJobWorker(
+        spring_client=spring_client,
+        chunking_service=chunking_service,
+        episode_chunk_embedding_service=FakeEpisodeChunkEmbeddingService(),
+        setting_extractor=FakeSettingExtractor(candidate_groups=[[unresolved_candidate]]),
+        subject_resolver=subject_resolver,
+        setting_candidate_service=setting_candidate_service,
+    )
+
+    result = worker.run_once()
+
+    assert result.claimed is True
+    assert setting_candidate_service.saved_candidates == [unresolved_candidate]
+    summary = json.loads(spring_client.complete_calls[0][1])
+    assert summary["candidateCount"] == 1
+    assert summary["subjectFallbackCallCount"] == 1
+    assert summary["subjectFallbackResolvedCount"] == 0
+    assert summary["subjectFallbackUnresolvedCount"] == 1
 
 
 def test_worker_continues_setting_extraction_when_embedding_provider_temporarily_fails() -> None:
@@ -268,7 +309,7 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         "candidateCount": 0,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
-        "subjectFallbackDiscardedCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
     }
     assert spring_client.fail_calls == []
 

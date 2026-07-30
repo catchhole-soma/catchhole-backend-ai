@@ -14,6 +14,8 @@
 - `matched_character_id`, `match_status`는 판단하지 않습니다.
 - `current_chunk`에서 나온 후보의 근거와 offset 기준은 그대로 유지된다고 가정합니다.
 - previous_chunk와 next_chunk는 주체 판단을 돕는 문맥일 뿐입니다.
+- `raw_entity_mention`은 추출 모델이 잘못 고른 신체·행동·사물 표현일 수 있으므로, 그 값만 주체라고 전제하지 않습니다.
+- `raw_entity_mention`이 없거나 부정확해도 current chunk의 근거 문장과 앞뒤 서술 흐름을 함께 검토합니다.
 - 단순히 주변 문맥에 캐릭터 이름이 등장한다는 이유만으로 주체를 확정하지 않습니다.
 - 대화 흐름, 서술 시점, 행동 연속성, 성별/호칭/관계 표현이 함께 맞을 때만 `resolved_entity_name`을 채웁니다.
 - 확신이 낮으면 `resolved_entity_name`은 null로 둡니다.

@@ -7,10 +7,9 @@ from typing import Protocol
 from pydantic import BaseModel, Field, ValidationError
 
 from app.analysis.character_name_resolver import (
-    AMBIGUOUS_MENTIONS,
-    PLACEHOLDER_ENTITY_NAMES,
     KnownCharacter,
-    normalize_character_name,
+    UNKNOWN_ENTITY_NAME,
+    is_concrete_character_name,
 )
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.schemas import ExtractedSettingCandidate
@@ -50,7 +49,7 @@ class SubjectResolutionResult:
     candidates: list[ExtractedSettingCandidate]
     fallback_call_count: int = 0
     fallback_resolved_count: int = 0
-    fallback_discarded_count: int = 0
+    fallback_unresolved_count: int = 0
 
 
 class SubjectResolutionItem(BaseModel):
@@ -86,17 +85,11 @@ class CharacterSubjectResolver:
         candidates: list[ExtractedSettingCandidate],
         known_characters: list[KnownCharacter],
     ) -> SubjectResolutionResult:
-        # raw 표현도 없고 entity_name도 "미상/나/그녀"처럼 불분명한 후보는
-        # fallback에 보낼 원문 지칭 표현이 없으므로 저장 후보에서 먼저 제외한다.
-        candidate_pool, pre_discarded_count = _filter_candidates_with_subject(candidates)
-
         # 명확한 캐릭터명 후보는 기존 name resolver로 충분하므로 fallback 대상에서 제외한다.
-        fallback_targets = _build_fallback_targets(candidate_pool)
+        # 미상/지칭어 후보는 raw 표현이 예상 형식이 아니거나 없어도 청크 문맥으로 다시 판단한다.
+        fallback_targets = _build_fallback_targets(candidates)
         if not fallback_targets:
-            return SubjectResolutionResult(
-                candidates=candidate_pool,
-                fallback_discarded_count=pre_discarded_count,
-            )
+            return SubjectResolutionResult(candidates=candidates)
 
         # 같은 current chunk에서 나온 fallback 대상들은 한 번의 LLM 호출로 같이 판단한다.
         resolution_response = self._request_resolution(
@@ -104,57 +97,59 @@ class CharacterSubjectResolver:
             targets=fallback_targets,
             known_characters=known_characters,
         )
+        _validate_resolution_candidate_ids(resolution_response, fallback_targets)
+
         # LLM 응답을 candidate_id 기준 dict로 바꿔 원래 후보와 다시 연결한다.
         resolution_by_candidate_id = {
             resolution_item.candidate_id: resolution_item
             for resolution_item in resolution_response.resolutions
         }
 
-        resolved_candidate_by_id: dict[str, ExtractedSettingCandidate] = {}
+        candidate_after_resolution_by_id: dict[str, ExtractedSettingCandidate] = {}
         resolved_count = 0
-        discarded_count = pre_discarded_count
+        unresolved_count = 0
 
         for fallback_target in fallback_targets:
-            # 프롬프트 계약상 모든 candidate_id가 돌아와야 한다.
-            # 그래도 누락되면 해소 실패로 보고 미상 후보를 저장하지 않는다.
-            resolution = resolution_by_candidate_id.get(fallback_target.candidate_id)
-            if resolution is None:
-                discarded_count += 1
-                continue
-
+            resolution = resolution_by_candidate_id[fallback_target.candidate_id]
             resolved_entity_name = _usable_resolved_entity_name(resolution.resolved_entity_name)
             if resolved_entity_name:
                 # entity_name만 치환하고 attribute/evidence/source_chunk 정보는 기존 후보를 유지한다.
-                resolved_candidate_by_id[fallback_target.candidate_id] = (
+                candidate_after_resolution_by_id[fallback_target.candidate_id] = (
                     fallback_target.candidate.model_copy(
                         update={"entity_name": resolved_entity_name}
                     )
                 )
                 resolved_count += 1
             else:
-                discarded_count += 1
+                # 정상적으로 판단했지만 주체를 특정하지 못한 후보는 폐기하지 않는다.
+                # placeholder를 하나로 정규화해 기존 name resolver가 AMBIGUOUS로 판정하게 한다.
+                candidate_after_resolution_by_id[fallback_target.candidate_id] = (
+                    fallback_target.candidate.model_copy(
+                        update={"entity_name": UNKNOWN_ENTITY_NAME}
+                    )
+                )
+                unresolved_count += 1
 
         fallback_target_ids = {target.candidate_id for target in fallback_targets}
-        # 최종적으로 저장 흐름에 넘길 후보 목록(기존 순서도 보장한다.)
+        # 최종적으로 저장 흐름에 넘길 후보 목록(기존 순서도 보장한다).
         final_candidates: list[ExtractedSettingCandidate] = []
         # 원래 candidates 리스트에 다시 같은 임시표를 붙여서 LLM 응답과 대조한다.
-        for indexed_candidate in _index_candidates(candidate_pool):
+        for indexed_candidate in _index_candidates(candidates):
             # fallback 대상이 아니었다면 그대로 넣는다.
             if indexed_candidate.candidate_id not in fallback_target_ids:
                 final_candidates.append(indexed_candidate.candidate)
                 continue
 
-            # fallback 대상이라면 바뀐 entity_name을 가진 수정본으로 치환한다.
-            resolved_candidate = resolved_candidate_by_id.get(indexed_candidate.candidate_id)
-            # fallback에 성공해서 entity_name이 치환된 후보가 있다면 넣는다.
-            if resolved_candidate is not None:
-                final_candidates.append(resolved_candidate)
+            # 성공 후보는 구체 이름으로, 해소 실패 후보는 표준 placeholder로 치환한다.
+            final_candidates.append(
+                candidate_after_resolution_by_id[indexed_candidate.candidate_id]
+            )
 
         return SubjectResolutionResult(
             candidates=final_candidates,
             fallback_call_count=1,
             fallback_resolved_count=resolved_count,
-            fallback_discarded_count=discarded_count,
+            fallback_unresolved_count=unresolved_count,
         )
 
     def _request_resolution(
@@ -212,22 +207,6 @@ def _build_fallback_targets(
     ]
 
 
-def _filter_candidates_with_subject(
-    candidates: list[ExtractedSettingCandidate],
-) -> tuple[list[ExtractedSettingCandidate], int]:
-    # raw/entity 둘 다 주체 판단에 쓸 수 없는 후보는 저장해도 검토자가 해소할 근거가 없다.
-    filtered_candidates: list[ExtractedSettingCandidate] = []
-    discarded_count = 0
-
-    for candidate in candidates:
-        if _should_discard_without_subject(candidate):
-            discarded_count += 1
-            continue
-        filtered_candidates.append(candidate)
-
-    return filtered_candidates, discarded_count
-
-
 def _index_candidates(candidates: Iterable[ExtractedSettingCandidate]) -> list[_IndexedCandidate]:
     # 원본 후보에는 임시 ID가 없으므로 chunk 내부 순서를 기반으로 안정적인 candidate_id를 만든다.
     return [
@@ -236,55 +215,31 @@ def _index_candidates(candidates: Iterable[ExtractedSettingCandidate]) -> list[_
     ]
 
 
-def _should_discard_without_subject(candidate: ExtractedSettingCandidate) -> bool:
-    normalized_raw_mention = normalize_character_name(candidate.raw_entity_mention)
-    if normalized_raw_mention:
-        return False
-
-    normalized_entity_name = normalize_character_name(candidate.entity_name)
-
-    # raw가 없는데 entity_name까지 비어 있거나 placeholder/지칭어라면
-    # "누구의 설정인지 모르는 후보"라서 fallback 없이 저장 전 제외한다.
-    return (
-        not normalized_entity_name
-        or normalized_entity_name in PLACEHOLDER_ENTITY_NAMES
-        or normalized_entity_name in AMBIGUOUS_MENTIONS
-    )
-
-
 def _is_fallback_target(candidate: ExtractedSettingCandidate) -> bool:
-    # raw/entity 표현은 같은 정규화 규칙으로 맞춘 뒤 지칭어/placeholder 여부를 판단한다.
-    normalized_raw_mention = normalize_character_name(candidate.raw_entity_mention)
-    normalized_entity_name = normalize_character_name(candidate.entity_name)
-
-    # raw가 지칭어가 아니면 앞뒤 chunk를 보지 않아도 기존 매칭 로직으로 처리할 수 있다.
-    if normalized_raw_mention not in AMBIGUOUS_MENTIONS:
-        return False
-
-    # 지칭어 raw에 entity_name까지 미상/지칭어라면 현재 chunk만으로 주체가 풀리지 않은 상태다.
-    return (
-        not normalized_entity_name
-        or normalized_entity_name in PLACEHOLDER_ENTITY_NAMES
-        or normalized_entity_name in AMBIGUOUS_MENTIONS
-    )
+    # raw 표현은 LLM이 예상과 다른 서술형 문구로 반환할 수 있으므로 진입 조건으로 믿지 않는다.
+    # 구체 entity_name을 얻지 못한 모든 후보를 청크 문맥 기반 fallback 대상으로 삼는다.
+    return not is_concrete_character_name(candidate.entity_name)
 
 
 def _usable_resolved_entity_name(resolved_entity_name: str | None) -> str | None:
-    # null/빈 문자열은 해소 실패로 본다.
-    if resolved_entity_name is None:
+    if not is_concrete_character_name(resolved_entity_name):
         return None
 
-    stripped_name = resolved_entity_name.strip()
-    normalized_name = normalize_character_name(stripped_name)
-    if not normalized_name:
-        return None
+    return resolved_entity_name.strip()
 
-    # LLM이 "미상", "그녀", "나"처럼 주체가 다시 불분명한 값을 반환하면
-    # 실제 해소가 아니므로 저장 후보에서 제외한다.
-    if normalized_name in PLACEHOLDER_ENTITY_NAMES or normalized_name in AMBIGUOUS_MENTIONS:
-        return None
 
-    return stripped_name
+def _validate_resolution_candidate_ids(
+    response: SubjectResolutionResponse,
+    targets: list[_IndexedCandidate],
+) -> None:
+    expected_candidate_ids = [target.candidate_id for target in targets]
+    actual_candidate_ids = [item.candidate_id for item in response.resolutions]
+    if len(actual_candidate_ids) != len(set(actual_candidate_ids)) or set(
+        actual_candidate_ids
+    ) != set(expected_candidate_ids):
+        raise LlmExtractionError(
+            "LLM subject resolution candidate IDs do not match the requested candidates."
+        )
 
 
 def _build_user_prompt(

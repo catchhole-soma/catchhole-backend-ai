@@ -85,7 +85,7 @@ def run_episode_text_analysis_debug(
     all_candidates: list[DebugCandidate] = []
     subject_fallback_call_count = 0
     subject_fallback_resolved_count = 0
-    subject_fallback_discarded_count = 0
+    subject_fallback_unresolved_count = 0
     for chunk in chunks_to_process:
         draft = chunk.draft
         print(
@@ -116,13 +116,13 @@ def run_episode_text_analysis_debug(
         )
         subject_fallback_call_count += subject_result.fallback_call_count
         subject_fallback_resolved_count += subject_result.fallback_resolved_count
-        subject_fallback_discarded_count += subject_result.fallback_discarded_count
+        subject_fallback_unresolved_count += subject_result.fallback_unresolved_count
         if subject_result.fallback_call_count:
             print(
                 "  subject_fallback "
                 f"calls={subject_result.fallback_call_count} "
                 f"resolved={subject_result.fallback_resolved_count} "
-                f"discarded={subject_result.fallback_discarded_count}",
+                f"unresolved={subject_result.fallback_unresolved_count}",
                 flush=True,
             )
 
@@ -152,7 +152,7 @@ def run_episode_text_analysis_debug(
         known_characters=known_characters,
         subject_fallback_call_count=subject_fallback_call_count,
         subject_fallback_resolved_count=subject_fallback_resolved_count,
-        subject_fallback_discarded_count=subject_fallback_discarded_count,
+        subject_fallback_unresolved_count=subject_fallback_unresolved_count,
     )
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -352,7 +352,7 @@ def _build_result(
     known_characters: list[KnownCharacter],
     subject_fallback_call_count: int,
     subject_fallback_resolved_count: int,
-    subject_fallback_discarded_count: int,
+    subject_fallback_unresolved_count: int,
 ) -> dict:
     normalized_known_characters = normalize_known_characters(known_characters)
     return {
@@ -371,7 +371,7 @@ def _build_result(
             "knownCharacterCount": len(known_characters),
             "subjectFallbackCallCount": subject_fallback_call_count,
             "subjectFallbackResolvedCount": subject_fallback_resolved_count,
-            "subjectFallbackDiscardedCount": subject_fallback_discarded_count,
+            "subjectFallbackUnresolvedCount": subject_fallback_unresolved_count,
         },
         "knownCharacters": [
             {

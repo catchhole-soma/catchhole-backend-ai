@@ -16,7 +16,7 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
   - `setting_candidates` 저장 구조를 고려해 `entity_type`, `attribute_name`, `value_json`, `evidence_spans` 등을 반환하도록 요구합니다.
   - `source_chunk_id`는 LLM 출력에 맡기지 않고 응답 파싱 후 현재 입력 `EpisodeChunk.id`로 주입합니다.
 - `character_subject_resolution.md`
-  - 이미 추출된 설정 후보 중 지칭어/placeholder 주체만 해소하기 위한 prompt입니다.
+  - 이미 추출된 설정 후보 중 `entity_name`이 구체적이지 않은 후보의 주체만 해소하기 위한 prompt입니다.
   - 설정 후보를 다시 추출하지 않고, current chunk 기준으로 묶인 후보들의 `resolved_entity_name`만 반환하도록 요구합니다.
 
 ## 설정 후보 출력 계약
@@ -49,4 +49,5 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 - 모든 candidate_id는 응답에 포함해야 하며, 애매한 후보도 생략하지 않고 null로 반환합니다.
 - `resolved_entity_name`에는 `미상`, `불명`, `unknown`, `나`, `그`, `그녀`, `주인공` 같은 placeholder/지칭어를 넣지 않습니다.
 - `MATCHED`, `UNRESOLVED`, `AMBIGUOUS` 같은 최종 매칭 상태는 Python의 `character_name_resolver`가 계산합니다.
+- 정상 응답의 null/placeholder 결과는 Python이 원래 후보를 `미상`으로 보존해 `AMBIGUOUS`로 저장하며, candidate ID 누락·중복·추가는 기술적 계약 오류로 처리합니다.
 - 규칙 기반 문자열 검색으로 주체를 확정하지 않고, 문맥상 확실할 때만 이름을 반환하도록 요구합니다.

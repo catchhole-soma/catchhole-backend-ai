@@ -98,9 +98,41 @@ def test_resolve_candidate_character_marks_pronoun_placeholder_ambiguous() -> No
     assert match.matched_character_id is None
 
 
+def test_resolve_candidate_character_marks_placeholder_with_descriptive_raw_ambiguous() -> None:
+    # raw가 예상 밖 서술형 문구여도 "미상"을 새 캐릭터 이름으로 취급하지 않는다.
+    match = resolve_candidate_character(
+        _candidate(entity_name="미상", raw_entity_mention="내려다 본 손"),
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
+def test_resolve_candidate_character_marks_placeholder_without_raw_ambiguous() -> None:
+    match = resolve_candidate_character(
+        _candidate(entity_name="미상", raw_entity_mention=None),
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
 def test_resolve_candidate_character_marks_pronoun_entity_name_ambiguous() -> None:
     match = resolve_candidate_character(
         _candidate(entity_name="그", raw_entity_mention="나"),
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
+def test_resolve_candidate_character_marks_particle_attached_reference_ambiguous() -> None:
+    # entity_name에 조사가 붙어도 지칭어를 새 캐릭터명으로 오해하지 않는다.
+    match = resolve_candidate_character(
+        _candidate(entity_name="주인공에게는", raw_entity_mention=None),
         _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
     )
 
