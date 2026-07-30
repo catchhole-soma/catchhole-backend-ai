@@ -54,7 +54,7 @@
 - `attributePattern`이 null인 schema의 `schemaKey`, `displayName`, `aliases`와 원문 속성이 명확히 대응하면 `attribute_name`에는 canonical `schemaKey`를, `value_type`에는 schema의 `valueType`을 사용합니다.
 - `attributePattern`이 있는 schema는 registry용 `schemaKey`를 그대로 출력하지 않고, pattern의 `*`를 원문에 나온 구체 명칭으로 바꾼 key와 schema의 `valueType`을 사용합니다.
 - schema와 정확히 대응하지 않는 속성을 유사한 alias로 추측하거나 가장 가까운 schema로 자동 정규화하지 않습니다.
-- schema의 exact key, alias 또는 `attributePattern`과 대응하지 않는 설정은 후보에서 제외합니다.
+- schema의 `schemaKey`, `displayName`, `aliases` 또는 `attributePattern`과 대응하지 않는 설정은 후보에서 제외합니다.
 - `attribute_name`은 먼저 `SettingCandidate.attributeName`에 저장되는 후보 key입니다.
 - Backend confirm에서 exact/alias match는 canonical `schemaKey`를, pattern match는 구체 `attribute_name`을 `CharacterFact.factKey`로 확정하므로 아래 규칙만 사용합니다.
   - 프로필: 제공된 canonical `profile.*` schemaKey

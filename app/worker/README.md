@@ -165,6 +165,7 @@ Spring claim
 - `analysis_job_worker.py`
   - claim된 payload의 단일 episode를 처리합니다.
   - claim의 `characterSettingSchemas`를 Backend가 보낸 순서와 중복을 유지한 immutable schema hint tuple로 job당 한 번 변환해 모든 chunk 추출에 전달합니다.
+  - `characterSettingSchemas`가 비어 있으면 등록 schema 기준의 추출을 수행할 수 없으므로, S3 원문 조회와 청크·후보 교체 전에 job을 실패 보고합니다.
   - 해당 episode의 청킹·임베딩 서비스와 chunk별 설정 추출기를 호출합니다.
   - 생성된 episode/chunk/embedding/candidate 개수를 `summaryJson`으로 모아 Spring에 완료 보고합니다.
 - `EpisodeS3ChunkingService`
@@ -177,7 +178,7 @@ Spring claim
   - LLM 응답 JSON을 `app/analysis/schemas.py` 기준으로 검증합니다.
   - schema hint는 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType` 다섯 필드만 가진 prompt 입력 전용 값입니다.
   - `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않으며 기존 응답 shape도 변경하지 않습니다.
-  - fuzzy alias 매칭이나 schema 자동 생성은 하지 않고, 명시적인 미등록 설정은 검토 후보로 보존합니다.
+  - fuzzy alias 매칭이나 schema 자동 생성은 하지 않고, 시간·사건·타임라인 정보와 등록 schema에 대응하지 않는 설정은 후보에서 제외합니다.
 - `EpisodeChunkEmbeddingService`
   - episode의 저장된 청크 텍스트를 한 번에 임베딩합니다.
   - 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.

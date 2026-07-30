@@ -39,6 +39,60 @@ def test_resolve_candidates_skips_llm_when_fallback_targets_do_not_exist(tmp_pat
     assert result.fallback_unresolved_count == 0
 
 
+def test_resolve_candidates_treats_exact_known_name_as_concrete_before_particle_check(
+    tmp_path: Path,
+) -> None:
+    # "나은"의 "은"을 조사로 제거해 "나"라는 지칭어로 오인하지 않는다.
+    llm_client = FakeSubjectResolutionClient(response_text='{"resolutions":[]}')
+    resolver = CharacterSubjectResolver(
+        llm_client=llm_client,
+        prompt_path=_prompt_path(tmp_path),
+    )
+    candidates = [_candidate(entity_name="나은", raw_entity_mention="나은")]
+
+    result = resolver.resolve_candidates(
+        context=_context(),
+        candidates=candidates,
+        known_characters=[KnownCharacter(character_id=AINAR_ID, name="나은")],
+    )
+
+    assert llm_client.call_count == 0
+    assert result.candidates == candidates
+
+
+def test_resolve_candidates_accepts_exact_known_name_from_fallback(
+    tmp_path: Path,
+) -> None:
+    # fallback 결과 "그로"의 "로"도 조사로 오인하지 않고 기존 캐릭터 이름으로 보존한다.
+    llm_client = FakeSubjectResolutionClient(
+        response_text="""
+        {
+          "resolutions": [
+            {
+              "candidate_id": "candidate-0",
+              "resolved_entity_name": "그로",
+              "reason": "문맥상 그로를 가리킨다."
+            }
+          ]
+        }
+        """
+    )
+    resolver = CharacterSubjectResolver(
+        llm_client=llm_client,
+        prompt_path=_prompt_path(tmp_path),
+    )
+
+    result = resolver.resolve_candidates(
+        context=_context(),
+        candidates=[_candidate(entity_name="미상", raw_entity_mention="그")],
+        known_characters=[KnownCharacter(character_id=AINAR_ID, name="그로")],
+    )
+
+    assert result.candidates[0].entity_name == "그로"
+    assert result.fallback_resolved_count == 1
+    assert result.fallback_unresolved_count == 0
+
+
 def test_resolve_candidates_preserves_unresolved_placeholders_without_raw_mentions(
     tmp_path: Path,
 ) -> None:

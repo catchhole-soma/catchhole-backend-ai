@@ -28,10 +28,11 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
   `SettingCandidate.attributeName`을 `CharacterFact.factKey`로 확정합니다.
 - `raw_entity_mention`은 원문에 실제 등장한 표현이고, `entity_name`은 원문 맥락에서 정리한 후보 캐릭터명입니다.
 - 나이/레벨은 `age`, `level` 고정 key를 사용합니다.
-- 여러 항목이 공존하는 값은 `stats.<스탯명>`, `skill.<스킬명>`, `item.<아이템명>`, `status.<상태명>`, `time.<시간 또는 사건명>`처럼 구체 key를 포함합니다.
+- 여러 항목이 공존하는 값은 제공된 schema의 `attributePattern`에 따라
+  `stats.<스탯명>`, `skill.<스킬명>`, `item.<아이템명>`, `status.<상태명>`처럼 구체 key를 포함합니다.
 - user prompt의 `character_setting_schemas`는 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`만 포함합니다.
 - 고정 schema와 명확히 대응하면 canonical `schemaKey`와 schema `valueType`을 사용하고, 동적 schema는 `attributePattern`의 `*`를 구체 명칭으로 치환합니다.
-- 미등록이지만 원문에 명시된 설정은 검토 후보로 보존하며, 가까운 schema로 fuzzy 정규화하지 않습니다.
+- 시간·사건·타임라인 정보와 제공된 schema에 대응하지 않는 설정은 후보에서 제외합니다. 가까운 schema로 fuzzy 정규화하거나 새 key를 만들지 않습니다.
 - `attribute_value`는 목록/검토 화면 표시용 summary이며, 로직 판단 기준으로 사용하지 않습니다.
 - `value_json`은 실제 값의 source of truth입니다. 나이/레벨은 `{"value": number}` 형태를 우선 사용합니다.
 - `source_chunk_id`는 prompt 출력 필드가 아니며 Python Worker가 현재 입력 chunk ID로 결정합니다.

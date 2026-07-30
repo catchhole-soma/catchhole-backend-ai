@@ -83,6 +83,46 @@ def test_worker_reports_fail_to_spring_when_analysis_fails() -> None:
     assert spring_client.fail_calls == [(ANALYSIS_JOB_ID, "LLM response parse failed.")]
 
 
+def test_worker_fails_before_data_changes_when_claim_has_no_character_schemas() -> None:
+    # 이전 Spring payload도 job ID까지는 파싱하되, Schema 없이 빈 후보로 기존 데이터를
+    # 교체하지 않도록 청킹·임베딩·추출·후보 저장 전에 분석 실패로 보고한다.
+    payload = _payload().model_copy(update={"character_setting_schemas": []})
+    spring_client = FakeSpringWorkerClient(payload=payload)
+    chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 전사다.")])
+    embedding_service = FakeEpisodeChunkEmbeddingService()
+    setting_extractor = FakeSettingExtractor(candidate_groups=[[]])
+    setting_candidate_service = FakeSettingCandidateService()
+    worker = AnalysisJobWorker(
+        spring_client=spring_client,
+        chunking_service=chunking_service,
+        episode_chunk_embedding_service=embedding_service,
+        setting_extractor=setting_extractor,
+        setting_candidate_service=setting_candidate_service,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="claim must include at least one characterSettingSchemas entry",
+    ):
+        worker.run_once()
+
+    assert spring_client.progress_calls == [
+        (ANALYSIS_JOB_ID, "SETTING_EXTRACTION", EpisodeProcessingStatus.ANALYZING)
+    ]
+    assert chunking_service.requested_episode_ids == []
+    assert chunking_service.requested_content_s3_keys == []
+    assert embedding_service.requested_chunk_ids == []
+    assert setting_extractor.requests == []
+    assert setting_candidate_service.request is None
+    assert spring_client.complete_calls == []
+    assert spring_client.fail_calls == [
+        (
+            ANALYSIS_JOB_ID,
+            "Analysis job claim must include at least one characterSettingSchemas entry.",
+        )
+    ]
+
+
 def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
     # 실제 OpenAI 호출은 FakeSettingExtractor로 대체한다.
     # 여기서는 "LLM 결과가 이미 나왔다"는 가정 아래 Worker가 저장 전에 quote offset을 보정하는지 본다.

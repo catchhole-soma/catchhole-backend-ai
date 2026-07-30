@@ -76,7 +76,9 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - `attribute_name: "skill.리더십"`
 - `confidence: 0.0`
 
-이런 정책 위반을 재시도 또는 후보 제외 조건으로 만들려면 `ExtractedSettingCandidate`에 attribute 규칙 validator를 추가하거나, schema 검증 이후 별도 policy validation 단계를 둡니다.
+여기서 `time. 이름 부여`는 운영 프롬프트가 지원하는 설정 유형이 아니라, `attribute_name`의 Pydantic shape 검증만으로는 프롬프트 정책 위반 문자열을 차단하지 못한다는 예시입니다. 운영 프롬프트는 시간·사건·타임라인 정보와 제공된 schema에 대응하지 않는 설정을 추출 대상에서 제외합니다.
+
+이런 정책 위반을 Python에서도 강제로 거절하거나 후보 제외 조건으로 만들려면 `ExtractedSettingCandidate`에 attribute 규칙 validator를 추가하거나, schema 검증 이후 별도 policy validation 단계를 둡니다.
 
 ## 캐릭터명 매칭 정책
 

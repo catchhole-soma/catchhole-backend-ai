@@ -230,6 +230,8 @@ payload에서 Python이 직접 사용하는 값:
 | `knownCharacters[].character_id`, `name` | 기존 캐릭터 매칭 |
 | `characterSettingSchemas[]` | Backend 배열의 순서와 중복을 유지한 immutable schema hint tuple로 job당 한 번 변환한 뒤 모든 chunk prompt에 전달 |
 
+payload DTO는 이전 Spring payload도 역직렬화할 수 있도록 `characterSettingSchemas` 누락을 빈 목록으로 파싱합니다. 하지만 현재 추출 계약에서는 등록 schema가 최소 하나 필요합니다. 목록이 비어 있으면 Worker는 진행 상태를 보고한 직후, S3 원문 조회와 청크·후보 교체 전에 예외를 발생시켜 Spring `fail` API로 해당 job을 실패 처리합니다. 이를 통해 schema가 없는 프롬프트가 후보를 0개 반환하고 기존 후보까지 빈 결과로 교체하는 상황을 막습니다.
+
 ### 2. S3 원문 조회와 정규화
 
 `EpisodeS3ChunkingService.replace_chunks_from_s3_content()`는 claim payload의 `content_s3_key`를 그대로 사용합니다.
@@ -353,7 +355,7 @@ user prompt는 하나의 JSON 객체가 아니라 다음 text section으로 구�
 character_setting_schema_rules:
 - attributePattern이 null인 schema의 schemaKey, displayName 또는 aliases와 명확히 대응하면 attribute_name에는 canonical schemaKey를, value_type에는 valueType을 사용하세요.
 - attributePattern이 있는 동적 설정은 schemaKey가 아니라 pattern의 *를 구체 명칭으로 바꾼 attribute_name과 schema의 valueType을 사용하세요.
-- schema에 등록되지 않았지만 원문에 명시된 설정은 stats.지능, time.첫전투처럼 의미가 드러나는 key로 검토 후보에 보존하세요. 가까운 schema로 추측해 바꾸거나 버리지 마세요. 이 후보는 Backend 확정 시 거절될 수 있습니다.
+- 시간·사건·타임라인 정보와 schema의 schemaKey, displayName, aliases 또는 attributePattern에 대응하지 않는 설정은 후보에서 제외하세요. 가까운 schema로 추측하거나 새 key를 만들지 마세요.
 
 character_setting_schemas:
 [
@@ -377,7 +379,7 @@ LLM이 분석할 청크 원문
 - Worker는 claim 배열의 순서와 중복을 그대로 보존하며 임의로 정렬하거나 dedup하지 않습니다.
 - `attributePattern`이 null인 schema와 명확히 대응하면 canonical `schemaKey`와 schema `valueType`을 사용합니다.
 - 동적 schema는 registry `schemaKey`가 아니라 `attributePattern`의 `*`를 구체 명칭으로 바꾼 key를 사용합니다.
-- schema에 없는 명시적 설정은 가까운 schema로 추측해 바꾸거나 버리지 않고 검토 후보로 보존합니다. Backend 확정 단계에서는 schema 미매칭으로 거절될 수 있습니다.
+- 시간·사건·타임라인 정보와 schema의 `schemaKey`, `displayName`, `aliases` 또는 `attributePattern`에 대응하지 않는 설정은 후보에서 제외합니다.
 - fuzzy alias 매칭이나 schema 자동 생성은 수행하지 않습니다.
 - 설정 후보 배열의 응답 잘림을 줄이기 위해 추출 호출에는 `max_output_tokens=4000`을 사용합니다.
 
@@ -404,7 +406,7 @@ LLM 출력 계약:
 | `source_chunk_id` | Worker가 현재 입력 `EpisodeChunk.id`로 주입하는 후보 근거 식별자. LLM 값은 사용하지 않음 |
 | `entity_type` | 현재는 캐릭터 중심 |
 | `entity_name` | LLM이 청크 문맥에서 정리한 후보 캐릭터명 |
-| `raw_entity_mention` | 원문에 실제 등장한 표현 |
+| `raw_entity_mention` | 원문에 실제 등장한 표현. 추출되지 않았으면 `null`을 유지 |
 | `attribute_name` | 먼저 `SettingCandidate.attributeName`에 저장되는 후보 key. confirm 시 exact/alias는 canonical `schemaKey`, pattern은 구체 attribute name이 `CharacterFact.factKey`가 됨 |
 | `attribute_value` | 목록/검토 화면 표시용 요약 문자열 |
 | `value_type` | 값 타입 |
@@ -606,7 +608,7 @@ save_items 전체 수집
 | `source_chunk_id` | Worker가 주입한 현재 입력 chunk ID |
 | `analysis_job_id` | claim한 analysis job ID |
 | `entity_name` | LLM이 정리한 후보 캐릭터명 |
-| `raw_entity_mention` | 원문 표현. 없으면 `entity_name`으로 fallback |
+| `raw_entity_mention` | 원문 provenance. 추출되지 않았으면 `entity_name`으로 만들지 않고 `null` 유지 |
 | `matched_character_id` | 기존 캐릭터와 확실히 매칭된 경우 |
 | `match_status` | `MATCHED`, `UNRESOLVED`, `AMBIGUOUS` |
 | `attribute_name/value/type/json` | LLM 추출 설정 값 |

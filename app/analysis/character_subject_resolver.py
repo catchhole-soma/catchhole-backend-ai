@@ -87,7 +87,7 @@ class CharacterSubjectResolver:
     ) -> SubjectResolutionResult:
         # 명확한 캐릭터명 후보는 기존 name resolver로 충분하므로 fallback 대상에서 제외한다.
         # 미상/지칭어 후보는 raw 표현이 예상 형식이 아니거나 없어도 청크 문맥으로 다시 판단한다.
-        fallback_targets = _build_fallback_targets(candidates)
+        fallback_targets = _build_fallback_targets(candidates, known_characters)
         if not fallback_targets:
             return SubjectResolutionResult(candidates=candidates)
 
@@ -111,7 +111,10 @@ class CharacterSubjectResolver:
 
         for fallback_target in fallback_targets:
             resolution = resolution_by_candidate_id[fallback_target.candidate_id]
-            resolved_entity_name = _usable_resolved_entity_name(resolution.resolved_entity_name)
+            resolved_entity_name = _usable_resolved_entity_name(
+                resolution.resolved_entity_name,
+                known_characters,
+            )
             if resolved_entity_name:
                 # entity_name만 치환하고 attribute/evidence/source_chunk 정보는 기존 후보를 유지한다.
                 candidate_after_resolution_by_id[fallback_target.candidate_id] = (
@@ -198,12 +201,13 @@ class _IndexedCandidate:
 
 def _build_fallback_targets(
     candidates: list[ExtractedSettingCandidate],
+    known_characters: list[KnownCharacter],
 ) -> list[_IndexedCandidate]:
     # 전체 후보 중 subject fallback이 필요한 후보만 고른다.
     return [
         indexed_candidate
         for indexed_candidate in _index_candidates(candidates)
-        if _is_fallback_target(indexed_candidate.candidate)
+        if _is_fallback_target(indexed_candidate.candidate, known_characters)
     ]
 
 
@@ -215,14 +219,20 @@ def _index_candidates(candidates: Iterable[ExtractedSettingCandidate]) -> list[_
     ]
 
 
-def _is_fallback_target(candidate: ExtractedSettingCandidate) -> bool:
+def _is_fallback_target(
+    candidate: ExtractedSettingCandidate,
+    known_characters: list[KnownCharacter],
+) -> bool:
     # raw 표현은 LLM이 예상과 다른 서술형 문구로 반환할 수 있으므로 진입 조건으로 믿지 않는다.
     # 구체 entity_name을 얻지 못한 모든 후보를 청크 문맥 기반 fallback 대상으로 삼는다.
-    return not is_concrete_character_name(candidate.entity_name)
+    return not is_concrete_character_name(candidate.entity_name, known_characters)
 
 
-def _usable_resolved_entity_name(resolved_entity_name: str | None) -> str | None:
-    if not is_concrete_character_name(resolved_entity_name):
+def _usable_resolved_entity_name(
+    resolved_entity_name: str | None,
+    known_characters: list[KnownCharacter],
+) -> str | None:
+    if not is_concrete_character_name(resolved_entity_name, known_characters):
         return None
 
     return resolved_entity_name.strip()

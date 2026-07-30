@@ -82,6 +82,7 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
     assert '"schemaKey": "profile.species"' in llm_client.user_prompt
     assert '"valueType": "STRING"' in llm_client.user_prompt
     assert "canonical schemaKey" in llm_client.user_prompt
+    assert "schemaKey, displayName, aliases 또는 attributePattern" in llm_client.user_prompt
     assert "후보에서 제외" in llm_client.user_prompt
     assert "time.첫전투" not in llm_client.user_prompt
     assert "profile.<프로필명>" in llm_client.system_prompt
@@ -94,6 +95,10 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
         llm_client.system_prompt
     )
     assert "타임라인에 해당하는 정보는 현재 추출하지 않습니다" in llm_client.system_prompt
+    assert (
+        "`schemaKey`, `displayName`, `aliases` 또는 `attributePattern`"
+        in llm_client.system_prompt
+    )
     assert "time.<시간 또는 사건명>" not in llm_client.system_prompt
     assert "skill.<스킬명>" in llm_client.system_prompt
     assert "item.<아이템명>" in llm_client.system_prompt

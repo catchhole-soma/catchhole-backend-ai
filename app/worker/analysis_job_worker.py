@@ -190,6 +190,13 @@ class AnalysisJobWorker:
         )
 
     def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
+        # Schema 없이 추출하면 모든 후보가 제외되고 기존 후보까지 빈 결과로 교체될 수 있다.
+        # job ID를 확보한 뒤 이 지점에서 중단해 run_once의 Spring 실패 보고 흐름으로 보낸다.
+        if not payload.character_setting_schemas:
+            raise ValueError(
+                "Analysis job claim must include at least one characterSettingSchemas entry."
+            )
+
         chunk_count = 0
         embedded_chunk_count = 0
         embedding_failed_chunk_count = 0
