@@ -1,7 +1,17 @@
 import json
 from uuid import UUID
 
-from app.analysis.setting_extractor import CharacterSettingExtractor
+from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
+
+SMOKE_SCHEMA_HINTS = (
+    CharacterSettingSchemaHint(
+        schema_key="level",
+        display_name="레벨",
+        attribute_pattern=None,
+        aliases=("레벨", "level"),
+        value_type="NUMBER",
+    ),
+)
 
 
 def main() -> None:
@@ -11,10 +21,8 @@ def main() -> None:
         source_chunk_id=UUID("00000000-0000-0000-0000-000000000001"),
         episode_no=1,
         episode_title="샘플 회차",
-        chunk_text=(
-            "카엘은 12레벨 검사였다. 그는 오래된 화염검을 장비하고 있었고, "
-            "근력은 80, 민첩은 65라고 알려져 있었다."
-        ),
+        chunk_text="카엘은 12레벨 검사였다.",
+        schema_hints=SMOKE_SCHEMA_HINTS,
     )
     # key나 원본 OpenAI 응답 전체는 출력하지 않고, schema 검증이 끝난 후보 JSON만 출력한다.
     print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))

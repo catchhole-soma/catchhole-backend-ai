@@ -7,6 +7,15 @@ from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterS
 from app.llm.responses import LlmTextResponse
 
 CHUNK_ID = UUID("00000000-0000-0000-0000-000000000001")
+DEFAULT_SCHEMA_HINTS = (
+    CharacterSettingSchemaHint(
+        schema_key="level",
+        display_name="레벨",
+        attribute_pattern=None,
+        aliases=("레벨", "level"),
+        value_type="NUMBER",
+    ),
+)
 
 
 def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
@@ -23,6 +32,7 @@ def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
         episode_no=3,
         episode_title="사라진 이름",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
     )
 
     assert len(result.candidates) == 1
@@ -104,6 +114,25 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
     assert "item.<아이템명>" in llm_client.system_prompt
 
 
+def test_extract_from_chunk_rejects_empty_schema_hints_before_llm_call() -> None:
+    llm_client = RecordingTextGenerationClient()
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        max_attempts=1,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="schema_hints must include at least one character setting schema",
+    ):
+        extractor.extract_from_chunk(
+            source_chunk_id=CHUNK_ID,
+            chunk_text="카엘은 12레벨 검사였다.",
+        )
+
+    assert llm_client.call_count == 0
+
+
 def test_extract_from_chunk_retries_when_json_parse_fails(tmp_path) -> None:
     # 첫 응답이 JSON이 아니어도 다음 응답이 정상이면 추출이 성공해야 한다.
     prompt_path = tmp_path / "prompt.md"
@@ -118,6 +147,7 @@ def test_extract_from_chunk_retries_when_json_parse_fails(tmp_path) -> None:
     result = extractor.extract_from_chunk(
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
     )
 
     assert llm_client.call_count == 2
@@ -138,6 +168,7 @@ def test_extract_from_chunk_retries_when_required_field_is_missing(tmp_path) -> 
     result = extractor.extract_from_chunk(
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
     )
 
     assert llm_client.call_count == 2
@@ -157,6 +188,7 @@ def test_extract_from_chunk_retries_when_entity_name_is_whitespace_only(tmp_path
     result = extractor.extract_from_chunk(
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
     )
 
     assert llm_client.call_count == 2
@@ -178,6 +210,7 @@ def test_extract_from_chunk_raises_error_when_required_field_keeps_missing(tmp_p
         extractor.extract_from_chunk(
             source_chunk_id=CHUNK_ID,
             chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+            schema_hints=DEFAULT_SCHEMA_HINTS,
         )
 
     assert llm_client.call_count == 2
@@ -198,6 +231,7 @@ def test_extract_from_chunk_raises_error_after_max_attempts(tmp_path) -> None:
         extractor.extract_from_chunk(
             source_chunk_id=CHUNK_ID,
             chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+            schema_hints=DEFAULT_SCHEMA_HINTS,
         )
 
     assert llm_client.call_count == 2
@@ -247,6 +281,7 @@ class RecordingTextGenerationClient:
     def __init__(self) -> None:
         self.system_prompt = ""
         self.user_prompt = ""
+        self.call_count = 0
 
     def create_text_response(
         self,
@@ -255,6 +290,7 @@ class RecordingTextGenerationClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
     ) -> LlmTextResponse:
+        self.call_count += 1
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
         return LlmTextResponse(text='{"candidates": []}')

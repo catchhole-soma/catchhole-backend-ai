@@ -70,6 +70,11 @@ class CharacterSettingExtractor:
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
     ) -> CharacterSettingExtractionResult:
+        # Schema가 없으면 모든 설정 후보를 제외하라는 prompt가 만들어지므로,
+        # 비용이 발생하는 LLM 호출 전에 잘못된 직접 호출을 차단한다.
+        if not schema_hints:
+            raise ValueError("schema_hints must include at least one character setting schema.")
+
         system_prompt = self._load_system_prompt()
         user_prompt = self._build_user_prompt(
             chunk_text=chunk_text,

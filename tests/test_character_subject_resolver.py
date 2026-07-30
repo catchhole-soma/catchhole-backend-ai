@@ -3,7 +3,11 @@ from uuid import UUID
 
 import pytest
 
-from app.analysis.character_name_resolver import KnownCharacter
+from app.analysis.character_name_resolver import (
+    KnownCharacter,
+    normalize_known_characters,
+    resolve_candidate_character,
+)
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.character_subject_resolver import (
     CharacterSubjectResolver,
@@ -63,15 +67,15 @@ def test_resolve_candidates_treats_exact_known_name_as_concrete_before_particle_
 def test_resolve_candidates_accepts_exact_known_name_from_fallback(
     tmp_path: Path,
 ) -> None:
-    # fallback 결과 "그로"의 "로"도 조사로 오인하지 않고 기존 캐릭터 이름으로 보존한다.
+    # fallback 결과가 조사형 지칭어처럼 보여도 기존 캐릭터 exact name이면 보존한다.
     llm_client = FakeSubjectResolutionClient(
         response_text="""
         {
           "resolutions": [
             {
               "candidate_id": "candidate-0",
-              "resolved_entity_name": "그로",
-              "reason": "문맥상 그로를 가리킨다."
+              "resolved_entity_name": "그녀로",
+              "reason": "문맥상 그녀로를 가리킨다."
             }
           ]
         }
@@ -85,12 +89,56 @@ def test_resolve_candidates_accepts_exact_known_name_from_fallback(
     result = resolver.resolve_candidates(
         context=_context(),
         candidates=[_candidate(entity_name="미상", raw_entity_mention="그")],
-        known_characters=[KnownCharacter(character_id=AINAR_ID, name="그로")],
+        known_characters=[KnownCharacter(character_id=AINAR_ID, name="그녀로")],
     )
 
-    assert result.candidates[0].entity_name == "그로"
+    assert result.candidates[0].entity_name == "그녀로"
     assert result.fallback_resolved_count == 1
     assert result.fallback_unresolved_count == 0
+
+
+@pytest.mark.parametrize("character_name", ["나은", "그로"])
+def test_resolve_candidates_preserves_particle_ending_new_name_from_fallback(
+    tmp_path: Path,
+    character_name: str,
+) -> None:
+    # fallback이 실제 이름이라고 재판단한 값은 조사형 지칭어와 겹쳐도 버리지 않는다.
+    # 기존 캐릭터가 없으므로 최종 자동 연결은 하지 않고 AMBIGUOUS로 남는다.
+    llm_client = FakeSubjectResolutionClient(
+        response_text=f"""
+        {{
+          "resolutions": [
+            {{
+              "candidate_id": "candidate-0",
+              "resolved_entity_name": "{character_name}",
+              "reason": "문맥상 실제 캐릭터 이름이다."
+            }}
+          ]
+        }}
+        """
+    )
+    resolver = CharacterSubjectResolver(
+        llm_client=llm_client,
+        prompt_path=_prompt_path(tmp_path),
+    )
+
+    result = resolver.resolve_candidates(
+        context=_context(),
+        candidates=[
+            _candidate(entity_name=character_name, raw_entity_mention=character_name)
+        ],
+        known_characters=[],
+    )
+    name_match = resolve_candidate_character(
+        result.candidates[0],
+        normalize_known_characters([]),
+    )
+
+    assert result.candidates[0].entity_name == character_name
+    assert result.fallback_resolved_count == 1
+    assert result.fallback_unresolved_count == 0
+    assert name_match.match_status.value == "AMBIGUOUS"
+    assert name_match.matched_character_id is None
 
 
 def test_resolve_candidates_preserves_unresolved_placeholders_without_raw_mentions(
@@ -267,8 +315,8 @@ def test_resolve_candidates_uses_fallback_for_particle_attached_reference(
               "resolutions": [
                 {
                   "candidate_id": "candidate-0",
-                  "resolved_entity_name": null,
-                  "reason": "주체를 특정할 수 없다."
+                  "resolved_entity_name": "주인공은",
+                  "reason": "구체 이름 대신 지칭어만 확인했다."
                 }
               ]
             }

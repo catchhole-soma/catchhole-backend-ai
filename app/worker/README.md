@@ -279,8 +279,9 @@ Spring, DB, S3 없이 로컬 텍스트 파일 하나만으로 청킹부터 설�
 ```
 
 `--character-setting-schemas-json`은 Spring claim payload의 `characterSettingSchemas`를 대신하는
-선택 입력입니다. `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`을 가진 JSON
-배열을 실제 claim DTO로 검증한 뒤 입력 순서와 중복을 유지해 모든 chunk의 설정 추출 prompt에 전달합니다.
+필수 입력입니다. `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`을 가진
+비어 있지 않은 JSON 배열을 실제 claim DTO로 검증한 뒤 입력 순서와 중복을 유지해 모든 chunk의
+설정 추출 prompt에 전달합니다.
 
 ```json
 [

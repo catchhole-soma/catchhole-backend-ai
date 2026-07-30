@@ -10,6 +10,7 @@ from app.analysis.character_name_resolver import (
     KnownCharacter,
     UNKNOWN_ENTITY_NAME,
     is_concrete_character_name,
+    is_usable_subject_resolution_name,
 )
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.schemas import ExtractedSettingCandidate
@@ -232,7 +233,10 @@ def _usable_resolved_entity_name(
     resolved_entity_name: str | None,
     known_characters: list[KnownCharacter],
 ) -> str | None:
-    if not is_concrete_character_name(resolved_entity_name, known_characters):
+    if not (
+        is_concrete_character_name(resolved_entity_name, known_characters)
+        or is_usable_subject_resolution_name(resolved_entity_name)
+    ):
         return None
 
     return resolved_entity_name.strip()

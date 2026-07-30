@@ -290,6 +290,32 @@ def is_concrete_character_name(
     return _is_safe_exact_name_match(normalized_name, exact_matches)
 
 
+def is_usable_subject_resolution_name(value: str | None) -> bool:
+    """fallback이 반환한 값을 실제 이름 후보로 보존할 수 있는지 확인한다."""
+
+    normalized_name = normalize_character_name(value)
+    if _is_concrete_normalized_character_name(normalized_name):
+        return True
+
+    if (
+        not normalized_name
+        or normalized_name in PLACEHOLDER_ENTITY_NAMES
+        or normalized_name in AMBIGUOUS_MENTIONS
+    ):
+        return False
+
+    # "주인공은", "그녀로"처럼 분명한 지칭어에 조사만 붙은 값은 거절한다.
+    # 반면 "나은", "그로"처럼 한 글자 지칭어와 우연히 겹치는 신규 이름은 보존하고,
+    # 최종 AMBIGUOUS/MATCHED 판단은 기존 name resolver에 맡긴다.
+    return not any(
+        len(normalized_name) > len(particle)
+        and normalized_name.endswith(particle)
+        and len(normalized_name[: -len(particle)]) > 1
+        and _is_ambiguous_mention(normalized_name[: -len(particle)])
+        for particle in AMBIGUOUS_MENTION_PARTICLES
+    )
+
+
 def _is_concrete_normalized_character_name(normalized_name: str) -> bool:
     return (
         bool(normalized_name)

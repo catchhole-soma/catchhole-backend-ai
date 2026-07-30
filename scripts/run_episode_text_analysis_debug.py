@@ -50,7 +50,7 @@ def run_episode_text_analysis_debug(
     max_chunks: int | None,
     known_characters: list[KnownCharacter],
     output_json: Path | None,
-    schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
+    schema_hints: tuple[CharacterSettingSchemaHint, ...],
 ) -> dict:
     raw_text = text_file.read_text(encoding="utf-8")
     normalized_text = normalize_text(raw_text)
@@ -218,9 +218,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--character-setting-schemas-json",
         type=Path,
-        default=None,
+        required=True,
         help=(
-            "Optional JSON array with Spring claim characterSettingSchemas entries. "
+            "Required non-empty JSON array with Spring claim characterSettingSchemas entries. "
             "Accepts schemaKey, displayName, attributePattern, aliases, and valueType."
         ),
     )
@@ -288,14 +288,13 @@ def _load_known_characters(path: Path | None) -> list[KnownCharacter]:
 
 
 def _load_character_setting_schema_hints(
-    path: Path | None,
+    path: Path,
 ) -> tuple[CharacterSettingSchemaHint, ...]:
-    if path is None:
-        return ()
-
     raw_items = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw_items, list):
         raise ValueError("--character-setting-schemas-json must be a JSON array.")
+    if not raw_items:
+        raise ValueError("--character-setting-schemas-json must not be empty.")
 
     # 로컬 입력도 실제 claim DTO로 검증해 필드 alias와 타입 계약을 운영 경로와 맞춘다.
     schemas = [
