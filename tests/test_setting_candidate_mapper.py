@@ -17,6 +17,7 @@ WORK_ID = UUID("00000000-0000-0000-0000-000000000001")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000002")
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000003")
 CHUNK_ID = UUID("00000000-0000-0000-0000-000000000004")
+SOURCE_CONTENT_S3_KEY = "works/work-id/episodes/episode-id/source.txt"
 
 
 def test_to_entity_maps_extracted_candidate_to_setting_candidate() -> None:
@@ -43,6 +44,7 @@ def test_to_entity_maps_extracted_candidate_to_setting_candidate() -> None:
     entity = SettingCandidateMapper.to_entity(
         work_id=WORK_ID,
         episode_id=EPISODE_ID,
+        source_content_s3_key=SOURCE_CONTENT_S3_KEY,
         analysis_job_id=ANALYSIS_JOB_ID,
         candidate=candidate,
         character_match=CharacterNameMatch(
@@ -54,6 +56,7 @@ def test_to_entity_maps_extracted_candidate_to_setting_candidate() -> None:
     assert entity.work_id == WORK_ID
     assert entity.episode_id == EPISODE_ID
     assert entity.source_chunk_id == CHUNK_ID
+    assert entity.source_content_s3_key == SOURCE_CONTENT_S3_KEY
     assert entity.analysis_job_id == ANALYSIS_JOB_ID
     assert entity.entity_type == SettingEntityType.CHARACTER
     assert entity.entity_name == "비요른"
@@ -103,6 +106,7 @@ def test_to_entity_uses_entity_name_stripped_during_extraction_validation() -> N
     entity = SettingCandidateMapper.to_entity(
         work_id=WORK_ID,
         episode_id=EPISODE_ID,
+        source_content_s3_key=SOURCE_CONTENT_S3_KEY,
         analysis_job_id=ANALYSIS_JOB_ID,
         candidate=candidate,
     )
@@ -135,6 +139,7 @@ def test_to_entity_preserves_missing_raw_entity_mention() -> None:
     entity = SettingCandidateMapper.to_entity(
         work_id=WORK_ID,
         episode_id=EPISODE_ID,
+        source_content_s3_key=SOURCE_CONTENT_S3_KEY,
         analysis_job_id=ANALYSIS_JOB_ID,
         candidate=candidate,
     )
@@ -163,6 +168,7 @@ def test_to_entity_rejects_whitespace_only_entity_name() -> None:
         SettingCandidateMapper.to_entity(
             work_id=WORK_ID,
             episode_id=EPISODE_ID,
+            source_content_s3_key=SOURCE_CONTENT_S3_KEY,
             analysis_job_id=ANALYSIS_JOB_ID,
             candidate=candidate,
         )

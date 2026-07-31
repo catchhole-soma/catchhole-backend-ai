@@ -17,6 +17,7 @@ class SettingCandidateMapper:
     def to_entity(
         work_id: UUID,
         episode_id: UUID | None,
+        source_content_s3_key: str | None,
         analysis_job_id: UUID,
         candidate: ExtractedSettingCandidate,
         character_match: CharacterNameMatch | None = None,
@@ -34,6 +35,8 @@ class SettingCandidateMapper:
             work_id=work_id,
             episode_id=episode_id,
             source_chunk_id=candidate.source_chunk_id,
+            # 원고 파일이 나중에 교체돼도 근거 조회는 분석 당시 원문을 사용한다.
+            source_content_s3_key=source_content_s3_key,
             analysis_job_id=analysis_job_id,
             entity_type=SettingEntityType(candidate.entity_type),
             entity_name=entity_name,

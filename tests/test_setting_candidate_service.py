@@ -13,6 +13,7 @@ WORK_ID = UUID("00000000-0000-0000-0000-000000000001")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000002")
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000003")
 CHUNK_ID = UUID("00000000-0000-0000-0000-000000000004")
+SOURCE_CONTENT_S3_KEY = "works/work-id/episodes/episode-id/source.txt"
 
 
 def test_replace_candidates_for_analysis_job_deletes_old_candidates_and_saves_new_ones() -> None:
@@ -30,6 +31,7 @@ def test_replace_candidates_for_analysis_job_deletes_old_candidates_and_saves_ne
         save_items=[
             SettingCandidateSaveItem(
                 episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
                 candidate=_candidate(),
             )
         ],
@@ -43,6 +45,7 @@ def test_replace_candidates_for_analysis_job_deletes_old_candidates_and_saves_ne
     assert saved_candidates == repository.saved_candidates
     assert repository.saved_candidates[0].work_id == WORK_ID
     assert repository.saved_candidates[0].episode_id == EPISODE_ID
+    assert repository.saved_candidates[0].source_content_s3_key == SOURCE_CONTENT_S3_KEY
     assert repository.saved_candidates[0].matched_character_id == UUID("00000000-0000-0000-0000-000000000005")
     assert repository.saved_candidates[0].match_status == SettingCandidateMatchStatus.MATCHED
     assert session.committed is True
@@ -65,6 +68,7 @@ def test_replace_candidates_saves_unknown_subject_as_ambiguous() -> None:
         save_items=[
             SettingCandidateSaveItem(
                 episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
                 candidate=_candidate(
                     entity_name="미상",
                     raw_entity_mention="내려다 본 손",

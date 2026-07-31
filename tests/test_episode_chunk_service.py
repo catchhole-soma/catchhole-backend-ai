@@ -6,8 +6,8 @@ from app.models.episode_chunk import EpisodeChunk
 from app.services.episode_chunk_service import EpisodeChunkService
 
 
-def test_replace_episode_chunks_normalizes_splits_and_saves_chunks() -> None:
-    # 원문을 정규화하고 청크로 나눈 뒤 같은 회차의 기존 청크를 대체 저장하는지 확인한다.
+def test_replace_episode_chunks_preserves_source_and_saves_chunks() -> None:
+    # 회차 원문을 변경하지 않고 청크로 나눈 뒤 기존 청크를 대체 저장하는지 확인한다.
     episode_id = uuid4()
     session = FakeSession()
     repositories: list[FakeEpisodeChunkRepository] = []
@@ -30,7 +30,7 @@ def test_replace_episode_chunks_normalizes_splits_and_saves_chunks() -> None:
     assert len(chunks) == 1
     assert chunks[0].episode_id == episode_id
     assert chunks[0].chunk_index == 0
-    assert chunks[0].chunk_text == "첫 번째 문단입니다.\n\n두 번째 문단입니다."
+    assert chunks[0].chunk_text == "\ufeff첫 번째 문단입니다.\r\n\r\n두 번째 문단입니다.\t"
     assert chunks[0].paragraph_start_index == 0
     assert chunks[0].paragraph_end_index == 1
     assert chunks[0].metadata_json == {"source": "single_episode_upload"}
