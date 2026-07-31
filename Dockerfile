@@ -8,7 +8,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN groupadd --system catchhole \
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system catchhole \
     && useradd --system --gid catchhole --uid 10001 --create-home catchhole
 
 COPY pyproject.toml README.md ./

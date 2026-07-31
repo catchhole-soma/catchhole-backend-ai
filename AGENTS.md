@@ -19,3 +19,7 @@
 ## Python Packaging
 
 - setuptools package discovery는 `app*`로 제한해 루트의 `samples`, `docs`, `scripts`를 배포 패키지에서 제외한다. `pyproject.toml`이나 루트 디렉터리를 변경하면 `python -m pip install -e ".[dev]"`로 editable install을 검증한다.
+
+## Runtime Timezone
+
+- 운영 AI Worker는 Backend와 PostgreSQL의 `APP_TIMEZONE`을 `TZ`로 전달받으며 기본값은 `Asia/Seoul`이다. Python의 `datetime.now()`와 timezone 없는 공유 DB 컬럼이 동일한 로컬 시각을 사용하도록 이미지의 `tzdata`를 유지한다.
