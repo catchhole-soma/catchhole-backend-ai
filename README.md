@@ -120,6 +120,7 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 `.env.example`을 참고해 `.env`를 생성합니다.
 
 - `DATABASE_URL`: Spring 서버와 공유하는 PostgreSQL 연결 문자열
+- `TZ`: Worker 로그와 timezone 없는 DB timestamp 생성에 사용할 런타임 시간대. 운영 기본값은 `Asia/Seoul`
 - `AWS_REGION`: S3 client가 사용할 AWS 리전
 - `AWS_S3_BUCKET`: 회차 원문과 업로드 파일이 저장되는 S3 버킷
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`: 둘 다 설정하면 S3 client에 명시적으로 전달하는 선택 자격 증명. 비워 두면 boto3 기본 credential provider chain을 사용합니다.
