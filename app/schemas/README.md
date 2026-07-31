@@ -28,7 +28,8 @@ Spring 기준으로는 Request/Response DTO에 가깝습니다.
   - `modelName`, `analysisJobId`, `contentS3Key` 같은 Spring JSON 필드를 Python 코드에서는 `model_name`, `analysis_job_id`, `content_s3_key`로 다룰 수 있게 alias를 둡니다.
   - claim payload는 복수 `episodes`가 아니라 단일 `episode`를 필수로 받으며, 한 `AnalysisJob`의 회차 하나를 표현합니다.
   - claim payload의 `knownCharacters`는 Python에서 `known_characters`로 받고, 설정 후보 캐릭터명 매칭 resolver에 전달합니다.
-  - claim payload의 `characterSettingSchemas`는 Python에서 `character_setting_schemas`로 받습니다. 각 항목은 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`만 포함하며, 필드가 없는 이전 payload는 빈 목록으로 처리합니다.
+  - claim payload의 `characterSettingSchemas`는 Python에서 `character_setting_schemas`로 받습니다. 각 항목은 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`만 포함합니다.
+  - 이전 payload를 역직렬화할 수 있도록 필드가 없으면 빈 목록으로 파싱하지만, 빈 목록은 현재 분석 계약과 호환되는 입력이 아닙니다. Worker는 원문·청크·후보를 변경하기 전에 해당 job을 실패 보고해 후보 0개 교체를 막습니다.
 
 ## 다른 값 객체와의 구분
 

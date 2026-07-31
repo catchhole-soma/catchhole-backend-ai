@@ -54,9 +54,10 @@ S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 
 `matched_character_id`, `match_status`까지 확인할 수 있습니다. 이 runner는 `episode_chunks`나
 `setting_candidates`에 저장하지 않고, 결과를 콘솔과 JSON 파일로만 출력합니다.
 
-`--character-setting-schemas-json`에는 Spring claim payload의 `characterSettingSchemas`와 같은 배열을
-넘깁니다. 각 항목은 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`을 포함하며,
-모든 chunk의 설정 추출 prompt에 schema hint로 전달됩니다.
+필수 인자인 `--character-setting-schemas-json`에는 Spring claim payload의
+`characterSettingSchemas`와 같은 비어 있지 않은 배열을 넘깁니다. 각 항목은 `schemaKey`,
+`displayName`, `attributePattern`, `aliases`, `valueType`을 포함하며, 모든 chunk의 설정 추출
+prompt에 schema hint로 전달됩니다.
 
 ```json
 [

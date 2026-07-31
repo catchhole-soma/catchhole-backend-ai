@@ -83,6 +83,46 @@ def test_worker_reports_fail_to_spring_when_analysis_fails() -> None:
     assert spring_client.fail_calls == [(ANALYSIS_JOB_ID, "LLM response parse failed.")]
 
 
+def test_worker_fails_before_data_changes_when_claim_has_no_character_schemas() -> None:
+    # 이전 Spring payload도 job ID까지는 파싱하되, Schema 없이 빈 후보로 기존 데이터를
+    # 교체하지 않도록 청킹·임베딩·추출·후보 저장 전에 분석 실패로 보고한다.
+    payload = _payload().model_copy(update={"character_setting_schemas": []})
+    spring_client = FakeSpringWorkerClient(payload=payload)
+    chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 전사다.")])
+    embedding_service = FakeEpisodeChunkEmbeddingService()
+    setting_extractor = FakeSettingExtractor(candidate_groups=[[]])
+    setting_candidate_service = FakeSettingCandidateService()
+    worker = AnalysisJobWorker(
+        spring_client=spring_client,
+        chunking_service=chunking_service,
+        episode_chunk_embedding_service=embedding_service,
+        setting_extractor=setting_extractor,
+        setting_candidate_service=setting_candidate_service,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="claim must include at least one characterSettingSchemas entry",
+    ):
+        worker.run_once()
+
+    assert spring_client.progress_calls == [
+        (ANALYSIS_JOB_ID, "SETTING_EXTRACTION", EpisodeProcessingStatus.ANALYZING)
+    ]
+    assert chunking_service.requested_episode_ids == []
+    assert chunking_service.requested_content_s3_keys == []
+    assert embedding_service.requested_chunk_ids == []
+    assert setting_extractor.requests == []
+    assert setting_candidate_service.request is None
+    assert spring_client.complete_calls == []
+    assert spring_client.fail_calls == [
+        (
+            ANALYSIS_JOB_ID,
+            "Analysis job claim must include at least one characterSettingSchemas entry.",
+        )
+    ]
+
+
 def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
     # 실제 OpenAI 호출은 FakeSettingExtractor로 대체한다.
     # 여기서는 "LLM 결과가 이미 나왔다"는 가정 아래 Worker가 저장 전에 quote offset을 보정하는지 본다.
@@ -122,13 +162,13 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         [chunking_service.chunks[0].id]
     ]
     assert setting_extractor.requests == [
-            {
-                "source_chunk_id": chunking_service.chunks[0].id,
-                "chunk_text": chunk_text,
-                "episode_no": 1,
-                "episode_title": "첫 번째 회차",
-                "schema_hints": SCHEMA_HINTS,
-            }
+        {
+            "source_chunk_id": chunking_service.chunks[0].id,
+            "chunk_text": chunk_text,
+            "episode_no": 1,
+            "episode_title": "첫 번째 회차",
+            "schema_hints": SCHEMA_HINTS,
+        }
     ]
     assert setting_candidate_service.request == {
         "work_id": WORK_ID,
@@ -152,7 +192,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "candidateCount": 2,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
-        "subjectFallbackDiscardedCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
     }
     assert spring_client.fail_calls == []
 
@@ -194,7 +234,7 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
             candidates=[resolved_candidate],
             fallback_call_count=1,
             fallback_resolved_count=1,
-            fallback_discarded_count=0,
+            fallback_unresolved_count=0,
         )
     )
     episode_chunk_embedding_service = FakeEpisodeChunkEmbeddingService()
@@ -231,8 +271,49 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         "candidateCount": 1,
         "subjectFallbackCallCount": 1,
         "subjectFallbackResolvedCount": 1,
-        "subjectFallbackDiscardedCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
     }
+
+
+def test_worker_preserves_subject_fallback_unresolved_candidate() -> None:
+    # fallback이 주체를 특정하지 못해도 후보를 버리지 않고 저장 Service까지 전달한다.
+    current_chunk_text = "의사는 아니지만 내겐 블랙아웃 증상이 있다."
+    spring_client = FakeSpringWorkerClient(payload=_payload())
+    chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, current_chunk_text)])
+    unresolved_candidate = _candidate(
+        chunking_service.chunks[0].id,
+        attribute_name="status.블랙아웃",
+        entity_name="미상",
+        raw_entity_mention="내려다 본 손",
+        quote="내겐 블랙아웃 증상이 있다.",
+    )
+    subject_resolver = FakeSubjectResolver(
+        result=SubjectResolutionResult(
+            candidates=[unresolved_candidate],
+            fallback_call_count=1,
+            fallback_resolved_count=0,
+            fallback_unresolved_count=1,
+        )
+    )
+    setting_candidate_service = FakeSettingCandidateService()
+    worker = AnalysisJobWorker(
+        spring_client=spring_client,
+        chunking_service=chunking_service,
+        episode_chunk_embedding_service=FakeEpisodeChunkEmbeddingService(),
+        setting_extractor=FakeSettingExtractor(candidate_groups=[[unresolved_candidate]]),
+        subject_resolver=subject_resolver,
+        setting_candidate_service=setting_candidate_service,
+    )
+
+    result = worker.run_once()
+
+    assert result.claimed is True
+    assert setting_candidate_service.saved_candidates == [unresolved_candidate]
+    summary = json.loads(spring_client.complete_calls[0][1])
+    assert summary["candidateCount"] == 1
+    assert summary["subjectFallbackCallCount"] == 1
+    assert summary["subjectFallbackResolvedCount"] == 0
+    assert summary["subjectFallbackUnresolvedCount"] == 1
 
 
 def test_worker_continues_setting_extraction_when_embedding_provider_temporarily_fails() -> None:
@@ -268,7 +349,7 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         "candidateCount": 0,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
-        "subjectFallbackDiscardedCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
     }
     assert spring_client.fail_calls == []
 

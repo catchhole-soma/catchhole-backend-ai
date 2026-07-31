@@ -37,7 +37,9 @@ class SettingCandidateMapper:
             analysis_job_id=analysis_job_id,
             entity_type=SettingEntityType(candidate.entity_type),
             entity_name=entity_name,
-            raw_entity_mention=candidate.raw_entity_mention or candidate.entity_name,
+            # raw_entity_mention은 원문에 실제 존재한 표현만 저장한다.
+            # 누락된 경우 entity_name으로 채우면 AI가 정리한 이름을 원문 근거로 오인할 수 있다.
+            raw_entity_mention=candidate.raw_entity_mention,
             matched_character_id=character_match.matched_character_id,
             match_status=character_match.match_status,
             attribute_name=candidate.attribute_name,

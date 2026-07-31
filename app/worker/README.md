@@ -154,7 +154,7 @@ Spring claim
 -> 해당 episode의 저장 청크 batch 임베딩 및 DB 반영
 -> chunk별 캐릭터 설정 후보 추출
 -> evidence quote 위치 보정
--> 지칭어/placeholder 후보 subject fallback
+-> 구체적이지 않은 entity_name 후보 subject fallback
 -> setting_candidates 교체 저장
 -> summaryJson 생성
 -> Spring complete 보고
@@ -165,6 +165,7 @@ Spring claim
 - `analysis_job_worker.py`
   - claim된 payload의 단일 episode를 처리합니다.
   - claim의 `characterSettingSchemas`를 Backend가 보낸 순서와 중복을 유지한 immutable schema hint tuple로 job당 한 번 변환해 모든 chunk 추출에 전달합니다.
+  - `characterSettingSchemas`가 비어 있으면 등록 schema 기준의 추출을 수행할 수 없으므로, S3 원문 조회와 청크·후보 교체 전에 job을 실패 보고합니다.
   - 해당 episode의 청킹·임베딩 서비스와 chunk별 설정 추출기를 호출합니다.
   - 생성된 episode/chunk/embedding/candidate 개수를 `summaryJson`으로 모아 Spring에 완료 보고합니다.
 - `EpisodeS3ChunkingService`
@@ -177,7 +178,7 @@ Spring claim
   - LLM 응답 JSON을 `app/analysis/schemas.py` 기준으로 검증합니다.
   - schema hint는 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType` 다섯 필드만 가진 prompt 입력 전용 값입니다.
   - `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않으며 기존 응답 shape도 변경하지 않습니다.
-  - fuzzy alias 매칭이나 schema 자동 생성은 하지 않고, 명시적인 미등록 설정은 검토 후보로 보존합니다.
+  - fuzzy alias 매칭이나 schema 자동 생성은 하지 않고, 시간·사건·타임라인 정보와 등록 schema에 대응하지 않는 설정은 후보에서 제외합니다.
 - `EpisodeChunkEmbeddingService`
   - episode의 저장된 청크 텍스트를 한 번에 임베딩합니다.
   - 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.
@@ -189,8 +190,9 @@ Spring claim
   - quote 위치를 `episode_chunks.start_offset`과 더해 회차 전체 기준 offset으로 보정합니다.
   - quote를 찾지 못하면 잘못된 위치를 저장하지 않도록 offset을 `null`로 둡니다.
 - `CharacterSubjectResolver`
-  - `raw_entity_mention`이 지칭어이고 `entity_name`이 `미상`/지칭어인 후보를 current chunk 기준으로 묶어 LLM에 전달합니다.
-  - previous/current/next chunk 문맥으로 주체만 해소하고, 실패한 placeholder 후보는 저장하지 않도록 제외합니다.
+  - `entity_name`이 비어 있거나 `미상`/지칭어처럼 구체적이지 않은 후보를 raw 표현의 형태와 관계없이 current chunk 기준으로 묶어 LLM에 전달합니다.
+  - previous/current/next chunk 문맥으로 주체만 해소하고, 정상 응답으로도 해소하지 못하면 후보를 `미상`으로 보존해 기존 매칭 로직이 `AMBIGUOUS`로 저장하게 합니다.
+  - 응답 JSON/schema나 candidate ID 계약이 잘못된 경우에는 사용자 검토 대상으로 숨기지 않고 분석 실패로 전파합니다.
 - `SettingCandidateService`
   - 검증된 후보를 `setting_candidates` 저장 모델로 변환합니다.
   - 같은 `analysis_job_id` 기준 기존 후보를 지운 뒤 새 후보를 저장합니다.
@@ -235,7 +237,7 @@ scripts/run_analysis_worker.py
 ## 로컬 텍스트 Debug 실행
 
 Spring, DB, S3 없이 로컬 텍스트 파일 하나만으로 청킹부터 설정 후보 추출, 근거 위치 보정,
-지칭어 subject fallback, 캐릭터 매칭 상태 계산까지 확인하려면
+캐릭터 주체 subject fallback, 캐릭터 매칭 상태 계산까지 확인하려면
 `scripts/run_episode_text_analysis_debug.py`를 사용합니다.
 
 ```bash
@@ -258,7 +260,7 @@ Spring, DB, S3 없이 로컬 텍스트 파일 하나만으로 청킹부터 설�
 -> 가상 chunk_id 부여
 -> chunk별 설정 후보 LLM 추출
 -> evidence quote offset 보정
--> 지칭어 + placeholder 후보 subject fallback
+-> 구체적이지 않은 entity_name 후보 subject fallback
 -> knownCharacters 기준 matched_character_id / match_status 계산
 -> 콘솔/JSON 파일로 결과 출력
 ```
@@ -277,8 +279,9 @@ Spring, DB, S3 없이 로컬 텍스트 파일 하나만으로 청킹부터 설�
 ```
 
 `--character-setting-schemas-json`은 Spring claim payload의 `characterSettingSchemas`를 대신하는
-선택 입력입니다. `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`을 가진 JSON
-배열을 실제 claim DTO로 검증한 뒤 입력 순서와 중복을 유지해 모든 chunk의 설정 추출 prompt에 전달합니다.
+필수 입력입니다. `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`을 가진
+비어 있지 않은 JSON 배열을 실제 claim DTO로 검증한 뒤 입력 순서와 중복을 유지해 모든 chunk의
+설정 추출 prompt에 전달합니다.
 
 ```json
 [
@@ -295,7 +298,7 @@ Spring, DB, S3 없이 로컬 텍스트 파일 하나만으로 청킹부터 설�
 처음 프롬프트와 offset을 점검할 때는 `--max-chunks 1`로 LLM 호출 범위를 줄입니다.
 
 현재 debug JSON은 최종 청킹 결과와 최종 설정 후보를 저장합니다.
-summary에는 subject fallback 호출/해소/폐기 개수가 함께 들어갑니다.
+summary에는 subject fallback 호출/해소/미해소 개수가 함께 들어갑니다.
 각 `settingCandidates[]`에는 `matched_character_id`, `match_status`, `evidenceMatches`가 포함됩니다.
 
 - LLM 재시도 횟수

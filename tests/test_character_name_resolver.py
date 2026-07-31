@@ -98,10 +98,87 @@ def test_resolve_candidate_character_marks_pronoun_placeholder_ambiguous() -> No
     assert match.matched_character_id is None
 
 
+def test_resolve_candidate_character_keeps_placeholder_ambiguous_when_raw_exactly_matches() -> None:
+    # fallback 이후에도 entity_name이 미상이면 raw가 기존 이름과 같더라도 자동 연결하지 않는다.
+    # raw는 원문 표현일 뿐 해소된 캐릭터명은 아니므로 사용자 확인을 우선한다.
+    match = resolve_candidate_character(
+        _candidate(entity_name="미상", raw_entity_mention="비요른"),
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
+def test_resolve_candidate_character_marks_placeholder_with_descriptive_raw_ambiguous() -> None:
+    # raw가 예상 밖 서술형 문구여도 "미상"을 새 캐릭터 이름으로 취급하지 않는다.
+    match = resolve_candidate_character(
+        _candidate(entity_name="미상", raw_entity_mention="내려다 본 손"),
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
+def test_resolve_candidate_character_marks_placeholder_without_raw_ambiguous() -> None:
+    match = resolve_candidate_character(
+        _candidate(entity_name="미상", raw_entity_mention=None),
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
 def test_resolve_candidate_character_marks_pronoun_entity_name_ambiguous() -> None:
     match = resolve_candidate_character(
         _candidate(entity_name="그", raw_entity_mention="나"),
         _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
+def test_resolve_candidate_character_marks_particle_attached_reference_ambiguous() -> None:
+    # entity_name에 조사가 붙어도 지칭어를 새 캐릭터명으로 오해하지 않는다.
+    match = resolve_candidate_character(
+        _candidate(entity_name="주인공에게는", raw_entity_mention=None),
+        _known_characters(KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert match.matched_character_id is None
+
+
+def test_resolve_candidate_character_prefers_exact_name_over_particle_interpretation() -> None:
+    # 이름 끝의 "은", "로"를 조사로 잘못 제거해 "나", "그"라는 지칭어로 오인하지 않는다.
+    known_characters = _known_characters(
+        KnownCharacter(character_id=AINAR_ID, name="나은"),
+        KnownCharacter(character_id=BJORN_ID, name="그로"),
+    )
+
+    naeun_match = resolve_candidate_character(
+        _candidate(entity_name="나은"),
+        known_characters,
+    )
+    gro_match = resolve_candidate_character(
+        _candidate(entity_name="그로"),
+        known_characters,
+    )
+
+    assert naeun_match.match_status == SettingCandidateMatchStatus.MATCHED
+    assert naeun_match.matched_character_id == AINAR_ID
+    assert gro_match.match_status == SettingCandidateMatchStatus.MATCHED
+    assert gro_match.matched_character_id == BJORN_ID
+
+
+def test_resolve_candidate_character_does_not_match_direct_reference_as_exact_name() -> None:
+    # "나", "그", "주인공" 자체는 DB에 같은 이름이 있어도 실제 이름으로 확정하지 않는다.
+    match = resolve_candidate_character(
+        _candidate(entity_name="나"),
+        _known_characters(KnownCharacter(character_id=AINAR_ID, name="나")),
     )
 
     assert match.match_status == SettingCandidateMatchStatus.AMBIGUOUS

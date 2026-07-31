@@ -50,7 +50,7 @@ def run_episode_text_analysis_debug(
     max_chunks: int | None,
     known_characters: list[KnownCharacter],
     output_json: Path | None,
-    schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
+    schema_hints: tuple[CharacterSettingSchemaHint, ...],
 ) -> dict:
     raw_text = text_file.read_text(encoding="utf-8")
     normalized_text = normalize_text(raw_text)
@@ -85,7 +85,7 @@ def run_episode_text_analysis_debug(
     all_candidates: list[DebugCandidate] = []
     subject_fallback_call_count = 0
     subject_fallback_resolved_count = 0
-    subject_fallback_discarded_count = 0
+    subject_fallback_unresolved_count = 0
     for chunk in chunks_to_process:
         draft = chunk.draft
         print(
@@ -116,13 +116,13 @@ def run_episode_text_analysis_debug(
         )
         subject_fallback_call_count += subject_result.fallback_call_count
         subject_fallback_resolved_count += subject_result.fallback_resolved_count
-        subject_fallback_discarded_count += subject_result.fallback_discarded_count
+        subject_fallback_unresolved_count += subject_result.fallback_unresolved_count
         if subject_result.fallback_call_count:
             print(
                 "  subject_fallback "
                 f"calls={subject_result.fallback_call_count} "
                 f"resolved={subject_result.fallback_resolved_count} "
-                f"discarded={subject_result.fallback_discarded_count}",
+                f"unresolved={subject_result.fallback_unresolved_count}",
                 flush=True,
             )
 
@@ -152,7 +152,7 @@ def run_episode_text_analysis_debug(
         known_characters=known_characters,
         subject_fallback_call_count=subject_fallback_call_count,
         subject_fallback_resolved_count=subject_fallback_resolved_count,
-        subject_fallback_discarded_count=subject_fallback_discarded_count,
+        subject_fallback_unresolved_count=subject_fallback_unresolved_count,
     )
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -218,9 +218,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--character-setting-schemas-json",
         type=Path,
-        default=None,
+        required=True,
         help=(
-            "Optional JSON array with Spring claim characterSettingSchemas entries. "
+            "Required non-empty JSON array with Spring claim characterSettingSchemas entries. "
             "Accepts schemaKey, displayName, attributePattern, aliases, and valueType."
         ),
     )
@@ -288,14 +288,13 @@ def _load_known_characters(path: Path | None) -> list[KnownCharacter]:
 
 
 def _load_character_setting_schema_hints(
-    path: Path | None,
+    path: Path,
 ) -> tuple[CharacterSettingSchemaHint, ...]:
-    if path is None:
-        return ()
-
     raw_items = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw_items, list):
         raise ValueError("--character-setting-schemas-json must be a JSON array.")
+    if not raw_items:
+        raise ValueError("--character-setting-schemas-json must not be empty.")
 
     # 로컬 입력도 실제 claim DTO로 검증해 필드 alias와 타입 계약을 운영 경로와 맞춘다.
     schemas = [
@@ -352,7 +351,7 @@ def _build_result(
     known_characters: list[KnownCharacter],
     subject_fallback_call_count: int,
     subject_fallback_resolved_count: int,
-    subject_fallback_discarded_count: int,
+    subject_fallback_unresolved_count: int,
 ) -> dict:
     normalized_known_characters = normalize_known_characters(known_characters)
     return {
@@ -371,7 +370,7 @@ def _build_result(
             "knownCharacterCount": len(known_characters),
             "subjectFallbackCallCount": subject_fallback_call_count,
             "subjectFallbackResolvedCount": subject_fallback_resolved_count,
-            "subjectFallbackDiscardedCount": subject_fallback_discarded_count,
+            "subjectFallbackUnresolvedCount": subject_fallback_unresolved_count,
         },
         "knownCharacters": [
             {

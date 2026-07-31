@@ -7,6 +7,15 @@ from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterS
 from app.llm.responses import LlmTextResponse
 
 CHUNK_ID = UUID("00000000-0000-0000-0000-000000000001")
+DEFAULT_SCHEMA_HINTS = (
+    CharacterSettingSchemaHint(
+        schema_key="level",
+        display_name="레벨",
+        attribute_pattern=None,
+        aliases=("레벨", "level"),
+        value_type="NUMBER",
+    ),
+)
 
 
 def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
@@ -23,6 +32,7 @@ def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
         episode_no=3,
         episode_title="사라진 이름",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
     )
 
     assert len(result.candidates) == 1
@@ -62,6 +72,13 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
                 aliases=(),
                 value_type="JSON",
             ),
+            CharacterSettingSchemaHint(
+                schema_key="profile.species",
+                display_name="종족",
+                attribute_pattern=None,
+                aliases=("종족", "species", "race"),
+                value_type="STRING",
+            ),
         ),
     )
 
@@ -72,10 +89,48 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
     assert '"mental_power"' in llm_client.user_prompt
     assert '"attributePattern": "skill.*"' in llm_client.user_prompt
     assert '"valueType": "JSON"' in llm_client.user_prompt
+    assert '"schemaKey": "profile.species"' in llm_client.user_prompt
+    assert '"valueType": "STRING"' in llm_client.user_prompt
     assert "canonical schemaKey" in llm_client.user_prompt
-    assert "stats.지능, time.첫전투" in llm_client.user_prompt
+    assert "schemaKey, displayName, aliases 또는 attributePattern" in llm_client.user_prompt
+    assert "후보에서 제외" in llm_client.user_prompt
+    assert "time.첫전투" not in llm_client.user_prompt
+    assert "profile.<프로필명>" in llm_client.system_prompt
+    assert "subject resolver용 임시값 `미상`" in llm_client.system_prompt
+    assert "설정의 주체를 가리키는 최소 표현" in llm_client.system_prompt
+    assert "실제 캐릭터명이 명확히 연결되면 반드시 해당 이름" in llm_client.system_prompt
+    assert "현재 청크만으로 한 캐릭터를 유일하게 특정할 수 없을 때만" in llm_client.system_prompt
+    assert "설정의 주체 자체를 가리키는 최소 표현만 사용합니다" in llm_client.system_prompt
+    assert "`나`, `그`, `그녀`, `주인공` 같은 지칭어를 넣지 않습니다" in (
+        llm_client.system_prompt
+    )
+    assert "타임라인에 해당하는 정보는 현재 추출하지 않습니다" in llm_client.system_prompt
+    assert (
+        "`schemaKey`, `displayName`, `aliases` 또는 `attributePattern`"
+        in llm_client.system_prompt
+    )
+    assert "time.<시간 또는 사건명>" not in llm_client.system_prompt
     assert "skill.<스킬명>" in llm_client.system_prompt
     assert "item.<아이템명>" in llm_client.system_prompt
+
+
+def test_extract_from_chunk_rejects_empty_schema_hints_before_llm_call() -> None:
+    llm_client = RecordingTextGenerationClient()
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        max_attempts=1,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="schema_hints must include at least one character setting schema",
+    ):
+        extractor.extract_from_chunk(
+            source_chunk_id=CHUNK_ID,
+            chunk_text="카엘은 12레벨 검사였다.",
+        )
+
+    assert llm_client.call_count == 0
 
 
 def test_extract_from_chunk_retries_when_json_parse_fails(tmp_path) -> None:
@@ -92,6 +147,7 @@ def test_extract_from_chunk_retries_when_json_parse_fails(tmp_path) -> None:
     result = extractor.extract_from_chunk(
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
     )
 
     assert llm_client.call_count == 2
@@ -112,6 +168,7 @@ def test_extract_from_chunk_retries_when_required_field_is_missing(tmp_path) -> 
     result = extractor.extract_from_chunk(
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
     )
 
     assert llm_client.call_count == 2
@@ -131,6 +188,7 @@ def test_extract_from_chunk_retries_when_entity_name_is_whitespace_only(tmp_path
     result = extractor.extract_from_chunk(
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
     )
 
     assert llm_client.call_count == 2
@@ -152,6 +210,7 @@ def test_extract_from_chunk_raises_error_when_required_field_keeps_missing(tmp_p
         extractor.extract_from_chunk(
             source_chunk_id=CHUNK_ID,
             chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+            schema_hints=DEFAULT_SCHEMA_HINTS,
         )
 
     assert llm_client.call_count == 2
@@ -172,6 +231,7 @@ def test_extract_from_chunk_raises_error_after_max_attempts(tmp_path) -> None:
         extractor.extract_from_chunk(
             source_chunk_id=CHUNK_ID,
             chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
+            schema_hints=DEFAULT_SCHEMA_HINTS,
         )
 
     assert llm_client.call_count == 2
@@ -221,6 +281,7 @@ class RecordingTextGenerationClient:
     def __init__(self) -> None:
         self.system_prompt = ""
         self.user_prompt = ""
+        self.call_count = 0
 
     def create_text_response(
         self,
@@ -229,6 +290,7 @@ class RecordingTextGenerationClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
     ) -> LlmTextResponse:
+        self.call_count += 1
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
         return LlmTextResponse(text='{"candidates": []}')

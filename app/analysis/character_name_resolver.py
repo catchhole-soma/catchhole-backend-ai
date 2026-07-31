@@ -81,14 +81,36 @@ AMBIGUOUS_MENTIONS = {
     "저 사람",
 }
 
+UNKNOWN_ENTITY_NAME = "미상"
+
 PLACEHOLDER_ENTITY_NAMES = {
-    "미상",
+    UNKNOWN_ENTITY_NAME,
     "불명",
     "불명확",
     "알 수 없음",
     "추론 불가",
     "unknown",
 }
+
+# LLM이 entity_name에 지칭어를 잘못 넣으면서 붙일 수 있는 흔한 한국어 조사.
+# "주인공은", "그 남자는"도 각각 "주인공", "그 남자"와 같은 지칭어로 본다.
+AMBIGUOUS_MENTION_PARTICLES = (
+    "에게서",
+    "한테서",
+    "에게",
+    "한테",
+    "께",
+    "으로",
+    "로",
+    "은",
+    "는",
+    "이",
+    "가",
+    "을",
+    "를",
+    "의",
+    "도",
+)
 
 
 def normalize_known_characters(
@@ -123,9 +145,23 @@ def resolve_candidate_character(
     # 이때는 LLM이 정리한 entity_name이 기존 캐릭터 1명과만 연결되는지 확인한다.
     normalized_raw_mention = normalize_character_name(candidate.raw_entity_mention)
     normalized_entity_name = normalize_character_name(candidate.entity_name)
+    exact_entity_matches = _find_exact_matches(
+        normalized_entity_name,
+        known_characters,
+    )
 
-    # raw mention이 없고 entity_name 자체도 대명사성 표현이면 확정할 수 없다.
-    if not normalized_raw_mention and _is_ambiguous_mention(normalized_entity_name):
+    # subject fallback 이후에도 구체 이름을 얻지 못한 후보는 raw 표현의 형태와 관계없이
+    # 새 캐릭터 후보로 해석하지 않고 사용자가 연결을 해소해야 하는 상태로 둔다.
+    #
+    # 다만 "나은", "그로"처럼 이름 끝이 조사와 우연히 같은 기존 캐릭터는 조사 제거보다
+    # exact-name 일치를 우선한다. "나", "그", "주인공" 자체는 지칭어이므로 예외가 아니다.
+    if (
+        not _is_concrete_normalized_character_name(normalized_entity_name)
+        and not _is_safe_exact_name_match(
+            normalized_entity_name,
+            exact_entity_matches,
+        )
+    ):
         return CharacterNameMatch(
             matched_character_id=None,
             match_status=SettingCandidateMatchStatus.AMBIGUOUS,
@@ -145,13 +181,8 @@ def resolve_candidate_character(
                 match_status=SettingCandidateMatchStatus.MATCHED,
             )
 
-        # entity_name도 여러 기존 캐릭터에 걸리거나, "미상"/지칭어처럼
-        # 아직 주체가 풀리지 않은 값이면 사용자 검토 또는 후속 fallback 대상으로 남긴다.
-        if (
-            len(entity_matches) > 1
-            or _is_unresolved_placeholder(normalized_entity_name)
-            or _is_ambiguous_mention(normalized_entity_name)
-        ):
+        # entity_name이 여러 기존 캐릭터에 걸리면 사용자가 연결을 해소하도록 남긴다.
+        if len(entity_matches) > 1:
             return CharacterNameMatch(
                 matched_character_id=None,
                 match_status=SettingCandidateMatchStatus.AMBIGUOUS,
@@ -239,12 +270,71 @@ def normalize_character_name(value: str | None) -> str:
     return normalized.casefold()
 
 
+def is_concrete_character_name(
+    value: str | None,
+    known_characters: list[KnownCharacter] | None = None,
+) -> bool:
+    """placeholder나 지칭어가 아닌 저장 가능한 구체 캐릭터명인지 확인한다."""
+
+    normalized_name = normalize_character_name(value)
+    if _is_concrete_normalized_character_name(normalized_name):
+        return True
+
+    # "나은", "그로"처럼 이름 끝이 조사와 같은 경우에만 기존 캐릭터 exact match로
+    # 조사 판정의 오탐을 보정한다. "나", "그", "주인공" 자체는 계속 지칭어로 본다.
+    exact_matches = [
+        character.character_id
+        for character in known_characters or []
+        if normalize_character_name(character.name) == normalized_name
+    ]
+    return _is_safe_exact_name_match(normalized_name, exact_matches)
+
+
+def is_usable_subject_resolution_name(value: str | None) -> bool:
+    """fallback이 반환한 값을 실제 이름 후보로 보존할 수 있는지 확인한다."""
+
+    normalized_name = normalize_character_name(value)
+    if _is_concrete_normalized_character_name(normalized_name):
+        return True
+
+    if (
+        not normalized_name
+        or normalized_name in PLACEHOLDER_ENTITY_NAMES
+        or normalized_name in AMBIGUOUS_MENTIONS
+    ):
+        return False
+
+    # "주인공은", "그녀로"처럼 분명한 지칭어에 조사만 붙은 값은 거절한다.
+    # 반면 "나은", "그로"처럼 한 글자 지칭어와 우연히 겹치는 신규 이름은 보존하고,
+    # 최종 AMBIGUOUS/MATCHED 판단은 기존 name resolver에 맡긴다.
+    return not any(
+        len(normalized_name) > len(particle)
+        and normalized_name.endswith(particle)
+        and len(normalized_name[: -len(particle)]) > 1
+        and _is_ambiguous_mention(normalized_name[: -len(particle)])
+        for particle in AMBIGUOUS_MENTION_PARTICLES
+    )
+
+
+def _is_concrete_normalized_character_name(normalized_name: str) -> bool:
+    return (
+        bool(normalized_name)
+        and normalized_name not in PLACEHOLDER_ENTITY_NAMES
+        and not _is_ambiguous_mention(normalized_name)
+    )
+
+
 def _is_ambiguous_mention(normalized_mention: str) -> bool:
-    return normalized_mention in AMBIGUOUS_MENTIONS
+    if normalized_mention in AMBIGUOUS_MENTIONS:
+        return True
 
-
-def _is_unresolved_placeholder(normalized_name: str) -> bool:
-    return not normalized_name or normalized_name in PLACEHOLDER_ENTITY_NAMES
+    # 조사 두 개가 결합된 "주인공에게는" 같은 표현도 단계적으로 제거해 확인한다.
+    return any(
+        len(normalized_mention) > len(particle)
+        and normalized_mention.endswith(particle)
+        and _is_ambiguous_mention(normalized_mention[: -len(particle)])
+        for particle in AMBIGUOUS_MENTION_PARTICLES
+    )
 
 
 def _find_matches(
@@ -270,6 +360,30 @@ def _find_matches(
 
     # set을 list로 바꿔 반환한다.
     return list(matched_ids)
+
+
+def _find_exact_matches(
+    normalized_mention: str,
+    known_characters: list[NormalizedKnownCharacter],
+) -> list[UUID]:
+    return [
+        character.character_id
+        for character in known_characters
+        if normalized_mention == character.normalized_name
+    ]
+
+
+def _is_safe_exact_name_match(
+    normalized_name: str,
+    exact_matches: list[UUID],
+) -> bool:
+    # exact match는 조사 제거 오탐만 보정한다. 명시적인 placeholder와 지칭어 자체는
+    # 같은 이름의 DB 행이 있더라도 자동 연결하지 않는다.
+    return (
+        bool(exact_matches)
+        and normalized_name not in PLACEHOLDER_ENTITY_NAMES
+        and normalized_name not in AMBIGUOUS_MENTIONS
+    )
 
 
 def _is_containment_match(

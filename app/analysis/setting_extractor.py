@@ -70,6 +70,11 @@ class CharacterSettingExtractor:
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
     ) -> CharacterSettingExtractionResult:
+        # Schema가 없으면 모든 설정 후보를 제외하라는 prompt가 만들어지므로,
+        # 비용이 발생하는 LLM 호출 전에 잘못된 직접 호출을 차단한다.
+        if not schema_hints:
+            raise ValueError("schema_hints must include at least one character setting schema.")
+
         system_prompt = self._load_system_prompt()
         user_prompt = self._build_user_prompt(
             chunk_text=chunk_text,
@@ -156,9 +161,9 @@ class CharacterSettingExtractor:
             "사용하세요.\n"
             "- attributePattern이 있는 동적 설정은 schemaKey가 아니라 pattern의 *를 구체 "
             "명칭으로 바꾼 attribute_name과 schema의 valueType을 사용하세요.\n"
-            "- schema에 등록되지 않았지만 원문에 명시된 설정은 stats.지능, time.첫전투처럼 "
-            "의미가 드러나는 key로 검토 후보에 보존하세요. 가까운 schema로 추측해 바꾸거나 "
-            "버리지 마세요. 이 후보는 Backend 확정 시 거절될 수 있습니다.\n\n"
+            "- character_setting_schemas의 schemaKey, displayName, aliases 또는 "
+            "attributePattern과 대응하지 "
+            "않는 설정은 가까운 schema로 추측하지 말고 후보에서 제외하세요.\n\n"
             "character_setting_schemas:\n"
             f"{json.dumps(schema_summary, ensure_ascii=False, indent=2)}\n\n"
             f"metadata:\n{json.dumps(metadata, ensure_ascii=False)}\n\n" # Python dict를 JSON 문자열로 바꿈

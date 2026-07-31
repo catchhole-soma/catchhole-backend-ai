@@ -111,6 +111,39 @@ def test_to_entity_uses_entity_name_stripped_during_extraction_validation() -> N
     assert entity.raw_ai_result_json["entity_name"] == "비요른"
 
 
+def test_to_entity_preserves_missing_raw_entity_mention() -> None:
+    # 원문에 없는 entity_name을 raw 표현으로 만들어 저장하지 않는다.
+    candidate = ExtractedSettingCandidate(
+        source_chunk_id=CHUNK_ID,
+        entity_type="CHARACTER",
+        entity_name="미상",
+        raw_entity_mention=None,
+        attribute_name="level",
+        attribute_value="1",
+        value_type="NUMBER",
+        value_json={"value": 1},
+        evidence_spans=[
+            ExtractedEvidenceSpan(
+                quote="정체를 알 수 없는 인물은 1레벨이다.",
+                start_offset=0,
+                end_offset=20,
+            )
+        ],
+        confidence=0.7,
+    )
+
+    entity = SettingCandidateMapper.to_entity(
+        work_id=WORK_ID,
+        episode_id=EPISODE_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        candidate=candidate,
+    )
+
+    assert entity.entity_name == "미상"
+    assert entity.raw_entity_mention is None
+    assert entity.raw_ai_result_json["raw_entity_mention"] is None
+
+
 def test_to_entity_rejects_whitespace_only_entity_name() -> None:
     # mapper의 최종 방어선은 Pydantic 검증을 우회한 내부 객체도 거절한다.
     candidate = ExtractedSettingCandidate.model_construct(

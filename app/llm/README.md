@@ -29,7 +29,7 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
 - `prompts/character_setting_extraction.md`
   - 캐릭터 중심 설정 후보 추출 prompt입니다.
 - `prompts/character_subject_resolution.md`
-  - 지칭어/placeholder 후보의 주체만 해소하는 fallback prompt입니다.
+  - 구체적이지 않은 `entity_name` 후보의 주체만 해소하는 fallback prompt입니다.
 
 ## 토큰 사용량 상태
 
@@ -47,7 +47,7 @@ OpenAIResponsesClient
 
 - 청크별 설정 후보 추출 호출
 - JSON 파싱 또는 schema 검증 실패로 다시 호출한 재시도
-- 지칭어/placeholder 후보를 처리하는 subject fallback 호출
+- 구체적이지 않은 `entity_name` 후보를 처리하는 subject fallback 호출
 - 임베딩 호출의 입력 토큰
 
 성공한 마지막 호출만이 아니라 실제 비용이 발생한 재시도까지 포함해야 합니다. 분석 작업이 최종 실패한 경우에는 현재 Spring fail API에 토큰 필드가 없으므로, 실패 작업의 사용량 보존 범위와 API 계약도 함께 결정해야 합니다.
@@ -65,11 +65,12 @@ OpenAI Structured Outputs의 JSON schema 강제, attribute policy validator, chu
 
 ## 현재 subject fallback 방식
 
-`CharacterSubjectResolver`는 설정 후보를 다시 추출하지 않고, 이미 추출된 후보 중 지칭어 + placeholder 후보만 대상으로 LLM을 추가 호출합니다.
+`CharacterSubjectResolver`는 설정 후보를 다시 추출하지 않고, 이미 추출된 후보 중 `entity_name`이 비어 있거나 placeholder/지칭어처럼 구체적이지 않은 후보를 대상으로 LLM을 추가 호출합니다. `raw_entity_mention`의 형태는 진입 조건으로 사용하지 않습니다.
 
 - 호출 단위는 current chunk 기준 batch입니다.
 - 같은 current chunk에서 나온 fallback 후보는 한 번의 호출로 묶습니다.
 - 입력 문맥은 previous/current/next chunk로 제한합니다.
 - 응답은 후보별 `resolved_entity_name`만 받습니다.
-- `resolved_entity_name`이 null이거나 placeholder/지칭어이면 해소 실패로 보고 저장 후보에서 제외합니다.
+- `resolved_entity_name`이 null이거나 placeholder/지칭어이면 정상적인 해소 실패로 보고 원래 후보를 `entity_name="미상"`으로 보존합니다.
 - `MATCHED`, `UNRESOLVED`, `AMBIGUOUS` 같은 최종 매칭 상태는 Python의 `character_name_resolver`가 계산합니다.
+- 보존된 `미상` 후보는 최종적으로 `AMBIGUOUS`가 되며, malformed 응답이나 candidate ID 누락·중복·추가는 기술적 계약 오류로 분석 실패 처리합니다.

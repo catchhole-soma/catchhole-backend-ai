@@ -34,9 +34,9 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
   - `KnownCharacter` 목록과 추출 후보의 `raw_entity_mention`, `entity_name`을 비교합니다.
   - 기존 캐릭터 하나와 확실히 연결되면 `MATCHED`, 후보가 없으면 `UNRESOLVED`, 대명사/복수 후보처럼 위험하면 `AMBIGUOUS`를 반환합니다.
 - `character_subject_resolver.py`
-  - `raw_entity_mention`이 지칭어이고 `entity_name`이 `미상`/지칭어 같은 placeholder인 후보를 LLM으로 한 번 더 해소합니다.
+  - `entity_name`이 비어 있거나 `미상`/지칭어 같은 구체적이지 않은 값인 후보를 `raw_entity_mention`의 형태와 관계없이 LLM으로 한 번 더 해소합니다.
   - 같은 current chunk에서 나온 fallback 대상 후보를 묶어 previous/current/next chunk 문맥과 함께 한 번에 전달합니다.
-  - 설정 후보를 다시 추출하지 않고 주체만 판단하며, 실패한 placeholder 후보는 저장 전 폐기합니다.
+  - 설정 후보를 다시 추출하지 않고 주체만 판단하며, 정상 응답으로도 해소하지 못한 후보는 `entity_name="미상"`으로 보존합니다.
 - `schemas.py`
   - LLM에서 받은 설정 후보 JSON을 검증하기 위한 Python 내부 schema를 정의합니다.
   - FastAPI 응답 DTO가 아니라, 외부 LLM 출력이 저장 가능한 구조인지 확인하는 경계 객체입니다.
@@ -76,7 +76,9 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - `attribute_name: "skill.리더십"`
 - `confidence: 0.0`
 
-이런 정책 위반을 재시도 또는 후보 제외 조건으로 만들려면 `ExtractedSettingCandidate`에 attribute 규칙 validator를 추가하거나, schema 검증 이후 별도 policy validation 단계를 둡니다.
+여기서 `time. 이름 부여`는 운영 프롬프트가 지원하는 설정 유형이 아니라, `attribute_name`의 Pydantic shape 검증만으로는 프롬프트 정책 위반 문자열을 차단하지 못한다는 예시입니다. 운영 프롬프트는 시간·사건·타임라인 정보와 제공된 schema에 대응하지 않는 설정을 추출 대상에서 제외합니다.
+
+이런 정책 위반을 Python에서도 강제로 거절하거나 후보 제외 조건으로 만들려면 `ExtractedSettingCandidate`에 attribute 규칙 validator를 추가하거나, schema 검증 이후 별도 policy validation 단계를 둡니다.
 
 ## 캐릭터명 매칭 정책
 
@@ -99,9 +101,9 @@ knownCharacters 이름을 한 번 정규화
 | --- | --- | --- |
 | `raw_entity_mention`이 `나`, `내 캐릭터`, `주인공`, `그`, `그녀` 같은 지칭어 + entity가 기존 캐릭터 1명과 매칭 | `MATCHED` | 같은 청크에서 LLM이 구체화한 후보명이 기존 캐릭터 하나와 유일하게 연결되면 문맥 추론을 살림 |
 | `raw_entity_mention`이 지칭어 + entity가 기존 캐릭터 여러 명과 매칭 | `AMBIGUOUS` | LLM 정리명만으로도 하나를 고를 수 없음 |
-| `raw_entity_mention`이 지칭어 + entity가 없거나 `미상`/지칭어 같은 placeholder | LLM subject fallback 대상 | previous/current/next chunk 문맥으로 주체만 해소한 뒤 일반 매칭 로직으로 진행 |
+| entity가 없거나 `미상`/지칭어 같은 구체적이지 않은 값 | LLM subject fallback 대상 | raw 표현의 형태와 관계없이 previous/current/next chunk 문맥으로 주체만 해소한 뒤 일반 매칭 로직으로 진행 |
 | `raw_entity_mention`이 지칭어 + entity가 기존 캐릭터와 매칭 실패 | `UNRESOLVED` | 기존 캐릭터와 연결할 근거는 없지만 신규 캐릭터 후보일 수 있음 |
-| `raw_entity_mention` 없음 + `entity_name`도 없거나 `미상`/지칭어 같은 placeholder | 저장 전 제외 | 원문 표현과 구체 후보명이 모두 없어 검토자가 해소할 근거가 없음 |
+| subject fallback 정상 응답에서도 주체를 해소하지 못함 | `AMBIGUOUS` | 후보의 설정과 근거는 보존하고 사용자가 캐릭터 연결을 판단하도록 `entity_name="미상"`으로 정규화 |
 | raw가 기존 캐릭터 여러 명과 매칭 | `AMBIGUOUS` | 어느 캐릭터인지 하나로 확정할 수 없음 |
 | raw가 기존 캐릭터 1명과 매칭 + entity가 다른 기존 캐릭터 1명과 매칭 | `AMBIGUOUS` | 원문 표현과 LLM 정리명이 서로 다른 캐릭터를 가리키는 충돌 |
 | raw가 기존 캐릭터 1명과 매칭 + entity가 없거나 같은 캐릭터와 매칭 | `MATCHED` | 원문 표현을 우선해 `matched_character_id`를 채움 |
@@ -113,7 +115,7 @@ knownCharacters 이름을 한 번 정규화
 
 ### adjacent chunk subject fallback
 
-`raw_entity_mention`이 `나`, `나는`, `그`, `그녀는`, `주인공` 같은 지칭어이고 `entity_name`이 `미상`/지칭어 같은 placeholder인 후보는 current chunk만으로 주체가 풀리지 않은 상태입니다.
+`entity_name`이 비어 있거나 `미상`, `불명`, `나`, `그녀`, `주인공`처럼 구체적인 캐릭터명이 아닌 후보는 current chunk만으로 주체가 풀리지 않은 상태입니다. `raw_entity_mention`은 fallback 판단에 사용할 입력이지만, 그 값이 미리 정한 지칭어 목록에 들어가는지를 fallback 진입 조건으로 사용하지 않습니다.
 
 이 경우 단순히 주변 청크에서 기존 캐릭터 이름을 문자열로 찾지 않습니다. 주변에 이름이 등장한다는 사실만으로 지칭 대상을 확정하면 잘못된 캐릭터 설정이 저장될 수 있기 때문입니다.
 
@@ -126,11 +128,11 @@ fallback 진입/처리 기준:
 | raw가 지칭어이고 entity가 기존 캐릭터 1명과 매칭 | 호출하지 않음 | 기존 매칭 로직에서 `MATCHED` |
 | raw가 지칭어이고 entity가 기존 캐릭터 여러 명과 매칭 | 호출하지 않음 | 기존 매칭 로직에서 `AMBIGUOUS` |
 | raw가 지칭어이고 entity가 기존 캐릭터와 매칭 실패 | 호출하지 않음 | 신규 캐릭터 가능성이 있으므로 `UNRESOLVED` |
-| raw가 지칭어이고 entity가 없거나 `미상`/지칭어 같은 placeholder | 호출함 | previous/current/next chunk로 주체만 재판단 |
-| raw가 없고 entity도 없거나 `미상`/지칭어 같은 placeholder | 호출하지 않음 | fallback에 보낼 원문 지칭 표현이 없으므로 저장 전 제외 |
+| entity가 없거나 `미상`/지칭어 같은 구체적이지 않은 값 | 호출함 | raw가 없거나 예상하지 못한 원문 표현이어도 previous/current/next chunk로 주체를 재판단 |
 | fallback 응답의 `resolved_entity_name`이 구체 이름 | - | candidate의 `entity_name`만 치환하고 기존 매칭 로직으로 진행 |
-| fallback 응답의 `resolved_entity_name`이 null | - | 잘못된 placeholder 후보가 저장되지 않도록 폐기 |
-| fallback 응답의 `resolved_entity_name`이 `미상`, `그녀`, `주인공` 같은 placeholder/지칭어 | - | 실제 해소 실패로 보고 폐기 |
+| fallback 응답의 `resolved_entity_name`이 null | - | 원래 후보를 보존하고 `entity_name="미상"`으로 정규화한 뒤 기존 매칭 로직에서 `AMBIGUOUS` 처리 |
+| fallback 응답의 `resolved_entity_name`이 `미상`, `그녀`, `주인공` 같은 placeholder/지칭어 | - | null과 같은 정상적인 해소 실패로 보고 후보를 `미상`으로 보존 |
+| 응답 JSON/schema가 잘못되거나 candidate ID가 누락·중복·추가됨 | - | 사용자 판단 대상이 아닌 기술적 계약 오류이므로 분석 실패로 전파 |
 
 ```text
 raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터 1명과 매칭
@@ -139,27 +141,27 @@ raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터 1명과 매칭
 raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터 여러 명과 매칭
 -> AMBIGUOUS
 
-raw_entity_mention이 지칭어 + entity_name이 "미상" 또는 지칭어 같은 placeholder
+entity_name이 "미상" 또는 지칭어 같은 구체적이지 않은 값
 -> 같은 current chunk의 fallback 대상 후보를 batch로 묶음
 -> previous/current/next chunk와 knownCharacters를 LLM subject resolver에 전달
 -> resolved_entity_name이 구체 캐릭터명이면 entity_name만 치환한 뒤 일반 매칭 로직으로 진행
--> resolved_entity_name이 null, "미상", "그녀" 같은 placeholder/지칭어이면 저장 전 폐기
+-> resolved_entity_name이 null, "미상", "그녀" 같은 placeholder/지칭어이면 entity_name을 "미상"으로 정규화
+-> character_name_resolver가 AMBIGUOUS로 계산해 사용자 검토 후보로 저장
 
 raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터와 매칭 실패
 -> UNRESOLVED
 
 raw_entity_mention이 지칭어 + entity_name이 이미 구체 후보명
 -> fallback을 호출하지 않고 entity_name 기준 매칭 정책으로 진행
-
-raw_entity_mention이 없고 entity_name도 "미상" 또는 지칭어 같은 placeholder
--> fallback에 사용할 원문 표현이 없으므로 저장 전 제외
 ```
 
 fallback은 설정 후보 추출을 다시 하는 단계가 아니라, 이미 추출된 후보의 주체만 해소하는 좁은 resolver입니다. previous/next chunk는 판단 문맥으로만 사용하고, `source_chunk_id`, `evidence_spans`, offset 기준은 후보가 실제 추출된 current chunk를 유지합니다.
 
 LLM subject resolver는 `MATCHED`, `UNRESOLVED`, `AMBIGUOUS` 같은 최종 매칭 상태를 판단하지 않습니다. LLM이 확실한 주체명만 `resolved_entity_name`으로 반환하면 Python이 후보의 `entity_name`만 치환하고, 이후 기존 `character_name_resolver`가 `knownCharacters`와 비교해 최종 `matched_character_id`, `match_status`를 계산합니다.
 
-`resolved_entity_name`에는 `미상`, `불명`, `unknown`, `나`, `그`, `그녀`, `주인공` 같은 placeholder/지칭어가 들어오면 안 됩니다. LLM이 이런 값을 반환하더라도 Python은 실제 해소 실패로 보고 해당 fallback 후보를 저장하지 않습니다.
+`resolved_entity_name`에는 `미상`, `불명`, `unknown`, `나`, `그`, `그녀`, `주인공` 같은 placeholder/지칭어가 들어오면 안 됩니다. LLM이 정상 응답에서 null 또는 이런 값을 반환하면 Python은 실제 해소 실패로 보고 원래 후보를 `entity_name="미상"`으로 보존합니다. 이후 기존 `character_name_resolver`가 이를 `AMBIGUOUS`로 계산하므로 `UNRESOLVED`의 새 캐릭터 후보로 잘못 표시되지 않습니다.
+
+응답 파싱/schema 검증 실패와 candidate ID 누락·중복·추가는 의미상 해소 실패가 아니라 외부 응답 계약 위반입니다. 이런 기술적 실패는 `AMBIGUOUS`로 숨기지 않고 분석 실패로 전파합니다.
 
 예시 입력:
 
@@ -225,7 +227,7 @@ character_name_resolver가 기존 캐릭터 목록과 비교해 MATCHED / UNRESO
 }
 ```
 
-이 경우 placeholder 후보는 `setting_candidates` 저장 전에 제외합니다. LLM이 `resolved_entity_name`에 `"미상"` 또는 `"그녀"` 같은 문자열을 넣어도 같은 방식으로 제외합니다.
+이 경우 원래 후보의 설정값, 근거, source chunk를 유지하고 `entity_name`만 `"미상"`으로 정규화합니다. LLM이 `resolved_entity_name`에 `"미상"` 또는 `"그녀"` 같은 문자열을 넣어도 같은 방식으로 보존하며, 저장 단계의 기존 캐릭터명 매칭 로직이 최종 상태를 `AMBIGUOUS`로 계산합니다.
 
 ### subject fallback trace 정책
 
@@ -234,10 +236,12 @@ character_name_resolver가 기존 캐릭터 목록과 비교해 MATCHED / UNRESO
 ```text
 subjectFallbackCallCount
 subjectFallbackResolvedCount
-subjectFallbackDiscardedCount
+subjectFallbackUnresolvedCount
 ```
 
-따라서 어떤 후보가 fallback 대상이었는지, 어떤 chunk에서 fallback이 호출됐는지, 폐기된 후보가 무엇이었는지는 최종 `settingCandidates[]`만으로는 알 수 없습니다. 최종 후보에는 fallback 성공 후의 `entity_name`만 남고, fallback 실패 후보는 저장 전에 제외되기 때문입니다.
+`subjectFallbackUnresolvedCount`는 subject resolver가 정상 응답을 반환했지만 구체 이름을 찾지 못해 `미상`으로 보존한 후보 수입니다. 최종 `AMBIGUOUS` 상태는 이후 기존 캐릭터명 매칭 단계에서 계산하므로, subject resolver 내부 지표에는 `Ambiguous` 대신 `Unresolved`를 사용합니다.
+
+최종 `settingCandidates[]`에서는 해소 실패 후보가 `미상 + AMBIGUOUS`로 보존된 사실을 볼 수 있습니다. 다만 어떤 chunk에서 fallback이 호출됐는지, LLM이 null을 반환한 이유가 무엇인지, 원래 `entity_name`이 무엇이었는지는 별도 trace 없이는 알 수 없습니다.
 
 후보별 fallback 이력을 확인하려면 별도 trace 구조가 필요합니다.
 
@@ -252,7 +256,7 @@ subjectFallbackDiscardedCount
   "original_entity_name": "미상",
   "resolved_entity_name": "비요른 얀델",
   "result": "RESOLVED",
-  "discard_reason": null
+  "unresolved_reason": null
 }
 ```
 
@@ -262,12 +266,12 @@ subjectFallbackDiscardedCount
 | --- | --- | --- |
 | debug runner JSON에만 남김 | 로컬 검증과 PR 리뷰에 충분하고 DB 영향이 없음 | 운영 이력으로는 조회할 수 없음 |
 | Worker summary JSON에 요약/샘플만 남김 | 분석 job 단위 관측성이 생김 | summary가 커질 수 있어 개수 제한 정책 필요 |
-| `setting_candidates.raw_ai_result_json`에 후보별 trace를 남김 | 저장된 후보와 fallback 이력을 함께 볼 수 있음 | 실패 후 폐기된 후보는 저장 후보가 없어 남기기 어려움 |
+| `setting_candidates.raw_ai_result_json`에 후보별 trace를 남김 | 저장된 후보와 fallback 이력을 함께 볼 수 있음 | 현재 값에는 fallback 응답과 판단 사유가 포함되지 않으므로 별도 구조가 필요 |
 | 별도 로그/실패 이력 테이블에 남김 | 운영 디버깅에 가장 강함 | 스키마와 보존 기간 정책이 필요 |
 
-현재 구현은 trace를 저장하지 않고 count만 남깁니다. 후보별 fallback 위치와 폐기 사유를 제품/운영에서 조회해야 한다면, 위 선택지 중 하나를 정한 뒤 debug 출력, Worker summary, DB 저장 범위를 함께 조정합니다.
+현재 구현은 trace를 저장하지 않고 count만 남깁니다. 후보별 fallback 위치와 해소 실패 사유를 제품/운영에서 조회해야 한다면, 위 선택지 중 하나를 정한 뒤 debug 출력, Worker summary, DB 저장 범위를 함께 조정합니다.
 
-`subjectFallbackDiscardedCount`에는 LLM fallback 응답으로 해소되지 않아 폐기된 후보와, raw/entity 모두 주체 판단에 쓸 수 없어 LLM 호출 전 제외된 후보가 함께 포함됩니다.
+`subjectFallbackUnresolvedCount`에는 LLM fallback 정상 응답으로도 구체 이름을 찾지 못해 `미상`으로 보존된 후보만 포함됩니다. malformed 응답이나 candidate ID 계약 위반은 분석 실패이므로 이 개수에 포함하지 않습니다.
 
 ## 후속 작업
 
@@ -276,4 +280,4 @@ subjectFallbackDiscardedCount
 - 설정 추출 재시도와 subject fallback을 포함한 LLM token usage를 Worker 단위로 집계해 Spring 완료 보고에 연결합니다.
 - 프롬프트 정책 위반 후보를 schema validator, 후처리 필터, LLM 재시도 중 어디에서 다룰지 결정합니다.
 - subject fallback의 prompt 품질과 호출 단위가 충분한지 실제 원문으로 검증합니다.
-- fallback에서 폐기된 후보와 해소된 후보의 trace를 debug JSON, Worker summary, DB 중 어디에 남길지 정책을 결정합니다.
+- fallback에서 해소된 후보와 `미상`으로 보존된 후보의 trace를 debug JSON, Worker summary, DB 중 어디에 남길지 정책을 결정합니다.

@@ -49,12 +49,52 @@ def test_replace_candidates_for_analysis_job_deletes_old_candidates_and_saves_ne
     assert session.rolled_back is False
 
 
-def _candidate() -> ExtractedSettingCandidate:
+def test_replace_candidates_saves_unknown_subject_as_ambiguous() -> None:
+    # subject fallback이 해소하지 못한 표준 placeholder는 새 캐릭터 후보가 아니라
+    # 사용자가 기존 캐릭터 연결을 확인해야 하는 AMBIGUOUS 상태로 저장한다.
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                candidate=_candidate(
+                    entity_name="미상",
+                    raw_entity_mention="내려다 본 손",
+                ),
+            )
+        ],
+        known_characters=[
+            KnownCharacter(
+                character_id=UUID("00000000-0000-0000-0000-000000000005"),
+                name="비요른",
+            )
+        ],
+    )
+
+    assert saved_candidates[0].entity_name == "미상"
+    assert saved_candidates[0].matched_character_id is None
+    assert saved_candidates[0].match_status == SettingCandidateMatchStatus.AMBIGUOUS
+    assert session.committed is True
+    assert session.rolled_back is False
+
+
+def _candidate(
+    entity_name: str = "비요른",
+    raw_entity_mention: str | None = "비요른",
+) -> ExtractedSettingCandidate:
     return ExtractedSettingCandidate(
         source_chunk_id=CHUNK_ID,
         entity_type="CHARACTER",
-        entity_name="비요른",
-        raw_entity_mention="비요른",
+        entity_name=entity_name,
+        raw_entity_mention=raw_entity_mention,
         attribute_name="level",
         attribute_value="1",
         value_type="NUMBER",
