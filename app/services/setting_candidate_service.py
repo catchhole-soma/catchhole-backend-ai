@@ -18,6 +18,7 @@ from app.repositories.setting_candidate_repository import SettingCandidateReposi
 @dataclass(frozen=True)
 class SettingCandidateSaveItem:
     episode_id: UUID | None
+    source_content_s3_key: str | None
     candidate: ExtractedSettingCandidate
 
 
@@ -45,6 +46,7 @@ class SettingCandidateService:
             SettingCandidateMapper.to_entity(
                 work_id=work_id,
                 episode_id=item.episode_id,
+                source_content_s3_key=item.source_content_s3_key,
                 analysis_job_id=analysis_job_id,
                 candidate=item.candidate,
                 character_match=resolve_candidate_character(

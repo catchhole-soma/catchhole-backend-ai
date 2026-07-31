@@ -1,9 +1,10 @@
 from dataclasses import dataclass
 
-#청크 기준 정의 - 기본, 최대, 최소
-DEFAULT_TARGET_CHARS = 1000
-DEFAULT_MAX_CHARS = 1500
-DEFAULT_MIN_CHARS = 300
+# 청크는 문단 경계를 우선해 약 2,500자로 묶고, 한 청크가 3,000자를 넘지 않게 한다.
+# 마지막 청크와 짧은 회차는 1,000자보다 작을 수 있다.
+DEFAULT_TARGET_CHARS = 2500
+DEFAULT_MAX_CHARS = 3000
+DEFAULT_MIN_CHARS = 1000
 
 #Java의 record와 유사한 형식 (현재는 한 파일의 내부 응답 경우에 사용 중)
 @dataclass(frozen=True)
@@ -43,26 +44,35 @@ def split_into_chunks(
             continue
 
         candidate_length = _combined_length([*current, paragraph]) # 현재 청크에 이번 문단까지 넣었을 때 길이 계산
-        # 지금 문단을 포함해서 1000자가 넘고, 지금 문단을 제외해도 300자가 된다면 청크 확정, 아니라면 이번 문단과 합치기
-        if current and candidate_length > target_chars and _combined_length(current) >= min_chars:
+        # 원문 slice가 최대 길이를 넘는 경우 최소 길이와 무관하게 현재 청크를 먼저 확정한다.
+        if current and candidate_length > max_chars:
             _flush_chunk(chunks, current, text)
             current = [paragraph]
             continue
 
         current.append(paragraph)
+        # target에 도달한 뒤 확정해야 기본 청크가 2,500자 안팎의 문맥을 갖는다.
+        if _combined_length(current) >= target_chars and _combined_length(current) >= min_chars:
+            _flush_chunk(chunks, current, text)
+            current = []
 
     _flush_chunk(chunks, current, text)
     return chunks
 
 #텍스트를 문단 목록으로 바꾼다
 def split_paragraphs(text: str) -> list[Paragraph]: #자바 문법으론 List<Paragraph> splitParagraphs(String text)
-    # 문단 offset은 정규화된 회차 원문 기준으로 계산한다.
+    # 문단 offset은 Episode.content_s3_key로 읽은 회차 원문 기준으로 계산한다.
     paragraphs: list[Paragraph] = []
     paragraph_index = 0 # 현재 몇 번째 문단인지 세는 값
     cursor = 0 # 원문 전체에서 현재 줄이 시작하는 위치
 
-    for line in text.splitlines(keepends=True): #줄단위로 나누는데 줄바꿈문자\n 까지 포함해서 가져간다(커서 계산의 정확성을 위해).
-        line_text = line.rstrip("\n")
+    for line in text.splitlines(keepends=True): # 줄바꿈 문자를 포함해 가져와 원문 cursor를 정확히 계산한다.
+        if line.endswith("\r\n"):
+            line_text = line[:-2]
+        elif line.endswith(("\r", "\n")):
+            line_text = line[:-1]
+        else:
+            line_text = line
         if line_text.strip(): #공백만 있는게 아니라면
             start_offset = cursor # 현재 줄이 원문 전체에서 어디인지
             end_offset = cursor + len(line_text)
@@ -124,4 +134,5 @@ def _split_long_paragraph(
 def _combined_length(paragraphs: list[Paragraph]) -> int:
     if not paragraphs:
         return 0
-    return sum(len(paragraph.text) for paragraph in paragraphs) + len(paragraphs) - 1
+    # 문단 사이의 CRLF, 빈 줄, 특수 공백도 실제 chunk_text에 포함되므로 원문 span으로 계산한다.
+    return paragraphs[-1].end_offset - paragraphs[0].start_offset

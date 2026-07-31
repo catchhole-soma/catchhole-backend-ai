@@ -23,6 +23,7 @@ class SettingCandidate(TimestampMixin, Base):
     work_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True))
     episode_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
     source_chunk_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
+    source_content_s3_key: Mapped[str | None] = mapped_column(String(512))
     analysis_job_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
     entity_type: Mapped[SettingEntityType] = mapped_column(String(30))
     entity_name: Mapped[str] = mapped_column(String(100))

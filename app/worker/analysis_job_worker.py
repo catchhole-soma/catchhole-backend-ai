@@ -284,6 +284,7 @@ class AnalysisJobWorker:
             save_items.extend(
                 SettingCandidateSaveItem(
                     episode_id=episode.episode_id,
+                    source_content_s3_key=episode.content_s3_key,
                     candidate=candidate,
                 )
                 for candidate in subject_resolution_result.candidates

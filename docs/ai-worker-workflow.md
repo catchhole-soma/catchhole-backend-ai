@@ -10,8 +10,7 @@ Python AI Worker가 Spring 내부 Worker API로 분석 작업을 claim한 뒤, S
 Spring claim
 -> claim payload의 단일 episode/knownCharacters/characterSettingSchemas 수신
 -> 해당 episode의 S3 원문 raw text 조회
--> 분석 기준 원문으로 normalize
--> 정규화 원문 기준 paragraph/chunk offset 계산
+-> 원문을 변경하지 않고 paragraph/chunk offset 계산
 -> 저장된 chunk_text batch 임베딩 및 episode_chunks 갱신
 -> chunk_text를 LLM에 전달
 -> LLM 설정 후보 JSON 파싱/검증
@@ -29,11 +28,10 @@ Python Worker는 `analysis_jobs.status`를 DB에서 직접 바꾸지 않습니�
 | 이름 | 의미 | 생성/사용 위치 | 기준 |
 | --- | --- | --- | --- |
 | `raw_text` | S3에서 읽은 회차 원문 문자열 | `S3TextObjectStorage.get_text()` | S3 객체 내용 그대로 |
-| `normalized_text` | 분석 기준으로 정리된 회차 원문 | `normalize_text(raw_text)` | 이후 chunk/offset 계산의 기준 |
-| `Paragraph.text` | 정규화 원문에서 공백이 아닌 한 줄 | `split_paragraphs()` | `normalized_text` 기준 start/end offset 보유 |
-| `chunk_text` | LLM에 전달되는 청크 원문 | `normalized_text[start_offset:end_offset]` | 재조립 문자열이 아니라 정규화 원문 slice |
+| `Paragraph.text` | S3 회차 원문에서 공백이 아닌 한 줄 | `split_paragraphs()` | `raw_text` 기준 start/end offset 보유 |
+| `chunk_text` | LLM에 전달되는 청크 원문 | `raw_text[start_offset:end_offset]` | 재조립 문자열이 아니라 원문 slice |
 | `evidence_spans[].quote` | LLM이 근거로 복사한 원문 일부 | LLM 응답 | `chunk_text` 안에서 다시 검색 |
-| `start_offset/end_offset` | 근거 문장의 위치 | `evidence_span_resolver.py` | 정규화된 회차 원문 전체 기준 |
+| `start_offset/end_offset` | 근거 문장의 위치 | `evidence_span_resolver.py` | S3 회차 원문 전체 기준 |
 | `raw_entity_mention` | 원문에 실제 등장한 캐릭터 표현 | LLM 응답 | 예: `나`, `프넬린의 두 번째 딸 아이나르` |
 | `entity_name` | LLM이 청크 문맥에서 정리한 후보 캐릭터명 | LLM 응답 | 예: `아이나르`, `비요른 얀델` |
 | `knownCharacters.name` | Spring이 내려준 기존 캐릭터명 | claim payload | 캐릭터 매칭 비교 대상 |
@@ -42,8 +40,8 @@ Python Worker는 `analysis_jobs.status`를 DB에서 직접 바꾸지 않습니�
 
 중요한 기준:
 
-- offset은 원본 업로드 파일 기준이 아니라 `normalize_text()` 이후의 정규화된 회차 원문 기준입니다.
-- `chunk_text`는 문단을 새로 이어 붙인 값이 아니라 정규화 원문에서 잘라낸 slice입니다.
+- offset은 `Episode.content_s3_key`로 읽은 S3 회차 원문 기준입니다.
+- `chunk_text`는 문단을 새로 이어 붙인 값이 아니라 원문에서 잘라낸 slice입니다.
 - LLM이 반환한 숫자 offset은 신뢰하지 않고, `quote`를 실제 `chunk_text`에서 찾아 다시 계산합니다.
 - LLM이 반환한 `source_chunk_id`는 신뢰하지 않고, Pydantic 검증 전에 Worker 입력 `EpisodeChunk.id`로 강제합니다.
 - 캐릭터명 매칭은 LLM이 DB 매칭을 직접 하는 것이 아니라, Python resolver가 `knownCharacters`와 비교해 계산합니다.
@@ -67,10 +65,9 @@ flowchart TD
     J --> K["contentS3Key 확인"]
     K -->|"없음"| KX["INVALID_REQUEST 예외"]
     K -->|"있음"| L["S3에서 raw_text 조회"]
-    L --> M["normalize_text(raw_text)<br/>분석 기준 원문 생성"]
-    M --> N["split_paragraphs()<br/>문단별 offset 계산"]
+    L --> N["split_paragraphs(raw_text)<br/>문단별 offset 계산"]
     N --> O["split_into_chunks()<br/>문단/길이 기준 청크 draft 생성"]
-    O --> P["EpisodeChunkMapper.to_entity()<br/>chunk_text는 normalized_text slice"]
+    O --> P["EpisodeChunkMapper.to_entity()<br/>chunk_text는 raw_text slice"]
     P --> Q["기존 episode_chunks 삭제"]
     Q --> R["새 episode_chunks 저장"]
 
@@ -150,8 +147,7 @@ sequenceDiagram
         Chunking->>Storage: get_text(contentS3Key)
         Storage-->>Chunking: raw_text
         Chunking->>ChunkService: replace_episode_chunks(episodeId, raw_text)
-        ChunkService->>ChunkService: normalize_text(raw_text)
-        ChunkService->>ChunkService: split_into_chunks(normalized_text)
+        ChunkService->>ChunkService: split_into_chunks(raw_text)
         ChunkService->>ChunkService: delete old chunks + save new chunks
         ChunkService-->>Worker: List<EpisodeChunk>
 
@@ -232,7 +228,7 @@ payload에서 Python이 직접 사용하는 값:
 
 payload DTO는 이전 Spring payload도 역직렬화할 수 있도록 `characterSettingSchemas` 누락을 빈 목록으로 파싱합니다. 하지만 현재 추출 계약에서는 등록 schema가 최소 하나 필요합니다. 목록이 비어 있으면 Worker는 진행 상태를 보고한 직후, S3 원문 조회와 청크·후보 교체 전에 예외를 발생시켜 Spring `fail` API로 해당 job을 실패 처리합니다. 이를 통해 schema가 없는 프롬프트가 후보를 0개 반환하고 기존 후보까지 빈 결과로 교체하는 상황을 막습니다.
 
-### 2. S3 원문 조회와 정규화
+### 2. S3 원문 조회
 
 `EpisodeS3ChunkingService.replace_chunks_from_s3_content()`는 claim payload의 `content_s3_key`를 그대로 사용합니다.
 
@@ -252,28 +248,16 @@ content_s3_key 있음
 
 S3 client는 `AWS_ACCESS_KEY_ID`와 `AWS_SECRET_ACCESS_KEY`가 둘 다 설정된 경우에만 해당 값을 명시적으로 사용합니다. `AWS_SESSION_TOKEN`도 설정되어 있으면 STS 등 임시 자격 증명의 일부로 함께 전달합니다. access key와 secret key 중 하나라도 없으면 AWS CLI profile, IAM role 등을 포함한 boto3 기본 credential provider chain에 맡깁니다. 실제 비밀값은 저장소 문서나 `.env.example`에 기록하지 않습니다.
 
-`normalize_text(raw_text)`는 다음 규칙으로 분석 기준 원문을 만듭니다.
-
-| 입력 노이즈 | 처리 |
-| --- | --- |
-| `\r\n`, `\r` | `\n`으로 통일 |
-| BOM `\ufeff` | 제거 |
-| zero-width space `\u200b` | 제거 |
-| non-breaking space `\u00a0` | 일반 공백으로 치환 |
-| tab `\t` | 일반 공백으로 치환 |
-| 각 줄 끝 공백 | 제거 |
-| 3개 이상 연속 줄바꿈 | 2개 줄바꿈으로 축약 |
-| 전체 앞뒤 공백 | 제거 |
-
-이후 모든 청크 offset과 evidence offset은 `raw_text`가 아니라 `normalized_text` 기준입니다.
+Python은 읽은 문자열의 BOM, CRLF, 탭, 특수 공백을 제거하거나 치환하지 않습니다.
+모든 청크 offset과 evidence offset은 동일한 `raw_text` 기준입니다.
 
 ### 3. 문단 분리와 청킹
 
-`split_paragraphs(normalized_text)`는 정규화된 회차 원문을 줄 단위로 순회합니다.
+`split_paragraphs(raw_text)`는 S3 회차 원문을 줄 단위로 순회합니다.
 
 - 공백뿐인 줄은 문단으로 만들지 않습니다.
 - 각 문단은 `Paragraph(index, text, start_offset, end_offset)`을 가집니다.
-- `start_offset`, `end_offset`은 `normalized_text` 전체 기준입니다.
+- `start_offset`, `end_offset`은 `raw_text` 전체 기준입니다.
 - 줄바꿈 문자는 cursor 계산에는 포함하지만, `Paragraph.text`에는 포함하지 않습니다.
 
 `split_into_chunks()`는 문단 경계를 우선해 청크를 만듭니다.
@@ -282,16 +266,16 @@ S3 client는 `AWS_ACCESS_KEY_ID`와 `AWS_SECRET_ACCESS_KEY`가 둘 다 설정된
 
 | 값 | 의미 |
 | --- | --- |
-| `target_chars = 1000` | 가능하면 이 길이를 넘으면 chunk를 확정 |
-| `min_chars = 300` | 너무 짧은 chunk를 피하기 위한 최소 기준 |
-| `max_chars = 1500` | 한 문단 자체가 너무 긴 경우 문단 내부 분할 기준 |
+| `target_chars = 2500` | 가능하면 이 길이에 도달한 뒤 chunk를 확정 |
+| `min_chars = 1000` | 너무 짧은 chunk를 피하기 위한 최소 기준 |
+| `max_chars = 3000` | 청크 상한 및 긴 단일 문단 분할 기준 |
 
 청킹 규칙:
 
 1. 한 문단이 `max_chars`보다 길면, 현재까지 모은 문단을 먼저 chunk로 확정합니다.
 2. 긴 문단은 문단 하나 안에서 `max_chars` 단위로 나눕니다.
 3. 일반 문단은 현재 chunk 후보에 합쳐봅니다.
-4. 합친 길이가 `target_chars`를 넘고, 기존 chunk 후보가 이미 `min_chars` 이상이면 기존 chunk를 확정합니다.
+4. 합친 길이가 `target_chars`에 도달하고 `min_chars` 이상이면 해당 문단까지 포함해 chunk를 확정합니다.
 5. 문맥 보존을 위해 문단 경계를 우선하므로, chunk 길이가 항상 `target_chars` 이하로 고정되지는 않습니다.
 
 `EpisodeChunkDraft.chunk_text`는 문단 문자열을 새로 조립하지 않습니다.
@@ -299,10 +283,10 @@ S3 client는 `AWS_ACCESS_KEY_ID`와 `AWS_SECRET_ACCESS_KEY`가 둘 다 설정된
 ```text
 start_offset = 첫 문단 start_offset
 end_offset = 마지막 문단 end_offset
-chunk_text = normalized_text[start_offset:end_offset]
+chunk_text = raw_text[start_offset:end_offset]
 ```
 
-이 방식 덕분에 `chunk_text` 안에서 찾은 quote 위치에 `chunk.start_offset`을 더하면 정규화된 회차 원문 전체 기준 offset으로 변환할 수 있습니다.
+이 방식 덕분에 `chunk_text` 안에서 찾은 quote 위치에 `chunk.start_offset`을 더하면 S3 회차 원문 전체 기준 offset으로 변환할 수 있습니다.
 
 ### 4. episode_chunks 교체 저장
 
@@ -312,7 +296,6 @@ chunk_text = normalized_text[start_offset:end_offset]
 
 ```text
 raw_text
--> normalize_text()
 -> split_into_chunks()
 -> EpisodeChunkMapper.to_entity()
 -> delete_by_episode_id(episode_id)
@@ -713,28 +696,26 @@ save_items 전체 수집
 5. `app/services/episode_s3_chunking_service.py`
    - claim payload의 `content_s3_key`로 S3 원문을 읽는 흐름을 봅니다.
 6. `app/services/episode_chunk_service.py`
-   - 원문 정규화, 청킹, 기존 chunk 교체 저장 흐름을 봅니다.
+   - 원문 보존 청킹과 기존 chunk 교체 저장 흐름을 봅니다.
 7. `app/embeddings/services/episode_chunk_embedding.py`
    - 저장된 청크를 batch 임베딩하고 DB에 반영하는 트랜잭션 경계를 봅니다.
 8. `app/embeddings/client.py`
    - OpenAI 응답의 순서, 개수, 차원 검증 흐름을 봅니다.
 9. `app/repositories/episode_chunk_repository.py`
    - 임베딩 관련 필드만 갱신하고 누락된 청크를 거부하는 흐름을 봅니다.
-10. `app/chunking/text_normalizer.py`
-   - `raw_text`가 분석 기준 문자열로 바뀌는 규칙을 봅니다.
-11. `app/chunking/chunk_splitter.py`
+10. `app/chunking/chunk_splitter.py`
    - 문단 offset과 chunk offset이 어떻게 계산되는지 봅니다.
-12. `app/analysis/setting_extractor.py`
+11. `app/analysis/setting_extractor.py`
    - LLM 프롬프트 구성, 호출, JSON 검증, 재시도 흐름을 봅니다.
-13. `app/analysis/evidence_span_resolver.py`
+12. `app/analysis/evidence_span_resolver.py`
     - LLM이 반환한 quote를 chunk 원문에서 찾아 회차 전체 기준 offset으로 보정하는 흐름을 봅니다.
-14. `app/analysis/character_subject_resolver.py`
+13. `app/analysis/character_subject_resolver.py`
     - 구체적이지 않은 entity_name 후보를 current chunk 기준 batch로 LLM에 보내 주체만 해소하는 흐름을 봅니다.
-15. `app/analysis/character_name_resolver.py`
+14. `app/analysis/character_name_resolver.py`
     - `raw_entity_mention`, `entity_name`, `knownCharacters`로 기존 캐릭터 매칭 상태를 계산하는 흐름을 봅니다.
-16. `app/services/setting_candidate_service.py`
+15. `app/services/setting_candidate_service.py`
     - 검증된 추출 결과가 `setting_candidates`로 저장되는 흐름을 봅니다.
-17. `app/mappers/setting_candidate_mapper.py`
+16. `app/mappers/setting_candidate_mapper.py`
     - LLM 후보와 매칭 결과가 DB 모델 필드로 어떻게 옮겨지는지 봅니다.
 
 ## adjacent chunk fallback 적용 지점

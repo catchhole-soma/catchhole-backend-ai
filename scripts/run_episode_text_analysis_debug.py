@@ -18,7 +18,6 @@ from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offse
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
 from app.chunking.chunk_splitter import EpisodeChunkDraft, split_into_chunks
-from app.chunking.text_normalizer import normalize_text
 from app.schemas.worker import WorkerAnalysisCharacterSettingSchemaPayload
 
 # 로컬에서 텍스트 파일을 넣으면 청킹 -> llm로 설정후보 추출 -> 인용문 offset 보정 -> fall back 흐름 -> Setting_candidates 응답값을 json 파일로 주는 테스트 코드
@@ -53,8 +52,7 @@ def run_episode_text_analysis_debug(
     schema_hints: tuple[CharacterSettingSchemaHint, ...],
 ) -> dict:
     raw_text = text_file.read_text(encoding="utf-8")
-    normalized_text = normalize_text(raw_text)
-    drafts = split_into_chunks(normalized_text)
+    drafts = split_into_chunks(raw_text)
     chunks = [
         DebugChunk(
             id=uuid4(),
@@ -75,7 +73,7 @@ def run_episode_text_analysis_debug(
         flush=True,
     )
     print(
-        f"text chars raw={len(raw_text)} normalized={len(normalized_text)} "
+        f"text chars={len(raw_text)} "
         f"chunks={len(chunks)} processed_chunks={len(chunks_to_process)}",
         flush=True,
     )
@@ -145,7 +143,6 @@ def run_episode_text_analysis_debug(
         episode_no=episode_no,
         episode_title=episode_title,
         raw_text=raw_text,
-        normalized_text=normalized_text,
         chunks=chunks,
         processed_chunks=chunks_to_process,
         candidates=all_candidates,
@@ -344,7 +341,6 @@ def _build_result(
     episode_no: int,
     episode_title: str | None,
     raw_text: str,
-    normalized_text: str,
     chunks: list[DebugChunk],
     processed_chunks: list[DebugChunk],
     candidates: list[DebugCandidate],
@@ -363,7 +359,6 @@ def _build_result(
             "episodeNo": episode_no,
             "episodeTitle": episode_title,
             "rawCharCount": len(raw_text),
-            "normalizedCharCount": len(normalized_text),
             "chunkCount": len(chunks),
             "processedChunkCount": len(processed_chunks),
             "candidateCount": len(candidates),
@@ -396,7 +391,7 @@ def _build_result(
         "settingCandidates": [
             _build_candidate_result(
                 debug_candidate=debug_candidate,
-                normalized_text=normalized_text,
+                source_text=raw_text,
                 normalized_known_characters=normalized_known_characters,
             )
             for debug_candidate in candidates
@@ -406,7 +401,7 @@ def _build_result(
 
 def _build_candidate_result(
     debug_candidate: DebugCandidate,
-    normalized_text: str,
+    source_text: str,
     normalized_known_characters: list[NormalizedKnownCharacter],
 ) -> dict:
     character_match = resolve_candidate_character(
@@ -425,13 +420,13 @@ def _build_candidate_result(
         ),
         "match_status": character_match.match_status.value,
         "evidenceMatches": [
-            _build_evidence_match(normalized_text, span.model_dump(mode="json"))
+            _build_evidence_match(source_text, span.model_dump(mode="json"))
             for span in debug_candidate.candidate.evidence_spans
         ],
     }
 
 
-def _build_evidence_match(normalized_text: str, span: dict) -> dict:
+def _build_evidence_match(source_text: str, span: dict) -> dict:
     start_offset = span["start_offset"]
     end_offset = span["end_offset"]
     if start_offset is None or end_offset is None:
@@ -443,7 +438,7 @@ def _build_evidence_match(normalized_text: str, span: dict) -> dict:
             "matched": False,
         }
 
-    matched_text = normalized_text[start_offset:end_offset]
+    matched_text = source_text[start_offset:end_offset]
     return {
         "quote": span["quote"],
         "startOffset": start_offset,

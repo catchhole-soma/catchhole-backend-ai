@@ -1,16 +1,12 @@
-from app.chunking.chunk_splitter import split_into_chunks, split_paragraphs
-from app.chunking.text_normalizer import normalize_text
+from app.chunking.chunk_splitter import (
+    DEFAULT_MAX_CHARS,
+    DEFAULT_TARGET_CHARS,
+    split_into_chunks,
+    split_paragraphs,
+)
 
 
-def test_normalize_text_cleans_line_endings_and_spacing_noise() -> None:
-    text = "\ufeff첫 문장입니다.\r\n두 번째\t문장입니다.\u00a0 \r\n\r\n\r\n세 번째 문장입니다.\u200b"
-
-    normalized = normalize_text(text)
-
-    assert normalized == "첫 문장입니다.\n두 번째 문장입니다.\n\n세 번째 문장입니다."
-
-
-def test_split_paragraphs_keeps_offsets_from_normalized_text() -> None:
+def test_split_paragraphs_keeps_offsets_from_episode_source() -> None:
     text = "첫 문단입니다.\n\n두 번째 문단입니다.\n세 번째 문단입니다."
 
     paragraphs = split_paragraphs(text)
@@ -35,12 +31,12 @@ def test_split_into_chunks_groups_paragraphs_with_source_positions() -> None:
 
     assert len(chunks) == 2
     assert chunks[0].chunk_index == 0
-    assert chunks[0].chunk_text == "첫 번째 문단입니다.\n두 번째 문단입니다."
+    assert chunks[0].chunk_text == "첫 번째 문단입니다.\n두 번째 문단입니다.\n세 번째 문단입니다."
     assert chunks[0].paragraph_start_index == 0
-    assert chunks[0].paragraph_end_index == 1
+    assert chunks[0].paragraph_end_index == 2
     assert text[chunks[0].start_offset : chunks[0].end_offset] == chunks[0].chunk_text
     assert chunks[1].chunk_index == 1
-    assert chunks[1].paragraph_start_index == 2
+    assert chunks[1].paragraph_start_index == 3
     assert chunks[1].paragraph_end_index == 3
 
 
@@ -62,3 +58,42 @@ def test_split_into_chunks_keeps_blank_lines_inside_source_slice() -> None:
     assert len(chunks) == 1
     assert chunks[0].chunk_text == text
     assert text[chunks[0].start_offset : chunks[0].end_offset] == chunks[0].chunk_text
+
+
+def test_split_into_chunks_preserves_source_control_characters_and_offsets() -> None:
+    text = "\ufeff첫 문장입니다.\r\n두 번째\t문장입니다.\u00a0 \r\n\r\n세 번째 문장입니다.\u200b"
+
+    chunks = split_into_chunks(text)
+
+    assert len(chunks) == 1
+    assert chunks[0].chunk_text == text
+    assert text[chunks[0].start_offset : chunks[0].end_offset] == text
+
+
+def test_default_chunk_policy_targets_2500_and_caps_at_3000_characters() -> None:
+    paragraph = "가" * 480
+    text = "\n".join(paragraph for _ in range(13))
+
+    chunks = split_into_chunks(text)
+
+    assert DEFAULT_TARGET_CHARS == 2500
+    assert DEFAULT_MAX_CHARS == 3000
+    assert len(chunks) == 3
+    assert all(len(chunk.chunk_text) <= DEFAULT_MAX_CHARS for chunk in chunks)
+    assert all(
+        len(chunk.chunk_text) >= DEFAULT_TARGET_CHARS
+        for chunk in chunks[:-1]
+    )
+    assert all(
+        text[chunk.start_offset : chunk.end_offset] == chunk.chunk_text
+        for chunk in chunks
+    )
+
+
+def test_default_chunk_policy_caps_combined_source_slice_with_blank_lines() -> None:
+    text = ("가" * 600) + ("\r\n" * 20) + ("나" * 2900)
+
+    chunks = split_into_chunks(text)
+
+    assert [len(chunk.chunk_text) for chunk in chunks] == [600, 2900]
+    assert all(len(chunk.chunk_text) <= DEFAULT_MAX_CHARS for chunk in chunks)

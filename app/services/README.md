@@ -25,7 +25,8 @@ Spring 기준으로는 Service 계층에 가깝습니다. Repository, storage, m
   - 분석 실행은 Service가 직접 시작하지 않고, Worker가 Spring 내부 API를 통해 claim합니다.
 - `episode_chunk_service.py`
   - 이미 원문 텍스트를 알고 있는 상태에서 회차 청킹 결과를 저장합니다.
-  - `normalize_text -> split_into_chunks -> EpisodeChunkMapper -> EpisodeChunkRepository` 흐름을 조율합니다.
+  - `split_into_chunks -> EpisodeChunkMapper -> EpisodeChunkRepository` 흐름을 조율합니다.
+  - `Episode.content_s3_key` 원문을 변경하지 않아 chunk와 근거 offset의 기준을 보존합니다.
   - 같은 회차에 대해 청킹이 재실행될 때 기존 청크를 삭제하고 새 청크를 저장해 중복 생성을 막습니다.
 - `episode_s3_chunking_service.py`
   - `Episode.content_s3_key`를 조회해 S3 원문을 읽습니다.

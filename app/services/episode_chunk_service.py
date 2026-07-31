@@ -4,7 +4,6 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.chunking.chunk_splitter import split_into_chunks
-from app.chunking.text_normalizer import normalize_text
 from app.mappers.episode_chunk_mapper import EpisodeChunkMapper
 from app.models.episode_chunk import EpisodeChunk
 from app.repositories.episode_chunk_repository import EpisodeChunkRepository
@@ -26,11 +25,10 @@ class EpisodeChunkService:
         raw_text: str,
         metadata_json: dict | None = None,
     ) -> list[EpisodeChunk]:
-        # 1. 원문 텍스트의 줄바꿈, 특수 공백, 탭 등을 정리
-        normalized_text = normalize_text(raw_text)
-        # 2. 정규화된 원문을 LLM/RAG에 넣기 좋은 크기의 chunk draft들로 나누기
-        drafts = split_into_chunks(normalized_text)
-        # 3. EpisodeChunkDraft를 실제 DB에 저장할 EpisodeChunk 엔티티로 변환
+        # Episode.content_s3_key로 읽은 회차 원문을 변경하지 않고 나눠야
+        # chunk/evidence offset을 같은 원문에 그대로 적용할 수 있다.
+        drafts = split_into_chunks(raw_text)
+        # EpisodeChunkDraft를 실제 DB에 저장할 EpisodeChunk 엔티티로 변환
         chunks = [
             EpisodeChunkMapper.to_entity(
                 episode_id=episode_id,
@@ -44,15 +42,15 @@ class EpisodeChunkService:
         with self.session_factory() as session:
             repository = self.repository_factory(session)
             try:
-                # 5. 해당 회차의 기존 chunk를 전부 삭제(다시 분석하는 상황 고려)
+                # 해당 회차의 기존 chunk를 전부 삭제(다시 분석하는 상황 고려)
                 repository.delete_by_episode_id(episode_id)
-                # 6. 새로 생성한 chunk들을 저장 대상으로 세션에 등록
+                # 새로 생성한 chunk들을 저장 대상으로 세션에 등록
                 saved_chunks = repository.save_all(chunks)
-                # 7. 삭제 + 저장 작업을 하나의 트랜잭션으로 확정
+                # 삭제 + 저장 작업을 하나의 트랜잭션으로 확정
                 session.commit()
             except Exception:
-                # 9. 중간에 에러가 나면 삭제나 저장 작업을 모두 되돌림
+                # 중간에 에러가 나면 삭제나 저장 작업을 모두 되돌림
                 session.rollback()
-                raise # 10. 예외를 밖으로 던진다.
+                raise
 
         return saved_chunks
