@@ -5,6 +5,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.enums import EpisodeProcessingStatus
 
+AiTokenPurpose = Literal["SETTING_EXTRACTION", "SUBJECT_RESOLUTION", "CHUNK_EMBEDDING"]
+AiTokenUsageOutcome = Literal["SUCCESS", "FAILURE", "USAGE_UNAVAILABLE"]
+
 # Worker가 Spring 서버에 job claim 요청
 class WorkerAnalysisJobClaimRequest(BaseModel):
     # Python 필드명과 JSON alias를 둘 다 허용한다, 예: model_name or modelName 모두 가능
@@ -39,6 +42,30 @@ class WorkerAnalysisJobFailRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     # 실패 사유
     error_message: str = Field(alias="errorMessage", min_length=1)
+
+
+class AiTokenReserveRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    request_id: UUID = Field(alias="requestId")
+    analysis_job_id: UUID = Field(alias="analysisJobId")
+    purpose: AiTokenPurpose
+    attempt: int = Field(ge=1)
+    model_name: str = Field(alias="modelName", min_length=1, max_length=100)
+    reserved_tokens: int = Field(alias="reservedTokens", ge=1)
+
+
+class AiTokenSettleRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    input_tokens: int = Field(alias="inputTokens", ge=0)
+    cached_input_tokens: int = Field(alias="cachedInputTokens", ge=0)
+    output_tokens: int = Field(alias="outputTokens", ge=0)
+    outcome: AiTokenUsageOutcome
+
+
+class AiTokenReleaseRequest(BaseModel):
+    outcome: AiTokenUsageOutcome
 
 # Spring이 Worker에게 내려주는 회차 정보 DTO
 class WorkerAnalysisEpisodePayload(BaseModel):

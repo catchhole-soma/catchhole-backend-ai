@@ -70,9 +70,11 @@ class OpenAIResponsesClient:
         # OpenAI 응답 JSON을 dict로 바꾼 뒤, 필요한 text와 token usage만 내부 schema로 정리
         payload = response.json()
         usage = payload.get("usage") or {}
+        input_details = usage.get("input_tokens_details") or {}
         return LlmTextResponse(
             text=self._extract_output_text(payload),
             input_token_count=usage.get("input_tokens"),
+            cached_input_token_count=input_details.get("cached_tokens"),
             output_token_count=usage.get("output_tokens"),
             raw_response=payload,
         )

@@ -10,6 +10,9 @@ from app.schemas.worker import (
     WorkerAnalysisJobFailRequest,
     WorkerAnalysisJobPayload,
     WorkerAnalysisJobProgressRequest,
+    AiTokenReleaseRequest,
+    AiTokenReserveRequest,
+    AiTokenSettleRequest,
 )
 
 # Spring 내부 API 인증용 헤더 이름
@@ -74,7 +77,7 @@ class SpringWorkerClient:
         response = self.http_client.patch(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/progress"),
             headers=self._headers(),
-            json=request.model_dump(by_alias=True),
+            json=request.model_dump(by_alias=True, mode="json"),
         )
         # HTTP 응답이 4xx/5xx이면 예외를 발생
         response.raise_for_status()
@@ -109,7 +112,61 @@ class SpringWorkerClient:
             json=request.model_dump(by_alias=True),
         )
         response.raise_for_status()
-        
+
+    def reserve_ai_tokens(
+        self,
+        request_id: UUID,
+        analysis_job_id: UUID,
+        purpose: str,
+        attempt: int,
+        model_name: str,
+        reserved_tokens: int,
+    ) -> None:
+        request = AiTokenReserveRequest(
+            request_id=request_id,
+            analysis_job_id=analysis_job_id,
+            purpose=purpose,
+            attempt=attempt,
+            model_name=model_name,
+            reserved_tokens=reserved_tokens,
+        )
+        response = self.http_client.post(
+            self._url("/api/internal/v1/ai-token-usages/reserve"),
+            headers=self._headers(),
+            json=request.model_dump(by_alias=True, mode="json"),
+        )
+        response.raise_for_status()
+
+    def settle_ai_tokens(
+        self,
+        request_id: UUID,
+        input_tokens: int,
+        cached_input_tokens: int,
+        output_tokens: int,
+        outcome: str,
+    ) -> None:
+        request = AiTokenSettleRequest(
+            input_tokens=input_tokens,
+            cached_input_tokens=cached_input_tokens,
+            output_tokens=output_tokens,
+            outcome=outcome,
+        )
+        response = self.http_client.post(
+            self._url(f"/api/internal/v1/ai-token-usages/{request_id}/settle"),
+            headers=self._headers(),
+            json=request.model_dump(by_alias=True),
+        )
+        response.raise_for_status()
+
+    def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
+        request = AiTokenReleaseRequest(outcome=outcome)
+        response = self.http_client.post(
+            self._url(f"/api/internal/v1/ai-token-usages/{request_id}/release"),
+            headers=self._headers(),
+            json=request.model_dump(by_alias=True),
+        )
+        response.raise_for_status()
+
     # base_url과 path를 합쳐 실제 요청 URL을 만듦
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"

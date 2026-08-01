@@ -1,5 +1,5 @@
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 
@@ -129,6 +129,45 @@ def test_fail_calls_spring_fail_api() -> None:
     assert request.method == "POST"
     assert request.url.path == f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}/fail"
     assert json.loads(request.content) == {"errorMessage": "LLM 응답 오류"}
+
+
+def test_ai_token_reserve_settle_and_release_call_internal_apis() -> None:
+    requests: list[httpx.Request] = []
+    client = _client(lambda request: _empty_success_response(request, requests))
+    request_id = uuid4()
+
+    client.reserve_ai_tokens(
+        request_id=request_id,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SETTING_EXTRACTION",
+        attempt=1,
+        model_name="gpt-4.1-mini",
+        reserved_tokens=1000,
+    )
+    client.settle_ai_tokens(request_id, 100, 10, 20, "SUCCESS")
+    other_request_id = uuid4()
+    client.release_ai_tokens(other_request_id, "USAGE_UNAVAILABLE")
+
+    assert [request.url.path for request in requests] == [
+        "/api/internal/v1/ai-token-usages/reserve",
+        f"/api/internal/v1/ai-token-usages/{request_id}/settle",
+        f"/api/internal/v1/ai-token-usages/{other_request_id}/release",
+    ]
+    assert json.loads(requests[0].content) == {
+        "requestId": str(request_id),
+        "analysisJobId": str(ANALYSIS_JOB_ID),
+        "purpose": "SETTING_EXTRACTION",
+        "attempt": 1,
+        "modelName": "gpt-4.1-mini",
+        "reservedTokens": 1000,
+    }
+    assert json.loads(requests[1].content) == {
+        "inputTokens": 100,
+        "cachedInputTokens": 10,
+        "outputTokens": 20,
+        "outcome": "SUCCESS",
+    }
+    assert json.loads(requests[2].content) == {"outcome": "USAGE_UNAVAILABLE"}
 
 
 # MockTransport를 쓰는 테스트용 SpringWorkerClient 생성

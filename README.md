@@ -162,6 +162,7 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `app/schemas/README.md`: FastAPI/Spring 내부 API JSON schema
 - `app/services/README.md`: 유스케이스 흐름 조율
 - `app/storage/README.md`: S3 같은 외부 object storage 접근
+- `app/usage/README.md`: AI 요청별 토큰 예약·정산 wrapper
 - `app/worker/README.md`: Spring claim 기반 Worker 실행 흐름과 상태/단계 정책
 - `app/queue/README.md`: queue consumer를 도입할 때의 책임
 

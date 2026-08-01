@@ -9,6 +9,8 @@ class LlmTextResponse:
     text: str
     # 사용량 집계를 위해 OpenAI usage에서 가져오는 입력/출력 token 수
     input_token_count: int | None = None
+    # 입력 토큰 중 prompt cache에서 재사용된 양. 총 사용량에는 input_token_count로 이미 포함된다.
+    cached_input_token_count: int | None = None
     output_token_count: int | None = None
     # 디버깅이나 후속 분석을 위해 원본 응답을 보관한다.
     raw_response: dict[str, Any] = field(default_factory=dict)
