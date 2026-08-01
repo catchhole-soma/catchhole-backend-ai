@@ -147,6 +147,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         episode_chunk_embedding_service=episode_chunk_embedding_service,
         setting_extractor=setting_extractor,
         setting_candidate_service=setting_candidate_service,
+        embedding_generation_enabled=True,
     )
 
     result = worker.run_once()
@@ -189,6 +190,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "chunkCount": 1,
         "embeddedChunkCount": 1,
         "embeddingFailedChunkCount": 0,
+        "embeddingSkippedChunkCount": 0,
         "candidateCount": 2,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
@@ -246,6 +248,7 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         setting_extractor=setting_extractor,
         subject_resolver=subject_resolver,
         setting_candidate_service=setting_candidate_service,
+        embedding_generation_enabled=True,
     )
 
     result = worker.run_once()
@@ -268,6 +271,7 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         "chunkCount": 3,
         "embeddedChunkCount": 3,
         "embeddingFailedChunkCount": 0,
+        "embeddingSkippedChunkCount": 0,
         "candidateCount": 1,
         "subjectFallbackCallCount": 1,
         "subjectFallbackResolvedCount": 1,
@@ -303,6 +307,7 @@ def test_worker_preserves_subject_fallback_unresolved_candidate() -> None:
         setting_extractor=FakeSettingExtractor(candidate_groups=[[unresolved_candidate]]),
         subject_resolver=subject_resolver,
         setting_candidate_service=setting_candidate_service,
+        embedding_generation_enabled=True,
     )
 
     result = worker.run_once()
@@ -314,6 +319,49 @@ def test_worker_preserves_subject_fallback_unresolved_candidate() -> None:
     assert summary["subjectFallbackCallCount"] == 1
     assert summary["subjectFallbackResolvedCount"] == 0
     assert summary["subjectFallbackUnresolvedCount"] == 1
+
+
+def test_worker_skips_chunk_embedding_by_default_and_completes_extraction() -> None:
+    spring_client = FakeSpringWorkerClient(payload=_payload())
+    chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 전사다.")])
+    episode_chunk_embedding_service = FakeEpisodeChunkEmbeddingService()
+    extracted_candidate = _candidate(
+        chunking_service.chunks[0].id,
+        attribute_name="class",
+        quote="비요른은 전사다.",
+    )
+    setting_extractor = FakeSettingExtractor(candidate_groups=[[extracted_candidate]])
+    setting_candidate_service = FakeSettingCandidateService()
+    worker = AnalysisJobWorker(
+        spring_client=spring_client,
+        chunking_service=chunking_service,
+        episode_chunk_embedding_service=episode_chunk_embedding_service,
+        setting_extractor=setting_extractor,
+        subject_resolver=FakeSubjectResolver(
+            result=SubjectResolutionResult(candidates=[extracted_candidate])
+        ),
+        setting_candidate_service=setting_candidate_service,
+    )
+
+    result = worker.run_once()
+
+    assert result.claimed is True
+    assert episode_chunk_embedding_service.requested_chunk_ids == []
+    assert len(setting_extractor.requests) == 1
+    assert setting_candidate_service.saved_candidates == [extracted_candidate]
+    summary = json.loads(spring_client.complete_calls[0][1])
+    assert summary == {
+        "episodeCount": 1,
+        "chunkCount": 1,
+        "embeddedChunkCount": 0,
+        "embeddingFailedChunkCount": 0,
+        "embeddingSkippedChunkCount": 1,
+        "candidateCount": 1,
+        "subjectFallbackCallCount": 0,
+        "subjectFallbackResolvedCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
+    }
+    assert spring_client.fail_calls == []
 
 
 def test_worker_continues_setting_extraction_when_embedding_provider_temporarily_fails() -> None:
@@ -333,6 +381,7 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         setting_extractor=setting_extractor,
         subject_resolver=subject_resolver,
         setting_candidate_service=setting_candidate_service,
+        embedding_generation_enabled=True,
     )
 
     result = worker.run_once()
@@ -346,6 +395,7 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         "chunkCount": 1,
         "embeddedChunkCount": 0,
         "embeddingFailedChunkCount": 1,
+        "embeddingSkippedChunkCount": 0,
         "candidateCount": 0,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
@@ -367,6 +417,7 @@ def test_worker_fails_analysis_when_chunk_embedding_data_is_inconsistent() -> No
         chunking_service=chunking_service,
         episode_chunk_embedding_service=episode_chunk_embedding_service,
         setting_extractor=setting_extractor,
+        embedding_generation_enabled=True,
     )
 
     with pytest.raises(EmbeddingDataIntegrityError, match="target is missing"):

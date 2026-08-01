@@ -133,6 +133,7 @@ class AnalysisJobWorker:
         subject_resolver: SubjectResolverApi | None = None,
         setting_candidate_service: SettingCandidateService | None = None,
         model_name: str | None = None,
+        embedding_generation_enabled: bool = False,
     ) -> None:
         self.spring_client = spring_client or SpringWorkerClient.from_settings()
         self._chunking_service = chunking_service
@@ -141,6 +142,7 @@ class AnalysisJobWorker:
         self._subject_resolver = subject_resolver
         self._setting_candidate_service = setting_candidate_service
         self.model_name = model_name
+        self.embedding_generation_enabled = embedding_generation_enabled
 
     def run_once(self) -> WorkerRunResult:
         # Spring 서버에 처리 가능한 분석 job 하나를 요청
@@ -200,6 +202,7 @@ class AnalysisJobWorker:
         chunk_count = 0
         embedded_chunk_count = 0
         embedding_failed_chunk_count = 0
+        embedding_skipped_chunk_count = 0
         subject_fallback_call_count = 0
         subject_fallback_resolved_count = 0
         subject_fallback_unresolved_count = 0
@@ -233,17 +236,26 @@ class AnalysisJobWorker:
         )
         chunk_count += len(chunks)
 
-        # 2. 저장된 청크들을 한 번에 임베딩한다. 일시적인 provider 장애일 때만
-        # NULL 상태로 남기고 현재 설정 후보 추출을 계속한다.
-        try:
-            embedding_result = (
-                self._get_episode_chunk_embedding_service().embed_chunks(chunks)
-            )
-            embedded_chunk_count += embedding_result.embedded_chunk_count
-        except RecoverableEmbeddingProviderError:
-            embedding_failed_chunk_count += len(chunks)
-            logger.exception(
-                "Chunk embedding provider failed temporarily; setting extraction will continue. "
+        # 2. MVP 기본값에서는 임베딩 생성을 생략하고 설정 후보 추출을 계속한다.
+        # 기능이 활성화된 경우에만 기존 임베딩 생성·실패 정책을 적용한다.
+        if self.embedding_generation_enabled:
+            try:
+                embedding_result = (
+                    self._get_episode_chunk_embedding_service().embed_chunks(chunks)
+                )
+                embedded_chunk_count += embedding_result.embedded_chunk_count
+            except RecoverableEmbeddingProviderError:
+                embedding_failed_chunk_count += len(chunks)
+                logger.exception(
+                    "Chunk embedding provider failed temporarily; setting extraction will continue. "
+                    "episode_id=%s chunk_count=%s",
+                    episode.episode_id,
+                    len(chunks),
+                )
+        else:
+            embedding_skipped_chunk_count += len(chunks)
+            logger.info(
+                "Chunk embedding generation skipped by feature flag. "
                 "episode_id=%s chunk_count=%s",
                 episode.episode_id,
                 len(chunks),
@@ -305,6 +317,7 @@ class AnalysisJobWorker:
                 "chunkCount": chunk_count,
                 "embeddedChunkCount": embedded_chunk_count,
                 "embeddingFailedChunkCount": embedding_failed_chunk_count,
+                "embeddingSkippedChunkCount": embedding_skipped_chunk_count,
                 "candidateCount": len(saved_candidates),
                 "subjectFallbackCallCount": subject_fallback_call_count,
                 "subjectFallbackResolvedCount": subject_fallback_resolved_count,

@@ -188,6 +188,26 @@ def test_settings_parses_embedding_dimensions_from_environment(
     assert settings.embedding_dimensions == 1536
 
 
+def test_settings_disables_embedding_generation_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EMBEDDING_GENERATION_ENABLED", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.embedding_generation_enabled is False
+
+
+def test_settings_parses_enabled_embedding_generation_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_GENERATION_ENABLED", "true")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.embedding_generation_enabled is True
+
+
 def _client(
     handler,
     api_key: str = "test-key",

@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     llm_extraction_max_attempts: int = 3
 
     # 청크와 검색 query가 함께 사용하는 embedding 계약
+    embedding_generation_enabled: bool = False
     embedding_model: str = "text-embedding-3-small"
     # DB의 episode_chunks.embedding vector(1536)과 반드시 동일해야 함
     embedding_dimensions: int = 1536

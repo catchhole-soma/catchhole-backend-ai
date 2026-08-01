@@ -3,6 +3,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 
+from app.core.config import get_settings
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunResult
 
 
@@ -42,8 +43,12 @@ def run_worker_loop(
 
 def main() -> None:
     args = _parse_args()
+    settings = get_settings()
     # 실제 실행에서는 세부 서비스를 직접 넣지 않고 Worker가 기본 구현체를 필요할 때 준비
-    worker = AnalysisJobWorker(model_name=args.model_name)
+    worker = AnalysisJobWorker(
+        model_name=args.model_name,
+        embedding_generation_enabled=settings.embedding_generation_enabled,
+    )
 
     # --once는 로컬에서 Spring claim 연결만 빠르게 확인할 때 사용한다.
     if args.once:
