@@ -1,6 +1,6 @@
 # AI Worker Workflow
 
-Python AI Worker가 Spring 내부 Worker API로 분석 작업을 claim한 뒤, S3 원문을 읽고 청킹/임베딩/LLM 추출/후보 저장/완료 보고까지 수행하는 흐름을 정리합니다.
+Python AI Worker가 Spring 내부 Worker API로 분석 작업을 claim한 뒤, S3 원문을 읽고 청킹/선택적 임베딩/LLM 추출/후보 저장/완료 보고까지 수행하는 흐름을 정리합니다.
 
 프로젝트 전체 분석 job 생성, 업로드 batch와 episode 연결, 사용자-facing 조회/수정/확정 API는 Spring 백엔드 문서가 기준입니다. 이 문서는 Spring 문서의 "Python AI Worker" 구간을 Python 코드 기준으로 자세히 펼친 문서입니다.
 
@@ -11,7 +11,7 @@ Spring claim
 -> claim payload의 단일 episode/knownCharacters/characterSettingSchemas 수신
 -> 해당 episode의 S3 원문 raw text 조회
 -> 원문을 변경하지 않고 paragraph/chunk offset 계산
--> 저장된 chunk_text batch 임베딩 및 episode_chunks 갱신
+-> flag가 켜진 경우에만 chunk_text batch 임베딩 및 episode_chunks 갱신
 -> chunk_text를 LLM에 전달
 -> LLM 설정 후보 JSON 파싱/검증
 -> quote를 chunk_text에서 다시 찾아 evidence offset 보정
@@ -71,12 +71,15 @@ flowchart TD
     P --> Q["기존 episode_chunks 삭제"]
     Q --> R["새 episode_chunks 저장"]
 
-    R --> RA["chunk_text 목록<br/>OpenAI Embeddings API 호출"]
+    R --> RFLAG{"EMBEDDING_GENERATION_ENABLED?"}
+    RFLAG -- "false" --> RE["임베딩 생략 개수 기록<br/>embedding은 NULL 유지"]
+    RFLAG -- "true" --> RA["chunk_text 목록<br/>OpenAI Embeddings API 호출"]
     RA --> RB{"임베딩 생성/저장 성공?"}
     RB -- "예" --> RC["embedding, model, version,<br/>embedded_at 갱신"]
     RB -- "아니오" --> RD["실패 로그 기록<br/>embedding은 NULL 유지"]
     RC --> S["저장된 chunk 순회"]
     RD --> S
+    RE --> S
     S --> T["LLM user prompt 구성<br/>schema hints + metadata + chunk_text"]
     T --> U["OpenAI Responses API 호출"]
     U --> V{"JSON parse / schema 검증 성공?"}
@@ -151,19 +154,23 @@ sequenceDiagram
         ChunkService->>ChunkService: delete old chunks + save new chunks
         ChunkService-->>Worker: List<EpisodeChunk>
 
-        Worker->>EmbeddingService: embed_chunks(chunks)
-        EmbeddingService->>EmbeddingsAPI: create embeddings(chunk_text list)
-        alt 임베딩 성공
-            EmbeddingsAPI-->>EmbeddingService: vectors + model + usage
-            EmbeddingService->>ChunkRepo: update_embeddings(updates)
-            ChunkRepo-->>EmbeddingService: updated chunks
-            EmbeddingService-->>Worker: EpisodeChunkEmbeddingResult
-        else 일시적인 provider 장애
-            EmbeddingService--xWorker: RecoverableEmbeddingProviderError
-            Worker->>Worker: 실패 개수/로그 기록 후 계속
-        else 요청·응답 계약·정합성·DB 오류
-            EmbeddingService--xWorker: fatal exception
-            Worker->>Spring: fail(analysisJobId, errorMessage)
+        alt 임베딩 생성 flag 활성화
+            Worker->>EmbeddingService: embed_chunks(chunks)
+            EmbeddingService->>EmbeddingsAPI: create embeddings(chunk_text list)
+            alt 임베딩 성공
+                EmbeddingsAPI-->>EmbeddingService: vectors + model + usage
+                EmbeddingService->>ChunkRepo: update_embeddings(updates)
+                ChunkRepo-->>EmbeddingService: updated chunks
+                EmbeddingService-->>Worker: EpisodeChunkEmbeddingResult
+            else 일시적인 provider 장애
+                EmbeddingService--xWorker: RecoverableEmbeddingProviderError
+                Worker->>Worker: 실패 개수/로그 기록 후 계속
+            else 요청·응답 계약·정합성·DB 오류
+                EmbeddingService--xWorker: fatal exception
+                Worker->>Spring: fail(analysisJobId, errorMessage)
+            end
+        else MVP 기본값 false
+            Worker->>Worker: service 호출 없이 생략 개수 기록
         end
 
         loop chunk in chunks
@@ -313,7 +320,9 @@ raw_text
 
 ### 4.5. 저장된 chunk batch 임베딩
 
-`EpisodeChunkEmbeddingService.embed_chunks()`는 한 회차에서 방금 저장한 청크 텍스트 목록을 OpenAI Embeddings API에 한 번에 전달합니다. 응답 벡터는 `data[].index` 기준 입력 순서로 검증된 뒤 다음 필드에 저장됩니다.
+`EMBEDDING_GENERATION_ENABLED`의 MVP 기본값은 `false`입니다. 비활성화된 Worker는 `EpisodeChunkEmbeddingService`와 OpenAI Embeddings client를 생성·호출하지 않고, 해당 청크 수를 `embeddingSkippedChunkCount`에 기록한 뒤 설정 후보 추출을 계속합니다.
+
+`true`로 활성화하면 `EpisodeChunkEmbeddingService.embed_chunks()`가 한 회차에서 방금 저장한 청크 텍스트 목록을 OpenAI Embeddings API에 한 번에 전달합니다. 응답 벡터는 `data[].index` 기준 입력 순서로 검증된 뒤 다음 필드에 저장됩니다.
 
 - `embedding`
 - `embedding_model`
@@ -323,6 +332,12 @@ raw_text
 API 호출은 DB 세션을 열기 전에 수행하며, 임베딩 필드 갱신은 회차 단위의 짧은 트랜잭션으로 처리합니다. timeout·네트워크·원격 protocol 오류와 HTTP 408/409/429/5xx는 `RecoverableEmbeddingProviderError`로 분류합니다. Worker는 이 예외만 해당 회차의 임베딩 실패로 집계하고 설정 후보 추출을 계속합니다. 벡터가 저장되지 않은 청크는 `NULL` 상태로 검색에서 제외되며, 현재 자동 backfill은 구현되어 있지 않습니다.
 
 API Key 누락, 408·409·429를 제외한 HTTP 4xx, 응답 JSON·개수·index·차원 불일치, 중복·누락된 chunk ID, DB 연결·갱신 실패는 설정이나 데이터 정합성 문제이므로 Worker에서 처리하지 않습니다. 해당 예외는 `run_once()`까지 전파되고 Spring `fail` API를 통해 analysis job 전체 실패로 기록됩니다. 이 경우 현재 회차의 LLM 설정 후보 추출과 이후 회차 처리는 실행되지 않습니다.
+
+flag를 다시 켜도 기존 `NULL` 임베딩은 자동으로 채워지지 않습니다. 과거 원문의 벡터가 필요한 시점에는 Spring에서 대상 회차 재분석 Job을 만든 뒤 다음 명령으로 한 건을 처리하거나, 대상 범위를 제한한 별도 backfill 작업을 추가합니다.
+
+```bash
+EMBEDDING_GENERATION_ENABLED=true .venv/bin/python scripts/run_analysis_worker.py --once
+```
 
 ### 5. chunk별 LLM 설정 후보 추출
 
@@ -616,14 +631,17 @@ save_items 전체 수집
 {
   "episodeCount": 1,
   "chunkCount": 18,
-  "embeddedChunkCount": 15,
-  "embeddingFailedChunkCount": 3,
+  "embeddedChunkCount": 0,
+  "embeddingFailedChunkCount": 0,
+  "embeddingSkippedChunkCount": 18,
   "candidateCount": 42,
   "subjectFallbackCallCount": 4,
   "subjectFallbackResolvedCount": 3,
   "subjectFallbackUnresolvedCount": 2
 }
 ```
+
+`embeddingSkippedChunkCount`는 feature flag 비활성화로 의도적으로 생략한 수이고, `embeddingFailedChunkCount`는 flag 활성화 중 복구 가능한 provider 장애로 생성하지 못한 수입니다.
 
 `subjectFallbackUnresolvedCount`에는 LLM fallback 정상 응답으로도 구체 이름을 찾지 못해 `미상`으로 보존된 후보만 포함됩니다. malformed 응답이나 candidate ID 누락·중복·추가는 분석 실패이므로 이 개수에 포함하지 않습니다.
 
@@ -698,7 +716,7 @@ save_items 전체 수집
 6. `app/services/episode_chunk_service.py`
    - 원문 보존 청킹과 기존 chunk 교체 저장 흐름을 봅니다.
 7. `app/embeddings/services/episode_chunk_embedding.py`
-   - 저장된 청크를 batch 임베딩하고 DB에 반영하는 트랜잭션 경계를 봅니다.
+   - flag가 켜진 경우 저장된 청크를 batch 임베딩하고 DB에 반영하는 트랜잭션 경계를 봅니다.
 8. `app/embeddings/client.py`
    - OpenAI 응답의 순서, 개수, 차원 검증 흐름을 봅니다.
 9. `app/repositories/episode_chunk_repository.py`

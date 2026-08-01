@@ -151,7 +151,7 @@ Spring claim
 -> progress 보고
 -> characterSettingSchemas를 immutable schema hint로 변환
 -> 단일 episode S3 원문 청킹
--> 해당 episode의 저장 청크 batch 임베딩 및 DB 반영
+-> flag가 켜진 경우에만 저장 청크 batch 임베딩 및 DB 반영
 -> chunk별 캐릭터 설정 후보 추출
 -> evidence quote 위치 보정
 -> 구체적이지 않은 entity_name 후보 subject fallback
@@ -166,8 +166,8 @@ Spring claim
   - claim된 payload의 단일 episode를 처리합니다.
   - claim의 `characterSettingSchemas`를 Backend가 보낸 순서와 중복을 유지한 immutable schema hint tuple로 job당 한 번 변환해 모든 chunk 추출에 전달합니다.
   - `characterSettingSchemas`가 비어 있으면 등록 schema 기준의 추출을 수행할 수 없으므로, S3 원문 조회와 청크·후보 교체 전에 job을 실패 보고합니다.
-  - 해당 episode의 청킹·임베딩 서비스와 chunk별 설정 추출기를 호출합니다.
-  - 생성된 episode/chunk/embedding/candidate 개수를 `summaryJson`으로 모아 Spring에 완료 보고합니다.
+  - 해당 episode의 청킹과 chunk별 설정 추출기를 호출하고, feature flag가 켜진 경우에만 임베딩 서비스를 호출합니다.
+  - 생성·생략된 episode/chunk/embedding/candidate 개수를 `summaryJson`으로 모아 Spring에 완료 보고합니다.
 - `EpisodeS3ChunkingService`
   - episode_id로 DB의 episode를 조회합니다.
   - episode의 `content_s3_key`로 S3 원문을 읽습니다.
@@ -180,6 +180,7 @@ Spring claim
   - `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않으며 기존 응답 shape도 변경하지 않습니다.
   - fuzzy alias 매칭이나 schema 자동 생성은 하지 않고, 시간·사건·타임라인 정보와 등록 schema에 대응하지 않는 설정은 후보에서 제외합니다.
 - `EpisodeChunkEmbeddingService`
+  - `EMBEDDING_GENERATION_ENABLED=true`일 때만 Worker에서 호출합니다. MVP 기본값 `false`에서는 service와 client를 생성하지 않습니다.
   - episode의 저장된 청크 텍스트를 한 번에 임베딩합니다.
   - 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.
   - timeout·네트워크·원격 protocol 오류와 HTTP 408/409/429/5xx만 복구 가능한 provider 장애로 분류하며, Worker는 실패 개수를 기록하고 설정 후보 추출을 계속합니다.
@@ -198,6 +199,16 @@ Spring claim
   - 같은 `analysis_job_id` 기준 기존 후보를 지운 뒤 새 후보를 저장합니다.
 
 현재 단계에서는 검증된 후보를 `setting_candidates` 테이블에 `PENDING_REVIEW` 상태로 저장합니다.
+
+## 임베딩 생성 feature flag
+
+MVP는 벡터 검색을 사용하지 않으므로 `EMBEDDING_GENERATION_ENABLED`의 기본값을 `false`로 둡니다. 비활성화된 Worker는 임베딩 service와 OpenAI Embeddings client를 호출하지 않고, 해당 청크 수를 `embeddingSkippedChunkCount`에 기록한 뒤 설정 후보 추출과 Job 완료를 계속합니다.
+
+후속 오류 리포트나 RAG 검색에서 벡터가 필요해지면 환경변수를 `true`로 바꿔 신규 분석과 재분석의 임베딩 생성을 다시 활성화합니다. 기존 `NULL` 임베딩은 자동으로 채워지지 않으므로, 과거 데이터가 필요하면 Spring에서 대상 회차의 재분석 Job을 생성한 뒤 다음처럼 Worker 한 건을 실행하거나 별도 범위 제한 backfill 작업을 추가해야 합니다.
+
+```bash
+EMBEDDING_GENERATION_ENABLED=true .venv/bin/python scripts/run_analysis_worker.py --once
+```
 LLM 응답의 JSON 파싱·schema 검증 실패 재시도는 현재 연결되어 있습니다. 동일 인물 병합과 일회성 캐릭터 필터링은 후속 작업에서 다룹니다.
 
 ## 로컬 Worker 실행
