@@ -2,7 +2,7 @@
 
 청크 임베딩 생성·저장과 범용 pgvector 검색 흐름을 두는 패키지입니다.
 
-현재 OpenAI Embeddings API Client와 모델·차원·버전 설정, 청크 임베딩 저장 서비스, 범용 Top-K 검색 Service까지 구현되어 있습니다. Worker는 회차별 청크를 저장한 직후 `chunk_text` 목록을 한 번에 임베딩하고, 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다.
+현재 OpenAI Embeddings API Client와 모델·차원·버전 설정, 청크 임베딩 저장 서비스, 범용 Top-K 검색 Service까지 구현되어 있습니다. Worker는 `EMBEDDING_GENERATION_ENABLED=true`일 때만 회차별 `chunk_text` 목록을 임베딩하고, 벡터와 모델·버전·생성 시각을 `episode_chunks`에 반영합니다. MVP 기본값은 `false`입니다.
 
 오류 리포트는 RDB에서 직접 찾을 수 없는 과거 사건과 상태 변화의 원문 근거를 보완하기 위해 이 검색 기반을 사용합니다. NVM-141은 query text와 기본 검색 조건을 받아 유사 청크를 반환하는 범용 검색까지만 담당하며, `SettingCandidate`를 기준으로 검색어와 범위를 정하는 retrieval orchestration은 NVM-143에서 담당합니다.
 
@@ -31,6 +31,7 @@
 - 작품·회차 범위·제외 청크·임베딩 모델 및 버전 필터
 - 실제 PostgreSQL·pgvector를 사용하는 Repository 통합 테스트
 - 임베딩 실패를 복구 가능한 provider 장애와 작업 중단 오류로 구분하는 정책
+- MVP 기본 OFF인 청크 임베딩 생성 feature flag와 생략 개수 요약
 
 이번 PR에서 의도적으로 제외한 범위:
 
@@ -93,15 +94,17 @@ SettingCandidate와 직접 source chunk 확인
 
 ```text
 episode별 chunk 교체 저장
--> chunk_text 목록을 OpenAI Embeddings API에 한 번에 전달
--> 응답 index 기준으로 입력 순서 복원 및 차원 검증
--> embedding / embedding_model / embedding_version / embedded_at 갱신
--> commit
+-> EMBEDDING_GENERATION_ENABLED 확인
+   -> false: API·DB 갱신 생략, embeddingSkippedChunkCount 기록
+   -> true: chunk_text 목록을 OpenAI Embeddings API에 한 번에 전달
+      -> 응답 index 기준으로 입력 순서 복원 및 차원 검증
+      -> embedding / embedding_model / embedding_version / embedded_at 갱신
+      -> commit
 ```
 
-외부 API를 기다리는 동안 DB 트랜잭션을 점유하지 않도록 벡터 생성 후 세션을 엽니다. Worker는 timeout·네트워크·원격 protocol 오류와 HTTP 408/409/429/5xx를 `RecoverableEmbeddingProviderError`로 받아 해당 회차의 전체 청크를 임베딩 실패로 기록하고 설정 후보 추출을 계속합니다. API 호출과 DB 반영이 batch 단위이므로 해당 회차의 벡터 일부만 부분 저장되는 일은 없습니다.
+flag가 꺼져 있으면 Worker는 임베딩 service와 client를 생성하지 않고 설정 후보 추출을 계속합니다. flag가 켜져 있으면 외부 API를 기다리는 동안 DB 트랜잭션을 점유하지 않도록 벡터 생성 후 세션을 엽니다. Worker는 timeout·네트워크·원격 protocol 오류와 HTTP 408/409/429/5xx를 `RecoverableEmbeddingProviderError`로 받아 해당 회차의 전체 청크를 임베딩 실패로 기록하고 설정 후보 추출을 계속합니다. API 호출과 DB 반영이 batch 단위이므로 해당 회차의 벡터 일부만 부분 저장되는 일은 없습니다.
 
-벡터가 저장되지 않은 청크는 `NULL`로 남아 검색 대상에서 제외됩니다. 현재 자동 backfill은 없으므로 해당 벡터를 복구하려면 분석 작업을 다시 실행하거나 별도 재처리 기능이 필요합니다. 누락 개수는 `embeddingFailedChunkCount`로 완료 요약에 남습니다.
+벡터가 저장되지 않은 청크는 `NULL`로 남아 검색 대상에서 제외됩니다. 비활성화로 생략한 개수는 `embeddingSkippedChunkCount`, 활성화 중 provider 장애로 누락된 개수는 `embeddingFailedChunkCount`로 구분합니다. flag를 다시 켜도 기존 `NULL` 벡터는 자동 backfill되지 않으므로 해당 회차를 재분석하거나 별도 재처리 기능이 필요합니다.
 
 API Key 누락, 408·409·429를 제외한 HTTP 4xx, 응답 JSON·개수·index·차원 불일치, 중복·누락된 chunk ID, DB 연결·갱신 실패는 Worker가 삼키지 않습니다. 해당 예외는 `run_once()`까지 전파되어 Spring에 analysis job 실패로 보고되며, 이 경우 현재 회차의 LLM 설정 후보 추출과 이후 회차 처리는 실행되지 않습니다. 중복 청크 ID는 불필요한 OpenAI 비용을 쓰지 않도록 Service에서 API 호출 전에 차단하고, Repository도 직접 호출될 때를 대비해 같은 정합성 검사를 유지합니다.
 
@@ -175,5 +178,5 @@ PGVECTOR_TEST_DATABASE_URL=postgresql+psycopg://myuser:secret@localhost:15432/my
 ## 후속 구현 방향
 
 - HNSW와 `vector_cosine_ops` 인덱스는 Flyway V1에 구성되어 있고 실제 pgvector 검색 통합 테스트도 연결되었습니다. 실제 OpenAI 기반 샘플 품질은 NVM-143의 query·범위 정책이 정해진 뒤 검증합니다.
-- 현재는 분석 작업에서 새로 만든 모든 `episode_chunks`를 같은 청킹 단위로 임베딩합니다. 기존 청크 backfill 자동화는 이번 PR 범위에서 제외했으며, 필요해지면 API 요청 크기와 운영 재처리 정책을 포함한 별도 작업으로 설계합니다.
+- `EMBEDDING_GENERATION_ENABLED=true`인 분석 작업만 새로 만든 모든 `episode_chunks`를 같은 청킹 단위로 임베딩합니다. 기존 청크 backfill 자동화는 이번 범위에서 제외했으며, 필요해지면 API 요청 크기와 운영 재처리 정책을 포함한 별도 작업으로 설계합니다.
 - NVM-143은 이 범용 검색 결과에 직접 source chunk, 기존 fact, 인접 문맥을 조합해 NVM-144에 넘길 검증 문맥을 만듭니다.
