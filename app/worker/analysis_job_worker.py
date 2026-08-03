@@ -83,6 +83,7 @@ class SpringWorkerApi(Protocol):
     def fail(self, analysis_job_id: UUID, error_message: str) -> None:
         pass
 
+    # 실제 provider 호출 전에 사용자 잔여 한도에서 예상 최대 토큰을 예약한다.
     def reserve_ai_tokens(
         self,
         request_id: UUID,
@@ -94,6 +95,7 @@ class SpringWorkerApi(Protocol):
     ) -> None:
         pass
 
+    # provider 응답 usage를 실제 사용량으로 확정하고 남은 예약량을 반환한다.
     def settle_ai_tokens(
         self,
         request_id: UUID,
@@ -104,6 +106,7 @@ class SpringWorkerApi(Protocol):
     ) -> None:
         pass
 
+    # 실제 사용량을 알 수 없는 호출의 예약량을 전액 반환한다.
     def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
         pass
 

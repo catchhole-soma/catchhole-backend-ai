@@ -113,6 +113,8 @@ class SpringWorkerClient:
         )
         response.raise_for_status()
 
+    # AI provider 호출 전에 예상 최대량을 Spring 원장에 예약한다.
+    # 한도 초과 응답은 그대로 예외로 올려 provider 호출 자체를 막는다.
     def reserve_ai_tokens(
         self,
         request_id: UUID,
@@ -137,6 +139,7 @@ class SpringWorkerClient:
         )
         response.raise_for_status()
 
+    # provider가 반환한 실제 usage로 예약을 정산하고 남은 예약량을 반환한다.
     def settle_ai_tokens(
         self,
         request_id: UUID,
@@ -158,6 +161,7 @@ class SpringWorkerClient:
         )
         response.raise_for_status()
 
+    # provider 사용량을 확인할 수 없을 때 기존 예약을 전액 해제한다.
     def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
         request = AiTokenReleaseRequest(outcome=outcome)
         response = self.http_client.post(

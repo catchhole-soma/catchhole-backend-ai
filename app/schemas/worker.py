@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.enums import EpisodeProcessingStatus
 
+# Spring AI 토큰 원장 계약에서 허용하는 호출 목적과 종료 결과
 AiTokenPurpose = Literal["SETTING_EXTRACTION", "SUBJECT_RESOLUTION", "CHUNK_EMBEDDING"]
 AiTokenUsageOutcome = Literal["SUCCESS", "FAILURE", "USAGE_UNAVAILABLE"]
 
@@ -44,26 +45,32 @@ class WorkerAnalysisJobFailRequest(BaseModel):
     error_message: str = Field(alias="errorMessage", min_length=1)
 
 
+# Provider 호출 직전에 예상 최대 토큰을 Spring 원장에 예약할 때 쓰는 DTO
 class AiTokenReserveRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    # 재시도 통신에서도 같은 예약을 식별해 중복 차감을 막는 요청 ID
     request_id: UUID = Field(alias="requestId")
     analysis_job_id: UUID = Field(alias="analysisJobId")
     purpose: AiTokenPurpose
+    # 같은 분석 작업과 목적 안에서 발생한 provider 호출 순번
     attempt: int = Field(ge=1)
     model_name: str = Field(alias="modelName", min_length=1, max_length=100)
     reserved_tokens: int = Field(alias="reservedTokens", ge=1)
 
 
+# Provider가 usage를 반환한 요청의 실제 입력·출력 토큰을 정산할 때 쓰는 DTO
 class AiTokenSettleRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     input_tokens: int = Field(alias="inputTokens", ge=0)
+    # cached input은 input_tokens에 이미 포함되므로 관측값으로만 별도 전달한다.
     cached_input_tokens: int = Field(alias="cachedInputTokens", ge=0)
     output_tokens: int = Field(alias="outputTokens", ge=0)
     outcome: AiTokenUsageOutcome
 
 
+# 실제 usage를 알 수 없는 요청의 예약량을 전액 해제할 때 쓰는 DTO
 class AiTokenReleaseRequest(BaseModel):
     outcome: AiTokenUsageOutcome
 

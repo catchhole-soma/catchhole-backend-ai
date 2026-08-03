@@ -8,6 +8,7 @@ from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.responses import LlmTextResponse
 
 
+# 실제 원장을 소유한 Spring 내부 API에 기대하는 예약·정산·해제 규격
 class AiTokenLedgerApi(Protocol):
     def reserve_ai_tokens(
         self,
@@ -77,9 +78,12 @@ class MeteredTextGenerationClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
     ) -> LlmTextResponse:
+        # attempt는 같은 job·purpose 안에서 발생한 실제 provider 호출 순서를 나타낸다.
         self._attempt += 1
+        # 각 provider 호출마다 고유 ID를 발급해 Spring의 멱등 예약·정산 기준으로 사용한다.
         request_id = uuid4()
         effective_model = model or self.default_model
+        # 실제 사용량은 호출 후에만 알 수 있으므로 호출 전에는 보수적인 최대량을 예약한다.
         reserved_tokens = _estimate_text_token_upper_bound(
             system_prompt,
             user_prompt,
@@ -101,6 +105,7 @@ class MeteredTextGenerationClient:
                 max_output_tokens=max_output_tokens,
             )
         except Exception as exc:
+            # 오류 응답에도 usage가 있으면 실제량을 보존하고, 없으면 추측하지 않고 예약을 해제한다.
             usage = _usage_from_http_error(exc)
             if usage is None:
                 self.ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
@@ -108,6 +113,7 @@ class MeteredTextGenerationClient:
                 self.ledger.settle_ai_tokens(request_id, *usage, outcome="FAILURE")
             raise
 
+        # 성공 응답이라도 usage가 누락되면 실제량을 임의 계산하지 않고 예약을 해제한다.
         if response.input_token_count is None or response.output_token_count is None:
             self.ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
         else:
@@ -139,6 +145,7 @@ class MeteredEmbeddingClient:
         self._attempt = 0
 
     def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
+        # 임베딩 batch 한 번을 원장의 요청 한 건으로 기록한다.
         self._attempt += 1
         request_id = uuid4()
         self.ledger.reserve_ai_tokens(
@@ -152,6 +159,7 @@ class MeteredEmbeddingClient:
         try:
             response = self.delegate.create_embeddings(inputs)
         except Exception as exc:
+            # 실패 응답의 usage 유무에 따라 LLM 호출과 동일한 정산 정책을 적용한다.
             usage = _usage_from_http_error(exc)
             if usage is None:
                 self.ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
@@ -183,10 +191,12 @@ def _estimate_text_token_upper_bound(
 
 
 def _estimate_embedding_token_upper_bound(inputs: Sequence[str]) -> int:
+    # 모든 입력의 UTF-8 byte 수에 batch 요청 여유분을 더해 보수적으로 예약한다.
     return sum(len(text.encode("utf-8")) for text in inputs) + 256
 
 
 def _usage_from_http_error(exc: Exception) -> tuple[int, int, int] | None:
+    # provider가 HTTP 오류 body에 usage를 포함한 경우에만 실패 사용량을 정산한다.
     if not isinstance(exc, httpx.HTTPStatusError):
         return None
     try:
