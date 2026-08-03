@@ -7,7 +7,7 @@ AI Worker의 토큰 예약 계산과 OpenAI Prompt Cache가 실제 분석 호출
 ## 검증 환경
 
 - 검증일: 2026-08-03
-- 모델: `gpt-4.1-mini`
+- 당시 모델: `gpt-4.1-mini` (GPT-5.6 Terra 전환 전 측정)
 - API: OpenAI Responses API
 - 대상: 같은 작품에서 연속 실행한 분석 Job 3개
 - 원장 범위: 로컬 `ai_token_usages`를 `created_at`, `request_id` 순으로 정렬한 51~61번째 행
@@ -84,7 +84,9 @@ cache를 반영한 추정 비용:  약 $0.0202156
 
 공통 prefix가 cache 가능 최소 길이에 도달하기 전에 동적 내용이 시작될 수 있으므로 `prompt_cache_key`가 같아도 exact prefix cache hit가 발생하기 어렵습니다. 캐시 적중을 위해 의미 없는 padding을 추가하면 input 자체가 늘어나므로 현재는 최적화 대상으로 삼지 않습니다.
 
-현재 `gpt-4.1-mini`의 Prompt Cache는 자동 방식입니다. `prompt_cache_key`는 같은 prefix 요청을 가까운 cache로 routing하는 공식 힌트이지만 적중을 강제하지 않습니다. 명시적 breakpoint는 GPT-5.6 이상 모델에서만 사용할 수 있으므로 모델 변경 없이 `prompt_cache_options`나 `prompt_cache_breakpoint`를 추가하지 않습니다. 자세한 조건은 [OpenAI Prompt Caching](https://developers.openai.com/api/docs/guides/prompt-caching)을 기준으로 확인합니다.
+위 수치는 `gpt-4.1-mini`로 측정한 역사적 결과입니다. 현재 운영 기본값은 `gpt-5.6-terra`, `reasoning.effort=none`이며 코드는 안정적인 `prompt_cache_key`만 전달합니다.
+
+GPT-5.6의 implicit caching은 가장 최근 user/tool 경계만 기본 breakpoint로 사용하므로, 같은 key만으로 cache hit를 강제할 수 없습니다. 현행 prompt는 정적 시스템 지침과 schema를 앞에, 동적 회차·청크를 뒤에 배치해 implicit cache가 재사용되기 쉬운 구조를 유지합니다. explicit `prompt_cache_breakpoint`와 `prompt_cache_options.mode=explicit`은 아직 적용하지 않았으며, 도입할 경우 cache write 비용과 실제 적중률을 별도로 재검증합니다. 최소 cache 가능 prefix와 최신 동작은 [OpenAI Prompt Caching](https://developers.openai.com/api/docs/guides/prompt-caching)을 기준으로 확인합니다.
 
 ## 재검증 절차
 
@@ -99,6 +101,7 @@ cache를 반영한 추정 비용:  약 $0.0202156
    - 평균 `reserved_tokens / (input_tokens + output_tokens)`
 5. 첫 설정 추출 요청은 cache miss이고, 같은 prefix의 후속 요청에서 cache hit가 생기는지 확인합니다.
 6. Worker 재시작 후에도 예약량이 이전 수준이면 tokenizer 초기화 실패와 byte fallback 여부를 확인합니다.
+7. 모델을 바꿨다면 과거 행과 섞지 말고 `model_name`으로 범위를 나누어 cached input 비율과 예약/실사용 배율을 다시 측정합니다.
 
 ## 판단 기준
 
@@ -108,3 +111,4 @@ cache를 반영한 추정 비용:  약 $0.0202156
 - `cached_input_tokens`는 `input_tokens`에 더하지 않습니다.
 - 예약량은 실제량보다 커야 하지만, 재시작 후 설정 추출이 과거처럼 4배 이상이면 최신 예약 코드 적용 여부를 먼저 확인합니다.
 - prompt 본문과 provider raw response는 원장에 저장하지 않고 token usage만 저장합니다.
+- 이 문서의 비용 수치는 `gpt-4.1-mini` 측정 당시 참고값이며 GPT-5.6 Terra의 운영 비용으로 재사용하지 않습니다.

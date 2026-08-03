@@ -25,6 +25,7 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
   - `LLM_API_KEY`, `LLM_MODEL`, `LLM_REASONING_EFFORT`, `OPENAI_RESPONSES_API_URL` 설정을 사용합니다.
   - GPT-5.6 Terra의 MVP 기본 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않습니다.
   - 같은 정적 prompt prefix를 공유하는 호출에는 안정적인 `prompt_cache_key`를 전달합니다.
+  - GPT-5.6 explicit cache breakpoint는 아직 사용하지 않으며, 현재는 정적 prefix 우선 배치와 cache key로 implicit cache 재사용을 돕습니다.
   - debug 로그에는 prompt 본문 없이 cached input 필드의 존재 여부와 token usage만 남깁니다.
   - 응답 텍스트와 token usage를 `LlmTextResponse`로 반환합니다.
 - `responses.py`
