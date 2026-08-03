@@ -114,6 +114,29 @@ def test_create_text_response_sends_configured_reasoning_effort() -> None:
     assert request_body["reasoning"] == {"effort": "none"}
 
 
+def test_create_text_response_omits_reasoning_for_non_reasoning_model_override() -> None:
+    requests: list[httpx.Request] = []
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        reasoning_effort="none",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.Client(
+            transport=httpx.MockTransport(lambda request: _response(request, requests))
+        ),
+    )
+
+    client.create_text_response(
+        system_prompt="규칙",
+        user_prompt="원문",
+        model="gpt-4.1-mini",
+    )
+
+    request_body = json.loads(requests[0].content)
+    assert request_body["model"] == "gpt-4.1-mini"
+    assert "reasoning" not in request_body
+
+
 def test_create_text_response_requires_api_key() -> None:
     client = OpenAIResponsesClient(
         api_key="",

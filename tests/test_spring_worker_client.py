@@ -170,6 +170,26 @@ def test_ai_token_reserve_settle_and_release_call_internal_apis() -> None:
     assert json.loads(requests[2].content) == {"outcome": "USAGE_UNAVAILABLE"}
 
 
+def test_ai_token_settlement_retries_temporary_spring_failure() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) < 3:
+            return httpx.Response(status_code=503, request=request)
+        return httpx.Response(status_code=200, request=request)
+
+    client = _client(handler)
+    request_id = uuid4()
+
+    client.settle_ai_tokens(request_id, 100, 10, 20, "SUCCESS")
+
+    assert len(requests) == 3
+    assert {request.url.path for request in requests} == {
+        f"/api/internal/v1/ai-token-usages/{request_id}/settle"
+    }
+
+
 # MockTransport를 쓰는 테스트용 SpringWorkerClient 생성
 def _client(handler) -> SpringWorkerClient:
     return SpringWorkerClient(

@@ -237,10 +237,11 @@ def _estimate_embedding_token_upper_bound(inputs: Sequence[str]) -> int:
 
 def _usage_from_http_error(exc: Exception) -> tuple[int, int, int] | None:
     # provider가 HTTP 오류 body에 usage를 포함한 경우에만 실패 사용량을 정산한다.
-    if not isinstance(exc, httpx.HTTPStatusError):
+    http_error = _find_http_status_error(exc)
+    if http_error is None:
         return None
     try:
-        payload = exc.response.json()
+        payload = http_error.response.json()
     except ValueError:
         return None
     usage = payload.get("usage") if isinstance(payload, dict) else None
@@ -253,3 +254,16 @@ def _usage_from_http_error(exc: Exception) -> tuple[int, int, int] | None:
     input_details = usage.get("input_tokens_details") or {}
     cached_tokens = input_details.get("cached_tokens", 0) if isinstance(input_details, dict) else 0
     return input_tokens, cached_tokens if isinstance(cached_tokens, int) else 0, output_tokens
+
+
+def _find_http_status_error(exc: Exception) -> httpx.HTTPStatusError | None:
+    """도메인 예외로 감싼 provider HTTP 오류까지 원인 체인에서 찾는다."""
+
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        if isinstance(current, httpx.HTTPStatusError):
+            return current
+        visited.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None

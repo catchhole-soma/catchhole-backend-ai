@@ -51,9 +51,10 @@ class OpenAIResponsesClient:
 
         # 실제 OpenAi API 요청을 보내는 부분
         # system_prompt는 역할/규칙, user_prompt는 실제 청크 입력을 담음
+        effective_model = model or self.model
         request_body = {
             # 호출별 model이 있으면 그걸 쓰고, 없으면 Settings의 기본 모델을 쓴다.
-            "model": model or self.model,
+            "model": effective_model,
             "input": [
                 {
                     "role": "system",
@@ -69,7 +70,7 @@ class OpenAIResponsesClient:
         # 같은 정적 prefix를 공유하는 요청만 동일한 key를 사용해 cache routing을 돕는다.
         if prompt_cache_key is not None:
             request_body["prompt_cache_key"] = prompt_cache_key
-        if self.reasoning_effort is not None:
+        if self.reasoning_effort is not None and _supports_reasoning(effective_model):
             request_body["reasoning"] = {"effort": self.reasoning_effort}
 
         response = self.http_client.post(
@@ -118,3 +119,9 @@ class OpenAIResponsesClient:
                     output_texts.append(content["text"])
 
         return "\n".join(output_texts).strip()
+
+
+def _supports_reasoning(model: str) -> bool:
+    """Responses API에서 reasoning 설정을 받는 현재 사용 모델 계열만 허용한다."""
+
+    return model.startswith(("gpt-5", "o1", "o3", "o4"))

@@ -1,9 +1,11 @@
 from uuid import UUID
 
+import httpx
 import pytest
 
 import app.usage.metering as metering
 from app.embeddings.responses import EmbeddingBatchResponse
+from app.embeddings.exceptions import RecoverableEmbeddingProviderError
 from app.llm.responses import LlmTextResponse
 from app.usage.metering import (
     MeteredEmbeddingClient,
@@ -106,6 +108,32 @@ def test_success_without_provider_usage_releases_reservation() -> None:
     assert ledger.releases == [(request_id, "USAGE_UNAVAILABLE")]
 
 
+def test_wrapped_embedding_http_error_settles_reported_usage() -> None:
+    ledger = FakeLedger()
+    request = httpx.Request("POST", "https://api.openai.test/v1/embeddings")
+    response = httpx.Response(
+        503,
+        request=request,
+        json={"usage": {"prompt_tokens": 42}},
+    )
+    http_error = httpx.HTTPStatusError("temporary", request=request, response=response)
+    wrapped_error = RecoverableEmbeddingProviderError("temporary provider error")
+    wrapped_error.__cause__ = http_error
+    client = MeteredEmbeddingClient(
+        delegate=FailingEmbeddingClient(wrapped_error),
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        model_name="text-embedding-3-small",
+    )
+
+    with pytest.raises(RecoverableEmbeddingProviderError):
+        client.create_embeddings(["첫 청크"])
+
+    request_id = ledger.reservations[0]["request_id"]
+    assert ledger.settlements == [(request_id, 42, 0, 0, "FAILURE")]
+    assert ledger.releases == []
+
+
 def test_known_model_reservation_uses_tokenizer_instead_of_utf8_bytes() -> None:
     system_prompt = "설정 추출 규칙입니다. " * 200
     user_prompt = "비요른은 새로운 기술을 익혔다. " * 500
@@ -184,6 +212,16 @@ class FakeEmbeddingClient:
             model="text-embedding-3-small",
             input_token_count=42,
         )
+
+
+class FailingEmbeddingClient:
+    version = "v1"
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
+        raise self.error
 
 
 class FakeEncoding:

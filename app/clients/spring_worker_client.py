@@ -154,12 +154,10 @@ class SpringWorkerClient:
             output_tokens=output_tokens,
             outcome=outcome,
         )
-        response = self.http_client.post(
-            self._url(f"/api/internal/v1/ai-token-usages/{request_id}/settle"),
-            headers=self._headers(),
-            json=request.model_dump(by_alias=True),
+        self._post_usage_update_with_retry(
+            path=f"/api/internal/v1/ai-token-usages/{request_id}/settle",
+            payload=request.model_dump(by_alias=True),
         )
-        response.raise_for_status()
 
     # provider 사용량을 확인할 수 없을 때 기존 예약을 전액 해제한다.
     def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
@@ -170,6 +168,28 @@ class SpringWorkerClient:
             json=request.model_dump(by_alias=True),
         )
         response.raise_for_status()
+
+    def _post_usage_update_with_retry(self, path: str, payload: dict) -> None:
+        """일시적인 Spring 연결 장애에는 같은 requestId의 멱등 정산을 재시도한다."""
+
+        for attempt in range(3):
+            try:
+                response = self.http_client.post(
+                    self._url(path),
+                    headers=self._headers(),
+                    json=payload,
+                )
+                response.raise_for_status()
+                return
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
+                if attempt == 2:
+                    raise
+            except httpx.HTTPStatusError as exc:
+                retryable = exc.response.status_code in {408, 409, 429} or (
+                    exc.response.status_code >= 500
+                )
+                if not retryable or attempt == 2:
+                    raise
 
     # base_url과 path를 합쳐 실제 요청 URL을 만듦
     def _url(self, path: str) -> str:
