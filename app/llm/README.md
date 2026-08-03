@@ -22,7 +22,8 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
 
 - `openai_client.py`
   - OpenAI Responses API를 호출합니다.
-  - `LLM_API_KEY`, `LLM_MODEL`, `OPENAI_RESPONSES_API_URL` 설정을 사용합니다.
+  - `LLM_API_KEY`, `LLM_MODEL`, `LLM_REASONING_EFFORT`, `OPENAI_RESPONSES_API_URL` 설정을 사용합니다.
+  - GPT-5.6 Terra의 MVP 기본 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않습니다.
   - 같은 정적 prompt prefix를 공유하는 호출에는 안정적인 `prompt_cache_key`를 전달합니다.
   - debug 로그에는 prompt 본문 없이 cached input 필드의 존재 여부와 token usage만 남깁니다.
   - 응답 텍스트와 token usage를 `LlmTextResponse`로 반환합니다.
@@ -35,24 +36,27 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
 
 ## 토큰 사용량 상태
 
-`OpenAIResponsesClient`는 OpenAI 응답의 `usage.input_tokens`, `usage.output_tokens`를 읽어 `LlmTextResponse`에 담습니다. 여기까지는 구현되어 있지만, 현재 설정 추출 흐름은 다음 단계에서 token usage를 전달하지 않습니다.
+`OpenAIResponsesClient`는 OpenAI 응답의 `usage.input_tokens`,
+`usage.input_tokens_details.cached_tokens`, `usage.output_tokens`를
+`LlmTextResponse`에 담습니다. 설정 추출과 subject fallback에 주입된
+`MeteredTextGenerationClient`가 provider 호출마다 Spring 원장에 먼저 예약하고,
+응답 usage로 실제 사용량을 정산합니다.
 
 ```text
-OpenAIResponsesClient
--> LlmTextResponse(input_token_count, output_token_count)
--> CharacterSettingExtractor / CharacterSubjectResolver에서 응답 text만 사용
--> WorkerRunSummary에는 합산되지 않음
--> Spring complete 요청의 inputTokenCount / outputTokenCount는 None
+CharacterSettingExtractor / CharacterSubjectResolver
+-> MeteredTextGenerationClient.reserve
+-> OpenAIResponsesClient
+-> LlmTextResponse(input/cached input/output)
+-> MeteredTextGenerationClient.settle 또는 release
+-> Spring ai_token_usages
 ```
 
-따라서 현재 `analysis_jobs.input_token_count`, `output_token_count`에는 설정 추출 LLM 사용량이 저장되지 않습니다. 후속 토큰 집계 작업에서는 다음 호출을 모두 합산해야 합니다.
+설정 추출 재시도와 subject fallback도 각각 실제 provider 호출 단위로 기록합니다.
+`analysis_jobs`의 과거 합산 컬럼을 비용 원장으로 사용하지 않으며, 요청별 근거는
+Spring의 `ai_token_usages`를 기준으로 조회합니다.
 
-- 청크별 설정 후보 추출 호출
-- JSON 파싱 또는 schema 검증 실패로 다시 호출한 재시도
-- 구체적이지 않은 `entity_name` 후보를 처리하는 subject fallback 호출
-- 임베딩 호출의 입력 토큰
-
-성공한 마지막 호출만이 아니라 실제 비용이 발생한 재시도까지 포함해야 합니다. 분석 작업이 최종 실패한 경우에는 현재 Spring fail API에 토큰 필드가 없으므로, 실패 작업의 사용량 보존 범위와 API 계약도 함께 결정해야 합니다.
+실제 Prompt Cache와 예약량 검증 결과는
+[`docs/ai-token-cache-validation.md`](../../docs/ai-token-cache-validation.md)에 기록합니다.
 
 ## 현재 추출 방식
 
