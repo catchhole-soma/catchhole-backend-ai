@@ -95,6 +95,25 @@ def test_create_text_response_sends_cache_key_and_logs_cache_usage(caplog) -> No
     assert "cached_tokens=1024" in caplog.text
 
 
+def test_create_text_response_sends_configured_reasoning_effort() -> None:
+    requests: list[httpx.Request] = []
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        reasoning_effort="none",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.Client(
+            transport=httpx.MockTransport(lambda request: _response(request, requests))
+        ),
+    )
+
+    client.create_text_response(system_prompt="규칙", user_prompt="원문")
+
+    request_body = json.loads(requests[0].content)
+    assert request_body["model"] == "gpt-5.6-terra"
+    assert request_body["reasoning"] == {"effort": "none"}
+
+
 def test_create_text_response_requires_api_key() -> None:
     client = OpenAIResponsesClient(
         api_key="",

@@ -215,6 +215,9 @@ def _estimate_text_token_upper_bound(
 
 @lru_cache
 def _encoding_for_model(model: str):
+    # tiktoken 0.13.0은 GPT-5.6 별칭을 아직 알지 못하므로 공식 계열 tokenizer를 명시한다.
+    if model.startswith("gpt-5.6"):
+        return tiktoken.get_encoding("o200k_base")
     return tiktoken.encoding_for_model(model)
 
 

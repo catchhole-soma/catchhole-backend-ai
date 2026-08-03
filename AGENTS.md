@@ -27,3 +27,8 @@
 ## Embedding Generation
 
 - 신규 청크 임베딩 생성은 `EMBEDDING_GENERATION_ENABLED`로 제어하며 MVP 기본값은 `false`다. 비활성화 시 Embeddings client를 생성·호출하지 않고 설정 후보 추출과 Job 완료를 계속하며, pgvector schema와 임베딩 service·검색 코드는 후속 재활성화를 위해 유지한다.
+
+## LLM Runtime
+
+- 기본 분석 모델과 추론 강도는 `LLM_MODEL`, `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
+- GPT-5.6 모델의 토큰 예약량은 `o200k_base` tokenizer로 계산한다. 사용하는 tiktoken 버전이 모델 별칭을 모를 수 있으므로 모델명 자동 탐지 실패를 byte 상한으로 방치하지 않는다.

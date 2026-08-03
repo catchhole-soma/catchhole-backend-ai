@@ -22,7 +22,7 @@ COPY scripts ./scripts
 RUN python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install . \
     && mkdir -p "${TIKTOKEN_CACHE_DIR}" \
-    && python -c "import tiktoken; tiktoken.encoding_for_model('gpt-4.1-mini')" \
+    && python -c "import tiktoken; tiktoken.get_encoding('o200k_base')" \
     && chmod -R a+rX "${TIKTOKEN_CACHE_DIR}" \
     && cd /tmp \
     && python -c "from pathlib import Path; import app; prompt_dir = Path(app.__file__).parent / 'llm' / 'prompts'; missing = [name for name in ('character_setting_extraction.md', 'character_subject_resolution.md') if not (prompt_dir / name).is_file()]; assert not missing, f'missing packaged prompts: {missing}'"

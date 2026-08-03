@@ -15,6 +15,7 @@ class OpenAIResponsesClient:
         api_key: str, #OpenAi 키
         model: str, # 기본 모델명
         responses_api_url: str, # OpenAI Responses API 주소
+        reasoning_effort: str | None = None, # GPT-5.6 추론 강도
         http_client: httpx.Client | None = None, #실제 HTTP 요청 도구
     ) -> None:
         self.api_key = api_key
@@ -22,6 +23,7 @@ class OpenAIResponsesClient:
         self.model = model
         # 기본값은 https://api.openai.com/v1/responses, 테스트에서는 fake URL을 넣을 수 있음
         self.responses_api_url = responses_api_url
+        self.reasoning_effort = reasoning_effort
         # 실제 HTTP 요청을 보내는 도구, 테스트에서는 MockTransport가 들어간 client를 주입
         self.http_client = http_client or httpx.Client(timeout=120)
 
@@ -33,6 +35,7 @@ class OpenAIResponsesClient:
             api_key=settings.llm_api_key,
             model=settings.llm_model,
             responses_api_url=settings.openai_responses_api_url,
+            reasoning_effort=settings.llm_reasoning_effort,
         )
 
     def create_text_response(
@@ -66,6 +69,8 @@ class OpenAIResponsesClient:
         # 같은 정적 prefix를 공유하는 요청만 동일한 key를 사용해 cache routing을 돕는다.
         if prompt_cache_key is not None:
             request_body["prompt_cache_key"] = prompt_cache_key
+        if self.reasoning_effort is not None:
+            request_body["reasoning"] = {"effort": self.reasoning_effort}
 
         response = self.http_client.post(
             self.responses_api_url,

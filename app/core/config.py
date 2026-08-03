@@ -25,7 +25,9 @@ class Settings(BaseSettings):
 
     # LLM API key
     llm_api_key: str = ""
-    llm_model: str = "gpt-4.1-mini"
+    llm_model: str = "gpt-5.6-terra"
+    # GPT-5.6의 기본 medium 추론 비용을 자동으로 추가하지 않는 MVP 기준값
+    llm_reasoning_effort: str = "none"
     openai_responses_api_url: str = "https://api.openai.com/v1/responses"
     # LLM 응답 JSON 파싱/검증 실패 시 전체 시도 횟수
     llm_extraction_max_attempts: int = 3
