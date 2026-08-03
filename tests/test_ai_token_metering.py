@@ -2,11 +2,26 @@ from uuid import UUID
 
 import pytest
 
+import app.usage.metering as metering
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.responses import LlmTextResponse
-from app.usage.metering import MeteredEmbeddingClient, MeteredTextGenerationClient
+from app.usage.metering import (
+    MeteredEmbeddingClient,
+    MeteredTextGenerationClient,
+    _estimate_text_token_upper_bound,
+)
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
+
+
+@pytest.fixture(autouse=True)
+def use_offline_tokenizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_encoding_for_model(model: str):
+        if model == "unknown-model":
+            raise KeyError(model)
+        return FakeEncoding()
+
+    monkeypatch.setattr(metering, "_encoding_for_model", fake_encoding_for_model)
 
 
 def test_text_generation_reserves_and_settles_actual_usage() -> None:
@@ -91,6 +106,34 @@ def test_success_without_provider_usage_releases_reservation() -> None:
     assert ledger.releases == [(request_id, "USAGE_UNAVAILABLE")]
 
 
+def test_known_model_reservation_uses_tokenizer_instead_of_utf8_bytes() -> None:
+    system_prompt = "설정 추출 규칙입니다. " * 200
+    user_prompt = "비요른은 새로운 기술을 익혔다. " * 500
+    max_output_tokens = 4000
+    legacy_byte_reservation = (
+        len(system_prompt.encode("utf-8"))
+        + len(user_prompt.encode("utf-8"))
+        + max_output_tokens
+        + 512
+    )
+
+    reservation = _estimate_text_token_upper_bound(
+        system_prompt,
+        user_prompt,
+        "gpt-4.1-mini",
+        max_output_tokens,
+    )
+
+    assert reservation >= max_output_tokens + 256
+    assert reservation < legacy_byte_reservation
+
+
+def test_unknown_model_reservation_keeps_conservative_byte_fallback() -> None:
+    reservation = _estimate_text_token_upper_bound("규칙", "원고", "unknown-model", 100)
+
+    assert reservation == len("규칙원고".encode("utf-8")) + 100 + 512
+
+
 class FakeLedger:
     def __init__(self) -> None:
         self.reservations: list[dict] = []
@@ -141,3 +184,8 @@ class FakeEmbeddingClient:
             model="text-embedding-3-small",
             input_token_count=42,
         )
+
+
+class FakeEncoding:
+    def encode(self, text: str, disallowed_special=()) -> list[str]:
+        return list(text)

@@ -5,7 +5,8 @@ AI provider 호출 전후의 토큰 예약·정산을 공통으로 감싸는 패
 ## 역할
 
 - LLM·임베딩 요청마다 고유 `request_id`를 생성합니다.
-- prompt의 UTF-8 byte 수와 최대 출력량으로 보수적인 상한을 계산해 Spring에 먼저 예약합니다.
+- 모델 tokenizer로 센 입력량에 10%와 256 token의 안전 여유, 최대 출력량을 더해 Spring에 먼저 예약합니다.
+- tokenizer를 사용할 수 없는 모델이나 환경에서는 기존 UTF-8 byte 상한으로 안전하게 되돌아갑니다.
 - provider가 반환한 input/cached input/output usage를 Spring 원장에 정산합니다.
 - provider 사용량을 알 수 없는 실패는 예약을 전액 해제합니다.
 - 설정 추출 재시도, subject fallback, batch embedding을 서로 다른 `purpose`로 기록합니다.
@@ -22,3 +23,4 @@ prompt나 응답 본문은 Spring에 보내지 않습니다. 이 패키지는 �
 | Spring reserve에서 한도 초과 | provider를 호출하지 않고 분석 실패 전파 |
 
 cached input은 전체 input에 이미 포함되므로 관측값으로만 전달하고 별도 가산하지 않습니다.
+배포 이미지는 `gpt-4.1-mini` tokenizer를 빌드 시점에 미리 저장해 런타임 네트워크에 의존하지 않습니다.

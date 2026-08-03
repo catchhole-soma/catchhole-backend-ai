@@ -1,8 +1,11 @@
 from collections.abc import Sequence
+from functools import lru_cache
+import math
 from typing import Protocol
 from uuid import UUID, uuid4
 
 import httpx
+import tiktoken
 
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.responses import LlmTextResponse
@@ -42,6 +45,7 @@ class TextGenerationApi(Protocol):
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         pass
 
@@ -77,6 +81,7 @@ class MeteredTextGenerationClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         # attempt는 같은 job·purpose 안에서 발생한 실제 provider 호출 순서를 나타낸다.
         self._attempt += 1
@@ -87,6 +92,7 @@ class MeteredTextGenerationClient:
         reserved_tokens = _estimate_text_token_upper_bound(
             system_prompt,
             user_prompt,
+            effective_model,
             max_output_tokens,
         )
         self.ledger.reserve_ai_tokens(
@@ -103,6 +109,7 @@ class MeteredTextGenerationClient:
                 user_prompt=user_prompt,
                 model=model,
                 max_output_tokens=max_output_tokens,
+                prompt_cache_key=prompt_cache_key,
             )
         except Exception as exc:
             # 오류 응답에도 usage가 있으면 실제량을 보존하고, 없으면 추측하지 않고 예약을 해제한다.
@@ -183,9 +190,39 @@ class MeteredEmbeddingClient:
 def _estimate_text_token_upper_bound(
     system_prompt: str,
     user_prompt: str,
+    model: str,
     max_output_tokens: int,
 ) -> int:
-    # UTF-8 byte 수는 한글을 포함한 BPE token 수보다 보수적으로 크다.
+    try:
+        encoding = _encoding_for_model(model)
+        # 원고에 특수 토큰 표기와 같은 문자열이 있어도 일반 텍스트로 세어 예약이 중단되지 않게 한다.
+        content_tokens = len(encoding.encode(system_prompt, disallowed_special=())) + len(
+            encoding.encode(user_prompt, disallowed_special=())
+        )
+    except Exception:
+        # 미지원 모델이나 tokenizer cache 장애 시 분석은 계속하되 기존 byte 상한으로 되돌아간다.
+        return _estimate_text_token_byte_upper_bound(
+            system_prompt,
+            user_prompt,
+            max_output_tokens,
+        )
+
+    # Responses API message framing과 tokenizer 차이를 10% + 256 token으로 흡수하고,
+    # 출력은 provider가 허용한 최대량 전체를 예약해 실제 사용량이 quota를 넘지 않게 한다.
+    estimated_input_tokens = math.ceil(content_tokens * 1.10) + 256
+    return estimated_input_tokens + max_output_tokens
+
+
+@lru_cache
+def _encoding_for_model(model: str):
+    return tiktoken.encoding_for_model(model)
+
+
+def _estimate_text_token_byte_upper_bound(
+    system_prompt: str,
+    user_prompt: str,
+    max_output_tokens: int,
+) -> int:
     prompt_bytes = len(system_prompt.encode("utf-8")) + len(user_prompt.encode("utf-8"))
     return prompt_bytes + max_output_tokens + 512
 

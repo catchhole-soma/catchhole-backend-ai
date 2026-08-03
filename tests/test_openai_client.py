@@ -1,4 +1,5 @@
 import json
+import logging
 
 import httpx
 import pytest
@@ -54,6 +55,44 @@ def test_create_text_response_calls_openai_responses_api() -> None:
     assert response.text == '{"candidates":[]}'
     assert response.input_token_count == 10
     assert response.output_token_count == 5
+
+
+def test_create_text_response_sends_cache_key_and_logs_cache_usage(caplog) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            status_code=200,
+            json={
+                "output_text": "{}",
+                "usage": {
+                    "input_tokens": 1400,
+                    "input_tokens_details": {"cached_tokens": 1024},
+                    "output_tokens": 10,
+                },
+            },
+        )
+
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="app.llm.openai_client"):
+        response = client.create_text_response(
+            system_prompt="규칙",
+            user_prompt="원문",
+            prompt_cache_key="setting-extraction:v1:abc123",
+        )
+
+    request_body = json.loads(requests[0].content)
+    assert request_body["prompt_cache_key"] == "setting-extraction:v1:abc123"
+    assert response.cached_input_token_count == 1024
+    assert "cached_tokens_present=True" in caplog.text
+    assert "cached_tokens=1024" in caplog.text
 
 
 def test_create_text_response_requires_api_key() -> None:

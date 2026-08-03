@@ -1,7 +1,11 @@
+import logging
+
 import httpx
 
 from app.core.config import Settings, get_settings
 from app.llm.responses import LlmTextResponse
+
+logger = logging.getLogger(__name__)
 
 
 # "OpenAI Responses API 호출만" 담당하는 client
@@ -37,33 +41,39 @@ class OpenAIResponsesClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         if not self.api_key:
             raise ValueError("LLM_API_KEY is required.")
 
         # 실제 OpenAi API 요청을 보내는 부분
         # system_prompt는 역할/규칙, user_prompt는 실제 청크 입력을 담음
+        request_body = {
+            # 호출별 model이 있으면 그걸 쓰고, 없으면 Settings의 기본 모델을 쓴다.
+            "model": model or self.model,
+            "input": [
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": system_prompt}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": user_prompt}],
+                },
+            ],
+            "max_output_tokens": max_output_tokens,
+        }
+        # 같은 정적 prefix를 공유하는 요청만 동일한 key를 사용해 cache routing을 돕는다.
+        if prompt_cache_key is not None:
+            request_body["prompt_cache_key"] = prompt_cache_key
+
         response = self.http_client.post(
             self.responses_api_url,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                # 호출별 model이 있으면 그걸 쓰고, 없으면 Settings의 기본 모델을 쓴다.
-                "model": model or self.model,
-                "input": [
-                    {
-                        "role": "system",
-                        "content": [{"type": "input_text", "text": system_prompt}],
-                    },
-                    {
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": user_prompt}],
-                    },
-                ],
-                "max_output_tokens": max_output_tokens,
-            },
+            json=request_body,
         )
         # 4xx/5xx 응답이면 httpx.HTTPStatusError를 발생
         response.raise_for_status()
@@ -71,10 +81,21 @@ class OpenAIResponsesClient:
         payload = response.json()
         usage = payload.get("usage") or {}
         input_details = usage.get("input_tokens_details") or {}
+        logger.debug(
+            "OpenAI token usage received. input_tokens=%s output_tokens=%s "
+            "cached_tokens_present=%s cached_tokens=%s input_tokens_details=%s",
+            usage.get("input_tokens"),
+            usage.get("output_tokens"),
+            isinstance(input_details, dict) and "cached_tokens" in input_details,
+            input_details.get("cached_tokens") if isinstance(input_details, dict) else None,
+            input_details,
+        )
         return LlmTextResponse(
             text=self._extract_output_text(payload),
             input_token_count=usage.get("input_tokens"),
-            cached_input_token_count=input_details.get("cached_tokens"),
+            cached_input_token_count=(
+                input_details.get("cached_tokens") if isinstance(input_details, dict) else None
+            ),
             output_token_count=usage.get("output_tokens"),
             raw_response=payload,
         )

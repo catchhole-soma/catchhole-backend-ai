@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -19,6 +20,7 @@ DEFAULT_PROMPT_PATH = (
 )
 # 이 파일 전용 로그 객체를 만든다 
 logger = logging.getLogger(__name__)
+SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v1"
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,7 @@ class TextGenerationClient(Protocol):
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         pass
 
@@ -76,19 +79,26 @@ class CharacterSettingExtractor:
             raise ValueError("schema_hints must include at least one character setting schema.")
 
         system_prompt = self._load_system_prompt()
+        schema_summary_json = _serialize_schema_hints(schema_hints)
         user_prompt = self._build_user_prompt(
             chunk_text=chunk_text,
             episode_no=episode_no,
             episode_title=episode_title,
-            schema_hints=schema_hints,
+            schema_summary_json=schema_summary_json,
         )
+        prompt_cache_key = _build_schema_cache_key(schema_summary_json)
 
         # LLM 응답은 JSON 형식을 항상 지키지 않을 수 있으므로 파싱/검증 실패만 재시도
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
                 # 예외가 없다면 정상적으로 return 
-                return self._extract_once(system_prompt, user_prompt, source_chunk_id)
+                return self._extract_once(
+                    system_prompt,
+                    user_prompt,
+                    source_chunk_id,
+                    prompt_cache_key,
+                )
             except (json.JSONDecodeError, ValidationError) as exc:
                 last_error = exc
                 if attempt == self.max_attempts:
@@ -111,6 +121,7 @@ class CharacterSettingExtractor:
         system_prompt: str,
         user_prompt: str,
         source_chunk_id: UUID,
+        prompt_cache_key: str,
     ) -> CharacterSettingExtractionResult:
         # 시스템 프롬프트 + 사용자 프롬프트를 조합하여 LLM에 요청
         response = self.llm_client.create_text_response(
@@ -118,6 +129,7 @@ class CharacterSettingExtractor:
             user_prompt=user_prompt,
             model=self.model,
             max_output_tokens=4000,
+            prompt_cache_key=prompt_cache_key,
         )
         # source_chunk_id는 Worker가 이미 알고 있는 식별자이므로 LLM 응답을 신뢰하지 않고
         # 현재 입력 chunk ID로 강제한 뒤 내부 schema를 검증한다.
@@ -137,22 +149,13 @@ class CharacterSettingExtractor:
         chunk_text: str,
         episode_no: int | None,
         episode_title: str | None,
-        schema_hints: tuple[CharacterSettingSchemaHint, ...],
+        schema_summary_json: str,
     ) -> str:
         metadata = {
             "episode_no": episode_no,
             "episode_title": episode_title,
         }
-        schema_summary = [
-            {
-                "schemaKey": hint.schema_key,
-                "displayName": hint.display_name,
-                "attributePattern": hint.attribute_pattern,
-                "aliases": list(hint.aliases),
-                "valueType": hint.value_type,
-            }
-            for hint in schema_hints
-        ]
+        # 고정 규칙과 canonical schema를 앞에 두고 회차별 metadata·원문은 뒤에 둔다.
         return (
             "다음 회차 청크에서 캐릭터 설정 후보를 추출하세요.\n\n"
             "character_setting_schema_rules:\n"
@@ -165,10 +168,37 @@ class CharacterSettingExtractor:
             "attributePattern과 대응하지 "
             "않는 설정은 가까운 schema로 추측하지 말고 후보에서 제외하세요.\n\n"
             "character_setting_schemas:\n"
-            f"{json.dumps(schema_summary, ensure_ascii=False, indent=2)}\n\n"
-            f"metadata:\n{json.dumps(metadata, ensure_ascii=False)}\n\n" # Python dict를 JSON 문자열로 바꿈
+            f"{schema_summary_json}\n\n"
+            f"metadata:\n{json.dumps(metadata, ensure_ascii=False, sort_keys=True)}\n\n"
             f"chunk_text:\n{chunk_text}"
         )
+
+
+def _serialize_schema_hints(
+    schema_hints: tuple[CharacterSettingSchemaHint, ...],
+) -> str:
+    # DB 조회 순서와 aliases 순서가 달라도 논리적으로 같은 schema는 같은 prefix를 만든다.
+    schema_summary = [
+        {
+            "schemaKey": hint.schema_key,
+            "displayName": hint.display_name,
+            "attributePattern": hint.attribute_pattern,
+            "aliases": sorted(hint.aliases),
+            "valueType": hint.value_type,
+        }
+        for hint in sorted(schema_hints, key=lambda hint: hint.schema_key)
+    ]
+    return json.dumps(
+        schema_summary,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    )
+
+
+def _build_schema_cache_key(schema_summary_json: str) -> str:
+    schema_fingerprint = hashlib.sha256(schema_summary_json.encode("utf-8")).hexdigest()[:16]
+    return f"{SETTING_EXTRACTION_CACHE_KEY_VERSION}:{schema_fingerprint}"
 
 
 def _parse_json_object(text: str) -> dict:

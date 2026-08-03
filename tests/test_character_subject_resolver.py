@@ -387,6 +387,7 @@ class FakeSubjectResolutionClient:
         self.call_count = 0
         self.last_system_prompt = ""
         self.last_user_prompt = ""
+        self.last_prompt_cache_key = None
 
     def create_text_response(
         self,
@@ -394,10 +395,13 @@ class FakeSubjectResolutionClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         self.call_count += 1
         self.last_system_prompt = system_prompt
         self.last_user_prompt = user_prompt
+        self.last_prompt_cache_key = prompt_cache_key
+        assert prompt_cache_key == "subject-resolution:v1"
         return LlmTextResponse(text=self.response_text)
 
 

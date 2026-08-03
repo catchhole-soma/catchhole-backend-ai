@@ -112,6 +112,52 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
     assert "time.<시간 또는 사건명>" not in llm_client.system_prompt
     assert "skill.<스킬명>" in llm_client.system_prompt
     assert "item.<아이템명>" in llm_client.system_prompt
+    assert llm_client.prompt_cache_key is not None
+
+
+def test_extract_from_chunk_canonicalizes_schema_order_for_prompt_cache() -> None:
+    first_client = RecordingTextGenerationClient()
+    second_client = RecordingTextGenerationClient()
+    first_schema = CharacterSettingSchemaHint(
+        schema_key="profile.species",
+        display_name="종족",
+        attribute_pattern=None,
+        aliases=("species", "종족"),
+        value_type="STRING",
+    )
+    second_schema = CharacterSettingSchemaHint(
+        schema_key="stats.strength",
+        display_name="근력",
+        attribute_pattern=None,
+        aliases=("strength", "근력"),
+        value_type="NUMBER",
+    )
+
+    CharacterSettingExtractor(llm_client=first_client, max_attempts=1).extract_from_chunk(
+        source_chunk_id=CHUNK_ID,
+        chunk_text="카엘은 인간이며 근력은 10이다.",
+        schema_hints=(first_schema, second_schema),
+    )
+    CharacterSettingExtractor(llm_client=second_client, max_attempts=1).extract_from_chunk(
+        source_chunk_id=CHUNK_ID,
+        chunk_text="카엘은 인간이며 근력은 10이다.",
+        schema_hints=(
+            second_schema,
+            CharacterSettingSchemaHint(
+                schema_key=first_schema.schema_key,
+                display_name=first_schema.display_name,
+                attribute_pattern=first_schema.attribute_pattern,
+                aliases=tuple(reversed(first_schema.aliases)),
+                value_type=first_schema.value_type,
+            ),
+        ),
+    )
+
+    assert first_client.user_prompt == second_client.user_prompt
+    assert first_client.prompt_cache_key == second_client.prompt_cache_key
+    assert first_client.user_prompt.index('"profile.species"') < first_client.user_prompt.index(
+        '"stats.strength"'
+    )
 
 
 def test_extract_from_chunk_rejects_empty_schema_hints_before_llm_call() -> None:
@@ -245,11 +291,14 @@ class FakeTextGenerationClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         # source_chunk_id는 LLM이 만들 값이 아니므로 prompt에 노출하지 않는다.
         assert "JSON만 반환하세요." in system_prompt
         assert str(CHUNK_ID) not in user_prompt
         assert max_output_tokens == 4000
+        assert prompt_cache_key is not None
+        assert prompt_cache_key.startswith("setting-extraction:v1:")
         return LlmTextResponse(
             text="""
             {
@@ -281,6 +330,7 @@ class RecordingTextGenerationClient:
     def __init__(self) -> None:
         self.system_prompt = ""
         self.user_prompt = ""
+        self.prompt_cache_key = None
         self.call_count = 0
 
     def create_text_response(
@@ -289,10 +339,12 @@ class RecordingTextGenerationClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         self.call_count += 1
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
+        self.prompt_cache_key = prompt_cache_key
         return LlmTextResponse(text='{"candidates": []}')
 
 
@@ -307,6 +359,7 @@ class RetryThenSuccessClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         self.call_count += 1
         if self.call_count == 1:
@@ -316,6 +369,7 @@ class RetryThenSuccessClient:
             user_prompt=user_prompt,
             model=model,
             max_output_tokens=max_output_tokens,
+            prompt_cache_key=prompt_cache_key,
         )
 
 
@@ -330,6 +384,7 @@ class MissingFieldThenSuccessClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         self.call_count += 1
         if self.call_count == 1:
@@ -362,6 +417,7 @@ class MissingFieldThenSuccessClient:
             user_prompt=user_prompt,
             model=model,
             max_output_tokens=max_output_tokens,
+            prompt_cache_key=prompt_cache_key,
         )
 
 
@@ -375,6 +431,7 @@ class WhitespaceEntityNameThenSuccessClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         self.call_count += 1
         if self.call_count == 1:
@@ -409,6 +466,7 @@ class WhitespaceEntityNameThenSuccessClient:
             user_prompt=user_prompt,
             model=model,
             max_output_tokens=max_output_tokens,
+            prompt_cache_key=prompt_cache_key,
         )
 
 
@@ -423,6 +481,7 @@ class AlwaysInvalidJsonClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         self.call_count += 1
         return LlmTextResponse(text="이 응답은 끝까지 JSON이 아닙니다.")
@@ -439,6 +498,7 @@ class AlwaysMissingFieldClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         self.call_count += 1
         return LlmTextResponse(

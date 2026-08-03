@@ -23,6 +23,8 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
 - `openai_client.py`
   - OpenAI Responses API를 호출합니다.
   - `LLM_API_KEY`, `LLM_MODEL`, `OPENAI_RESPONSES_API_URL` 설정을 사용합니다.
+  - 같은 정적 prompt prefix를 공유하는 호출에는 안정적인 `prompt_cache_key`를 전달합니다.
+  - debug 로그에는 prompt 본문 없이 cached input 필드의 존재 여부와 token usage만 남깁니다.
   - 응답 텍스트와 token usage를 `LlmTextResponse`로 반환합니다.
 - `responses.py`
   - LLM 호출 결과를 내부에서 전달하기 위한 `dataclass` 값 객체를 둡니다.
