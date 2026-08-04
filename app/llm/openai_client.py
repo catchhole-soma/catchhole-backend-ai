@@ -70,8 +70,12 @@ class OpenAIResponsesClient:
         # 같은 정적 prefix를 공유하는 요청만 동일한 key를 사용해 cache routing을 돕는다.
         if prompt_cache_key is not None:
             request_body["prompt_cache_key"] = prompt_cache_key
-        if self.reasoning_effort is not None and _supports_reasoning(effective_model):
-            request_body["reasoning"] = {"effort": self.reasoning_effort}
+        effective_reasoning_effort = _resolve_reasoning_effort(
+            effective_model,
+            self.reasoning_effort,
+        )
+        if effective_reasoning_effort is not None:
+            request_body["reasoning"] = {"effort": effective_reasoning_effort}
 
         response = self.http_client.post(
             self.responses_api_url,
@@ -125,3 +129,13 @@ def _supports_reasoning(model: str) -> bool:
     """Responses API에서 reasoning 설정을 받는 현재 사용 모델 계열만 허용한다."""
 
     return model.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _resolve_reasoning_effort(model: str, configured_effort: str | None) -> str | None:
+    """모델 전용 기본값이 호환되지 않는 override 요청에는 추론 강도를 상속하지 않는다."""
+
+    if configured_effort is None or not _supports_reasoning(model):
+        return None
+    if configured_effort == "none" and not model.startswith("gpt-5.6"):
+        return None
+    return configured_effort

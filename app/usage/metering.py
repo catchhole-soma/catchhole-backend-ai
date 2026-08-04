@@ -2,16 +2,18 @@ from collections.abc import Sequence
 from functools import lru_cache
 import logging
 import math
-from typing import Protocol
+from typing import Protocol, TypeVar
 from uuid import UUID, uuid4
 
 import httpx
 import tiktoken
 
+from app.embeddings.exceptions import EmbeddingResponseValidationError
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.responses import LlmTextResponse
 
 logger = logging.getLogger(__name__)
+TException = TypeVar("TException", bound=BaseException)
 
 
 # 실제 원장을 소유한 Spring 내부 API에 기대하는 예약·정산·해제 규격
@@ -167,7 +169,7 @@ class MeteredEmbeddingClient:
             response = self.delegate.create_embeddings(inputs)
         except Exception as exc:
             # 실패 응답의 usage 유무에 따라 LLM 호출과 동일한 정산 정책을 적용한다.
-            usage = _usage_from_http_error(exc)
+            usage = _usage_from_embedding_error(exc)
             _finalize_failed_provider_request(self.ledger, request_id, usage)
             raise
 
@@ -269,13 +271,31 @@ def _usage_from_http_error(exc: Exception) -> tuple[int, int, int] | None:
     return input_tokens, cached_tokens if isinstance(cached_tokens, int) else 0, output_tokens
 
 
+def _usage_from_embedding_error(exc: Exception) -> tuple[int, int, int] | None:
+    """성공 응답 검증 오류와 HTTP 오류에서 provider가 보고한 임베딩 사용량을 찾는다."""
+
+    validation_error = _find_exception(exc, EmbeddingResponseValidationError)
+    if validation_error is not None and isinstance(validation_error.input_token_count, int):
+        return validation_error.input_token_count, 0, 0
+    return _usage_from_http_error(exc)
+
+
 def _find_http_status_error(exc: Exception) -> httpx.HTTPStatusError | None:
     """도메인 예외로 감싼 provider HTTP 오류까지 원인 체인에서 찾는다."""
+
+    return _find_exception(exc, httpx.HTTPStatusError)
+
+
+def _find_exception(
+    exc: BaseException,
+    exception_type: type[TException],
+) -> TException | None:
+    """원인 체인에서 요청한 예외 타입을 순환 없이 찾는다."""
 
     current: BaseException | None = exc
     visited: set[int] = set()
     while current is not None and id(current) not in visited:
-        if isinstance(current, httpx.HTTPStatusError):
+        if isinstance(current, exception_type):
             return current
         visited.add(id(current))
         current = current.__cause__ or current.__context__

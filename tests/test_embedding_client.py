@@ -6,7 +6,10 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.embeddings.client import OpenAIEmbeddingsClient
-from app.embeddings.exceptions import RecoverableEmbeddingProviderError
+from app.embeddings.exceptions import (
+    EmbeddingResponseValidationError,
+    RecoverableEmbeddingProviderError,
+)
 
 
 def test_create_embeddings_calls_openai_api_and_orders_response_by_index() -> None:
@@ -125,13 +128,16 @@ def test_create_embeddings_rejects_dimension_mismatch() -> None:
             json={
                 "data": [{"index": 0, "embedding": [0.1, 0.2]}],
                 "model": "text-embedding-3-small",
+                "usage": {"prompt_tokens": 12},
             },
             request=request,
         ),
     )
 
-    with pytest.raises(ValueError, match="dimensions"):
+    with pytest.raises(EmbeddingResponseValidationError, match="dimensions") as exc_info:
         client.create_embedding("query")
+
+    assert exc_info.value.input_token_count == 12
 
 
 @pytest.mark.parametrize(

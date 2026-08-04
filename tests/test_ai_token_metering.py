@@ -5,7 +5,10 @@ import pytest
 
 import app.usage.metering as metering
 from app.embeddings.responses import EmbeddingBatchResponse
-from app.embeddings.exceptions import RecoverableEmbeddingProviderError
+from app.embeddings.exceptions import (
+    EmbeddingResponseValidationError,
+    RecoverableEmbeddingProviderError,
+)
 from app.llm.responses import LlmTextResponse
 from app.usage.metering import (
     MeteredEmbeddingClient,
@@ -140,6 +143,25 @@ def test_wrapped_embedding_http_error_settles_reported_usage() -> None:
     )
 
     with pytest.raises(RecoverableEmbeddingProviderError):
+        client.create_embeddings(["첫 청크"])
+
+    request_id = ledger.reservations[0]["request_id"]
+    assert ledger.settlements == [(request_id, 42, 0, 0, "FAILURE")]
+    assert ledger.releases == []
+
+
+def test_embedding_validation_error_settles_reported_usage() -> None:
+    ledger = FakeLedger()
+    client = MeteredEmbeddingClient(
+        delegate=FailingEmbeddingClient(
+            EmbeddingResponseValidationError("invalid dimensions", input_token_count=42)
+        ),
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        model_name="text-embedding-3-small",
+    )
+
+    with pytest.raises(EmbeddingResponseValidationError, match="invalid dimensions"):
         client.create_embeddings(["첫 청크"])
 
     request_id = ledger.reservations[0]["request_id"]
