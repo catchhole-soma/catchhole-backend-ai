@@ -14,9 +14,11 @@ from app.analysis.character_subject_resolver import (
     SubjectResolutionResult,
 )
 from app.clients.spring_worker_client import SpringWorkerClient
+from app.core.config import get_settings
 from app.db.session import get_session_maker
 from app.domain.enums import AnalysisStep, EpisodeProcessingStatus
 from app.embeddings.exceptions import RecoverableEmbeddingProviderError
+from app.embeddings.client import OpenAIEmbeddingsClient
 from app.embeddings.services.episode_chunk_embedding import (
     EpisodeChunkEmbeddingResult,
     EpisodeChunkEmbeddingService,
@@ -30,6 +32,8 @@ from app.services.setting_candidate_service import (
     SettingCandidateService,
 )
 from app.storage.s3 import S3TextObjectStorage
+from app.llm.openai_client import OpenAIResponsesClient
+from app.usage.metering import MeteredEmbeddingClient, MeteredTextGenerationClient
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +81,33 @@ class SpringWorkerApi(Protocol):
 
     # 분석 중 예외가 발생하면 Spring에 실패 사유를 보고한다.
     def fail(self, analysis_job_id: UUID, error_message: str) -> None:
+        pass
+
+    # 실제 provider 호출 전에 사용자 잔여 한도에서 예상 최대 토큰을 예약한다.
+    def reserve_ai_tokens(
+        self,
+        request_id: UUID,
+        analysis_job_id: UUID,
+        purpose: str,
+        attempt: int,
+        model_name: str,
+        reserved_tokens: int,
+    ) -> None:
+        pass
+
+    # provider 응답 usage를 실제 사용량으로 확정하고 남은 예약량을 반환한다.
+    def settle_ai_tokens(
+        self,
+        request_id: UUID,
+        input_tokens: int,
+        cached_input_tokens: int,
+        output_tokens: int,
+        outcome: str,
+    ) -> None:
+        pass
+
+    # 실제 사용량을 알 수 없는 호출의 예약량을 전액 반환한다.
+    def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
         pass
 
 
@@ -227,6 +258,10 @@ class AnalysisJobWorker:
             )
             for schema in payload.character_setting_schemas
         )
+        # 실제 provider 호출 서비스는 job ID가 포함된 계량 client로 job마다 한 번 구성한다.
+        # 테스트에서 주입한 fake 서비스는 그대로 재사용해 기존 단위 테스트 경계를 유지한다.
+        setting_extractor = self._get_setting_extractor(payload.analysis_job_id)
+        subject_resolver = self._get_subject_resolver(payload.analysis_job_id)
 
         episode = payload.episode
         # 1. Episode.content_s3_key 기준으로 S3 원문을 읽고 episode_chunks를 재생성한다.
@@ -237,12 +272,13 @@ class AnalysisJobWorker:
         chunk_count += len(chunks)
 
         # 2. MVP 기본값에서는 임베딩 생성을 생략하고 설정 후보 추출을 계속한다.
-        # 기능이 활성화된 경우에만 기존 임베딩 생성·실패 정책을 적용한다.
+        # 기능이 활성화된 경우에만 계량 client를 구성하고 기존 임베딩 생성·실패 정책을 적용한다.
         if self.embedding_generation_enabled:
+            embedding_service = self._get_episode_chunk_embedding_service(
+                payload.analysis_job_id
+            )
             try:
-                embedding_result = (
-                    self._get_episode_chunk_embedding_service().embed_chunks(chunks)
-                )
+                embedding_result = embedding_service.embed_chunks(chunks)
                 embedded_chunk_count += embedding_result.embedded_chunk_count
             except RecoverableEmbeddingProviderError:
                 embedding_failed_chunk_count += len(chunks)
@@ -263,7 +299,7 @@ class AnalysisJobWorker:
 
         # 3. 저장된 chunk를 LLM 추출기에 넘겨 설정 후보를 생성한다.
         for index, chunk in enumerate(chunks):
-            extraction_result = self._get_setting_extractor().extract_from_chunk(
+            extraction_result = setting_extractor.extract_from_chunk(
                 source_chunk_id=chunk.id,
                 chunk_text=chunk.chunk_text,
                 episode_no=episode.episode_no,
@@ -278,7 +314,7 @@ class AnalysisJobWorker:
             )
             # 현재 chunk에서 나온 후보 중 "나/그녀/미상"처럼 주체가 풀리지 않은 후보만
             # previous/current/next chunk 문맥으로 한 번 더 판단한다.
-            subject_resolution_result = self._get_subject_resolver().resolve_candidates(
+            subject_resolution_result = subject_resolver.resolve_candidates(
                 context=SubjectResolutionChunkContext(
                     # 현재 chunk의 앞뒤 텍스트만 꺼내 resolver 입력으로 넘긴다.
                     previous_chunk_text=chunks[index - 1].chunk_text if index > 0 else None,
@@ -342,24 +378,62 @@ class AnalysisJobWorker:
         return self._chunking_service
 
     # 저장된 청크의 벡터를 생성하고 episode_chunks에 반영할 서비스를 초기화한다.
-    def _get_episode_chunk_embedding_service(self) -> EpisodeChunkEmbeddingApi:
-        if self._episode_chunk_embedding_service is None:
-            self._episode_chunk_embedding_service = EpisodeChunkEmbeddingService(
-                session_factory=get_session_maker(),
-            )
-        return self._episode_chunk_embedding_service
+    def _get_episode_chunk_embedding_service(
+        self,
+        analysis_job_id: UUID,
+    ) -> EpisodeChunkEmbeddingApi:
+        if self._episode_chunk_embedding_service is not None:
+            return self._episode_chunk_embedding_service
+
+        settings = get_settings()
+        metered_client = MeteredEmbeddingClient(
+            delegate=OpenAIEmbeddingsClient.from_settings(settings),
+            ledger=self.spring_client,
+            analysis_job_id=analysis_job_id,
+            model_name=settings.embedding_model,
+        )
+        return EpisodeChunkEmbeddingService(
+            session_factory=get_session_maker(),
+            embedding_client=metered_client,
+        )
 
     # llm에 넣을 프롬프트와 api호출을 할 서비스(CharacterSettingExtractor)를 초기화 하는 작업만 한다.
-    def _get_setting_extractor(self) -> SettingExtractorApi:
-        if self._setting_extractor is None:
-            self._setting_extractor = CharacterSettingExtractor(model=self.model_name)
-        return self._setting_extractor
+    def _get_setting_extractor(self, analysis_job_id: UUID) -> SettingExtractorApi:
+        if self._setting_extractor is not None:
+            return self._setting_extractor
 
-    def _get_subject_resolver(self) -> SubjectResolverApi:
-        if self._subject_resolver is None:
-            # 구체 entity_name을 얻지 못한 후보의 주체 해소 resolver를 필요할 때 초기화한다.
-            self._subject_resolver = CharacterSubjectResolver(model=self.model_name)
-        return self._subject_resolver
+        settings = get_settings()
+        model_name = self.model_name or settings.llm_model
+        metered_client = MeteredTextGenerationClient(
+            delegate=OpenAIResponsesClient.from_settings(settings),
+            ledger=self.spring_client,
+            analysis_job_id=analysis_job_id,
+            purpose="SETTING_EXTRACTION",
+            default_model=model_name,
+        )
+        return CharacterSettingExtractor(
+            llm_client=metered_client,
+            model=model_name,
+        )
+
+    def _get_subject_resolver(self, analysis_job_id: UUID) -> SubjectResolverApi:
+        if self._subject_resolver is not None:
+            return self._subject_resolver
+
+        settings = get_settings()
+        model_name = self.model_name or settings.llm_model
+        metered_client = MeteredTextGenerationClient(
+            delegate=OpenAIResponsesClient.from_settings(settings),
+            ledger=self.spring_client,
+            analysis_job_id=analysis_job_id,
+            purpose="SUBJECT_RESOLUTION",
+            default_model=model_name,
+        )
+        # 구체 entity_name을 얻지 못한 후보의 주체 해소 호출도 별도 request로 정산한다.
+        return CharacterSubjectResolver(
+            llm_client=metered_client,
+            model=model_name,
+        )
 
     # 검증된 설정 후보를 setting_candidates 테이블에 저장할 서비스를 필요할 때 초기화한다.
     def _get_setting_candidate_service(self) -> SettingCandidateService:

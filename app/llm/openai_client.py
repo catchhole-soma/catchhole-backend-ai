@@ -1,7 +1,12 @@
+import logging
+
 import httpx
 
 from app.core.config import Settings, get_settings
+from app.llm.exceptions import LlmResponseValidationError
 from app.llm.responses import LlmTextResponse
+
+logger = logging.getLogger(__name__)
 
 
 # "OpenAI Responses API 호출만" 담당하는 client
@@ -11,6 +16,7 @@ class OpenAIResponsesClient:
         api_key: str, #OpenAi 키
         model: str, # 기본 모델명
         responses_api_url: str, # OpenAI Responses API 주소
+        reasoning_effort: str | None = None, # GPT-5.6 추론 강도
         http_client: httpx.Client | None = None, #실제 HTTP 요청 도구
     ) -> None:
         self.api_key = api_key
@@ -18,6 +24,7 @@ class OpenAIResponsesClient:
         self.model = model
         # 기본값은 https://api.openai.com/v1/responses, 테스트에서는 fake URL을 넣을 수 있음
         self.responses_api_url = responses_api_url
+        self.reasoning_effort = reasoning_effort
         # 실제 HTTP 요청을 보내는 도구, 테스트에서는 MockTransport가 들어간 client를 주입
         self.http_client = http_client or httpx.Client(timeout=120)
 
@@ -29,6 +36,7 @@ class OpenAIResponsesClient:
             api_key=settings.llm_api_key,
             model=settings.llm_model,
             responses_api_url=settings.openai_responses_api_url,
+            reasoning_effort=settings.llm_reasoning_effort,
         )
 
     def create_text_response(
@@ -37,50 +45,101 @@ class OpenAIResponsesClient:
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         if not self.api_key:
             raise ValueError("LLM_API_KEY is required.")
 
         # 실제 OpenAi API 요청을 보내는 부분
         # system_prompt는 역할/규칙, user_prompt는 실제 청크 입력을 담음
+        effective_model = model or self.model
+        request_body = {
+            # 호출별 model이 있으면 그걸 쓰고, 없으면 Settings의 기본 모델을 쓴다.
+            "model": effective_model,
+            "input": [
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": system_prompt}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": user_prompt}],
+                },
+            ],
+            "max_output_tokens": max_output_tokens,
+        }
+        # 같은 정적 prefix를 공유하는 요청만 동일한 key를 사용해 cache routing을 돕는다.
+        if prompt_cache_key is not None:
+            request_body["prompt_cache_key"] = prompt_cache_key
+        effective_reasoning_effort = _resolve_reasoning_effort(
+            effective_model,
+            self.reasoning_effort,
+        )
+        if effective_reasoning_effort is not None:
+            request_body["reasoning"] = {"effort": effective_reasoning_effort}
+
         response = self.http_client.post(
             self.responses_api_url,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                # 호출별 model이 있으면 그걸 쓰고, 없으면 Settings의 기본 모델을 쓴다.
-                "model": model or self.model,
-                "input": [
-                    {
-                        "role": "system",
-                        "content": [{"type": "input_text", "text": system_prompt}],
-                    },
-                    {
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": user_prompt}],
-                    },
-                ],
-                "max_output_tokens": max_output_tokens,
-            },
+            json=request_body,
         )
         # 4xx/5xx 응답이면 httpx.HTTPStatusError를 발생
         response.raise_for_status()
         # OpenAI 응답 JSON을 dict로 바꾼 뒤, 필요한 text와 token usage만 내부 schema로 정리
         payload = response.json()
-        usage = payload.get("usage") or {}
+        raw_usage = payload.get("usage") or {}
+        usage = raw_usage if isinstance(raw_usage, dict) else {}
+        input_details = usage.get("input_tokens_details") or {}
+        input_token_count = usage.get("input_tokens")
+        cached_input_token_count = (
+            input_details.get("cached_tokens") if isinstance(input_details, dict) else None
+        )
+        output_token_count = usage.get("output_tokens")
+        logger.debug(
+            "OpenAI token usage received. input_tokens=%s output_tokens=%s "
+            "cached_tokens_present=%s cached_tokens=%s input_tokens_details=%s",
+            usage.get("input_tokens"),
+            usage.get("output_tokens"),
+            isinstance(input_details, dict) and "cached_tokens" in input_details,
+            input_details.get("cached_tokens") if isinstance(input_details, dict) else None,
+            input_details,
+        )
+        try:
+            output_text = self._extract_output_text(payload)
+        except (AttributeError, TypeError, ValueError) as exc:
+            # HTTP 200 응답 구조가 잘못되어도 이미 과금된 provider usage는 정산할 수 있게 보존한다.
+            raise LlmResponseValidationError(
+                str(exc),
+                input_token_count=(
+                    input_token_count if isinstance(input_token_count, int) else None
+                ),
+                cached_input_token_count=(
+                    cached_input_token_count
+                    if isinstance(cached_input_token_count, int)
+                    else None
+                ),
+                output_token_count=(
+                    output_token_count if isinstance(output_token_count, int) else None
+                ),
+            ) from exc
         return LlmTextResponse(
-            text=self._extract_output_text(payload),
-            input_token_count=usage.get("input_tokens"),
-            output_token_count=usage.get("output_tokens"),
+            text=output_text,
+            input_token_count=input_token_count,
+            cached_input_token_count=cached_input_token_count,
+            output_token_count=output_token_count,
             raw_response=payload,
         )
 
     def _extract_output_text(self, payload: dict) -> str:
         # Responses API가 output_text를 바로 주는 경우 먼저 사용
-        if payload.get("output_text"):
-            return payload["output_text"]
+        direct_output_text = payload.get("output_text")
+        if direct_output_text:
+            if not isinstance(direct_output_text, str):
+                raise TypeError("OpenAI output_text must be a string.")
+            return direct_output_text
 
         # 일부 응답 형태는 output[].content[] 안에 output_text가 들어올 수 있어서 fallback으로 처리
         output_texts: list[str] = []
@@ -90,3 +149,19 @@ class OpenAIResponsesClient:
                     output_texts.append(content["text"])
 
         return "\n".join(output_texts).strip()
+
+
+def _supports_reasoning(model: str) -> bool:
+    """Responses API에서 reasoning 설정을 받는 현재 사용 모델 계열만 허용한다."""
+
+    return model.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _resolve_reasoning_effort(model: str, configured_effort: str | None) -> str | None:
+    """모델 전용 기본값이 호환되지 않는 override 요청에는 추론 강도를 상속하지 않는다."""
+
+    if configured_effort is None or not _supports_reasoning(model):
+        return None
+    if configured_effort == "none" and not model.startswith("gpt-5.6"):
+        return None
+    return configured_effort

@@ -128,6 +128,7 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `AWS_SQS_QUEUE_URL`: 분석 잡 큐를 붙일 경우 사용할 SQS URL
 - `LLM_API_KEY`: 설정 추출/검증에 사용할 LLM API 키
 - `LLM_MODEL`: 설정 추출에 사용할 LLM 모델명
+- `LLM_REASONING_EFFORT`: GPT-5.6 추론 강도. MVP 기본값은 `none`이며 품질 평가 후 상향합니다.
 - `OPENAI_RESPONSES_API_URL`: OpenAI Responses API endpoint
 - `EMBEDDING_GENERATION_ENABLED`: 신규 청크 임베딩 생성 여부. MVP 기본값은 `false`이며 `true`일 때만 Worker가 Embeddings API를 호출합니다.
 - `EMBEDDING_MODEL`: 청크와 검색 query에 공통으로 사용할 embedding 모델명
@@ -162,6 +163,7 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `app/schemas/README.md`: FastAPI/Spring 내부 API JSON schema
 - `app/services/README.md`: 유스케이스 흐름 조율
 - `app/storage/README.md`: S3 같은 외부 object storage 접근
+- `app/usage/README.md`: AI 요청별 토큰 예약·정산 wrapper
 - `app/worker/README.md`: Spring claim 기반 Worker 실행 흐름과 상태/단계 정책
 - `app/queue/README.md`: queue consumer를 도입할 때의 책임
 

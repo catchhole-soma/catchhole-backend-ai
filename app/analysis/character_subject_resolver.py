@@ -20,6 +20,7 @@ from app.llm.responses import LlmTextResponse
 DEFAULT_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "llm" / "prompts" / "character_subject_resolution.md"
 )
+SUBJECT_RESOLUTION_CACHE_KEY = "subject-resolution:v1"
 
 
 class TextGenerationClient(Protocol):
@@ -31,6 +32,7 @@ class TextGenerationClient(Protocol):
         user_prompt: str,
         model: str | None = None,
         max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
         pass
 
@@ -189,6 +191,7 @@ class CharacterSubjectResolver:
             user_prompt=user_prompt,
             model=self.model,
             max_output_tokens=1000,
+            prompt_cache_key=SUBJECT_RESOLUTION_CACHE_KEY,
         )
         return SubjectResolutionResponse.model_validate(_parse_json_object(response.text))
 

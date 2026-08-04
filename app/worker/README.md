@@ -151,10 +151,10 @@ Spring claim
 -> progress 보고
 -> characterSettingSchemas를 immutable schema hint로 변환
 -> 단일 episode S3 원문 청킹
--> flag가 켜진 경우에만 저장 청크 batch 임베딩 및 DB 반영
--> chunk별 캐릭터 설정 후보 추출
+-> flag가 켜진 경우에만 저장 청크 batch 임베딩 전 토큰 예약·호출 후 정산
+-> chunk별 캐릭터 설정 후보 추출 전 토큰 예약·호출 후 정산
 -> evidence quote 위치 보정
--> 구체적이지 않은 entity_name 후보 subject fallback
+-> 구체적이지 않은 entity_name 후보 subject fallback 전 토큰 예약·호출 후 정산
 -> setting_candidates 교체 저장
 -> summaryJson 생성
 -> Spring complete 보고
@@ -167,7 +167,13 @@ Spring claim
   - claim의 `characterSettingSchemas`를 Backend가 보낸 순서와 중복을 유지한 immutable schema hint tuple로 job당 한 번 변환해 모든 chunk 추출에 전달합니다.
   - `characterSettingSchemas`가 비어 있으면 등록 schema 기준의 추출을 수행할 수 없으므로, S3 원문 조회와 청크·후보 교체 전에 job을 실패 보고합니다.
   - 해당 episode의 청킹과 chunk별 설정 추출기를 호출하고, feature flag가 켜진 경우에만 임베딩 서비스를 호출합니다.
+  - 실제 Worker 실행에서는 호출할 raw LLM·embedding client를 job ID가 결합된 metered wrapper로 감싸고, 테스트에서 주입한 fake service는 그대로 재사용합니다.
   - 생성·생략된 episode/chunk/embedding/candidate 개수를 `summaryJson`으로 모아 Spring에 완료 보고합니다.
+- `MeteredTextGenerationClient`, `MeteredEmbeddingClient`
+  - 각 provider 호출마다 Spring 원장에 예상 최대 토큰을 먼저 예약합니다.
+  - 성공 또는 usage가 포함된 실패는 실제 token 수로 정산하고, usage를 알 수 없는 실패는 예약을 해제합니다.
+  - prompt와 응답 본문은 계량 API에 전달하지 않습니다.
+  - 자세한 계약은 [usage README](../usage/README.md)를 따릅니다.
 - `EpisodeS3ChunkingService`
   - episode_id로 DB의 episode를 조회합니다.
   - episode의 `content_s3_key`로 S3 원문을 읽습니다.

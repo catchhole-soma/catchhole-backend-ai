@@ -11,8 +11,8 @@ Spring claim
 -> claim payload의 단일 episode/knownCharacters/characterSettingSchemas 수신
 -> 해당 episode의 S3 원문 raw text 조회
 -> 원문을 변경하지 않고 paragraph/chunk offset 계산
--> flag가 켜진 경우에만 chunk_text batch 임베딩 및 episode_chunks 갱신
--> chunk_text를 LLM에 전달
+-> flag가 켜진 경우에만 batch 임베딩 토큰 예약·실제량 정산 및 episode_chunks 갱신
+-> chunk_text LLM 토큰 예약·실제량 정산
 -> LLM 설정 후보 JSON 파싱/검증
 -> quote를 chunk_text에서 다시 찾아 evidence offset 보정
 -> 구체적이지 않은 entity_name 후보를 LLM subject fallback으로 해소
@@ -20,6 +20,8 @@ Spring claim
 -> setting_candidates 교체 저장
 -> Spring complete/fail 보고
 ```
+
+실제로 실행하는 모든 AI provider 호출은 `app/usage` wrapper를 통과합니다. 설정 추출 재시도와 subject fallback도 각각 별도 요청으로 예약·정산하며, 임베딩 flag가 꺼져 있으면 임베딩 예약과 provider 호출을 모두 생략합니다. prompt와 응답 본문은 Spring 사용량 원장에 보내지 않습니다. Spring은 이 원장의 `SETTLED` 행을 합산해 최종 analysis job input/output token 수를 기록합니다.
 
 Python Worker는 `analysis_jobs.status`를 DB에서 직접 바꾸지 않습니다. 상태 변경은 Spring 내부 API에 보고하고, Python은 분석에 필요한 `episode_chunks`와 `setting_candidates` 저장을 담당합니다.
 
@@ -645,14 +647,13 @@ save_items 전체 수집
 
 `subjectFallbackUnresolvedCount`에는 LLM fallback 정상 응답으로도 구체 이름을 찾지 못해 `미상`으로 보존된 후보만 포함됩니다. malformed 응답이나 candidate ID 누락·중복·추가는 분석 실패이므로 이 개수에 포함하지 않습니다.
 
-현재 토큰 수:
+현재 토큰 계측:
 
 - OpenAI Responses Client는 설정 추출과 subject fallback 응답의 입력·출력 token usage를 `LlmTextResponse`에 담습니다.
 - OpenAI Embeddings Client도 임베딩 입력 token usage를 `EmbeddingBatchResponse`와 `EpisodeChunkEmbeddingResult`에 담습니다.
-- 하지만 `CharacterSettingExtractor`와 `CharacterSubjectResolver`는 현재 응답 text만 사용하고 token usage를 Worker로 전달하지 않으며, Worker도 임베딩 token usage를 합산하지 않습니다.
-- 따라서 실제 분석 흐름의 `WorkerRunSummary.input_token_count`, `output_token_count`는 `None`이고, Spring complete 요청과 `analysis_jobs` 토큰 컬럼에도 사용량이 반영되지 않습니다.
-
-후속 토큰 집계 작업에서는 설정 추출의 모든 재시도, subject fallback, 임베딩 호출을 합산해야 합니다. 최종 실패한 분석 작업의 토큰까지 보존하려면 token 필드가 없는 현재 Spring fail API 계약도 함께 검토해야 합니다.
+- 실제 provider client는 `app/usage`의 metered wrapper로 감싸며, 호출 전 예상량을 Spring 원장에 예약하고 호출 후 provider usage로 정산합니다.
+- 설정 추출 재시도와 subject fallback은 호출마다 별도 요청으로 남고, 임베딩은 feature flag가 켜진 경우에만 예약·정산합니다.
+- Spring complete/fail은 해당 Job의 `SETTLED` 원장을 합산해 `analysis_jobs.input_token_count`, `output_token_count`를 확정합니다.
 
 처리 중 예외가 발생하면:
 
@@ -767,7 +768,7 @@ raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터와 매칭 실�
 - fallback의 후보별 입력·응답·해소 실패 사유를 debug JSON, Worker summary, DB 중 어디에 남길지 결정해야 합니다.
 - subject fallback prompt 품질과 호출 단위를 실제 원문으로 검증해야 합니다.
 - quote를 찾지 못해 offset이 null인 후보를 유지할지, 특정 confidence 이하에서는 제외할지 결정해야 합니다.
-- 설정 추출 재시도·subject fallback·임베딩을 포함한 전체 token usage를 `WorkerRunSummary.input_token_count/output_token_count`로 집계하고 Spring 완료 보고에 연결해야 합니다.
+- 프로세스 강제 종료로 `RESERVED` 상태가 남는 요청의 자동 만료·운영 해제 정책을 정해야 합니다.
 - Worker loop에서 단일 job 실패 시 프로세스를 계속 유지할지, 현재처럼 예외를 전파해 중단할지 운영 정책을 정해야 합니다.
 - `NVM-141`: 신규 `episode_chunks` 임베딩 생성·저장, 범용 pgvector Top-K 검색·기본 필터, 실제 PostgreSQL 통합 테스트와 임베딩 실패 유형별 Worker 정책이 구현되었습니다. 실제 OpenAI 기반 샘플 품질 검증은 NVM-143의 query 정책 확정 후 진행하며, 기존 청크 backfill 자동화는 이번 PR에서 제외했습니다.
 - `NVM-143`: `SettingCandidate`를 기준으로 검색 query와 범위를 만들고 직접 근거·기존 fact·Top-K 결과를 조합합니다.

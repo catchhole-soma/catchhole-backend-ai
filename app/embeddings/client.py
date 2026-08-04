@@ -1,7 +1,10 @@
 import httpx
 
 from app.core.config import Settings, get_settings
-from app.embeddings.exceptions import RecoverableEmbeddingProviderError
+from app.embeddings.exceptions import (
+    EmbeddingResponseValidationError,
+    RecoverableEmbeddingProviderError,
+)
 from app.embeddings.responses import EmbeddingBatchResponse
 
 
@@ -100,12 +103,22 @@ class OpenAIEmbeddingsClient:
             raise
 
         payload = response.json()
-        embeddings = self._extract_embeddings(payload, len(inputs))
         usage = payload.get("usage") or {}
+        input_token_count = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        try:
+            embeddings = self._extract_embeddings(payload, len(inputs))
+        except (TypeError, ValueError) as exc:
+            # HTTP 200 응답의 벡터가 잘못되어도 이미 과금된 provider usage는 정산할 수 있게 보존한다.
+            raise EmbeddingResponseValidationError(
+                str(exc),
+                input_token_count=(
+                    input_token_count if isinstance(input_token_count, int) else None
+                ),
+            ) from exc
         return EmbeddingBatchResponse(
             embeddings=embeddings,
             model=payload.get("model") or self.model,
-            input_token_count=usage.get("prompt_tokens"),
+            input_token_count=input_token_count,
             raw_response=payload,
         )
 

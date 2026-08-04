@@ -10,6 +10,9 @@ from app.schemas.worker import (
     WorkerAnalysisJobFailRequest,
     WorkerAnalysisJobPayload,
     WorkerAnalysisJobProgressRequest,
+    AiTokenReleaseRequest,
+    AiTokenReserveRequest,
+    AiTokenSettleRequest,
 )
 
 # Spring 내부 API 인증용 헤더 이름
@@ -74,7 +77,7 @@ class SpringWorkerClient:
         response = self.http_client.patch(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/progress"),
             headers=self._headers(),
-            json=request.model_dump(by_alias=True),
+            json=request.model_dump(by_alias=True, mode="json"),
         )
         # HTTP 응답이 4xx/5xx이면 예외를 발생
         response.raise_for_status()
@@ -109,7 +112,81 @@ class SpringWorkerClient:
             json=request.model_dump(by_alias=True),
         )
         response.raise_for_status()
-        
+
+    # AI provider 호출 전에 예상 최대량을 Spring 원장에 예약한다.
+    # 같은 requestId 재요청은 멱등하므로 일시 장애에는 정산과 동일하게 재시도한다.
+    def reserve_ai_tokens(
+        self,
+        request_id: UUID,
+        analysis_job_id: UUID,
+        purpose: str,
+        attempt: int,
+        model_name: str,
+        reserved_tokens: int,
+    ) -> None:
+        request = AiTokenReserveRequest(
+            request_id=request_id,
+            analysis_job_id=analysis_job_id,
+            purpose=purpose,
+            attempt=attempt,
+            model_name=model_name,
+            reserved_tokens=reserved_tokens,
+        )
+        self._post_usage_update_with_retry(
+            path="/api/internal/v1/ai-token-usages/reserve",
+            payload=request.model_dump(by_alias=True, mode="json"),
+        )
+
+    # provider가 반환한 실제 usage로 예약을 정산하고 남은 예약량을 반환한다.
+    def settle_ai_tokens(
+        self,
+        request_id: UUID,
+        input_tokens: int,
+        cached_input_tokens: int,
+        output_tokens: int,
+        outcome: str,
+    ) -> None:
+        request = AiTokenSettleRequest(
+            input_tokens=input_tokens,
+            cached_input_tokens=cached_input_tokens,
+            output_tokens=output_tokens,
+            outcome=outcome,
+        )
+        self._post_usage_update_with_retry(
+            path=f"/api/internal/v1/ai-token-usages/{request_id}/settle",
+            payload=request.model_dump(by_alias=True),
+        )
+
+    # provider 사용량을 확인할 수 없을 때 기존 예약을 전액 해제한다.
+    def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
+        request = AiTokenReleaseRequest(outcome=outcome)
+        self._post_usage_update_with_retry(
+            path=f"/api/internal/v1/ai-token-usages/{request_id}/release",
+            payload=request.model_dump(by_alias=True),
+        )
+
+    def _post_usage_update_with_retry(self, path: str, payload: dict) -> None:
+        """일시적인 Spring 연결 장애에는 같은 requestId의 멱등 원장 요청을 재시도한다."""
+
+        for attempt in range(3):
+            try:
+                response = self.http_client.post(
+                    self._url(path),
+                    headers=self._headers(),
+                    json=payload,
+                )
+                response.raise_for_status()
+                return
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
+                if attempt == 2:
+                    raise
+            except httpx.HTTPStatusError as exc:
+                retryable = exc.response.status_code in {408, 409, 429} or (
+                    exc.response.status_code >= 500
+                )
+                if not retryable or attempt == 2:
+                    raise
+
     # base_url과 path를 합쳐 실제 요청 URL을 만듦
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
