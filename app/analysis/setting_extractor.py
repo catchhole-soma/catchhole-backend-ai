@@ -186,7 +186,17 @@ def _serialize_schema_hints(
             "aliases": sorted(hint.aliases),
             "valueType": hint.value_type,
         }
-        for hint in sorted(schema_hints, key=lambda hint: hint.schema_key)
+        for hint in sorted(
+            schema_hints,
+            key=lambda hint: (
+                hint.schema_key,
+                hint.display_name,
+                hint.attribute_pattern is not None,
+                hint.attribute_pattern or "",
+                tuple(sorted(hint.aliases)),
+                hint.value_type,
+            ),
+        )
     ]
     return json.dumps(
         schema_summary,

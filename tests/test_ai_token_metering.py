@@ -9,6 +9,7 @@ from app.embeddings.exceptions import (
     EmbeddingResponseValidationError,
     RecoverableEmbeddingProviderError,
 )
+from app.llm.exceptions import LlmResponseValidationError
 from app.llm.responses import LlmTextResponse
 from app.usage.metering import (
     MeteredEmbeddingClient,
@@ -122,6 +123,31 @@ def test_success_without_provider_usage_releases_reservation() -> None:
     request_id = ledger.reservations[0]["request_id"]
     assert ledger.settlements == []
     assert ledger.releases == [(request_id, "USAGE_UNAVAILABLE")]
+
+
+def test_text_validation_error_settles_reported_usage() -> None:
+    ledger = FakeLedger()
+    client = MeteredTextGenerationClient(
+        delegate=FakeTextClient(
+            error=LlmResponseValidationError(
+                "invalid output structure",
+                input_token_count=120,
+                cached_input_token_count=20,
+                output_token_count=30,
+            )
+        ),
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SETTING_EXTRACTION",
+        default_model="gpt-4.1-mini",
+    )
+
+    with pytest.raises(LlmResponseValidationError, match="invalid output structure"):
+        client.create_text_response("규칙", "원고")
+
+    request_id = ledger.reservations[0]["request_id"]
+    assert ledger.settlements == [(request_id, 120, 20, 30, "FAILURE")]
+    assert ledger.releases == []
 
 
 def test_wrapped_embedding_http_error_settles_reported_usage() -> None:

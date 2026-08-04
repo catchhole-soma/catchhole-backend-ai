@@ -4,6 +4,7 @@ import logging
 import httpx
 import pytest
 
+from app.llm.exceptions import LlmResponseValidationError
 from app.llm.openai_client import OpenAIResponsesClient
 
 
@@ -154,6 +155,36 @@ def test_create_text_response_does_not_inherit_none_for_o_series_override() -> N
     request_body = json.loads(requests[0].content)
     assert request_body["model"] == "o3"
     assert "reasoning" not in request_body
+
+
+def test_malformed_success_response_preserves_reported_usage() -> None:
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    status_code=200,
+                    json={
+                        "output": [{"content": "invalid"}],
+                        "usage": {
+                            "input_tokens": 120,
+                            "input_tokens_details": {"cached_tokens": 20},
+                            "output_tokens": 30,
+                        },
+                    },
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(LlmResponseValidationError) as exc_info:
+        client.create_text_response(system_prompt="규칙", user_prompt="원문")
+
+    assert exc_info.value.input_token_count == 120
+    assert exc_info.value.cached_input_token_count == 20
+    assert exc_info.value.output_token_count == 30
 
 
 def test_create_text_response_requires_api_key() -> None:

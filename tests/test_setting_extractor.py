@@ -132,16 +132,30 @@ def test_extract_from_chunk_canonicalizes_schema_order_for_prompt_cache() -> Non
         aliases=("strength", "근력"),
         value_type="NUMBER",
     )
+    work_schema = CharacterSettingSchemaHint(
+        schema_key="stats.strength",
+        display_name="작품 근력",
+        attribute_pattern="stats.*",
+        aliases=("power", "작품 근력"),
+        value_type="NUMBER",
+    )
 
     CharacterSettingExtractor(llm_client=first_client, max_attempts=1).extract_from_chunk(
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 인간이며 근력은 10이다.",
-        schema_hints=(first_schema, second_schema),
+        schema_hints=(first_schema, second_schema, work_schema),
     )
     CharacterSettingExtractor(llm_client=second_client, max_attempts=1).extract_from_chunk(
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 인간이며 근력은 10이다.",
         schema_hints=(
+            CharacterSettingSchemaHint(
+                schema_key=work_schema.schema_key,
+                display_name=work_schema.display_name,
+                attribute_pattern=work_schema.attribute_pattern,
+                aliases=tuple(reversed(work_schema.aliases)),
+                value_type=work_schema.value_type,
+            ),
             second_schema,
             CharacterSettingSchemaHint(
                 schema_key=first_schema.schema_key,

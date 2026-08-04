@@ -3,6 +3,7 @@ import logging
 import httpx
 
 from app.core.config import Settings, get_settings
+from app.llm.exceptions import LlmResponseValidationError
 from app.llm.responses import LlmTextResponse
 
 logger = logging.getLogger(__name__)
@@ -89,8 +90,14 @@ class OpenAIResponsesClient:
         response.raise_for_status()
         # OpenAI 응답 JSON을 dict로 바꾼 뒤, 필요한 text와 token usage만 내부 schema로 정리
         payload = response.json()
-        usage = payload.get("usage") or {}
+        raw_usage = payload.get("usage") or {}
+        usage = raw_usage if isinstance(raw_usage, dict) else {}
         input_details = usage.get("input_tokens_details") or {}
+        input_token_count = usage.get("input_tokens")
+        cached_input_token_count = (
+            input_details.get("cached_tokens") if isinstance(input_details, dict) else None
+        )
+        output_token_count = usage.get("output_tokens")
         logger.debug(
             "OpenAI token usage received. input_tokens=%s output_tokens=%s "
             "cached_tokens_present=%s cached_tokens=%s input_tokens_details=%s",
@@ -100,20 +107,39 @@ class OpenAIResponsesClient:
             input_details.get("cached_tokens") if isinstance(input_details, dict) else None,
             input_details,
         )
+        try:
+            output_text = self._extract_output_text(payload)
+        except (AttributeError, TypeError, ValueError) as exc:
+            # HTTP 200 응답 구조가 잘못되어도 이미 과금된 provider usage는 정산할 수 있게 보존한다.
+            raise LlmResponseValidationError(
+                str(exc),
+                input_token_count=(
+                    input_token_count if isinstance(input_token_count, int) else None
+                ),
+                cached_input_token_count=(
+                    cached_input_token_count
+                    if isinstance(cached_input_token_count, int)
+                    else None
+                ),
+                output_token_count=(
+                    output_token_count if isinstance(output_token_count, int) else None
+                ),
+            ) from exc
         return LlmTextResponse(
-            text=self._extract_output_text(payload),
-            input_token_count=usage.get("input_tokens"),
-            cached_input_token_count=(
-                input_details.get("cached_tokens") if isinstance(input_details, dict) else None
-            ),
-            output_token_count=usage.get("output_tokens"),
+            text=output_text,
+            input_token_count=input_token_count,
+            cached_input_token_count=cached_input_token_count,
+            output_token_count=output_token_count,
             raw_response=payload,
         )
 
     def _extract_output_text(self, payload: dict) -> str:
         # Responses API가 output_text를 바로 주는 경우 먼저 사용
-        if payload.get("output_text"):
-            return payload["output_text"]
+        direct_output_text = payload.get("output_text")
+        if direct_output_text:
+            if not isinstance(direct_output_text, str):
+                raise TypeError("OpenAI output_text must be a string.")
+            return direct_output_text
 
         # 일부 응답 형태는 output[].content[] 안에 output_text가 들어올 수 있어서 fallback으로 처리
         output_texts: list[str] = []

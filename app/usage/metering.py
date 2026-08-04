@@ -10,6 +10,7 @@ import tiktoken
 
 from app.embeddings.exceptions import EmbeddingResponseValidationError
 from app.embeddings.responses import EmbeddingBatchResponse
+from app.llm.exceptions import LlmResponseValidationError
 from app.llm.responses import LlmTextResponse
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,7 @@ class MeteredTextGenerationClient:
             )
         except Exception as exc:
             # 오류 응답에도 usage가 있으면 실제량을 보존하고, 없으면 추측하지 않고 예약을 해제한다.
-            usage = _usage_from_http_error(exc)
+            usage = _usage_from_text_error(exc)
             _finalize_failed_provider_request(self.ledger, request_id, usage)
             raise
 
@@ -277,6 +278,24 @@ def _usage_from_embedding_error(exc: Exception) -> tuple[int, int, int] | None:
     validation_error = _find_exception(exc, EmbeddingResponseValidationError)
     if validation_error is not None and isinstance(validation_error.input_token_count, int):
         return validation_error.input_token_count, 0, 0
+    return _usage_from_http_error(exc)
+
+
+def _usage_from_text_error(exc: Exception) -> tuple[int, int, int] | None:
+    """성공 응답 검증 오류와 HTTP 오류에서 provider가 보고한 텍스트 사용량을 찾는다."""
+
+    validation_error = _find_exception(exc, LlmResponseValidationError)
+    if (
+        validation_error is not None
+        and isinstance(validation_error.input_token_count, int)
+        and isinstance(validation_error.output_token_count, int)
+    ):
+        cached_tokens = validation_error.cached_input_token_count
+        return (
+            validation_error.input_token_count,
+            cached_tokens if isinstance(cached_tokens, int) else 0,
+            validation_error.output_token_count,
+        )
     return _usage_from_http_error(exc)
 
 
