@@ -74,6 +74,19 @@ def test_text_generation_releases_reservation_when_usage_is_unavailable() -> Non
     assert ledger.releases == [(request_id, "USAGE_UNAVAILABLE")]
 
 
+def test_release_failure_does_not_mask_original_provider_error() -> None:
+    provider_error = RecoverableEmbeddingProviderError("temporary provider error")
+    client = MeteredEmbeddingClient(
+        delegate=FailingEmbeddingClient(provider_error),
+        ledger=FailingReleaseLedger(),
+        analysis_job_id=ANALYSIS_JOB_ID,
+        model_name="text-embedding-3-small",
+    )
+
+    with pytest.raises(RecoverableEmbeddingProviderError, match="temporary provider error"):
+        client.create_embeddings(["첫 청크"])
+
+
 def test_embedding_request_is_metered_separately() -> None:
     ledger = FakeLedger()
     client = MeteredEmbeddingClient(
@@ -185,6 +198,11 @@ class FakeLedger:
 
     def release_ai_tokens(self, request_id, outcome) -> None:
         self.releases.append((request_id, outcome))
+
+
+class FailingReleaseLedger(FakeLedger):
+    def release_ai_tokens(self, request_id, outcome) -> None:
+        raise httpx.ConnectError("spring unavailable")
 
 
 class FakeTextClient:

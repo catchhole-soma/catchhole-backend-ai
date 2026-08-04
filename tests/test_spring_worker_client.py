@@ -190,6 +190,54 @@ def test_ai_token_settlement_retries_temporary_spring_failure() -> None:
     }
 
 
+def test_ai_token_reservation_retries_with_same_idempotency_key() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        status_code = 503 if len(requests) < 3 else 200
+        return httpx.Response(status_code=status_code, request=request)
+
+    client = _client(handler)
+    request_id = uuid4()
+
+    client.reserve_ai_tokens(
+        request_id=request_id,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SETTING_EXTRACTION",
+        attempt=1,
+        model_name="gpt-5.6-terra",
+        reserved_tokens=1000,
+    )
+
+    assert len(requests) == 3
+    assert {request.url.path for request in requests} == {
+        "/api/internal/v1/ai-token-usages/reserve"
+    }
+    assert {json.loads(request.content)["requestId"] for request in requests} == {
+        str(request_id)
+    }
+
+
+def test_ai_token_release_retries_temporary_spring_failure() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        status_code = 503 if len(requests) < 3 else 200
+        return httpx.Response(status_code=status_code, request=request)
+
+    client = _client(handler)
+    request_id = uuid4()
+
+    client.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
+
+    assert len(requests) == 3
+    assert {request.url.path for request in requests} == {
+        f"/api/internal/v1/ai-token-usages/{request_id}/release"
+    }
+
+
 # MockTransport를 쓰는 테스트용 SpringWorkerClient 생성
 def _client(handler) -> SpringWorkerClient:
     return SpringWorkerClient(

@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from functools import lru_cache
+import logging
 import math
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -9,6 +10,8 @@ import tiktoken
 
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.responses import LlmTextResponse
+
+logger = logging.getLogger(__name__)
 
 
 # 실제 원장을 소유한 Spring 내부 API에 기대하는 예약·정산·해제 규격
@@ -114,10 +117,7 @@ class MeteredTextGenerationClient:
         except Exception as exc:
             # 오류 응답에도 usage가 있으면 실제량을 보존하고, 없으면 추측하지 않고 예약을 해제한다.
             usage = _usage_from_http_error(exc)
-            if usage is None:
-                self.ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
-            else:
-                self.ledger.settle_ai_tokens(request_id, *usage, outcome="FAILURE")
+            _finalize_failed_provider_request(self.ledger, request_id, usage)
             raise
 
         # 성공 응답이라도 usage가 누락되면 실제량을 임의 계산하지 않고 예약을 해제한다.
@@ -168,10 +168,7 @@ class MeteredEmbeddingClient:
         except Exception as exc:
             # 실패 응답의 usage 유무에 따라 LLM 호출과 동일한 정산 정책을 적용한다.
             usage = _usage_from_http_error(exc)
-            if usage is None:
-                self.ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
-            else:
-                self.ledger.settle_ai_tokens(request_id, *usage, outcome="FAILURE")
+            _finalize_failed_provider_request(self.ledger, request_id, usage)
             raise
 
         if response.input_token_count is None:
@@ -233,6 +230,22 @@ def _estimate_text_token_byte_upper_bound(
 def _estimate_embedding_token_upper_bound(inputs: Sequence[str]) -> int:
     # 모든 입력의 UTF-8 byte 수에 batch 요청 여유분을 더해 보수적으로 예약한다.
     return sum(len(text.encode("utf-8")) for text in inputs) + 256
+
+
+def _finalize_failed_provider_request(
+    ledger: AiTokenLedgerApi,
+    request_id: UUID,
+    usage: tuple[int, int, int] | None,
+) -> None:
+    """원장 정리 실패가 재시도 판단에 필요한 원래 provider 예외를 덮지 않게 한다."""
+
+    try:
+        if usage is None:
+            ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
+        else:
+            ledger.settle_ai_tokens(request_id, *usage, outcome="FAILURE")
+    except Exception:
+        logger.exception("Failed to finalize AI token ledger request_id=%s", request_id)
 
 
 def _usage_from_http_error(exc: Exception) -> tuple[int, int, int] | None:

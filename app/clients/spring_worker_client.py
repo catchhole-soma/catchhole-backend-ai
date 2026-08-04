@@ -114,7 +114,7 @@ class SpringWorkerClient:
         response.raise_for_status()
 
     # AI provider 호출 전에 예상 최대량을 Spring 원장에 예약한다.
-    # 한도 초과 응답은 그대로 예외로 올려 provider 호출 자체를 막는다.
+    # 같은 requestId 재요청은 멱등하므로 일시 장애에는 정산과 동일하게 재시도한다.
     def reserve_ai_tokens(
         self,
         request_id: UUID,
@@ -132,12 +132,10 @@ class SpringWorkerClient:
             model_name=model_name,
             reserved_tokens=reserved_tokens,
         )
-        response = self.http_client.post(
-            self._url("/api/internal/v1/ai-token-usages/reserve"),
-            headers=self._headers(),
-            json=request.model_dump(by_alias=True, mode="json"),
+        self._post_usage_update_with_retry(
+            path="/api/internal/v1/ai-token-usages/reserve",
+            payload=request.model_dump(by_alias=True, mode="json"),
         )
-        response.raise_for_status()
 
     # provider가 반환한 실제 usage로 예약을 정산하고 남은 예약량을 반환한다.
     def settle_ai_tokens(
@@ -162,15 +160,13 @@ class SpringWorkerClient:
     # provider 사용량을 확인할 수 없을 때 기존 예약을 전액 해제한다.
     def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
         request = AiTokenReleaseRequest(outcome=outcome)
-        response = self.http_client.post(
-            self._url(f"/api/internal/v1/ai-token-usages/{request_id}/release"),
-            headers=self._headers(),
-            json=request.model_dump(by_alias=True),
+        self._post_usage_update_with_retry(
+            path=f"/api/internal/v1/ai-token-usages/{request_id}/release",
+            payload=request.model_dump(by_alias=True),
         )
-        response.raise_for_status()
 
     def _post_usage_update_with_retry(self, path: str, payload: dict) -> None:
-        """일시적인 Spring 연결 장애에는 같은 requestId의 멱등 정산을 재시도한다."""
+        """일시적인 Spring 연결 장애에는 같은 requestId의 멱등 원장 요청을 재시도한다."""
 
         for attempt in range(3):
             try:
