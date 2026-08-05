@@ -122,6 +122,41 @@ def test_replace_candidates_skips_discovery_for_known_character() -> None:
     assert session.committed is True
 
 
+def test_replace_candidates_skips_ambiguous_discovery_for_existing_characters() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_discovery_candidate("비요른"),
+            )
+        ],
+        known_characters=[
+            KnownCharacter(
+                character_id=UUID("00000000-0000-0000-0000-000000000005"),
+                name="비요른 얀델",
+            ),
+            KnownCharacter(
+                character_id=UUID("00000000-0000-0000-0000-000000000007"),
+                name="비요른 라프손",
+            ),
+        ],
+    )
+
+    assert saved_candidates == []
+    assert repository.saved_candidates == []
+    assert session.committed is True
+
+
 def test_replace_candidates_deduplicates_new_character_discoveries_by_name() -> None:
     session = FakeSession()
     repository = FakeSettingCandidateRepository(session)

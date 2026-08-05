@@ -56,7 +56,7 @@ class SettingCandidateService:
                 normalized_known_characters,
             )
             if item.candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
-                if character_match.match_status == SettingCandidateMatchStatus.MATCHED:
+                if character_match.match_status != SettingCandidateMatchStatus.UNRESOLVED:
                     continue
                 normalized_name = normalize_character_name(item.candidate.entity_name)
                 if normalized_name in seen_discovery_names:
