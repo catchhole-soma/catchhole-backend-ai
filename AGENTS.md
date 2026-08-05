@@ -11,6 +11,10 @@
 - claim payload는 복수 `episodes`가 아니라 단일 `episode`를 받는다. 한 `AnalysisJob`은 한 회차만 처리하고, 회차 사이의 반복과 실패 격리는 Spring의 Job queue가 담당한다.
 - 장기 실행 runner는 한 Job의 실패를 Spring에 보고한 뒤 다음 claim을 계속한다. 개별 분석 예외로 Worker 프로세스 전체를 종료하지 않는다.
 - `source_chunk_id`는 LLM 생성값이 아니라 Worker가 가진 `EpisodeChunk.id`를 source of truth로 사용한다. LLM 응답에 값이 없거나 잘못되어도 Pydantic 검증 전에 현재 chunk ID로 덮어쓴다.
+- 설정 추출 prompt에는 claim의 `knownCharacters` 대표 이름만 전달하고 Backend 내부 매칭용 `characterId`는 노출하지 않는다. 원문에 명시된 미등록 이름은 `candidate_kind=CHARACTER_DISCOVERY`로 추출하고 설정 payload는 모두 `null`로 두며, 기존 이름과 매칭되는 발견 후보와 같은 분석 안의 중복 발견은 저장 전에 제외한다.
+- `CHARACTER_DISCOVERY`의 캐릭터 매칭은 `entity_name`만 기준으로 한다. `케닉의 넷째 아들 세룸` 같은 `raw_entity_mention` 안의 기존 관계자 이름을 발견 대상 캐릭터로 오연결하거나 subject fallback으로 재해석하지 않는다.
+- 같은 분석 작업의 `SETTING` 후보는 확정된 캐릭터 ID 또는 정규화한 구체 이름, `attribute_name`, `value_type`, canonical `value_json`이 모두 같을 때만 저장 전에 중복 제거하고 더 높은 confidence의 근거를 남긴다. 값이 다르거나 주체가 `AMBIGUOUS`인 후보는 변화·다른 인물 가능성이 있으므로 유지한다.
+- `SettingCandidate.value_json`은 `JSONB(none_as_null=True)`로 매핑한다. `CHARACTER_DISCOVERY`의 Python `None`은 JSON literal `null`이 아니라 DB check constraint가 요구하는 SQL `NULL`로 저장해야 한다.
 
 ## AWS S3
 

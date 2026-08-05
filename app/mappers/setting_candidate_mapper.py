@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from app.analysis.character_name_resolver import CharacterNameMatch
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.domain.enums import (
+    SettingCandidateKind,
     SettingCandidateMatchStatus,
     SettingCandidateReviewStatus,
     SettingEntityType,
@@ -38,6 +39,7 @@ class SettingCandidateMapper:
             # 원고 파일이 나중에 교체돼도 근거 조회는 분석 당시 원문을 사용한다.
             source_content_s3_key=source_content_s3_key,
             analysis_job_id=analysis_job_id,
+            candidate_kind=SettingCandidateKind(candidate.candidate_kind),
             entity_type=SettingEntityType(candidate.entity_type),
             entity_name=entity_name,
             # raw_entity_mention은 원문에 실제 존재한 표현만 저장한다.
@@ -47,7 +49,11 @@ class SettingCandidateMapper:
             match_status=character_match.match_status,
             attribute_name=candidate.attribute_name,
             attribute_value=candidate.attribute_value,
-            value_type=SettingValueType(candidate.value_type),
+            value_type=(
+                SettingValueType(candidate.value_type)
+                if candidate.value_type is not None
+                else None
+            ),
             value_json=candidate.value_json,
             evidence_spans=[
                 evidence_span.model_dump(mode="json")

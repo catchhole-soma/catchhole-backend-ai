@@ -41,6 +41,11 @@ class SettingEntityType(StrEnum):
     CHARACTER = "CHARACTER"
 
 
+class SettingCandidateKind(StrEnum):
+    SETTING = "SETTING"
+    CHARACTER_DISCOVERY = "CHARACTER_DISCOVERY"
+
+
 class SettingValueType(StrEnum):
     STRING = "STRING"
     NUMBER = "NUMBER"
