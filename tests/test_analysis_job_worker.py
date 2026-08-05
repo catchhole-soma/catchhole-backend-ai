@@ -3,6 +3,7 @@ from uuid import UUID
 
 import pytest
 
+from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.analysis.character_subject_resolver import SubjectResolutionResult
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
@@ -166,11 +167,17 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         {
             "source_chunk_id": chunking_service.chunks[0].id,
             "chunk_text": chunk_text,
-            "episode_no": 1,
-            "episode_title": "첫 번째 회차",
-            "schema_hints": SCHEMA_HINTS,
-        }
-    ]
+                "episode_no": 1,
+                "episode_title": "첫 번째 회차",
+                "schema_hints": SCHEMA_HINTS,
+                "known_characters": (
+                    KnownCharacter(
+                        character_id=UUID("00000000-0000-0000-0000-000000000005"),
+                        name="비요른 얀델",
+                    ),
+                ),
+            }
+        ]
     assert setting_candidate_service.request == {
         "work_id": WORK_ID,
         "analysis_job_id": ANALYSIS_JOB_ID,
@@ -520,6 +527,7 @@ class FakeSettingExtractor:
         episode_no: int | None = None,
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
+        known_characters: tuple[KnownCharacter, ...] = (),
     ):
         self.requests.append(
             {
@@ -528,6 +536,7 @@ class FakeSettingExtractor:
                 "episode_no": episode_no,
                 "episode_title": episode_title,
                 "schema_hints": schema_hints,
+                "known_characters": known_characters,
             }
         )
         candidates = self.candidate_groups.pop(0)

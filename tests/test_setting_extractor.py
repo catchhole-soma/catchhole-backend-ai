@@ -2,6 +2,7 @@ from uuid import UUID
 
 import pytest
 
+from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
 from app.llm.responses import LlmTextResponse
@@ -47,6 +48,52 @@ def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
     assert candidate.evidence_spans[0].quote == "카엘은 12레벨 검사"
 
 
+def test_extract_from_chunk_parses_character_discovery_and_family_setting(
+    tmp_path,
+) -> None:
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("캐릭터 발견과 설정을 JSON으로 반환하세요.", encoding="utf-8")
+    extractor = CharacterSettingExtractor(
+        llm_client=CharacterDiscoveryTextGenerationClient(),
+        prompt_path=prompt_path,
+        max_attempts=1,
+    )
+
+    result = extractor.extract_from_chunk(
+        source_chunk_id=CHUNK_ID,
+        chunk_text="케닉의 넷째 아들 세룸은 나와라!",
+        schema_hints=(
+            CharacterSettingSchemaHint(
+                schema_key="profile.family_relation",
+                display_name="가족 관계",
+                attribute_pattern=None,
+                aliases=("가족 관계",),
+                value_type="STRING",
+            ),
+        ),
+        known_characters=(
+            KnownCharacter(
+                character_id=UUID("00000000-0000-0000-0000-000000000002"),
+                name="케닉",
+            ),
+        ),
+    )
+
+    assert len(result.candidates) == 2
+    discovery, family_setting = result.candidates
+    assert discovery.candidate_kind == "CHARACTER_DISCOVERY"
+    assert discovery.entity_name == "세룸"
+    assert discovery.raw_entity_mention == "케닉의 넷째 아들 세룸"
+    assert discovery.attribute_name is None
+    assert discovery.attribute_value is None
+    assert discovery.value_type is None
+    assert discovery.value_json is None
+    assert family_setting.candidate_kind == "SETTING"
+    assert family_setting.entity_name == "세룸"
+    assert family_setting.attribute_name == "profile.family_relation"
+    assert family_setting.value_json == {"value": "케닉의 넷째 아들"}
+
+
 def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts() -> None:
     llm_client = RecordingTextGenerationClient()
     extractor = CharacterSettingExtractor(
@@ -80,6 +127,12 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
                 value_type="STRING",
             ),
         ),
+        known_characters=(
+            KnownCharacter(
+                character_id=UUID("00000000-0000-0000-0000-000000000002"),
+                name="비요른 얀델",
+            ),
+        ),
     )
 
     assert result.candidates == []
@@ -91,6 +144,7 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
     assert '"valueType": "JSON"' in llm_client.user_prompt
     assert '"schemaKey": "profile.species"' in llm_client.user_prompt
     assert '"valueType": "STRING"' in llm_client.user_prompt
+    assert 'known_character_names:\n["비요른 얀델"]' in llm_client.user_prompt
     assert "canonical schemaKey" in llm_client.user_prompt
     assert "schemaKey, displayName, aliases 또는 attributePattern" in llm_client.user_prompt
     assert "후보에서 제외" in llm_client.user_prompt
@@ -105,6 +159,17 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
         llm_client.system_prompt
     )
     assert "타임라인에 해당하는 정보는 현재 추출하지 않습니다" in llm_client.system_prompt
+    assert "별도 설정이 없더라도 원문에서 이름이 명시된 신규 캐릭터" in (
+        llm_client.system_prompt
+    )
+    assert "`candidate_kind`를 `CHARACTER_DISCOVERY`" in llm_client.system_prompt
+    assert "출생 순서, 가족 관계, 서열은 `age`가 아니며" in llm_client.system_prompt
+    assert "동일한 캐릭터, 동일한 `attribute_name`, 동일한 `value_type`" in (
+        llm_client.system_prompt
+    )
+    assert "실제 설정값이 달라졌다면 서로 다른 후보로 유지합니다" in (
+        llm_client.system_prompt
+    )
     assert (
         "`schemaKey`, `displayName`, `aliases` 또는 `attributePattern`"
         in llm_client.system_prompt
@@ -312,7 +377,7 @@ class FakeTextGenerationClient:
         assert str(CHUNK_ID) not in user_prompt
         assert max_output_tokens == 4000
         assert prompt_cache_key is not None
-        assert prompt_cache_key.startswith("setting-extraction:v1:")
+        assert prompt_cache_key.startswith("setting-extraction:v3:")
         return LlmTextResponse(
             text="""
             {
@@ -360,6 +425,62 @@ class RecordingTextGenerationClient:
         self.user_prompt = user_prompt
         self.prompt_cache_key = prompt_cache_key
         return LlmTextResponse(text='{"candidates": []}')
+
+
+class CharacterDiscoveryTextGenerationClient:
+    def create_text_response(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None = None,
+        max_output_tokens: int = 1500,
+        prompt_cache_key: str | None = None,
+    ) -> LlmTextResponse:
+        assert 'known_character_names:\n["케닉"]' in user_prompt
+        return LlmTextResponse(
+            text="""
+            {
+              "candidates": [
+                {
+                  "candidate_kind": "CHARACTER_DISCOVERY",
+                  "entity_type": "CHARACTER",
+                  "entity_name": "세룸",
+                  "raw_entity_mention": "케닉의 넷째 아들 세룸",
+                  "attribute_name": null,
+                  "attribute_value": null,
+                  "value_type": null,
+                  "value_json": null,
+                  "evidence_spans": [
+                    {
+                      "quote": "케닉의 넷째 아들 세룸은 나와라!",
+                      "start_offset": null,
+                      "end_offset": null
+                    }
+                  ],
+                  "confidence": 0.95
+                },
+                {
+                  "candidate_kind": "SETTING",
+                  "entity_type": "CHARACTER",
+                  "entity_name": "세룸",
+                  "raw_entity_mention": "케닉의 넷째 아들 세룸",
+                  "attribute_name": "profile.family_relation",
+                  "attribute_value": "케닉의 넷째 아들",
+                  "value_type": "STRING",
+                  "value_json": {"value": "케닉의 넷째 아들"},
+                  "evidence_spans": [
+                    {
+                      "quote": "케닉의 넷째 아들 세룸은 나와라!",
+                      "start_offset": null,
+                      "end_offset": null
+                    }
+                  ],
+                  "confidence": 0.9
+                }
+              ]
+            }
+            """
+        )
 
 
 class RetryThenSuccessClient:

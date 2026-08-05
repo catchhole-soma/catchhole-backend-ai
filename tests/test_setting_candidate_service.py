@@ -2,7 +2,7 @@ from uuid import UUID
 
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
-from app.domain.enums import SettingCandidateMatchStatus
+from app.domain.enums import SettingCandidateKind, SettingCandidateMatchStatus
 from app.models.setting_candidate import SettingCandidate
 from app.services.setting_candidate_service import (
     SettingCandidateSaveItem,
@@ -13,6 +13,7 @@ WORK_ID = UUID("00000000-0000-0000-0000-000000000001")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000002")
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000003")
 CHUNK_ID = UUID("00000000-0000-0000-0000-000000000004")
+OTHER_CHUNK_ID = UUID("00000000-0000-0000-0000-000000000006")
 SOURCE_CONTENT_S3_KEY = "works/work-id/episodes/episode-id/source.txt"
 
 
@@ -90,27 +91,280 @@ def test_replace_candidates_saves_unknown_subject_as_ambiguous() -> None:
     assert session.rolled_back is False
 
 
+def test_replace_candidates_skips_discovery_for_known_character() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_discovery_candidate("비요른"),
+            )
+        ],
+        known_characters=[
+            KnownCharacter(
+                character_id=UUID("00000000-0000-0000-0000-000000000005"),
+                name="비요른",
+            )
+        ],
+    )
+
+    assert saved_candidates == []
+    assert repository.saved_candidates == []
+    assert session.committed is True
+
+
+def test_replace_candidates_skips_ambiguous_discovery_for_existing_characters() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_discovery_candidate("비요른"),
+            )
+        ],
+        known_characters=[
+            KnownCharacter(
+                character_id=UUID("00000000-0000-0000-0000-000000000005"),
+                name="비요른 얀델",
+            ),
+            KnownCharacter(
+                character_id=UUID("00000000-0000-0000-0000-000000000007"),
+                name="비요른 라프손",
+            ),
+        ],
+    )
+
+    assert saved_candidates == []
+    assert repository.saved_candidates == []
+    assert session.committed is True
+
+
+def test_replace_candidates_deduplicates_new_character_discoveries_by_name() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_discovery_candidate("세룸", "케닉의 넷째 아들 세룸"),
+            ),
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_discovery_candidate(" 세룸 ", "세룸"),
+            ),
+        ],
+        known_characters=[
+            KnownCharacter(
+                character_id=UUID("00000000-0000-0000-0000-000000000005"),
+                name="케닉",
+            )
+        ],
+    )
+
+    assert len(saved_candidates) == 1
+    assert saved_candidates[0].candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY
+    assert saved_candidates[0].entity_name == "세룸"
+    assert saved_candidates[0].raw_entity_mention == "케닉의 넷째 아들 세룸"
+    assert saved_candidates[0].match_status == SettingCandidateMatchStatus.UNRESOLVED
+
+
+def test_replace_candidates_deduplicates_identical_settings_and_keeps_clearer_evidence() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_candidate(
+                    source_chunk_id=CHUNK_ID,
+                    raw_entity_mention="그",
+                    confidence=0.7,
+                ),
+            ),
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_candidate(
+                    source_chunk_id=OTHER_CHUNK_ID,
+                    raw_entity_mention="비요른",
+                    attribute_value="Lv.1",
+                    confidence=0.95,
+                ),
+            ),
+        ],
+        known_characters=[
+            KnownCharacter(
+                character_id=UUID("00000000-0000-0000-0000-000000000005"),
+                name="비요른",
+            )
+        ],
+    )
+
+    assert len(saved_candidates) == 1
+    assert saved_candidates[0].source_chunk_id == OTHER_CHUNK_ID
+    assert saved_candidates[0].raw_entity_mention == "비요른"
+    assert str(saved_candidates[0].confidence) == "0.95"
+
+
+def test_replace_candidates_keeps_same_setting_when_structured_value_changes() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_candidate(source_chunk_id=CHUNK_ID, level=1),
+            ),
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_candidate(source_chunk_id=OTHER_CHUNK_ID, level=2),
+            ),
+        ],
+        known_characters=[],
+    )
+
+    assert len(saved_candidates) == 2
+    assert [candidate.value_json for candidate in saved_candidates] == [
+        {"value": 1},
+        {"value": 2},
+    ]
+
+
+def test_replace_candidates_does_not_deduplicate_ambiguous_setting_subjects() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_candidate(
+                    entity_name="미상",
+                    raw_entity_mention="그",
+                    source_chunk_id=CHUNK_ID,
+                ),
+            ),
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_candidate(
+                    entity_name="미상",
+                    raw_entity_mention="그녀",
+                    source_chunk_id=OTHER_CHUNK_ID,
+                ),
+            ),
+        ],
+        known_characters=[],
+    )
+
+    assert len(saved_candidates) == 2
+    assert all(
+        candidate.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+        for candidate in saved_candidates
+    )
+
+
 def _candidate(
     entity_name: str = "비요른",
     raw_entity_mention: str | None = "비요른",
+    source_chunk_id: UUID = CHUNK_ID,
+    level: int = 1,
+    attribute_value: str | None = None,
+    confidence: float = 0.9,
 ) -> ExtractedSettingCandidate:
     return ExtractedSettingCandidate(
-        source_chunk_id=CHUNK_ID,
+        source_chunk_id=source_chunk_id,
         entity_type="CHARACTER",
         entity_name=entity_name,
         raw_entity_mention=raw_entity_mention,
         attribute_name="level",
-        attribute_value="1",
+        attribute_value=attribute_value or str(level),
         value_type="NUMBER",
-        value_json={"value": 1},
+        value_json={"value": level},
         evidence_spans=[
             ExtractedEvidenceSpan(
-                quote="비요른은 1레벨 바바리안이다.",
+                quote=f"비요른은 {level}레벨 바바리안이다.",
                 start_offset=None,
                 end_offset=None,
             )
         ],
-        confidence=0.9,
+        confidence=confidence,
+    )
+
+
+def _discovery_candidate(
+    entity_name: str,
+    raw_entity_mention: str | None = None,
+) -> ExtractedSettingCandidate:
+    return ExtractedSettingCandidate(
+        source_chunk_id=CHUNK_ID,
+        candidate_kind="CHARACTER_DISCOVERY",
+        entity_type="CHARACTER",
+        entity_name=entity_name,
+        raw_entity_mention=raw_entity_mention or entity_name,
+        attribute_name=None,
+        attribute_value=None,
+        value_type=None,
+        value_json=None,
+        evidence_spans=[
+            ExtractedEvidenceSpan(
+                quote="케닉의 넷째 아들 세룸은 나와라!",
+                start_offset=None,
+                end_offset=None,
+            )
+        ],
+        confidence=0.95,
     )
 
 

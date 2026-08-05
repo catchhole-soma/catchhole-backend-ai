@@ -138,6 +138,7 @@ class SettingExtractorApi(Protocol):
         episode_no: int | None = None,
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
+        known_characters: tuple[KnownCharacter, ...] = (),
     ):
         pass
 
@@ -305,6 +306,7 @@ class AnalysisJobWorker:
                 episode_no=episode.episode_no,
                 episode_title=episode.title,
                 schema_hints=schema_hints,
+                known_characters=tuple(known_characters),
             )
             # 설정 후보들을 추출한 후 그 데이터를 그대로 넣고, 청크의 원문과 청크의 시작 지점을 넘겨주어 근거 위치 보정
             resolved_candidates = resolve_candidate_evidence_offsets(

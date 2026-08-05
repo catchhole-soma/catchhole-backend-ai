@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
+from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.schemas import CharacterSettingExtractionResult
 from app.core.config import get_settings
@@ -20,7 +21,7 @@ DEFAULT_PROMPT_PATH = (
 )
 # 이 파일 전용 로그 객체를 만든다 
 logger = logging.getLogger(__name__)
-SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v1"
+SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v3"
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ class CharacterSettingExtractor:
         episode_no: int | None = None,
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
+        known_characters: tuple[KnownCharacter, ...] = (),
     ) -> CharacterSettingExtractionResult:
         # Schema가 없으면 모든 설정 후보를 제외하라는 prompt가 만들어지므로,
         # 비용이 발생하는 LLM 호출 전에 잘못된 직접 호출을 차단한다.
@@ -85,6 +87,7 @@ class CharacterSettingExtractor:
             episode_no=episode_no,
             episode_title=episode_title,
             schema_summary_json=schema_summary_json,
+            known_characters=known_characters,
         )
         prompt_cache_key = _build_schema_cache_key(schema_summary_json)
 
@@ -150,6 +153,7 @@ class CharacterSettingExtractor:
         episode_no: int | None,
         episode_title: str | None,
         schema_summary_json: str,
+        known_characters: tuple[KnownCharacter, ...],
     ) -> str:
         metadata = {
             "episode_no": episode_no,
@@ -169,6 +173,8 @@ class CharacterSettingExtractor:
             "않는 설정은 가까운 schema로 추측하지 말고 후보에서 제외하세요.\n\n"
             "character_setting_schemas:\n"
             f"{schema_summary_json}\n\n"
+            "known_character_names:\n"
+            f"{_serialize_known_character_names(known_characters)}\n\n"
             f"metadata:\n{json.dumps(metadata, ensure_ascii=False, sort_keys=True)}\n\n"
             f"chunk_text:\n{chunk_text}"
         )
@@ -203,6 +209,14 @@ def _serialize_schema_hints(
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
+    )
+
+
+def _serialize_known_character_names(known_characters: tuple[KnownCharacter, ...]) -> str:
+    return json.dumps(
+        [character.name for character in known_characters],
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
 
 

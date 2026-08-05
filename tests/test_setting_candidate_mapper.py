@@ -6,6 +6,7 @@ import pytest
 from app.analysis.character_name_resolver import CharacterNameMatch
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.domain.enums import (
+    SettingCandidateKind,
     SettingCandidateMatchStatus,
     SettingCandidateReviewStatus,
     SettingEntityType,
@@ -76,6 +77,7 @@ def test_to_entity_maps_extracted_candidate_to_setting_candidate() -> None:
     ]
     assert entity.confidence == Decimal("0.95")
     assert entity.review_status == SettingCandidateReviewStatus.PENDING_REVIEW
+    assert entity.candidate_kind == SettingCandidateKind.SETTING
     assert entity.raw_ai_result_json["entity_name"] == "비요른"
     assert entity.raw_ai_result_json["raw_entity_mention"] == "나"
     assert entity.created_at is None
@@ -147,6 +149,64 @@ def test_to_entity_preserves_missing_raw_entity_mention() -> None:
     assert entity.entity_name == "미상"
     assert entity.raw_entity_mention is None
     assert entity.raw_ai_result_json["raw_entity_mention"] is None
+
+
+def test_to_entity_maps_character_discovery_without_setting_value_fields() -> None:
+    candidate = ExtractedSettingCandidate(
+        source_chunk_id=CHUNK_ID,
+        candidate_kind="CHARACTER_DISCOVERY",
+        entity_type="CHARACTER",
+        entity_name="세룸",
+        raw_entity_mention="케닉의 넷째 아들 세룸",
+        attribute_name=None,
+        attribute_value=None,
+        value_type=None,
+        value_json=None,
+        evidence_spans=[
+            ExtractedEvidenceSpan(
+                quote="케닉의 넷째 아들 세룸은 나와라!",
+                start_offset=0,
+                end_offset=21,
+            )
+        ],
+        confidence=0.95,
+    )
+
+    entity = SettingCandidateMapper.to_entity(
+        work_id=WORK_ID,
+        episode_id=EPISODE_ID,
+        source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        candidate=candidate,
+    )
+
+    assert entity.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY
+    assert entity.entity_name == "세룸"
+    assert entity.attribute_name is None
+    assert entity.attribute_value is None
+    assert entity.value_type is None
+    assert entity.value_json is None
+    assert entity.raw_ai_result_json["candidate_kind"] == "CHARACTER_DISCOVERY"
+
+
+def test_character_discovery_rejects_setting_value_fields() -> None:
+    with pytest.raises(
+        ValueError,
+        match="CHARACTER_DISCOVERY candidate must not include setting value fields",
+    ):
+        ExtractedSettingCandidate(
+            source_chunk_id=CHUNK_ID,
+            candidate_kind="CHARACTER_DISCOVERY",
+            entity_type="CHARACTER",
+            entity_name="세룸",
+            raw_entity_mention="세룸",
+            attribute_name="profile.family_relation",
+            attribute_value=None,
+            value_type=None,
+            value_json=None,
+            evidence_spans=[ExtractedEvidenceSpan(quote="세룸은 나와라!")],
+            confidence=0.95,
+        )
 
 
 def test_to_entity_rejects_whitespace_only_entity_name() -> None:

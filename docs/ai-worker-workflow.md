@@ -13,7 +13,7 @@ Spring claim
 -> 원문을 변경하지 않고 paragraph/chunk offset 계산
 -> flag가 켜진 경우에만 batch 임베딩 토큰 예약·실제량 정산 및 episode_chunks 갱신
 -> chunk_text LLM 토큰 예약·실제량 정산
--> LLM 설정 후보 JSON 파싱/검증
+-> knownCharacters 이름을 포함한 prompt로 LLM 설정·캐릭터 발견 후보 JSON 파싱/검증
 -> quote를 chunk_text에서 다시 찾아 evidence offset 보정
 -> 구체적이지 않은 entity_name 후보를 LLM subject fallback으로 해소
 -> raw/entity 캐릭터명을 knownCharacters와 비교
@@ -37,6 +37,7 @@ Python Worker는 `analysis_jobs.status`를 DB에서 직접 바꾸지 않습니�
 | `raw_entity_mention` | 원문에 실제 등장한 캐릭터 표현 | LLM 응답 | 예: `나`, `프넬린의 두 번째 딸 아이나르` |
 | `entity_name` | LLM이 청크 문맥에서 정리한 후보 캐릭터명 | LLM 응답 | 예: `아이나르`, `비요른 얀델` |
 | `knownCharacters.name` | Spring이 내려준 기존 캐릭터명 | claim payload | 캐릭터 매칭 비교 대상 |
+| `candidate_kind` | 설정 값 후보와 이름 발견 후보 구분 | LLM 응답 | `SETTING`, `CHARACTER_DISCOVERY` |
 | `characterSettingSchemas` | Spring이 내려준 활성 캐릭터 설정 schema | claim payload | canonical key, 동적 pattern, 값 타입 prompt hint |
 | subject fallback | 구체적이지 않은 entity_name 후보의 주체 해소 | `character_subject_resolver.py` | previous/current/next chunk 기준 |
 
@@ -101,7 +102,7 @@ flowchart TD
     AD --> AE
     AE --> AEF["save_items에 후보 추가"]
 
-    AEF --> AG["모든 chunk 처리 완료<br/>knownCharacters 이름을 한 번 정규화"]
+    AEF --> AG["모든 chunk 처리 완료<br/>knownCharacters 이름과 Fact를 준비"]
     AG --> AH["raw_entity_mention/entity_name 정규화"]
     AH --> AI["기존 캐릭터 매칭 상태 계산<br/>MATCHED / UNRESOLVED / AMBIGUOUS"]
     AI --> AJ["analysis_job_id 기준<br/>기존 setting_candidates 삭제"]
@@ -232,7 +233,7 @@ payload에서 Python이 직접 사용하는 값:
 | `episode.episode_id` | chunk 저장, 후보 episode 연결 |
 | `episode.episode_no`, `episode.title` | LLM user prompt metadata |
 | `episode.content_s3_key` | S3 원문 조회 |
-| `knownCharacters[].character_id`, `name` | 기존 캐릭터 매칭 |
+| `knownCharacters[].character_id`, `name` | 기존 캐릭터 매칭. ID는 LLM prompt에 노출하지 않음 |
 | `characterSettingSchemas[]` | Backend 배열의 순서와 중복을 유지한 immutable schema hint tuple로 job당 한 번 변환한 뒤 모든 chunk prompt에 전달 |
 
 payload DTO는 이전 Spring payload도 역직렬화할 수 있도록 `characterSettingSchemas` 누락을 빈 목록으로 파싱합니다. 하지만 현재 추출 계약에서는 등록 schema가 최소 하나 필요합니다. 목록이 비어 있으면 Worker는 진행 상태를 보고한 직후, S3 원문 조회와 청크·후보 교체 전에 예외를 발생시켜 Spring `fail` API로 해당 job을 실패 처리합니다. 이를 통해 schema가 없는 프롬프트가 후보를 0개 반환하고 기존 후보까지 빈 결과로 교체하는 상황을 막습니다.
@@ -368,6 +369,9 @@ character_setting_schemas:
   }
 ]
 
+known_character_names:
+["비요른 얀델"]
+
 metadata:
 {"episode_no": 1, "episode_title": "1화"}
 
@@ -375,12 +379,14 @@ chunk_text:
 LLM이 분석할 청크 원문
 ```
 
-- schema hint는 위 다섯 필드만 가진 prompt 입력 전용 값입니다. `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않고 `CharacterSettingExtractionResult` 응답 shape도 변경하지 않습니다.
+- schema hint는 위 다섯 필드만 가진 prompt 입력 전용 값입니다. `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않습니다.
+- `known_character_names`는 claim의 `knownCharacters[].name`만 포함하고 내부 매칭용 `characterId`는 제외합니다. 원문에 직접 나온 이름이 이 목록에 없으면 `CHARACTER_DISCOVERY` 후보가 될 수 있습니다.
 - Worker는 claim 배열의 순서와 중복을 그대로 보존하며 임의로 정렬하거나 dedup하지 않습니다.
 - `attributePattern`이 null인 schema와 명확히 대응하면 canonical `schemaKey`와 schema `valueType`을 사용합니다.
 - 동적 schema는 registry `schemaKey`가 아니라 `attributePattern`의 `*`를 구체 명칭으로 바꾼 key를 사용합니다.
 - 시간·사건·타임라인 정보와 schema의 `schemaKey`, `displayName`, `aliases` 또는 `attributePattern`에 대응하지 않는 설정은 후보에서 제외합니다.
 - fuzzy alias 매칭이나 schema 자동 생성은 수행하지 않습니다.
+- 같은 청크의 동일 캐릭터·`attribute_name`·`value_type`·`value_json` 후보는 가장 직접적인 근거 하나만 반환합니다. 같은 설정 key라도 실제 `value_json`이 다르면 별도 후보로 유지합니다.
 - 설정 후보 배열의 응답 잘림을 줄이기 위해 추출 호출에는 `max_output_tokens=4000`을 사용합니다.
 
 LLM 응답 처리:
@@ -404,13 +410,14 @@ LLM 출력 계약:
 | 필드 | 역할 |
 | --- | --- |
 | `source_chunk_id` | Worker가 현재 입력 `EpisodeChunk.id`로 주입하는 후보 근거 식별자. LLM 값은 사용하지 않음 |
+| `candidate_kind` | 값이 있는 설정은 `SETTING`, 이름 존재 확인은 `CHARACTER_DISCOVERY` |
 | `entity_type` | 현재는 캐릭터 중심 |
 | `entity_name` | LLM이 청크 문맥에서 정리한 후보 캐릭터명 |
 | `raw_entity_mention` | 원문에 실제 등장한 표현. 추출되지 않았으면 `null`을 유지 |
-| `attribute_name` | 먼저 `SettingCandidate.attributeName`에 저장되는 후보 key. confirm 시 exact/alias는 canonical `schemaKey`, pattern은 구체 attribute name이 `CharacterFact.factKey`가 됨 |
-| `attribute_value` | 목록/검토 화면 표시용 요약 문자열 |
-| `value_type` | 값 타입 |
-| `value_json` | 실제 값의 source of truth |
+| `attribute_name` | `SETTING`에서 먼저 `SettingCandidate.attributeName`에 저장되는 후보 key. `CHARACTER_DISCOVERY`는 null |
+| `attribute_value` | `SETTING`의 목록/검토 화면 표시용 요약 문자열. `CHARACTER_DISCOVERY`는 null |
+| `value_type` | `SETTING`의 값 타입. `CHARACTER_DISCOVERY`는 null |
+| `value_json` | `SETTING` 실제 값의 source of truth. `CHARACTER_DISCOVERY`는 null |
 | `evidence_spans[].quote` | 원문에서 복사한 근거 문장 |
 | `evidence_spans[].start_offset/end_offset` | LLM 값은 사용하지 않고 후처리에서 재계산 |
 | `confidence` | 후보 신뢰도 |
@@ -547,6 +554,8 @@ trace 저장 위치는 아직 정책 결정이 필요합니다.
 
 LLM은 기존 캐릭터 DB와 확정 매칭하지 않습니다. Python resolver가 Spring claim payload의 `knownCharacters`와 후보의 `raw_entity_mention`, `entity_name`을 비교해 `matched_character_id`, `match_status`를 계산합니다.
 
+`CHARACTER_DISCOVERY`는 `entity_name`만 기존 이름과 비교합니다. `raw_entity_mention="케닉의 넷째 아들 세룸"`처럼 관계자 이름이 함께 있어도 기존 `케닉`으로 연결하지 않습니다. 기존 캐릭터와 매칭된 발견 후보는 저장 전에 제외하고, 미등록 이름은 `UNRESOLVED`로 보존합니다. 같은 분석 안에서 정규화 이름이 같은 발견 후보는 첫 근거 하나만 남깁니다.
+
 매칭 전 정규화:
 
 | 대상 | 정규화 |
@@ -593,6 +602,9 @@ save_items 전체 수집
 -> subject fallback 성공 후보는 entity_name 치환
 -> subject fallback 미해소 후보는 entity_name을 "미상"으로 정규화
 -> 후보마다 character match 계산
+-> 기존 캐릭터와 매칭된 발견 후보 제외
+-> 같은 신규 이름 발견 후보 중복 제거
+-> 동일 주체·attribute_name·value_type·value_json 설정 후보 중 confidence가 높은 하나만 유지
 -> SettingCandidateMapper.to_entity()
 -> analysis_job_id 기준 기존 후보 삭제
 -> 새 후보 save_all
@@ -607,11 +619,12 @@ save_items 전체 수집
 | `episode_id` | 후보가 나온 episode ID |
 | `source_chunk_id` | Worker가 주입한 현재 입력 chunk ID |
 | `analysis_job_id` | claim한 analysis job ID |
+| `candidate_kind` | `SETTING` 또는 `CHARACTER_DISCOVERY` |
 | `entity_name` | LLM이 정리한 후보 캐릭터명 |
 | `raw_entity_mention` | 원문 provenance. 추출되지 않았으면 `entity_name`으로 만들지 않고 `null` 유지 |
 | `matched_character_id` | 기존 캐릭터와 확실히 매칭된 경우 |
 | `match_status` | `MATCHED`, `UNRESOLVED`, `AMBIGUOUS` |
-| `attribute_name/value/type/json` | LLM 추출 설정 값 |
+| `attribute_name/value/type/json` | `SETTING`의 LLM 추출 설정 값. `CHARACTER_DISCOVERY`는 모두 `NULL` |
 | `evidence_spans` | quote와 보정된 offset |
 | `confidence` | LLM 후보 신뢰도 |
 | `review_status` | 기본 `PENDING_REVIEW` |
@@ -622,6 +635,8 @@ save_items 전체 수집
 - 같은 `analysis_job_id`로 다시 저장하면 기존 후보를 먼저 삭제합니다.
 - 따라서 같은 analysis job의 후보가 중복 누적되지 않습니다.
 - 삭제와 저장은 같은 트랜잭션입니다. 실패하면 rollback하고 예외를 다시 던집니다.
+
+설정 중복 제거는 단일 episode인 analysis job의 `save_items` 안에서 수행합니다. `attribute_value`는 표시용이라 key에서 제외하고 canonical `value_json`을 비교합니다. 값이 다르거나 주체가 `AMBIGUOUS`이면 정보 손실을 피하기 위해 제거하지 않습니다.
 
 ### 10. 완료 보고와 실패 보고
 

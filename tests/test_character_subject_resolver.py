@@ -43,6 +43,36 @@ def test_resolve_candidates_skips_llm_when_fallback_targets_do_not_exist(tmp_pat
     assert result.fallback_unresolved_count == 0
 
 
+def test_resolve_candidates_does_not_reinterpret_character_discovery(tmp_path: Path) -> None:
+    llm_client = FakeSubjectResolutionClient(response_text='{"resolutions":[]}')
+    resolver = CharacterSubjectResolver(
+        llm_client=llm_client,
+        prompt_path=_prompt_path(tmp_path),
+    )
+    discovery = ExtractedSettingCandidate(
+        source_chunk_id=CHUNK_ID,
+        candidate_kind="CHARACTER_DISCOVERY",
+        entity_type="CHARACTER",
+        entity_name="세룸",
+        raw_entity_mention="케닉의 넷째 아들 세룸",
+        attribute_name=None,
+        attribute_value=None,
+        value_type=None,
+        value_json=None,
+        evidence_spans=[ExtractedEvidenceSpan(quote="케닉의 넷째 아들 세룸은 나와라!")],
+        confidence=0.95,
+    )
+
+    result = resolver.resolve_candidates(
+        context=_context(),
+        candidates=[discovery],
+        known_characters=[],
+    )
+
+    assert llm_client.call_count == 0
+    assert result.candidates == [discovery]
+
+
 def test_resolve_candidates_treats_exact_known_name_as_concrete_before_particle_check(
     tmp_path: Path,
 ) -> None:

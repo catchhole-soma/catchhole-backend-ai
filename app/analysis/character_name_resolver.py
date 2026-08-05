@@ -3,7 +3,7 @@ import re
 from uuid import UUID
 
 from app.analysis.schemas import ExtractedSettingCandidate
-from app.domain.enums import SettingCandidateMatchStatus
+from app.domain.enums import SettingCandidateKind, SettingCandidateMatchStatus
 
 
 # 이미 DB에 존재하는 캐릭터 정보.
@@ -15,7 +15,6 @@ class KnownCharacter:
 
     # 대표 이름
     name: str
-
 
 # 매칭 비교에 사용할 수 있도록 이름을 미리 정규화한 캐릭터 정보.
 @dataclass(frozen=True)
@@ -167,6 +166,25 @@ def resolve_candidate_character(
             match_status=SettingCandidateMatchStatus.AMBIGUOUS,
         )
 
+    # 발견 후보는 entity_name 자체가 새 캐릭터 이름이라는 계약이다. 관계 표현이 포함된
+    # raw_entity_mention 안의 기존 인물명(예: "케닉의 넷째 아들 세룸")으로 연결하지 않는다.
+    if candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
+        entity_matches = _find_matches(normalized_entity_name, known_characters)
+        if len(entity_matches) == 1:
+            return CharacterNameMatch(
+                matched_character_id=entity_matches[0],
+                match_status=SettingCandidateMatchStatus.MATCHED,
+            )
+        if len(entity_matches) > 1:
+            return CharacterNameMatch(
+                matched_character_id=None,
+                match_status=SettingCandidateMatchStatus.AMBIGUOUS,
+            )
+        return CharacterNameMatch(
+            matched_character_id=None,
+            match_status=SettingCandidateMatchStatus.UNRESOLVED,
+        )
+
     raw_matches = _find_matches(normalized_raw_mention, known_characters)
     entity_matches = _find_matches(normalized_entity_name, known_characters)
 
@@ -190,6 +208,18 @@ def resolve_candidate_character(
 
         # 지칭어의 주체를 LLM이 구체 이름으로 정리했지만 기존 캐릭터 목록에는 없을 수 있다.
         # 이 경우는 새 캐릭터 후보 가능성이 있으므로 UNRESOLVED로 저장한다.
+        return CharacterNameMatch(
+            matched_character_id=None,
+            match_status=SettingCandidateMatchStatus.UNRESOLVED,
+        )
+
+    # entity_name이 raw 표현 안에 직접 있고 아직 등록되지 않은 이름이라면, 같은 표현에
+    # 함께 등장한 기존 관계자 이름을 주체로 오인하지 않고 신규 인물 설정으로 남긴다.
+    if (
+        not entity_matches
+        and normalized_entity_name
+        and normalized_entity_name in normalized_raw_mention
+    ):
         return CharacterNameMatch(
             matched_character_id=None,
             match_status=SettingCandidateMatchStatus.UNRESOLVED,

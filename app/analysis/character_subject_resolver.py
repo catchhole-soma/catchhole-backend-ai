@@ -14,6 +14,7 @@ from app.analysis.character_name_resolver import (
 )
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.schemas import ExtractedSettingCandidate
+from app.domain.enums import SettingCandidateKind
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.responses import LlmTextResponse
 
@@ -227,6 +228,8 @@ def _is_fallback_target(
     candidate: ExtractedSettingCandidate,
     known_characters: list[KnownCharacter],
 ) -> bool:
+    if candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
+        return False
     # raw 표현은 LLM이 예상과 다른 서술형 문구로 반환할 수 있으므로 진입 조건으로 믿지 않는다.
     # 구체 entity_name을 얻지 못한 모든 후보를 청크 문맥 기반 fallback 대상으로 삼는다.
     return not is_concrete_character_name(candidate.entity_name, known_characters)

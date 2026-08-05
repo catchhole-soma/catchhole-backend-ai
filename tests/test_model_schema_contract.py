@@ -25,6 +25,14 @@ def test_java_owned_timestamps_are_not_nullable() -> None:
     assert SettingCandidate.__table__.c.updated_at.default is not None
 
 
+def test_setting_candidate_kind_and_nullable_value_columns_match_flyway_schema() -> None:
+    assert SettingCandidate.__table__.c.candidate_kind.nullable is False
+    assert SettingCandidate.__table__.c.candidate_kind.type.length == 30
+    assert SettingCandidate.__table__.c.attribute_name.nullable is True
+    assert SettingCandidate.__table__.c.value_type.nullable is True
+    assert SettingCandidate.__table__.c.value_json.type.none_as_null is True
+
+
 def test_episode_chunk_timestamps_are_not_nullable() -> None:
     assert EpisodeChunk.__table__.c.created_at.nullable is False
     assert EpisodeChunk.__table__.c.updated_at.nullable is False

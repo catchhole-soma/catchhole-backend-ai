@@ -6,7 +6,7 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 ## 역할
 
-- 원문 청크를 입력으로 받아 설정 후보를 추출합니다.
+- 원문 청크를 입력으로 받아 설정 후보와 명시적 신규 캐릭터 발견 후보를 추출합니다.
 - LLM 응답 JSON을 Python 내부 검증 schema로 확인합니다.
 - 추출 결과를 `setting_candidates` 저장 구조에 맞는 중간 결과로 정리합니다.
 - 근거 문장을 원문에서 다시 찾아 회차 전체 기준 위치를 계산합니다.
@@ -23,8 +23,9 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 ## 현재 파일
 
 - `setting_extractor.py`
-  - 청크 하나를 LLM에 보내 캐릭터 설정 후보를 추출합니다.
+  - 청크 하나를 LLM에 보내 캐릭터 설정 후보와 이름 발견 후보를 추출합니다.
   - Spring claim DTO를 Worker가 변환한 immutable schema hint를 user prompt에 포함합니다.
+  - claim의 기존 캐릭터 대표 이름을 user prompt에 포함해 이미 등록된 이름의 발견 후보를 만들지 않게 합니다. Backend 내부 매칭용 ID는 prompt에 포함하지 않습니다.
   - prompt 로드, user prompt 구성, JSON 파싱, 결정적 `source_chunk_id` 주입, schema 검증, 검증 실패 재시도를 담당합니다.
 - `evidence_span_resolver.py`
   - LLM이 반환한 `evidence_spans[].quote`를 청크 원문에서 다시 찾아 offset을 보정합니다.
@@ -40,7 +41,7 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - `schemas.py`
   - LLM에서 받은 설정 후보 JSON을 검증하기 위한 Python 내부 schema를 정의합니다.
   - FastAPI 응답 DTO가 아니라, 외부 LLM 출력이 저장 가능한 구조인지 확인하는 경계 객체입니다.
-  - 필수 필드 누락, 잘못된 값 타입, 빈 근거 문장 등은 이 단계에서 걸러집니다.
+  - 필수 필드 누락, 잘못된 값 타입, 빈 근거 문장과 후보 종류별 payload 불일치는 이 단계에서 걸러집니다.
 - `exceptions.py`
   - Analysis 내부 흐름에서만 사용하는 예외를 정의합니다.
   - FastAPI 응답용 공통 예외와 분리해 Worker가 분석 실패 사유를 구분할 수 있게 합니다.
@@ -63,6 +64,7 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - 필수 필드 누락
 - `value_type` enum 범위 밖 값
 - `confidence`가 0~1 범위를 벗어난 값
+- `SETTING`인데 `attribute_name`, `value_type`, `value_json`이 없거나, `CHARACTER_DISCOVERY`인데 설정 값 필드가 채워진 값
 
 반대로 프롬프트 정책상 좋지 않은 값이더라도 schema상 문자열로 유효하면 현재는 재시도하지 않습니다.
 
@@ -80,11 +82,23 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 이런 정책 위반을 Python에서도 강제로 거절하거나 후보 제외 조건으로 만들려면 `ExtractedSettingCandidate`에 attribute 규칙 validator를 추가하거나, schema 검증 이후 별도 policy validation 단계를 둡니다.
 
+## 설정 후보 중복 제거 정책
+
+프롬프트는 같은 청크에서 동일 주체·설정 key·구조화 값을 근거 문장마다 반복 반환하지 않고 가장 명확한 근거 하나만 고르도록 요구합니다. 청크별 LLM 호출은 다른 청크의 결과를 알 수 없으므로, 저장 직전 `SettingCandidateService`가 같은 분석 작업 전체를 한 번 더 중복 제거합니다.
+
+중복 key는 기존 캐릭터와 매칭되었으면 캐릭터 ID, 아니면 정규화한 구체 `entity_name`을 주체로 사용하고, 여기에 `attribute_name`, `value_type`, key 순서를 정규화한 `value_json`을 결합합니다. `attribute_value`는 표시 문구이므로 중복 판정에 사용하지 않습니다. 중복이면 confidence가 더 높은 후보 하나를 남기고, 같으면 먼저 나온 근거를 유지합니다.
+
+동일 `attribute_name`이라도 `value_json`이 다르면 실제 값 변경일 수 있어 모두 유지합니다. `AMBIGUOUS` 주체는 같은 `미상` 문자열이어도 서로 다른 인물일 수 있으므로 중복 제거하지 않습니다.
+
 ## 캐릭터명 매칭 정책
 
 LLM은 기존 캐릭터 DB와의 확정 매칭을 하지 않습니다. LLM은 원문에 실제 나온 표현인 `raw_entity_mention`과 원문 맥락에서 정리한 표시 후보명인 `entity_name`만 반환합니다.
 
 저장 직전 Python resolver가 Spring claim payload의 `knownCharacters`를 받아 다음 순서로 매칭합니다.
+
+`candidate_kind=CHARACTER_DISCOVERY`는 `entity_name` 자체가 발견한 이름이라는 별도 계약을 사용합니다. 따라서 `raw_entity_mention="케닉의 넷째 아들 세룸"`에 기존 캐릭터 `케닉`이 포함돼도 케닉으로 연결하지 않고, `entity_name="세룸"`과 기존 이름 목록만 비교합니다. 기존 이름과 매칭되면 발견 후보를 저장하지 않고, 매칭되지 않으면 `UNRESOLVED` 검토 후보로 저장합니다. 발견 후보는 subject fallback 대상이 아닙니다.
+
+일반 `SETTING` 후보에서도 등록되지 않은 구체 `entity_name`이 `raw_entity_mention` 안에 직접 등장하면, 같은 표현에 함께 나온 기존 관계자 이름보다 새 주체명을 우선해 `UNRESOLVED`로 남깁니다.
 
 ```text
 raw_entity_mention 정규화

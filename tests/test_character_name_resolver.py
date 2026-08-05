@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 
 from app.analysis.character_name_resolver import (
@@ -222,6 +223,50 @@ def test_resolve_candidate_character_marks_missing_match_unresolved() -> None:
     assert match.matched_character_id is None
 
 
+def test_character_discovery_ignores_related_known_name_in_raw_mention() -> None:
+    match = resolve_candidate_character(
+        _candidate(
+            entity_name="세룸",
+            raw_entity_mention="케닉의 넷째 아들 세룸",
+            candidate_kind="CHARACTER_DISCOVERY",
+        ),
+        _known_characters(KnownCharacter(character_id=AINAR_ID, name="케닉")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.UNRESOLVED
+    assert match.matched_character_id is None
+
+
+def test_character_discovery_matches_known_character_by_entity_name() -> None:
+    match = resolve_candidate_character(
+        _candidate(
+            entity_name="세룸",
+            raw_entity_mention="케닉의 넷째 아들 세룸",
+            candidate_kind="CHARACTER_DISCOVERY",
+        ),
+        _known_characters(
+            KnownCharacter(character_id=AINAR_ID, name="케닉"),
+            KnownCharacter(character_id=BJORN_ID, name="세룸"),
+        ),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.MATCHED
+    assert match.matched_character_id == BJORN_ID
+
+
+def test_new_named_setting_ignores_related_known_name_in_raw_mention() -> None:
+    match = resolve_candidate_character(
+        _candidate(
+            entity_name="세룸",
+            raw_entity_mention="케닉의 넷째 아들 세룸",
+        ),
+        _known_characters(KnownCharacter(character_id=AINAR_ID, name="케닉")),
+    )
+
+    assert match.match_status == SettingCandidateMatchStatus.UNRESOLVED
+    assert match.matched_character_id is None
+
+
 def test_normalize_character_name_trims_wrapping_punctuation_and_spaces() -> None:
     assert normalize_character_name("  “비요른   얀델”  ") == "비요른 얀델"
 
@@ -246,16 +291,19 @@ def _known_characters(*characters: KnownCharacter) -> list[NormalizedKnownCharac
 def _candidate(
     entity_name: str,
     raw_entity_mention: str | None = None,
+    candidate_kind: Literal["SETTING", "CHARACTER_DISCOVERY"] = "SETTING",
 ) -> ExtractedSettingCandidate:
+    is_discovery = candidate_kind == "CHARACTER_DISCOVERY"
     return ExtractedSettingCandidate(
         source_chunk_id=CHUNK_ID,
+        candidate_kind=candidate_kind,
         entity_type="CHARACTER",
         entity_name=entity_name,
         raw_entity_mention=raw_entity_mention,
-        attribute_name="level",
-        attribute_value="1",
-        value_type="NUMBER",
-        value_json={"value": 1},
+        attribute_name=None if is_discovery else "level",
+        attribute_value=None if is_discovery else "1",
+        value_type=None if is_discovery else "NUMBER",
+        value_json=None if is_discovery else {"value": 1},
         evidence_spans=[
             ExtractedEvidenceSpan(
                 quote="비요른은 1레벨 바바리안이다.",
