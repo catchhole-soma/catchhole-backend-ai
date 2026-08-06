@@ -31,6 +31,11 @@ def main() -> None:
         semantic_judge=semantic_judge,
         setting_schemas=setting_schemas,
     )
+    report["run"] = {
+        "analysisModel": args.analysis_model,
+        "semanticJudgeEnabled": semantic_judge is not None,
+        "semanticJudgeModel": semantic_judge.model if semantic_judge is not None else None,
+    }
     serialized = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -67,6 +72,11 @@ def _parse_args() -> argparse.Namespace:
         "--judge-model",
         default=None,
         help="Override the semantic judge model (default: gpt-5.6-luna).",
+    )
+    parser.add_argument(
+        "--analysis-model",
+        default=None,
+        help="Record the model that produced the supplied predictions.",
     )
     parser.add_argument(
         "--setting-schemas",

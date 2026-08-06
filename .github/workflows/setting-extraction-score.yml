@@ -140,6 +140,7 @@ jobs:
             --gold build/eval/gold.json \
             --source-root build/eval/input/sources \
             --setting-schemas build/eval/input/character-setting-schemas.json \
+            --analysis-model "$ANALYSIS_MODEL" \
             "${prediction_args[@]}" \
             "${judge_args[@]}" \
             --output build/eval/report.json \

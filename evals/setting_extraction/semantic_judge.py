@@ -168,7 +168,13 @@ class OpenAISemanticValueJudge:
             max_output_tokens=min(4000, 300 + 400 * len(cases)),
             prompt_cache_key="setting-extraction-eval:semantic-judge:v2",
         )
-        payload = _SemanticJudgeBatchResponse.model_validate(_parse_json_object(response.text))
+        try:
+            payload = _SemanticJudgeBatchResponse.model_validate(
+                _parse_json_object(response.text)
+            )
+        except ValueError:
+            # provider 응답의 reason·입력값이 Actions traceback에 포함되지 않게 경계를 닫는다.
+            raise ValueError("Semantic judge response is invalid.") from None
         decision_by_id: dict[int, SemanticJudgeDecision] = {}
         for item in payload.results:
             if item.case_id in decision_by_id:

@@ -44,6 +44,7 @@ def build_machine_summary(report: dict[str, Any]) -> dict[str, Any]:
     """원문 파생 상세값 없이 비교 가능한 집계 결과만 반환한다."""
 
     return {
+        "run": report.get("run", {}),
         "dataset": report.get("dataset", {}),
         "metrics": report.get("metrics", {}),
         "counts": report.get("counts", {}),
@@ -51,15 +52,23 @@ def build_machine_summary(report: dict[str, Any]) -> dict[str, Any]:
 
 
 def render_markdown_summary(report: dict[str, Any]) -> str:
+    run = report.get("run", {})
     dataset = report.get("dataset", {})
     metrics = report.get("metrics", {})
     counts = report.get("counts", {})
+    judge_model = (
+        run.get("semanticJudgeModel", "-")
+        if run.get("semanticJudgeEnabled")
+        else "사용 안 함"
+    )
     lines = [
         "# 설정 추출 평가 결과",
         "",
         f"- 데이터셋: `{dataset.get('name', '-')}`",
         f"- 스냅샷 버전: `{dataset.get('version', '-')}`",
         f"- 평가 회차: `{dataset.get('episodeCount', 0)}`개",
+        f"- 분석 모델: `{run.get('analysisModel') or '-'}`",
+        f"- 의미 판정 모델: `{judge_model}`",
         "- 판정 정책: 낮은 점수만으로 워크플로를 실패시키지 않음",
         "",
         "## 핵심 지표",

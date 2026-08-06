@@ -46,6 +46,7 @@ def test_build_gold_dataset_filters_episodes_and_preserves_annotation_contract()
 
     assert dataset.dataset_version.startswith("notion-")
     assert [episode.episode_no for episode in dataset.episodes] == [2]
+    assert dataset.episodes[0].title is None
     assert dataset.episodes[0].source_file == "02화.txt"
     candidate = dataset.episodes[0].candidates[0]
     assert candidate.fact_key == "profile.species"
@@ -69,6 +70,17 @@ def test_unselected_incomplete_episode_does_not_block_selected_export() -> None:
     assert [episode.episode_no for episode in dataset.episodes] == [2]
 
 
+def test_requested_episode_without_annotations_fails_export() -> None:
+    page = _annotation_page(page_id="page-2", row_id="2-1", episode_no=2)
+
+    with pytest.raises(ValueError, match=r"episodes: 3\."):
+        build_gold_dataset(
+            [page],
+            dataset_name="설정 추출 답안지",
+            episode_numbers={2, 3},
+        )
+
+
 def test_snapshot_version_is_stable_when_notion_page_order_changes() -> None:
     first = _annotation_page(page_id="page-a", row_id="2-1", episode_no=2)
     second = _annotation_page(
@@ -86,12 +98,18 @@ def test_snapshot_version_is_stable_when_notion_page_order_changes() -> None:
     assert forward.dataset_version == reverse.dataset_version
 
 
-def test_invalid_extract_row_reports_the_notion_row_id() -> None:
+def test_invalid_extract_row_reports_only_safe_row_and_field_details() -> None:
     page = _annotation_page(page_id="page-a", row_id="2-17", episode_no=2)
     page["properties"]["정답 attributeValue"] = _rich_text("")
+    private_quote = "외부에 노출하면 안 되는 원문"
+    page["properties"]["원문 근거"] = _rich_text(private_quote)
 
-    with pytest.raises(ValueError, match="2-17"):
+    with pytest.raises(ValueError, match="2-17") as exc_info:
         build_gold_dataset([page], dataset_name="gold")
+
+    assert "정답 attributeValue" in str(exc_info.value)
+    assert private_quote not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
 
 
 def test_notion_client_retries_and_reads_all_cursor_pages() -> None:
@@ -184,6 +202,11 @@ def test_live_analysis_failure_does_not_expose_source_details(capsys) -> None:
 def test_markdown_summary_marks_scores_as_informational() -> None:
     markdown = render_markdown_summary(
         {
+            "run": {
+                "analysisModel": "gpt-5.6-terra",
+                "semanticJudgeEnabled": True,
+                "semanticJudgeModel": "gpt-5.6-luna",
+            },
             "dataset": {"name": "gold", "version": "v1", "episodeCount": 1},
             "metrics": {"detectionPrecision": 0.75, "factF1": None},
             "counts": {"goldExtract": 4, "predictions": 5, "detectionMatches": 3},
@@ -191,6 +214,8 @@ def test_markdown_summary_marks_scores_as_informational() -> None:
     )
 
     assert "75.00%" in markdown
+    assert "gpt-5.6-terra" in markdown
+    assert "gpt-5.6-luna" in markdown
     assert "판정 대기/대상 없음" in markdown
     assert "낮은 점수만으로 워크플로를 실패시키지 않음" in markdown
 
@@ -198,6 +223,11 @@ def test_markdown_summary_marks_scores_as_informational() -> None:
 def test_machine_summary_excludes_source_derived_details() -> None:
     summary = build_machine_summary(
         {
+            "run": {
+                "analysisModel": "gpt-5.6-terra",
+                "semanticJudgeEnabled": True,
+                "semanticJudgeModel": "gpt-5.6-luna",
+            },
             "dataset": {"name": "gold", "version": "v1", "episodeCount": 1},
             "metrics": {"detectionPrecision": 0.75},
             "counts": {"predictions": 5},
@@ -206,7 +236,8 @@ def test_machine_summary_excludes_source_derived_details() -> None:
         }
     )
 
-    assert set(summary) == {"dataset", "metrics", "counts"}
+    assert set(summary) == {"run", "dataset", "metrics", "counts"}
+    assert summary["run"]["analysisModel"] == "gpt-5.6-terra"
     assert "private source quote" not in json.dumps(summary)
 
 

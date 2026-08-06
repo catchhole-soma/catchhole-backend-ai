@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from evals.setting_extraction.models import GoldDataset
 
@@ -120,13 +121,19 @@ def build_gold_dataset(
     """Notion 행을 평가기가 소비하는 고정 GoldDataset 스냅샷으로 변환한다."""
 
     rows = []
+    exported_episode_numbers: set[int] = set()
     for page in pages:
-        if (
-            episode_numbers is not None
-            and _annotation_episode_no(page) not in episode_numbers
-        ):
+        episode_no = _annotation_episode_no(page)
+        if episode_numbers is not None and episode_no not in episode_numbers:
             continue
+        exported_episode_numbers.add(episode_no)
         rows.append(_parse_annotation_page(page))
+
+    if episode_numbers is not None:
+        missing_episode_numbers = sorted(episode_numbers - exported_episode_numbers)
+        if missing_episode_numbers:
+            missing = ", ".join(str(number) for number in missing_episode_numbers)
+            raise ValueError(f"No Notion annotation rows found for episodes: {missing}.")
     if not rows:
         raise ValueError("No Notion annotation rows matched the selected episodes.")
 
@@ -138,7 +145,8 @@ def build_gold_dataset(
     episodes = [
         {
             "episodeNo": episode_no,
-            "title": f"{episode_no}화",
+            # 실제 회차 제목을 신뢰할 입력이 없으므로 분석 prompt에 임의 제목을 넣지 않는다.
+            "title": None,
             "sourceFile": source_file_pattern.format(episode_no=episode_no),
             "candidates": candidates,
         }
@@ -208,8 +216,11 @@ def _parse_annotation_page(page: dict[str, Any]) -> dict[str, Any]:
                 ],
             }
         )
-    except ValueError as exc:
-        raise ValueError(f"Invalid Notion annotation row {row_id}: {exc}") from exc
+    except ValidationError as exc:
+        fields = ", ".join(_sanitized_validation_fields(candidate, exc))
+        raise ValueError(
+            f"Invalid Notion annotation row {row_id}; check fields: {fields}."
+        ) from None
 
     return {
         "page_id": page_id,
@@ -272,8 +283,8 @@ def _parse_aliases(value: str, row_id: str) -> list[str]:
         return []
     try:
         aliases = json.loads(value)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid factKey alias JSON in Notion row {row_id}: {exc}") from exc
+    except json.JSONDecodeError:
+        raise ValueError(f"Invalid factKey alias JSON in Notion row {row_id}.") from None
     if not isinstance(aliases, list) or any(
         not isinstance(alias, str) or not alias.strip() for alias in aliases
     ):
@@ -286,11 +297,58 @@ def _parse_value_json(value: str, row_id: str) -> dict[str, Any] | None:
         return None
     try:
         parsed = json.loads(value)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid valueJson in Notion row {row_id}: {exc}") from exc
+    except json.JSONDecodeError:
+        raise ValueError(f"Invalid valueJson in Notion row {row_id}.") from None
     if not isinstance(parsed, dict):
         raise ValueError(f"valueJson must be a JSON object in Notion row {row_id}.")
     return parsed
+
+
+def _sanitized_validation_fields(
+    candidate: dict[str, Any],
+    error: ValidationError,
+) -> list[str]:
+    """Pydantic 입력값을 노출하지 않고 검토할 Notion 컬럼명만 반환한다."""
+
+    labels = {
+        "decision": "판정",
+        "importance": "중요도",
+        "entityName": "소속 캐릭터",
+        "factKey": "canonical factKey",
+        "factKeyAliases": "추가 허용 factKey 별칭",
+        "valueType": "valueType",
+        "attributeValue": "정답 attributeValue",
+        "valueJson": "정답 valueJson",
+        "evidenceQuotes": "원문 근거",
+        "note": "비고(판정 사유·검수 메모)",
+    }
+    fields: list[str] = []
+    if candidate.get("decision") == "EXTRACT":
+        required_fields = (
+            "importance",
+            "factKey",
+            "valueType",
+            "attributeValue",
+            "valueJson",
+            "evidenceQuotes",
+        )
+        fields.extend(
+            labels[field]
+            for field in required_fields
+            if candidate.get(field) in (None, "", [])
+        )
+
+    for detail in error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    ):
+        fields.extend(
+            labels[part]
+            for part in detail.get("loc", ())
+            if isinstance(part, str) and part in labels
+        )
+    return list(dict.fromkeys(fields)) or ["후보 필드"]
 
 
 def _snapshot_version(snapshot_body: dict[str, Any]) -> str:
