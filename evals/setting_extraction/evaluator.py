@@ -75,6 +75,11 @@ def evaluate_predictions(
             episode_no=episode_no,
             gold_candidates=gold_candidates,
             predictions=predictions,
+            character_discovery_excluded_count=(
+                prediction_episode.character_discovery_excluded_count
+                if prediction_episode
+                else 0
+            ),
             source_text=source_text,
             semantic_judge=semantic_judge,
         )
@@ -98,6 +103,7 @@ def _evaluate_episode(
     episode_no: int,
     gold_candidates: list[GoldCandidate],
     predictions: list[PredictionCandidate],
+    character_discovery_excluded_count: int,
     source_text: str | None,
     semantic_judge: SemanticValueJudge | None,
 ) -> dict[str, Any]:
@@ -277,6 +283,7 @@ def _evaluate_episode(
         "goldDoNotExtractScored": len(scorable_hard_negative_gold),
         "goldDoNotExtractUnscored": len(unscorable_hard_negative_gold),
         "goldReviewExcluded": len(review_gold),
+        "characterDiscoveryExcluded": character_discovery_excluded_count,
         "predictionTotal": len(predictions),
         "predictions": len(predictions) - len(review_excluded_prediction_indexes),
         "reviewExcludedPredictions": len(review_excluded_prediction_indexes),
@@ -549,6 +556,7 @@ def _empty_aggregate() -> dict[str, int]:
         "goldDoNotExtractScored": 0,
         "goldDoNotExtractUnscored": 0,
         "goldReviewExcluded": 0,
+        "characterDiscoveryExcluded": 0,
         "predictionTotal": 0,
         "predictions": 0,
         "reviewExcludedPredictions": 0,

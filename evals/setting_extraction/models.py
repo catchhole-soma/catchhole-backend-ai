@@ -5,7 +5,11 @@ import unicodedata
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-from app.domain.enums import SettingCandidateMatchStatus, SettingValueType
+from app.domain.enums import (
+    SettingCandidateKind,
+    SettingCandidateMatchStatus,
+    SettingValueType,
+)
 
 
 class GoldDecision(StrEnum):
@@ -252,11 +256,47 @@ class PredictionCandidate(BaseModel):
 
 
 class PredictionEpisode(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     episode_no: int = Field(
         validation_alias=AliasChoices("episodeNo", "episode_no"),
         ge=1,
     )
     candidates: list[PredictionCandidate] = Field(default_factory=list)
+    character_discovery_excluded_count: int = Field(
+        default=0,
+        validation_alias=AliasChoices(
+            "characterDiscoveryExcluded",
+            "character_discovery_excluded_count",
+        ),
+        ge=0,
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def separate_character_discovery_candidates(cls, value: Any) -> Any:
+        """설정 Fact가 없는 캐릭터 발견 후보를 설정 평가 입력에서 분리한다."""
+
+        if not isinstance(value, dict) or not isinstance(value.get("candidates"), list):
+            return value
+
+        setting_candidates = []
+        excluded_count = 0
+        for candidate in value["candidates"]:
+            if isinstance(candidate, dict):
+                candidate_kind = candidate.get(
+                    "candidateKind",
+                    candidate.get("candidate_kind", SettingCandidateKind.SETTING),
+                )
+                if candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
+                    excluded_count += 1
+                    continue
+            setting_candidates.append(candidate)
+
+        normalized = dict(value)
+        normalized["candidates"] = setting_candidates
+        normalized["character_discovery_excluded_count"] = excluded_count
+        return normalized
 
 
 class PredictionBundle(BaseModel):

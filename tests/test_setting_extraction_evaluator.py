@@ -699,6 +699,51 @@ def test_debug_prediction_uses_operational_matched_character_name_for_detection(
     assert report["counts"]["detectionMatches"] == 1
 
 
+def test_character_discovery_candidate_is_reported_but_not_scored_as_setting(
+    tmp_path: Path,
+) -> None:
+    prediction_path = tmp_path / "episode-1-result.json"
+    prediction_path.write_text(
+        json.dumps(
+            {
+                "summary": {"episodeNo": 1},
+                "knownCharacters": [],
+                "settingCandidates": [
+                    {
+                        "candidateKind": "CHARACTER_DISCOVERY",
+                        "entityName": "아이나르",
+                        "rawEntityMention": "프넬린의 두 번째 딸 아이나르",
+                        "attributeName": None,
+                        "attributeValue": None,
+                        "valueType": None,
+                        "valueJson": None,
+                    },
+                    {
+                        "candidate_kind": "SETTING",
+                        "entity_name": "아이나르",
+                        "match_status": "UNRESOLVED",
+                        "attribute_name": "profile.species",
+                        "attribute_value": "바바리안",
+                        "value_type": "STRING",
+                        "value_json": {"value": "바바리안"},
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    predictions = load_prediction_bundle([prediction_path])
+    report = evaluate_predictions(_single_fact_gold(entity_name="아이나르"), predictions)
+
+    assert len(predictions.episodes[0].candidates) == 1
+    assert predictions.episodes[0].character_discovery_excluded_count == 1
+    assert report["counts"]["characterDiscoveryExcluded"] == 1
+    assert report["counts"]["predictionTotal"] == 1
+    assert report["counts"]["detectionMatches"] == 1
+
+
 def test_unresolved_new_character_keeps_exact_name_detection() -> None:
     predictions = _single_fact_predictions(
         entity_name="아이나르",

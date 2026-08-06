@@ -683,7 +683,13 @@ Judge를 끄고 의미 판정 대기 행이 남으면 `factPrecision`, `factReca
 | `ambiguousUnknownSubjectRate` | `미상` 예측 중 같은 key·type·값을 가진 정답이 여러 개이거나 한 정답에 여러 예측이 걸려 자동 귀속할 수 없는 비율 |
 | `pendingUnknownSubjectRate` | `미상` 예측 중 key·type은 맞지만 서술형 값의 의미 판정이 필요해 보수적으로 보류한 비율 |
 
-보고서의 `predictionTotal`은 입력된 전체 예측 수이고, `predictions`는 key가 확정된
+이 평가는 설정 Fact 추출 품질을 측정하므로 `candidateKind=SETTING`만 채점합니다.
+`CHARACTER_DISCOVERY`는 설정 key·type·value가 없는 별도 계약이므로 입력 파싱 단계에서 분리하고,
+제외한 수를 회차별·전체 `characterDiscoveryExcluded`로 기록합니다. 발견 후보를 제외해도 정답표의
+`EXTRACT` 설정을 만들지 못한 결과는 그대로 Recall 하락에 반영됩니다. 캐릭터 발견 자체의 품질은
+별도 평가 대상으로 다룹니다. 과거 예측 파일처럼 `candidateKind`가 없으면 `SETTING`으로 간주합니다.
+
+보고서의 `predictionTotal`은 입력된 설정 예측 수이고, `predictions`는 key가 확정된
 `REVIEW_REQUIRED` 대응 예측을 제외해 실제 Precision 분모에 들어간 수입니다.
 `reviewExcludedPredictions`와 회차별 `reviewExcludedPredictionIndexes`로 제외 대상을 확인할 수
 있습니다.
