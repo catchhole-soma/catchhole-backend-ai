@@ -1,0 +1,164 @@
+name: Setting Extraction Score
+
+on:
+  workflow_dispatch:
+    inputs:
+      episodes:
+        description: "평가할 회차 번호(쉼표 구분, 예: 2,3)"
+        required: true
+        default: "2"
+        type: string
+      analysis_model:
+        description: "설정 추출 분석 모델"
+        required: true
+        default: "gpt-5.6-terra"
+        type: string
+      semantic_judge:
+        description: "규칙으로 확정할 수 없는 표시값을 LLM Judge로 판정"
+        required: true
+        default: true
+        type: boolean
+      confirm_run:
+        description: "OpenAI 비용 발생 확인을 위해 RUN 입력"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: setting-extraction-evaluation
+    env:
+      NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
+      NOTION_GOLD_DATA_SOURCE_ID: ${{ vars.NOTION_GOLD_DATA_SOURCE_ID }}
+      LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      SETTING_EVAL_INPUT_S3_URI: ${{ vars.SETTING_EVAL_INPUT_S3_URI }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+      DEPLOY_AWS_ACCESS_KEY_ID: ${{ secrets.DEPLOY_AWS_ACCESS_KEY_ID }}
+      DEPLOY_AWS_SECRET_ACCESS_KEY: ${{ secrets.DEPLOY_AWS_SECRET_ACCESS_KEY }}
+      RUN_EPISODES: ${{ inputs.episodes }}
+      ANALYSIS_MODEL: ${{ inputs.analysis_model }}
+      SEMANTIC_JUDGE_ENABLED: ${{ inputs.semantic_judge }}
+      CONFIRM_RUN: ${{ inputs.confirm_run }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate manual run configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM_RUN" != "RUN" ]; then
+            echo "::error::OpenAI 비용 발생 확인을 위해 confirm_run에 RUN을 입력해야 합니다."
+            exit 1
+          fi
+          for name in NOTION_API_TOKEN NOTION_GOLD_DATA_SOURCE_ID LLM_API_KEY SETTING_EVAL_INPUT_S3_URI AWS_REGION; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name 설정이 필요합니다."
+              exit 1
+            fi
+          done
+          if [ -z "${AWS_ROLE_TO_ASSUME:-}" ] && {
+            [ -z "${DEPLOY_AWS_ACCESS_KEY_ID:-}" ] || [ -z "${DEPLOY_AWS_SECRET_ACCESS_KEY:-}" ];
+          }; then
+            echo "::error::AWS_ROLE_TO_ASSUME 또는 static AWS credential 쌍이 필요합니다."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Configure AWS credentials with OIDC
+        if: env.AWS_ROLE_TO_ASSUME != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure AWS credentials with access keys
+        if: env.AWS_ROLE_TO_ASSUME == ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.DEPLOY_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.DEPLOY_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download private evaluation input
+        run: aws s3 sync "$SETTING_EVAL_INPUT_S3_URI" build/eval/input --only-show-errors
+
+      - name: Export selected Notion annotations
+        run: |
+          python -m evals.setting_extraction.notion_cli \
+            --episodes "$RUN_EPISODES" \
+            --output build/eval/gold.json
+
+      - name: Run live analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          known_args=()
+          if [ -f build/eval/input/known-characters.json ]; then
+            known_args+=(--known-characters build/eval/input/known-characters.json)
+          fi
+          python -m evals.setting_extraction.run_gold_analysis \
+            --gold build/eval/gold.json \
+            --source-root build/eval/input/sources \
+            --setting-schemas build/eval/input/character-setting-schemas.json \
+            --model-name "$ANALYSIS_MODEL" \
+            --output-dir build/eval/predictions \
+            "${known_args[@]}"
+
+      - name: Evaluate predictions
+        shell: bash
+        run: |
+          set -euo pipefail
+          prediction_args=()
+          while IFS= read -r prediction; do
+            prediction_args+=(--predictions "$prediction")
+          done < <(find build/eval/predictions -type f -name 'episode-*.json' -print | sort)
+          if [ "${#prediction_args[@]}" -eq 0 ]; then
+            echo "::error::분석 결과 파일이 생성되지 않았습니다."
+            exit 1
+          fi
+          judge_args=(--semantic-judge none)
+          if [ "$SEMANTIC_JUDGE_ENABLED" = "true" ]; then
+            judge_args=(--semantic-judge openai --judge-model gpt-5.6-luna)
+          fi
+          python -m evals.setting_extraction.cli \
+            --gold build/eval/gold.json \
+            --source-root build/eval/input/sources \
+            --setting-schemas build/eval/input/character-setting-schemas.json \
+            --analysis-model "$ANALYSIS_MODEL" \
+            "${prediction_args[@]}" \
+            "${judge_args[@]}" \
+            --output build/eval/report.json \
+            --quiet
+
+      - name: Publish score summary
+        run: |
+          python -m evals.setting_extraction.report_cli \
+            --report build/eval/report.json \
+            --output build/eval/summary.md \
+            --machine-output build/eval/score.json
+          cat build/eval/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload non-source evaluation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: setting-extraction-report-${{ github.run_id }}
+          path: |
+            build/eval/score.json
+            build/eval/summary.md
+          retention-days: 14
