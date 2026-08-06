@@ -1,6 +1,8 @@
 from dataclasses import asdict, dataclass
+import json
 from typing import Any
 
+from app.analysis.character_name_resolver import normalize_character_name
 from app.domain.enums import SettingCandidateMatchStatus
 from evals.setting_extraction.assignment import maximum_weight_assignment
 from evals.setting_extraction.evidence import EvidenceEvaluation, evaluate_evidence
@@ -268,12 +270,15 @@ def _evaluate_episode(
         predictions,
         scored_unmatched_prediction_indexes,
     )
-    # 이미 정답에 배정된 예측을 오탐이나 중복으로 다시 집계하지 않는다.
-    duplicate_prediction_indexes = [
+    scored_prediction_indexes = [
         index
-        for index in scored_unmatched_prediction_indexes
-        if any(_identity_matches(gold, predictions[index]) for gold in extract_gold)
+        for index in range(len(predictions))
+        if index not in review_excluded_prediction_indexes
     ]
+    duplicate_prediction_indexes = _find_duplicate_prediction_indexes(
+        predictions,
+        scored_prediction_indexes,
+    )
     matched_weight = sum(_importance_weight(extract_gold[index]) for index in matched_gold_indexes)
     total_weight = sum(_importance_weight(gold) for gold in extract_gold)
 
@@ -435,6 +440,53 @@ def _fact_key_matches(gold: GoldCandidate, prediction: PredictionCandidate) -> b
     return predicted_key in {
         normalize_fact_key(accepted_key) for accepted_key in gold.accepted_fact_keys
     }
+
+
+def _find_duplicate_prediction_indexes(
+    predictions: list[PredictionCandidate],
+    prediction_indexes: list[int],
+) -> list[int]:
+    """운영 저장 기준과 같은 설정 identity가 반복된 후속 예측만 반환한다."""
+
+    seen: set[tuple[str, str, str, str]] = set()
+    duplicates = []
+    for index in prediction_indexes:
+        duplicate_key = _prediction_duplicate_key(predictions[index])
+        if duplicate_key is None:
+            continue
+        if duplicate_key in seen:
+            duplicates.append(index)
+            continue
+        seen.add(duplicate_key)
+    return duplicates
+
+
+def _prediction_duplicate_key(
+    prediction: PredictionCandidate,
+) -> tuple[str, str, str, str] | None:
+    if prediction.match_status == SettingCandidateMatchStatus.AMBIGUOUS:
+        return None
+
+    if prediction.matched_character_id:
+        subject_key = f"id:{prediction.matched_character_id}"
+    else:
+        normalized_name = normalize_character_name(prediction.entity_name)
+        if not normalized_name:
+            return None
+        subject_key = f"name:{normalized_name}"
+
+    canonical_value_json = json.dumps(
+        prediction.value_json,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return (
+        subject_key,
+        prediction.attribute_name,
+        prediction.value_type,
+        canonical_value_json,
+    )
 
 
 def _candidate_match_weight(

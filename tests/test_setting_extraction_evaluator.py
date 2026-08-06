@@ -160,6 +160,39 @@ def test_evaluator_counts_duplicate_prediction_as_false_positive() -> None:
     assert report["metrics"]["detectionRecall"] == 1.0
 
 
+def test_evaluator_keeps_same_identity_predictions_with_different_values() -> None:
+    predictions = load_prediction_bundle([FIXTURE_DIR / "predictions.json"])
+    level_prediction = predictions.episodes[0].candidates[0]
+    changed_level = level_prediction.model_copy(
+        update={
+            "attribute_value": "13",
+            "value_json": {"value": 13},
+        }
+    )
+    with_changed_value = predictions.model_copy(
+        update={
+            "episodes": [
+                predictions.episodes[0].model_copy(
+                    update={
+                        "candidates": [
+                            *predictions.episodes[0].candidates,
+                            changed_level,
+                        ]
+                    }
+                )
+            ]
+        }
+    )
+
+    report = evaluate_predictions(
+        load_gold_dataset(FIXTURE_DIR / "gold.json"),
+        with_changed_value,
+        semantic_judge=AlwaysMatchJudge(),
+    )
+
+    assert report["counts"]["duplicates"] == 0
+
+
 def test_evaluator_counts_do_not_extract_violation() -> None:
     predictions = load_prediction_bundle([FIXTURE_DIR / "predictions.json"])
     wrong_age = PredictionCandidate.model_validate(
@@ -742,6 +775,41 @@ def test_character_discovery_candidate_is_reported_but_not_scored_as_setting(
     assert report["counts"]["characterDiscoveryExcluded"] == 1
     assert report["counts"]["predictionTotal"] == 1
     assert report["counts"]["detectionMatches"] == 1
+
+
+def test_character_discovery_excluded_count_survives_prediction_round_trip() -> None:
+    predictions = PredictionBundle.model_validate(
+        {
+            "episodes": [
+                {
+                    "episodeNo": 1,
+                    "candidates": [
+                        {
+                            "candidateKind": "CHARACTER_DISCOVERY",
+                            "entityName": "아이나르",
+                            "attributeName": None,
+                            "attributeValue": None,
+                            "valueType": None,
+                            "valueJson": None,
+                        },
+                        {
+                            "candidateKind": "SETTING",
+                            "entityName": "아이나르",
+                            "attributeName": "profile.species",
+                            "attributeValue": "바바리안",
+                            "valueType": "STRING",
+                            "valueJson": {"value": "바바리안"},
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+
+    reloaded = PredictionBundle.model_validate(predictions.model_dump())
+
+    assert len(reloaded.episodes[0].candidates) == 1
+    assert reloaded.episodes[0].character_discovery_excluded_count == 1
 
 
 def test_unresolved_new_character_keeps_exact_name_detection() -> None:

@@ -295,7 +295,8 @@ class PredictionEpisode(BaseModel):
 
         normalized = dict(value)
         normalized["candidates"] = setting_candidates
-        normalized["character_discovery_excluded_count"] = excluded_count
+        if excluded_count > 0:
+            normalized["character_discovery_excluded_count"] = excluded_count
         return normalized
 
 

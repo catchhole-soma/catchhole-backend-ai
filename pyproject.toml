@@ -27,11 +27,10 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*", "evals*"]
+include = ["app*"]
 
 [tool.setuptools.package-data]
 "app.llm" = ["prompts/*.md"]
-"evals.setting_extraction" = ["prompts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

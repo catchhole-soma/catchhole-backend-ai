@@ -676,7 +676,7 @@ Judge를 끄고 의미 판정 대기 행이 남으면 `factPrecision`, `factReca
 | `evidenceLocatableRate` | 원문이 제공된 매칭 후보의 예측 인용문 중 실제 원문에서 찾을 수 있는 비율 |
 | `goldEvidenceCoverageRate` | 정답 근거와 같은 범위를 예측 근거가 포괄한 비율 |
 | `hardNegativeViolationRate` | 자동 채점 가능한 `DO_NOT_EXTRACT` key를 생성한 비율 |
-| `duplicatePredictionRate` | 같은 회차·캐릭터·key를 중복 생성한 비율 |
+| `duplicatePredictionRate` | 같은 회차의 동일 해소 주체·원본 attributeName·valueType·canonical valueJson을 반복 생성한 비율 |
 | `unknownSubjectPredictionRate` | 전체 `SETTING` 예측 중 최종 주체가 `미상`으로 남은 비율 |
 | `subjectOnlyFailureRate` | 전체 `EXTRACT` 정답 중 캐릭터명만 해소됐다면 유일하게 복구 가능한 예측의 비율 |
 | `unknownSubjectRecoverableRate` | `미상` 예측 중 key·type·값이 유일한 정답과 일치해 주체 해소만 실패한 것으로 볼 수 있는 비율 |
