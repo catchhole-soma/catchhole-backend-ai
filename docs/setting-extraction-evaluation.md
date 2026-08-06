@@ -673,11 +673,11 @@ Judge를 끄고 의미 판정 대기 행이 남으면 `factPrecision`, `factReca
 | `attributeValueAccuracy` | identity가 매칭된 후보 중 표시값이 맞은 비율 |
 | `structuredValueAccuracy` | 정답 valueJson이 있는 후보 중 핵심 구조가 맞은 비율 |
 | `evidenceProvidedRate` | 매칭 후보 중 예측 근거를 하나 이상 제공한 비율 |
-| `evidenceLocatableRate` | 예측 인용문을 실제 원문에서 찾을 수 있는 비율 |
+| `evidenceLocatableRate` | 원문이 제공된 매칭 후보의 예측 인용문 중 실제 원문에서 찾을 수 있는 비율 |
 | `goldEvidenceCoverageRate` | 정답 근거와 같은 범위를 예측 근거가 포괄한 비율 |
 | `hardNegativeViolationRate` | 자동 채점 가능한 `DO_NOT_EXTRACT` key를 생성한 비율 |
 | `duplicatePredictionRate` | 같은 회차·캐릭터·key를 중복 생성한 비율 |
-| `unknownSubjectPredictionRate` | 전체 원시 예측 중 최종 주체가 `미상`으로 남은 비율 |
+| `unknownSubjectPredictionRate` | 전체 `SETTING` 예측 중 최종 주체가 `미상`으로 남은 비율 |
 | `subjectOnlyFailureRate` | 전체 `EXTRACT` 정답 중 캐릭터명만 해소됐다면 유일하게 복구 가능한 예측의 비율 |
 | `unknownSubjectRecoverableRate` | `미상` 예측 중 key·type·값이 유일한 정답과 일치해 주체 해소만 실패한 것으로 볼 수 있는 비율 |
 | `ambiguousUnknownSubjectRate` | `미상` 예측 중 같은 key·type·값을 가진 정답이 여러 개이거나 한 정답에 여러 예측이 걸려 자동 귀속할 수 없는 비율 |
@@ -704,7 +704,7 @@ Judge를 끄고 의미 판정 대기 행이 남으면 `factPrecision`, `factReca
 주체 해소 품질만 따로 비교할 수 있도록 원인을 추가 분류합니다.
 
 `unknownSubjectPredictionRate`의 분자는 `matchStatus=MATCHED`가 아니면서 최종
-`entityName`이 정확히 `미상`인 후보입니다. 분모는 `REVIEW_REQUIRED` 제외 전 원시 예측 수인
+`entityName`이 정확히 `미상`인 후보입니다. 분모는 `REVIEW_REQUIRED` 제외 전 `SETTING` 예측 수인
 `predictionTotal`입니다. `AMBIGUOUS`라는 상태만으로는 집계하지 않습니다. 정상적으로 서로 다른
 두 캐릭터 사이에서 애매한 후보까지 모두 `미상`으로 오해하지 않기 위해서입니다. 반대로 추출 이름이
 한때 `미상`이었어도 운영 이름 해소 결과가 `MATCHED`라면 실패로 집계하지 않습니다.
