@@ -10,6 +10,7 @@ Python AI Worker의 문서 위치와 작성 기준을 정리합니다.
 | --- | --- |
 | [AI Worker Workflow](ai-worker-workflow.md) | Spring claim 이후 Python Worker가 청킹, LLM 추출, 후보 저장, 완료/실패 보고를 수행하는 흐름 |
 | [AI Token Cache Validation](ai-token-cache-validation.md) | 실제 분석 호출의 토큰 예약량, Prompt Cache 적중률과 재검증 기준 |
+| [Setting Extraction Evaluation](setting-extraction-evaluation.md) | 설정 추출 정답 데이터, 예측 결과, 규칙·LLM 채점과 평가 지표를 연결하는 로컬 평가 흐름 |
 | [FastAPI Role Review](fastapi-role-review.md) | FastAPI를 health check 수준으로 유지할지, Worker-only 구조로 제거할지 검토하는 기준 |
 
 ## Java Docs와의 책임 구분

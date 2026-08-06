@@ -1,0 +1,42 @@
+{
+  "datasetVersion": "example-v1",
+  "name": "설정 추출 평가 예시",
+  "episodes": [
+    {
+      "episodeNo": 1,
+      "sourceText": "카엘은 12레벨 검사다. 불타는 검을 들고 있다.",
+      "candidates": [
+        {
+          "decision": "EXTRACT",
+          "importance": "MUST",
+          "entityName": "카엘",
+          "factKey": "level",
+          "valueType": "NUMBER",
+          "attributeValue": "12",
+          "valueJson": {"value": 12},
+          "evidenceQuotes": ["카엘은 12레벨 검사다."]
+        },
+        {
+          "decision": "EXTRACT",
+          "importance": "SHOULD",
+          "entityName": "카엘",
+          "factKey": "item.불타는_검",
+          "acceptedFactKeyAliases": ["item.화염검"],
+          "valueType": "JSON",
+          "attributeValue": "불타는 검을 보유",
+          "valueJson": {"name": "불타는 검"},
+          "evidenceQuotes": ["불타는 검을 들고 있다."]
+        },
+        {
+          "decision": "DO_NOT_EXTRACT",
+          "entityName": "카엘",
+          "factKey": "age",
+          "valueType": "NUMBER",
+          "attributeValue": "12",
+          "valueJson": {"value": 12},
+          "evidenceQuotes": ["카엘은 12레벨 검사다."]
+        }
+      ]
+    }
+  ]
+}
