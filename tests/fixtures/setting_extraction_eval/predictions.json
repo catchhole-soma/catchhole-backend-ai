@@ -1,0 +1,25 @@
+{
+  "episodes": [
+    {
+      "episodeNo": 1,
+      "candidates": [
+        {
+          "entity_name": "카엘",
+          "attribute_name": "level",
+          "attribute_value": "12",
+          "value_type": "NUMBER",
+          "value_json": {"value": 12},
+          "evidence_spans": [{"quote": "카엘은 12레벨 검사다."}]
+        },
+        {
+          "entity_name": "카엘",
+          "attribute_name": "item.화염검",
+          "attribute_value": "불타는 검 장착",
+          "value_type": "JSON",
+          "value_json": {"name": "불타는 검", "equipped": true},
+          "evidence_spans": [{"quote": "불타는 검을 들고 있다."}]
+        }
+      ]
+    }
+  ]
+}
