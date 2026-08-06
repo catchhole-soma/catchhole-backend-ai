@@ -1,9 +1,9 @@
 # 설정 추출 평가
 
 설정 추출 프롬프트나 모델을 변경했을 때 같은 정답 데이터로 결과를 다시 채점하기 위한
-로컬 평가 도구입니다. 현재 범위는 **이미 생성된 예측 JSON을 재현 가능하게 채점하는 것**입니다.
-기준 브랜치와 변경 브랜치에서 OpenAI 분석을 자동 실행하는 A/B runner와 GitHub Actions 연동은
-후속 작업으로 둡니다.
+평가 도구입니다. 이미 생성된 예측 JSON의 로컬 채점뿐 아니라, 구조화한 Notion 정답을
+스냅샷으로 내보내 private 원고를 다시 분석하고 GitHub Actions Summary에서 점수를 확인할 수
+있습니다. 기준 브랜치와 변경 브랜치를 한 실행에서 비교하는 A/B 자동화는 후속 작업으로 둡니다.
 
 ## 평가 원칙
 
@@ -28,6 +28,11 @@
 | `evals/setting_extraction/semantic_judge.py` | 규칙으로 확정하지 못한 서술형 표시값의 LLM 판정 |
 | `evals/setting_extraction/evaluator.py` | 회차별 매칭과 전체 지표 집계 |
 | `evals/setting_extraction/cli.py` | 로컬 실행 진입점 |
+| `evals/setting_extraction/notion_exporter.py` | 구조화 Notion 행 조회·검증·스냅샷 생성 |
+| `evals/setting_extraction/notion_cli.py` | Notion → `GoldDataset` 내보내기 진입점 |
+| `evals/setting_extraction/run_gold_analysis.py` | 스냅샷에 선택된 회차를 실제 분석 모델로 실행 |
+| `evals/setting_extraction/report_cli.py` | 평가 JSON을 GitHub Summary용 Markdown으로 요약 |
+| `.github/workflows/setting-extraction-score.yml` | 비용 확인 후 수동 실행하는 비차단 점수 확인 workflow |
 
 ## 자연어로 보는 전체 실행 흐름
 
@@ -742,9 +747,9 @@ Judge를 끄고 의미 판정 대기 행이 남으면 `factPrecision`, `factReca
 
 ## 남은 후속 작업
 
-- Notion 정답표를 위 JSON 계약으로 내보내는 변환기
 - 동일 원고를 기준 브랜치와 변경 브랜치에서 각각 실행하는 A/B runner
 - 모델 호출 비용과 평가 점수를 함께 비교하는 보고서
-- GitHub Actions에서 private 원고를 안전하게 가져오는 방식
+- 프롬프트·모델·청크·평가 코드 변경 감지와 자동 실행 범위
 - 회귀 실패 기준과 PR 체크 임계값 합의
+- 빠른 PR 평가와 전체 정식 평가 데이터셋 분리
 - 작품·장르·회차 길이가 다른 고정 train/dev/test 평가 세트 구성

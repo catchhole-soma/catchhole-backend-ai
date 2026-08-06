@@ -35,7 +35,8 @@ def main() -> None:
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(serialized, encoding="utf-8")
-    print(serialized)
+    if not args.quiet:
+        print(serialized)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -74,6 +75,11 @@ def _parse_args() -> argparse.Namespace:
         help="Active character setting schema snapshot used to canonicalize prediction aliases.",
     )
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Do not print the detailed report, which may contain source-derived text.",
+    )
     return parser.parse_args()
 
 

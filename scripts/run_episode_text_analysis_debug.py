@@ -174,9 +174,9 @@ def main() -> None:
         episode_title=args.episode_title,
         model_name=args.model_name,
         max_chunks=args.max_chunks,
-        known_characters=_load_known_characters(args.known_characters_json),
+        known_characters=load_known_characters(args.known_characters_json),
         output_json=args.output_json,
-        schema_hints=_load_character_setting_schema_hints(
+        schema_hints=load_character_setting_schema_hints(
             args.character_setting_schemas_json
         ),
     )
@@ -251,7 +251,7 @@ def _build_subject_context(
     )
 
 
-def _load_known_characters(path: Path | None) -> list[KnownCharacter]:
+def load_known_characters(path: Path | None) -> list[KnownCharacter]:
     if path is None:
         return []
 
@@ -284,7 +284,7 @@ def _load_known_characters(path: Path | None) -> list[KnownCharacter]:
     return known_characters
 
 
-def _load_character_setting_schema_hints(
+def load_character_setting_schema_hints(
     path: Path,
 ) -> tuple[CharacterSettingSchemaHint, ...]:
     raw_items = json.loads(path.read_text(encoding="utf-8"))
@@ -308,6 +308,11 @@ def _load_character_setting_schema_hints(
         )
         for schema in schemas
     )
+
+
+# 기존 로컬 스크립트·테스트에서 사용하던 이름도 유지한다.
+_load_known_characters = load_known_characters
+_load_character_setting_schema_hints = load_character_setting_schema_hints
 
 
 def _print_candidate_preview(candidates: list[ExtractedSettingCandidate]) -> None:
