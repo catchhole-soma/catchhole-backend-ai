@@ -100,6 +100,7 @@ def run_episode_text_analysis_debug(
             episode_no=episode_no,
             episode_title=episode_title,
             schema_hints=schema_hints,
+            known_characters=tuple(known_characters),
         )
         resolved_candidates = resolve_candidate_evidence_offsets(
             candidates=extraction_result.candidates,

@@ -136,7 +136,7 @@ required reviewer를 지정합니다. 이 승인은 실수로 OpenAI 비용이 �
 | 종류 | 이름 | 내용 |
 | --- | --- | --- |
 | Secret | `NOTION_API_TOKEN` | Read-only Notion integration secret |
-| Secret | `OPENAI_API_KEY` | 평가 분석과 선택적 semantic judge 호출용 |
+| Secret | `OPENAI_API_KEY` | workflow에서 `LLM_API_KEY`로 매핑하는 평가 분석·semantic judge 호출용 키 |
 | Variable | `NOTION_GOLD_DATA_SOURCE_ID` | 위 구조화 data source ID |
 | Variable | `SETTING_EVAL_INPUT_S3_URI` | private 평가 입력 S3 prefix |
 | Variable | `AWS_REGION` | 평가 bucket region. 예: `ap-northeast-2` |

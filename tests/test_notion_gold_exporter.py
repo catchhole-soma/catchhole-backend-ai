@@ -1,5 +1,7 @@
 import json
+import logging
 from pathlib import Path
+import sys
 
 import httpx
 import pytest
@@ -12,7 +14,10 @@ from evals.setting_extraction.report_cli import (
     build_machine_summary,
     render_markdown_summary,
 )
-from evals.setting_extraction.run_gold_analysis import resolve_episode_source_file
+from evals.setting_extraction.run_gold_analysis import (
+    resolve_episode_source_file,
+    run_analysis_without_source_logs,
+)
 
 
 def test_build_gold_dataset_filters_episodes_and_preserves_annotation_contract() -> None:
@@ -150,6 +155,30 @@ def test_source_file_cannot_escape_private_source_root(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="escapes the source root"):
         resolve_episode_source_file(dataset.episodes[0], source_root)
+
+
+def test_live_analysis_failure_does_not_expose_source_details(capsys) -> None:
+    private_text = "private manuscript evidence quote"
+
+    def fail_with_source_details() -> dict:
+        print(private_text)
+        print(private_text, file=sys.stderr)
+        logging.getLogger("eval-source-test").error(private_text)
+        raise ValueError(private_text)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Episode 2 analysis failed \(ValueError\)\.",
+    ) as exc_info:
+        run_analysis_without_source_logs(
+            episode_no=2,
+            operation=fail_with_source_details,
+        )
+
+    captured = capsys.readouterr()
+    assert private_text not in captured.out
+    assert private_text not in captured.err
+    assert private_text not in str(exc_info.value)
 
 
 def test_markdown_summary_marks_scores_as_informational() -> None:

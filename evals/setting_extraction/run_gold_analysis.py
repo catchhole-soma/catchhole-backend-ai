@@ -1,7 +1,9 @@
 import argparse
-from contextlib import redirect_stdout
+from collections.abc import Callable
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 import json
+import logging
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -26,10 +28,9 @@ def main() -> None:
     for episode in dataset.episodes:
         text_file = resolve_episode_source_file(episode, args.source_root)
         output_file = args.output_dir / f"episode-{episode.episode_no}.json"
-        # Actions 로그에 후보 원문과 근거 미리보기가 남지 않도록 기존 디버그 러너의
-        # 표준 출력만 가리고, 예외는 그대로 전파해 실행 실패를 숨기지 않는다.
-        with redirect_stdout(StringIO()):
-            result = run_episode_text_analysis_debug(
+        result = run_analysis_without_source_logs(
+            episode_no=episode.episode_no,
+            operation=lambda: run_episode_text_analysis_debug(
                 text_file=text_file,
                 episode_id=_stable_uuid(
                     dataset.dataset_version,
@@ -47,11 +48,44 @@ def main() -> None:
                 known_characters=known_characters,
                 output_json=output_file,
                 schema_hints=schema_hints,
-            )
+            ),
+        )
         print(
             f"episode={episode.episode_no} "
             f"candidateCount={result['summary']['candidateCount']}"
         )
+
+
+def run_analysis_without_source_logs(
+    *,
+    episode_no: int,
+    operation: Callable[[], dict],
+) -> dict:
+    """원문 유래 출력은 버리고 실패 여부와 예외 종류만 호출자에게 전달한다."""
+
+    try:
+        # 디버그 러너의 후보 미리보기뿐 아니라 validation warning과 stderr도 차단한다.
+        with (
+            redirect_stdout(StringIO()),
+            redirect_stderr(StringIO()),
+            _disable_logging(),
+        ):
+            return operation()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Episode {episode_no} analysis failed ({exc.__class__.__name__})."
+        ) from None
+
+
+@contextmanager
+def _disable_logging():
+    # 평가 CLI는 단일 스레드로 처리하므로 분석 구간에서 전역 logging을 잠시 꺼도 안전하다.
+    previous_level = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+    try:
+        yield
+    finally:
+        logging.disable(previous_level)
 
 
 def resolve_episode_source_file(episode: GoldEpisode, source_root: Path) -> Path:

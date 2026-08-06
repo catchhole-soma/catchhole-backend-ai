@@ -35,7 +35,7 @@ jobs:
     env:
       NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
       NOTION_GOLD_DATA_SOURCE_ID: ${{ vars.NOTION_GOLD_DATA_SOURCE_ID }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SETTING_EVAL_INPUT_S3_URI: ${{ vars.SETTING_EVAL_INPUT_S3_URI }}
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
@@ -58,7 +58,7 @@ jobs:
             echo "::error::OpenAI 비용 발생 확인을 위해 confirm_run에 RUN을 입력해야 합니다."
             exit 1
           fi
-          for name in NOTION_API_TOKEN NOTION_GOLD_DATA_SOURCE_ID OPENAI_API_KEY SETTING_EVAL_INPUT_S3_URI AWS_REGION; do
+          for name in NOTION_API_TOKEN NOTION_GOLD_DATA_SOURCE_ID LLM_API_KEY SETTING_EVAL_INPUT_S3_URI AWS_REGION; do
             if [ -z "${!name:-}" ]; then
               echo "::error::$name 설정이 필요합니다."
               exit 1
