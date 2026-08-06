@@ -218,7 +218,7 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         required=True,
         help=(
-            "Required non-empty JSON array with Spring claim characterSettingSchemas entries. "
+            "Required non-empty JSON array or characterSettingSchemas wrapper. "
             "Accepts schemaKey, displayName, attributePattern, aliases, and valueType."
         ),
     )
@@ -288,9 +288,17 @@ def load_known_characters(path: Path | None) -> list[KnownCharacter]:
 def load_character_setting_schema_hints(
     path: Path,
 ) -> tuple[CharacterSettingSchemaHint, ...]:
-    raw_items = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    raw_items = (
+        payload.get("characterSettingSchemas")
+        if isinstance(payload, dict)
+        else payload
+    )
     if not isinstance(raw_items, list):
-        raise ValueError("--character-setting-schemas-json must be a JSON array.")
+        raise ValueError(
+            "--character-setting-schemas-json must be an array or contain "
+            "characterSettingSchemas."
+        )
     if not raw_items:
         raise ValueError("--character-setting-schemas-json must not be empty.")
 

@@ -41,6 +41,33 @@ def test_load_character_setting_schema_hints_accepts_spring_claim_shape(tmp_path
     assert hints[0].value_type == "JSON"
 
 
+def test_load_character_setting_schema_hints_accepts_wrapped_snapshot(tmp_path) -> None:
+    schema_path = tmp_path / "character-setting-schemas.json"
+    schema_path.write_text(
+        json.dumps(
+            {
+                "characterSettingSchemas": [
+                    {
+                        "schemaKey": "stats.stat",
+                        "displayName": "스탯",
+                        "attributePattern": "stats.*",
+                        "aliases": [],
+                        "valueType": "NUMBER",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    hints = _load_character_setting_schema_hints(schema_path)
+
+    assert len(hints) == 1
+    assert hints[0].schema_key == "stats.stat"
+    assert hints[0].attribute_pattern == "stats.*"
+    assert hints[0].value_type == "NUMBER"
+
+
 def test_load_character_setting_schema_hints_rejects_empty_array(tmp_path) -> None:
     schema_path = tmp_path / "character-setting-schemas.json"
     schema_path.write_text("[]", encoding="utf-8")
