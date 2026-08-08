@@ -42,13 +42,13 @@ class CharacterSettingExtractor:
         model: str | None = None,
         max_attempts: int | None = None,
     ) -> None:
+        settings = get_settings()
         # 실제 실행에서는 OpenAI client를 쓰고, 테스트에서는 fake client를 주입
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
-        # 특정 추출 작업에서만 모델을 바꾸고 싶을 때 사용한다, 없으면 LLM client 기본 모델을 쓴다
-        self.model = model
+        self.model = model or settings.effective_llm_extraction_model
         self.max_attempts = (
-            get_settings().llm_extraction_max_attempts if max_attempts is None else max_attempts
+            settings.llm_extraction_max_attempts if max_attempts is None else max_attempts
         )
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be at least 1.")

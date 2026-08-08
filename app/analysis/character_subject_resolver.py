@@ -14,6 +14,7 @@ from app.analysis.character_name_resolver import (
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.json_response import compact_error_message, parse_json_object
 from app.analysis.schemas import ExtractedSettingCandidate
+from app.core.config import get_settings
 from app.domain.enums import SettingCandidateKind
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
@@ -67,7 +68,7 @@ class CharacterSubjectResolver:
         # 운영에서는 OpenAI client를 기본 사용하고, 테스트에서는 fake client를 주입한다.
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
-        self.model = model
+        self.model = model or get_settings().effective_llm_extraction_model
 
     def resolve_candidates(
         self,
