@@ -11,6 +11,7 @@ import tiktoken
 from app.embeddings.exceptions import EmbeddingResponseValidationError
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.exceptions import LlmResponseValidationError
+from app.llm.protocols import TextGenerationClient
 from app.llm.responses import LlmTextResponse
 
 logger = logging.getLogger(__name__)
@@ -27,8 +28,8 @@ class AiTokenLedgerApi(Protocol):
         attempt: int,
         model_name: str,
         reserved_tokens: int,
-    ) -> None:
-        pass
+        lease_token: UUID,
+    ) -> None: ...
 
     def settle_ai_tokens(
         self,
@@ -37,30 +38,15 @@ class AiTokenLedgerApi(Protocol):
         cached_input_tokens: int,
         output_tokens: int,
         outcome: str,
-    ) -> None:
-        pass
+    ) -> None: ...
 
-    def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
-        pass
-
-
-class TextGenerationApi(Protocol):
-    def create_text_response(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        model: str | None = None,
-        max_output_tokens: int = 1500,
-        prompt_cache_key: str | None = None,
-    ) -> LlmTextResponse:
-        pass
+    def release_ai_tokens(self, request_id: UUID, outcome: str) -> None: ...
 
 
 class EmbeddingApi(Protocol):
     version: str
 
-    def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
-        pass
+    def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse: ...
 
 
 class MeteredTextGenerationClient:
@@ -68,17 +54,19 @@ class MeteredTextGenerationClient:
 
     def __init__(
         self,
-        delegate: TextGenerationApi,
+        delegate: TextGenerationClient,
         ledger: AiTokenLedgerApi,
         analysis_job_id: UUID,
         purpose: str,
         default_model: str,
+        lease_token: UUID,
     ) -> None:
         self.delegate = delegate
         self.ledger = ledger
         self.analysis_job_id = analysis_job_id
         self.purpose = purpose
         self.default_model = default_model
+        self.lease_token = lease_token
         self._attempt = 0
 
     def create_text_response(
@@ -108,6 +96,7 @@ class MeteredTextGenerationClient:
             attempt=self._attempt,
             model_name=effective_model,
             reserved_tokens=reserved_tokens,
+            lease_token=self.lease_token,
         )
         try:
             response = self.delegate.create_text_response(
@@ -146,11 +135,13 @@ class MeteredEmbeddingClient:
         ledger: AiTokenLedgerApi,
         analysis_job_id: UUID,
         model_name: str,
+        lease_token: UUID,
     ) -> None:
         self.delegate = delegate
         self.ledger = ledger
         self.analysis_job_id = analysis_job_id
         self.model_name = model_name
+        self.lease_token = lease_token
         self.version = delegate.version
         self._attempt = 0
 
@@ -165,6 +156,7 @@ class MeteredEmbeddingClient:
             attempt=self._attempt,
             model_name=self.model_name,
             reserved_tokens=_estimate_embedding_token_upper_bound(inputs),
+            lease_token=self.lease_token,
         )
         try:
             response = self.delegate.create_embeddings(inputs)

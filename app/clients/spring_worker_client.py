@@ -3,20 +3,35 @@ from uuid import UUID
 import httpx
 
 from app.core.config import Settings, get_settings
-from app.domain.enums import EpisodeProcessingStatus
+from app.domain.enums import (
+    AnalysisJobCheckpointStage,
+    AnalysisJobType,
+    EpisodeProcessingStatus,
+    WorldSettingCategory,
+)
 from app.schemas.worker import (
-    WorkerAnalysisJobClaimRequest,
-    WorkerAnalysisJobCompleteRequest,
-    WorkerAnalysisJobFailRequest,
-    WorkerAnalysisJobPayload,
-    WorkerAnalysisJobProgressRequest,
     AiTokenReleaseRequest,
     AiTokenReserveRequest,
     AiTokenSettleRequest,
+    WorkerAnalysisJobClaimRequest,
+    WorkerAnalysisJobCompleteRequest,
+    WorkerAnalysisJobFailRequest,
+    WorkerAnalysisJobHeartbeatResponse,
+    WorkerAnalysisJobPayload,
+    WorkerAnalysisJobProgressRequest,
+    WorkerWorldSettingCandidatePayload,
+    WorkerWorldSettingCandidatePublishItem,
+    WorkerWorldSettingCandidatePublishRequest,
+    WorkerWorldSettingComparisonCompleteRequest,
+    WorkerWorldSettingComparisonContextRequest,
+    WorkerWorldSettingComparisonContextResponse,
+    WorkerWorldSettingComparisonFailRequest,
+    WorkerWorldSettingSubjectPageResponse,
 )
 
 # Spring 내부 API 인증용 헤더 이름
 INTERNAL_API_KEY_HEADER = "X-Internal-Api-Key"
+WORKER_LEASE_TOKEN_HEADER = "X-Worker-Lease-Token"
 
 
 class SpringWorkerClient:
@@ -26,10 +41,9 @@ class SpringWorkerClient:
         internal_api_key: str,
         http_client: httpx.Client | None = None,
     ) -> None:
-        # base_url 끝의 / 제거, 예: http://localhost:8080/ -> http://localhost:8080
         self.base_url = base_url.rstrip("/")
-        self.internal_api_key = internal_api_key # Spring 내부 API 호출 시 보낼 API key (env 값)
-        self.http_client = http_client or httpx.Client(timeout=30) #Python에서 HTTP 요청을 보내는 도구
+        self.internal_api_key = internal_api_key
+        self.http_client = http_client or httpx.Client(timeout=30)
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "SpringWorkerClient":
@@ -41,43 +55,44 @@ class SpringWorkerClient:
 
     def claim(
         self,
+        allowed_job_types: list[AnalysisJobType],
         model_name: str | None = None,
         current_step: str | None = None,
     ) -> WorkerAnalysisJobPayload | None:
-        # claim 요청 DTO 생성
-        request = WorkerAnalysisJobClaimRequest(model_name=model_name, current_step=current_step)
-        # Spring에 분석 job claim 요청
+        request = WorkerAnalysisJobClaimRequest(
+            model_name=model_name,
+            current_step=current_step,
+            allowed_job_types=allowed_job_types,
+        )
         response = self.http_client.post(
             self._url("/api/internal/v1/analysis-jobs/claim"),
             headers=self._headers(),
-            # Pydantic DTO를 JSON용 dict로 변환 (alias 형태로 변환, null은 보내지 않음)
             json=request.model_dump(by_alias=True, exclude_none=True),
         )
         # 204 No Content면 가져갈 job이 없다는 뜻
         if response.status_code == 204:
             return None
-        #2xx, 3xx → 그냥 통과, 4xx, 5xx → httpx.HTTPStatusError 발생
         response.raise_for_status()
-        # data 안쪽만 꺼내서 받을 schema와 형식이 동일한지 검증
         return WorkerAnalysisJobPayload.model_validate(response.json()["data"])
 
     # Spring에 보낼 진행 상태 보고 요청 DTO
     def report_progress(
         self,
         analysis_job_id: UUID,
+        lease_token: UUID,
         current_step: str,
-        episode_status: EpisodeProcessingStatus,
+        episode_status: EpisodeProcessingStatus | None = None,
+        checkpoint_stage: AnalysisJobCheckpointStage | None = None,
     ) -> None:
         request = WorkerAnalysisJobProgressRequest(
             current_step=current_step,
             episode_status=episode_status,
+            checkpoint_stage=checkpoint_stage,
         )
-        
-        # Spring 내부 API에 PATCH 요청
         response = self.http_client.patch(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/progress"),
-            headers=self._headers(),
-            json=request.model_dump(by_alias=True, mode="json"),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
         # HTTP 응답이 4xx/5xx이면 예외를 발생
         response.raise_for_status()
@@ -85,6 +100,7 @@ class SpringWorkerClient:
     def complete(
         self,
         analysis_job_id: UUID,
+        lease_token: UUID,
         summary_json: str | None = None,
         input_token_count: int | None = None,
         output_token_count: int | None = None,
@@ -98,17 +114,17 @@ class SpringWorkerClient:
         # Spring 내부 API에 완료 보고 POST 요청
         response = self.http_client.post(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/complete"),
-            headers=self._headers(),
+            headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, exclude_none=True),
         )
         response.raise_for_status()
 
     # Spring에 보낼 분석 실패 요청 DTO
-    def fail(self, analysis_job_id: UUID, error_message: str) -> None:
+    def fail(self, analysis_job_id: UUID, lease_token: UUID, error_message: str) -> None:
         request = WorkerAnalysisJobFailRequest(error_message=error_message)
         response = self.http_client.post(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/fail"),
-            headers=self._headers(),
+            headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True),
         )
         response.raise_for_status()
@@ -123,6 +139,7 @@ class SpringWorkerClient:
         attempt: int,
         model_name: str,
         reserved_tokens: int,
+        lease_token: UUID,
     ) -> None:
         request = AiTokenReserveRequest(
             request_id=request_id,
@@ -135,7 +152,127 @@ class SpringWorkerClient:
         self._post_usage_update_with_retry(
             path="/api/internal/v1/ai-token-usages/reserve",
             payload=request.model_dump(by_alias=True, mode="json"),
+            lease_token=lease_token,
         )
+
+    def heartbeat(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> WorkerAnalysisJobHeartbeatResponse:
+        response = self.http_client.post(
+            self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/heartbeat"),
+            headers=self._headers(lease_token),
+        )
+        response.raise_for_status()
+        return WorkerAnalysisJobHeartbeatResponse.model_validate(response.json()["data"])
+
+    def publish_world_setting_candidates(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+        candidates: list[WorkerWorldSettingCandidatePublishItem],
+    ) -> list[WorkerWorldSettingCandidatePayload]:
+        request = WorkerWorldSettingCandidatePublishRequest(candidates=candidates)
+        response = self.http_client.put(
+            self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/world-setting-candidates"),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
+        )
+        response.raise_for_status()
+        return [
+            WorkerWorldSettingCandidatePayload.model_validate(candidate_payload)
+            for candidate_payload in response.json()["data"]
+        ]
+
+    def claim_next_world_setting_comparison(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> WorkerWorldSettingCandidatePayload | None:
+        response = self.http_client.post(
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                "/world-setting-comparisons/claim-next"
+            ),
+            headers=self._headers(lease_token),
+        )
+        if response.status_code == 204:
+            return None
+        response.raise_for_status()
+        return WorkerWorldSettingCandidatePayload.model_validate(response.json()["data"])
+
+    def get_world_setting_subjects(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+        category: WorldSettingCategory,
+        page: int,
+        size: int = 500,
+    ) -> WorkerWorldSettingSubjectPageResponse:
+        response = self.http_client.get(
+            self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/world-setting-subjects"),
+            headers=self._headers(lease_token),
+            params={"category": category, "page": page, "size": size},
+        )
+        response.raise_for_status()
+        return WorkerWorldSettingSubjectPageResponse.model_validate(response.json()["data"])
+
+    def get_world_setting_comparison_context(
+        self,
+        analysis_job_id: UUID,
+        candidate_id: UUID,
+        lease_token: UUID,
+        target_world_setting_ids: list[UUID],
+    ) -> WorkerWorldSettingComparisonContextResponse:
+        request = WorkerWorldSettingComparisonContextRequest(
+            target_world_setting_ids=target_world_setting_ids
+        )
+        response = self.http_client.post(
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/world-setting-candidates/{candidate_id}/comparison-context"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, mode="json"),
+        )
+        response.raise_for_status()
+        return WorkerWorldSettingComparisonContextResponse.model_validate(response.json()["data"])
+
+    def complete_world_setting_comparison(
+        self,
+        analysis_job_id: UUID,
+        candidate_id: UUID,
+        lease_token: UUID,
+        request: WorkerWorldSettingComparisonCompleteRequest,
+    ) -> None:
+        response = self.http_client.post(
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/world-setting-candidates/{candidate_id}/comparison-complete"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
+        )
+        response.raise_for_status()
+
+    def fail_world_setting_comparison(
+        self,
+        analysis_job_id: UUID,
+        candidate_id: UUID,
+        lease_token: UUID,
+        error_message: str,
+    ) -> None:
+        request = WorkerWorldSettingComparisonFailRequest(error_message=error_message)
+        response = self.http_client.post(
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/world-setting-candidates/{candidate_id}/comparison-fail"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True),
+        )
+        response.raise_for_status()
 
     # provider가 반환한 실제 usage로 예약을 정산하고 남은 예약량을 반환한다.
     def settle_ai_tokens(
@@ -165,14 +302,19 @@ class SpringWorkerClient:
             payload=request.model_dump(by_alias=True),
         )
 
-    def _post_usage_update_with_retry(self, path: str, payload: dict) -> None:
+    def _post_usage_update_with_retry(
+        self,
+        path: str,
+        payload: dict,
+        lease_token: UUID | None = None,
+    ) -> None:
         """일시적인 Spring 연결 장애에는 같은 requestId의 멱등 원장 요청을 재시도한다."""
 
         for attempt in range(3):
             try:
                 response = self.http_client.post(
                     self._url(path),
-                    headers=self._headers(),
+                    headers=self._headers(lease_token),
                     json=payload,
                 )
                 response.raise_for_status()
@@ -192,5 +334,8 @@ class SpringWorkerClient:
         return f"{self.base_url}{path}"
 
     # Spring 내부 API 인증 헤더 생성
-    def _headers(self) -> dict[str, str]:
-        return {INTERNAL_API_KEY_HEADER: self.internal_api_key}
+    def _headers(self, lease_token: UUID | None = None) -> dict[str, str]:
+        headers = {INTERNAL_API_KEY_HEADER: self.internal_api_key}
+        if lease_token is not None:
+            headers[WORKER_LEASE_TOKEN_HEADER] = str(lease_token)
+        return headers

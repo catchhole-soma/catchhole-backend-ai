@@ -3,7 +3,11 @@ from uuid import UUID, uuid4
 
 import httpx
 
-from app.clients.spring_worker_client import INTERNAL_API_KEY_HEADER, SpringWorkerClient
+from app.clients.spring_worker_client import (
+    INTERNAL_API_KEY_HEADER,
+    WORKER_LEASE_TOKEN_HEADER,
+    SpringWorkerClient,
+)
 from app.domain.enums import EpisodeProcessingStatus
 from app.schemas.worker import WorkerAnalysisJobPayload
 
@@ -11,6 +15,7 @@ ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
 WORK_ID = UUID("00000000-0000-0000-0000-000000000002")
 BATCH_ID = UUID("00000000-0000-0000-0000-000000000003")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000004")
+LEASE_TOKEN = UUID("00000000-0000-0000-0000-000000000005")
 
 
 # claim 성공 시 payload를 파싱하고 요청 헤더/URL/Body가 올바른지 확인
@@ -18,7 +23,11 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
     requests: list[httpx.Request] = []
     client = _client(lambda request: _claim_response(request, requests))
 
-    payload = client.claim(model_name="gpt-4.1-mini", current_step="원문 청킹")
+    payload = client.claim(
+        allowed_job_types=["SETTING_EXTRACTION"],
+        model_name="gpt-4.1-mini",
+        current_step="원문 청킹",
+    )
 
     assert payload is not None
     assert payload.analysis_job_id == ANALYSIS_JOB_ID
@@ -41,6 +50,7 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
     assert json.loads(request.content) == {
         "modelName": "gpt-4.1-mini",
         "currentStep": "원문 청킹",
+        "allowedJobTypes": ["SETTING_EXTRACTION"],
     }
 
 
@@ -48,7 +58,7 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
 def test_claim_returns_none_when_spring_returns_no_content() -> None:
     client = _client(lambda request: httpx.Response(status_code=204))
 
-    payload = client.claim()
+    payload = client.claim(allowed_job_types=["SETTING_EXTRACTION"])
 
     assert payload is None
 
@@ -61,6 +71,9 @@ def test_claim_payload_defaults_character_setting_schemas_when_older_spring_omit
             "workId": str(WORK_ID),
             "workTitle": "빛나는 검사 로맨스",
             "batchId": str(BATCH_ID),
+            "leaseToken": str(LEASE_TOKEN),
+            "leaseExpiresAt": "2026-08-06T12:05:00",
+            "claimAttemptCount": 1,
             "episode": {
                 "episodeId": str(EPISODE_ID),
                 "episodeNo": 1,
@@ -83,6 +96,7 @@ def test_report_progress_calls_spring_progress_api() -> None:
 
     client.report_progress(
         analysis_job_id=ANALYSIS_JOB_ID,
+        lease_token=LEASE_TOKEN,
         current_step="설정 추출",
         episode_status=EpisodeProcessingStatus.ANALYZING,
     )
@@ -90,6 +104,7 @@ def test_report_progress_calls_spring_progress_api() -> None:
     request = requests[0]
     assert request.method == "PATCH"
     assert request.url.path == f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}/progress"
+    assert request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN)
     assert json.loads(request.content) == {
         "currentStep": "설정 추출",
         "episodeStatus": "ANALYZING",
@@ -103,6 +118,7 @@ def test_complete_calls_spring_complete_api() -> None:
 
     client.complete(
         analysis_job_id=ANALYSIS_JOB_ID,
+        lease_token=LEASE_TOKEN,
         summary_json='{"candidateCount":3}',
         input_token_count=100,
         output_token_count=20,
@@ -111,6 +127,7 @@ def test_complete_calls_spring_complete_api() -> None:
     request = requests[0]
     assert request.method == "POST"
     assert request.url.path == f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}/complete"
+    assert request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN)
     assert json.loads(request.content) == {
         "summaryJson": '{"candidateCount":3}',
         "inputTokenCount": 100,
@@ -123,11 +140,16 @@ def test_fail_calls_spring_fail_api() -> None:
     requests: list[httpx.Request] = []
     client = _client(lambda request: _empty_success_response(request, requests))
 
-    client.fail(analysis_job_id=ANALYSIS_JOB_ID, error_message="LLM 응답 오류")
+    client.fail(
+        analysis_job_id=ANALYSIS_JOB_ID,
+        lease_token=LEASE_TOKEN,
+        error_message="LLM 응답 오류",
+    )
 
     request = requests[0]
     assert request.method == "POST"
     assert request.url.path == f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}/fail"
+    assert request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN)
     assert json.loads(request.content) == {"errorMessage": "LLM 응답 오류"}
 
 
@@ -143,6 +165,7 @@ def test_ai_token_reserve_settle_and_release_call_internal_apis() -> None:
         attempt=1,
         model_name="gpt-4.1-mini",
         reserved_tokens=1000,
+        lease_token=LEASE_TOKEN,
     )
     client.settle_ai_tokens(request_id, 100, 10, 20, "SUCCESS")
     other_request_id = uuid4()
@@ -161,6 +184,7 @@ def test_ai_token_reserve_settle_and_release_call_internal_apis() -> None:
         "modelName": "gpt-4.1-mini",
         "reservedTokens": 1000,
     }
+    assert requests[0].headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN)
     assert json.loads(requests[1].content) == {
         "inputTokens": 100,
         "cachedInputTokens": 10,
@@ -208,15 +232,14 @@ def test_ai_token_reservation_retries_with_same_idempotency_key() -> None:
         attempt=1,
         model_name="gpt-5.6-terra",
         reserved_tokens=1000,
+        lease_token=LEASE_TOKEN,
     )
 
     assert len(requests) == 3
     assert {request.url.path for request in requests} == {
         "/api/internal/v1/ai-token-usages/reserve"
     }
-    assert {json.loads(request.content)["requestId"] for request in requests} == {
-        str(request_id)
-    }
+    assert {json.loads(request.content)["requestId"] for request in requests} == {str(request_id)}
 
 
 def test_ai_token_release_retries_temporary_spring_failure() -> None:
@@ -235,6 +258,73 @@ def test_ai_token_release_retries_temporary_spring_failure() -> None:
     assert len(requests) == 3
     assert {request.url.path for request in requests} == {
         f"/api/internal/v1/ai-token-usages/{request_id}/release"
+    }
+
+
+def test_world_setting_worker_calls_use_lease_and_parse_structured_context() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/world-setting-candidates"):
+            return httpx.Response(200, request=request, json={"data": [_candidate_payload()]})
+        if request.url.path.endswith("/claim-next"):
+            return httpx.Response(200, request=request, json={"data": _candidate_payload()})
+        if request.url.path.endswith("/comparison-context"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "data": {
+                        "candidate": _candidate_payload(),
+                        "exactTargetWorldSettingId": None,
+                        "targets": [],
+                    }
+                },
+            )
+        return _empty_success_response(request, [])
+
+    client = _client(handler)
+    candidate = client.publish_world_setting_candidates(
+        ANALYSIS_JOB_ID,
+        LEASE_TOKEN,
+        [
+            {
+                "category": "RACE",
+                "subjectName": "바바리안",
+                "settingName": "서식지",
+                "extractedValue": "혹한 지역",
+                "evidenceSpans": [{"quote": "바바리안은 혹한 지역에 산다."}],
+                "extractionConfidence": 0.95,
+            }
+        ],
+    )[0]
+    claimed = client.claim_next_world_setting_comparison(ANALYSIS_JOB_ID, LEASE_TOKEN)
+    context = client.get_world_setting_comparison_context(
+        ANALYSIS_JOB_ID,
+        candidate.candidate_id,
+        LEASE_TOKEN,
+        [],
+    )
+
+    assert claimed is not None
+    assert context.candidate.evidence_spans[0].quote == "바바리안은 혹한 지역에 산다."
+    assert all(
+        request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN) for request in requests
+    )
+
+
+def _candidate_payload() -> dict:
+    return {
+        "candidateId": "00000000-0000-0000-0000-000000000020",
+        "workId": str(WORK_ID),
+        "sourceEpisodeId": str(EPISODE_ID),
+        "category": "RACE",
+        "subjectName": "바바리안",
+        "settingName": "서식지",
+        "extractedValue": "혹한 지역",
+        "evidenceSpans": [{"quote": "바바리안은 혹한 지역에 산다."}],
+        "extractionConfidence": 0.95,
     }
 
 
@@ -263,6 +353,11 @@ def _claim_response(request: httpx.Request, requests: list[httpx.Request]) -> ht
                 "batchId": str(BATCH_ID),
                 "modelName": "gpt-4.1-mini",
                 "currentStep": "원문 청킹",
+                "leaseToken": str(LEASE_TOKEN),
+                "leaseExpiresAt": "2026-08-06T12:05:00",
+                "claimAttemptCount": 1,
+                "checkpointStage": None,
+                "worldSettingCandidateId": None,
                 "characterSettingSchemas": [
                     {
                         "schemaKey": "stats.strength",
@@ -296,7 +391,9 @@ def _claim_response(request: httpx.Request, requests: list[httpx.Request]) -> ht
 
 
 # 성공 응답을 흉내내고 요청을 기록
-def _empty_success_response(request: httpx.Request, requests: list[httpx.Request]) -> httpx.Response:
+def _empty_success_response(
+    request: httpx.Request, requests: list[httpx.Request]
+) -> httpx.Response:
     requests.append(request)
     return httpx.Response(
         status_code=200,

@@ -18,6 +18,7 @@ from app.usage.metering import (
 )
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
+LEASE_TOKEN = UUID("00000000-0000-0000-0000-000000000002")
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +47,7 @@ def test_text_generation_reserves_and_settles_actual_usage() -> None:
         analysis_job_id=ANALYSIS_JOB_ID,
         purpose="SETTING_EXTRACTION",
         default_model="gpt-4.1-mini",
+        lease_token=LEASE_TOKEN,
     )
 
     response = client.create_text_response("규칙", "원고", max_output_tokens=100)
@@ -68,6 +70,7 @@ def test_text_generation_releases_reservation_when_usage_is_unavailable() -> Non
         analysis_job_id=ANALYSIS_JOB_ID,
         purpose="SUBJECT_RESOLUTION",
         default_model="gpt-4.1-mini",
+        lease_token=LEASE_TOKEN,
     )
 
     with pytest.raises(TimeoutError, match="provider timeout"):
@@ -85,6 +88,7 @@ def test_release_failure_does_not_mask_original_provider_error() -> None:
         ledger=FailingReleaseLedger(),
         analysis_job_id=ANALYSIS_JOB_ID,
         model_name="text-embedding-3-small",
+        lease_token=LEASE_TOKEN,
     )
 
     with pytest.raises(RecoverableEmbeddingProviderError, match="temporary provider error"):
@@ -98,6 +102,7 @@ def test_embedding_request_is_metered_separately() -> None:
         ledger=ledger,
         analysis_job_id=ANALYSIS_JOB_ID,
         model_name="text-embedding-3-small",
+        lease_token=LEASE_TOKEN,
     )
 
     response = client.create_embeddings(["첫 청크", "두 번째 청크"])
@@ -116,6 +121,7 @@ def test_success_without_provider_usage_releases_reservation() -> None:
         analysis_job_id=ANALYSIS_JOB_ID,
         purpose="SETTING_EXTRACTION",
         default_model="gpt-4.1-mini",
+        lease_token=LEASE_TOKEN,
     )
 
     client.create_text_response("규칙", "원고")
@@ -140,6 +146,7 @@ def test_text_validation_error_settles_reported_usage() -> None:
         analysis_job_id=ANALYSIS_JOB_ID,
         purpose="SETTING_EXTRACTION",
         default_model="gpt-4.1-mini",
+        lease_token=LEASE_TOKEN,
     )
 
     with pytest.raises(LlmResponseValidationError, match="invalid output structure"):
@@ -166,6 +173,7 @@ def test_wrapped_embedding_http_error_settles_reported_usage() -> None:
         ledger=ledger,
         analysis_job_id=ANALYSIS_JOB_ID,
         model_name="text-embedding-3-small",
+        lease_token=LEASE_TOKEN,
     )
 
     with pytest.raises(RecoverableEmbeddingProviderError):
@@ -185,6 +193,7 @@ def test_embedding_validation_error_settles_reported_usage() -> None:
         ledger=ledger,
         analysis_job_id=ANALYSIS_JOB_ID,
         model_name="text-embedding-3-small",
+        lease_token=LEASE_TOKEN,
     )
 
     with pytest.raises(EmbeddingResponseValidationError, match="invalid dimensions"):

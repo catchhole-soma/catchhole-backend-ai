@@ -2,14 +2,20 @@ import argparse
 import time
 from collections.abc import Callable
 from datetime import datetime
+from typing import Protocol
 
 from app.core.config import get_settings
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunResult
+from app.worker.world_setting_comparison_worker import WorldSettingComparisonWorker
+
+
+class WorkerLoopApi(Protocol):
+    def run_once(self) -> WorkerRunResult: ...
 
 
 # AnalysisJobWorker.run_once()를 반복 호출하는 CLI runner의 loop
 def run_worker_loop(
-    worker: AnalysisJobWorker,
+    worker: WorkerLoopApi,
     idle_sleep_seconds: float,
     max_iterations: int | None = None,
     sleeper: Callable[[float], None] = time.sleep,
@@ -45,9 +51,16 @@ def main() -> None:
     args = _parse_args()
     settings = get_settings()
     # 실제 실행에서는 세부 서비스를 직접 넣지 않고 Worker가 기본 구현체를 필요할 때 준비
-    worker = AnalysisJobWorker(
-        model_name=args.model_name,
-        embedding_generation_enabled=settings.embedding_generation_enabled,
+    worker = (
+        WorldSettingComparisonWorker(
+            comparison_model_name=args.comparison_model_name or args.model_name,
+        )
+        if args.worker_kind == "world-comparison"
+        else AnalysisJobWorker(
+            extraction_model_name=args.extraction_model_name or args.model_name,
+            comparison_model_name=args.comparison_model_name or args.model_name,
+            embedding_generation_enabled=settings.embedding_generation_enabled,
+        )
     )
 
     # --once는 로컬에서 Spring claim 연결만 빠르게 확인할 때 사용한다.
@@ -64,29 +77,40 @@ def main() -> None:
 
 
 def _parse_args() -> argparse.Namespace:
-    # argparse는 Python 표준 CLI 인자 파서, 별도 라이브러리 없이 실행 옵션을 받음
     parser = argparse.ArgumentParser(description="Run CatchHole analysis worker.")
-    # 한 번만 시행할지
     parser.add_argument("--once", action="store_true", help="Run one claim attempt and exit.")
     parser.add_argument(
-        # sleep 시간, 기본 5초
+        "--worker-kind",
+        choices=("analysis", "world-comparison"),
+        default="analysis",
+        help="Select the disjoint Spring job type set claimed by this process.",
+    )
+    parser.add_argument(
         "--idle-sleep-seconds",
         type=float,
         default=5.0,
         help="Sleep seconds when claimable job does not exist.",
     )
     parser.add_argument(
-        # 최대 반복 횟수, 기본 제한 없음
         "--max-iterations",
         type=int,
         default=None,
         help="Limit loop iterations for local checks. Omit for continuous worker mode.",
     )
     parser.add_argument(
-        # 사용할 모델 이름
         "--model-name",
         default=None,
-        help="Override LLM model name passed to Spring claim and extractor.",
+        help="Deprecated common override for both LLM stages.",
+    )
+    parser.add_argument(
+        "--extraction-model-name",
+        default=None,
+        help="Override the first-stage extraction model.",
+    )
+    parser.add_argument(
+        "--comparison-model-name",
+        default=None,
+        help="Override the second-stage comparison model.",
     )
     return parser.parse_args()
 

@@ -13,18 +13,36 @@ from app.domain.enums import (
 )
 
 # Spring AI 토큰 원장 계약에서 허용하는 호출 목적과 종료 결과
-AiTokenPurpose = Literal["SETTING_EXTRACTION", "SUBJECT_RESOLUTION", "CHUNK_EMBEDDING"]
-AiTokenUsageOutcome = Literal["SUCCESS", "FAILURE", "USAGE_UNAVAILABLE"]
+AiTokenPurpose = Literal[
+    "SETTING_EXTRACTION",
+    "SUBJECT_RESOLUTION",
+    "CHUNK_EMBEDDING",
+    "WORLD_SETTING_EXTRACTION",
+    "WORLD_SETTING_SUBJECT_RESOLUTION",
+    "WORLD_SETTING_COMPARISON",
+]
+AiTokenUsageOutcome = Literal[
+    "SUCCESS",
+    "FAILURE",
+    "USAGE_UNAVAILABLE",
+    "WORKER_LEASE_EXPIRED",
+]
+
 
 # Worker가 Spring 서버에 job claim 요청
 class WorkerAnalysisJobClaimRequest(BaseModel):
     # Python 필드명과 JSON alias를 둘 다 허용한다, 예: model_name or modelName 모두 가능
-    #Pydantic 모델의 설정값, 실제 데이터 필드로 들어가지 않음
+    # Pydantic 모델의 설정값, 실제 데이터 필드로 들어가지 않음
     model_config = ConfigDict(populate_by_name=True)
 
     model_name: str | None = Field(default=None, alias="modelName", max_length=100)
     # Spring에 알려줄 현재 작업 단계
     current_step: str | None = Field(default=None, alias="currentStep", max_length=100)
+    allowed_job_types: list[AnalysisJobType] = Field(
+        alias="allowedJobTypes",
+        min_length=1,
+    )
+
 
 # Worker가 분석 진행 상황을 Spring에 보고할 때 쓰는 DTO
 class WorkerAnalysisJobProgressRequest(BaseModel):
@@ -32,7 +50,12 @@ class WorkerAnalysisJobProgressRequest(BaseModel):
     # 현재 진행 단계, 빈 문자열은 허용 x
     current_step: str = Field(alias="currentStep", min_length=1, max_length=100)
     # 사람이 읽는 currentStep과 별개로 Spring Episode에 적용할 명시적 상태
-    episode_status: EpisodeProcessingStatus = Field(alias="episodeStatus")
+    episode_status: EpisodeProcessingStatus | None = Field(default=None, alias="episodeStatus")
+    checkpoint_stage: AnalysisJobCheckpointStage | None = Field(
+        default=None,
+        alias="checkpointStage",
+    )
+
 
 # Worker가 분석 성공을 Spring에 보고할 때 쓰는 DTO
 class WorkerAnalysisJobCompleteRequest(BaseModel):
@@ -40,16 +63,24 @@ class WorkerAnalysisJobCompleteRequest(BaseModel):
 
     # 분석 결과 요약 JSON 문자열
     summary_json: str | None = Field(default=None, alias="summaryJson")
-    # 입력 토큰 수
+    # 구버전 Worker 호환용 필드. Backend는 token ledger 합계를 사용한다.
     input_token_count: int | None = Field(default=None, alias="inputTokenCount", ge=0)
-    # 출력 토큰 수
+    # 구버전 Worker 호환용 필드. Backend는 token ledger 합계를 사용한다.
     output_token_count: int | None = Field(default=None, alias="outputTokenCount", ge=0)
+
 
 # Worker가 분석 실패를 Spring에 보고할 때 쓰는 DTO
 class WorkerAnalysisJobFailRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     # 실패 사유
     error_message: str = Field(alias="errorMessage", min_length=1)
+
+
+class WorkerAnalysisJobHeartbeatResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    lease_token: UUID = Field(alias="leaseToken")
+    lease_expires_at: datetime = Field(alias="leaseExpiresAt")
 
 
 # Provider 호출 직전에 예상 최대 토큰을 Spring 원장에 예약할 때 쓰는 DTO
@@ -81,6 +112,7 @@ class AiTokenSettleRequest(BaseModel):
 class AiTokenReleaseRequest(BaseModel):
     outcome: AiTokenUsageOutcome
 
+
 # Spring이 Worker에게 내려주는 회차 정보 DTO
 class WorkerAnalysisEpisodePayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -110,9 +142,7 @@ class WorkerAnalysisCharacterSettingSchemaPayload(BaseModel):
     display_name: str = Field(alias="displayName")
     attribute_pattern: str | None = Field(default=None, alias="attributePattern")
     aliases: list[str] = Field(default_factory=list)
-    value_type: Literal["STRING", "NUMBER", "BOOLEAN", "JSON", "UNKNOWN"] = Field(
-        alias="valueType"
-    )
+    value_type: Literal["STRING", "NUMBER", "BOOLEAN", "JSON", "UNKNOWN"] = Field(alias="valueType")
 
 
 # Spring이 Worker에게 내려주는 분석 job 전체 payload
@@ -120,12 +150,23 @@ class WorkerAnalysisJobPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     analysis_job_id: UUID = Field(alias="analysisJobId")
-    job_type: str = Field(alias="jobType")
+    job_type: AnalysisJobType = Field(alias="jobType")
     work_id: UUID = Field(alias="workId")
     work_title: str = Field(alias="workTitle")
     batch_id: UUID = Field(alias="batchId")
     model_name: str | None = Field(default=None, alias="modelName")
     current_step: str | None = Field(default=None, alias="currentStep")
+    lease_token: UUID = Field(alias="leaseToken")
+    lease_expires_at: datetime = Field(alias="leaseExpiresAt")
+    claim_attempt_count: int = Field(alias="claimAttemptCount", ge=1)
+    checkpoint_stage: AnalysisJobCheckpointStage | None = Field(
+        default=None,
+        alias="checkpointStage",
+    )
+    world_setting_candidate_id: UUID | None = Field(
+        default=None,
+        alias="worldSettingCandidateId",
+    )
     character_setting_schemas: list[WorkerAnalysisCharacterSettingSchemaPayload] = Field(
         default_factory=list,
         alias="characterSettingSchemas",
