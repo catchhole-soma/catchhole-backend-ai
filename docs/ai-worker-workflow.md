@@ -1,6 +1,6 @@
 # AI Worker Workflow
 
-Python AI Worker가 Spring 내부 Worker API로 분석 작업을 claim한 뒤, S3 원문을 읽고 청킹/선택적 임베딩/LLM 추출/후보 저장/완료 보고까지 수행하는 흐름을 정리합니다.
+Python AI Worker가 Spring 내부 Worker API로 분석 작업을 claim한 뒤, S3 원문을 읽고 청킹/선택적 임베딩/캐릭터·세계관 LLM 추출/세계관 비교/후보 저장/완료 보고까지 수행하는 흐름을 정리합니다.
 
 프로젝트 전체 분석 job 생성, 업로드 batch와 episode 연결, 사용자-facing 조회/수정/확정 API는 Spring 백엔드 문서가 기준입니다. 이 문서는 Spring 문서의 "Python AI Worker" 구간을 Python 코드 기준으로 자세히 펼친 문서입니다.
 
@@ -18,12 +18,43 @@ Spring claim
 -> 구체적이지 않은 entity_name 후보를 LLM subject fallback으로 해소
 -> raw/entity 캐릭터명을 knownCharacters와 비교
 -> setting_candidates 교체 저장
+-> 같은 chunk에서 지속 가능한 세계관 속성을 원자 후보로 추출
+-> Spring 내부 API로 world_setting_candidates 게시
+-> 같은 category의 대상명 검색 후 최대 3개 상세 문맥 비교
+-> 후보별 ADD/UPDATE/MERGE/EXCLUDE 제안 저장
 -> Spring complete/fail 보고
 ```
 
 실제로 실행하는 모든 AI provider 호출은 `app/usage` wrapper를 통과합니다. 설정 추출 재시도와 subject fallback도 각각 별도 요청으로 예약·정산하며, 임베딩 flag가 꺼져 있으면 임베딩 예약과 provider 호출을 모두 생략합니다. prompt와 응답 본문은 Spring 사용량 원장에 보내지 않습니다. Spring은 이 원장의 `SETTLED` 행을 합산해 최종 analysis job input/output token 수를 기록합니다.
 
-Python Worker는 `analysis_jobs.status`를 DB에서 직접 바꾸지 않습니다. 상태 변경은 Spring 내부 API에 보고하고, Python은 분석에 필요한 `episode_chunks`와 `setting_candidates` 저장을 담당합니다.
+Python Worker는 `analysis_jobs.status`와 세계관 테이블을 DB에서 직접 바꾸지 않습니다. 상태와 세계관 후보 변경은 Spring 내부 API에 보고합니다. 기존 캐릭터 흐름의 `episode_chunks`와 `setting_candidates` 저장만 SQLAlchemy 경계를 유지합니다.
+
+## NVM-260 세계관 확장 흐름
+
+기존 문서의 상세 diagram과 단계 1~10은 캐릭터 분석 stage의 내부 동작을 설명합니다. 그 stage 뒤에는 다음 checkpoint 기반 흐름이 이어집니다.
+
+```text
+CHUNKS_READY
+-> CHARACTER_CANDIDATES_SAVED
+-> chunk별 세계관 속성 추출 및 구조적 exact dedupe
+-> Backend 내부 API로 후보 전체 게시
+-> WORLD_CANDIDATES_PUBLISHED
+-> 후보마다 같은 category의 대상명만 페이지 조회
+-> exact 대상 또는 LLM이 선택한 최대 3개 대상의 properties/version 조회
+-> ADD/UPDATE/MERGE/EXCLUDE 비교 완료 또는 후보 FAILED 기록
+-> WORLD_COMPARISONS_FINISHED
+-> Job complete
+```
+
+claim 요청은 `allowedJobTypes`를 필수로 보내고 성공 응답의 lease token을 모든 상태 변경·토큰 예약·세계관 API에 사용합니다. 5분 lease는 백그라운드 heartbeat가 60초마다 갱신하며, 만료 후 재claim 시 마지막 checkpoint 이후 단계부터 재개합니다.
+
+초기 회차 분석의 후보별 비교 실패는 해당 후보를 `FAILED`로 기록하고 다른 후보와 Job 완료를 계속합니다. 사용자가 `/recompare`를 호출하면 Backend가 공개 분석 목록에 노출하지 않는 `WORLD_SETTING_COMPARISON` Job을 만들고, 다음 별도 runner가 그 Job type만 claim합니다.
+
+```bash
+.venv/bin/python -m scripts.run_analysis_worker --worker-kind world-comparison
+```
+
+LLM에는 DB UUID를 전달하지 않고 Worker가 만든 `S*`와 `T*` 참조만 제공합니다. 실제 대상 UUID, exact 대상, property 존재 여부, 현재 version, `beforeValue`는 Backend가 검증·산출하며 LLM과 Worker는 `world_settings` 확정본을 변경하지 않습니다.
 
 ## 주요 문자열과 기준
 
@@ -218,7 +249,11 @@ sequenceDiagram
 - `--once`: claim을 한 번만 시도합니다.
 - `--max-iterations`: 로컬 점검용 반복 횟수를 제한합니다.
 - `--idle-sleep-seconds`: claim할 작업이 없을 때 다음 polling 전 대기 시간입니다.
-- `--model-name`: Spring claim payload와 LLM extractor에 사용할 모델명을 넘깁니다.
+- `--extraction-model-name`: 1차 후보 추출 모델만 override합니다.
+- `--comparison-model-name`: 2차 확정 데이터 비교 모델만 override합니다.
+- `--model-name`: 이전 실행 명령 호환용으로 두 단계 모델을 함께 override합니다. 새 실행 명령에서는 단계별 옵션을 우선 사용합니다.
+
+환경변수는 `LLM_EXTRACTION_MODEL`과 `LLM_COMPARISON_MODEL`로 두 단계를 독립 설정합니다. 지정하지 않은 단계는 `LLM_MODEL`을 fallback으로 사용합니다. 캐릭터·세계관 후보 추출과 캐릭터 subject fallback은 extraction 모델을 사용하고, 초기 세계관 비교와 사용자 재비교는 comparison 모델을 사용합니다. comparison이라는 단계명은 세계관에 종속하지 않으며 추후 캐릭터 2차 비교에도 재사용합니다.
 
 claim 결과가 없으면 Worker는 오류로 처리하지 않고 `WorkerRunResult(claimed=false)`를 반환합니다. 반복 실행 모드에서는 claim 결과가 없거나 개별 Job이 실패했을 때 sleep 후 다시 claim합니다.
 
@@ -339,7 +374,7 @@ API Key 누락, 408·409·429를 제외한 HTTP 4xx, 응답 JSON·개수·index�
 flag를 다시 켜도 기존 `NULL` 임베딩은 자동으로 채워지지 않습니다. 과거 원문의 벡터가 필요한 시점에는 Spring에서 대상 회차 재분석 Job을 만든 뒤 다음 명령으로 한 건을 처리하거나, 대상 범위를 제한한 별도 backfill 작업을 추가합니다.
 
 ```bash
-EMBEDDING_GENERATION_ENABLED=true .venv/bin/python scripts/run_analysis_worker.py --once
+EMBEDDING_GENERATION_ENABLED=true .venv/bin/python -m scripts.run_analysis_worker --once
 ```
 
 ### 5. chunk별 LLM 설정 후보 추출
@@ -640,7 +675,7 @@ save_items 전체 수집
 
 ### 10. 완료 보고와 실패 보고
 
-모든 저장이 끝나면 Worker는 `SpringWorkerClient.complete()`를 호출합니다.
+캐릭터 후보 저장과 세계관 후보 게시·비교 stage가 끝나면 Worker는 `SpringWorkerClient.complete()`를 호출합니다.
 
 현재 `summaryJson`:
 
@@ -654,7 +689,10 @@ save_items 전체 수집
   "candidateCount": 42,
   "subjectFallbackCallCount": 4,
   "subjectFallbackResolvedCount": 3,
-  "subjectFallbackUnresolvedCount": 2
+  "subjectFallbackUnresolvedCount": 2,
+  "worldSettingCandidateCount": 7,
+  "worldSettingComparisonCompletedCount": 6,
+  "worldSettingComparisonFailedCount": 1
 }
 ```
 
@@ -672,7 +710,7 @@ save_items 전체 수집
 
 처리 중 예외가 발생하면:
 
-1. `SpringWorkerClient.fail(analysis_job_id, error_message)`를 호출합니다.
+1. `SpringWorkerClient.fail(analysis_job_id, lease_token, error_message)`를 호출합니다.
 2. error message는 최대 1000자로 잘라 Spring에 전달합니다.
 3. 예외는 다시 밖으로 전파합니다.
 4. 장기 실행 runner는 예외를 기록하고 idle sleep한 뒤 다음 회차 Job을 claim합니다. `--once` 실행은 예외를 그대로 종료 상태로 전달합니다.
@@ -685,7 +723,9 @@ save_items 전체 수집
 | chunk 임베딩 | `episode_chunks` 임베딩 필드 | 해당 episode의 chunk 교체 직후 | 외부 API 호출 후 별도 트랜잭션으로 갱신, 실패 시 NULL 유지하고 분석 계속 |
 | 후보 수집 | Python 메모리 `save_items` | chunk별 LLM 추출 후 | DB 저장 전까지 메모리에 누적 |
 | 후보 교체 | `setting_candidates` | 단일 episode의 모든 chunk 처리 완료 후 | `analysis_job_id` 기준 기존 후보 삭제 후 새 후보 저장 |
-| 작업 완료 | Spring `analysis_jobs` | 후보 저장 성공 후 | Spring 내부 complete API 호출 |
+| 세계관 후보 게시 | Spring `world_setting_candidates` | 모든 chunk의 세계관 추출·dedupe 후 | lease와 checkpoint를 검증한 Backend 트랜잭션에서 검토 전 후보 교체 |
+| 세계관 비교 | Spring `world_setting_candidates` | 후보별 대상 문맥 비교 후 | Backend가 대상 ID·version·property를 검증하고 `COMPLETED` 또는 `FAILED` 전이 |
+| 작업 완료 | Spring `analysis_jobs` | 마지막 checkpoint 도달 및 모든 세계관 비교가 terminal 상태가 된 후 | Spring 내부 complete API 호출 |
 | 작업 실패 | Spring `analysis_jobs` | 처리 중 예외 발생 후 | Spring 내부 fail API 호출 |
 
 주의:
@@ -712,6 +752,11 @@ save_items 전체 수집
 | 캐릭터 주체 subject fallback | Python |
 | 캐릭터명 매칭 상태 계산 | Python |
 | `setting_candidates` 후보 저장 | Python |
+| 세계관 후보 추출·구조적 dedupe | Python |
+| 세계관 비교 대상명 선택·제안 생성 | Python |
+| `world_setting_candidates` 생성·비교 상태 저장 | Spring 내부 Worker API |
+| 비교 대상·version·property 구조 검증 | Spring |
+| `world_settings` 확정 반영 | Spring 사용자 confirm 트랜잭션 |
 | 사용자 후보 조회/수정/승인/반려 | Spring |
 | `SUCCEEDED` / `FAILED` 상태 반영 | Spring 내부 API 호출을 통해 처리 |
 
@@ -751,6 +796,18 @@ save_items 전체 수집
     - 검증된 추출 결과가 `setting_candidates`로 저장되는 흐름을 봅니다.
 16. `app/mappers/setting_candidate_mapper.py`
     - LLM 후보와 매칭 결과가 DB 모델 필드로 어떻게 옮겨지는지 봅니다.
+17. `app/analysis/world_setting_extractor.py`, `app/analysis/world_setting_schemas.py`
+    - 지속 가능한 세계관 속성의 추출 prompt 호출과 출력 계약을 봅니다.
+18. `app/mappers/world_setting_candidate_mapper.py`
+    - evidence offset 보정, Spring 게시 DTO 변환과 구조적 dedupe를 봅니다.
+19. `app/analysis/world_setting_comparator.py`
+    - `S*` 대상명 선택과 `T*` 상세 속성 비교, operation별 검증 규칙을 봅니다.
+20. `app/analysis/world_setting_pipeline.py`
+    - 후보 claim부터 문맥 stale 재시도, 비교 완료/실패까지의 orchestration을 봅니다.
+21. `app/worker/world_setting_comparison_worker.py`
+    - 공개 recompare가 만든 내부 Job을 별도 프로세스가 처리하는 흐름을 봅니다.
+22. `app/worker/lease_heartbeat.py`, `app/usage/metering.py`
+    - 장기 provider 호출의 lease 유지와 요청별 token 예약·정산을 봅니다.
 
 ## adjacent chunk fallback 적용 지점
 
@@ -783,8 +840,7 @@ raw_entity_mention이 지칭어 + entity_name이 기존 캐릭터와 매칭 실�
 - fallback의 후보별 입력·응답·해소 실패 사유를 debug JSON, Worker summary, DB 중 어디에 남길지 결정해야 합니다.
 - subject fallback prompt 품질과 호출 단위를 실제 원문으로 검증해야 합니다.
 - quote를 찾지 못해 offset이 null인 후보를 유지할지, 특정 confidence 이하에서는 제외할지 결정해야 합니다.
-- 프로세스 강제 종료로 `RESERVED` 상태가 남는 요청의 자동 만료·운영 해제 정책을 정해야 합니다.
-- Worker loop에서 단일 job 실패 시 프로세스를 계속 유지할지, 현재처럼 예외를 전파해 중단할지 운영 정책을 정해야 합니다.
+- 실제 운영 로그에서 lease 만료·checkpoint 재개의 빈도와 3회 최대 claim 정책을 관측해 조정합니다.
 - `NVM-141`: 신규 `episode_chunks` 임베딩 생성·저장, 범용 pgvector Top-K 검색·기본 필터, 실제 PostgreSQL 통합 테스트와 임베딩 실패 유형별 Worker 정책이 구현되었습니다. 실제 OpenAI 기반 샘플 품질 검증은 NVM-143의 query 정책 확정 후 진행하며, 기존 청크 backfill 자동화는 이번 PR에서 제외했습니다.
 - `NVM-143`: `SettingCandidate`를 기준으로 검색 query와 범위를 만들고 직접 근거·기존 fact·Top-K 결과를 조합합니다.
 - `NVM-144`: NVM-143이 모은 검증 문맥으로 최종 충돌 여부를 판정합니다.

@@ -22,7 +22,7 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
 
 - `openai_client.py`
   - OpenAI Responses API를 호출합니다.
-  - `LLM_API_KEY`, `LLM_MODEL`, `LLM_REASONING_EFFORT`, `OPENAI_RESPONSES_API_URL` 설정을 사용합니다.
+  - `LLM_API_KEY`, 단계별 `LLM_EXTRACTION_MODEL`·`LLM_COMPARISON_MODEL`, fallback `LLM_MODEL`, `LLM_REASONING_EFFORT`, `OPENAI_RESPONSES_API_URL` 설정을 사용합니다.
   - GPT-5.6 Terra의 MVP 기본 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않습니다.
   - 같은 정적 prompt prefix를 공유하는 호출에는 안정적인 `prompt_cache_key`를 전달합니다.
   - GPT-5.6 explicit cache breakpoint는 아직 사용하지 않으며, 현재는 정적 prefix 우선 배치와 cache key로 implicit cache 재사용을 돕습니다.
@@ -30,21 +30,30 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
   - 응답 텍스트와 token usage를 `LlmTextResponse`로 반환합니다.
 - `responses.py`
   - LLM 호출 결과를 내부에서 전달하기 위한 `dataclass` 값 객체를 둡니다.
+- `protocols.py`
+  - 캐릭터·세계관 분석기와 token metering wrapper가 공유하는 최소 텍스트 생성 계약을 둡니다.
 - `prompts/character_setting_extraction.md`
   - 캐릭터 중심 설정 후보 추출 prompt입니다.
 - `prompts/character_subject_resolution.md`
   - 구체적이지 않은 `entity_name` 후보의 주체만 해소하는 fallback prompt입니다.
+- `prompts/world_setting_extraction.md`
+  - 지속 가능한 세계관 속성을 원자 후보로 추출하는 prompt입니다.
+- `prompts/world_setting_subject_resolution.md`
+  - 같은 category의 기존 대상명 중 의미상 같은 대상 후보를 고르는 prompt입니다.
+- `prompts/world_setting_comparison.md`
+  - 후보와 기존 속성을 비교해 ADD/UPDATE/MERGE/EXCLUDE를 만드는 prompt입니다.
 
 ## 토큰 사용량 상태
 
 `OpenAIResponsesClient`는 OpenAI 응답의 `usage.input_tokens`,
 `usage.input_tokens_details.cached_tokens`, `usage.output_tokens`를
-`LlmTextResponse`에 담습니다. 설정 추출과 subject fallback에 주입된
+`LlmTextResponse`에 담습니다. 캐릭터·세계관 추출, subject fallback과 세계관 비교에 주입된
 `MeteredTextGenerationClient`가 provider 호출마다 Spring 원장에 먼저 예약하고,
 응답 usage로 실제 사용량을 정산합니다.
 
 ```text
-CharacterSettingExtractor / CharacterSubjectResolver
+CharacterSettingExtractor / CharacterSubjectResolver / WorldSettingExtractor
+/ WorldSettingSubjectResolver / WorldSettingComparator
 -> MeteredTextGenerationClient.reserve
 -> OpenAIResponsesClient
 -> LlmTextResponse(input/cached input/output)
@@ -52,7 +61,8 @@ CharacterSettingExtractor / CharacterSubjectResolver
 -> Spring ai_token_usages
 ```
 
-설정 추출 재시도와 subject fallback도 각각 실제 provider 호출 단위로 기록합니다.
+캐릭터·세계관 추출 재시도, subject fallback, 세계관 대상 탐색·비교도 각각 실제 provider 호출 단위로 기록합니다.
+1차 캐릭터·세계관 추출과 캐릭터 subject fallback은 extraction 모델을 사용하고, 세계관 대상 탐색·비교는 comparison 모델을 사용합니다. 두 모델이 달라도 provider 요청과 Spring 토큰 원장에는 각 단계에서 실제 호출한 모델명이 기록됩니다.
 `analysis_jobs`의 과거 합산 컬럼을 비용 원장으로 사용하지 않으며, 요청별 근거는
 Spring의 `ai_token_usages`를 기준으로 조회합니다.
 
@@ -69,6 +79,8 @@ JSON 파싱 실패 또는 Python schema 검증 실패는 `CharacterSettingExtrac
 예를 들어 `attribute_name`이 `item`처럼 suffix 없이 오거나, `confidence`가 `0.0`인 응답은 프롬프트상 원하지 않는 값이지만 현재 schema만으로는 통과할 수 있습니다.
 
 OpenAI Structured Outputs의 JSON schema 강제, attribute policy validator, chunk별 재시도 이력 기록은 후속 이슈에서 다룹니다.
+
+세계관 추출·대상 탐색·비교는 `app/analysis/json_response.py`의 공통 JSON/Pydantic 검증 재시도를 사용합니다. `S*`/`T*` ref 범위, 최대 대상 수, UPDATE/MERGE의 실제 속성명, ADD/EXCLUDE의 추출값 보존 규칙은 provider 응답 뒤 Python에서 추가 검증합니다. 실제 UUID와 version은 prompt에 포함하지 않습니다.
 
 ## 현재 subject fallback 방식
 

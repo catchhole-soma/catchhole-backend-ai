@@ -18,6 +18,15 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 - `character_subject_resolution.md`
   - 이미 추출된 설정 후보 중 `entity_name`이 구체적이지 않은 후보의 주체만 해소하기 위한 prompt입니다.
   - 설정 후보를 다시 추출하지 않고, current chunk 기준으로 묶인 후보들의 `resolved_entity_name`만 반환하도록 요구합니다.
+- `world_setting_extraction.md`
+  - 회차 청크에서 일시적 사건·현재 상태를 제외하고 지속 가능한 세계관 속성을 한 행 단위로 추출합니다.
+  - 7개 category, 원문 evidence quote, 고정 confidence 단계와 문자열 속성값을 요구합니다.
+- `world_setting_subject_resolution.md`
+  - 같은 category의 기존 대상명 중 후보와 의미상 같은 대상을 최대 3개까지 고릅니다.
+  - UUID 대신 Worker가 만든 `S*` 참조만 입력·출력에 사용합니다.
+- `world_setting_comparison.md`
+  - 후보 속성과 최대 3개 기존 대상의 현재 properties를 비교해 ADD/UPDATE/MERGE/EXCLUDE를 제안합니다.
+  - UUID/version 대신 `T*` 참조를 사용하고, UPDATE/MERGE의 실제 속성명과 최종 문자열을 반환합니다.
 
 ## 설정 후보 출력 계약
 
@@ -54,5 +63,15 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 - 모든 candidate_id는 응답에 포함해야 하며, 애매한 후보도 생략하지 않고 null로 반환합니다.
 - `resolved_entity_name`에는 `미상`, `불명`, `unknown`, `나`, `그`, `그녀`, `주인공` 같은 placeholder/지칭어를 넣지 않습니다.
 - `MATCHED`, `UNRESOLVED`, `AMBIGUOUS` 같은 최종 매칭 상태는 Python의 `character_name_resolver`가 계산합니다.
+
+## 세계관 prompt 출력 계약
+
+- 세계관 후보 한 건은 `category + subject_name + setting_name + extracted_value`로 표현되는 속성 하나입니다.
+- 추출 근거 quote는 원문 그대로 복사하며 offset은 Python mapper가 현재 chunk에서 다시 계산합니다.
+- 대상 탐색과 상세 비교 prompt에는 Backend UUID와 version을 넣지 않습니다. LLM은 입력에 있는 `S*`/`T*` ref만 반환합니다.
+- 대상 탐색은 같은 대상일 가능성이 없으면 빈 목록을 반환하고, 단순 연관성만으로 선택하지 않습니다.
+- ADD/EXCLUDE는 추출 설정명과 값을 보존합니다. UPDATE/MERGE는 선택한 target에 실제 존재하는 속성명을 그대로 사용합니다.
+- MERGE의 `proposed_value`는 기존·신규 정보를 모두 보존하되 중복을 제거한 최종 문자열 한 개입니다.
+- Python schema가 ref와 operation별 필드를 검증하고, Backend가 실제 대상 ID·현재 version·속성 존재 여부를 다시 검증합니다.
 - 정상 응답의 null/placeholder 결과는 Python이 원래 후보를 `미상`으로 보존해 `AMBIGUOUS`로 저장하며, candidate ID 누락·중복·추가는 기술적 계약 오류로 처리합니다.
 - 규칙 기반 문자열 검색으로 주체를 확정하지 않고, 문맥상 확실할 때만 이름을 반환하도록 요구합니다.
