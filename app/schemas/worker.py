@@ -1,9 +1,16 @@
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.enums import EpisodeProcessingStatus
+from app.domain.enums import (
+    AnalysisJobCheckpointStage,
+    AnalysisJobType,
+    EpisodeProcessingStatus,
+    WorldSettingCategory,
+    WorldSettingOperation,
+)
 
 # Spring AI 토큰 원장 계약에서 허용하는 호출 목적과 종료 결과
 AiTokenPurpose = Literal["SETTING_EXTRACTION", "SUBJECT_RESOLUTION", "CHUNK_EMBEDDING"]
@@ -128,3 +135,124 @@ class WorkerAnalysisJobPayload(BaseModel):
         alias="knownCharacters",
     )
     episode: WorkerAnalysisEpisodePayload
+
+
+class WorkerEvidenceSpan(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    quote: str = Field(min_length=1)
+    start_offset: int | None = Field(default=None, alias="startOffset", ge=0)
+    end_offset: int | None = Field(default=None, alias="endOffset", ge=0)
+
+
+class WorkerWorldSettingCandidatePublishItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    category: WorldSettingCategory
+    subject_name: str = Field(alias="subjectName", min_length=1, max_length=100)
+    setting_name: str = Field(alias="settingName", min_length=1, max_length=100)
+    extracted_value: str = Field(alias="extractedValue", min_length=1)
+    evidence_spans: list[WorkerEvidenceSpan] = Field(alias="evidenceSpans", min_length=1)
+    extraction_confidence: Literal[0.65, 0.8, 0.95] = Field(alias="extractionConfidence")
+    raw_extraction_json: dict[str, Any] | None = Field(
+        default=None,
+        alias="rawExtractionJson",
+    )
+
+
+class WorkerWorldSettingCandidatePublishRequest(BaseModel):
+    candidates: list[WorkerWorldSettingCandidatePublishItem]
+
+
+class WorkerWorldSettingCandidatePayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_id: UUID = Field(alias="candidateId")
+    work_id: UUID = Field(alias="workId")
+    source_episode_id: UUID = Field(alias="sourceEpisodeId")
+    category: WorldSettingCategory
+    subject_name: str = Field(alias="subjectName")
+    setting_name: str = Field(alias="settingName")
+    extracted_value: str = Field(alias="extractedValue")
+    evidence_spans: list[WorkerEvidenceSpan] = Field(alias="evidenceSpans")
+    extraction_confidence: float | None = Field(default=None, alias="extractionConfidence")
+
+
+class WorkerWorldSettingSubject(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    world_setting_id: UUID = Field(alias="worldSettingId")
+    subject_name: str = Field(alias="subjectName")
+
+
+class WorkerWorldSettingSubjectPageResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    subjects: list[WorkerWorldSettingSubject]
+    page: int = Field(ge=0)
+    has_next: bool = Field(alias="hasNext")
+
+
+class WorkerWorldSettingComparisonContextRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    target_world_setting_ids: list[UUID] = Field(
+        alias="targetWorldSettingIds",
+        max_length=3,
+    )
+
+
+class WorkerWorldSettingComparisonTarget(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    world_setting_id: UUID = Field(alias="worldSettingId")
+    subject_name: str = Field(alias="subjectName")
+    properties_json: dict[str, str] = Field(alias="propertiesJson")
+    version: int = Field(ge=0)
+
+
+class WorkerWorldSettingComparisonContextResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate: WorkerWorldSettingCandidatePayload
+    exact_target_world_setting_id: UUID | None = Field(
+        default=None,
+        alias="exactTargetWorldSettingId",
+    )
+    targets: list[WorkerWorldSettingComparisonTarget] = Field(max_length=3)
+
+
+class WorkerWorldSettingContextVersion(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    world_setting_id: UUID = Field(alias="worldSettingId")
+    version: int = Field(ge=0)
+
+
+class WorkerWorldSettingComparisonCompleteRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    target_world_setting_id: UUID | None = Field(default=None, alias="targetWorldSettingId")
+    matched_property_name: str | None = Field(default=None, alias="matchedPropertyName")
+    suggested_operation: WorldSettingOperation = Field(alias="suggestedOperation")
+    proposed_setting_name: str = Field(alias="proposedSettingName", min_length=1, max_length=100)
+    proposed_value: str = Field(alias="proposedValue", min_length=1)
+    comparison_reason: str = Field(alias="comparisonReason", min_length=1)
+    exact_target_world_setting_id: UUID | None = Field(
+        default=None,
+        alias="exactTargetWorldSettingId",
+    )
+    context_versions: list[WorkerWorldSettingContextVersion] = Field(
+        alias="contextVersions",
+        max_length=3,
+    )
+    raw_comparison_json: dict[str, Any] | None = Field(
+        default=None,
+        alias="rawComparisonJson",
+    )
+
+
+class WorkerWorldSettingComparisonFailRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
