@@ -25,6 +25,7 @@ def test_pipeline_uses_normalized_exact_subject_and_completes_update() -> None:
     subject_resolver = FakeSubjectResolver([])
     comparator = FakeComparator(
         WorldSettingComparisonDecision(
+            consolidation_status="SINGLE",
             operation="UPDATE",
             target_ref="T1",
             matched_property_name="서식지",
@@ -55,6 +56,7 @@ def test_pipeline_rebuilds_context_after_stale_completion() -> None:
         FakeSubjectResolver([]),
         FakeComparator(
             WorldSettingComparisonDecision(
+                consolidation_status="SINGLE",
                 operation="MERGE",
                 target_ref="T1",
                 matched_property_name="서식지",
@@ -70,6 +72,34 @@ def test_pipeline_rebuilds_context_after_stale_completion() -> None:
     assert result.completed_count == 1
     assert len(spring.context_target_ids) == 2
     assert len(spring.completions) == 2
+
+
+def test_pipeline_keeps_duplicate_exclude_target_and_matched_property() -> None:
+    spring = FakeSpringApi(candidate=_candidate())
+    spring.subjects = [_subject(TARGET_ID, "바바리안")]
+    spring.context = _context()
+    pipeline = WorldSettingComparisonPipeline(
+        spring,
+        FakeSubjectResolver([]),
+        FakeComparator(
+            WorldSettingComparisonDecision(
+                consolidation_status="SINGLE",
+                operation="EXCLUDE",
+                target_ref="T1",
+                matched_property_name="서식지",
+                proposed_setting_name="서식지",
+                proposed_value="극지방",
+                comparison_reason="기존 서식지와 의미가 같아 별도로 반영하지 않는다.",
+            )
+        ),
+    )
+
+    result = pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN)
+
+    assert result.completed_count == 1
+    request = spring.completions[0]
+    assert request.target_world_setting_id == TARGET_ID
+    assert request.matched_property_name == "서식지"
 
 
 def test_pipeline_fails_only_claimed_candidate_when_comparator_fails() -> None:

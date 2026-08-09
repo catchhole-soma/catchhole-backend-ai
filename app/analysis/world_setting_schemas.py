@@ -3,7 +3,11 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from app.analysis.schemas import ExtractedEvidenceSpan
-from app.domain.enums import WorldSettingCategory, WorldSettingOperation
+from app.domain.enums import (
+    WorldSettingCategory,
+    WorldSettingConsolidationStatus,
+    WorldSettingOperation,
+)
 
 TrimmedName = Annotated[
     str,
@@ -36,6 +40,7 @@ class WorldSettingSubjectSelection(BaseModel):
 
 
 class WorldSettingComparisonDecision(BaseModel):
+    consolidation_status: WorldSettingConsolidationStatus
     operation: WorldSettingOperation
     target_ref: str | None = None
     matched_property_name: TrimmedName | None = None
@@ -45,9 +50,13 @@ class WorldSettingComparisonDecision(BaseModel):
 
     @model_validator(mode="after")
     def validate_operation_payload(self) -> "WorldSettingComparisonDecision":
-        if self.operation in {WorldSettingOperation.UPDATE, WorldSettingOperation.MERGE}:
-            if self.target_ref is None or self.matched_property_name is None:
-                raise ValueError("UPDATE and MERGE require target_ref and matched_property_name.")
+        if self.matched_property_name is not None and self.target_ref is None:
+            raise ValueError("matched_property_name requires target_ref.")
+        if (
+            self.operation in {WorldSettingOperation.UPDATE, WorldSettingOperation.MERGE}
+            and (self.target_ref is None or self.matched_property_name is None)
+        ):
+            raise ValueError("UPDATE and MERGE require target_ref and matched_property_name.")
         if self.operation == WorldSettingOperation.ADD and self.matched_property_name is not None:
             raise ValueError("ADD must not include matched_property_name.")
         return self

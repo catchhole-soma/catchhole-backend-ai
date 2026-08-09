@@ -9,6 +9,7 @@ from app.domain.enums import (
     AnalysisJobType,
     EpisodeProcessingStatus,
     WorldSettingCategory,
+    WorldSettingConsolidationStatus,
     WorldSettingOperation,
 )
 
@@ -275,6 +276,7 @@ class WorkerWorldSettingComparisonCompleteRequest(BaseModel):
 
     target_world_setting_id: UUID | None = Field(default=None, alias="targetWorldSettingId")
     matched_property_name: str | None = Field(default=None, alias="matchedPropertyName")
+    consolidation_status: WorldSettingConsolidationStatus = Field(alias="consolidationStatus")
     suggested_operation: WorldSettingOperation = Field(alias="suggestedOperation")
     proposed_setting_name: str = Field(alias="proposedSettingName", min_length=1, max_length=100)
     proposed_value: str = Field(alias="proposedValue", min_length=1)

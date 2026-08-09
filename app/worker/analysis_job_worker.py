@@ -1,15 +1,15 @@
-from dataclasses import dataclass
 import json
 import logging
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
+from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.character_subject_resolver import (
     CharacterSubjectResolver,
     SubjectResolutionChunkContext,
     SubjectResolutionResult,
 )
-from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.schemas import CharacterSettingExtractionResult, ExtractedSettingCandidate
 from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
@@ -35,8 +35,9 @@ from app.embeddings.services.episode_chunk_embedding import (
     EpisodeChunkEmbeddingResult,
     EpisodeChunkEmbeddingService,
 )
-from app.models.episode_chunk import EpisodeChunk
+from app.llm.openai_client import OpenAIResponsesClient
 from app.mappers.world_setting_candidate_mapper import WorldSettingCandidateMapper
+from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import (
     WorkerAnalysisJobPayload,
     WorkerWorldSettingCandidatePayload,
@@ -49,7 +50,6 @@ from app.services.setting_candidate_service import (
     SettingCandidateService,
 )
 from app.storage.s3 import S3TextObjectStorage
-from app.llm.openai_client import OpenAIResponsesClient
 from app.usage.metering import (
     AiTokenLedgerApi,
     MeteredEmbeddingClient,
@@ -496,7 +496,7 @@ class AnalysisJobWorker:
                 episode_title=payload.episode.title,
             ).candidates
         ]
-        candidates = WorldSettingCandidateMapper.deduplicate(extracted_items)
+        candidates = WorldSettingCandidateMapper.consolidate_by_key(extracted_items)
         published = self.spring_client.publish_world_setting_candidates(
             payload.analysis_job_id,
             payload.lease_token,

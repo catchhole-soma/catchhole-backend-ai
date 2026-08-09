@@ -1,6 +1,6 @@
-from dataclasses import dataclass
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
@@ -135,6 +135,11 @@ class WorldSettingComparator:
                 "subject_name": candidate.subject_name,
                 "setting_name": candidate.setting_name,
                 "extracted_value": candidate.extracted_value,
+                "extracted_values": _source_values(candidate),
+                "evidence_spans": [
+                    evidence.model_dump(mode="json")
+                    for evidence in candidate.evidence_spans
+                ],
             },
             "targets": [
                 {
@@ -153,7 +158,7 @@ class WorldSettingComparator:
             model=self.model,
             max_output_tokens=2000,
             max_attempts=self.max_attempts,
-            prompt_cache_key="world-setting-comparison:v1",
+            prompt_cache_key="world-setting-comparison:v5",
             operation_name="World-setting comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -162,6 +167,7 @@ class WorldSettingComparator:
                 references,
             ),
         )
+        decision = _replace_internal_target_references(decision, references)
         return decision, decision.model_dump(mode="json")
 
 
@@ -186,20 +192,58 @@ def _validate_comparison_decision(
     candidate: WorkerWorldSettingCandidatePayload,
     references: list[ComparisonTargetReference],
 ) -> None:
+    source_values = _source_values(candidate)
+    if len(source_values) == 1 and decision.consolidation_status != "SINGLE":
+        raise ValueError("A single extracted value must use SINGLE consolidation status.")
+    if len(source_values) > 1 and decision.consolidation_status == "SINGLE":
+        raise ValueError("Multiple extracted values must use MERGED or CONFLICT status.")
+    if (
+        decision.consolidation_status == "CONFLICT"
+        and decision.proposed_value != candidate.extracted_value
+    ):
+        raise ValueError("CONFLICT must preserve every extracted value for user review.")
+
     references_by_key = {
         target_reference.reference: target_reference.target for target_reference in references
     }
     if decision.target_ref is not None and decision.target_ref not in references_by_key:
         raise ValueError(f"Unknown comparison target_ref: {decision.target_ref}")
     if decision.operation in {WorldSettingOperation.ADD, WorldSettingOperation.EXCLUDE}:
-        if (
-            decision.proposed_setting_name != candidate.setting_name
-            or decision.proposed_value != candidate.extracted_value
-        ):
-            raise ValueError("ADD and EXCLUDE must preserve the extracted setting name and value.")
+        if decision.proposed_setting_name != candidate.setting_name:
+            raise ValueError("ADD and EXCLUDE must preserve the extracted setting name.")
+        if len(source_values) == 1 and decision.proposed_value != source_values[0]:
+            raise ValueError("A single extracted value must be preserved.")
+    if decision.operation == WorldSettingOperation.ADD:
+        return
+    if decision.operation == WorldSettingOperation.EXCLUDE:
+        if decision.matched_property_name is None:
+            return
+        target = references_by_key[decision.target_ref]
+        if decision.matched_property_name not in target.properties_json:
+            raise ValueError("matched_property_name does not exist in the selected target.")
         return
     target = references_by_key[decision.target_ref]
     if decision.matched_property_name not in target.properties_json:
         raise ValueError("matched_property_name does not exist in the selected target.")
     if decision.proposed_setting_name != decision.matched_property_name:
         raise ValueError("UPDATE and MERGE must preserve the stored property name.")
+
+
+def _replace_internal_target_references(
+    decision: WorldSettingComparisonDecision,
+    references: list[ComparisonTargetReference],
+) -> WorldSettingComparisonDecision:
+    comparison_reason = decision.comparison_reason
+    for target_reference in references:
+        comparison_reason = comparison_reason.replace(
+            target_reference.reference,
+            f"기존 '{target_reference.target.subject_name}' 설정",
+        )
+    if comparison_reason == decision.comparison_reason:
+        return decision
+    return decision.model_copy(update={"comparison_reason": comparison_reason})
+
+
+def _source_values(candidate: WorkerWorldSettingCandidatePayload) -> list[str]:
+    values = [value.strip() for value in candidate.extracted_value.splitlines() if value.strip()]
+    return values or [candidate.extracted_value]

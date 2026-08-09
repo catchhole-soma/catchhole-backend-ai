@@ -90,3 +90,9 @@ class WorldSettingOperation(StrEnum):
     UPDATE = "UPDATE"
     MERGE = "MERGE"
     EXCLUDE = "EXCLUDE"
+
+
+class WorldSettingConsolidationStatus(StrEnum):
+    SINGLE = "SINGLE"
+    MERGED = "MERGED"
+    CONFLICT = "CONFLICT"

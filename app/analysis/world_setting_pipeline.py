@@ -1,6 +1,6 @@
-from dataclasses import dataclass
 import logging
 import unicodedata
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
@@ -157,6 +157,7 @@ class WorldSettingComparisonPipeline:
                     None if selected_target is None else selected_target.world_setting_id
                 ),
                 matched_property_name=decision.matched_property_name,
+                consolidation_status=decision.consolidation_status,
                 suggested_operation=decision.operation,
                 proposed_setting_name=decision.proposed_setting_name,
                 proposed_value=decision.proposed_value,
