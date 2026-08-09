@@ -45,6 +45,7 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - `world_setting_comparator.py`
   - normalized exact 대상이 없을 때 같은 category의 대상명만 `S*` 참조로 LLM에 전달해 최대 3개를 선택합니다.
   - Backend가 반환한 현재 속성 문맥은 UUID/version 없이 `T*` 참조로 LLM에 전달해 ADD/UPDATE/MERGE/EXCLUDE를 판단합니다.
+  - 기존 속성과 중복되어 EXCLUDE하면 해당 `T*`와 실제 속성명을 검증해 Backend가 기존값을 저장할 수 있게 전달합니다.
 - `world_setting_pipeline.py`
   - 후보 claim, 대상명 페이지 조회, 비교 문맥 조회, 결과 저장을 조율합니다.
   - 문맥 version 충돌은 새 문맥으로 최대 3회 다시 비교하고, 후보 하나의 실패는 해당 후보에만 기록합니다.
@@ -100,6 +101,8 @@ LLM 응답 파싱/검증 실패 메시지와 JSON 객체 파싱은 `json_respons
 중복 key는 기존 캐릭터와 매칭되었으면 캐릭터 ID, 아니면 정규화한 구체 `entity_name`을 주체로 사용하고, 여기에 `attribute_name`, `value_type`, key 순서를 정규화한 `value_json`을 결합합니다. `attribute_value`는 표시 문구이므로 중복 판정에 사용하지 않습니다. 중복이면 confidence가 더 높은 후보 하나를 남기고, 같으면 먼저 나온 근거를 유지합니다.
 
 동일 `attribute_name`이라도 `value_json`이 다르면 실제 값 변경일 수 있어 모두 유지합니다. `AMBIGUOUS` 주체는 같은 `미상` 문자열이어도 서로 다른 인물일 수 있으므로 중복 제거하지 않습니다.
+
+세계관 후보는 캐릭터 후보와 달리 작가가 확정할 최종 설정 key가 검토 단위입니다. 모든 chunk 추출을 모은 뒤 정규화한 `category + subject_name + setting_name`이 같으면 후보 하나로 통합하고, 서로 다른 추출값은 줄 단위 원본 목록으로, `evidence_spans`와 raw extraction payload는 합집합으로 보존합니다. 2차 비교는 값 하나를 `SINGLE`, 양립 가능한 여러 값을 `MERGED`, 동시에 참일 수 없는 여러 값을 `CONFLICT`로 판정합니다. `MERGED`는 중복을 제거한 자연스러운 최종 문자열을 제안하지만 `CONFLICT`는 추출값 목록을 바꾸지 않고 사용자가 최종값을 정하도록 남깁니다.
 
 ## 캐릭터명 매칭 정책
 

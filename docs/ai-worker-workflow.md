@@ -36,7 +36,8 @@ Python Worker는 `analysis_jobs.status`와 세계관 테이블을 DB에서 직�
 ```text
 CHUNKS_READY
 -> CHARACTER_CANDIDATES_SAVED
--> chunk별 세계관 속성 추출 및 구조적 exact dedupe
+-> chunk별 세계관 속성 추출 및 동일 분류·대상·설정명 후보 통합
+-> 2차 LLM이 단일값·안전한 통합·서로 다른 내용(SINGLE/MERGED/CONFLICT) 판정
 -> Backend 내부 API로 후보 전체 게시
 -> WORLD_CANDIDATES_PUBLISHED
 -> 후보마다 같은 category의 대상명만 페이지 조회
@@ -752,7 +753,7 @@ save_items 전체 수집
 | 캐릭터 주체 subject fallback | Python |
 | 캐릭터명 매칭 상태 계산 | Python |
 | `setting_candidates` 후보 저장 | Python |
-| 세계관 후보 추출·구조적 dedupe | Python |
+| 세계관 후보 추출·동일 key 값·근거 통합 | Python |
 | 세계관 비교 대상명 선택·제안 생성 | Python |
 | `world_setting_candidates` 생성·비교 상태 저장 | Spring 내부 Worker API |
 | 비교 대상·version·property 구조 검증 | Spring |
