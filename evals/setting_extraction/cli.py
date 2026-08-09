@@ -31,11 +31,17 @@ def main() -> None:
         semantic_judge=semantic_judge,
         setting_schemas=setting_schemas,
     )
+    report["run"] = {
+        "analysisModel": args.analysis_model,
+        "semanticJudgeEnabled": semantic_judge is not None,
+        "semanticJudgeModel": semantic_judge.model if semantic_judge is not None else None,
+    }
     serialized = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(serialized, encoding="utf-8")
-    print(serialized)
+    if not args.quiet:
+        print(serialized)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -68,12 +74,22 @@ def _parse_args() -> argparse.Namespace:
         help="Override the semantic judge model (default: gpt-5.6-luna).",
     )
     parser.add_argument(
+        "--analysis-model",
+        default=None,
+        help="Record the model that produced the supplied predictions.",
+    )
+    parser.add_argument(
         "--setting-schemas",
         type=Path,
         default=None,
         help="Active character setting schema snapshot used to canonicalize prediction aliases.",
     )
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Do not print the detailed report, which may contain source-derived text.",
+    )
     return parser.parse_args()
 
 

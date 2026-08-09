@@ -131,6 +131,28 @@ def test_openai_semantic_judge_batches_cases_and_defaults_to_luna() -> None:
     assert result.input_tokens == 120
 
 
+def test_openai_semantic_judge_redacts_invalid_provider_response() -> None:
+    private_reason = "외부에 노출하면 안 되는 원문 기반 판정"
+    client = InvalidJudgeClient(private_reason)
+    gold = load_gold_dataset(FIXTURE_DIR / "gold.json")
+    predictions = load_prediction_bundle([FIXTURE_DIR / "predictions.json"])
+    judge = OpenAISemanticValueJudge(client=client)
+
+    with pytest.raises(ValueError, match="Semantic judge response is invalid") as exc_info:
+        judge.judge_many(
+            [
+                SemanticJudgeCase(
+                    gold=gold.episodes[0].candidates[1],
+                    prediction=predictions.episodes[0].candidates[1],
+                    source_text=gold.episodes[0].source_text,
+                )
+            ]
+        )
+
+    assert private_reason not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+
+
 def test_evaluator_counts_duplicate_prediction_as_false_positive() -> None:
     predictions = load_prediction_bundle([FIXTURE_DIR / "predictions.json"])
     level_prediction = predictions.episodes[0].candidates[0]
@@ -1199,4 +1221,20 @@ class RecordingJudgeClient:
             input_token_count=120,
             cached_input_token_count=60,
             output_token_count=40,
+        )
+
+
+class InvalidJudgeClient:
+    def __init__(self, private_reason: str) -> None:
+        self.private_reason = private_reason
+
+    def create_text_response(self, **kwargs):
+        return SimpleNamespace(
+            text=json.dumps(
+                {"results": [{"caseId": 0, "reason": self.private_reason}]},
+                ensure_ascii=False,
+            ),
+            input_token_count=0,
+            cached_input_token_count=0,
+            output_token_count=0,
         )
