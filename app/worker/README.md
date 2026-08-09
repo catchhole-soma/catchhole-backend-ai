@@ -54,97 +54,38 @@ Python Worker는 `analysis_jobs` 테이블을 직접 수정하지 않고, Spring
 
 ## 현재 Spring API 동작
 
-현재 Spring claim API는 요청 body의 `currentStep`을 받을 수 있습니다.
+Spring claim API는 프로세스가 처리할 `allowedJobTypes`와 초기 `currentStep`을 받습니다. claim에 성공하면 5분 동안 유효한 lease token과 마지막 checkpoint를 반환합니다.
 
 ```text
 POST /api/internal/v1/analysis-jobs/claim
 ```
 
-claim 요청의 `currentStep`은 claim 성공 직후 `AnalysisJob.start(modelName, currentStep)`에 전달됩니다.
-따라서 Python Worker가 claim 요청에 `currentStep`을 보내면 Spring은 해당 값을 작업의 시작 단계로 저장합니다.
-
-또한 Spring에는 실행 중 단계를 갱신하는 별도 progress API가 있습니다.
+실행 중에는 다음 API를 사용합니다.
 
 ```text
 PATCH /api/internal/v1/analysis-jobs/{analysisJobId}/progress
+POST  /api/internal/v1/analysis-jobs/{analysisJobId}/heartbeat
+POST  /api/internal/v1/analysis-jobs/{analysisJobId}/complete
+POST  /api/internal/v1/analysis-jobs/{analysisJobId}/fail
 ```
 
-progress 요청은 표시 문구인 `currentStep`과 대상 회차에 적용할 `episodeStatus`를 함께 보냅니다. Spring은 `currentStep` 문자열에서 회차 상태를 추론하지 않습니다.
+모든 변경 요청은 claim 응답의 `X-Worker-Lease-Token`을 보내며, Worker는 provider 호출 중 60초마다 heartbeat로 lease를 갱신합니다. progress의 `currentStep`은 표시용이고 `episodeStatus`와 기계 판독용 `checkpointStage`를 별도 필드로 전달합니다.
 
 ```json
 {
   "currentStep": "SETTING_EXTRACTION",
-  "episodeStatus": "ANALYZING"
+  "episodeStatus": "ANALYZING",
+  "checkpointStage": "CHARACTER_CANDIDATES_SAVED"
 }
 ```
 
-따라서 현재 구조에서는 두 지점 모두 `current_step`을 바꿀 수 있습니다.
-
-- claim 시점: 작업을 `RUNNING`으로 만들면서 초기 단계 기록
-- progress 시점: 실행 중 세부 단계 변경
-
-## 합의가 필요한 부분
-
-`status`와 `current_step`은 서로 역할이 다르지만, `current_step`을 언제 바꿀지는 팀 합의가 필요합니다.
-
-논의할 선택지는 다음과 같습니다.
-
-### 선택지 1. claim에서 초기 current_step을 함께 기록
-
-흐름:
-
-```text
-claim(currentStep=SETTING_EXTRACTION)
--> status = RUNNING
--> current_step = SETTING_EXTRACTION
-```
-
-장점:
-
-- claim 직후부터 작업이 어느 단계로 시작됐는지 알 수 있습니다.
-- Worker가 progress API를 호출하기 전에도 화면에 시작 단계가 보입니다.
-
-주의점:
-
-- claim 직후 다시 progress를 호출하면 같은 단계가 중복 기록될 수 있습니다.
-- claim의 책임이 "작업 획득"과 "초기 단계 기록"으로 조금 넓어집니다.
-
-### 선택지 2. claim은 status만 바꾸고 current_step은 progress에서만 기록
-
-흐름:
-
-```text
-claim()
--> status = RUNNING
-progress(currentStep=SETTING_EXTRACTION, episodeStatus=ANALYZING)
--> current_step = SETTING_EXTRACTION
--> Episode.status = ANALYZING
-```
-
-장점:
-
-- claim과 progress의 책임이 명확하게 분리됩니다.
-- `current_step` 변경 지점이 progress API 하나로 모입니다.
-
-주의점:
-
-- claim 직후 progress 호출 전까지는 `current_step`이 비어 있을 수 있습니다.
-- Spring claim DTO의 `currentStep` 필드를 사용하지 않게 됩니다.
-
-## 현재 Python 구현 기준
-
-현재 Python Worker는 Spring API 스펙에 맞춰 `claim` 요청에 `currentStep`을 보낼 수 있는 구조입니다.
-다만 `current_step` 변경 정책이 확정되기 전까지는 다음 기준으로 코드를 읽습니다.
-
-- `status`는 Spring이 관리합니다.
-- Python은 DB row를 직접 변경하지 않습니다.
-- Python은 Spring 내부 API에 진행, 완료, 실패를 보고합니다.
-- progress 보고에는 `currentStep`과 명시적인 `EpisodeProcessingStatus`를 함께 전달합니다.
-- `current_step`을 claim에서 보낼지, progress에서만 보낼지는 후속 협의 대상입니다.
+checkpoint는 `CHUNKS_READY`, `CHARACTER_CANDIDATES_SAVED`, `WORLD_CANDIDATES_PUBLISHED`, `WORLD_COMPARISONS_FINISHED` 순서로만 증가합니다. lease가 만료되어 Job이 다시 claim되면 마지막 checkpoint 이후 stage부터 재개합니다.
 
 ## 현재 연결된 실행 흐름
 
 `AnalysisJobWorker.run_once()`는 다음 순서로 한 개의 분석 작업을 처리합니다.
+
+1차 추출 호출은 `LLM_EXTRACTION_MODEL`, 후보와 확정 데이터의 2차 비교 호출은 `LLM_COMPARISON_MODEL`을 사용합니다. 각 값이 비어 있으면 `LLM_MODEL`로 fallback합니다. 초기 회차 Job 안의 세계관 비교와 별도 재비교 Worker는 모두 같은 comparison 모델 설정을 사용합니다.
 
 ```text
 Spring claim
@@ -157,8 +98,21 @@ Spring claim
 -> evidence quote 위치 보정
 -> 구체적이지 않은 entity_name 후보 subject fallback 전 토큰 예약·호출 후 정산
 -> setting_candidates 교체 저장
+-> 세계관 설정 후보 추출 및 Spring 내부 API 게시
+-> 후보별 기존 world_settings 탐색 및 ADD/UPDATE/MERGE/EXCLUDE 비교 저장
+-> WORLD_COMPARISONS_FINISHED checkpoint 보고
 -> summaryJson 생성
 -> Spring complete 보고
+```
+
+사용자 재비교는 별도 실행 모드가 담당합니다.
+
+```text
+run_analysis_worker.py --worker-kind world-comparison
+-> WORLD_SETTING_COMPARISON만 claim
+-> 연결된 PENDING 후보 한 건 비교
+-> 후보 COMPLETED/FAILED 저장
+-> Job complete/fail 보고
 ```
 
 세부 책임은 다음 파일로 나뉩니다.
@@ -187,6 +141,18 @@ Spring claim
   - schema hint는 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType` 다섯 필드만 가진 prompt 입력 전용 값입니다.
   - `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않으며 기존 응답 shape도 변경하지 않습니다.
   - fuzzy alias 매칭이나 schema 자동 생성은 하지 않고, 시간·사건·타임라인 정보와 등록 schema에 대응하지 않는 설정은 후보에서 제외합니다.
+- `WorldSettingExtractor`, `WorldSettingCandidateMapper`
+  - 같은 회차 chunk에서 지속 가능한 세계관 속성을 한 속성 단위로 추출하고 evidence offset을 보정합니다.
+  - 분석 Job 전체에서 구조적으로 같은 후보만 exact dedupe한 뒤 Spring 내부 API로 게시합니다.
+- `WorldSettingComparisonPipeline`
+  - exact 대상이 없으면 같은 category의 대상명을 `S*` 참조로 좁히고, 최대 3개 상세 문맥을 `T*` 참조로 비교합니다.
+  - LLM에는 UUID/version을 노출하지 않으며, Backend의 문맥 stale 응답에는 최신 문맥으로 최대 3회 다시 비교합니다.
+  - 후보별 오류는 해당 후보를 `FAILED`로 기록하고 초기 회차 Job의 다른 후보 처리를 계속합니다.
+- `WorldSettingComparisonWorker`
+  - 공개 recompare 요청이 만든 숨김 `WORLD_SETTING_COMPARISON` Job만 claim합니다.
+  - 연결 후보 하나가 성공해야 Job을 완료하고, 후보 비교 실패는 Job 실패로 보고합니다.
+- `WorkerLeaseHeartbeat`
+  - provider 호출 중 60초마다 현재 Job의 5분 lease를 연장하고, heartbeat 실패를 완료 보고 전에 전파합니다.
 - `EpisodeChunkEmbeddingService`
   - `EMBEDDING_GENERATION_ENABLED=true`일 때만 Worker에서 호출합니다. MVP 기본값 `false`에서는 service와 client를 생성하지 않습니다.
   - episode의 저장된 청크 텍스트를 한 번에 임베딩합니다.
@@ -218,7 +184,7 @@ MVP는 벡터 검색을 사용하지 않으므로 `EMBEDDING_GENERATION_ENABLED`
 후속 오류 리포트나 RAG 검색에서 벡터가 필요해지면 환경변수를 `true`로 바꿔 신규 분석과 재분석의 임베딩 생성을 다시 활성화합니다. 기존 `NULL` 임베딩은 자동으로 채워지지 않으므로, 과거 데이터가 필요하면 Spring에서 대상 회차의 재분석 Job을 생성한 뒤 다음처럼 Worker 한 건을 실행하거나 별도 범위 제한 backfill 작업을 추가해야 합니다.
 
 ```bash
-EMBEDDING_GENERATION_ENABLED=true .venv/bin/python scripts/run_analysis_worker.py --once
+EMBEDDING_GENERATION_ENABLED=true .venv/bin/python -m scripts.run_analysis_worker --once
 ```
 LLM 응답의 JSON 파싱·schema 검증 실패 재시도는 현재 연결되어 있습니다. 동일 인물 병합과 일회성 캐릭터 필터링은 후속 작업에서 다룹니다.
 
@@ -228,7 +194,13 @@ LLM 응답의 JSON 파싱·schema 검증 실패 재시도는 현재 연결되어
 따라서 로컬에서 Worker를 계속 실행하려면 runner script가 반복 호출을 담당합니다.
 
 ```bash
-.venv/bin/python scripts/run_analysis_worker.py
+.venv/bin/python -m scripts.run_analysis_worker
+```
+
+재비교 queue는 별도 프로세스로 실행합니다.
+
+```bash
+.venv/bin/python -m scripts.run_analysis_worker --worker-kind world-comparison
 ```
 
 실행 흐름은 다음과 같습니다.
@@ -245,7 +217,7 @@ scripts/run_analysis_worker.py
 수동 확인 시에는 한 번만 claim을 시도할 수 있습니다.
 
 ```bash
-.venv/bin/python scripts/run_analysis_worker.py --once
+.venv/bin/python -m scripts.run_analysis_worker --once
 ```
 
 `--once`에서는 실패 예외가 프로세스 종료 상태로 전달됩니다. 기본 장기 실행 모드에서만 개별 job 실패를 격리하고 다음 claim을 계속합니다.
@@ -253,7 +225,7 @@ scripts/run_analysis_worker.py
 테스트나 로컬 점검에서는 반복 횟수를 제한할 수 있습니다.
 
 ```bash
-.venv/bin/python scripts/run_analysis_worker.py --max-iterations 3
+.venv/bin/python -m scripts.run_analysis_worker --max-iterations 3
 ```
 
 ## 로컬 텍스트 Debug 실행

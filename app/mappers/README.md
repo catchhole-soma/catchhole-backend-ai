@@ -31,6 +31,10 @@ Spring 기준으로는 Mapper 계층에 가깝습니다. Python에서는 클래�
   - `work_id`, `episode_id`, `analysis_job_id`는 Worker/Service 흐름에서 붙입니다.
   - `raw_entity_mention`은 원문 provenance이므로 누락되면 `entity_name`으로 만들지 않고 `null`로 저장합니다.
   - character name resolver 결과를 받아 `matched_character_id`, `match_status`를 함께 저장합니다.
+- `world_setting_candidate_mapper.py`
+  - 검증된 세계관 추출 후보와 원본 `EpisodeChunk`를 Spring 게시 DTO로 변환합니다.
+  - evidence quote offset을 회차 전체 기준으로 보정하고 raw extraction JSON을 보존합니다.
+  - 모든 chunk의 후보를 정규화한 `category + subject_name + setting_name`별로 통합하고, 서로 다른 보완 추출값·원문 근거·raw payload를 모두 보존합니다.
 
 ## 기준
 

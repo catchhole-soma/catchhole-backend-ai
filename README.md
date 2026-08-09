@@ -32,7 +32,13 @@ uvicorn app.main:app --reload
 실제 분석 실행은 Worker runner를 기준으로 합니다.
 
 ```bash
-.venv/bin/python scripts/run_analysis_worker.py
+.venv/bin/python -m scripts.run_analysis_worker
+```
+
+기본 프로세스는 회차 `SETTING_EXTRACTION` Job만 claim합니다. 사용자가 요청한 세계관 후보 재비교는 동일 이미지를 별도 프로세스로 실행합니다.
+
+```bash
+.venv/bin/python -m scripts.run_analysis_worker --worker-kind world-comparison
 ```
 
 S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 후보 추출, 근거 위치 보정,
@@ -106,6 +112,13 @@ docker build -t catchhole-ai:local .
 docker run --rm --env-file .env catchhole-ai:local
 ```
 
+재비교 Worker 컨테이너는 command만 분리합니다.
+
+```bash
+docker run --rm --env-file .env catchhole-ai:local \
+  python -m scripts.run_analysis_worker --worker-kind world-comparison
+```
+
 FastAPI 서버를 확인해야 할 때는 command를 override합니다.
 
 ```bash
@@ -128,7 +141,9 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `AWS_SESSION_TOKEN`: STS 등 임시 자격 증명을 사용할 때 access key, secret key와 함께 전달하는 선택 세션 토큰입니다.
 - `AWS_SQS_QUEUE_URL`: 분석 잡 큐를 붙일 경우 사용할 SQS URL
 - `LLM_API_KEY`: 설정 추출/검증에 사용할 LLM API 키
-- `LLM_MODEL`: 설정 추출에 사용할 LLM 모델명
+- `LLM_EXTRACTION_MODEL`: 회차 원문에서 캐릭터·세계관 후보와 주체를 추출하는 1차 LLM 모델명
+- `LLM_COMPARISON_MODEL`: 후보와 확정 데이터를 비교해 반영 방식을 제안하는 2차 LLM 모델명
+- `LLM_MODEL`: 단계별 모델 변수가 없을 때 사용하는 하위 호환 기본 모델명
 - `LLM_REASONING_EFFORT`: GPT-5.6 추론 강도. MVP 기본값은 `none`이며 품질 평가 후 상향합니다.
 - `OPENAI_RESPONSES_API_URL`: OpenAI Responses API endpoint
 - `EMBEDDING_GENERATION_ENABLED`: 신규 청크 임베딩 생성 여부. MVP 기본값은 `false`이며 `true`일 때만 Worker가 Embeddings API를 호출합니다.
@@ -151,7 +166,7 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 
 각 패키지의 세부 책임은 패키지 내부 README에서 관리합니다.
 
-- `app/analysis/README.md`: 설정 추출, 근거 위치 계산, 캐릭터 주체 해소
+- `app/analysis/README.md`: 캐릭터·세계관 설정 추출, 근거 위치 계산, 주체 해소와 세계관 비교
 - `app/chunking/README.md`: 원문 정규화, 문단 분리, 청킹, offset 기준
 - `app/clients/README.md`: Spring 내부 API 같은 외부 HTTP client
 - `app/db/README.md`: DB session과 트랜잭션 경계

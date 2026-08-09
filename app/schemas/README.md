@@ -30,6 +30,9 @@ Spring 기준으로는 Request/Response DTO에 가깝습니다.
   - claim payload의 `knownCharacters`는 Python에서 `known_characters`로 받고, `characterId`와 이름을 캐릭터명 매칭에 사용합니다. LLM prompt에는 내부 ID를 제외한 대표 이름만 전달합니다.
   - claim payload의 `characterSettingSchemas`는 Python에서 `character_setting_schemas`로 받습니다. 각 항목은 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`만 포함합니다.
   - 이전 payload를 역직렬화할 수 있도록 필드가 없으면 빈 목록으로 파싱하지만, 빈 목록은 현재 분석 계약과 호환되는 입력이 아닙니다. Worker는 원문·청크·후보를 변경하기 전에 해당 job을 실패 보고해 후보 0개 교체를 막습니다.
+  - claim payload의 lease token/만료 시각, claim 횟수, checkpoint와 선택 `worldSettingCandidateId`를 타입이 지정된 필드로 검증합니다.
+  - 세계관 후보 게시, 대상명 페이지, 최대 3개 비교 문맥, context version과 ADD/UPDATE/MERGE/EXCLUDE 완료 요청을 정의합니다.
+  - Worker DTO의 raw JSON은 `dict`/`list` 경계로 유지하고 Backend 전용 Jackson 객체나 UUID 생성 책임을 Python schema에 넣지 않습니다.
 
 ## 다른 값 객체와의 구분
 

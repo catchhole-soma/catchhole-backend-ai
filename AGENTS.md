@@ -7,6 +7,13 @@
 
 ## Spring Worker API
 
+- 분석 runner는 claim의 `allowedJobTypes`를 명시한다. 기본 `analysis` 프로세스는 `SETTING_EXTRACTION`, 별도 `world-comparison` 프로세스는 사용자 재비교용 `WORLD_SETTING_COMPARISON`만 claim해 서로의 작업을 가져가지 않는다.
+- claim 뒤 상태 변경, checkpoint, 세계관 후보 API와 토큰 예약에는 `X-Worker-Lease-Token`을 전송하고, 장기 provider 호출 중에는 60초 주기로 heartbeat를 보낸다. lease가 만료된 응답을 우회해 DB 상태를 직접 바꾸지 않는다.
+- `SETTING_EXTRACTION`의 재시작 경계는 `CHUNKS_READY → CHARACTER_CANDIDATES_SAVED → WORLD_CANDIDATES_PUBLISHED → WORLD_COMPARISONS_FINISHED` checkpoint 순서를 사용한다. 완료된 stage의 외부 호출과 저장을 반복하지 않는다.
+- 캐릭터 `setting_candidates` 저장은 기존 SQLAlchemy 경계를 유지한다. 세계관 `world_setting_candidates` 생성·비교 상태 저장은 반드시 Spring 내부 Worker API를 사용하며, Python이 `world_settings`나 세계관 후보 테이블을 직접 수정하지 않는다.
+- 세계관 비교 prompt에는 Backend UUID를 노출하지 않는다. Worker가 만든 `S*`/`T*` 참조만 LLM에 제공하고, 실제 대상 ID·현재 property·version 검증과 `beforeValue` 산출은 Spring이 담당한다.
+- 세계관 `comparisonReason`은 검토 화면에 그대로 노출되는 사용자 문장이다. `S*`/`T*` 참조, UUID, key, version, operation enum 같은 내부 용어를 저장하지 않으며, 모델이 대상 참조를 반환하면 실제 대상명을 사용한 자연스러운 한국어로 치환한다.
+- 기존 속성과 의미가 같아 세계관 후보를 `EXCLUDE`할 때는 2차 비교 결과에 해당 `target_ref`와 실제 `matched_property_name`을 함께 반환한다. Backend가 비교 당시 기존값을 `beforeValue`로 보존해야 하며, 일시적 사건처럼 특정 기존 속성과 비교하지 않은 제외만 두 값을 비울 수 있다.
 - 분석 progress 요청은 표시용 `currentStep`과 대상 회차에 적용할 `episodeStatus`를 함께 보낸다. 자유 형식 문구에서 상태를 추론하지 않도록 `EpisodeProcessingStatus` enum을 명시적으로 직렬화한다.
 - claim payload는 복수 `episodes`가 아니라 단일 `episode`를 받는다. 한 `AnalysisJob`은 한 회차만 처리하고, 회차 사이의 반복과 실패 격리는 Spring의 Job queue가 담당한다.
 - 장기 실행 runner는 한 Job의 실패를 Spring에 보고한 뒤 다음 claim을 계속한다. 개별 분석 예외로 Worker 프로세스 전체를 종료하지 않는다.
@@ -34,5 +41,8 @@
 
 ## LLM Runtime
 
-- 기본 분석 모델과 추론 강도는 `LLM_MODEL`, `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
+- 1차 후보 추출은 `LLM_EXTRACTION_MODEL`, 2차 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 개별 값이 없으면 기존 `LLM_MODEL`을 fallback으로 사용해 이전 배포 환경을 유지한다. 이 단계명은 세계관에 종속하지 않으며 추후 캐릭터 비교에도 같은 비교 모델 설정을 사용한다.
+- 세계관 2차 비교·재비교 prompt에는 Backend가 반환한 1차 `evidenceSpans`를 읽기 전용 문맥으로 전달한다. 2차 LLM이 quote·offset을 다시 생성하거나 비교 완료 payload로 반환하지 않으며, 원고가 바뀐 경우에만 새 1차 분석 후보와 근거를 만든다.
+- 세계관 후보는 Spring 게시 전에 정규화한 `category + subject_name + setting_name`별로 하나로 통합한다. 2차 비교는 추출값 하나면 `SINGLE`, 여러 값이 양립하면 `MERGED`, 동시에 참일 수 없으면 `CONFLICT`로 판정한다. `MERGED`만 자연스러운 최종 문자열 하나로 정리하고 `CONFLICT`는 모든 추출값을 그대로 보존해 사용자 판단으로 넘긴다. 각 1차 후보의 quote·offset과 raw payload는 어느 상태에서도 수정하지 않는다.
+- 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
 - GPT-5.6 모델의 토큰 예약량은 `o200k_base` tokenizer로 계산한다. 사용하는 tiktoken 버전이 모델 별칭을 모를 수 있으므로 모델명 자동 탐지 실패를 byte 상한으로 방치하지 않는다.

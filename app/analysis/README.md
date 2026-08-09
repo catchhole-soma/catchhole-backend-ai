@@ -6,11 +6,12 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 ## 역할
 
-- 원문 청크를 입력으로 받아 설정 후보와 명시적 신규 캐릭터 발견 후보를 추출합니다.
+- 원문 청크를 입력으로 받아 캐릭터 설정·신규 캐릭터 발견 후보와 지속 가능한 세계관 속성 후보를 추출합니다.
 - LLM 응답 JSON을 Python 내부 검증 schema로 확인합니다.
 - 추출 결과를 `setting_candidates` 저장 구조에 맞는 중간 결과로 정리합니다.
 - 근거 문장을 원문에서 다시 찾아 회차 전체 기준 위치를 계산합니다.
 - 추출 후보의 캐릭터명 표현을 기존 캐릭터 목록과 비교해 매칭 상태를 계산합니다.
+- 세계관 후보와 같은 category의 기존 대상을 좁히고 ADD/UPDATE/MERGE/EXCLUDE 제안을 생성합니다.
 - NVM-143의 검증 근거 수집과 NVM-144의 충돌 판정은 후속 단계에서 연결합니다.
 
 다음 책임은 Analysis에 넣지 않습니다.
@@ -38,6 +39,18 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
   - `entity_name`이 비어 있거나 `미상`/지칭어 같은 구체적이지 않은 값인 후보를 `raw_entity_mention`의 형태와 관계없이 LLM으로 한 번 더 해소합니다.
   - 같은 current chunk에서 나온 fallback 대상 후보를 묶어 previous/current/next chunk 문맥과 함께 한 번에 전달합니다.
   - 설정 후보를 다시 추출하지 않고 주체만 판단하며, 정상 응답으로도 해소하지 못한 후보는 `entity_name="미상"`으로 보존합니다.
+- `world_setting_extractor.py`, `world_setting_schemas.py`
+  - 청크에서 여러 회차에 재사용 가능한 종족·세력·장소·몬스터·능력 체계·규칙/역사·중요 아이템의 원자 속성을 추출합니다.
+  - 현재 소유 상태, 날씨, 단발성 사건은 제외하고 confidence를 `0.65`, `0.80`, `0.95` 중 하나로 제한합니다.
+- `world_setting_comparator.py`
+  - normalized exact 대상이 없을 때 같은 category의 대상명만 `S*` 참조로 LLM에 전달해 최대 3개를 선택합니다.
+  - Backend가 반환한 현재 속성 문맥은 UUID/version 없이 `T*` 참조로 LLM에 전달해 ADD/UPDATE/MERGE/EXCLUDE를 판단합니다.
+  - 기존 속성과 중복되어 EXCLUDE하면 해당 `T*`와 실제 속성명을 검증해 Backend가 기존값을 저장할 수 있게 전달합니다.
+- `world_setting_pipeline.py`
+  - 후보 claim, 대상명 페이지 조회, 비교 문맥 조회, 결과 저장을 조율합니다.
+  - 문맥 version 충돌은 새 문맥으로 최대 3회 다시 비교하고, 후보 하나의 실패는 해당 후보에만 기록합니다.
+- `json_response.py`
+  - 세계관 추출·대상 선택·비교가 공유하는 JSON 객체 파싱, Pydantic 검증, 제한 재시도를 담당합니다.
 - `schemas.py`
   - LLM에서 받은 설정 후보 JSON을 검증하기 위한 Python 내부 schema를 정의합니다.
   - FastAPI 응답 DTO가 아니라, 외부 LLM 출력이 저장 가능한 구조인지 확인하는 경계 객체입니다.
@@ -48,15 +61,14 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 
 ## 실패 메시지 처리
 
-현재 LLM 응답 파싱/검증 실패 메시지는 `setting_extractor.py` 내부 helper에서 짧게 정리합니다.
-
-아직 사용처가 `CharacterSettingExtractor` 하나뿐이므로 공통 util로 분리하지 않았습니다.
-다만 이후 Worker 실패 보고, Spring 내부 API 실패 보고, S3/DB 처리 실패 등에서 같은 규칙이 필요해지면 `app/core/error_messages.py` 같은 공통 helper로 분리합니다.
+LLM 응답 파싱/검증 실패 메시지와 JSON 객체 파싱은 `json_response.py`에서 공통 처리합니다. 캐릭터 추출은 현재 chunk ID를 응답에 주입하는 고유 단계가 있어 자체 retry loop를 유지하되 같은 오류 메시지 helper를 사용합니다.
 
 ## 재시도 기준
 
 `CharacterSettingExtractor`는 LLM 응답이 JSON으로 파싱되지 않거나, `app/analysis/schemas.py`의 Pydantic schema 검증에 실패한 경우에만 재시도합니다.
 설정 후보 배열이 응답 중간에 잘리는 위험을 줄이기 위해 각 추출 요청의 `max_output_tokens`는 4000으로 고정합니다.
+
+세계관 추출·대상 선택·비교도 JSON/schema/참조 검증 실패만 설정된 횟수만큼 재시도합니다. 대상 선택은 입력 ref의 중복·누락 범위를, 비교는 operation별 target/property와 제안 문자열을 Python에서 추가 검증합니다. DB 문맥 version 충돌은 LLM 응답 오류와 별도로 `world_setting_pipeline.py`가 최신 문맥을 다시 받아 최대 3회 처리합니다.
 
 예를 들어 다음 경우는 재시도 대상입니다.
 
@@ -89,6 +101,8 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 중복 key는 기존 캐릭터와 매칭되었으면 캐릭터 ID, 아니면 정규화한 구체 `entity_name`을 주체로 사용하고, 여기에 `attribute_name`, `value_type`, key 순서를 정규화한 `value_json`을 결합합니다. `attribute_value`는 표시 문구이므로 중복 판정에 사용하지 않습니다. 중복이면 confidence가 더 높은 후보 하나를 남기고, 같으면 먼저 나온 근거를 유지합니다.
 
 동일 `attribute_name`이라도 `value_json`이 다르면 실제 값 변경일 수 있어 모두 유지합니다. `AMBIGUOUS` 주체는 같은 `미상` 문자열이어도 서로 다른 인물일 수 있으므로 중복 제거하지 않습니다.
+
+세계관 후보는 캐릭터 후보와 달리 작가가 확정할 최종 설정 key가 검토 단위입니다. 모든 chunk 추출을 모은 뒤 정규화한 `category + subject_name + setting_name`이 같으면 후보 하나로 통합하고, 서로 다른 추출값은 줄 단위 원본 목록으로, `evidence_spans`와 raw extraction payload는 합집합으로 보존합니다. 2차 비교는 값 하나를 `SINGLE`, 양립 가능한 여러 값을 `MERGED`, 동시에 참일 수 없는 여러 값을 `CONFLICT`로 판정합니다. `MERGED`는 중복을 제거한 자연스러운 최종 문자열을 제안하지만 `CONFLICT`는 추출값 목록을 바꾸지 않고 사용자가 최종값을 정하도록 남깁니다.
 
 ## 캐릭터명 매칭 정책
 

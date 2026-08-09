@@ -7,6 +7,7 @@ from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.analysis.character_subject_resolver import SubjectResolutionResult
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
+from app.analysis.world_setting_schemas import WorldSettingExtractionResult
 from app.embeddings.exceptions import (
     EmbeddingDataIntegrityError,
     RecoverableEmbeddingProviderError,
@@ -21,6 +22,7 @@ ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
 WORK_ID = UUID("00000000-0000-0000-0000-000000000002")
 BATCH_ID = UUID("00000000-0000-0000-0000-000000000003")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000004")
+LEASE_TOKEN = UUID("00000000-0000-0000-0000-000000000006")
 SCHEMA_HINTS = (
     CharacterSettingSchemaHint(
         schema_key="stats.strength",
@@ -55,17 +57,22 @@ def test_worker_returns_without_error_when_claimable_job_does_not_exist() -> Non
 
 def test_worker_reports_progress_and_complete_to_spring() -> None:
     spring_client = FakeSpringWorkerClient(payload=_payload())
-    worker = SuccessfulAnalysisJobWorker(spring_client=spring_client)
+    worker = SuccessfulAnalysisJobWorker(
+        spring_client=spring_client,
+        extraction_model_name="extraction-model",
+        comparison_model_name="comparison-model",
+    )
 
     result = worker.run_once()
 
     assert result.claimed is True
     assert result.analysis_job_id == ANALYSIS_JOB_ID
+    assert spring_client.claim_model_name == "extraction-model"
     assert spring_client.progress_calls == [
         (ANALYSIS_JOB_ID, "SETTING_EXTRACTION", EpisodeProcessingStatus.ANALYZING)
     ]
     assert spring_client.complete_calls == [
-        (ANALYSIS_JOB_ID, '{"candidateCount": 0}', 10, 2),
+        (ANALYSIS_JOB_ID, '{"candidateCount": 0}', None, None),
     ]
     assert spring_client.fail_calls == []
 
@@ -98,6 +105,7 @@ def test_worker_fails_before_data_changes_when_claim_has_no_character_schemas() 
         chunking_service=chunking_service,
         episode_chunk_embedding_service=embedding_service,
         setting_extractor=setting_extractor,
+        world_setting_extractor=FakeWorldSettingExtractor(),
         setting_candidate_service=setting_candidate_service,
     )
 
@@ -132,9 +140,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "비요른은 1레벨 바바리안이다. 그는 낡은 도끼를 고쳐 쥐고 통로 안쪽을 노려보았다."
     )
     spring_client = FakeSpringWorkerClient(payload=_payload())
-    chunking_service = FakeEpisodeChunkingService(
-        chunks=[_chunk(0, chunk_text, start_offset=100)]
-    )
+    chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, chunk_text, start_offset=100)])
     extracted_candidates = [
         _candidate(chunking_service.chunks[0].id, attribute_name="level"),
         _candidate(chunking_service.chunks[0].id, attribute_name="class"),
@@ -147,6 +153,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         chunking_service=chunking_service,
         episode_chunk_embedding_service=episode_chunk_embedding_service,
         setting_extractor=setting_extractor,
+        world_setting_extractor=FakeWorldSettingExtractor(),
         setting_candidate_service=setting_candidate_service,
         embedding_generation_enabled=True,
     )
@@ -160,24 +167,22 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
     assert result.episode_count == 1
     assert chunking_service.requested_episode_ids == [EPISODE_ID]
     assert chunking_service.requested_content_s3_keys == ["works/work-id/episodes/episode-id.txt"]
-    assert episode_chunk_embedding_service.requested_chunk_ids == [
-        [chunking_service.chunks[0].id]
-    ]
+    assert episode_chunk_embedding_service.requested_chunk_ids == [[chunking_service.chunks[0].id]]
     assert setting_extractor.requests == [
         {
             "source_chunk_id": chunking_service.chunks[0].id,
             "chunk_text": chunk_text,
-                "episode_no": 1,
-                "episode_title": "첫 번째 회차",
-                "schema_hints": SCHEMA_HINTS,
-                "known_characters": (
-                    KnownCharacter(
-                        character_id=UUID("00000000-0000-0000-0000-000000000005"),
-                        name="비요른 얀델",
-                    ),
+            "episode_no": 1,
+            "episode_title": "첫 번째 회차",
+            "schema_hints": SCHEMA_HINTS,
+            "known_characters": (
+                KnownCharacter(
+                    character_id=UUID("00000000-0000-0000-0000-000000000005"),
+                    name="비요른 얀델",
                 ),
-            }
-        ]
+            ),
+        }
+    ]
     assert setting_candidate_service.request == {
         "work_id": WORK_ID,
         "analysis_job_id": ANALYSIS_JOB_ID,
@@ -189,7 +194,9 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
     expected_start_offset = 100 + chunk_text.index("비요른은 1레벨 바바리안이다.")
     assert saved_candidate.attribute_name == "level"
     assert saved_candidate.evidence_spans[0].start_offset == expected_start_offset
-    assert saved_candidate.evidence_spans[0].end_offset == expected_start_offset + len("비요른은 1레벨 바바리안이다.")
+    assert saved_candidate.evidence_spans[0].end_offset == expected_start_offset + len(
+        "비요른은 1레벨 바바리안이다."
+    )
     assert extracted_candidates[0].evidence_spans[0].start_offset is None
     summary = json.loads(spring_client.complete_calls[0][1])
     assert summary == {
@@ -202,6 +209,9 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
         "subjectFallbackUnresolvedCount": 0,
+        "worldSettingCandidateCount": 0,
+        "worldSettingComparisonCompletedCount": 0,
+        "worldSettingComparisonFailedCount": 0,
     }
     assert spring_client.fail_calls == []
 
@@ -254,6 +264,7 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         episode_chunk_embedding_service=episode_chunk_embedding_service,
         setting_extractor=setting_extractor,
         subject_resolver=subject_resolver,
+        world_setting_extractor=FakeWorldSettingExtractor(),
         setting_candidate_service=setting_candidate_service,
         embedding_generation_enabled=True,
     )
@@ -283,6 +294,9 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         "subjectFallbackCallCount": 1,
         "subjectFallbackResolvedCount": 1,
         "subjectFallbackUnresolvedCount": 0,
+        "worldSettingCandidateCount": 0,
+        "worldSettingComparisonCompletedCount": 0,
+        "worldSettingComparisonFailedCount": 0,
     }
 
 
@@ -313,6 +327,7 @@ def test_worker_preserves_subject_fallback_unresolved_candidate() -> None:
         episode_chunk_embedding_service=FakeEpisodeChunkEmbeddingService(),
         setting_extractor=FakeSettingExtractor(candidate_groups=[[unresolved_candidate]]),
         subject_resolver=subject_resolver,
+        world_setting_extractor=FakeWorldSettingExtractor(),
         setting_candidate_service=setting_candidate_service,
         embedding_generation_enabled=True,
     )
@@ -347,6 +362,7 @@ def test_worker_skips_chunk_embedding_by_default_and_completes_extraction() -> N
         subject_resolver=FakeSubjectResolver(
             result=SubjectResolutionResult(candidates=[extracted_candidate])
         ),
+        world_setting_extractor=FakeWorldSettingExtractor(),
         setting_candidate_service=setting_candidate_service,
     )
 
@@ -367,6 +383,9 @@ def test_worker_skips_chunk_embedding_by_default_and_completes_extraction() -> N
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
         "subjectFallbackUnresolvedCount": 0,
+        "worldSettingCandidateCount": 0,
+        "worldSettingComparisonCompletedCount": 0,
+        "worldSettingComparisonFailedCount": 0,
     }
     assert spring_client.fail_calls == []
 
@@ -387,6 +406,7 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         episode_chunk_embedding_service=episode_chunk_embedding_service,
         setting_extractor=setting_extractor,
         subject_resolver=subject_resolver,
+        world_setting_extractor=FakeWorldSettingExtractor(),
         setting_candidate_service=setting_candidate_service,
         embedding_generation_enabled=True,
     )
@@ -407,6 +427,9 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
         "subjectFallbackUnresolvedCount": 0,
+        "worldSettingCandidateCount": 0,
+        "worldSettingComparisonCompletedCount": 0,
+        "worldSettingComparisonFailedCount": 0,
     }
     assert spring_client.fail_calls == []
 
@@ -424,6 +447,7 @@ def test_worker_fails_analysis_when_chunk_embedding_data_is_inconsistent() -> No
         chunking_service=chunking_service,
         episode_chunk_embedding_service=episode_chunk_embedding_service,
         setting_extractor=setting_extractor,
+        world_setting_extractor=FakeWorldSettingExtractor(),
         embedding_generation_enabled=True,
     )
 
@@ -432,18 +456,12 @@ def test_worker_fails_analysis_when_chunk_embedding_data_is_inconsistent() -> No
 
     assert setting_extractor.requests == []
     assert spring_client.complete_calls == []
-    assert spring_client.fail_calls == [
-        (ANALYSIS_JOB_ID, "embedding update target is missing")
-    ]
+    assert spring_client.fail_calls == [(ANALYSIS_JOB_ID, "embedding update target is missing")]
 
 
 class SuccessfulAnalysisJobWorker(AnalysisJobWorker):
     def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
-        return WorkerRunSummary(
-            summary_json='{"candidateCount": 0}',
-            input_token_count=10,
-            output_token_count=2,
-        )
+        return WorkerRunSummary(summary_json='{"candidateCount": 0}')
 
 
 class FailingAnalysisJobWorker(AnalysisJobWorker):
@@ -455,33 +473,63 @@ class FakeSpringWorkerClient:
     def __init__(self, payload: WorkerAnalysisJobPayload | None) -> None:
         self.payload = payload
         self.claim_called = False
+        self.claim_model_name: str | None = None
         self.progress_calls: list[tuple[UUID, str, EpisodeProcessingStatus]] = []
         self.complete_calls: list[tuple[UUID, str | None, int | None, int | None]] = []
         self.fail_calls: list[tuple[UUID, str]] = []
 
-    def claim(self, model_name: str | None = None, current_step: str | None = None) -> WorkerAnalysisJobPayload | None:
+    def claim(
+        self,
+        allowed_job_types,
+        model_name: str | None = None,
+        current_step: str | None = None,
+    ) -> WorkerAnalysisJobPayload | None:
         self.claim_called = True
+        self.claim_model_name = model_name
         return self.payload
 
     def report_progress(
         self,
         analysis_job_id: UUID,
+        lease_token: UUID,
         current_step: str,
-        episode_status: EpisodeProcessingStatus,
+        episode_status: EpisodeProcessingStatus | None = None,
+        checkpoint_stage=None,
     ) -> None:
         self.progress_calls.append((analysis_job_id, current_step, episode_status))
 
     def complete(
         self,
         analysis_job_id: UUID,
+        lease_token: UUID,
         summary_json: str | None = None,
         input_token_count: int | None = None,
         output_token_count: int | None = None,
     ) -> None:
-        self.complete_calls.append((analysis_job_id, summary_json, input_token_count, output_token_count))
+        self.complete_calls.append(
+            (analysis_job_id, summary_json, input_token_count, output_token_count)
+        )
 
-    def fail(self, analysis_job_id: UUID, error_message: str) -> None:
+    def fail(self, analysis_job_id: UUID, lease_token: UUID, error_message: str) -> None:
         self.fail_calls.append((analysis_job_id, error_message))
+
+    def heartbeat(self, analysis_job_id: UUID, lease_token: UUID) -> None:
+        return None
+
+    def publish_world_setting_candidates(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+        candidates,
+    ):
+        return candidates
+
+    def claim_next_world_setting_comparison(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ):
+        return None
 
 
 class FakeEpisodeChunkingService:
@@ -548,6 +596,11 @@ class FakeExtractionResult:
         self.candidates = candidates
 
 
+class FakeWorldSettingExtractor:
+    def extract_from_chunk(self, chunk_text: str, episode_no=None, episode_title=None):
+        return WorldSettingExtractionResult(candidates=[])
+
+
 class FakeSettingCandidateService:
     # 실제 DB 저장 대신 Worker가 전달한 저장 요청을 기록
     def __init__(self) -> None:
@@ -566,9 +619,7 @@ class FakeSettingCandidateService:
             "work_id": work_id,
             "analysis_job_id": analysis_job_id,
             "episode_ids": [item.episode_id for item in save_items],
-            "known_character_names": [
-                character.name for character in known_characters
-            ],
+            "known_character_names": [character.name for character in known_characters],
             "candidate_count": len(save_items),
         }
         return self.saved_candidates
@@ -594,9 +645,7 @@ class FakeSubjectResolver:
                 "current_chunk_text": context.current_chunk_text,
                 "next_chunk_text": context.next_chunk_text,
                 "candidate_count": len(candidates),
-                "known_character_names": [
-                    character.name for character in known_characters
-                ],
+                "known_character_names": [character.name for character in known_characters],
             }
         )
         return self.result
@@ -611,6 +660,9 @@ def _payload() -> WorkerAnalysisJobPayload:
         batch_id=BATCH_ID,
         model_name="gpt-4.1-mini",
         current_step="SETTING_EXTRACTION",
+        lease_token=LEASE_TOKEN,
+        lease_expires_at="2026-08-06T12:05:00",
+        claim_attempt_count=1,
         character_setting_schemas=[
             {
                 "schemaKey": "stats.strength",
@@ -625,7 +677,7 @@ def _payload() -> WorkerAnalysisJobPayload:
                 "attributePattern": None,
                 "aliases": ["완력"],
                 "valueType": "NUMBER",
-            }
+            },
         ],
         known_characters=[
             {

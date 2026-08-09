@@ -13,7 +13,7 @@ class EpisodeChunkService:
     def __init__(
         self,
         session_factory: Callable[[], Session],
-         # repository_factory(session)을 호출하면 EpisodeChunkRepository(session)이 생성
+        # repository_factory(session)을 호출하면 EpisodeChunkRepository(session)이 생성
         repository_factory: Callable[[Session], EpisodeChunkRepository] = EpisodeChunkRepository,
     ) -> None:
         self.session_factory = session_factory
@@ -37,7 +37,7 @@ class EpisodeChunkService:
             )
             for draft in drafts
         ]
-        
+
         # 4. DB 세션을 열고, with 블록이 끝나면 session.close()가 자동으로 호출
         with self.session_factory() as session:
             repository = self.repository_factory(session)
@@ -54,3 +54,7 @@ class EpisodeChunkService:
                 raise
 
         return saved_chunks
+
+    def get_episode_chunks(self, episode_id: UUID) -> list[EpisodeChunk]:
+        with self.session_factory() as session:
+            return self.repository_factory(session).find_by_episode_id(episode_id)

@@ -3,7 +3,7 @@ from functools import lru_cache
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# .env 또는 환경변수에서 설정값을 읽어오는 클래스 
+# .env 또는 환경변수에서 설정값을 읽어오는 클래스
 class Settings(BaseSettings):
     # .env 파일을 읽고 Settings에 정의되지 않은 추가 환경변수는 무시 (pydantic-settings가 .env 파일에서 이름이 같은 환경변수 이름을 자동으로 매핑)
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -26,11 +26,21 @@ class Settings(BaseSettings):
     # LLM API key
     llm_api_key: str = ""
     llm_model: str = "gpt-5.6-terra"
+    llm_extraction_model: str | None = None
+    llm_comparison_model: str | None = None
     # GPT-5.6의 기본 medium 추론 비용을 자동으로 추가하지 않는 MVP 기준값
     llm_reasoning_effort: str = "none"
     openai_responses_api_url: str = "https://api.openai.com/v1/responses"
     # LLM 응답 JSON 파싱/검증 실패 시 전체 시도 횟수
     llm_extraction_max_attempts: int = 3
+
+    @property
+    def effective_llm_extraction_model(self) -> str:
+        return self.llm_extraction_model or self.llm_model
+
+    @property
+    def effective_llm_comparison_model(self) -> str:
+        return self.llm_comparison_model or self.llm_model
 
     # 청크와 검색 query가 함께 사용하는 embedding 계약
     embedding_generation_enabled: bool = False
@@ -49,7 +59,7 @@ class Settings(BaseSettings):
             )
         return embedding_dimensions
 
-    #Spring 내부 API 주소와 내부 API key를 읽음
+    # Spring 내부 API 주소와 내부 API key를 읽음
     spring_internal_api_base_url: str = "http://localhost:8080"
     spring_internal_api_key: str = ""
 

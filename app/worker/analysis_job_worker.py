@@ -1,30 +1,48 @@
-from dataclasses import dataclass
 import json
 import logging
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.character_name_resolver import KnownCharacter
-from app.analysis.schemas import ExtractedSettingCandidate
-from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
 from app.analysis.character_subject_resolver import (
     CharacterSubjectResolver,
     SubjectResolutionChunkContext,
     SubjectResolutionResult,
 )
+from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
+from app.analysis.schemas import CharacterSettingExtractionResult, ExtractedSettingCandidate
+from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
+from app.analysis.world_setting_extractor import WorldSettingExtractor
+from app.analysis.world_setting_pipeline import (
+    WorldSettingComparisonPipeline,
+    WorldSettingComparisonRunResult,
+    WorldSettingComparisonSpringApi,
+)
+from app.analysis.world_setting_schemas import WorldSettingExtractionResult
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import get_settings
 from app.db.session import get_session_maker
-from app.domain.enums import AnalysisStep, EpisodeProcessingStatus
-from app.embeddings.exceptions import RecoverableEmbeddingProviderError
+from app.domain.enums import (
+    AnalysisJobCheckpointStage,
+    AnalysisJobType,
+    AnalysisStep,
+    EpisodeProcessingStatus,
+)
 from app.embeddings.client import OpenAIEmbeddingsClient
+from app.embeddings.exceptions import RecoverableEmbeddingProviderError
 from app.embeddings.services.episode_chunk_embedding import (
     EpisodeChunkEmbeddingResult,
     EpisodeChunkEmbeddingService,
 )
+from app.llm.openai_client import OpenAIResponsesClient
+from app.mappers.world_setting_candidate_mapper import WorldSettingCandidateMapper
 from app.models.episode_chunk import EpisodeChunk
-from app.schemas.worker import WorkerAnalysisJobPayload
+from app.schemas.worker import (
+    WorkerAnalysisJobPayload,
+    WorkerWorldSettingCandidatePayload,
+    WorkerWorldSettingCandidatePublishItem,
+)
 from app.services.episode_chunk_service import EpisodeChunkService
 from app.services.episode_s3_chunking_service import EpisodeS3ChunkingService
 from app.services.setting_candidate_service import (
@@ -32,10 +50,16 @@ from app.services.setting_candidate_service import (
     SettingCandidateService,
 )
 from app.storage.s3 import S3TextObjectStorage
-from app.llm.openai_client import OpenAIResponsesClient
-from app.usage.metering import MeteredEmbeddingClient, MeteredTextGenerationClient
+from app.usage.metering import (
+    AiTokenLedgerApi,
+    MeteredEmbeddingClient,
+    MeteredTextGenerationClient,
+)
+from app.worker.lease_heartbeat import HeartbeatSpringApi, WorkerLeaseHeartbeat
+from app.worker.world_setting_services import create_world_setting_comparison_pipeline
 
 logger = logging.getLogger(__name__)
+
 
 # Worker 실행 결과를 담는 값 객체
 @dataclass(frozen=True)
@@ -47,85 +71,75 @@ class WorkerRunResult:
     work_title: str | None = None
     episode_count: int | None = None
 
+
 # 실제 분석 실행 후 Spring에 완료 보고할 요약 정보
 @dataclass(frozen=True)
 class WorkerRunSummary:
     summary_json: str | None = None
-    input_token_count: int | None = None
-    output_token_count: int | None = None
+
 
 # SpringWorkerClient가 가져야 하는 메서드 규격
-class SpringWorkerApi(Protocol):
+class SpringWorkerApi(
+    WorldSettingComparisonSpringApi,
+    AiTokenLedgerApi,
+    HeartbeatSpringApi,
+    Protocol,
+):
     # Spring 내부 API에서 처리 가능한 analysis job 하나를 점유한다.
-    def claim(self, model_name: str | None = None, current_step: str | None = None) -> WorkerAnalysisJobPayload | None:
-        pass
+    def claim(
+        self,
+        allowed_job_types: list[AnalysisJobType],
+        model_name: str | None = None,
+        current_step: str | None = None,
+    ) -> WorkerAnalysisJobPayload | None: ...
 
     # claim 직후 현재 Worker가 어떤 단계에 진입했는지 Spring에 보고한다.
     def report_progress(
         self,
         analysis_job_id: UUID,
+        lease_token: UUID,
         current_step: str,
-        episode_status: EpisodeProcessingStatus,
-    ) -> None:
-        pass
+        episode_status: EpisodeProcessingStatus | None = None,
+        checkpoint_stage: AnalysisJobCheckpointStage | None = None,
+    ) -> None: ...
 
     # 단일 episode의 chunk 분석과 후보 저장이 끝난 뒤 성공 결과를 Spring에 보고한다.
     def complete(
         self,
         analysis_job_id: UUID,
+        lease_token: UUID,
         summary_json: str | None = None,
         input_token_count: int | None = None,
         output_token_count: int | None = None,
-    ) -> None:
-        pass
+    ) -> None: ...
 
     # 분석 중 예외가 발생하면 Spring에 실패 사유를 보고한다.
-    def fail(self, analysis_job_id: UUID, error_message: str) -> None:
-        pass
+    def fail(self, analysis_job_id: UUID, lease_token: UUID, error_message: str) -> None: ...
 
-    # 실제 provider 호출 전에 사용자 잔여 한도에서 예상 최대 토큰을 예약한다.
-    def reserve_ai_tokens(
+    def publish_world_setting_candidates(
         self,
-        request_id: UUID,
         analysis_job_id: UUID,
-        purpose: str,
-        attempt: int,
-        model_name: str,
-        reserved_tokens: int,
-    ) -> None:
-        pass
-
-    # provider 응답 usage를 실제 사용량으로 확정하고 남은 예약량을 반환한다.
-    def settle_ai_tokens(
-        self,
-        request_id: UUID,
-        input_tokens: int,
-        cached_input_tokens: int,
-        output_tokens: int,
-        outcome: str,
-    ) -> None:
-        pass
-
-    # 실제 사용량을 알 수 없는 호출의 예약량을 전액 반환한다.
-    def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
-        pass
+        lease_token: UUID,
+        candidates: list[WorkerWorldSettingCandidatePublishItem],
+    ) -> list[WorkerWorldSettingCandidatePayload]: ...
 
 
-# Worker가 회차 원문을 읽고 청킹 결과를 저장할 때 기대하는 규격(테스트를 위한 목적이 커서 이후에 구현 완료되면 바로 주입 가능)
+# 회차 원문을 읽고 청킹 결과를 교체하는 최소 계약.
 class EpisodeChunkingApi(Protocol):
-    # episode의 content_s3_key로 S3 원문을 읽고, 기존 chunk를 교체 저장한 뒤 새 chunk 목록을 반환한다.
     def replace_chunks_from_s3_content(
         self,
         episode_id: UUID,
         content_s3_key: str,
-    ) -> list[EpisodeChunk]:
-        pass
+    ) -> list[EpisodeChunk]: ...
+
+
+class EpisodeChunkStoreApi(Protocol):
+    def get_episode_chunks(self, episode_id: UUID) -> list[EpisodeChunk]: ...
 
 
 # Worker가 저장된 청크의 임베딩 생성과 DB 반영을 요청할 때 기대하는 규격
 class EpisodeChunkEmbeddingApi(Protocol):
-    def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult:
-        pass
+    def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult: ...
 
 
 # Worker가 chunk 하나에서 설정 후보를 추출할 때 기대하는 규격(테스트를 위한 목적이 커서 이후에 구현 완료되면 바로 주입 가능)
@@ -139,8 +153,7 @@ class SettingExtractorApi(Protocol):
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
         known_characters: tuple[KnownCharacter, ...] = (),
-    ):
-        pass
+    ) -> CharacterSettingExtractionResult: ...
 
 
 class SubjectResolverApi(Protocol):
@@ -150,8 +163,16 @@ class SubjectResolverApi(Protocol):
         context: SubjectResolutionChunkContext,
         candidates: list[ExtractedSettingCandidate],
         known_characters: list[KnownCharacter],
-    ) -> SubjectResolutionResult:
-        pass
+    ) -> SubjectResolutionResult: ...
+
+
+class WorldSettingExtractorApi(Protocol):
+    def extract_from_chunk(
+        self,
+        chunk_text: str,
+        episode_no: int | None = None,
+        episode_title: str | None = None,
+    ) -> WorldSettingExtractionResult: ...
 
 
 # 분석 job 하나를 claim하고, 진행/완료/실패 보고까지 수행하는 Worker
@@ -160,26 +181,40 @@ class AnalysisJobWorker:
         self,
         spring_client: SpringWorkerApi | None = None,
         chunking_service: EpisodeChunkingApi | None = None,
+        episode_chunk_service: EpisodeChunkStoreApi | None = None,
         episode_chunk_embedding_service: EpisodeChunkEmbeddingApi | None = None,
         setting_extractor: SettingExtractorApi | None = None,
         subject_resolver: SubjectResolverApi | None = None,
+        world_setting_extractor: WorldSettingExtractorApi | None = None,
+        world_setting_comparison_pipeline: WorldSettingComparisonPipeline | None = None,
         setting_candidate_service: SettingCandidateService | None = None,
-        model_name: str | None = None,
+        extraction_model_name: str | None = None,
+        comparison_model_name: str | None = None,
         embedding_generation_enabled: bool = False,
     ) -> None:
+        settings = get_settings()
         self.spring_client = spring_client or SpringWorkerClient.from_settings()
         self._chunking_service = chunking_service
+        self._episode_chunk_service = episode_chunk_service
         self._episode_chunk_embedding_service = episode_chunk_embedding_service
         self._setting_extractor = setting_extractor
         self._subject_resolver = subject_resolver
+        self._world_setting_extractor = world_setting_extractor
+        self._world_setting_comparison_pipeline = world_setting_comparison_pipeline
         self._setting_candidate_service = setting_candidate_service
-        self.model_name = model_name
+        self.extraction_model_name = (
+            extraction_model_name or settings.effective_llm_extraction_model
+        )
+        self.comparison_model_name = (
+            comparison_model_name or settings.effective_llm_comparison_model
+        )
         self.embedding_generation_enabled = embedding_generation_enabled
 
     def run_once(self) -> WorkerRunResult:
         # Spring 서버에 처리 가능한 분석 job 하나를 요청
         payload = self.spring_client.claim(
-            model_name=self.model_name,
+            allowed_job_types=[AnalysisJobType.SETTING_EXTRACTION],
+            model_name=self.extraction_model_name,
             current_step=AnalysisStep.SETTING_EXTRACTION.value,
         )
         # 처리할 job이 없으면 아무 작업도 하지 않고 종료
@@ -191,26 +226,40 @@ class AnalysisJobWorker:
             )
 
         try:
+            if payload.job_type != AnalysisJobType.SETTING_EXTRACTION:
+                raise ValueError(f"Unsupported analysis job type: {payload.job_type}")
             # claim한 job의 현재 진행 상태를 Spring에 보고
             self.spring_client.report_progress(
                 analysis_job_id=payload.analysis_job_id,
+                lease_token=payload.lease_token,
                 current_step=AnalysisStep.SETTING_EXTRACTION.value,
                 episode_status=EpisodeProcessingStatus.ANALYZING,
             )
-            # 실제 분석 로직
-            summary = self._run_analysis_steps(payload)
+            with WorkerLeaseHeartbeat(
+                self.spring_client,
+                payload.analysis_job_id,
+                payload.lease_token,
+            ) as lease_heartbeat:
+                summary = self._run_analysis_steps(payload)
+                lease_heartbeat.raise_if_failed()
             # 분석이 성공하면 Spring에 완료 상태와 요약 정보를 보고
             self.spring_client.complete(
                 analysis_job_id=payload.analysis_job_id,
+                lease_token=payload.lease_token,
                 summary_json=summary.summary_json,
-                input_token_count=summary.input_token_count,
-                output_token_count=summary.output_token_count,
             )
         except Exception as exc:
-            self.spring_client.fail(
-                analysis_job_id=payload.analysis_job_id,
-                error_message=self._error_message(exc),
-            )
+            try:
+                self.spring_client.fail(
+                    analysis_job_id=payload.analysis_job_id,
+                    lease_token=payload.lease_token,
+                    error_message=self._error_message(exc),
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to report analysis job failure. analysis_job_id=%s",
+                    payload.analysis_job_id,
+                )
             raise
 
         # 분석 job 하나를 정상적으로 처리했음을 반환
@@ -224,22 +273,19 @@ class AnalysisJobWorker:
         )
 
     def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
-        # Schema 없이 추출하면 모든 후보가 제외되고 기존 후보까지 빈 결과로 교체될 수 있다.
-        # job ID를 확보한 뒤 이 지점에서 중단해 run_once의 Spring 실패 보고 흐름으로 보낸다.
-        if not payload.character_setting_schemas:
+        checkpoint = payload.checkpoint_stage
+        if (
+            not _checkpoint_reached(
+                checkpoint,
+                AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED,
+            )
+            and not payload.character_setting_schemas
+        ):
             raise ValueError(
                 "Analysis job claim must include at least one characterSettingSchemas entry."
             )
 
-        chunk_count = 0
-        embedded_chunk_count = 0
-        embedding_failed_chunk_count = 0
-        embedding_skipped_chunk_count = 0
-        subject_fallback_call_count = 0
-        subject_fallback_resolved_count = 0
-        subject_fallback_unresolved_count = 0
-        save_items: list[SettingCandidateSaveItem] = []
-        # claim payload의 기존 캐릭터 목록은 모든 chunk에서 같은 기준으로 재사용한다.
+        chunks, embedding_metrics = self._run_chunk_stage(payload, checkpoint)
         known_characters = [
             KnownCharacter(
                 character_id=character.character_id,
@@ -247,8 +293,6 @@ class AnalysisJobWorker:
             )
             for character in payload.known_characters
         ]
-        # Backend가 보낸 순서와 중복을 유지한 immutable tuple을 job당 한 번 만들고,
-        # 모든 chunk에 재사용해 같은 분석 job 안에서 prompt 기준이 달라지지 않게 한다.
         schema_hints = tuple(
             CharacterSettingSchemaHint(
                 schema_key=schema.schema_key,
@@ -259,30 +303,62 @@ class AnalysisJobWorker:
             )
             for schema in payload.character_setting_schemas
         )
-        # 실제 provider 호출 서비스는 job ID가 포함된 계량 client로 job마다 한 번 구성한다.
-        # 테스트에서 주입한 fake 서비스는 그대로 재사용해 기존 단위 테스트 경계를 유지한다.
-        setting_extractor = self._get_setting_extractor(payload.analysis_job_id)
-        subject_resolver = self._get_subject_resolver(payload.analysis_job_id)
+        character_metrics = self._run_character_stage(
+            payload,
+            chunks,
+            checkpoint,
+            known_characters,
+            schema_hints,
+        )
+        world_candidate_count = self._run_world_extraction_stage(payload, chunks, checkpoint)
+        comparison_result = self._run_world_comparison_stage(payload, checkpoint)
 
+        summary_json = json.dumps(
+            {
+                "episodeCount": 1,
+                "chunkCount": len(chunks),
+                **embedding_metrics,
+                **character_metrics,
+                "worldSettingCandidateCount": world_candidate_count,
+                "worldSettingComparisonCompletedCount": comparison_result.completed_count,
+                "worldSettingComparisonFailedCount": comparison_result.failed_count,
+            },
+            ensure_ascii=False,
+        )
+        return WorkerRunSummary(summary_json=summary_json)
+
+    def _run_chunk_stage(
+        self,
+        payload: WorkerAnalysisJobPayload,
+        checkpoint: AnalysisJobCheckpointStage | None,
+    ) -> tuple[list[EpisodeChunk], dict[str, int]]:
         episode = payload.episode
-        # 1. Episode.content_s3_key 기준으로 S3 원문을 읽고 episode_chunks를 재생성한다.
+        if _checkpoint_reached(checkpoint, AnalysisJobCheckpointStage.CHUNKS_READY):
+            chunks = self._get_episode_chunk_service().get_episode_chunks(episode.episode_id)
+            if not chunks:
+                raise ValueError("CHUNKS_READY checkpoint has no stored episode chunks.")
+            return chunks, {
+                "embeddedChunkCount": 0,
+                "embeddingFailedChunkCount": 0,
+                "embeddingSkippedChunkCount": 0,
+            }
+
         chunks = self._get_chunking_service().replace_chunks_from_s3_content(
             episode_id=episode.episode_id,
             content_s3_key=episode.content_s3_key,
         )
-        chunk_count += len(chunks)
-
-        # 2. MVP 기본값에서는 임베딩 생성을 생략하고 설정 후보 추출을 계속한다.
-        # 기능이 활성화된 경우에만 계량 client를 구성하고 기존 임베딩 생성·실패 정책을 적용한다.
+        embedded_count = 0
+        failed_count = 0
+        skipped_count = 0
         if self.embedding_generation_enabled:
-            embedding_service = self._get_episode_chunk_embedding_service(
-                payload.analysis_job_id
-            )
             try:
-                embedding_result = embedding_service.embed_chunks(chunks)
-                embedded_chunk_count += embedding_result.embedded_chunk_count
+                result = self._get_episode_chunk_embedding_service(
+                    payload.analysis_job_id,
+                    payload.lease_token,
+                ).embed_chunks(chunks)
+                embedded_count = result.embedded_chunk_count
             except RecoverableEmbeddingProviderError:
-                embedding_failed_chunk_count += len(chunks)
+                failed_count = len(chunks)
                 logger.exception(
                     "Chunk embedding provider failed temporarily; setting extraction will continue. "
                     "episode_id=%s chunk_count=%s",
@@ -290,15 +366,52 @@ class AnalysisJobWorker:
                     len(chunks),
                 )
         else:
-            embedding_skipped_chunk_count += len(chunks)
-            logger.info(
-                "Chunk embedding generation skipped by feature flag. "
-                "episode_id=%s chunk_count=%s",
-                episode.episode_id,
-                len(chunks),
-            )
+            skipped_count = len(chunks)
+        self.spring_client.report_progress(
+            payload.analysis_job_id,
+            payload.lease_token,
+            AnalysisStep.SETTING_EXTRACTION,
+            EpisodeProcessingStatus.ANALYZING,
+            AnalysisJobCheckpointStage.CHUNKS_READY,
+        )
+        return chunks, {
+            "embeddedChunkCount": embedded_count,
+            "embeddingFailedChunkCount": failed_count,
+            "embeddingSkippedChunkCount": skipped_count,
+        }
 
-        # 3. 저장된 chunk를 LLM 추출기에 넘겨 설정 후보를 생성한다.
+    def _run_character_stage(
+        self,
+        payload: WorkerAnalysisJobPayload,
+        chunks: list[EpisodeChunk],
+        checkpoint: AnalysisJobCheckpointStage | None,
+        known_characters: list[KnownCharacter],
+        schema_hints: tuple[CharacterSettingSchemaHint, ...],
+    ) -> dict[str, int]:
+        if _checkpoint_reached(
+            checkpoint,
+            AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED,
+        ):
+            return {
+                "candidateCount": 0,
+                "subjectFallbackCallCount": 0,
+                "subjectFallbackResolvedCount": 0,
+                "subjectFallbackUnresolvedCount": 0,
+            }
+
+        setting_extractor = self._get_setting_extractor(
+            payload.analysis_job_id,
+            payload.lease_token,
+        )
+        subject_resolver = self._get_subject_resolver(
+            payload.analysis_job_id,
+            payload.lease_token,
+        )
+        save_items: list[SettingCandidateSaveItem] = []
+        fallback_calls = 0
+        fallback_resolved = 0
+        fallback_unresolved = 0
+        episode = payload.episode
         for index, chunk in enumerate(chunks):
             extraction_result = setting_extractor.extract_from_chunk(
                 source_chunk_id=chunk.id,
@@ -308,62 +421,112 @@ class AnalysisJobWorker:
                 schema_hints=schema_hints,
                 known_characters=tuple(known_characters),
             )
-            # 설정 후보들을 추출한 후 그 데이터를 그대로 넣고, 청크의 원문과 청크의 시작 지점을 넘겨주어 근거 위치 보정
             resolved_candidates = resolve_candidate_evidence_offsets(
                 candidates=extraction_result.candidates,
                 chunk_text=chunk.chunk_text,
                 chunk_start_offset=chunk.start_offset,
             )
-            # 현재 chunk에서 나온 후보 중 "나/그녀/미상"처럼 주체가 풀리지 않은 후보만
-            # previous/current/next chunk 문맥으로 한 번 더 판단한다.
-            subject_resolution_result = subject_resolver.resolve_candidates(
+            resolution = subject_resolver.resolve_candidates(
                 context=SubjectResolutionChunkContext(
-                    # 현재 chunk의 앞뒤 텍스트만 꺼내 resolver 입력으로 넘긴다.
                     previous_chunk_text=chunks[index - 1].chunk_text if index > 0 else None,
                     current_chunk_text=chunk.chunk_text,
-                    next_chunk_text=chunks[index + 1].chunk_text if index + 1 < len(chunks) else None,
+                    next_chunk_text=(
+                        chunks[index + 1].chunk_text if index + 1 < len(chunks) else None
+                    ),
                 ),
                 candidates=resolved_candidates,
                 known_characters=known_characters,
             )
-            # resolver는 해소 실패 후보도 표준 placeholder로 유지한다.
-            # 최종 MATCHED/UNRESOLVED/AMBIGUOUS 판정은 저장 Service의 기존 name resolver가 담당한다.
-            subject_fallback_call_count += subject_resolution_result.fallback_call_count
-            subject_fallback_resolved_count += subject_resolution_result.fallback_resolved_count
-            subject_fallback_unresolved_count += subject_resolution_result.fallback_unresolved_count
+            fallback_calls += resolution.fallback_call_count
+            fallback_resolved += resolution.fallback_resolved_count
+            fallback_unresolved += resolution.fallback_unresolved_count
             save_items.extend(
                 SettingCandidateSaveItem(
                     episode_id=episode.episode_id,
                     source_content_s3_key=episode.content_s3_key,
                     candidate=candidate,
                 )
-                for candidate in subject_resolution_result.candidates
+                for candidate in resolution.candidates
             )
 
-        # 4. 검증된 후보들을 setting_candidates에 저장하고, 실제 저장된 개수를 완료 요약에 사용한다.
-        saved_candidates = self._get_setting_candidate_service().replace_candidates_for_analysis_job(
-            work_id=payload.work_id,
-            analysis_job_id=payload.analysis_job_id,
-            save_items=save_items,
-            known_characters=known_characters,
+        saved_candidates = (
+            self._get_setting_candidate_service().replace_candidates_for_analysis_job(
+                work_id=payload.work_id,
+                analysis_job_id=payload.analysis_job_id,
+                save_items=save_items,
+                known_characters=known_characters,
+            )
         )
+        self.spring_client.report_progress(
+            payload.analysis_job_id,
+            payload.lease_token,
+            AnalysisStep.WORLD_SETTING_EXTRACTION,
+            EpisodeProcessingStatus.ANALYZING,
+            AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED,
+        )
+        return {
+            "candidateCount": len(saved_candidates),
+            "subjectFallbackCallCount": fallback_calls,
+            "subjectFallbackResolvedCount": fallback_resolved,
+            "subjectFallbackUnresolvedCount": fallback_unresolved,
+        }
 
-        # 분석 결과 개수를 Spring 완료 API에 전달할 JSON 문자열로 만든다.
-        summary_json = json.dumps(
-            {
-                "episodeCount": 1,
-                "chunkCount": chunk_count,
-                "embeddedChunkCount": embedded_chunk_count,
-                "embeddingFailedChunkCount": embedding_failed_chunk_count,
-                "embeddingSkippedChunkCount": embedding_skipped_chunk_count,
-                "candidateCount": len(saved_candidates),
-                "subjectFallbackCallCount": subject_fallback_call_count,
-                "subjectFallbackResolvedCount": subject_fallback_resolved_count,
-                "subjectFallbackUnresolvedCount": subject_fallback_unresolved_count,
-            },
-            ensure_ascii=False,
+    def _run_world_extraction_stage(
+        self,
+        payload: WorkerAnalysisJobPayload,
+        chunks: list[EpisodeChunk],
+        checkpoint: AnalysisJobCheckpointStage | None,
+    ) -> int:
+        if _checkpoint_reached(
+            checkpoint,
+            AnalysisJobCheckpointStage.WORLD_CANDIDATES_PUBLISHED,
+        ):
+            return 0
+
+        extractor = self._get_world_setting_extractor(
+            payload.analysis_job_id,
+            payload.lease_token,
         )
-        return WorkerRunSummary(summary_json=summary_json)
+        extracted_items = [
+            WorldSettingCandidateMapper.to_publish_item(candidate, chunk)
+            for chunk in chunks
+            for candidate in extractor.extract_from_chunk(
+                chunk_text=chunk.chunk_text,
+                episode_no=payload.episode.episode_no,
+                episode_title=payload.episode.title,
+            ).candidates
+        ]
+        candidates = WorldSettingCandidateMapper.consolidate_by_key(extracted_items)
+        published = self.spring_client.publish_world_setting_candidates(
+            payload.analysis_job_id,
+            payload.lease_token,
+            candidates,
+        )
+        return len(published)
+
+    def _run_world_comparison_stage(
+        self,
+        payload: WorkerAnalysisJobPayload,
+        checkpoint: AnalysisJobCheckpointStage | None,
+    ) -> WorldSettingComparisonRunResult:
+        if _checkpoint_reached(
+            checkpoint,
+            AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED,
+        ):
+            return WorldSettingComparisonRunResult(0, 0)
+
+        result = self._get_world_setting_comparison_pipeline(
+            payload.analysis_job_id,
+            payload.lease_token,
+        ).process_all(payload.analysis_job_id, payload.lease_token)
+        self.spring_client.report_progress(
+            payload.analysis_job_id,
+            payload.lease_token,
+            AnalysisStep.WORLD_SETTING_COMPARISON,
+            EpisodeProcessingStatus.ANALYZING,
+            AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED,
+        )
+        return result
 
     def _error_message(self, exc: Exception) -> str:
         message = str(exc) or exc.__class__.__name__
@@ -373,16 +536,23 @@ class AnalysisJobWorker:
     def _get_chunking_service(self) -> EpisodeChunkingApi:
         if self._chunking_service is None:
             session_factory = get_session_maker()
+            self._episode_chunk_service = EpisodeChunkService(session_factory=session_factory)
             self._chunking_service = EpisodeS3ChunkingService(
                 storage=S3TextObjectStorage.from_settings(),
-                chunk_service=EpisodeChunkService(session_factory=session_factory),
+                chunk_service=self._episode_chunk_service,
             )
         return self._chunking_service
+
+    def _get_episode_chunk_service(self) -> EpisodeChunkStoreApi:
+        if self._episode_chunk_service is None:
+            self._episode_chunk_service = EpisodeChunkService(session_factory=get_session_maker())
+        return self._episode_chunk_service
 
     # 저장된 청크의 벡터를 생성하고 episode_chunks에 반영할 서비스를 초기화한다.
     def _get_episode_chunk_embedding_service(
         self,
         analysis_job_id: UUID,
+        lease_token: UUID,
     ) -> EpisodeChunkEmbeddingApi:
         if self._episode_chunk_embedding_service is not None:
             return self._episode_chunk_embedding_service
@@ -393,6 +563,7 @@ class AnalysisJobWorker:
             ledger=self.spring_client,
             analysis_job_id=analysis_job_id,
             model_name=settings.embedding_model,
+            lease_token=lease_token,
         )
         return EpisodeChunkEmbeddingService(
             session_factory=get_session_maker(),
@@ -400,41 +571,86 @@ class AnalysisJobWorker:
         )
 
     # llm에 넣을 프롬프트와 api호출을 할 서비스(CharacterSettingExtractor)를 초기화 하는 작업만 한다.
-    def _get_setting_extractor(self, analysis_job_id: UUID) -> SettingExtractorApi:
+    def _get_setting_extractor(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> SettingExtractorApi:
         if self._setting_extractor is not None:
             return self._setting_extractor
 
         settings = get_settings()
-        model_name = self.model_name or settings.llm_model
+        model_name = self.extraction_model_name
         metered_client = MeteredTextGenerationClient(
             delegate=OpenAIResponsesClient.from_settings(settings),
             ledger=self.spring_client,
             analysis_job_id=analysis_job_id,
             purpose="SETTING_EXTRACTION",
             default_model=model_name,
+            lease_token=lease_token,
         )
         return CharacterSettingExtractor(
             llm_client=metered_client,
             model=model_name,
         )
 
-    def _get_subject_resolver(self, analysis_job_id: UUID) -> SubjectResolverApi:
+    def _get_subject_resolver(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> SubjectResolverApi:
         if self._subject_resolver is not None:
             return self._subject_resolver
 
         settings = get_settings()
-        model_name = self.model_name or settings.llm_model
+        model_name = self.extraction_model_name
         metered_client = MeteredTextGenerationClient(
             delegate=OpenAIResponsesClient.from_settings(settings),
             ledger=self.spring_client,
             analysis_job_id=analysis_job_id,
             purpose="SUBJECT_RESOLUTION",
             default_model=model_name,
+            lease_token=lease_token,
         )
         # 구체 entity_name을 얻지 못한 후보의 주체 해소 호출도 별도 request로 정산한다.
         return CharacterSubjectResolver(
             llm_client=metered_client,
             model=model_name,
+        )
+
+    def _get_world_setting_extractor(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> WorldSettingExtractorApi:
+        if self._world_setting_extractor is not None:
+            return self._world_setting_extractor
+
+        settings = get_settings()
+        model_name = self.extraction_model_name
+        metered_client = MeteredTextGenerationClient(
+            delegate=OpenAIResponsesClient.from_settings(settings),
+            ledger=self.spring_client,
+            analysis_job_id=analysis_job_id,
+            purpose="WORLD_SETTING_EXTRACTION",
+            default_model=model_name,
+            lease_token=lease_token,
+        )
+        return WorldSettingExtractor(llm_client=metered_client, model=model_name)
+
+    def _get_world_setting_comparison_pipeline(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> WorldSettingComparisonPipeline:
+        if self._world_setting_comparison_pipeline is not None:
+            return self._world_setting_comparison_pipeline
+
+        return create_world_setting_comparison_pipeline(
+            spring_client=self.spring_client,
+            analysis_job_id=analysis_job_id,
+            lease_token=lease_token,
+            comparison_model_name=self.comparison_model_name,
         )
 
     # 검증된 설정 후보를 setting_candidates 테이블에 저장할 서비스를 필요할 때 초기화한다.
@@ -444,3 +660,13 @@ class AnalysisJobWorker:
                 session_factory=get_session_maker(),
             )
         return self._setting_candidate_service
+
+
+def _checkpoint_reached(
+    current: AnalysisJobCheckpointStage | None,
+    target: AnalysisJobCheckpointStage,
+) -> bool:
+    if current is None:
+        return False
+    checkpoints = list(AnalysisJobCheckpointStage)
+    return checkpoints.index(current) >= checkpoints.index(target)

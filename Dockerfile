@@ -25,7 +25,7 @@ RUN python -m pip install --upgrade pip setuptools wheel \
     && python -c "import tiktoken; tiktoken.get_encoding('o200k_base')" \
     && chmod -R a+rX "${TIKTOKEN_CACHE_DIR}" \
     && cd /tmp \
-    && python -c "from pathlib import Path; import app; prompt_dir = Path(app.__file__).parent / 'llm' / 'prompts'; missing = [name for name in ('character_setting_extraction.md', 'character_subject_resolution.md') if not (prompt_dir / name).is_file()]; assert not missing, f'missing packaged prompts: {missing}'"
+    && python -c "from pathlib import Path; import app; prompt_dir = Path(app.__file__).parent / 'llm' / 'prompts'; required = ('character_setting_extraction.md', 'character_subject_resolution.md', 'world_setting_extraction.md', 'world_setting_subject_resolution.md', 'world_setting_comparison.md'); missing = [name for name in required if not (prompt_dir / name).is_file()]; assert not missing, f'missing packaged prompts: {missing}'"
 
 USER catchhole:catchhole
 

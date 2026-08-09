@@ -8,7 +8,7 @@ Python AI Worker의 문서 위치와 작성 기준을 정리합니다.
 
 | 문서 | 내용 |
 | --- | --- |
-| [AI Worker Workflow](ai-worker-workflow.md) | Spring claim 이후 Python Worker가 청킹, LLM 추출, 후보 저장, 완료/실패 보고를 수행하는 흐름 |
+| [AI Worker Workflow](ai-worker-workflow.md) | Spring claim 이후 lease/checkpoint, 캐릭터·세계관 추출, 세계관 비교, 후보 저장과 완료/실패 보고 흐름 |
 | [AI Token Cache Validation](ai-token-cache-validation.md) | 실제 분석 호출의 토큰 예약량, Prompt Cache 적중률과 재검증 기준 |
 | [Setting Extraction Evaluation](setting-extraction-evaluation.md) | 설정 추출 정답 데이터, 예측 결과, 규칙·LLM 채점과 평가 지표를 연결하는 로컬 평가 흐름 |
 | [Notion Gold Dataset Operation](setting-extraction-notion-operation.md) | Notion 정답 원본, 내용 기반 snapshot, private 원고와 수동 GitHub 평가 실행·권한 설정 |

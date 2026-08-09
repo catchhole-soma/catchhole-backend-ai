@@ -2,7 +2,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -13,29 +12,17 @@ from app.analysis.character_name_resolver import (
     is_usable_subject_resolution_name,
 )
 from app.analysis.exceptions import LlmExtractionError
+from app.analysis.json_response import compact_error_message, parse_json_object
 from app.analysis.schemas import ExtractedSettingCandidate
+from app.core.config import get_settings
 from app.domain.enums import SettingCandidateKind
 from app.llm.openai_client import OpenAIResponsesClient
-from app.llm.responses import LlmTextResponse
+from app.llm.protocols import TextGenerationClient
 
 DEFAULT_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "llm" / "prompts" / "character_subject_resolution.md"
 )
 SUBJECT_RESOLUTION_CACHE_KEY = "subject-resolution:v1"
-
-
-class TextGenerationClient(Protocol):
-    # 테스트에서 OpenAI 클라이언트를 대체 주입하기 위한 최소 규격.
-    # system/user prompt를 받아 텍스트 응답 하나를 생성한다.
-    def create_text_response(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        model: str | None = None,
-        max_output_tokens: int = 1500,
-        prompt_cache_key: str | None = None,
-    ) -> LlmTextResponse:
-        pass
 
 
 @dataclass(frozen=True)
@@ -81,7 +68,7 @@ class CharacterSubjectResolver:
         # 운영에서는 OpenAI client를 기본 사용하고, 테스트에서는 fake client를 주입한다.
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
-        self.model = model
+        self.model = model or get_settings().effective_llm_extraction_model
 
     def resolve_candidates(
         self,
@@ -174,11 +161,11 @@ class CharacterSubjectResolver:
         )
 
         try:
-            # fallback은 같은 문맥으로 한 번만 판단한다.(같은 문맥으로 2번 이상 판단할 이유가 없다고 생각)
+            # 동일 문맥의 subject fallback은 한 번만 판단하고 잘못된 응답은 분석 실패로 전파한다.
             return self._request_once(system_prompt, user_prompt)
-        except (json.JSONDecodeError, ValidationError) as exc:
+        except (json.JSONDecodeError, TypeError, ValidationError) as exc:
             raise LlmExtractionError(
-                f"LLM subject resolution failed: {_error_message(exc)}"
+                f"LLM subject resolution failed: {compact_error_message(exc)}"
             ) from exc
 
     def _request_once(
@@ -194,7 +181,7 @@ class CharacterSubjectResolver:
             max_output_tokens=1000,
             prompt_cache_key=SUBJECT_RESOLUTION_CACHE_KEY,
         )
-        return SubjectResolutionResponse.model_validate(_parse_json_object(response.text))
+        return SubjectResolutionResponse.model_validate(parse_json_object(response.text))
 
 
 @dataclass(frozen=True)
@@ -253,7 +240,7 @@ def _validate_resolution_candidate_ids(
     targets: list[_IndexedCandidate],
 ) -> None:
     expected_candidate_ids = [target.candidate_id for target in targets]
-    actual_candidate_ids = [item.candidate_id for item in response.resolutions]
+    actual_candidate_ids = [resolution.candidate_id for resolution in response.resolutions]
     if len(actual_candidate_ids) != len(set(actual_candidate_ids)) or set(
         actual_candidate_ids
     ) != set(expected_candidate_ids):
@@ -288,10 +275,7 @@ def _build_user_prompt(
                 "entity_name": target.candidate.entity_name,
                 "attribute_name": target.candidate.attribute_name,
                 "attribute_value": target.candidate.attribute_value,
-                "evidence_quotes": [
-                    evidence.quote
-                    for evidence in target.candidate.evidence_spans
-                ],
+                "evidence_quotes": [evidence.quote for evidence in target.candidate.evidence_spans],
             }
             for target in targets
         ],
@@ -301,31 +285,3 @@ def _build_user_prompt(
         "전체 설정 후보를 다시 추출하지 말고 candidates에 있는 candidate_id만 반환하세요.\n\n"
         f"{json.dumps(payload, ensure_ascii=False)}"
     )
-
-
-def _parse_json_object(text: str) -> dict:
-    # 모델이 실수로 코드블록이나 앞뒤 설명을 붙여도 JSON 객체만 최대한 회수한다.
-    content = text.strip()
-    if content.startswith("```"):
-        lines = content.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        content = "\n".join(lines).strip()
-
-    if not content.startswith("{"):
-        start = content.find("{")
-        end = content.rfind("}")
-        if start >= 0 and end >= start:
-            content = content[start : end + 1]
-
-    return json.loads(content)
-
-
-def _error_message(exc: Exception | None) -> str:
-    # 최종 예외 메시지가 너무 길어지지 않도록 짧게 자른다.
-    if exc is None:
-        return "unknown error"
-    message = str(exc) or exc.__class__.__name__
-    return message[:500]
