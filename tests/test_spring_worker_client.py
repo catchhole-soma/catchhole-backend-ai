@@ -292,6 +292,7 @@ def test_world_setting_worker_calls_use_lease_and_parse_structured_context() -> 
             {
                 "category": "RACE",
                 "subjectName": "바바리안",
+                "scopeName": "1층",
                 "settingName": "서식지",
                 "extractedValue": "혹한 지역",
                 "evidenceSpans": [{"quote": "바바리안은 혹한 지역에 산다."}],
@@ -308,6 +309,7 @@ def test_world_setting_worker_calls_use_lease_and_parse_structured_context() -> 
     )
 
     assert claimed is not None
+    assert claimed.scope_name == "1층"
     assert context.candidate.evidence_spans[0].quote == "바바리안은 혹한 지역에 산다."
     assert all(
         request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN) for request in requests
@@ -321,6 +323,7 @@ def _candidate_payload() -> dict:
         "sourceEpisodeId": str(EPISODE_ID),
         "category": "RACE",
         "subjectName": "바바리안",
+        "scopeName": "1층",
         "settingName": "서식지",
         "extractedValue": "혹한 지역",
         "evidenceSpans": [{"quote": "바바리안은 혹한 지역에 산다."}],

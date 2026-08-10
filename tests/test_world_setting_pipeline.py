@@ -8,6 +8,7 @@ from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonContextResponse,
     WorkerWorldSettingComparisonTarget,
+    WorkerWorldSettingProperty,
     WorkerWorldSettingSubject,
     WorkerWorldSettingSubjectPageResponse,
 )
@@ -45,6 +46,54 @@ def test_pipeline_uses_normalized_exact_subject_and_completes_update() -> None:
     request = spring.completions[0]
     assert request.target_world_setting_id == TARGET_ID
     assert request.context_versions[0].version == 3
+
+
+def test_pipeline_forwards_scoped_property_path_to_backend() -> None:
+    candidate = _candidate(scope_name="1층")
+    spring = FakeSpringApi(candidate=candidate)
+    spring.subjects = [_subject(TARGET_ID, "바바리안")]
+    spring.context = WorkerWorldSettingComparisonContextResponse(
+        candidate=candidate,
+        exact_target_world_setting_id=TARGET_ID,
+        targets=[
+            WorkerWorldSettingComparisonTarget(
+                world_setting_id=TARGET_ID,
+                subject_name="바바리안",
+                properties=[
+                    WorkerWorldSettingProperty(
+                        scope_name="1층",
+                        setting_name="서식지",
+                        value="혹한 지역",
+                    )
+                ],
+                version=3,
+            )
+        ],
+    )
+    pipeline = WorldSettingComparisonPipeline(
+        spring,
+        FakeSubjectResolver([]),
+        FakeComparator(
+            WorldSettingComparisonDecision(
+                consolidation_status="SINGLE",
+                operation="UPDATE",
+                target_ref="T1",
+                matched_scope_name="1층",
+                matched_property_name="서식지",
+                proposed_scope_name="1층",
+                proposed_setting_name="서식지",
+                proposed_value="극지방",
+                comparison_reason="1층의 기존 서식지를 구체화한다.",
+            )
+        ),
+    )
+
+    result = pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN)
+
+    assert result.completed_count == 1
+    request = spring.completions[0]
+    assert request.matched_scope_name == "1층"
+    assert request.proposed_scope_name == "1층"
 
 
 def test_pipeline_rebuilds_context_after_stale_completion() -> None:
@@ -204,7 +253,7 @@ class FailingComparator:
         raise ValueError("malformed LLM response")
 
 
-def _candidate() -> WorkerWorldSettingCandidatePayload:
+def _candidate(scope_name: str | None = None) -> WorkerWorldSettingCandidatePayload:
     return WorkerWorldSettingCandidatePayload.model_validate(
         {
             "candidateId": str(CANDIDATE_ID),
@@ -212,6 +261,7 @@ def _candidate() -> WorkerWorldSettingCandidatePayload:
             "sourceEpisodeId": "00000000-0000-0000-0000-000000000011",
             "category": "RACE",
             "subjectName": " 바바리안 ",
+            "scopeName": scope_name,
             "settingName": "서식지",
             "extractedValue": "극지방",
             "evidenceSpans": [{"quote": "바바리안은 극지방에 산다."}],
@@ -236,7 +286,13 @@ def _context(
             WorkerWorldSettingComparisonTarget(
                 world_setting_id=TARGET_ID,
                 subject_name="바바리안",
-                properties_json={"서식지": "혹한 지역"},
+                properties=[
+                    WorkerWorldSettingProperty(
+                        scope_name=None,
+                        setting_name="서식지",
+                        value="혹한 지역",
+                    )
+                ],
                 version=3,
             )
         ]

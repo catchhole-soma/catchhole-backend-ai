@@ -8,6 +8,7 @@ from app.llm.responses import LlmTextResponse
 from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonTarget,
+    WorkerWorldSettingProperty,
 )
 
 TARGET_ID = UUID("00000000-0000-0000-0000-000000000004")
@@ -223,6 +224,64 @@ def test_comparator_retries_when_conflict_rewrites_source_values() -> None:
     assert len(text_client.requests) == 2
 
 
+def test_comparator_never_matches_same_setting_name_from_a_different_scope() -> None:
+    candidate = _candidate(
+        "방향별 몬스터 출몰 규칙",
+        "동쪽에서 고블린이 출몰한다.",
+        scope_name="1층",
+    )
+    invalid = {
+        "consolidation_status": "SINGLE",
+        "operation": "UPDATE",
+        "target_ref": "T1",
+        "matched_scope_name": "2층",
+        "matched_property_name": "방향별 몬스터 출몰 규칙",
+        "proposed_scope_name": "2층",
+        "proposed_setting_name": "방향별 몬스터 출몰 규칙",
+        "proposed_value": candidate.extracted_value,
+        "comparison_reason": "다른 층의 기존 설정을 갱신한다.",
+    }
+    valid = {
+        **invalid,
+        "matched_scope_name": "1층",
+        "proposed_scope_name": "1층",
+        "comparison_reason": "1층의 기존 설정을 갱신한다.",
+    }
+    target = WorkerWorldSettingComparisonTarget(
+        world_setting_id=TARGET_ID,
+        subject_name="미궁",
+        properties=[
+            WorkerWorldSettingProperty(
+                scope_name="1층",
+                setting_name="방향별 몬스터 출몰 규칙",
+                value="동쪽에서 슬라임이 출몰한다.",
+            ),
+            WorkerWorldSettingProperty(
+                scope_name="2층",
+                setting_name="방향별 몬스터 출몰 규칙",
+                value="동쪽에서 오크가 출몰한다.",
+            ),
+        ],
+        version=3,
+    )
+    text_client = FakeTextClient([invalid, valid])
+
+    result, _ = WorldSettingComparator(
+        llm_client=text_client,
+        max_attempts=2,
+    ).compare(candidate, [target])
+
+    assert result.matched_scope_name == "1층"
+    assert result.proposed_scope_name == "1층"
+    prompt_payload = json.loads(text_client.requests[0]["user_prompt"])
+    assert prompt_payload["candidate"]["scope_name"] == "1층"
+    assert [property["scope_name"] for property in prompt_payload["targets"][0]["properties"]] == [
+        "1층",
+        "2층",
+    ]
+    assert len(text_client.requests) == 2
+
+
 class FakeTextClient:
     def __init__(self, responses: list[dict]) -> None:
         self.responses = responses
@@ -235,7 +294,11 @@ class FakeTextClient:
         )
 
 
-def _candidate(setting_name: str, extracted_value: str) -> WorkerWorldSettingCandidatePayload:
+def _candidate(
+    setting_name: str,
+    extracted_value: str,
+    scope_name: str | None = None,
+) -> WorkerWorldSettingCandidatePayload:
     return WorkerWorldSettingCandidatePayload.model_validate(
         {
             "candidateId": "00000000-0000-0000-0000-000000000003",
@@ -243,6 +306,7 @@ def _candidate(setting_name: str, extracted_value: str) -> WorkerWorldSettingCan
             "sourceEpisodeId": "00000000-0000-0000-0000-000000000011",
             "category": "RACE",
             "subjectName": "바바리안",
+            "scopeName": scope_name,
             "settingName": setting_name,
             "extractedValue": extracted_value,
             "evidenceSpans": [{"quote": "원문 근거"}],
@@ -255,6 +319,12 @@ def _target() -> WorkerWorldSettingComparisonTarget:
     return WorkerWorldSettingComparisonTarget(
         world_setting_id=TARGET_ID,
         subject_name="바바리안",
-        properties_json={"서식지": "혹한 지역"},
+        properties=[
+            WorkerWorldSettingProperty(
+                scope_name=None,
+                setting_name="서식지",
+                value="혹한 지역",
+            )
+        ],
         version=3,
     )

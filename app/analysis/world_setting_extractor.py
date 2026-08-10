@@ -11,7 +11,7 @@ from app.llm.protocols import TextGenerationClient
 DEFAULT_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "llm" / "prompts" / "world_setting_extraction.md"
 )
-WORLD_SETTING_EXTRACTION_CACHE_KEY = "world-setting-extraction:v1"
+WORLD_SETTING_EXTRACTION_CACHE_KEY = "world-setting-extraction:v2"
 logger = logging.getLogger(__name__)
 
 

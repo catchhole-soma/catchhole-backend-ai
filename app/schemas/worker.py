@@ -192,6 +192,7 @@ class WorkerWorldSettingCandidatePublishItem(BaseModel):
 
     category: WorldSettingCategory
     subject_name: str = Field(alias="subjectName", min_length=1, max_length=100)
+    scope_name: str | None = Field(default=None, alias="scopeName", max_length=100)
     setting_name: str = Field(alias="settingName", min_length=1, max_length=100)
     extracted_value: str = Field(alias="extractedValue", min_length=1)
     evidence_spans: list[WorkerEvidenceSpan] = Field(alias="evidenceSpans", min_length=1)
@@ -214,6 +215,7 @@ class WorkerWorldSettingCandidatePayload(BaseModel):
     source_episode_id: UUID = Field(alias="sourceEpisodeId")
     category: WorldSettingCategory
     subject_name: str = Field(alias="subjectName")
+    scope_name: str | None = Field(default=None, alias="scopeName")
     setting_name: str = Field(alias="settingName")
     extracted_value: str = Field(alias="extractedValue")
     evidence_spans: list[WorkerEvidenceSpan] = Field(alias="evidenceSpans")
@@ -244,12 +246,20 @@ class WorkerWorldSettingComparisonContextRequest(BaseModel):
     )
 
 
+class WorkerWorldSettingProperty(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    scope_name: str | None = Field(default=None, alias="scopeName")
+    setting_name: str = Field(alias="settingName")
+    value: str
+
+
 class WorkerWorldSettingComparisonTarget(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     world_setting_id: UUID = Field(alias="worldSettingId")
     subject_name: str = Field(alias="subjectName")
-    properties_json: dict[str, str] = Field(alias="propertiesJson")
+    properties: list[WorkerWorldSettingProperty]
     version: int = Field(ge=0)
 
 
@@ -275,9 +285,15 @@ class WorkerWorldSettingComparisonCompleteRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     target_world_setting_id: UUID | None = Field(default=None, alias="targetWorldSettingId")
+    matched_scope_name: str | None = Field(default=None, alias="matchedScopeName")
     matched_property_name: str | None = Field(default=None, alias="matchedPropertyName")
     consolidation_status: WorldSettingConsolidationStatus = Field(alias="consolidationStatus")
     suggested_operation: WorldSettingOperation = Field(alias="suggestedOperation")
+    proposed_scope_name: str | None = Field(
+        default=None,
+        alias="proposedScopeName",
+        max_length=100,
+    )
     proposed_setting_name: str = Field(alias="proposedSettingName", min_length=1, max_length=100)
     proposed_value: str = Field(alias="proposedValue", min_length=1)
     comparison_reason: str = Field(alias="comparisonReason", min_length=1)

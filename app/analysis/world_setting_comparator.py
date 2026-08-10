@@ -133,6 +133,7 @@ class WorldSettingComparator:
             "candidate": {
                 "category": candidate.category,
                 "subject_name": candidate.subject_name,
+                "scope_name": candidate.scope_name,
                 "setting_name": candidate.setting_name,
                 "extracted_value": candidate.extracted_value,
                 "extracted_values": _source_values(candidate),
@@ -145,7 +146,10 @@ class WorldSettingComparator:
                 {
                     "ref": target_reference.reference,
                     "subject_name": target_reference.target.subject_name,
-                    "properties": target_reference.target.properties_json,
+                    "properties": [
+                        property.model_dump(mode="json")
+                        for property in target_reference.target.properties
+                    ],
                 }
                 for target_reference in references
             ],
@@ -158,7 +162,7 @@ class WorldSettingComparator:
             model=self.model,
             max_output_tokens=2000,
             max_attempts=self.max_attempts,
-            prompt_cache_key="world-setting-comparison:v5",
+            prompt_cache_key="world-setting-comparison:v6",
             operation_name="World-setting comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -209,6 +213,8 @@ def _validate_comparison_decision(
     if decision.target_ref is not None and decision.target_ref not in references_by_key:
         raise ValueError(f"Unknown comparison target_ref: {decision.target_ref}")
     if decision.operation in {WorldSettingOperation.ADD, WorldSettingOperation.EXCLUDE}:
+        if decision.proposed_scope_name != candidate.scope_name:
+            raise ValueError("ADD and EXCLUDE must preserve the extracted scope name.")
         if decision.proposed_setting_name != candidate.setting_name:
             raise ValueError("ADD and EXCLUDE must preserve the extracted setting name.")
         if len(source_values) == 1 and decision.proposed_value != source_values[0]:
@@ -218,15 +224,40 @@ def _validate_comparison_decision(
     if decision.operation == WorldSettingOperation.EXCLUDE:
         if decision.matched_property_name is None:
             return
+        if decision.matched_scope_name != candidate.scope_name:
+            raise ValueError("A matched property must use the extracted scope name.")
         target = references_by_key[decision.target_ref]
-        if decision.matched_property_name not in target.properties_json:
-            raise ValueError("matched_property_name does not exist in the selected target.")
+        if not _has_property(
+            target,
+            decision.matched_scope_name,
+            decision.matched_property_name,
+        ):
+            raise ValueError("The matched property path does not exist in the selected target.")
         return
+    if decision.matched_scope_name != candidate.scope_name:
+        raise ValueError("UPDATE and MERGE must match the extracted scope name.")
     target = references_by_key[decision.target_ref]
-    if decision.matched_property_name not in target.properties_json:
-        raise ValueError("matched_property_name does not exist in the selected target.")
+    if not _has_property(
+        target,
+        decision.matched_scope_name,
+        decision.matched_property_name,
+    ):
+        raise ValueError("The matched property path does not exist in the selected target.")
+    if decision.proposed_scope_name != decision.matched_scope_name:
+        raise ValueError("UPDATE and MERGE must preserve the stored scope name.")
     if decision.proposed_setting_name != decision.matched_property_name:
         raise ValueError("UPDATE and MERGE must preserve the stored property name.")
+
+
+def _has_property(
+    target: WorkerWorldSettingComparisonTarget,
+    scope_name: str | None,
+    setting_name: str,
+) -> bool:
+    return any(
+        property.scope_name == scope_name and property.setting_name == setting_name
+        for property in target.properties
+    )
 
 
 def _replace_internal_target_references(
