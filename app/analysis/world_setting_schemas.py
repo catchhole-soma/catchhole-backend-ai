@@ -19,6 +19,7 @@ TrimmedValue = Annotated[str, StringConstraints(strip_whitespace=True, min_lengt
 class ExtractedWorldSettingCandidate(BaseModel):
     category: WorldSettingCategory
     subject_name: TrimmedName
+    scope_name: TrimmedName | None = None
     setting_name: TrimmedName
     extracted_value: TrimmedValue
     evidence_spans: list[ExtractedEvidenceSpan] = Field(min_length=1)
@@ -43,13 +44,17 @@ class WorldSettingComparisonDecision(BaseModel):
     consolidation_status: WorldSettingConsolidationStatus
     operation: WorldSettingOperation
     target_ref: str | None = None
+    matched_scope_name: TrimmedName | None = None
     matched_property_name: TrimmedName | None = None
+    proposed_scope_name: TrimmedName | None = None
     proposed_setting_name: TrimmedName
     proposed_value: TrimmedValue
     comparison_reason: TrimmedValue
 
     @model_validator(mode="after")
     def validate_operation_payload(self) -> "WorldSettingComparisonDecision":
+        if self.matched_scope_name is not None and self.matched_property_name is None:
+            raise ValueError("matched_scope_name requires matched_property_name.")
         if self.matched_property_name is not None and self.target_ref is None:
             raise ValueError("matched_property_name requires target_ref.")
         if (

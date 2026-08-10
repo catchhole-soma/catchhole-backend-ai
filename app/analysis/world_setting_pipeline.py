@@ -156,9 +156,11 @@ class WorldSettingComparisonPipeline:
                 target_world_setting_id=(
                     None if selected_target is None else selected_target.world_setting_id
                 ),
+                matched_scope_name=decision.matched_scope_name,
                 matched_property_name=decision.matched_property_name,
                 consolidation_status=decision.consolidation_status,
                 suggested_operation=decision.operation,
+                proposed_scope_name=decision.proposed_scope_name,
                 proposed_setting_name=decision.proposed_setting_name,
                 proposed_value=decision.proposed_value,
                 comparison_reason=decision.comparison_reason,

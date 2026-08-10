@@ -56,6 +56,16 @@ def test_world_setting_extractor_accepts_empty_result_for_temporary_event() -> N
     assert result.candidates == []
 
 
+def test_world_setting_extractor_accepts_one_level_scope() -> None:
+    client = FakeTextClient([_response(category="LOCATION", scope_name="1층")])
+
+    result = WorldSettingExtractor(llm_client=client, max_attempts=1).extract_from_chunk(
+        "미궁 1층 동쪽에서는 고블린이 출몰한다."
+    )
+
+    assert result.candidates[0].scope_name == "1층"
+
+
 def test_world_setting_mapper_resolves_offsets_and_consolidates_exact_fact() -> None:
     text = "바바리안은 혹한 지역에서 살아간다."
     chunk = EpisodeChunk(
@@ -123,16 +133,43 @@ def test_world_setting_mapper_consolidates_same_key_values_and_keeps_all_evidenc
     ]
 
 
+def test_world_setting_mapper_keeps_same_setting_name_separate_across_scopes() -> None:
+    first_floor = _publish_item(
+        setting_name="방향별 몬스터 출몰 규칙",
+        extracted_value="동쪽에서 고블린이 출몰한다.",
+        quote="미궁 1층 동쪽에서는 고블린이 출몰한다.",
+        start_offset=10,
+        scope_name="1층",
+    )
+    second_floor = _publish_item(
+        setting_name="방향별 몬스터 출몰 규칙",
+        extracted_value="동쪽에서 오크가 출몰한다.",
+        quote="미궁 2층 동쪽에서는 오크가 출몰한다.",
+        start_offset=80,
+        scope_name="2층",
+    )
+
+    consolidated = WorldSettingCandidateMapper.consolidate_by_key([first_floor, second_floor])
+
+    assert [candidate.scope_name for candidate in consolidated] == ["1층", "2층"]
+    assert [candidate.evidence_spans[0].quote for candidate in consolidated] == [
+        "미궁 1층 동쪽에서는 고블린이 출몰한다.",
+        "미궁 2층 동쪽에서는 오크가 출몰한다.",
+    ]
+
+
 def _publish_item(
     setting_name: str,
     extracted_value: str,
     quote: str,
     start_offset: int,
+    scope_name: str | None = None,
 ):
     return WorldSettingCandidateMapper.to_publish_item(
         ExtractedWorldSettingCandidate.model_validate({
             "category": "IMPORTANT_ITEM",
             "subject_name": "메시지 스톤",
+            "scope_name": scope_name,
             "setting_name": setting_name,
             "extracted_value": extracted_value,
             "evidence_spans": [{"quote": quote}],
@@ -154,13 +191,18 @@ def _publish_item(
     )
 
 
-def _response(category: str, confidence: float = 0.95) -> str:
+def _response(
+    category: str,
+    confidence: float = 0.95,
+    scope_name: str | None = None,
+) -> str:
     return json.dumps(
         {
             "candidates": [
                 {
                     "category": category,
                     "subject_name": "바바리안",
+                    "scope_name": scope_name,
                     "setting_name": "서식지",
                     "extracted_value": "혹한 지역",
                     "evidence_spans": [{"quote": "바바리안은 혹한 지역에서 살아간다."}],

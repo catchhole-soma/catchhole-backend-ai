@@ -26,6 +26,7 @@ class WorldSettingCandidateMapper:
         return WorkerWorldSettingCandidatePublishItem(
             category=candidate.category,
             subject_name=candidate.subject_name,
+            scope_name=candidate.scope_name,
             setting_name=candidate.setting_name,
             extracted_value=candidate.extracted_value,
             evidence_spans=[
@@ -45,12 +46,13 @@ class WorldSettingCandidateMapper:
         candidates: list[WorkerWorldSettingCandidatePublishItem],
     ) -> list[WorkerWorldSettingCandidatePublishItem]:
         candidates_by_key: dict[
-            tuple[str, str, str], list[WorkerWorldSettingCandidatePublishItem]
+            tuple[str, str, str | None, str], list[WorkerWorldSettingCandidatePublishItem]
         ] = {}
         for candidate in candidates:
             key = (
                 candidate.category,
                 _normalized_name(candidate.subject_name),
+                _normalized_optional_name(candidate.scope_name),
                 _normalized_name(candidate.setting_name),
             )
             candidates_by_key.setdefault(key, []).append(candidate)
@@ -86,6 +88,7 @@ def _consolidate_candidates(
             "consolidationKey": {
                 "category": first.category,
                 "subjectName": first.subject_name,
+                "scopeName": first.scope_name,
                 "settingName": first.setting_name,
             },
             "sourceValues": source_values,
@@ -108,3 +111,7 @@ def _unique_values(values) -> list[str]:
 
 def _normalized_name(value: str) -> str:
     return unicodedata.normalize("NFC", value.strip()).casefold()
+
+
+def _normalized_optional_name(value: str | None) -> str | None:
+    return None if value is None else _normalized_name(value)
