@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -178,7 +179,7 @@ def test_source_file_cannot_escape_private_source_root(tmp_path: Path) -> None:
 def test_live_analysis_failure_does_not_expose_source_details(capsys) -> None:
     private_text = "private manuscript evidence quote"
 
-    def fail_with_source_details() -> dict:
+    async def fail_with_source_details() -> dict:
         print(private_text)
         print(private_text, file=sys.stderr)
         logging.getLogger("eval-source-test").error(private_text)
@@ -188,9 +189,11 @@ def test_live_analysis_failure_does_not_expose_source_details(capsys) -> None:
         RuntimeError,
         match=r"Episode 2 analysis failed \(ValueError\)\.",
     ) as exc_info:
-        run_analysis_without_source_logs(
-            episode_no=2,
-            operation=fail_with_source_details,
+        asyncio.run(
+            run_analysis_without_source_logs(
+                episode_no=2,
+                operation=fail_with_source_details,
+            )
         )
 
     captured = capsys.readouterr()

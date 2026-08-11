@@ -53,7 +53,7 @@ class CharacterSettingExtractor:
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be at least 1.")
 
-    def extract_from_chunk(
+    async def extract_from_chunk(
         self,
         source_chunk_id: UUID,
         chunk_text: str,
@@ -83,7 +83,7 @@ class CharacterSettingExtractor:
         for attempt in range(1, self.max_attempts + 1):
             try:
                 # 예외가 없다면 정상적으로 return
-                return self._extract_once(
+                return await self._extract_once(
                     system_prompt,
                     user_prompt,
                     source_chunk_id,
@@ -106,7 +106,7 @@ class CharacterSettingExtractor:
             f"{self.max_attempts} attempts: {compact_error_message(last_error)}"
         ) from last_error
 
-    def _extract_once(
+    async def _extract_once(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -114,7 +114,7 @@ class CharacterSettingExtractor:
         prompt_cache_key: str,
     ) -> CharacterSettingExtractionResult:
         # 시스템 프롬프트 + 사용자 프롬프트를 조합하여 LLM에 요청
-        response = self.llm_client.create_text_response(
+        response = await self.llm_client.create_text_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=self.model,

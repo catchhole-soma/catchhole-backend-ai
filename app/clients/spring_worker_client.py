@@ -39,11 +39,11 @@ class SpringWorkerClient:
         self,
         base_url: str,
         internal_api_key: str,
-        http_client: httpx.Client | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.internal_api_key = internal_api_key
-        self.http_client = http_client or httpx.Client(timeout=30)
+        self.http_client = http_client or httpx.AsyncClient(timeout=30)
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "SpringWorkerClient":
@@ -53,7 +53,7 @@ class SpringWorkerClient:
             internal_api_key=settings.spring_internal_api_key,
         )
 
-    def claim(
+    async def claim(
         self,
         allowed_job_types: list[AnalysisJobType],
         model_name: str | None = None,
@@ -64,7 +64,7 @@ class SpringWorkerClient:
             current_step=current_step,
             allowed_job_types=allowed_job_types,
         )
-        response = self.http_client.post(
+        response = await self.http_client.post(
             self._url("/api/internal/v1/analysis-jobs/claim"),
             headers=self._headers(),
             json=request.model_dump(by_alias=True, exclude_none=True),
@@ -76,7 +76,7 @@ class SpringWorkerClient:
         return WorkerAnalysisJobPayload.model_validate(response.json()["data"])
 
     # Spring에 보낼 진행 상태 보고 요청 DTO
-    def report_progress(
+    async def report_progress(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
@@ -89,7 +89,7 @@ class SpringWorkerClient:
             episode_status=episode_status,
             checkpoint_stage=checkpoint_stage,
         )
-        response = self.http_client.patch(
+        response = await self.http_client.patch(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/progress"),
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
@@ -97,7 +97,7 @@ class SpringWorkerClient:
         # HTTP 응답이 4xx/5xx이면 예외를 발생
         response.raise_for_status()
 
-    def complete(
+    async def complete(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
@@ -112,7 +112,7 @@ class SpringWorkerClient:
             output_token_count=output_token_count,
         )
         # Spring 내부 API에 완료 보고 POST 요청
-        response = self.http_client.post(
+        response = await self.http_client.post(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/complete"),
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, exclude_none=True),
@@ -120,9 +120,14 @@ class SpringWorkerClient:
         response.raise_for_status()
 
     # Spring에 보낼 분석 실패 요청 DTO
-    def fail(self, analysis_job_id: UUID, lease_token: UUID, error_message: str) -> None:
+    async def fail(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+        error_message: str,
+    ) -> None:
         request = WorkerAnalysisJobFailRequest(error_message=error_message)
-        response = self.http_client.post(
+        response = await self.http_client.post(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/fail"),
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True),
@@ -131,7 +136,7 @@ class SpringWorkerClient:
 
     # AI provider 호출 전에 예상 최대량을 Spring 원장에 예약한다.
     # 같은 requestId 재요청은 멱등하므로 일시 장애에는 정산과 동일하게 재시도한다.
-    def reserve_ai_tokens(
+    async def reserve_ai_tokens(
         self,
         request_id: UUID,
         analysis_job_id: UUID,
@@ -149,32 +154,32 @@ class SpringWorkerClient:
             model_name=model_name,
             reserved_tokens=reserved_tokens,
         )
-        self._post_usage_update_with_retry(
+        await self._post_usage_update_with_retry(
             path="/api/internal/v1/ai-token-usages/reserve",
             payload=request.model_dump(by_alias=True, mode="json"),
             lease_token=lease_token,
         )
 
-    def heartbeat(
+    async def heartbeat(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
     ) -> WorkerAnalysisJobHeartbeatResponse:
-        response = self.http_client.post(
+        response = await self.http_client.post(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/heartbeat"),
             headers=self._headers(lease_token),
         )
         response.raise_for_status()
         return WorkerAnalysisJobHeartbeatResponse.model_validate(response.json()["data"])
 
-    def publish_world_setting_candidates(
+    async def publish_world_setting_candidates(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
         candidates: list[WorkerWorldSettingCandidatePublishItem],
     ) -> list[WorkerWorldSettingCandidatePayload]:
         request = WorkerWorldSettingCandidatePublishRequest(candidates=candidates)
-        response = self.http_client.put(
+        response = await self.http_client.put(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/world-setting-candidates"),
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
@@ -185,12 +190,12 @@ class SpringWorkerClient:
             for candidate_payload in response.json()["data"]
         ]
 
-    def claim_next_world_setting_comparison(
+    async def claim_next_world_setting_comparison(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
     ) -> WorkerWorldSettingCandidatePayload | None:
-        response = self.http_client.post(
+        response = await self.http_client.post(
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 "/world-setting-comparisons/claim-next"
@@ -202,7 +207,7 @@ class SpringWorkerClient:
         response.raise_for_status()
         return WorkerWorldSettingCandidatePayload.model_validate(response.json()["data"])
 
-    def get_world_setting_subjects(
+    async def get_world_setting_subjects(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
@@ -210,7 +215,7 @@ class SpringWorkerClient:
         page: int,
         size: int = 500,
     ) -> WorkerWorldSettingSubjectPageResponse:
-        response = self.http_client.get(
+        response = await self.http_client.get(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/world-setting-subjects"),
             headers=self._headers(lease_token),
             params={"category": category, "page": page, "size": size},
@@ -218,7 +223,7 @@ class SpringWorkerClient:
         response.raise_for_status()
         return WorkerWorldSettingSubjectPageResponse.model_validate(response.json()["data"])
 
-    def get_world_setting_comparison_context(
+    async def get_world_setting_comparison_context(
         self,
         analysis_job_id: UUID,
         candidate_id: UUID,
@@ -228,7 +233,7 @@ class SpringWorkerClient:
         request = WorkerWorldSettingComparisonContextRequest(
             target_world_setting_ids=target_world_setting_ids
         )
-        response = self.http_client.post(
+        response = await self.http_client.post(
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 f"/world-setting-candidates/{candidate_id}/comparison-context"
@@ -239,14 +244,14 @@ class SpringWorkerClient:
         response.raise_for_status()
         return WorkerWorldSettingComparisonContextResponse.model_validate(response.json()["data"])
 
-    def complete_world_setting_comparison(
+    async def complete_world_setting_comparison(
         self,
         analysis_job_id: UUID,
         candidate_id: UUID,
         lease_token: UUID,
         request: WorkerWorldSettingComparisonCompleteRequest,
     ) -> None:
-        response = self.http_client.post(
+        response = await self.http_client.post(
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 f"/world-setting-candidates/{candidate_id}/comparison-complete"
@@ -256,7 +261,7 @@ class SpringWorkerClient:
         )
         response.raise_for_status()
 
-    def fail_world_setting_comparison(
+    async def fail_world_setting_comparison(
         self,
         analysis_job_id: UUID,
         candidate_id: UUID,
@@ -264,7 +269,7 @@ class SpringWorkerClient:
         error_message: str,
     ) -> None:
         request = WorkerWorldSettingComparisonFailRequest(error_message=error_message)
-        response = self.http_client.post(
+        response = await self.http_client.post(
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 f"/world-setting-candidates/{candidate_id}/comparison-fail"
@@ -275,7 +280,7 @@ class SpringWorkerClient:
         response.raise_for_status()
 
     # provider가 반환한 실제 usage로 예약을 정산하고 남은 예약량을 반환한다.
-    def settle_ai_tokens(
+    async def settle_ai_tokens(
         self,
         request_id: UUID,
         input_tokens: int,
@@ -289,20 +294,20 @@ class SpringWorkerClient:
             output_tokens=output_tokens,
             outcome=outcome,
         )
-        self._post_usage_update_with_retry(
+        await self._post_usage_update_with_retry(
             path=f"/api/internal/v1/ai-token-usages/{request_id}/settle",
             payload=request.model_dump(by_alias=True),
         )
 
     # provider 사용량을 확인할 수 없을 때 기존 예약을 전액 해제한다.
-    def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
+    async def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
         request = AiTokenReleaseRequest(outcome=outcome)
-        self._post_usage_update_with_retry(
+        await self._post_usage_update_with_retry(
             path=f"/api/internal/v1/ai-token-usages/{request_id}/release",
             payload=request.model_dump(by_alias=True),
         )
 
-    def _post_usage_update_with_retry(
+    async def _post_usage_update_with_retry(
         self,
         path: str,
         payload: dict,
@@ -312,7 +317,7 @@ class SpringWorkerClient:
 
         for attempt in range(3):
             try:
-                response = self.http_client.post(
+                response = await self.http_client.post(
                     self._url(path),
                     headers=self._headers(lease_token),
                     json=payload,
@@ -328,6 +333,9 @@ class SpringWorkerClient:
                 )
                 if not retryable or attempt == 2:
                     raise
+
+    async def aclose(self) -> None:
+        await self.http_client.aclose()
 
     # base_url과 path를 합쳐 실제 요청 URL을 만듦
     def _url(self, path: str) -> str:

@@ -1,5 +1,6 @@
 import argparse
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 import json
@@ -16,6 +17,10 @@ from scripts.run_episode_text_analysis_debug import (
 
 
 def main() -> None:
+    asyncio.run(_async_main())
+
+
+async def _async_main() -> None:
     args = _parse_args()
     dataset = GoldDataset.model_validate(
         json.loads(args.gold.read_text(encoding="utf-8"))
@@ -28,7 +33,7 @@ def main() -> None:
     for episode in dataset.episodes:
         text_file = resolve_episode_source_file(episode, args.source_root)
         output_file = args.output_dir / f"episode-{episode.episode_no}.json"
-        result = run_analysis_without_source_logs(
+        result = await run_analysis_without_source_logs(
             episode_no=episode.episode_no,
             operation=lambda: run_episode_text_analysis_debug(
                 text_file=text_file,
@@ -56,10 +61,10 @@ def main() -> None:
         )
 
 
-def run_analysis_without_source_logs(
+async def run_analysis_without_source_logs(
     *,
     episode_no: int,
-    operation: Callable[[], dict],
+    operation: Callable[[], Awaitable[dict]],
 ) -> dict:
     """원문 유래 출력은 버리고 실패 여부와 예외 종류만 호출자에게 전달한다."""
 
@@ -70,7 +75,7 @@ def run_analysis_without_source_logs(
             redirect_stderr(StringIO()),
             _disable_logging(),
         ):
-            return operation()
+            return await operation()
     except Exception as exc:
         raise RuntimeError(
             f"Episode {episode_no} analysis failed ({exc.__class__.__name__})."

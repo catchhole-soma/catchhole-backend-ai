@@ -1,5 +1,6 @@
-from collections.abc import Callable
-from typing import Protocol
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Protocol, TypeVar
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -10,6 +11,9 @@ from app.repositories.episode_chunk_repository import (
     EpisodeChunkSearchResult,
 )
 
+T = TypeVar("T")
+BlockingRunner = Callable[[Callable[[], T]], Awaitable[T]]
+
 
 class QueryEmbeddingClientApi(Protocol):
     """검색 Service가 임베딩 클라이언트에 요구하는 최소 규격"""
@@ -17,7 +21,7 @@ class QueryEmbeddingClientApi(Protocol):
     model: str
     version: str
 
-    def create_embedding(self, text: str) -> list[float]:
+    async def create_embedding(self, text: str) -> list[float]:
         pass
 
 
@@ -29,12 +33,14 @@ class EpisodeChunkVectorSearchService:
         session_factory: Callable[[], Session],
         embedding_client: QueryEmbeddingClientApi | None = None,
         repository_factory: Callable[[Session], EpisodeChunkRepository] = EpisodeChunkRepository,
+        blocking_runner: BlockingRunner | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.embedding_client = embedding_client or OpenAIEmbeddingsClient.from_settings()
         self.repository_factory = repository_factory
+        self.blocking_runner = blocking_runner or asyncio.to_thread
 
-    def search_similar_chunks(
+    async def search_similar_chunks(
         self,
         query_text: str,
         work_id: UUID,
@@ -59,9 +65,29 @@ class EpisodeChunkVectorSearchService:
 
         # 검색 문장도 저장된 청크와 같은 client 설정으로 임베딩해야 비교할 수 있다.
         # 외부 API 응답을 기다리는 동안 DB 세션을 점유하지 않도록 세션보다 먼저 호출한다.
-        query_embedding = self.embedding_client.create_embedding(query_text)
+        query_embedding = await self.embedding_client.create_embedding(query_text)
 
         # 조회 전용 세션이므로 commit은 필요 없으며 with 종료 시 연결을 반환한다.
+        return await self.blocking_runner(
+            lambda: self._search_database(
+                query_embedding=query_embedding,
+                work_id=work_id,
+                top_k=top_k,
+                episode_no_from=episode_no_from,
+                episode_no_to=episode_no_to,
+                excluded_chunk_ids=excluded_chunk_ids,
+            )
+        )
+
+    def _search_database(
+        self,
+        query_embedding: list[float],
+        work_id: UUID,
+        top_k: int,
+        episode_no_from: int | None,
+        episode_no_to: int | None,
+        excluded_chunk_ids: list[UUID] | None,
+    ) -> list[EpisodeChunkSearchResult]:
         with self.session_factory() as session:
             repository = self.repository_factory(session)
             return repository.search_similar_chunks(

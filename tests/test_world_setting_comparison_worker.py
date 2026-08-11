@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 import pytest
@@ -21,7 +22,7 @@ def test_comparison_worker_claims_only_recomparison_jobs_and_completes() -> None
         comparison_model_name="comparison-model",
     )
 
-    result = worker.run_once()
+    result = _run_once(worker)
 
     assert result.claimed is True
     assert spring.allowed_job_types == ["WORLD_SETTING_COMPARISON"]
@@ -38,23 +39,24 @@ def test_comparison_worker_fails_job_when_candidate_comparison_failed() -> None:
     )
 
     with pytest.raises(RuntimeError, match="recomparison failed"):
-        worker.run_once()
+        _run_once(worker)
 
     assert spring.complete_calls == []
     assert spring.fail_calls == [ANALYSIS_JOB_ID]
 
 
-def test_comparison_pipeline_uses_comparison_model_for_calls_and_metering() -> None:
+def test_comparison_pipeline_routes_subject_resolution_and_comparison_models() -> None:
     pipeline = create_world_setting_comparison_pipeline(
         spring_client=FakeSpringApi(_payload()),
         analysis_job_id=ANALYSIS_JOB_ID,
         lease_token=LEASE_TOKEN,
+        subject_resolution_model_name="subject-resolution-model",
         comparison_model_name="comparison-model",
     )
 
-    assert pipeline.subject_resolver.model == "comparison-model"
+    assert pipeline.subject_resolver.model == "subject-resolution-model"
     assert pipeline.comparator.model == "comparison-model"
-    assert pipeline.subject_resolver.llm_client.default_model == "comparison-model"
+    assert pipeline.subject_resolver.llm_client.default_model == "subject-resolution-model"
     assert pipeline.comparator.llm_client.default_model == "comparison-model"
 
 
@@ -62,7 +64,7 @@ class FakePipeline:
     def __init__(self, result: WorldSettingComparisonRunResult) -> None:
         self.result = result
 
-    def process_all(self, analysis_job_id, lease_token):
+    async def process_all(self, analysis_job_id, lease_token):
         return self.result
 
 
@@ -74,21 +76,21 @@ class FakeSpringApi:
         self.complete_calls = []
         self.fail_calls = []
 
-    def claim(self, allowed_job_types, model_name=None, current_step=None):
+    async def claim(self, allowed_job_types, model_name=None, current_step=None):
         self.allowed_job_types = allowed_job_types
         self.claim_model_name = model_name
         return self.payload
 
-    def report_progress(self, *args, **kwargs):
+    async def report_progress(self, *args, **kwargs):
         return None
 
-    def heartbeat(self, *args, **kwargs):
+    async def heartbeat(self, *args, **kwargs):
         return None
 
-    def complete(self, analysis_job_id, lease_token, **kwargs):
+    async def complete(self, analysis_job_id, lease_token, **kwargs):
         self.complete_calls.append(analysis_job_id)
 
-    def fail(self, analysis_job_id, lease_token, error_message):
+    async def fail(self, analysis_job_id, lease_token, error_message):
         self.fail_calls.append(analysis_job_id)
 
 
@@ -117,3 +119,13 @@ def _payload() -> WorkerAnalysisJobPayload:
             },
         }
     )
+
+
+def _run_once(worker: WorldSettingComparisonWorker):
+    async def scenario():
+        try:
+            return await worker.run_once()
+        finally:
+            await worker.aclose()
+
+    return asyncio.run(scenario())

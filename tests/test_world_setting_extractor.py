@@ -1,3 +1,4 @@
+import asyncio
 import json
 from uuid import UUID
 
@@ -26,7 +27,9 @@ def test_world_setting_extractor_accepts_all_categories(category: str) -> None:
     client = FakeTextClient([_response(category=category)])
     extractor = WorldSettingExtractor(llm_client=client, max_attempts=1)
 
-    result = extractor.extract_from_chunk("바바리안은 혹한 지역에서 살아간다.", 1, "서장")
+    result = asyncio.run(
+        extractor.extract_from_chunk("바바리안은 혹한 지역에서 살아간다.", 1, "서장")
+    )
 
     assert result.candidates[0].category == category
     assert result.candidates[0].confidence == 0.95
@@ -38,8 +41,10 @@ def test_world_setting_extractor_retries_confidence_outside_fixed_scale() -> Non
     valid = _response(category="RACE", confidence=0.8)
     client = FakeTextClient([invalid, valid])
 
-    result = WorldSettingExtractor(llm_client=client, max_attempts=2).extract_from_chunk(
-        "바바리안은 혹한 지역에서 살아간다."
+    result = asyncio.run(
+        WorldSettingExtractor(llm_client=client, max_attempts=2).extract_from_chunk(
+            "바바리안은 혹한 지역에서 살아간다."
+        )
     )
 
     assert result.candidates[0].confidence == 0.8
@@ -49,8 +54,10 @@ def test_world_setting_extractor_retries_confidence_outside_fixed_scale() -> Non
 def test_world_setting_extractor_accepts_empty_result_for_temporary_event() -> None:
     client = FakeTextClient([json.dumps({"candidates": []})])
 
-    result = WorldSettingExtractor(llm_client=client, max_attempts=1).extract_from_chunk(
-        "오늘 왕궁에 비가 내렸다."
+    result = asyncio.run(
+        WorldSettingExtractor(llm_client=client, max_attempts=1).extract_from_chunk(
+            "오늘 왕궁에 비가 내렸다."
+        )
     )
 
     assert result.candidates == []
@@ -59,8 +66,10 @@ def test_world_setting_extractor_accepts_empty_result_for_temporary_event() -> N
 def test_world_setting_extractor_accepts_one_level_scope() -> None:
     client = FakeTextClient([_response(category="LOCATION", scope_name="1층")])
 
-    result = WorldSettingExtractor(llm_client=client, max_attempts=1).extract_from_chunk(
-        "미궁 1층 동쪽에서는 고블린이 출몰한다."
+    result = asyncio.run(
+        WorldSettingExtractor(llm_client=client, max_attempts=1).extract_from_chunk(
+            "미궁 1층 동쪽에서는 고블린이 출몰한다."
+        )
     )
 
     assert result.candidates[0].scope_name == "1층"
@@ -219,6 +228,6 @@ class FakeTextClient:
         self.responses = responses
         self.requests: list[dict] = []
 
-    def create_text_response(self, **kwargs) -> LlmTextResponse:
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
         self.requests.append(kwargs)
         return LlmTextResponse(text=self.responses.pop(0))

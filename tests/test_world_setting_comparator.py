@@ -1,3 +1,4 @@
+import asyncio
 import json
 from uuid import UUID
 
@@ -62,10 +63,12 @@ def test_comparator_accepts_each_supported_operation(
     }
     text_client = FakeTextClient([decision])
 
-    result, _ = WorldSettingComparator(
-        llm_client=text_client,
-        max_attempts=1,
-    ).compare(candidate, [_target()])
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=1,
+        ).compare(candidate, [_target()])
+    )
 
     assert result.operation == operation
     user_prompt = text_client.requests[0]["user_prompt"]
@@ -91,10 +94,12 @@ def test_comparator_retries_when_exclude_rewrites_extracted_value() -> None:
     valid = {**invalid, "proposed_value": "수아"}
     text_client = FakeTextClient([invalid, valid])
 
-    result, _ = WorldSettingComparator(
-        llm_client=text_client,
-        max_attempts=2,
-    ).compare(candidate, [_target()])
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=2,
+        ).compare(candidate, [_target()])
+    )
 
     assert result.proposed_value == "수아"
     assert len(text_client.requests) == 2
@@ -121,10 +126,12 @@ def test_comparator_consolidates_multiple_same_key_values_for_add() -> None:
         "comparison_reason": "같은 기능을 설명하는 원문 근거를 하나의 설정으로 정리했다.",
     }])
 
-    result, _ = WorldSettingComparator(
-        llm_client=text_client,
-        max_attempts=1,
-    ).compare(candidate, [])
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=1,
+        ).compare(candidate, [])
+    )
 
     assert result.proposed_value == merged_value
     prompt_payload = json.loads(text_client.requests[0]["user_prompt"])
@@ -145,10 +152,12 @@ def test_comparator_retries_when_exclude_matches_property_without_target() -> No
     valid = {**invalid, "target_ref": "T1"}
     text_client = FakeTextClient([invalid, valid])
 
-    result, _ = WorldSettingComparator(
-        llm_client=text_client,
-        max_attempts=2,
-    ).compare(candidate, [_target()])
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=2,
+        ).compare(candidate, [_target()])
+    )
 
     assert result.target_ref == "T1"
     assert result.matched_property_name == "서식지"
@@ -169,10 +178,12 @@ def test_comparator_replaces_internal_target_reference_in_user_facing_reason() -
         }
     ])
 
-    result, raw_result = WorldSettingComparator(
-        llm_client=text_client,
-        max_attempts=1,
-    ).compare(candidate, [_target()])
+    result, raw_result = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=1,
+        ).compare(candidate, [_target()])
+    )
 
     assert result.comparison_reason == "기존 '바바리안' 설정의 기존 서식지와 모순되지 않아 병합한다."
     assert raw_result["comparison_reason"] == result.comparison_reason
@@ -192,10 +203,12 @@ def test_comparator_preserves_conflicting_values_for_user_review() -> None:
         "comparison_reason": "원문마다 통신 반경이 달라 최종값 확인이 필요하다.",
     }])
 
-    result, _ = WorldSettingComparator(
-        llm_client=text_client,
-        max_attempts=1,
-    ).compare(candidate, [])
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=1,
+        ).compare(candidate, [])
+    )
 
     assert result.consolidation_status == "CONFLICT"
     assert result.proposed_value == candidate.extracted_value
@@ -215,10 +228,12 @@ def test_comparator_retries_when_conflict_rewrites_source_values() -> None:
     valid = {**invalid, "proposed_value": candidate.extracted_value}
     text_client = FakeTextClient([invalid, valid])
 
-    result, _ = WorldSettingComparator(
-        llm_client=text_client,
-        max_attempts=2,
-    ).compare(candidate, [])
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=2,
+        ).compare(candidate, [])
+    )
 
     assert result.proposed_value == candidate.extracted_value
     assert len(text_client.requests) == 2
@@ -266,10 +281,12 @@ def test_comparator_never_matches_same_setting_name_from_a_different_scope() -> 
     )
     text_client = FakeTextClient([invalid, valid])
 
-    result, _ = WorldSettingComparator(
-        llm_client=text_client,
-        max_attempts=2,
-    ).compare(candidate, [target])
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=2,
+        ).compare(candidate, [target])
+    )
 
     assert result.matched_scope_name == "1층"
     assert result.proposed_scope_name == "1층"
@@ -287,7 +304,7 @@ class FakeTextClient:
         self.responses = responses
         self.requests: list[dict] = []
 
-    def create_text_response(self, **kwargs) -> LlmTextResponse:
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
         self.requests.append(kwargs)
         return LlmTextResponse(
             text=json.dumps(self.responses.pop(0), ensure_ascii=False),

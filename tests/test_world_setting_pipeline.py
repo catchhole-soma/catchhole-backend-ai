@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 import httpx
@@ -37,7 +38,7 @@ def test_pipeline_uses_normalized_exact_subject_and_completes_update() -> None:
     )
     pipeline = WorldSettingComparisonPipeline(spring, subject_resolver, comparator)
 
-    result = pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN)
+    result = asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
 
     assert result.completed_count == 1
     assert result.failed_count == 0
@@ -88,7 +89,7 @@ def test_pipeline_forwards_scoped_property_path_to_backend() -> None:
         ),
     )
 
-    result = pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN)
+    result = asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
 
     assert result.completed_count == 1
     request = spring.completions[0]
@@ -116,7 +117,7 @@ def test_pipeline_rebuilds_context_after_stale_completion() -> None:
         ),
     )
 
-    result = pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN)
+    result = asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
 
     assert result.completed_count == 1
     assert len(spring.context_target_ids) == 2
@@ -143,7 +144,7 @@ def test_pipeline_keeps_duplicate_exclude_target_and_matched_property() -> None:
         ),
     )
 
-    result = pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN)
+    result = asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
 
     assert result.completed_count == 1
     request = spring.completions[0]
@@ -161,7 +162,7 @@ def test_pipeline_fails_only_claimed_candidate_when_comparator_fails() -> None:
         FailingComparator(),
     )
 
-    result = pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN)
+    result = asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
 
     assert result.completed_count == 0
     assert result.failed_count == 1
@@ -182,17 +183,19 @@ class FakeSpringApi:
         self.failures: list[tuple[UUID, str]] = []
         self.stale_completion_count = stale_completion_count
 
-    def claim_next_world_setting_comparison(self, analysis_job_id, lease_token):
+    async def claim_next_world_setting_comparison(self, analysis_job_id, lease_token):
         return self.candidates.pop(0) if self.candidates else None
 
-    def get_world_setting_subjects(self, analysis_job_id, lease_token, category, page, size=500):
+    async def get_world_setting_subjects(
+        self, analysis_job_id, lease_token, category, page, size=500
+    ):
         return WorkerWorldSettingSubjectPageResponse(
             subjects=self.subjects,
             page=page,
             has_next=False,
         )
 
-    def get_world_setting_comparison_context(
+    async def get_world_setting_comparison_context(
         self,
         analysis_job_id,
         candidate_id,
@@ -202,7 +205,7 @@ class FakeSpringApi:
         self.context_target_ids.append(target_world_setting_ids)
         return self.context
 
-    def complete_world_setting_comparison(
+    async def complete_world_setting_comparison(
         self,
         analysis_job_id,
         candidate_id,
@@ -220,7 +223,7 @@ class FakeSpringApi:
             )
             raise httpx.HTTPStatusError("stale", request=http_request, response=response)
 
-    def fail_world_setting_comparison(
+    async def fail_world_setting_comparison(
         self,
         analysis_job_id,
         candidate_id,
@@ -235,7 +238,7 @@ class FakeSubjectResolver:
         self.selected = selected
         self.calls = []
 
-    def select_subjects(self, candidate, subjects):
+    async def select_subjects(self, candidate, subjects):
         self.calls.append((candidate, subjects))
         return self.selected
 
@@ -244,12 +247,12 @@ class FakeComparator:
     def __init__(self, decision: WorldSettingComparisonDecision) -> None:
         self.decision = decision
 
-    def compare(self, candidate, targets):
+    async def compare(self, candidate, targets):
         return self.decision, self.decision.model_dump(mode="json")
 
 
 class FailingComparator:
-    def compare(self, candidate, targets):
+    async def compare(self, candidate, targets):
         raise ValueError("malformed LLM response")
 
 

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -18,7 +19,7 @@ def test_default_http_client_uses_120_second_read_timeout() -> None:
     try:
         assert client.http_client.timeout.read == 120
     finally:
-        client.http_client.close()
+        asyncio.run(client.aclose())
 
 
 def test_create_text_response_calls_openai_responses_api() -> None:
@@ -27,13 +28,17 @@ def test_create_text_response_calls_openai_responses_api() -> None:
         api_key="test-key",
         model="gpt-4.1-mini",
         responses_api_url="https://api.openai.test/v1/responses",
-        http_client=httpx.Client(transport=httpx.MockTransport(lambda request: _response(request, requests))),
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: _response(request, requests))
+        ),
     )
 
-    response = client.create_text_response(
-        system_prompt="JSON만 반환하세요.",
-        user_prompt="원문",
-        max_output_tokens=100,
+    response = asyncio.run(
+        client.create_text_response(
+            system_prompt="JSON만 반환하세요.",
+            user_prompt="원문",
+            max_output_tokens=100,
+        )
     )
 
     request = requests[0]
@@ -79,14 +84,16 @@ def test_create_text_response_sends_cache_key_and_logs_cache_usage(caplog) -> No
         api_key="test-key",
         model="gpt-4.1-mini",
         responses_api_url="https://api.openai.test/v1/responses",
-        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
     with caplog.at_level(logging.DEBUG, logger="app.llm.openai_client"):
-        response = client.create_text_response(
-            system_prompt="규칙",
-            user_prompt="원문",
-            prompt_cache_key="setting-extraction:v1:abc123",
+        response = asyncio.run(
+            client.create_text_response(
+                system_prompt="규칙",
+                user_prompt="원문",
+                prompt_cache_key="setting-extraction:v1:abc123",
+            )
         )
 
     request_body = json.loads(requests[0].content)
@@ -103,12 +110,12 @@ def test_create_text_response_sends_configured_reasoning_effort() -> None:
         model="gpt-5.6-terra",
         reasoning_effort="none",
         responses_api_url="https://api.openai.test/v1/responses",
-        http_client=httpx.Client(
+        http_client=httpx.AsyncClient(
             transport=httpx.MockTransport(lambda request: _response(request, requests))
         ),
     )
 
-    client.create_text_response(system_prompt="규칙", user_prompt="원문")
+    asyncio.run(client.create_text_response(system_prompt="규칙", user_prompt="원문"))
 
     request_body = json.loads(requests[0].content)
     assert request_body["model"] == "gpt-5.6-terra"
@@ -122,15 +129,17 @@ def test_create_text_response_omits_reasoning_for_non_reasoning_model_override()
         model="gpt-5.6-terra",
         reasoning_effort="none",
         responses_api_url="https://api.openai.test/v1/responses",
-        http_client=httpx.Client(
+        http_client=httpx.AsyncClient(
             transport=httpx.MockTransport(lambda request: _response(request, requests))
         ),
     )
 
-    client.create_text_response(
-        system_prompt="규칙",
-        user_prompt="원문",
-        model="gpt-4.1-mini",
+    asyncio.run(
+        client.create_text_response(
+            system_prompt="규칙",
+            user_prompt="원문",
+            model="gpt-4.1-mini",
+        )
     )
 
     request_body = json.loads(requests[0].content)
@@ -145,12 +154,14 @@ def test_create_text_response_does_not_inherit_none_for_o_series_override() -> N
         model="gpt-5.6-terra",
         reasoning_effort="none",
         responses_api_url="https://api.openai.test/v1/responses",
-        http_client=httpx.Client(
+        http_client=httpx.AsyncClient(
             transport=httpx.MockTransport(lambda request: _response(request, requests))
         ),
     )
 
-    client.create_text_response(system_prompt="규칙", user_prompt="원문", model="o3")
+    asyncio.run(
+        client.create_text_response(system_prompt="규칙", user_prompt="원문", model="o3")
+    )
 
     request_body = json.loads(requests[0].content)
     assert request_body["model"] == "o3"
@@ -162,7 +173,7 @@ def test_malformed_success_response_preserves_reported_usage() -> None:
         api_key="test-key",
         model="gpt-4.1-mini",
         responses_api_url="https://api.openai.test/v1/responses",
-        http_client=httpx.Client(
+        http_client=httpx.AsyncClient(
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(
                     status_code=200,
@@ -180,7 +191,7 @@ def test_malformed_success_response_preserves_reported_usage() -> None:
     )
 
     with pytest.raises(LlmResponseValidationError) as exc_info:
-        client.create_text_response(system_prompt="규칙", user_prompt="원문")
+        asyncio.run(client.create_text_response(system_prompt="규칙", user_prompt="원문"))
 
     assert exc_info.value.input_token_count == 120
     assert exc_info.value.cached_input_token_count == 20
@@ -192,11 +203,13 @@ def test_create_text_response_requires_api_key() -> None:
         api_key="",
         model="gpt-4.1-mini",
         responses_api_url="https://api.openai.test/v1/responses",
-        http_client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200))),
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200))
+        ),
     )
 
     with pytest.raises(ValueError):
-        client.create_text_response(system_prompt="system", user_prompt="user")
+        asyncio.run(client.create_text_response(system_prompt="system", user_prompt="user"))
 
 
 def _response(request: httpx.Request, requests: list[httpx.Request]) -> httpx.Response:

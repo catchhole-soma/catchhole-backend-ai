@@ -23,6 +23,14 @@
 - 같은 분석 작업의 `SETTING` 후보는 확정된 캐릭터 ID 또는 정규화한 구체 이름, `attribute_name`, `value_type`, canonical `value_json`이 모두 같을 때만 저장 전에 중복 제거하고 더 높은 confidence의 근거를 남긴다. 값이 다르거나 주체가 `AMBIGUOUS`인 후보는 변화·다른 인물 가능성이 있으므로 유지한다.
 - `SettingCandidate.value_json`은 `JSONB(none_as_null=True)`로 매핑한다. `CHARACTER_DISCOVERY`의 Python `None`은 JSON literal `null`이 아니라 DB check constraint가 요구하는 SQL `NULL`로 저장해야 한다.
 
+## Async Worker Runtime
+
+- 장기 실행 runner는 `AI_WORKER_CONCURRENCY`개의 실행 슬롯만 유지한다. 반드시 빈 슬롯을 확보한 뒤 Job 하나를 claim해 즉시 Task로 실행하고, 슬롯 없이 Job을 미리 claim해 프로세스 내부 대기열에 쌓지 않는다.
+- 한 Job 안의 청크와 분석 stage는 순차 처리한다. `LLM_MAX_CONCURRENT_REQUESTS`는 프로세스 내부 provider 호출 상한이고, 동기 DB/S3 작업은 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에 넘긴다.
+- 운영 `SETTING_EXTRACTION` 검증 rollout은 분석 Worker 2개 × 프로세스당 동시 Job 5개 = 최대 10개다. 별도 `world-comparison` 프로세스는 Job·LLM 동시성을 1로 유지한다. 10은 설정 추출 Job 용량이며 여러 프로세스와 재비교 Worker를 합친 provider 계정 전체의 분산 상한은 아니다. 50개 Job 부하 테스트에서 Backend·PostgreSQL·LLM 지표를 확인하고 기준 미달이면 프로세스당 3개로 되돌린다.
+- 각 Job의 lease token, heartbeat, 토큰 예약·정산, 실패 상태는 Task별로 분리한다. 한 Task의 예외가 실행 중인 다른 Job을 취소하지 않으며 heartbeat도 Job별 독립 Task로 실행한다.
+- 종료 신호를 받으면 신규 claim을 즉시 중단하고 `AI_WORKER_SHUTDOWN_GRACE_SECONDS` 동안 실행 중 Job과 heartbeat를 유지한다. 운영 내부 grace는 180초, Compose `stop_grace_period`는 210초로 두며, grace를 넘긴 취소 Job은 heartbeat를 중단해 Spring의 lease 회수 경로로 재처리한다.
+
 ## AWS S3
 
 - `AWS_ACCESS_KEY_ID`와 `AWS_SECRET_ACCESS_KEY`는 둘 다 설정된 경우에만 boto3 client에 명시적으로 전달하고, `AWS_SESSION_TOKEN`이 있으면 임시 자격 증명의 일부로 함께 전달한다. access key와 secret key가 모두 있지 않으면 기본 credential provider chain을 사용하며 실제 비밀값은 저장소에 커밋하지 않는다.
@@ -41,8 +49,8 @@
 
 ## LLM Runtime
 
-- 1차 후보 추출은 `LLM_EXTRACTION_MODEL`, 2차 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 개별 값이 없으면 기존 `LLM_MODEL`을 fallback으로 사용해 이전 배포 환경을 유지한다. 이 단계명은 세계관에 종속하지 않으며 추후 캐릭터 비교에도 같은 비교 모델 설정을 사용한다.
+- 캐릭터 Fact·세계관 후보의 1차 추출은 `LLM_EXTRACTION_MODEL`, 캐릭터·세계관 주체 해소는 `LLM_SUBJECT_RESOLUTION_MODEL`, 후보와 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 운영 기본 라우팅은 추출 `gpt-5.6-terra`, 주체 해소·비교 `gpt-5.6-luna`이며 개별 값이 없으면 기존 `LLM_MODEL`을 fallback으로 사용한다.
 - 세계관 2차 비교·재비교 prompt에는 Backend가 반환한 1차 `evidenceSpans`를 읽기 전용 문맥으로 전달한다. 2차 LLM이 quote·offset을 다시 생성하거나 비교 완료 payload로 반환하지 않으며, 원고가 바뀐 경우에만 새 1차 분석 후보와 근거를 만든다.
 - 세계관 후보는 Spring 게시 전에 정규화한 `category + subject_name + scope_name + setting_name`별로 하나로 통합한다. `scope_name`은 세계관에만 있는 선택적 1단계 범위이며 빈 값은 루트 property를 뜻한다. 같은 설정명이라도 범위가 다르면 통합하지 않고, 2차 비교도 반드시 범위+설정명 전체 경로를 정확히 매칭한다. 2차 비교는 추출값 하나면 `SINGLE`, 여러 값이 양립하면 `MERGED`, 동시에 참일 수 없으면 `CONFLICT`로 판정한다. `MERGED`만 자연스러운 최종 문자열 하나로 정리하고 `CONFLICT`는 모든 추출값을 그대로 보존해 사용자 판단으로 넘긴다. 각 1차 후보의 quote·offset과 raw payload는 어느 상태에서도 수정하지 않는다.
-- 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
+- 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra·Luna의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
 - GPT-5.6 모델의 토큰 예약량은 `o200k_base` tokenizer로 계산한다. 사용하는 tiktoken 버전이 모델 별칭을 모를 수 있으므로 모델명 자동 탐지 실패를 byte 상한으로 방치하지 않는다.

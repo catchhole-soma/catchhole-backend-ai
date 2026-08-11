@@ -66,7 +66,7 @@ class SemanticJudgeBatchResult:
 
 
 class SemanticValueJudge(Protocol):
-    def judge_many(
+    async def judge_many(
         self,
         cases: Sequence[SemanticJudgeCase],
     ) -> SemanticJudgeBatchResult:
@@ -89,13 +89,13 @@ class OpenAISemanticValueJudge:
         self.prompt_path = prompt_path
         self.batch_size = batch_size
 
-    def judge(
+    async def judge(
         self,
         gold: GoldCandidate,
         prediction: PredictionCandidate,
         source_text: str | None,
     ) -> SemanticJudgeResult:
-        batch = self.judge_many(
+        batch = await self.judge_many(
             [SemanticJudgeCase(gold=gold, prediction=prediction, source_text=source_text)]
         )
         return SemanticJudgeResult(
@@ -105,7 +105,7 @@ class OpenAISemanticValueJudge:
             output_tokens=batch.output_tokens,
         )
 
-    def judge_many(
+    async def judge_many(
         self,
         cases: Sequence[SemanticJudgeCase],
     ) -> SemanticJudgeBatchResult:
@@ -118,7 +118,7 @@ class OpenAISemanticValueJudge:
         output_tokens = 0
         for start in range(0, len(cases), self.batch_size):
             chunk = cases[start : start + self.batch_size]
-            chunk_result = self._judge_chunk(chunk)
+            chunk_result = await self._judge_chunk(chunk)
             decisions.extend(chunk_result.decisions)
             input_tokens += chunk_result.input_tokens
             cached_input_tokens += chunk_result.cached_input_tokens
@@ -130,12 +130,12 @@ class OpenAISemanticValueJudge:
             output_tokens=output_tokens,
         )
 
-    def _judge_chunk(
+    async def _judge_chunk(
         self,
         cases: Sequence[SemanticJudgeCase],
     ) -> SemanticJudgeBatchResult:
         # 규칙으로 확정하지 못한 행만 최대 8개씩 묶고, 각 행의 근거 문맥은 독립적으로 준다.
-        response = self.client.create_text_response(
+        response = await self.client.create_text_response(
             system_prompt=self.prompt_path.read_text(encoding="utf-8"),
             user_prompt=json.dumps(
                 {

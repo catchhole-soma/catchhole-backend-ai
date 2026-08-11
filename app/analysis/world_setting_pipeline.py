@@ -25,13 +25,13 @@ CONTEXT_STALE_ERROR_CODE = "WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE"
 
 
 class WorldSettingComparisonSpringApi(Protocol):
-    def claim_next_world_setting_comparison(
+    async def claim_next_world_setting_comparison(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
     ) -> WorkerWorldSettingCandidatePayload | None: ...
 
-    def get_world_setting_subjects(
+    async def get_world_setting_subjects(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
@@ -40,7 +40,7 @@ class WorldSettingComparisonSpringApi(Protocol):
         size: int = 500,
     ) -> WorkerWorldSettingSubjectPageResponse: ...
 
-    def get_world_setting_comparison_context(
+    async def get_world_setting_comparison_context(
         self,
         analysis_job_id: UUID,
         candidate_id: UUID,
@@ -48,7 +48,7 @@ class WorldSettingComparisonSpringApi(Protocol):
         target_world_setting_ids: list[UUID],
     ) -> WorkerWorldSettingComparisonContextResponse: ...
 
-    def complete_world_setting_comparison(
+    async def complete_world_setting_comparison(
         self,
         analysis_job_id: UUID,
         candidate_id: UUID,
@@ -56,7 +56,7 @@ class WorldSettingComparisonSpringApi(Protocol):
         request: WorkerWorldSettingComparisonCompleteRequest,
     ) -> None: ...
 
-    def fail_world_setting_comparison(
+    async def fail_world_setting_comparison(
         self,
         analysis_job_id: UUID,
         candidate_id: UUID,
@@ -86,35 +86,35 @@ class WorldSettingComparisonPipeline:
         self.comparator = comparator
         self.max_context_attempts = max_context_attempts
 
-    def process_all(
+    async def process_all(
         self, analysis_job_id: UUID, lease_token: UUID
     ) -> WorldSettingComparisonRunResult:
         completed_count = 0
         failed_count = 0
         while True:
-            candidate = self.spring_client.claim_next_world_setting_comparison(
+            candidate = await self.spring_client.claim_next_world_setting_comparison(
                 analysis_job_id,
                 lease_token,
             )
             if candidate is None:
                 return WorldSettingComparisonRunResult(completed_count, failed_count)
-            if self._process_claimed_candidate(analysis_job_id, lease_token, candidate):
+            if await self._process_claimed_candidate(analysis_job_id, lease_token, candidate):
                 completed_count += 1
             else:
                 failed_count += 1
 
-    def _process_claimed_candidate(
+    async def _process_claimed_candidate(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
         candidate: WorkerWorldSettingCandidatePayload,
     ) -> bool:
         try:
-            self._compare_with_fresh_context(analysis_job_id, lease_token, candidate)
+            await self._compare_with_fresh_context(analysis_job_id, lease_token, candidate)
             return True
         except Exception as exc:
             error_message = (str(exc) or exc.__class__.__name__)[:1000]
-            self.spring_client.fail_world_setting_comparison(
+            await self.spring_client.fail_world_setting_comparison(
                 analysis_job_id,
                 candidate.candidate_id,
                 lease_token,
@@ -127,22 +127,22 @@ class WorldSettingComparisonPipeline:
             )
             return False
 
-    def _compare_with_fresh_context(
+    async def _compare_with_fresh_context(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
         candidate: WorkerWorldSettingCandidatePayload,
     ) -> None:
         for attempt in range(1, self.max_context_attempts + 1):
-            subjects = self._load_all_subjects(analysis_job_id, lease_token, candidate)
-            target_ids = self._select_context_target_ids(candidate, subjects)
-            context = self.spring_client.get_world_setting_comparison_context(
+            subjects = await self._load_all_subjects(analysis_job_id, lease_token, candidate)
+            target_ids = await self._select_context_target_ids(candidate, subjects)
+            context = await self.spring_client.get_world_setting_comparison_context(
                 analysis_job_id,
                 candidate.candidate_id,
                 lease_token,
                 target_ids,
             )
-            decision, raw_comparison_json = self.comparator.compare(
+            decision, raw_comparison_json = await self.comparator.compare(
                 context.candidate,
                 context.targets,
             )
@@ -175,7 +175,7 @@ class WorldSettingComparisonPipeline:
                 raw_comparison_json=raw_comparison_json,
             )
             try:
-                self.spring_client.complete_world_setting_comparison(
+                await self.spring_client.complete_world_setting_comparison(
                     analysis_job_id,
                     candidate.candidate_id,
                     lease_token,
@@ -196,7 +196,7 @@ class WorldSettingComparisonPipeline:
                     self.max_context_attempts,
                 )
 
-    def _load_all_subjects(
+    async def _load_all_subjects(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
@@ -205,7 +205,7 @@ class WorldSettingComparisonPipeline:
         subjects: list[WorkerWorldSettingSubject] = []
         page = 0
         while True:
-            response = self.spring_client.get_world_setting_subjects(
+            response = await self.spring_client.get_world_setting_subjects(
                 analysis_job_id,
                 lease_token,
                 candidate.category,
@@ -216,7 +216,7 @@ class WorldSettingComparisonPipeline:
                 return subjects
             page += 1
 
-    def _select_context_target_ids(
+    async def _select_context_target_ids(
         self,
         candidate: WorkerWorldSettingCandidatePayload,
         subjects: list[WorkerWorldSettingSubject],
@@ -231,7 +231,7 @@ class WorldSettingComparisonPipeline:
             return [exact_matches[0].world_setting_id]
         return [
             reference.world_setting_id
-            for reference in self.subject_resolver.select_subjects(candidate, subjects)
+            for reference in await self.subject_resolver.select_subjects(candidate, subjects)
         ]
 
 

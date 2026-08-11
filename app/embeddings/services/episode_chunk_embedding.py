@@ -1,7 +1,8 @@
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,9 @@ from app.repositories.episode_chunk_repository import (
     EpisodeChunkEmbeddingUpdate,
     EpisodeChunkRepository,
 )
+
+T = TypeVar("T")
+BlockingRunner = Callable[[Callable[[], T]], Awaitable[T]]
 
 
 @dataclass(frozen=True)
@@ -28,7 +32,7 @@ class EmbeddingClientApi(Protocol):
 
     version: str
 
-    def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
+    async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
         pass
 
 
@@ -41,13 +45,15 @@ class EpisodeChunkEmbeddingService:
         embedding_client: EmbeddingClientApi | None = None,
         repository_factory: Callable[[Session], EpisodeChunkRepository] = EpisodeChunkRepository,
         now_factory: Callable[[], datetime] = datetime.now,
+        blocking_runner: BlockingRunner | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.embedding_client = embedding_client or OpenAIEmbeddingsClient.from_settings()
         self.repository_factory = repository_factory
         self.now_factory = now_factory
+        self.blocking_runner = blocking_runner or asyncio.to_thread
 
-    def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult:
+    async def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult:
         """청크 순서대로 벡터를 생성하고 임베딩 필드만 한 트랜잭션으로 갱신한다."""
 
         if not chunks:
@@ -61,7 +67,7 @@ class EpisodeChunkEmbeddingService:
             )
 
         # 외부 API를 기다리는 동안 DB 트랜잭션을 점유하지 않도록 먼저 벡터를 생성한다.
-        response = self.embedding_client.create_embeddings(
+        response = await self.embedding_client.create_embeddings(
             [chunk.chunk_text for chunk in chunks]
         )
         embedded_at = self.now_factory()
@@ -77,6 +83,19 @@ class EpisodeChunkEmbeddingService:
             for chunk, embedding in zip(chunks, response.embeddings, strict=True)
         ]
 
+        updated_chunks = await self.blocking_runner(
+            lambda: self._persist_embedding_updates(embedding_updates)
+        )
+
+        return EpisodeChunkEmbeddingResult(
+            embedded_chunk_count=len(updated_chunks),
+            input_token_count=response.input_token_count,
+        )
+
+    def _persist_embedding_updates(
+        self,
+        embedding_updates: list[EpisodeChunkEmbeddingUpdate],
+    ) -> list[EpisodeChunk]:
         with self.session_factory() as session:
             repository = self.repository_factory(session)
             try:
@@ -85,8 +104,4 @@ class EpisodeChunkEmbeddingService:
             except Exception:
                 session.rollback()
                 raise
-
-        return EpisodeChunkEmbeddingResult(
-            embedded_chunk_count=len(updated_chunks),
-            input_token_count=response.input_token_count,
-        )
+        return updated_chunks

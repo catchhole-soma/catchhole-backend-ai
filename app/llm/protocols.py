@@ -6,7 +6,7 @@ from app.llm.responses import LlmTextResponse
 class TextGenerationClient(Protocol):
     """설정 추출기와 계량 wrapper가 공유하는 텍스트 생성 최소 계약."""
 
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,

@@ -29,6 +29,37 @@ Spring claim
 
 Python Worker는 `analysis_jobs.status`와 세계관 테이블을 DB에서 직접 바꾸지 않습니다. 상태와 세계관 후보 변경은 Spring 내부 API에 보고합니다. 기존 캐릭터 흐름의 `episode_chunks`와 `setting_candidates` 저장만 SQLAlchemy 경계를 유지합니다.
 
+## Job 단위 비동기 실행
+
+운영 Worker는 `asyncio` event loop에서 Job 사이만 병렬화합니다. `analysis_jobs`의 `PENDING` row가 대기열이고, 프로세스의 실행 슬롯은 지금 즉시 처리할 수 있는 자리입니다. scheduler는 빈 슬롯을 먼저 확보한 뒤 Spring에서 Job 하나만 claim하고 곧바로 Job Task를 시작합니다. Task는 progress 보고 뒤 전용 heartbeat Task를 유지합니다. 슬롯 없이 Job을 미리 claim해 프로세스 내부에 쌓지 않으므로 처리 시작 전에 lease 시간이 소모되지 않습니다.
+
+```mermaid
+flowchart TD
+    A["Worker 프로세스 시작"] --> B["실행 슬롯 생성<br/>AI_WORKER_CONCURRENCY"]
+    B --> C{"빈 슬롯이 있는가?"}
+    C -- "없음" --> D["실행 중 Job 완료 대기"]
+    C -- "있음" --> E["Spring에서 Job 하나 claim"]
+    E --> F{"claim 성공?"}
+    F -- "아니오" --> G["슬롯 반환 후 idle sleep"]
+    F -- "예" --> H["Job Task와 heartbeat Task 즉시 시작"]
+    H --> I["Job 내부 청크·stage 순차 처리"]
+    I --> J["complete 또는 fail 보고"]
+    J --> K["heartbeat 종료·슬롯 반환"]
+    D --> C
+    G --> C
+    K --> C
+```
+
+- `LLM_MAX_CONCURRENT_REQUESTS`는 한 프로세스의 실제 LLM HTTP 요청 상한입니다.
+- 동기 S3·SQLAlchemy 작업은 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에서 수행해 event loop와 heartbeat를 막지 않습니다.
+- 한 Job의 오류는 그 Task에서만 처리하며 다른 실행 중 Job을 취소하지 않습니다.
+- 현재 운영 검증 rollout은 분석 Worker 2개 × 프로세스당 동시 Job 5개 = `SETTING_EXTRACTION` 최대 10개입니다. 50개 Job 부하 테스트가 기준에 미달하면 프로세스당 3개로 되돌립니다.
+- 별도 `world-comparison` Worker는 Job·LLM 동시성을 1로 유지합니다. 따라서 10은 provider 계정 전체의 분산 상한이 아니며, 계정 전체 상한이 필요하면 별도 분산 limiter가 필요합니다.
+
+종료 신호를 받으면 scheduler는 신규 claim을 즉시 중단하고 `AI_WORKER_SHUTDOWN_GRACE_SECONDS` 동안 실행 중 Job과 heartbeat를 유지합니다. 운영 내부 grace는 180초이고 Compose `stop_grace_period`는 210초입니다. grace 안에 끝나지 않은 Task는 취소하고 heartbeat를 중단하며, Spring은 5분 lease가 만료된 Job을 마지막 checkpoint부터 회수합니다.
+
+이미 시작된 동기 DB/S3 thread는 Python에서 강제 중단할 수 없어, critical section 완료를 기다리는 동안 heartbeat 종료가 180초를 넘길 수 있습니다. 따라서 내부 grace는 blocking I/O의 절대 timeout이 아니며 Compose의 210초 강제 종료가 최종 상한입니다. 마지막 heartbeat 직후 강제 종료되면 재claim이 lease TTL만큼 추가 지연될 수 있으므로, staging 부하 테스트에서 응답하지 않는 DB/S3와 강제 종료 후 lease 회수까지 함께 확인합니다.
+
 ## NVM-260 세계관 확장 흐름
 
 기존 문서의 상세 diagram과 단계 1~10은 캐릭터 분석 stage의 내부 동작을 설명합니다. 그 stage 뒤에는 다음 checkpoint 기반 흐름이 이어집니다.
@@ -85,13 +116,14 @@ LLM에는 DB UUID를 전달하지 않고 Worker가 만든 `S*`와 `T*` 참조만
 
 ```mermaid
 flowchart TD
-    A["scripts/run_analysis_worker.py 실행"] --> B["AnalysisJobWorker 생성"]
-    B --> C["run_once() 호출"]
+    A["scripts/run_analysis_worker.py 실행"] --> B["비동기 scheduler와 실행 슬롯 생성"]
+    B --> C["빈 슬롯 확보"]
     C --> D["SpringWorkerClient.claim()"]
 
     D --> E{"claim할 작업이 있는가?"}
-    E -- "없음" --> F["WorkerRunResult(claimed=false) 반환"]
+    E -- "없음" --> F["슬롯 반환"]
     F --> G["runner가 idle sleep 후 다시 claim 시도"]
+    G --> C
 
     E -- "있음" --> H["WorkerAnalysisJobPayload 수신<br/>analysisJobId, work, episode,<br/>knownCharacters, characterSettingSchemas"]
     H --> I["SpringWorkerClient.report_progress()<br/>currentStep=SETTING_EXTRACTION<br/>episodeStatus=ANALYZING"]
@@ -141,12 +173,13 @@ flowchart TD
     AJ --> AK["새 setting_candidates 저장"]
     AK --> AL["summaryJson 생성<br/>chunk/embedding/candidate 처리 개수"]
     AL --> AM["SpringWorkerClient.complete()"]
-    AM --> AN["WorkerRunResult(claimed=true) 반환"]
+    AM --> AN["heartbeat 종료·슬롯 반환"]
+    AN --> C
 
-    C --> ERR{"처리 중 예외 발생?"}
+    H -. "Job Task 처리 중 예외" .-> ERR{"처리 중 예외 발생?"}
     ERR -- "예" --> FAIL["SpringWorkerClient.fail(errorMessage)"]
     FAIL --> RAISE["예외 다시 전파"]
-    RAISE --> WAIT["runner가 실패 로그·idle sleep 후<br/>다음 Job claim 계속"]
+    RAISE --> WAIT["해당 Task만 종료하고 슬롯 반환<br/>다른 Job Task는 계속"]
     WAIT --> C
 ```
 
@@ -171,14 +204,18 @@ sequenceDiagram
     participant CandidateService as SettingCandidateService
     participant CandidateRepo as SettingCandidateRepository
 
-    Runner->>Worker: run_once()
+    Runner->>Runner: 빈 실행 슬롯 확보
+    Runner->>Worker: claim_next()
     Worker->>Spring: claim(modelName, currentStep)
 
     alt claim할 작업 없음
         Spring-->>Worker: null
-        Worker-->>Runner: WorkerRunResult(claimed=false)
+        Worker-->>Runner: null
+        Runner->>Runner: 슬롯 반환 + idle sleep
     else claim 성공
         Spring-->>Worker: WorkerAnalysisJobPayload
+        Worker-->>Runner: WorkerAnalysisJobPayload
+        Runner->>Worker: create_task(process_claimed(payload))
         Worker->>Spring: report_progress(SETTING_EXTRACTION, ANALYZING)
 
         Worker->>Chunking: replace_chunks_from_s3_content(episodeId, contentS3Key)
@@ -231,13 +268,14 @@ sequenceDiagram
         CandidateService-->>Worker: saved candidates
         Worker->>Spring: complete(summaryJson)
         Worker-->>Runner: WorkerRunResult(claimed=true)
+        Runner->>Runner: 슬롯 반환
     end
 
     alt 처리 중 예외
         Worker->>Spring: fail(errorMessage)
         Worker-->>Runner: raise exception
-        Runner->>Runner: 실패 로그 + idle sleep
-        Runner->>Worker: 다음 run_once()
+        Runner->>Runner: 해당 Task 실패 로그 + 슬롯 반환
+        Note over Runner,Worker: 다른 실행 중 Job Task는 계속 진행
     end
 ```
 
@@ -245,18 +283,19 @@ sequenceDiagram
 
 ### 1. Worker 실행과 claim
 
-`scripts/run_analysis_worker.py`는 `AnalysisJobWorker.run_once()`를 반복 호출하는 CLI runner입니다.
+`scripts/run_analysis_worker.py`는 실행 슬롯을 관리하고, `claim_next()`로 가져온 Job마다 `AnalysisJobWorker.process_claimed()` Task를 만드는 비동기 CLI scheduler입니다. 빈 슬롯을 확보한 뒤에만 claim하며, 모든 슬롯이 사용 중이면 실행 중 Job 하나가 끝날 때까지 기다립니다. 빈 queue polling은 슬롯 수만큼 별도 loop를 만들지 않고 프로세스당 scheduler 하나가 담당합니다.
 
 - `--once`: claim을 한 번만 시도합니다.
 - `--max-iterations`: 로컬 점검용 반복 횟수를 제한합니다.
 - `--idle-sleep-seconds`: claim할 작업이 없을 때 다음 polling 전 대기 시간입니다.
 - `--extraction-model-name`: 1차 후보 추출 모델만 override합니다.
+- `--subject-resolution-model-name`: 캐릭터·세계관 주체 해소 모델만 override합니다.
 - `--comparison-model-name`: 2차 확정 데이터 비교 모델만 override합니다.
-- `--model-name`: 이전 실행 명령 호환용으로 두 단계 모델을 함께 override합니다. 새 실행 명령에서는 단계별 옵션을 우선 사용합니다.
+- `--model-name`: 이전 실행 명령 호환용으로 세 단계 모델을 함께 override합니다. 새 실행 명령에서는 단계별 옵션을 우선 사용합니다.
 
-환경변수는 `LLM_EXTRACTION_MODEL`과 `LLM_COMPARISON_MODEL`로 두 단계를 독립 설정합니다. 지정하지 않은 단계는 `LLM_MODEL`을 fallback으로 사용합니다. 캐릭터·세계관 후보 추출과 캐릭터 subject fallback은 extraction 모델을 사용하고, 초기 세계관 비교와 사용자 재비교는 comparison 모델을 사용합니다. comparison이라는 단계명은 세계관에 종속하지 않으며 추후 캐릭터 2차 비교에도 재사용합니다.
+환경변수는 `LLM_EXTRACTION_MODEL`, `LLM_SUBJECT_RESOLUTION_MODEL`, `LLM_COMPARISON_MODEL`로 세 단계를 독립 설정합니다. 지정하지 않은 단계는 `LLM_MODEL`을 fallback으로 사용합니다. 운영 기본값은 캐릭터 Fact·세계관 후보 추출에 `gpt-5.6-terra`, 캐릭터·세계관 주체 해소와 초기 세계관 비교·사용자 재비교에 `gpt-5.6-luna`입니다.
 
-claim 결과가 없으면 Worker는 오류로 처리하지 않고 `WorkerRunResult(claimed=false)`를 반환합니다. 반복 실행 모드에서는 claim 결과가 없거나 개별 Job이 실패했을 때 sleep 후 다시 claim합니다.
+장기 실행 scheduler의 `claim_next()` 결과가 없으면 오류로 처리하지 않고 슬롯을 반환한 뒤 `AI_WORKER_IDLE_SLEEP_SECONDS`만큼 기다립니다. `--once` 경로의 `run_once()`는 같은 상황에서 `WorkerRunResult(claimed=false)`를 반환합니다. 개별 Job이 실패해도 다른 Task는 계속 실행하고 반환된 슬롯만 다음 Job에 사용합니다.
 
 claim 결과가 있으면 Spring은 단일 회차 작업을 `RUNNING`으로 전환한 payload를 반환합니다. Python은 `analysis_jobs` 테이블을 직접 수정하지 않습니다.
 
@@ -714,7 +753,9 @@ save_items 전체 수집
 1. `SpringWorkerClient.fail(analysis_job_id, lease_token, error_message)`를 호출합니다.
 2. error message는 최대 1000자로 잘라 Spring에 전달합니다.
 3. 예외는 다시 밖으로 전파합니다.
-4. 장기 실행 runner는 예외를 기록하고 idle sleep한 뒤 다음 회차 Job을 claim합니다. `--once` 실행은 예외를 그대로 종료 상태로 전달합니다.
+4. 장기 실행 runner는 예외를 해당 Job Task 안에서 격리하고 슬롯을 반환합니다. 다른 실행 중 Job은 취소하지 않으며 `--once` 실행은 예외를 그대로 종료 상태로 전달합니다.
+5. 종료 grace를 넘겨 Task가 취소되면 신규 fail 전이를 강제하지 않고 heartbeat를 중단합니다. Spring이 lease 만료와 checkpoint 정책으로 Job을 회수하며, 진행 중이던 token 예약도 lease 회수 시 정리합니다.
+6. heartbeat가 일시 오류 재시도 뒤에도 실패하거나 lease conflict를 받으면 그 Job Task만 취소하고 같은 lease 재회수 경로를 사용합니다. 다른 Job Task는 계속 실행합니다.
 
 ## 저장 부수효과와 트랜잭션 경계
 

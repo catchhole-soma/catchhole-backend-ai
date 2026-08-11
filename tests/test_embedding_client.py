@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -18,7 +19,7 @@ def test_create_embeddings_calls_openai_api_and_orders_response_by_index() -> No
         handler=lambda request: _embedding_response(request, requests),
     )
 
-    response = client.create_embeddings(["첫 번째 청크", "두 번째 청크"])
+    response = asyncio.run(client.create_embeddings(["첫 번째 청크", "두 번째 청크"]))
 
     request = requests[0]
     assert request.headers["Authorization"] == "Bearer test-key"
@@ -46,7 +47,7 @@ def test_create_embedding_returns_single_vector() -> None:
         ),
     )
 
-    assert client.create_embedding("query") == [0.1, 0.2, 0.3]
+    assert asyncio.run(client.create_embedding("query")) == [0.1, 0.2, 0.3]
 
 
 @pytest.mark.parametrize("inputs", [[], [""], ["  "]])
@@ -54,7 +55,7 @@ def test_create_embeddings_rejects_empty_or_blank_inputs(inputs: list[str]) -> N
     client = _client(handler=lambda request: httpx.Response(200, request=request))
 
     with pytest.raises(ValueError):
-        client.create_embeddings(inputs)
+        asyncio.run(client.create_embeddings(inputs))
 
 
 def test_create_embeddings_requires_api_key() -> None:
@@ -64,7 +65,7 @@ def test_create_embeddings_requires_api_key() -> None:
     )
 
     with pytest.raises(ValueError, match="LLM_API_KEY"):
-        client.create_embedding("query")
+        asyncio.run(client.create_embedding("query"))
 
 
 @pytest.mark.parametrize(
@@ -81,7 +82,7 @@ def test_create_embeddings_wraps_temporary_transport_error_as_recoverable(
     client = _client(handler=raise_temporary_error)
 
     with pytest.raises(RecoverableEmbeddingProviderError, match="temporarily"):
-        client.create_embedding("query")
+        asyncio.run(client.create_embedding("query"))
 
 
 def test_create_embeddings_keeps_configuration_transport_error_fatal() -> None:
@@ -92,7 +93,7 @@ def test_create_embeddings_keeps_configuration_transport_error_fatal() -> None:
     client = _client(handler=raise_unsupported_protocol)
 
     with pytest.raises(httpx.UnsupportedProtocol):
-        client.create_embedding("query")
+        asyncio.run(client.create_embedding("query"))
 
 
 @pytest.mark.parametrize("status_code", [408, 409, 429, 500, 503])
@@ -105,7 +106,7 @@ def test_create_embeddings_wraps_retryable_http_status_as_recoverable(
     )
 
     with pytest.raises(RecoverableEmbeddingProviderError, match=f"status={status_code}"):
-        client.create_embedding("query")
+        asyncio.run(client.create_embedding("query"))
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 403, 404, 422])
@@ -118,7 +119,7 @@ def test_create_embeddings_keeps_non_retryable_http_status_fatal(
     )
 
     with pytest.raises(httpx.HTTPStatusError):
-        client.create_embedding("query")
+        asyncio.run(client.create_embedding("query"))
 
 
 def test_create_embeddings_rejects_dimension_mismatch() -> None:
@@ -135,7 +136,7 @@ def test_create_embeddings_rejects_dimension_mismatch() -> None:
     )
 
     with pytest.raises(EmbeddingResponseValidationError, match="dimensions") as exc_info:
-        client.create_embedding("query")
+        asyncio.run(client.create_embedding("query"))
 
     assert exc_info.value.input_token_count == 12
 
@@ -158,7 +159,7 @@ def test_create_embeddings_rejects_missing_or_non_integer_index(item: dict) -> N
     )
 
     with pytest.raises(ValueError, match="indices"):
-        client.create_embedding("query")
+        asyncio.run(client.create_embedding("query"))
 
 
 def test_from_settings_uses_embedding_contract() -> None:
@@ -224,7 +225,7 @@ def _client(
         dimensions=3,
         version="v1",
         embeddings_api_url="https://api.openai.test/v1/embeddings",
-        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
 

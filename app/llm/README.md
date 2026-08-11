@@ -22,8 +22,8 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
 
 - `openai_client.py`
   - OpenAI Responses API를 호출합니다.
-  - `LLM_API_KEY`, 단계별 `LLM_EXTRACTION_MODEL`·`LLM_COMPARISON_MODEL`, fallback `LLM_MODEL`, `LLM_REASONING_EFFORT`, `OPENAI_RESPONSES_API_URL` 설정을 사용합니다.
-  - GPT-5.6 Terra의 MVP 기본 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않습니다.
+  - `LLM_API_KEY`, 단계별 `LLM_EXTRACTION_MODEL`·`LLM_SUBJECT_RESOLUTION_MODEL`·`LLM_COMPARISON_MODEL`, fallback `LLM_MODEL`, `LLM_REASONING_EFFORT`, `OPENAI_RESPONSES_API_URL` 설정을 사용합니다.
+  - 운영 기본 라우팅은 후보 추출 `gpt-5.6-terra`, 주체 해소·비교 `gpt-5.6-luna`이며 공통 MVP 추론 강도는 `none`입니다.
   - 같은 정적 prompt prefix를 공유하는 호출에는 안정적인 `prompt_cache_key`를 전달합니다.
   - GPT-5.6 explicit cache breakpoint는 아직 사용하지 않으며, 현재는 정적 prefix 우선 배치와 cache key로 implicit cache 재사용을 돕습니다.
   - debug 로그에는 prompt 본문 없이 cached input 필드의 존재 여부와 token usage만 남깁니다.
@@ -62,7 +62,7 @@ CharacterSettingExtractor / CharacterSubjectResolver / WorldSettingExtractor
 ```
 
 캐릭터·세계관 추출 재시도, subject fallback, 세계관 대상 탐색·비교도 각각 실제 provider 호출 단위로 기록합니다.
-1차 캐릭터·세계관 추출과 캐릭터 subject fallback은 extraction 모델을 사용하고, 세계관 대상 탐색·비교는 comparison 모델을 사용합니다. 두 모델이 달라도 provider 요청과 Spring 토큰 원장에는 각 단계에서 실제 호출한 모델명이 기록됩니다.
+1차 캐릭터 Fact·세계관 후보 추출은 extraction 모델, 캐릭터·세계관 대상 탐색은 subject-resolution 모델, 세계관 비교·재비교는 comparison 모델을 사용합니다. 모델이 달라도 provider 요청과 Spring 토큰 원장에는 각 단계에서 실제 호출한 모델명이 기록됩니다.
 `analysis_jobs`의 과거 합산 컬럼을 비용 원장으로 사용하지 않으며, 요청별 근거는
 Spring의 `ai_token_usages`를 기준으로 조회합니다.
 

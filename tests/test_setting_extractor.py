@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 import pytest
@@ -28,7 +29,8 @@ def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
         prompt_path=prompt_path,
     )
 
-    result = extractor.extract_from_chunk(
+    result = _extract(
+        extractor,
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
         episode_no=3,
@@ -59,7 +61,8 @@ def test_extract_from_chunk_parses_character_discovery_and_family_setting(
         max_attempts=1,
     )
 
-    result = extractor.extract_from_chunk(
+    result = _extract(
+        extractor,
         source_chunk_id=CHUNK_ID,
         chunk_text="케닉의 넷째 아들 세룸은 나와라!",
         schema_hints=(
@@ -101,7 +104,8 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
         max_attempts=1,
     )
 
-    result = extractor.extract_from_chunk(
+    result = _extract(
+        extractor,
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 화염검술을 익혔고 지능은 17이다.",
         schema_hints=(
@@ -205,12 +209,14 @@ def test_extract_from_chunk_canonicalizes_schema_order_for_prompt_cache() -> Non
         value_type="NUMBER",
     )
 
-    CharacterSettingExtractor(llm_client=first_client, max_attempts=1).extract_from_chunk(
+    _extract(
+        CharacterSettingExtractor(llm_client=first_client, max_attempts=1),
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 인간이며 근력은 10이다.",
         schema_hints=(first_schema, second_schema, work_schema),
     )
-    CharacterSettingExtractor(llm_client=second_client, max_attempts=1).extract_from_chunk(
+    _extract(
+        CharacterSettingExtractor(llm_client=second_client, max_attempts=1),
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 인간이며 근력은 10이다.",
         schema_hints=(
@@ -250,7 +256,8 @@ def test_extract_from_chunk_rejects_empty_schema_hints_before_llm_call() -> None
         ValueError,
         match="schema_hints must include at least one character setting schema",
     ):
-        extractor.extract_from_chunk(
+        _extract(
+            extractor,
             source_chunk_id=CHUNK_ID,
             chunk_text="카엘은 12레벨 검사였다.",
         )
@@ -269,7 +276,8 @@ def test_extract_from_chunk_retries_when_json_parse_fails(tmp_path) -> None:
         max_attempts=2,
     )
 
-    result = extractor.extract_from_chunk(
+    result = _extract(
+        extractor,
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
         schema_hints=DEFAULT_SCHEMA_HINTS,
@@ -290,7 +298,8 @@ def test_extract_from_chunk_retries_when_required_field_is_missing(tmp_path) -> 
         max_attempts=2,
     )
 
-    result = extractor.extract_from_chunk(
+    result = _extract(
+        extractor,
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
         schema_hints=DEFAULT_SCHEMA_HINTS,
@@ -310,7 +319,8 @@ def test_extract_from_chunk_retries_when_entity_name_is_whitespace_only(tmp_path
         max_attempts=2,
     )
 
-    result = extractor.extract_from_chunk(
+    result = _extract(
+        extractor,
         source_chunk_id=CHUNK_ID,
         chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
         schema_hints=DEFAULT_SCHEMA_HINTS,
@@ -332,7 +342,8 @@ def test_extract_from_chunk_raises_error_when_required_field_keeps_missing(tmp_p
     )
 
     with pytest.raises(LlmExtractionError):
-        extractor.extract_from_chunk(
+        _extract(
+            extractor,
             source_chunk_id=CHUNK_ID,
             chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
             schema_hints=DEFAULT_SCHEMA_HINTS,
@@ -353,7 +364,8 @@ def test_extract_from_chunk_raises_error_after_max_attempts(tmp_path) -> None:
     )
 
     with pytest.raises(LlmExtractionError):
-        extractor.extract_from_chunk(
+        _extract(
+            extractor,
             source_chunk_id=CHUNK_ID,
             chunk_text="카엘은 12레벨 검사로, 화염검을 장비하고 있었다.",
             schema_hints=DEFAULT_SCHEMA_HINTS,
@@ -362,9 +374,13 @@ def test_extract_from_chunk_raises_error_after_max_attempts(tmp_path) -> None:
     assert llm_client.call_count == 2
 
 
+def _extract(extractor: CharacterSettingExtractor, **kwargs):
+    return asyncio.run(extractor.extract_from_chunk(**kwargs))
+
+
 class FakeTextGenerationClient:
     # 정상 LLM 응답을 흉내 내는 기본 fake client
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -412,7 +428,7 @@ class RecordingTextGenerationClient:
         self.prompt_cache_key = None
         self.call_count = 0
 
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -428,7 +444,7 @@ class RecordingTextGenerationClient:
 
 
 class CharacterDiscoveryTextGenerationClient:
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -488,7 +504,7 @@ class RetryThenSuccessClient:
     def __init__(self) -> None:
         self.call_count = 0
 
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -499,7 +515,7 @@ class RetryThenSuccessClient:
         self.call_count += 1
         if self.call_count == 1:
             return LlmTextResponse(text="이 응답은 JSON이 아닙니다.")
-        return FakeTextGenerationClient().create_text_response(
+        return await FakeTextGenerationClient().create_text_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=model,
@@ -513,7 +529,7 @@ class MissingFieldThenSuccessClient:
     def __init__(self) -> None:
         self.call_count = 0
 
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -547,7 +563,7 @@ class MissingFieldThenSuccessClient:
                 }
                 """
             )
-        return FakeTextGenerationClient().create_text_response(
+        return await FakeTextGenerationClient().create_text_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=model,
@@ -560,7 +576,7 @@ class WhitespaceEntityNameThenSuccessClient:
     def __init__(self) -> None:
         self.call_count = 0
 
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -596,7 +612,7 @@ class WhitespaceEntityNameThenSuccessClient:
                 }
                 """
             )
-        return FakeTextGenerationClient().create_text_response(
+        return await FakeTextGenerationClient().create_text_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=model,
@@ -610,7 +626,7 @@ class AlwaysInvalidJsonClient:
     def __init__(self) -> None:
         self.call_count = 0
 
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -627,7 +643,7 @@ class AlwaysMissingFieldClient:
     def __init__(self) -> None:
         self.call_count = 0
 
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,

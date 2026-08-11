@@ -1,3 +1,4 @@
+import asyncio
 import json
 from uuid import UUID
 
@@ -16,7 +17,11 @@ from app.embeddings.services.episode_chunk_embedding import EpisodeChunkEmbeddin
 from app.domain.enums import EpisodeProcessingStatus
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisEpisodePayload, WorkerAnalysisJobPayload
-from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunSummary
+from app.worker.analysis_job_worker import (
+    AnalysisJobWorker,
+    WorkerRunResult,
+    WorkerRunSummary,
+)
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
 WORK_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -45,7 +50,7 @@ def test_worker_returns_without_error_when_claimable_job_does_not_exist() -> Non
     spring_client = FakeSpringWorkerClient(payload=None)
     worker = SuccessfulAnalysisJobWorker(spring_client=spring_client)
 
-    result = worker.run_once()
+    result = _run_once(worker)
 
     assert result.claimed is False
     assert result.analysis_job_id is None
@@ -60,10 +65,11 @@ def test_worker_reports_progress_and_complete_to_spring() -> None:
     worker = SuccessfulAnalysisJobWorker(
         spring_client=spring_client,
         extraction_model_name="extraction-model",
+        subject_resolution_model_name="subject-resolution-model",
         comparison_model_name="comparison-model",
     )
 
-    result = worker.run_once()
+    result = _run_once(worker)
 
     assert result.claimed is True
     assert result.analysis_job_id == ANALYSIS_JOB_ID
@@ -77,18 +83,133 @@ def test_worker_reports_progress_and_complete_to_spring() -> None:
     assert spring_client.fail_calls == []
 
 
+def test_worker_routes_each_llm_stage_to_its_configured_model() -> None:
+    async def scenario() -> None:
+        worker = AnalysisJobWorker(
+            spring_client=FakeSpringWorkerClient(payload=None),
+            extraction_model_name="extraction-model",
+            subject_resolution_model_name="subject-resolution-model",
+            comparison_model_name="comparison-model",
+            llm_provider_client=object(),
+        )
+        try:
+            setting_extractor = worker._get_setting_extractor(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+            )
+            character_subject_resolver = worker._get_subject_resolver(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+            )
+            world_setting_extractor = worker._get_world_setting_extractor(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+            )
+            world_setting_pipeline = worker._get_world_setting_comparison_pipeline(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+            )
+
+            assert setting_extractor.model == "extraction-model"
+            assert setting_extractor.llm_client.default_model == "extraction-model"
+            assert character_subject_resolver.model == "subject-resolution-model"
+            assert character_subject_resolver.llm_client.default_model == "subject-resolution-model"
+            assert world_setting_extractor.model == "extraction-model"
+            assert world_setting_extractor.llm_client.default_model == "extraction-model"
+            assert world_setting_pipeline.subject_resolver.model == "subject-resolution-model"
+            assert (
+                world_setting_pipeline.subject_resolver.llm_client.default_model
+                == "subject-resolution-model"
+            )
+            assert world_setting_pipeline.comparator.model == "comparison-model"
+            assert world_setting_pipeline.comparator.llm_client.default_model == "comparison-model"
+        finally:
+            await worker.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_worker_reports_fail_to_spring_when_analysis_fails() -> None:
     spring_client = FakeSpringWorkerClient(payload=_payload())
     worker = FailingAnalysisJobWorker(spring_client=spring_client)
 
     with pytest.raises(RuntimeError):
-        worker.run_once()
+        _run_once(worker)
 
     assert spring_client.progress_calls == [
         (ANALYSIS_JOB_ID, "SETTING_EXTRACTION", EpisodeProcessingStatus.ANALYZING)
     ]
     assert spring_client.complete_calls == []
     assert spring_client.fail_calls == [(ANALYSIS_JOB_ID, "LLM response parse failed.")]
+
+
+def test_worker_cancellation_leaves_job_for_lease_recovery_instead_of_reporting_failure() -> None:
+    async def scenario() -> FakeSpringWorkerClient:
+        payload = _payload()
+        spring_client = FakeSpringWorkerClient(payload=payload)
+        worker = CancellableAnalysisJobWorker(spring_client=spring_client)
+        task = asyncio.create_task(worker.process_claimed(payload))
+        await worker.started.wait()
+        task.cancel()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            await worker.aclose()
+        return spring_client
+
+    spring_client = asyncio.run(scenario())
+
+    assert spring_client.complete_calls == []
+    assert spring_client.fail_calls == []
+
+
+def test_worker_close_attempts_every_owned_resource_after_one_close_fails() -> None:
+    async def scenario() -> tuple[
+        FailingCloseResource, RecordingCloseResource, RecordingCloseResource
+    ]:
+        provider = FailingCloseResource()
+        spring_client = FakeSpringWorkerClient(payload=None)
+        spring_close = RecordingCloseResource()
+        blocking_executor = RecordingCloseResource()
+        spring_client.aclose = spring_close.aclose
+        worker = AnalysisJobWorker(
+            spring_client=spring_client,
+            llm_provider_client=provider,
+            blocking_io_executor=blocking_executor,
+        )
+        # 주입 객체는 기본적으로 caller 소유다. 이 테스트에서는 production 소유 경로를 재현한다.
+        worker._owns_llm_provider_client = True
+        worker._owns_spring_client = True
+        worker._owns_blocking_io_executor = True
+
+        with pytest.raises(RuntimeError, match="provider close failed"):
+            await worker.aclose()
+        return provider, spring_close, blocking_executor
+
+    provider, spring_close, blocking_executor = asyncio.run(scenario())
+
+    assert provider.closed is True
+    assert spring_close.closed is True
+    assert blocking_executor.closed is True
+
+
+def test_worker_injects_bounded_executor_into_embedding_persistence() -> None:
+    async def scenario() -> None:
+        worker = AnalysisJobWorker(
+            spring_client=FakeSpringWorkerClient(payload=None),
+            embedding_generation_enabled=True,
+        )
+        try:
+            service = worker._get_episode_chunk_embedding_service(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+            )
+            assert service.blocking_runner.__self__ is worker._blocking_io_executor
+        finally:
+            await worker.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_worker_fails_before_data_changes_when_claim_has_no_character_schemas() -> None:
@@ -113,7 +234,7 @@ def test_worker_fails_before_data_changes_when_claim_has_no_character_schemas() 
         ValueError,
         match="claim must include at least one characterSettingSchemas entry",
     ):
-        worker.run_once()
+        _run_once(worker)
 
     assert spring_client.progress_calls == [
         (ANALYSIS_JOB_ID, "SETTING_EXTRACTION", EpisodeProcessingStatus.ANALYZING)
@@ -158,7 +279,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         embedding_generation_enabled=True,
     )
 
-    result = worker.run_once()
+    result = _run_once(worker)
 
     assert result.claimed is True
     assert result.analysis_job_id == ANALYSIS_JOB_ID
@@ -269,7 +390,7 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         embedding_generation_enabled=True,
     )
 
-    result = worker.run_once()
+    result = _run_once(worker)
 
     assert result.claimed is True
     assert subject_resolver.requests == [
@@ -332,7 +453,7 @@ def test_worker_preserves_subject_fallback_unresolved_candidate() -> None:
         embedding_generation_enabled=True,
     )
 
-    result = worker.run_once()
+    result = _run_once(worker)
 
     assert result.claimed is True
     assert setting_candidate_service.saved_candidates == [unresolved_candidate]
@@ -366,7 +487,7 @@ def test_worker_skips_chunk_embedding_by_default_and_completes_extraction() -> N
         setting_candidate_service=setting_candidate_service,
     )
 
-    result = worker.run_once()
+    result = _run_once(worker)
 
     assert result.claimed is True
     assert episode_chunk_embedding_service.requested_chunk_ids == []
@@ -411,7 +532,7 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         embedding_generation_enabled=True,
     )
 
-    result = worker.run_once()
+    result = _run_once(worker)
 
     assert result.claimed is True
     assert len(setting_extractor.requests) == 1
@@ -452,7 +573,7 @@ def test_worker_fails_analysis_when_chunk_embedding_data_is_inconsistent() -> No
     )
 
     with pytest.raises(EmbeddingDataIntegrityError, match="target is missing"):
-        worker.run_once()
+        _run_once(worker)
 
     assert setting_extractor.requests == []
     assert spring_client.complete_calls == []
@@ -460,13 +581,38 @@ def test_worker_fails_analysis_when_chunk_embedding_data_is_inconsistent() -> No
 
 
 class SuccessfulAnalysisJobWorker(AnalysisJobWorker):
-    def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
+    async def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
         return WorkerRunSummary(summary_json='{"candidateCount": 0}')
 
 
 class FailingAnalysisJobWorker(AnalysisJobWorker):
-    def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
+    async def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
         raise RuntimeError("LLM response parse failed.")
+
+
+class CancellableAnalysisJobWorker(AnalysisJobWorker):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.started = asyncio.Event()
+
+    async def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+class RecordingCloseResource:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class FailingCloseResource(RecordingCloseResource):
+    async def aclose(self) -> None:
+        await super().aclose()
+        raise RuntimeError("provider close failed")
 
 
 class FakeSpringWorkerClient:
@@ -478,7 +624,7 @@ class FakeSpringWorkerClient:
         self.complete_calls: list[tuple[UUID, str | None, int | None, int | None]] = []
         self.fail_calls: list[tuple[UUID, str]] = []
 
-    def claim(
+    async def claim(
         self,
         allowed_job_types,
         model_name: str | None = None,
@@ -488,7 +634,7 @@ class FakeSpringWorkerClient:
         self.claim_model_name = model_name
         return self.payload
 
-    def report_progress(
+    async def report_progress(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
@@ -498,7 +644,7 @@ class FakeSpringWorkerClient:
     ) -> None:
         self.progress_calls.append((analysis_job_id, current_step, episode_status))
 
-    def complete(
+    async def complete(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
@@ -510,13 +656,13 @@ class FakeSpringWorkerClient:
             (analysis_job_id, summary_json, input_token_count, output_token_count)
         )
 
-    def fail(self, analysis_job_id: UUID, lease_token: UUID, error_message: str) -> None:
+    async def fail(self, analysis_job_id: UUID, lease_token: UUID, error_message: str) -> None:
         self.fail_calls.append((analysis_job_id, error_message))
 
-    def heartbeat(self, analysis_job_id: UUID, lease_token: UUID) -> None:
+    async def heartbeat(self, analysis_job_id: UUID, lease_token: UUID) -> None:
         return None
 
-    def publish_world_setting_candidates(
+    async def publish_world_setting_candidates(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
@@ -524,7 +670,7 @@ class FakeSpringWorkerClient:
     ):
         return candidates
 
-    def claim_next_world_setting_comparison(
+    async def claim_next_world_setting_comparison(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
@@ -555,7 +701,7 @@ class FakeEpisodeChunkEmbeddingService:
         self.error = error
         self.requested_chunk_ids: list[list[UUID]] = []
 
-    def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult:
+    async def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult:
         self.requested_chunk_ids.append([chunk.id for chunk in chunks])
         if self.error is not None:
             raise self.error
@@ -568,7 +714,7 @@ class FakeSettingExtractor:
         self.candidate_groups = candidate_groups
         self.requests = []
 
-    def extract_from_chunk(
+    async def extract_from_chunk(
         self,
         source_chunk_id: UUID,
         chunk_text: str,
@@ -597,7 +743,7 @@ class FakeExtractionResult:
 
 
 class FakeWorldSettingExtractor:
-    def extract_from_chunk(self, chunk_text: str, episode_no=None, episode_title=None):
+    async def extract_from_chunk(self, chunk_text: str, episode_no=None, episode_title=None):
         return WorldSettingExtractionResult(candidates=[])
 
 
@@ -630,7 +776,7 @@ class FakeSubjectResolver:
         self.result = result
         self.requests = []
 
-    def resolve_candidates(
+    async def resolve_candidates(
         self,
         context,
         candidates,
@@ -695,6 +841,16 @@ def _payload() -> WorkerAnalysisJobPayload:
             char_count=1234,
         ),
     )
+
+
+def _run_once(worker: AnalysisJobWorker) -> WorkerRunResult:
+    async def scenario() -> WorkerRunResult:
+        try:
+            return await worker.run_once()
+        finally:
+            await worker.aclose()
+
+    return asyncio.run(scenario())
 
 
 def _candidate(

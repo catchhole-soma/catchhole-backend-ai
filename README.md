@@ -41,6 +41,8 @@ uvicorn app.main:app --reload
 .venv/bin/python -m scripts.run_analysis_worker --worker-kind world-comparison
 ```
 
+장기 실행 runner는 빈 실행 슬롯을 확보한 뒤 Job 하나를 claim해 즉시 비동기 Task로 처리합니다. 한 Job 안의 청크는 순차 처리하고, 다른 Job이 OpenAI 응답을 기다리는 동안 event loop가 나머지 Job을 진행합니다. 현재 운영 검증값은 Backend 저장소의 Compose에서 분석 Worker 2개를 실행하고 프로세스당 동시 Job 5개로 `SETTING_EXTRACTION` Job을 최대 10개 처리합니다. 별도 세계관 재비교 Worker는 Job·LLM 동시성을 1로 유지합니다.
+
 S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 후보 추출, 근거 위치 보정,
 지칭어 subject fallback, 캐릭터 매칭 상태 계산을 확인하려면 다음 runner를 사용합니다.
 
@@ -141,11 +143,19 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `AWS_SESSION_TOKEN`: STS 등 임시 자격 증명을 사용할 때 access key, secret key와 함께 전달하는 선택 세션 토큰입니다.
 - `AWS_SQS_QUEUE_URL`: 분석 잡 큐를 붙일 경우 사용할 SQS URL
 - `LLM_API_KEY`: 설정 추출/검증에 사용할 LLM API 키
-- `LLM_EXTRACTION_MODEL`: 회차 원문에서 캐릭터·세계관 후보와 주체를 추출하는 1차 LLM 모델명
-- `LLM_COMPARISON_MODEL`: 후보와 확정 데이터를 비교해 반영 방식을 제안하는 2차 LLM 모델명
+- `LLM_EXTRACTION_MODEL`: 회차 원문에서 캐릭터 Fact·세계관 설정 후보를 추출하는 모델명. 현재 기본값은 `gpt-5.6-terra`입니다.
+- `LLM_SUBJECT_RESOLUTION_MODEL`: 캐릭터 Fact와 세계관 후보의 주체를 기존 캐릭터·세계관 대상에 연결하는 모델명. 현재 기본값은 `gpt-5.6-luna`입니다.
+- `LLM_COMPARISON_MODEL`: 세계관 후보와 확정 데이터를 비교해 반영 방식을 제안하는 모델명. 현재 기본값은 `gpt-5.6-luna`입니다.
 - `LLM_MODEL`: 단계별 모델 변수가 없을 때 사용하는 하위 호환 기본 모델명
 - `LLM_REASONING_EFFORT`: GPT-5.6 추론 강도. MVP 기본값은 `none`이며 품질 평가 후 상향합니다.
 - `OPENAI_RESPONSES_API_URL`: OpenAI Responses API endpoint
+- `LLM_HTTP_MAX_RETRIES`: 429/5xx/timeout 같은 일시 provider 오류의 재시도 횟수. 최초 요청은 제외하며 운영 기본값은 3입니다.
+- `LLM_HTTP_RETRY_BASE_SECONDS`: provider 재시도의 지수 backoff 기준값. 운영 기본값 2초에서 2초, 4초, 8초와 jitter를 적용하고 `Retry-After`가 있으면 우선합니다.
+- `AI_WORKER_CONCURRENCY`: 현재 프로세스가 동시에 실행할 Job 슬롯 수. 운영 검증값은 5입니다.
+- `LLM_MAX_CONCURRENT_REQUESTS`: 현재 프로세스 안에서 동시에 진행할 LLM HTTP 요청 상한. Job 내부 청크는 순차이므로 운영 검증에서는 Job 동시성과 같은 5를 사용합니다.
+- `AI_WORKER_BLOCKING_MAX_WORKERS`: 동기 DB/S3 작업을 event loop 밖에서 수행하는 blocking executor의 최대 Thread 수. 운영 rollout 값은 3입니다.
+- `AI_WORKER_IDLE_SLEEP_SECONDS`: claim할 Job이 없을 때 다음 polling 전 대기 시간. 운영 기본값은 5초입니다.
+- `AI_WORKER_SHUTDOWN_GRACE_SECONDS`: 종료 신호 뒤 신규 claim을 중단하고 실행 중 Job을 기다리는 내부 grace. 운영값은 180초이며 Compose는 더 긴 210초 뒤 강제 종료합니다.
 - `EMBEDDING_GENERATION_ENABLED`: 신규 청크 임베딩 생성 여부. MVP 기본값은 `false`이며 `true`일 때만 Worker가 Embeddings API를 호출합니다.
 - `EMBEDDING_MODEL`: 청크와 검색 query에 공통으로 사용할 embedding 모델명
 - `EMBEDDING_DIMENSIONS`: pgvector 컬럼과 일치해야 하는 embedding 차원. 현재 1536
@@ -153,6 +163,8 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `OPENAI_EMBEDDINGS_API_URL`: OpenAI Embeddings API endpoint
 - `SPRING_INTERNAL_API_BASE_URL`: Spring 내부 Worker API base URL. 기본값 `http://localhost:8080`은 로컬 개발용 값입니다.
 - `SPRING_INTERNAL_API_KEY`: Spring 내부 Worker API 호출에 사용할 `X-Internal-Api-Key` 값
+
+`AI_WORKER_CONCURRENCY=5`와 `LLM_MAX_CONCURRENT_REQUESTS=5`는 프로세스별 상한입니다. 운영 Compose의 분석 Worker 2개를 합친 `10`은 `SETTING_EXTRACTION` Job 용량만 뜻합니다. 별도 재비교 Worker와 모든 프로세스를 합친 provider 계정 전체 상한을 강제하려면 프로세스 밖의 분산 limiter가 필요하며 현재 MVP에는 포함하지 않습니다.
 
 ## FastAPI API 초안
 

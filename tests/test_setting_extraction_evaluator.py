@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,7 +7,7 @@ from pydantic import ValidationError
 import pytest
 
 from evals.setting_extraction.assignment import maximum_weight_assignment
-from evals.setting_extraction.evaluator import evaluate_predictions
+from evals.setting_extraction.evaluator import evaluate_predictions as evaluate_predictions_async
 from evals.setting_extraction.loader import load_gold_dataset, load_prediction_bundle
 from evals.setting_extraction.models import (
     CharacterSettingSchemaSnapshot,
@@ -29,6 +30,10 @@ from evals.setting_extraction.value_comparator import (
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "setting_extraction_eval"
+
+
+def evaluate_predictions(*args, **kwargs):
+    return asyncio.run(evaluate_predictions_async(*args, **kwargs))
 
 
 def test_evaluator_matches_alias_and_reports_semantic_pending() -> None:
@@ -109,19 +114,21 @@ def test_openai_semantic_judge_batches_cases_and_defaults_to_luna() -> None:
     client = RecordingJudgeClient()
     judge = OpenAISemanticValueJudge(client=client)
 
-    result = judge.judge_many(
-        [
-            SemanticJudgeCase(
-                gold=gold.episodes[0].candidates[1],
-                prediction=predictions.episodes[0].candidates[1],
-                source_text=gold.episodes[0].source_text,
-            ),
-            SemanticJudgeCase(
-                gold=gold.episodes[0].candidates[1],
-                prediction=predictions.episodes[0].candidates[1],
-                source_text=gold.episodes[0].source_text,
-            ),
-        ]
+    result = asyncio.run(
+        judge.judge_many(
+            [
+                SemanticJudgeCase(
+                    gold=gold.episodes[0].candidates[1],
+                    prediction=predictions.episodes[0].candidates[1],
+                    source_text=gold.episodes[0].source_text,
+                ),
+                SemanticJudgeCase(
+                    gold=gold.episodes[0].candidates[1],
+                    prediction=predictions.episodes[0].candidates[1],
+                    source_text=gold.episodes[0].source_text,
+                ),
+            ]
+        )
     )
 
     assert len(client.requests) == 1
@@ -139,14 +146,16 @@ def test_openai_semantic_judge_redacts_invalid_provider_response() -> None:
     judge = OpenAISemanticValueJudge(client=client)
 
     with pytest.raises(ValueError, match="Semantic judge response is invalid") as exc_info:
-        judge.judge_many(
-            [
-                SemanticJudgeCase(
-                    gold=gold.episodes[0].candidates[1],
-                    prediction=predictions.episodes[0].candidates[1],
-                    source_text=gold.episodes[0].source_text,
-                )
-            ]
+        asyncio.run(
+            judge.judge_many(
+                [
+                    SemanticJudgeCase(
+                        gold=gold.episodes[0].candidates[1],
+                        prediction=predictions.episodes[0].candidates[1],
+                        source_text=gold.episodes[0].source_text,
+                    )
+                ]
+            )
         )
 
     assert private_reason not in str(exc_info.value)
@@ -1171,7 +1180,7 @@ def _single_fact_predictions(
 
 
 class AlwaysMatchJudge:
-    def judge_many(self, cases) -> SemanticJudgeBatchResult:
+    async def judge_many(self, cases) -> SemanticJudgeBatchResult:
         return SemanticJudgeBatchResult(
             decisions=tuple(
                 SemanticJudgeDecision(
@@ -1190,7 +1199,7 @@ class AlwaysMatchJudge:
 
 
 class FailOnCallJudge:
-    def judge_many(self, cases) -> SemanticJudgeBatchResult:
+    async def judge_many(self, cases) -> SemanticJudgeBatchResult:
         raise AssertionError(f"Subject diagnostics must not call semantic judge: {cases}")
 
 
@@ -1198,7 +1207,7 @@ class RecordingJudgeClient:
     def __init__(self) -> None:
         self.requests = []
 
-    def create_text_response(self, **kwargs):
+    async def create_text_response(self, **kwargs):
         self.requests.append(kwargs)
         case_count = len(json.loads(kwargs["user_prompt"])["cases"])
         return SimpleNamespace(
@@ -1228,7 +1237,7 @@ class InvalidJudgeClient:
     def __init__(self, private_reason: str) -> None:
         self.private_reason = private_reason
 
-    def create_text_response(self, **kwargs):
+    async def create_text_response(self, **kwargs):
         return SimpleNamespace(
             text=json.dumps(
                 {"results": [{"caseId": 0, "reason": self.private_reason}]},

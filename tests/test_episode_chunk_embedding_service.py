@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from uuid import UUID
 
@@ -32,7 +33,7 @@ def test_embed_chunks_generates_vectors_before_updating_and_commits() -> None:
         now_factory=lambda: EMBEDDED_AT,
     )
 
-    result = service.embed_chunks(chunks)
+    result = asyncio.run(service.embed_chunks(chunks))
 
     assert embedding_client.requests == [["첫 번째 청크", "두 번째 청크"]]
     assert repositories[0].embedding_updates == [
@@ -74,7 +75,7 @@ def test_embed_chunks_skips_api_and_database_when_chunks_are_empty() -> None:
         embedding_client=embedding_client,
     )
 
-    result = service.embed_chunks([])
+    result = asyncio.run(service.embed_chunks([]))
 
     assert result.embedded_chunk_count == 0
     assert embedding_client.requests == []
@@ -103,7 +104,7 @@ def test_embed_chunks_rejects_duplicate_chunk_ids_before_external_calls() -> Non
     )
 
     with pytest.raises(EmbeddingDataIntegrityError, match="Duplicate chunk IDs"):
-        service.embed_chunks([chunk, chunk])
+        asyncio.run(service.embed_chunks([chunk, chunk]))
 
     assert embedding_client.requests == []
     assert session_factory_call_count == 0
@@ -125,7 +126,7 @@ def test_embed_chunks_does_not_open_database_session_when_api_fails() -> None:
     )
 
     with pytest.raises(RuntimeError, match="embedding API failed"):
-        service.embed_chunks([_chunk(0, "청크")])
+        asyncio.run(service.embed_chunks([_chunk(0, "청크")]))
 
     assert session_factory_call_count == 0
 
@@ -146,7 +147,7 @@ def test_embed_chunks_rolls_back_when_database_update_fails() -> None:
     )
 
     with pytest.raises(RuntimeError, match="embedding update failed"):
-        service.embed_chunks([_chunk(0, "청크")])
+        asyncio.run(service.embed_chunks([_chunk(0, "청크")]))
 
     assert session.committed is False
     assert session.rolled_back is True
@@ -164,7 +165,7 @@ class FakeEmbeddingClient:
         self.error = error
         self.requests: list[list[str]] = []
 
-    def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
+    async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
         self.requests.append(inputs)
         if self.error is not None:
             raise self.error

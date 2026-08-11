@@ -81,11 +81,27 @@ POST  /api/internal/v1/analysis-jobs/{analysisJobId}/fail
 
 checkpoint는 `CHUNKS_READY`, `CHARACTER_CANDIDATES_SAVED`, `WORLD_CANDIDATES_PUBLISHED`, `WORLD_COMPARISONS_FINISHED` 순서로만 증가합니다. lease가 만료되어 Job이 다시 claim되면 마지막 checkpoint 이후 stage부터 재개합니다.
 
+## 실행 슬롯과 동시성
+
+`analysis_jobs` 테이블의 `PENDING` Job이 대기열이고, 실행 슬롯은 현재 프로세스가 즉시 처리할 수 있는 자리입니다. runner는 `AI_WORKER_CONCURRENCY`개의 슬롯만 허용하며 순서를 반드시 다음과 같이 유지합니다.
+
+```text
+빈 슬롯 확보
+-> Spring에서 Job 하나 claim
+-> 즉시 Job 전용 Task와 heartbeat Task 시작
+-> 완료 또는 실패 보고
+-> 슬롯 반환
+```
+
+슬롯이 없을 때 Job을 미리 claim해 내부 대기열에 쌓지 않습니다. 한 Job 안의 청크와 stage는 순차 처리하고, Job 사이만 비동기로 겹칩니다. `LLM_MAX_CONCURRENT_REQUESTS`는 프로세스별 LLM 요청 상한이며, 동기 DB/S3 경계는 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에서 실행합니다.
+
+현재 운영 검증 rollout은 `SETTING_EXTRACTION` 분석 Worker 2개 × 프로세스당 슬롯 5개 = 최대 10개입니다. 50개 Job 부하 테스트에서 Backend·PostgreSQL·LLM 지표를 확인하고 기준 미달이면 슬롯을 3개로 되돌립니다. 별도 `world-comparison` Worker는 Job·LLM 동시성을 1로 고정합니다. 이 10은 설정 추출 Job 처리 용량이며 provider 계정 전체에 걸친 분산 동시성 제한은 아닙니다.
+
 ## 현재 연결된 실행 흐름
 
-`AnalysisJobWorker.run_once()`는 다음 순서로 한 개의 분석 작업을 처리합니다.
+`AnalysisJobWorker`가 claim한 뒤 만드는 `process_claimed()` Job Task는 다음 순서로 한 개의 분석 작업을 처리합니다. `--once` 경로의 `run_once()`도 같은 처리를 사용합니다.
 
-1차 추출 호출은 `LLM_EXTRACTION_MODEL`, 후보와 확정 데이터의 2차 비교 호출은 `LLM_COMPARISON_MODEL`을 사용합니다. 각 값이 비어 있으면 `LLM_MODEL`로 fallback합니다. 초기 회차 Job 안의 세계관 비교와 별도 재비교 Worker는 모두 같은 comparison 모델 설정을 사용합니다.
+캐릭터 Fact·세계관 후보 추출은 `LLM_EXTRACTION_MODEL`, 캐릭터·세계관 주체 해소는 `LLM_SUBJECT_RESOLUTION_MODEL`, 후보와 확정 데이터 비교는 `LLM_COMPARISON_MODEL`을 사용합니다. 각 값이 비어 있으면 `LLM_MODEL`로 fallback합니다. 운영 기본 라우팅은 추출에 `gpt-5.6-terra`, 주체 해소와 세계관 비교·재비교에 `gpt-5.6-luna`입니다.
 
 ```text
 Spring claim
@@ -152,7 +168,7 @@ run_analysis_worker.py --worker-kind world-comparison
   - 공개 recompare 요청이 만든 숨김 `WORLD_SETTING_COMPARISON` Job만 claim합니다.
   - 연결 후보 하나가 성공해야 Job을 완료하고, 후보 비교 실패는 Job 실패로 보고합니다.
 - `WorkerLeaseHeartbeat`
-  - provider 호출 중 60초마다 현재 Job의 5분 lease를 연장하고, heartbeat 실패를 완료 보고 전에 전파합니다.
+  - provider 호출 중 60초마다 현재 Job의 5분 lease를 연장합니다. 일시적인 408/429/5xx·network 오류는 2초, 4초 간격으로 재시도하고, 최종 실패나 lease conflict에서는 해당 Job Task만 취소해 중복 실행 대신 lease 재회수 경로로 보냅니다.
 - `EpisodeChunkEmbeddingService`
   - `EMBEDDING_GENERATION_ENABLED=true`일 때만 Worker에서 호출합니다. MVP 기본값 `false`에서는 service와 client를 생성하지 않습니다.
   - episode의 저장된 청크 텍스트를 한 번에 임베딩합니다.
@@ -190,8 +206,7 @@ LLM 응답의 JSON 파싱·schema 검증 실패 재시도는 현재 연결되어
 
 ## 로컬 Worker 실행
 
-`AnalysisJobWorker.run_once()`는 분석 작업 하나만 처리하는 함수입니다.
-따라서 로컬에서 Worker를 계속 실행하려면 runner script가 반복 호출을 담당합니다.
+`AnalysisJobWorker.run_once()`는 `--once`에서 claim과 처리 한 번을 묶는 함수입니다. 장기 실행 runner는 빈 슬롯 수만큼만 Job Task를 만들고, 슬롯을 확보한 상태에서 `claim_next()`로 가져온 Job을 `process_claimed()` Task로 즉시 실행합니다.
 
 ```bash
 .venv/bin/python -m scripts.run_analysis_worker
@@ -208,11 +223,16 @@ LLM 응답의 JSON 파싱·schema 검증 실패 재시도는 현재 연결되어
 ```text
 scripts/run_analysis_worker.py
 -> AnalysisJobWorker 생성
--> run_once 반복 호출
--> claim할 job이 없으면 idle sleep
--> job이 있으면 청킹/설정 추출/완료 보고 수행
--> 개별 job 실패는 Spring에 보고한 뒤 로그와 idle sleep을 남기고 다음 claim 계속
+-> 빈 실행 슬롯 확보
+-> claim_next()로 Job 하나 claim
+-> claim 성공 시 process_claimed() 분석 Task를 즉시 실행하고 Task 안에서 Job별 heartbeat 유지
+-> claim할 Job이 없으면 슬롯 반환 후 idle sleep
+-> 개별 Job 실패는 해당 Task에서만 Spring에 보고하고 다른 Job은 계속 실행
 ```
+
+`SIGTERM` 또는 `SIGINT`를 받으면 runner는 신규 claim을 중단하고 `AI_WORKER_SHUTDOWN_GRACE_SECONDS` 동안 실행 중 Job과 heartbeat를 유지합니다. 운영 내부 grace는 180초이고 Compose의 강제 종료 유예는 210초입니다. 내부 grace를 넘긴 Task는 취소하고 heartbeat를 중단해, Spring이 5분 lease 만료 뒤 마지막 checkpoint부터 회수할 수 있게 합니다.
+
+단, 이미 시작된 동기 DB/S3 호출은 Python thread에서 강제로 중단할 수 없습니다. 취소 시 해당 critical section의 완료를 기다리는 동안 heartbeat가 잠시 더 유지될 수 있으므로 180초는 blocking I/O의 절대 timeout이 아닙니다. Compose의 210초 강제 종료가 프로세스의 최종 상한이며, 강제 종료 직전 heartbeat가 성공했다면 재claim은 마지막 5분 lease 만료까지 늦어질 수 있습니다. 운영 부하 테스트에는 응답하지 않는 DB/S3와 강제 종료 시나리오를 포함합니다.
 
 수동 확인 시에는 한 번만 claim을 시도할 수 있습니다.
 

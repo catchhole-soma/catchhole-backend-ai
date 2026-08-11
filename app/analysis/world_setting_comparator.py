@@ -51,10 +51,10 @@ class WorldSettingSubjectResolver:
     ) -> None:
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
-        self.model = model or get_settings().effective_llm_comparison_model
+        self.model = model or get_settings().effective_llm_subject_resolution_model
         self.max_attempts = _resolve_max_attempts(max_attempts)
 
-    def select_subjects(
+    async def select_subjects(
         self,
         candidate: WorkerWorldSettingCandidatePayload,
         subjects: list[WorkerWorldSettingSubject],
@@ -70,7 +70,7 @@ class WorldSettingSubjectResolver:
         if not references:
             return []
 
-        payload = request_validated_model(
+        payload = await request_validated_model(
             client=self.llm_client,
             response_model=WorldSettingSubjectSelection,
             system_prompt=self.prompt_path.read_text(encoding="utf-8"),
@@ -120,7 +120,7 @@ class WorldSettingComparator:
         self.model = model or get_settings().effective_llm_comparison_model
         self.max_attempts = _resolve_max_attempts(max_attempts)
 
-    def compare(
+    async def compare(
         self,
         candidate: WorkerWorldSettingCandidatePayload,
         targets: list[WorkerWorldSettingComparisonTarget],
@@ -138,8 +138,7 @@ class WorldSettingComparator:
                 "extracted_value": candidate.extracted_value,
                 "extracted_values": _source_values(candidate),
                 "evidence_spans": [
-                    evidence.model_dump(mode="json")
-                    for evidence in candidate.evidence_spans
+                    evidence.model_dump(mode="json") for evidence in candidate.evidence_spans
                 ],
             },
             "targets": [
@@ -154,7 +153,7 @@ class WorldSettingComparator:
                 for target_reference in references
             ],
         }
-        decision = request_validated_model(
+        decision = await request_validated_model(
             client=self.llm_client,
             response_model=WorldSettingComparisonDecision,
             system_prompt=self.prompt_path.read_text(encoding="utf-8"),

@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import json
 from pathlib import Path
 
@@ -25,11 +26,13 @@ def main() -> None:
         if args.semantic_judge == "openai"
         else None
     )
-    report = evaluate_predictions(
-        gold,
-        predictions,
-        semantic_judge=semantic_judge,
-        setting_schemas=setting_schemas,
+    report = asyncio.run(
+        evaluate_predictions(
+            gold,
+            predictions,
+            semantic_judge=semantic_judge,
+            setting_schemas=setting_schemas,
+        )
     )
     report["run"] = {
         "analysisModel": args.analysis_model,
