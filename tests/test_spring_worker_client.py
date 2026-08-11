@@ -1,3 +1,4 @@
+import asyncio
 import json
 from uuid import UUID, uuid4
 
@@ -23,10 +24,12 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
     requests: list[httpx.Request] = []
     client = _client(lambda request: _claim_response(request, requests))
 
-    payload = client.claim(
-        allowed_job_types=["SETTING_EXTRACTION"],
-        model_name="gpt-4.1-mini",
-        current_step="원문 청킹",
+    payload = asyncio.run(
+        client.claim(
+            allowed_job_types=["SETTING_EXTRACTION"],
+            model_name="gpt-4.1-mini",
+            current_step="원문 청킹",
+        )
     )
 
     assert payload is not None
@@ -58,7 +61,7 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
 def test_claim_returns_none_when_spring_returns_no_content() -> None:
     client = _client(lambda request: httpx.Response(status_code=204))
 
-    payload = client.claim(allowed_job_types=["SETTING_EXTRACTION"])
+    payload = asyncio.run(client.claim(allowed_job_types=["SETTING_EXTRACTION"]))
 
     assert payload is None
 
@@ -94,11 +97,13 @@ def test_report_progress_calls_spring_progress_api() -> None:
     requests: list[httpx.Request] = []
     client = _client(lambda request: _empty_success_response(request, requests))
 
-    client.report_progress(
-        analysis_job_id=ANALYSIS_JOB_ID,
-        lease_token=LEASE_TOKEN,
-        current_step="설정 추출",
-        episode_status=EpisodeProcessingStatus.ANALYZING,
+    asyncio.run(
+        client.report_progress(
+            analysis_job_id=ANALYSIS_JOB_ID,
+            lease_token=LEASE_TOKEN,
+            current_step="설정 추출",
+            episode_status=EpisodeProcessingStatus.ANALYZING,
+        )
     )
 
     request = requests[0]
@@ -116,12 +121,14 @@ def test_complete_calls_spring_complete_api() -> None:
     requests: list[httpx.Request] = []
     client = _client(lambda request: _empty_success_response(request, requests))
 
-    client.complete(
-        analysis_job_id=ANALYSIS_JOB_ID,
-        lease_token=LEASE_TOKEN,
-        summary_json='{"candidateCount":3}',
-        input_token_count=100,
-        output_token_count=20,
+    asyncio.run(
+        client.complete(
+            analysis_job_id=ANALYSIS_JOB_ID,
+            lease_token=LEASE_TOKEN,
+            summary_json='{"candidateCount":3}',
+            input_token_count=100,
+            output_token_count=20,
+        )
     )
 
     request = requests[0]
@@ -140,10 +147,12 @@ def test_fail_calls_spring_fail_api() -> None:
     requests: list[httpx.Request] = []
     client = _client(lambda request: _empty_success_response(request, requests))
 
-    client.fail(
-        analysis_job_id=ANALYSIS_JOB_ID,
-        lease_token=LEASE_TOKEN,
-        error_message="LLM 응답 오류",
+    asyncio.run(
+        client.fail(
+            analysis_job_id=ANALYSIS_JOB_ID,
+            lease_token=LEASE_TOKEN,
+            error_message="LLM 응답 오류",
+        )
     )
 
     request = requests[0]
@@ -158,18 +167,22 @@ def test_ai_token_reserve_settle_and_release_call_internal_apis() -> None:
     client = _client(lambda request: _empty_success_response(request, requests))
     request_id = uuid4()
 
-    client.reserve_ai_tokens(
-        request_id=request_id,
-        analysis_job_id=ANALYSIS_JOB_ID,
-        purpose="SETTING_EXTRACTION",
-        attempt=1,
-        model_name="gpt-4.1-mini",
-        reserved_tokens=1000,
-        lease_token=LEASE_TOKEN,
-    )
-    client.settle_ai_tokens(request_id, 100, 10, 20, "SUCCESS")
     other_request_id = uuid4()
-    client.release_ai_tokens(other_request_id, "USAGE_UNAVAILABLE")
+
+    async def call_usage_apis() -> None:
+        await client.reserve_ai_tokens(
+            request_id=request_id,
+            analysis_job_id=ANALYSIS_JOB_ID,
+            purpose="SETTING_EXTRACTION",
+            attempt=1,
+            model_name="gpt-4.1-mini",
+            reserved_tokens=1000,
+            lease_token=LEASE_TOKEN,
+        )
+        await client.settle_ai_tokens(request_id, 100, 10, 20, "SUCCESS")
+        await client.release_ai_tokens(other_request_id, "USAGE_UNAVAILABLE")
+
+    asyncio.run(call_usage_apis())
 
     assert [request.url.path for request in requests] == [
         "/api/internal/v1/ai-token-usages/reserve",
@@ -206,7 +219,7 @@ def test_ai_token_settlement_retries_temporary_spring_failure() -> None:
     client = _client(handler)
     request_id = uuid4()
 
-    client.settle_ai_tokens(request_id, 100, 10, 20, "SUCCESS")
+    asyncio.run(client.settle_ai_tokens(request_id, 100, 10, 20, "SUCCESS"))
 
     assert len(requests) == 3
     assert {request.url.path for request in requests} == {
@@ -225,14 +238,16 @@ def test_ai_token_reservation_retries_with_same_idempotency_key() -> None:
     client = _client(handler)
     request_id = uuid4()
 
-    client.reserve_ai_tokens(
-        request_id=request_id,
-        analysis_job_id=ANALYSIS_JOB_ID,
-        purpose="SETTING_EXTRACTION",
-        attempt=1,
-        model_name="gpt-5.6-terra",
-        reserved_tokens=1000,
-        lease_token=LEASE_TOKEN,
+    asyncio.run(
+        client.reserve_ai_tokens(
+            request_id=request_id,
+            analysis_job_id=ANALYSIS_JOB_ID,
+            purpose="SETTING_EXTRACTION",
+            attempt=1,
+            model_name="gpt-5.6-terra",
+            reserved_tokens=1000,
+            lease_token=LEASE_TOKEN,
+        )
     )
 
     assert len(requests) == 3
@@ -253,7 +268,7 @@ def test_ai_token_release_retries_temporary_spring_failure() -> None:
     client = _client(handler)
     request_id = uuid4()
 
-    client.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
+    asyncio.run(client.release_ai_tokens(request_id, "USAGE_UNAVAILABLE"))
 
     assert len(requests) == 3
     assert {request.url.path for request in requests} == {
@@ -285,28 +300,36 @@ def test_world_setting_worker_calls_use_lease_and_parse_structured_context() -> 
         return _empty_success_response(request, [])
 
     client = _client(handler)
-    candidate = client.publish_world_setting_candidates(
-        ANALYSIS_JOB_ID,
-        LEASE_TOKEN,
-        [
-            {
-                "category": "RACE",
-                "subjectName": "바바리안",
-                "scopeName": "1층",
-                "settingName": "서식지",
-                "extractedValue": "혹한 지역",
-                "evidenceSpans": [{"quote": "바바리안은 혹한 지역에 산다."}],
-                "extractionConfidence": 0.95,
-            }
-        ],
-    )[0]
-    claimed = client.claim_next_world_setting_comparison(ANALYSIS_JOB_ID, LEASE_TOKEN)
-    context = client.get_world_setting_comparison_context(
-        ANALYSIS_JOB_ID,
-        candidate.candidate_id,
-        LEASE_TOKEN,
-        [],
-    )
+    async def call_world_setting_apis():
+        candidates = await client.publish_world_setting_candidates(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+            [
+                {
+                    "category": "RACE",
+                    "subjectName": "바바리안",
+                    "scopeName": "1층",
+                    "settingName": "서식지",
+                    "extractedValue": "혹한 지역",
+                    "evidenceSpans": [{"quote": "바바리안은 혹한 지역에 산다."}],
+                    "extractionConfidence": 0.95,
+                }
+            ],
+        )
+        candidate = candidates[0]
+        claimed = await client.claim_next_world_setting_comparison(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+        )
+        context = await client.get_world_setting_comparison_context(
+            ANALYSIS_JOB_ID,
+            candidate.candidate_id,
+            LEASE_TOKEN,
+            [],
+        )
+        return candidate, claimed, context
+
+    candidate, claimed, context = asyncio.run(call_world_setting_apis())
 
     assert claimed is not None
     assert claimed.scope_name == "1층"
@@ -336,7 +359,7 @@ def _client(handler) -> SpringWorkerClient:
     return SpringWorkerClient(
         base_url="http://spring.local",
         internal_api_key="test-api-key",
-        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
 

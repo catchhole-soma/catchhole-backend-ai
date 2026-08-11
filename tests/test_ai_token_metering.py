@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 import httpx
@@ -50,7 +51,7 @@ def test_text_generation_reserves_and_settles_actual_usage() -> None:
         lease_token=LEASE_TOKEN,
     )
 
-    response = client.create_text_response("규칙", "원고", max_output_tokens=100)
+    response = asyncio.run(client.create_text_response("규칙", "원고", max_output_tokens=100))
 
     assert response.text == "{}"
     assert len(ledger.reservations) == 1
@@ -74,7 +75,7 @@ def test_text_generation_releases_reservation_when_usage_is_unavailable() -> Non
     )
 
     with pytest.raises(TimeoutError, match="provider timeout"):
-        client.create_text_response("규칙", "문맥")
+        asyncio.run(client.create_text_response("규칙", "문맥"))
 
     request_id = ledger.reservations[0]["request_id"]
     assert ledger.settlements == []
@@ -89,10 +90,11 @@ def test_release_failure_does_not_mask_original_provider_error() -> None:
         analysis_job_id=ANALYSIS_JOB_ID,
         model_name="text-embedding-3-small",
         lease_token=LEASE_TOKEN,
+        max_retries=0,
     )
 
     with pytest.raises(RecoverableEmbeddingProviderError, match="temporary provider error"):
-        client.create_embeddings(["첫 청크"])
+        asyncio.run(client.create_embeddings(["첫 청크"]))
 
 
 def test_embedding_request_is_metered_separately() -> None:
@@ -105,7 +107,7 @@ def test_embedding_request_is_metered_separately() -> None:
         lease_token=LEASE_TOKEN,
     )
 
-    response = client.create_embeddings(["첫 청크", "두 번째 청크"])
+    response = asyncio.run(client.create_embeddings(["첫 청크", "두 번째 청크"]))
 
     assert response.input_token_count == 42
     request_id = ledger.reservations[0]["request_id"]
@@ -124,7 +126,7 @@ def test_success_without_provider_usage_releases_reservation() -> None:
         lease_token=LEASE_TOKEN,
     )
 
-    client.create_text_response("규칙", "원고")
+    asyncio.run(client.create_text_response("규칙", "원고"))
 
     request_id = ledger.reservations[0]["request_id"]
     assert ledger.settlements == []
@@ -150,7 +152,7 @@ def test_text_validation_error_settles_reported_usage() -> None:
     )
 
     with pytest.raises(LlmResponseValidationError, match="invalid output structure"):
-        client.create_text_response("규칙", "원고")
+        asyncio.run(client.create_text_response("규칙", "원고"))
 
     request_id = ledger.reservations[0]["request_id"]
     assert ledger.settlements == [(request_id, 120, 20, 30, "FAILURE")]
@@ -174,10 +176,11 @@ def test_wrapped_embedding_http_error_settles_reported_usage() -> None:
         analysis_job_id=ANALYSIS_JOB_ID,
         model_name="text-embedding-3-small",
         lease_token=LEASE_TOKEN,
+        max_retries=0,
     )
 
     with pytest.raises(RecoverableEmbeddingProviderError):
-        client.create_embeddings(["첫 청크"])
+        asyncio.run(client.create_embeddings(["첫 청크"]))
 
     request_id = ledger.reservations[0]["request_id"]
     assert ledger.settlements == [(request_id, 42, 0, 0, "FAILURE")]
@@ -197,11 +200,361 @@ def test_embedding_validation_error_settles_reported_usage() -> None:
     )
 
     with pytest.raises(EmbeddingResponseValidationError, match="invalid dimensions"):
-        client.create_embeddings(["첫 청크"])
+        asyncio.run(client.create_embeddings(["첫 청크"]))
 
     request_id = ledger.reservations[0]["request_id"]
     assert ledger.settlements == [(request_id, 42, 0, 0, "FAILURE")]
     assert ledger.releases == []
+
+
+def test_text_generation_retries_transient_provider_errors_with_exponential_backoff() -> None:
+    ledger = FakeLedger()
+    delegate = SequencedTextClient(
+        [
+            _http_status_error(503),
+            _http_status_error(500),
+            httpx.ReadTimeout("provider timeout", request=_provider_request()),
+            LlmTextResponse(text="{}", input_token_count=10, output_token_count=5),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SETTING_EXTRACTION",
+        default_model="gpt-4.1-mini",
+        lease_token=LEASE_TOKEN,
+        max_retries=3,
+        retry_base_seconds=2.0,
+        sleeper=record_sleep,
+        random_source=lambda: 0.0,
+    )
+
+    response = asyncio.run(client.create_text_response("규칙", "원고"))
+
+    assert response.text == "{}"
+    assert sleeps == [2.0, 4.0, 8.0]
+    assert [reservation["attempt"] for reservation in ledger.reservations] == [1, 2, 3, 4]
+    assert len({reservation["request_id"] for reservation in ledger.reservations}) == 4
+    assert len(ledger.releases) == 3
+    assert len(ledger.settlements) == 1
+
+
+def test_text_generation_uses_retry_after_before_local_backoff() -> None:
+    ledger = FakeLedger()
+    delegate = SequencedTextClient(
+        [
+            _http_status_error(
+                429,
+                error_code="rate_limit_exceeded",
+                headers={"Retry-After": "7.5"},
+            ),
+            LlmTextResponse(text="{}", input_token_count=10, output_token_count=5),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SETTING_EXTRACTION",
+        default_model="gpt-4.1-mini",
+        lease_token=LEASE_TOKEN,
+        sleeper=record_sleep,
+        random_source=lambda: 1.0,
+    )
+
+    asyncio.run(client.create_text_response("규칙", "원고"))
+
+    assert sleeps == [7.5]
+    assert delegate.call_count == 2
+
+
+def test_text_generation_retries_request_timeout_response() -> None:
+    ledger = FakeLedger()
+    delegate = SequencedTextClient(
+        [
+            _http_status_error(408),
+            LlmTextResponse(text="{}", input_token_count=10, output_token_count=5),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SETTING_EXTRACTION",
+        default_model="gpt-4.1-mini",
+        lease_token=LEASE_TOKEN,
+        max_retries=1,
+        sleeper=record_sleep,
+        random_source=lambda: 0.0,
+    )
+
+    asyncio.run(client.create_text_response("규칙", "원고"))
+
+    assert delegate.call_count == 2
+    assert sleeps == [2.0]
+
+
+@pytest.mark.parametrize("status_code", [408, 409])
+def test_embedding_retries_wrapped_recoverable_http_response(status_code: int) -> None:
+    http_error = _http_status_error(status_code)
+    wrapped_error = RecoverableEmbeddingProviderError("temporary provider error")
+    wrapped_error.__cause__ = http_error
+    delegate = SequencedEmbeddingClient(
+        [
+            wrapped_error,
+            EmbeddingBatchResponse(
+                embeddings=[[0.1]],
+                model="text-embedding-3-small",
+                input_token_count=1,
+            ),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    client = MeteredEmbeddingClient(
+        delegate=delegate,
+        ledger=FakeLedger(),
+        analysis_job_id=ANALYSIS_JOB_ID,
+        model_name="text-embedding-3-small",
+        lease_token=LEASE_TOKEN,
+        max_retries=1,
+        sleeper=record_sleep,
+        random_source=lambda: 0.0,
+    )
+
+    asyncio.run(client.create_embeddings(["첫 청크"]))
+
+    assert delegate.call_count == 2
+    assert sleeps == [2.0]
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    ["insufficient_quota", "billing_hard_limit_reached", "billing_not_active"],
+)
+def test_text_generation_does_not_retry_non_transient_429(error_code: str) -> None:
+    ledger = FakeLedger()
+    provider_error = _http_status_error(429, error_code=error_code)
+    delegate = SequencedTextClient([provider_error])
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SETTING_EXTRACTION",
+        default_model="gpt-4.1-mini",
+        lease_token=LEASE_TOKEN,
+        sleeper=record_sleep,
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(client.create_text_response("규칙", "원고"))
+
+    assert delegate.call_count == 1
+    assert sleeps == []
+    assert len(ledger.releases) == 1
+
+
+def test_text_generation_cancellation_releases_reservation_and_semaphore() -> None:
+    async def scenario() -> tuple[FakeLedger, asyncio.Semaphore]:
+        ledger = FakeLedger()
+        semaphore = asyncio.Semaphore(1)
+        provider_started = asyncio.Event()
+
+        class BlockingTextClient:
+            async def create_text_response(self, **kwargs) -> LlmTextResponse:
+                provider_started.set()
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")
+
+        client = MeteredTextGenerationClient(
+            delegate=BlockingTextClient(),
+            ledger=ledger,
+            analysis_job_id=ANALYSIS_JOB_ID,
+            purpose="SETTING_EXTRACTION",
+            default_model="gpt-4.1-mini",
+            lease_token=LEASE_TOKEN,
+            request_semaphore=semaphore,
+        )
+        task = asyncio.create_task(client.create_text_response("규칙", "원고"))
+        await provider_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        replacement = MeteredTextGenerationClient(
+            delegate=FakeTextClient(
+                response=LlmTextResponse(text="{}", input_token_count=1, output_token_count=1)
+            ),
+            ledger=ledger,
+            analysis_job_id=ANALYSIS_JOB_ID,
+            purpose="SETTING_EXTRACTION",
+            default_model="gpt-4.1-mini",
+            lease_token=LEASE_TOKEN,
+            request_semaphore=semaphore,
+        )
+        await asyncio.wait_for(replacement.create_text_response("규칙", "다음 원고"), timeout=1)
+        return ledger, semaphore
+
+    ledger, semaphore = asyncio.run(scenario())
+
+    assert len(ledger.releases) == 1
+    assert semaphore.locked() is False
+
+
+def test_text_generation_cancellation_during_reserve_releases_after_reserve_finishes() -> None:
+    async def scenario() -> tuple[FakeLedger, SequencedTextClient, asyncio.Semaphore]:
+        class BlockingReserveLedger(FakeLedger):
+            def __init__(self) -> None:
+                super().__init__()
+                self.reserve_started = asyncio.Event()
+                self.allow_reserve_to_finish = asyncio.Event()
+                self.release_finished = asyncio.Event()
+
+            async def reserve_ai_tokens(self, **kwargs) -> None:
+                self.reservations.append(kwargs)
+                self.reserve_started.set()
+                await self.allow_reserve_to_finish.wait()
+
+            async def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
+                await super().release_ai_tokens(request_id, outcome)
+                self.release_finished.set()
+
+        ledger = BlockingReserveLedger()
+        semaphore = asyncio.Semaphore(1)
+        delegate = SequencedTextClient(
+            [LlmTextResponse(text="{}", input_token_count=1, output_token_count=1)]
+        )
+        client = MeteredTextGenerationClient(
+            delegate=delegate,
+            ledger=ledger,
+            analysis_job_id=ANALYSIS_JOB_ID,
+            purpose="SETTING_EXTRACTION",
+            default_model="gpt-4.1-mini",
+            lease_token=LEASE_TOKEN,
+            request_semaphore=semaphore,
+        )
+
+        task = asyncio.create_task(client.create_text_response("규칙", "원고"))
+        await ledger.reserve_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=0.1)
+
+        assert semaphore.locked() is False
+        assert ledger.releases == []
+        ledger.allow_reserve_to_finish.set()
+        await asyncio.wait_for(ledger.release_finished.wait(), timeout=1)
+        return ledger, delegate, semaphore
+
+    ledger, delegate, semaphore = asyncio.run(scenario())
+
+    assert len(ledger.reservations) == 1
+    assert len(ledger.releases) == 1
+    assert delegate.call_count == 0
+    assert semaphore.locked() is False
+
+
+def test_ledger_call_cancellation_does_not_wait_for_ledger_completion() -> None:
+    async def scenario() -> None:
+        started = asyncio.Event()
+        allow_completion = asyncio.Event()
+        completed = asyncio.Event()
+
+        async def blocking_ledger_call() -> None:
+            started.set()
+            await allow_completion.wait()
+            completed.set()
+
+        owner = asyncio.create_task(
+            metering._complete_ledger_call_on_cancellation(blocking_ledger_call())
+        )
+        await started.wait()
+        owner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(owner, timeout=0.1)
+
+        assert completed.is_set() is False
+        allow_completion.set()
+        await asyncio.wait_for(completed.wait(), timeout=1)
+
+    asyncio.run(scenario())
+
+
+def test_shared_request_semaphore_limits_parallel_provider_calls_across_jobs() -> None:
+    async def scenario() -> tuple[int, FakeLedger]:
+        ledger = FakeLedger()
+        semaphore = asyncio.Semaphore(3)
+        three_calls_active = asyncio.Event()
+        release_calls = asyncio.Event()
+        active_calls = 0
+        max_active_calls = 0
+
+        class TrackingTextClient:
+            async def create_text_response(self, **kwargs) -> LlmTextResponse:
+                nonlocal active_calls, max_active_calls
+                active_calls += 1
+                max_active_calls = max(max_active_calls, active_calls)
+                if active_calls == 3:
+                    three_calls_active.set()
+                try:
+                    await release_calls.wait()
+                finally:
+                    active_calls -= 1
+                return LlmTextResponse(text="{}", input_token_count=1, output_token_count=1)
+
+        delegate = TrackingTextClient()
+        clients = [
+            MeteredTextGenerationClient(
+                delegate=delegate,
+                ledger=ledger,
+                analysis_job_id=UUID(int=index + 10),
+                purpose="SETTING_EXTRACTION",
+                default_model="gpt-4.1-mini",
+                lease_token=LEASE_TOKEN,
+                request_semaphore=semaphore,
+            )
+            for index in range(8)
+        ]
+        tasks = [
+            asyncio.create_task(client.create_text_response("규칙", f"원고 {index}"))
+            for index, client in enumerate(clients)
+        ]
+        await asyncio.wait_for(three_calls_active.wait(), timeout=1)
+        assert max_active_calls == 3
+        assert sum(task.done() for task in tasks) == 0
+        release_calls.set()
+        await asyncio.gather(*tasks)
+        return max_active_calls, ledger
+
+    max_active_calls, ledger = asyncio.run(scenario())
+
+    assert max_active_calls == 3
+    assert len(ledger.reservations) == 8
+    assert len(ledger.settlements) == 8
 
 
 def test_known_model_reservation_uses_tokenizer_instead_of_utf8_bytes() -> None:
@@ -238,10 +591,10 @@ class FakeLedger:
         self.settlements: list[tuple] = []
         self.releases: list[tuple] = []
 
-    def reserve_ai_tokens(self, **kwargs) -> None:
+    async def reserve_ai_tokens(self, **kwargs) -> None:
         self.reservations.append(kwargs)
 
-    def settle_ai_tokens(
+    async def settle_ai_tokens(
         self,
         request_id,
         input_tokens,
@@ -253,12 +606,12 @@ class FakeLedger:
             (request_id, input_tokens, cached_input_tokens, output_tokens, outcome)
         )
 
-    def release_ai_tokens(self, request_id, outcome) -> None:
+    async def release_ai_tokens(self, request_id, outcome) -> None:
         self.releases.append((request_id, outcome))
 
 
 class FailingReleaseLedger(FakeLedger):
-    def release_ai_tokens(self, request_id, outcome) -> None:
+    async def release_ai_tokens(self, request_id, outcome) -> None:
         raise httpx.ConnectError("spring unavailable")
 
 
@@ -271,17 +624,30 @@ class FakeTextClient:
         self.response = response
         self.error = error
 
-    def create_text_response(self, **kwargs) -> LlmTextResponse:
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
         if self.error is not None:
             raise self.error
         assert self.response is not None
         return self.response
 
 
+class SequencedTextClient:
+    def __init__(self, results: list[LlmTextResponse | Exception]) -> None:
+        self.results = results
+        self.call_count = 0
+
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
+        result = self.results[self.call_count]
+        self.call_count += 1
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
 class FakeEmbeddingClient:
     version = "v1"
 
-    def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
+    async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
         return EmbeddingBatchResponse(
             embeddings=[[0.1], [0.2]],
             model="text-embedding-3-small",
@@ -295,10 +661,44 @@ class FailingEmbeddingClient:
     def __init__(self, error: Exception) -> None:
         self.error = error
 
-    def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
+    async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
         raise self.error
+
+
+class SequencedEmbeddingClient:
+    version = "v1"
+
+    def __init__(self, results: list[EmbeddingBatchResponse | Exception]) -> None:
+        self.results = results
+        self.call_count = 0
+
+    async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
+        result = self.results[self.call_count]
+        self.call_count += 1
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class FakeEncoding:
     def encode(self, text: str, disallowed_special=()) -> list[str]:
         return list(text)
+
+
+def _provider_request() -> httpx.Request:
+    return httpx.Request("POST", "https://api.openai.test/v1/responses")
+
+
+def _http_status_error(
+    status_code: int,
+    error_code: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> httpx.HTTPStatusError:
+    request = _provider_request()
+    response = httpx.Response(
+        status_code,
+        request=request,
+        headers=headers,
+        json={"error": {"code": error_code}} if error_code is not None else {},
+    )
+    return httpx.HTTPStatusError("provider failed", request=request, response=response)

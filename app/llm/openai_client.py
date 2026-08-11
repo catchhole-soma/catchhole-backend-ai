@@ -17,7 +17,7 @@ class OpenAIResponsesClient:
         model: str, # 기본 모델명
         responses_api_url: str, # OpenAI Responses API 주소
         reasoning_effort: str | None = None, # GPT-5.6 추론 강도
-        http_client: httpx.Client | None = None, #실제 HTTP 요청 도구
+        http_client: httpx.AsyncClient | None = None, #실제 HTTP 요청 도구
     ) -> None:
         self.api_key = api_key
         # 기본 모델명, 호출할 때 model을 따로 넘기면 그 값이 우선
@@ -26,7 +26,7 @@ class OpenAIResponsesClient:
         self.responses_api_url = responses_api_url
         self.reasoning_effort = reasoning_effort
         # 실제 HTTP 요청을 보내는 도구, 테스트에서는 MockTransport가 들어간 client를 주입
-        self.http_client = http_client or httpx.Client(timeout=120)
+        self.http_client = http_client or httpx.AsyncClient(timeout=120)
 
     # .env에서 읽은 설정값으로 client를 만드는 생성 보조 함수
     @classmethod
@@ -39,7 +39,7 @@ class OpenAIResponsesClient:
             reasoning_effort=settings.llm_reasoning_effort,
         )
 
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -78,7 +78,7 @@ class OpenAIResponsesClient:
         if effective_reasoning_effort is not None:
             request_body["reasoning"] = {"effort": effective_reasoning_effort}
 
-        response = self.http_client.post(
+        response = await self.http_client.post(
             self.responses_api_url,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
@@ -132,6 +132,9 @@ class OpenAIResponsesClient:
             output_token_count=output_token_count,
             raw_response=payload,
         )
+
+    async def aclose(self) -> None:
+        await self.http_client.aclose()
 
     def _extract_output_text(self, payload: dict) -> str:
         # Responses API가 output_text를 바로 주는 경우 먼저 사용

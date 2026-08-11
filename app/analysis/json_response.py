@@ -41,7 +41,7 @@ def compact_error_message(exc: Exception | None, max_length: int = 500) -> str:
     return (str(exc) or exc.__class__.__name__)[:max_length]
 
 
-def request_validated_model(
+async def request_validated_model(
     client: TextGenerationClient,
     response_model: type[ModelT],
     system_prompt: str,
@@ -59,7 +59,7 @@ def request_validated_model(
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            response = client.create_text_response(
+            response = await client.create_text_response(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 model=model,

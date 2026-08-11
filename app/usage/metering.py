@@ -1,14 +1,22 @@
-from collections.abc import Sequence
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from functools import lru_cache
 import logging
 import math
+import random
 from typing import Protocol, TypeVar
 from uuid import UUID, uuid4
 
 import httpx
 import tiktoken
 
-from app.embeddings.exceptions import EmbeddingResponseValidationError
+from app.embeddings.exceptions import (
+    EmbeddingResponseValidationError,
+    RecoverableEmbeddingProviderError,
+)
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.exceptions import LlmResponseValidationError
 from app.llm.protocols import TextGenerationClient
@@ -16,11 +24,24 @@ from app.llm.responses import LlmTextResponse
 
 logger = logging.getLogger(__name__)
 TException = TypeVar("TException", bound=BaseException)
+AsyncSleeper = Callable[[float], Awaitable[None]]
+RandomSource = Callable[[], float]
+_detached_ledger_tasks: set[asyncio.Task[None]] = set()
+
+NON_RETRYABLE_429_CODES = frozenset(
+    {
+        "billing_hard_limit_reached",
+        "billing_not_active",
+        "insufficient_quota",
+        "quota_exceeded",
+        "usage_limit_reached",
+    }
+)
 
 
 # 실제 원장을 소유한 Spring 내부 API에 기대하는 예약·정산·해제 규격
 class AiTokenLedgerApi(Protocol):
-    def reserve_ai_tokens(
+    async def reserve_ai_tokens(
         self,
         request_id: UUID,
         analysis_job_id: UUID,
@@ -31,7 +52,7 @@ class AiTokenLedgerApi(Protocol):
         lease_token: UUID,
     ) -> None: ...
 
-    def settle_ai_tokens(
+    async def settle_ai_tokens(
         self,
         request_id: UUID,
         input_tokens: int,
@@ -40,13 +61,13 @@ class AiTokenLedgerApi(Protocol):
         outcome: str,
     ) -> None: ...
 
-    def release_ai_tokens(self, request_id: UUID, outcome: str) -> None: ...
+    async def release_ai_tokens(self, request_id: UUID, outcome: str) -> None: ...
 
 
 class EmbeddingApi(Protocol):
     version: str
 
-    def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse: ...
+    async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse: ...
 
 
 class MeteredTextGenerationClient:
@@ -60,16 +81,29 @@ class MeteredTextGenerationClient:
         purpose: str,
         default_model: str,
         lease_token: UUID,
+        request_semaphore: asyncio.Semaphore | None = None,
+        max_retries: int = 3,
+        retry_base_seconds: float = 2.0,
+        sleeper: AsyncSleeper = asyncio.sleep,
+        random_source: RandomSource = random.random,
+        jitter_max_seconds: float = 1.0,
     ) -> None:
+        _validate_retry_configuration(max_retries, retry_base_seconds, jitter_max_seconds)
         self.delegate = delegate
         self.ledger = ledger
         self.analysis_job_id = analysis_job_id
         self.purpose = purpose
         self.default_model = default_model
         self.lease_token = lease_token
+        self.request_semaphore = request_semaphore
+        self.max_retries = max_retries
+        self.retry_base_seconds = retry_base_seconds
+        self.sleeper = sleeper
+        self.random_source = random_source
+        self.jitter_max_seconds = jitter_max_seconds
         self._attempt = 0
 
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -77,53 +111,65 @@ class MeteredTextGenerationClient:
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
     ) -> LlmTextResponse:
-        # attempt는 같은 job·purpose 안에서 발생한 실제 provider 호출 순서를 나타낸다.
-        self._attempt += 1
-        # 각 provider 호출마다 고유 ID를 발급해 Spring의 멱등 예약·정산 기준으로 사용한다.
-        request_id = uuid4()
         effective_model = model or self.default_model
-        # 실제 사용량은 호출 후에만 알 수 있으므로 호출 전에는 보수적인 최대량을 예약한다.
         reserved_tokens = _estimate_text_token_upper_bound(
             system_prompt,
             user_prompt,
             effective_model,
             max_output_tokens,
         )
-        self.ledger.reserve_ai_tokens(
-            request_id=request_id,
-            analysis_job_id=self.analysis_job_id,
-            purpose=self.purpose,
-            attempt=self._attempt,
-            model_name=effective_model,
-            reserved_tokens=reserved_tokens,
-            lease_token=self.lease_token,
-        )
-        try:
-            response = self.delegate.create_text_response(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                model=model,
-                max_output_tokens=max_output_tokens,
-                prompt_cache_key=prompt_cache_key,
-            )
-        except Exception as exc:
-            # 오류 응답에도 usage가 있으면 실제량을 보존하고, 없으면 추측하지 않고 예약을 해제한다.
-            usage = _usage_from_text_error(exc)
-            _finalize_failed_provider_request(self.ledger, request_id, usage)
-            raise
+        for retry_index in range(self.max_retries + 1):
+            async with _optional_semaphore(self.request_semaphore):
+                self._attempt += 1
+                request_id = uuid4()
+                await _reserve_tokens_cancellation_safe(
+                    ledger=self.ledger,
+                    request_id=request_id,
+                    analysis_job_id=self.analysis_job_id,
+                    purpose=self.purpose,
+                    attempt=self._attempt,
+                    model_name=effective_model,
+                    reserved_tokens=reserved_tokens,
+                    lease_token=self.lease_token,
+                )
+                try:
+                    response = await self.delegate.create_text_response(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        model=model,
+                        max_output_tokens=max_output_tokens,
+                        prompt_cache_key=prompt_cache_key,
+                    )
+                except asyncio.CancelledError:
+                    _detach_failed_provider_finalization(self.ledger, request_id)
+                    raise
+                except Exception as exc:
+                    usage = _usage_from_text_error(exc)
+                    await _finalize_failed_provider_request(
+                        self.ledger,
+                        request_id,
+                        usage,
+                    )
+                    if retry_index >= self.max_retries or not _is_retryable_provider_error(exc):
+                        raise
+                    retry_delay = _provider_retry_delay(
+                        exc=exc,
+                        retry_index=retry_index,
+                        retry_base_seconds=self.retry_base_seconds,
+                        random_source=self.random_source,
+                        jitter_max_seconds=self.jitter_max_seconds,
+                    )
+                else:
+                    await _finalize_successful_text_request(
+                        self.ledger,
+                        request_id,
+                        response,
+                    )
+                    return response
 
-        # 성공 응답이라도 usage가 누락되면 실제량을 임의 계산하지 않고 예약을 해제한다.
-        if response.input_token_count is None or response.output_token_count is None:
-            self.ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
-        else:
-            self.ledger.settle_ai_tokens(
-                request_id=request_id,
-                input_tokens=response.input_token_count,
-                cached_input_tokens=response.cached_input_token_count or 0,
-                output_tokens=response.output_token_count,
-                outcome="SUCCESS",
-            )
-        return response
+            await self.sleeper(retry_delay)
+
+        raise AssertionError("Provider retry loop terminated unexpectedly.")
 
 
 class MeteredEmbeddingClient:
@@ -136,47 +182,297 @@ class MeteredEmbeddingClient:
         analysis_job_id: UUID,
         model_name: str,
         lease_token: UUID,
+        request_semaphore: asyncio.Semaphore | None = None,
+        max_retries: int = 3,
+        retry_base_seconds: float = 2.0,
+        sleeper: AsyncSleeper = asyncio.sleep,
+        random_source: RandomSource = random.random,
+        jitter_max_seconds: float = 1.0,
     ) -> None:
+        _validate_retry_configuration(max_retries, retry_base_seconds, jitter_max_seconds)
         self.delegate = delegate
         self.ledger = ledger
         self.analysis_job_id = analysis_job_id
         self.model_name = model_name
         self.lease_token = lease_token
+        self.request_semaphore = request_semaphore
+        self.max_retries = max_retries
+        self.retry_base_seconds = retry_base_seconds
+        self.sleeper = sleeper
+        self.random_source = random_source
+        self.jitter_max_seconds = jitter_max_seconds
         self.version = delegate.version
         self._attempt = 0
 
-    def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
-        # 임베딩 batch 한 번을 원장의 요청 한 건으로 기록한다.
-        self._attempt += 1
-        request_id = uuid4()
-        self.ledger.reserve_ai_tokens(
-            request_id=request_id,
-            analysis_job_id=self.analysis_job_id,
-            purpose="CHUNK_EMBEDDING",
-            attempt=self._attempt,
-            model_name=self.model_name,
-            reserved_tokens=_estimate_embedding_token_upper_bound(inputs),
-            lease_token=self.lease_token,
-        )
-        try:
-            response = self.delegate.create_embeddings(inputs)
-        except Exception as exc:
-            # 실패 응답의 usage 유무에 따라 LLM 호출과 동일한 정산 정책을 적용한다.
-            usage = _usage_from_embedding_error(exc)
-            _finalize_failed_provider_request(self.ledger, request_id, usage)
-            raise
+    async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
+        reserved_tokens = _estimate_embedding_token_upper_bound(inputs)
+        for retry_index in range(self.max_retries + 1):
+            async with _optional_semaphore(self.request_semaphore):
+                self._attempt += 1
+                request_id = uuid4()
+                await _reserve_tokens_cancellation_safe(
+                    ledger=self.ledger,
+                    request_id=request_id,
+                    analysis_job_id=self.analysis_job_id,
+                    purpose="CHUNK_EMBEDDING",
+                    attempt=self._attempt,
+                    model_name=self.model_name,
+                    reserved_tokens=reserved_tokens,
+                    lease_token=self.lease_token,
+                )
+                try:
+                    response = await self.delegate.create_embeddings(inputs)
+                except asyncio.CancelledError:
+                    _detach_failed_provider_finalization(self.ledger, request_id)
+                    raise
+                except Exception as exc:
+                    usage = _usage_from_embedding_error(exc)
+                    await _finalize_failed_provider_request(
+                        self.ledger,
+                        request_id,
+                        usage,
+                    )
+                    if retry_index >= self.max_retries or not _is_retryable_provider_error(exc):
+                        raise
+                    retry_delay = _provider_retry_delay(
+                        exc=exc,
+                        retry_index=retry_index,
+                        retry_base_seconds=self.retry_base_seconds,
+                        random_source=self.random_source,
+                        jitter_max_seconds=self.jitter_max_seconds,
+                    )
+                else:
+                    await _finalize_successful_embedding_request(
+                        self.ledger,
+                        request_id,
+                        response,
+                    )
+                    return response
 
-        if response.input_token_count is None:
-            self.ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
-        else:
-            self.ledger.settle_ai_tokens(
-                request_id=request_id,
-                input_tokens=response.input_token_count,
-                cached_input_tokens=0,
-                output_tokens=0,
-                outcome="SUCCESS",
-            )
-        return response
+            await self.sleeper(retry_delay)
+
+        raise AssertionError("Provider retry loop terminated unexpectedly.")
+
+
+@asynccontextmanager
+async def _optional_semaphore(
+    semaphore: asyncio.Semaphore | None,
+) -> AsyncIterator[None]:
+    if semaphore is None:
+        yield
+        return
+    async with semaphore:
+        yield
+
+
+def _validate_retry_configuration(
+    max_retries: int,
+    retry_base_seconds: float,
+    jitter_max_seconds: float,
+) -> None:
+    if max_retries < 0:
+        raise ValueError("max_retries must be at least zero.")
+    if retry_base_seconds < 0:
+        raise ValueError("retry_base_seconds must be at least zero.")
+    if jitter_max_seconds < 0:
+        raise ValueError("jitter_max_seconds must be at least zero.")
+
+
+async def _reserve_tokens_cancellation_safe(
+    ledger: AiTokenLedgerApi,
+    request_id: UUID,
+    analysis_job_id: UUID,
+    purpose: str,
+    attempt: int,
+    model_name: str,
+    reserved_tokens: int,
+    lease_token: UUID,
+) -> None:
+    """Reserve tokens without delaying owning Job cancellation."""
+
+    reservation_task = asyncio.create_task(
+        ledger.reserve_ai_tokens(
+            request_id=request_id,
+            analysis_job_id=analysis_job_id,
+            purpose=purpose,
+            attempt=attempt,
+            model_name=model_name,
+            reserved_tokens=reserved_tokens,
+            lease_token=lease_token,
+        )
+    )
+    try:
+        await asyncio.shield(reservation_task)
+    except asyncio.CancelledError:
+        cleanup_task = asyncio.create_task(
+            _cleanup_cancelled_reservation(ledger, reservation_task, request_id)
+        )
+        _detach_ledger_task(
+            cleanup_task,
+            f"AI token reservation cleanup failed. request_id={request_id}",
+        )
+        raise
+
+
+async def _complete_ledger_call_on_cancellation(awaitable: Awaitable[None]) -> None:
+    """Observe ledger completion without delaying owning Job cancellation."""
+
+    ledger_task = asyncio.create_task(awaitable)
+    try:
+        await asyncio.shield(ledger_task)
+    except asyncio.CancelledError:
+        _detach_ledger_task(ledger_task, "Detached AI token ledger call failed.")
+        raise
+
+
+async def _cleanup_cancelled_reservation(
+    ledger: AiTokenLedgerApi,
+    reservation_task: asyncio.Task[None],
+    request_id: UUID,
+) -> None:
+    await reservation_task
+    await _finalize_failed_provider_request(ledger, request_id, usage=None)
+
+
+def _detach_ledger_task(task: asyncio.Task[None], failure_message: str) -> None:
+    _detached_ledger_tasks.add(task)
+
+    def consume_result(completed: asyncio.Task[None]) -> None:
+        _detached_ledger_tasks.discard(completed)
+        if completed.cancelled():
+            return
+        try:
+            completed.result()
+        except Exception:
+            logger.exception(failure_message)
+
+    task.add_done_callback(consume_result)
+
+
+def _detach_failed_provider_finalization(
+    ledger: AiTokenLedgerApi,
+    request_id: UUID,
+) -> None:
+    cleanup_task = asyncio.create_task(
+        _finalize_failed_provider_request(ledger, request_id, usage=None)
+    )
+    _detach_ledger_task(
+        cleanup_task,
+        f"Cancelled provider request cleanup failed. request_id={request_id}",
+    )
+
+
+async def _finalize_successful_text_request(
+    ledger: AiTokenLedgerApi,
+    request_id: UUID,
+    response: LlmTextResponse,
+) -> None:
+    if response.input_token_count is None or response.output_token_count is None:
+        await _complete_ledger_call_on_cancellation(
+            ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
+        )
+        return
+    await _complete_ledger_call_on_cancellation(
+        ledger.settle_ai_tokens(
+            request_id=request_id,
+            input_tokens=response.input_token_count,
+            cached_input_tokens=response.cached_input_token_count or 0,
+            output_tokens=response.output_token_count,
+            outcome="SUCCESS",
+        )
+    )
+
+
+async def _finalize_successful_embedding_request(
+    ledger: AiTokenLedgerApi,
+    request_id: UUID,
+    response: EmbeddingBatchResponse,
+) -> None:
+    if response.input_token_count is None:
+        await _complete_ledger_call_on_cancellation(
+            ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
+        )
+        return
+    await _complete_ledger_call_on_cancellation(
+        ledger.settle_ai_tokens(
+            request_id=request_id,
+            input_tokens=response.input_token_count,
+            cached_input_tokens=0,
+            output_tokens=0,
+            outcome="SUCCESS",
+        )
+    )
+
+
+def _is_retryable_provider_error(exc: Exception) -> bool:
+    http_error = _find_http_status_error(exc)
+    if http_error is not None:
+        status_code = http_error.response.status_code
+        if status_code == 429:
+            return not _is_non_retryable_429(http_error)
+        if status_code == 408:
+            return True
+        if status_code == 409:
+            return _find_exception(exc, RecoverableEmbeddingProviderError) is not None
+        return status_code >= 500
+    if _find_exception(exc, httpx.TimeoutException) is not None:
+        return True
+    if _find_exception(exc, httpx.NetworkError) is not None:
+        return True
+    if _find_exception(exc, httpx.RemoteProtocolError) is not None:
+        return True
+    return _find_exception(exc, RecoverableEmbeddingProviderError) is not None
+
+
+def _is_non_retryable_429(exc: httpx.HTTPStatusError) -> bool:
+    try:
+        payload = exc.response.json()
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return False
+    return any(
+        isinstance(error.get(field), str)
+        and error[field].strip().casefold() in NON_RETRYABLE_429_CODES
+        for field in ("code", "type")
+    )
+
+
+def _provider_retry_delay(
+    exc: Exception,
+    retry_index: int,
+    retry_base_seconds: float,
+    random_source: RandomSource,
+    jitter_max_seconds: float,
+) -> float:
+    retry_after = _retry_after_seconds(exc)
+    if retry_after is not None:
+        return retry_after
+    jitter_fraction = min(1.0, max(0.0, float(random_source())))
+    return (retry_base_seconds * (2**retry_index)) + (jitter_fraction * jitter_max_seconds)
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    http_error = _find_http_status_error(exc)
+    if http_error is None:
+        return None
+    raw_value = http_error.response.headers.get("Retry-After")
+    if raw_value is None:
+        return None
+    try:
+        seconds = float(raw_value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(raw_value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        seconds = (retry_at - datetime.now(timezone.utc)).total_seconds()
+    return max(0.0, seconds)
 
 
 def _estimate_text_token_upper_bound(
@@ -227,7 +523,7 @@ def _estimate_embedding_token_upper_bound(inputs: Sequence[str]) -> int:
     return sum(len(text.encode("utf-8")) for text in inputs) + 256
 
 
-def _finalize_failed_provider_request(
+async def _finalize_failed_provider_request(
     ledger: AiTokenLedgerApi,
     request_id: UUID,
     usage: tuple[int, int, int] | None,
@@ -236,9 +532,15 @@ def _finalize_failed_provider_request(
 
     try:
         if usage is None:
-            ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
+            await _complete_ledger_call_on_cancellation(
+                ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
+            )
         else:
-            ledger.settle_ai_tokens(request_id, *usage, outcome="FAILURE")
+            await _complete_ledger_call_on_cancellation(
+                ledger.settle_ai_tokens(request_id, *usage, outcome="FAILURE")
+            )
+    except asyncio.CancelledError:
+        raise
     except Exception:
         logger.exception("Failed to finalize AI token ledger request_id=%s", request_id)
 

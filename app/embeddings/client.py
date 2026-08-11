@@ -18,7 +18,7 @@ class OpenAIEmbeddingsClient:
         dimensions: int,
         version: str,
         embeddings_api_url: str,
-        http_client: httpx.Client | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """임베딩 생성에 사용할 API 설정과 HTTP 클라이언트를 초기화한다.
 
@@ -34,7 +34,7 @@ class OpenAIEmbeddingsClient:
         self.dimensions = dimensions
         self.version = version
         self.embeddings_api_url = embeddings_api_url
-        self.http_client = http_client or httpx.Client(timeout=60)
+        self.http_client = http_client or httpx.AsyncClient(timeout=60)
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "OpenAIEmbeddingsClient":
@@ -52,15 +52,15 @@ class OpenAIEmbeddingsClient:
             embeddings_api_url=settings.openai_embeddings_api_url,
         )
 
-    def create_embedding(self, text: str) -> list[float]:
+    async def create_embedding(self, text: str) -> list[float]:
         """단일 문자열을 임베딩하고 생성된 벡터 하나를 반환한다.
 
         검색 query 하나를 임베딩해 단건 조회하는 경우에 사용한다.
         """
 
-        return self.create_embeddings([text]).embeddings[0]
+        return (await self.create_embeddings([text])).embeddings[0]
 
-    def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
+    async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
         """여러 문자열(청크들)을 한 요청으로 임베딩하고 검증된 배치 결과를 반환한다.
 
         일시적인 네트워크·provider 오류는 ``RecoverableEmbeddingProviderError``로
@@ -70,7 +70,7 @@ class OpenAIEmbeddingsClient:
         self._validate_inputs(inputs)
 
         try:
-            response = self.http_client.post(
+            response = await self.http_client.post(
                 self.embeddings_api_url,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
@@ -121,6 +121,9 @@ class OpenAIEmbeddingsClient:
             input_token_count=input_token_count,
             raw_response=payload,
         )
+
+    async def aclose(self) -> None:
+        await self.http_client.aclose()
 
     def _validate_inputs(self, inputs: list[str]) -> None:
         """API 키가 있고 임베딩할 문자열 목록이 비어 있지 않은지 검사한다."""

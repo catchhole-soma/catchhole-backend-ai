@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 from types import SimpleNamespace
@@ -101,7 +102,7 @@ def test_debug_runner_passes_known_characters_to_extractor(monkeypatch, tmp_path
         def __init__(self, *, model=None) -> None:
             pass
 
-        def extract_from_chunk(self, *, known_characters=(), **kwargs):
+        async def extract_from_chunk(self, *, known_characters=(), **kwargs):
             captured_known_characters.extend(known_characters)
             return CharacterSettingExtractionResult(candidates=[])
 
@@ -109,7 +110,7 @@ def test_debug_runner_passes_known_characters_to_extractor(monkeypatch, tmp_path
         def __init__(self, *, model=None) -> None:
             pass
 
-        def resolve_candidates(self, **kwargs):
+        async def resolve_candidates(self, **kwargs):
             return SimpleNamespace(
                 candidates=[],
                 fallback_call_count=0,
@@ -123,26 +124,28 @@ def test_debug_runner_passes_known_characters_to_extractor(monkeypatch, tmp_path
     text_file.write_text("기존 캐릭터가 등장한다.", encoding="utf-8")
     known_character = KnownCharacter(character_id=uuid4(), name="비요른 얀델")
 
-    debug_runner.run_episode_text_analysis_debug(
-        text_file=text_file,
-        episode_id=uuid4(),
-        work_id=uuid4(),
-        analysis_job_id=uuid4(),
-        episode_no=2,
-        episode_title=None,
-        model_name=None,
-        max_chunks=None,
-        known_characters=[known_character],
-        output_json=None,
-        schema_hints=(
-            CharacterSettingSchemaHint(
-                schema_key="profile.species",
-                display_name="종족",
-                attribute_pattern=None,
-                aliases=(),
-                value_type="STRING",
+    asyncio.run(
+        debug_runner.run_episode_text_analysis_debug(
+            text_file=text_file,
+            episode_id=uuid4(),
+            work_id=uuid4(),
+            analysis_job_id=uuid4(),
+            episode_no=2,
+            episode_title=None,
+            model_name=None,
+            max_chunks=None,
+            known_characters=[known_character],
+            output_json=None,
+            schema_hints=(
+                CharacterSettingSchemaHint(
+                    schema_key="profile.species",
+                    display_name="종족",
+                    attribute_pattern=None,
+                    aliases=(),
+                    value_type="STRING",
+                ),
             ),
-        ),
+        )
     )
 
     assert captured_known_characters == [known_character]

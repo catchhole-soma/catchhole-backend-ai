@@ -48,7 +48,7 @@ class CandidateMatchResult:
     semantic_judge_reason: str | None = None
 
 
-def evaluate_predictions(
+async def evaluate_predictions(
     gold_dataset: GoldDataset,
     prediction_bundle: PredictionBundle,
     semantic_judge: SemanticValueJudge | None = None,
@@ -73,7 +73,7 @@ def evaluate_predictions(
         gold_candidates = gold_episode.candidates if gold_episode else []
         predictions = prediction_episode.candidates if prediction_episode else []
         source_text = gold_episode.source_text if gold_episode else None
-        episode_report = _evaluate_episode(
+        episode_report = await _evaluate_episode(
             episode_no=episode_no,
             gold_candidates=gold_candidates,
             predictions=predictions,
@@ -101,7 +101,7 @@ def evaluate_predictions(
     }
 
 
-def _evaluate_episode(
+async def _evaluate_episode(
     episode_no: int,
     gold_candidates: list[GoldCandidate],
     predictions: list[PredictionCandidate],
@@ -171,7 +171,7 @@ def _evaluate_episode(
     semantic_decision_by_assignment = {}
     if semantic_judge is not None and semantic_assignment_keys:
         # 서로 독립적인 서술형 판정만 회차 안에서 묶어 호출 횟수를 줄인다.
-        judge_batch = semantic_judge.judge_many(
+        judge_batch = await semantic_judge.judge_many(
             [
                 SemanticJudgeCase(
                     gold=extract_gold[gold_index],

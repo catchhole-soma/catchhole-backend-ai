@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 import pytest
@@ -34,13 +35,15 @@ def test_search_similar_chunks_embeds_query_and_passes_all_conditions_to_reposit
         ),
     )
 
-    results = service.search_similar_chunks(
-        query_text="주인공의 나이가 갑자기 어려졌다.",
-        work_id=WORK_ID,
-        top_k=5,
-        episode_no_from=1,
-        episode_no_to=10,
-        excluded_chunk_ids=[EXCLUDED_CHUNK_ID],
+    results = asyncio.run(
+        service.search_similar_chunks(
+            query_text="주인공의 나이가 갑자기 어려졌다.",
+            work_id=WORK_ID,
+            top_k=5,
+            episode_no_from=1,
+            episode_no_to=10,
+            excluded_chunk_ids=[EXCLUDED_CHUNK_ID],
+        )
     )
 
     assert results == expected_results
@@ -91,12 +94,14 @@ def test_search_similar_chunks_rejects_invalid_conditions_before_external_calls(
     )
 
     with pytest.raises(ValueError, match=message):
-        service.search_similar_chunks(
-            query_text=query_text,
-            work_id=WORK_ID,
-            top_k=top_k,
-            episode_no_from=episode_no_from,
-            episode_no_to=episode_no_to,
+        asyncio.run(
+            service.search_similar_chunks(
+                query_text=query_text,
+                work_id=WORK_ID,
+                top_k=top_k,
+                episode_no_from=episode_no_from,
+                episode_no_to=episode_no_to,
+            )
         )
 
     assert embedding_client.requested_texts == []
@@ -119,10 +124,12 @@ def test_search_similar_chunks_does_not_open_database_session_when_embedding_fai
     )
 
     with pytest.raises(RuntimeError, match="embedding API failed"):
-        service.search_similar_chunks(
-            query_text="검색 문장",
-            work_id=WORK_ID,
-            top_k=5,
+        asyncio.run(
+            service.search_similar_chunks(
+                query_text="검색 문장",
+                work_id=WORK_ID,
+                top_k=5,
+            )
         )
 
     assert embedding_client.requested_texts == ["검색 문장"]
@@ -143,7 +150,7 @@ class FakeQueryEmbeddingClient:
         self.error = error
         self.requested_texts: list[str] = []
 
-    def create_embedding(self, text: str) -> list[float]:
+    async def create_embedding(self, text: str) -> list[float]:
         self.requested_texts.append(text)
         if self.error is not None:
             raise self.error

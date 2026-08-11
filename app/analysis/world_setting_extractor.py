@@ -33,7 +33,7 @@ class WorldSettingExtractor:
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be at least 1.")
 
-    def extract_from_chunk(
+    async def extract_from_chunk(
         self,
         chunk_text: str,
         episode_no: int | None = None,
@@ -47,7 +47,7 @@ class WorldSettingExtractor:
         )
         user_prompt = f"metadata:\n{metadata}\n\nchunk_text:\n{chunk_text}"
 
-        return request_validated_model(
+        return await request_validated_model(
             client=self.llm_client,
             response_model=WorldSettingExtractionResult,
             system_prompt=system_prompt,

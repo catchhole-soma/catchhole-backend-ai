@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -38,7 +39,7 @@ class DebugCandidate:
     candidate: ExtractedSettingCandidate
 
 
-def run_episode_text_analysis_debug(
+async def run_episode_text_analysis_debug(
     text_file: Path,
     episode_id: UUID,
     work_id: UUID,
@@ -94,7 +95,7 @@ def run_episode_text_analysis_debug(
             f"paragraphs={draft.paragraph_start_index}..{draft.paragraph_end_index}",
             flush=True,
         )
-        extraction_result = extractor.extract_from_chunk(
+        extraction_result = await extractor.extract_from_chunk(
             source_chunk_id=chunk.id,
             chunk_text=draft.chunk_text,
             episode_no=episode_no,
@@ -108,7 +109,7 @@ def run_episode_text_analysis_debug(
             chunk_start_offset=draft.start_offset,
         )
 
-        subject_result = subject_resolver.resolve_candidates(
+        subject_result = await subject_resolver.resolve_candidates(
             context=_build_subject_context(chunks, draft.chunk_index),
             candidates=resolved_candidates,
             known_characters=known_characters,
@@ -166,19 +167,21 @@ def run_episode_text_analysis_debug(
 
 def main() -> None:
     args = _parse_args()
-    run_episode_text_analysis_debug(
-        text_file=args.text_file,
-        episode_id=args.episode_id or uuid4(),
-        work_id=args.work_id or uuid4(),
-        analysis_job_id=args.analysis_job_id or uuid4(),
-        episode_no=args.episode_no,
-        episode_title=args.episode_title,
-        model_name=args.model_name,
-        max_chunks=args.max_chunks,
-        known_characters=load_known_characters(args.known_characters_json),
-        output_json=args.output_json,
-        schema_hints=load_character_setting_schema_hints(
-            args.character_setting_schemas_json
+    asyncio.run(
+        run_episode_text_analysis_debug(
+            text_file=args.text_file,
+            episode_id=args.episode_id or uuid4(),
+            work_id=args.work_id or uuid4(),
+            analysis_job_id=args.analysis_job_id or uuid4(),
+            episode_no=args.episode_no,
+            episode_title=args.episode_title,
+            model_name=args.model_name,
+            max_chunks=args.max_chunks,
+            known_characters=load_known_characters(args.known_characters_json),
+            output_json=args.output_json,
+            schema_hints=load_character_setting_schema_hints(
+                args.character_setting_schemas_json
+            ),
         ),
     )
 

@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from uuid import UUID
 
@@ -30,7 +31,8 @@ def test_resolve_candidates_skips_llm_when_fallback_targets_do_not_exist(tmp_pat
     )
     candidates = [_candidate(entity_name="비요른", raw_entity_mention="비요른")]
 
-    result = resolver.resolve_candidates(
+    result = _resolve(
+        resolver,
         context=_context(),
         candidates=candidates,
         known_characters=[KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")],
@@ -63,7 +65,8 @@ def test_resolve_candidates_does_not_reinterpret_character_discovery(tmp_path: P
         confidence=0.95,
     )
 
-    result = resolver.resolve_candidates(
+    result = _resolve(
+        resolver,
         context=_context(),
         candidates=[discovery],
         known_characters=[],
@@ -84,7 +87,8 @@ def test_resolve_candidates_treats_exact_known_name_as_concrete_before_particle_
     )
     candidates = [_candidate(entity_name="나은", raw_entity_mention="나은")]
 
-    result = resolver.resolve_candidates(
+    result = _resolve(
+        resolver,
         context=_context(),
         candidates=candidates,
         known_characters=[KnownCharacter(character_id=AINAR_ID, name="나은")],
@@ -116,7 +120,8 @@ def test_resolve_candidates_accepts_exact_known_name_from_fallback(
         prompt_path=_prompt_path(tmp_path),
     )
 
-    result = resolver.resolve_candidates(
+    result = _resolve(
+        resolver,
         context=_context(),
         candidates=[_candidate(entity_name="미상", raw_entity_mention="그")],
         known_characters=[KnownCharacter(character_id=AINAR_ID, name="그녀로")],
@@ -152,7 +157,8 @@ def test_resolve_candidates_preserves_particle_ending_new_name_from_fallback(
         prompt_path=_prompt_path(tmp_path),
     )
 
-    result = resolver.resolve_candidates(
+    result = _resolve(
+        resolver,
         context=_context(),
         candidates=[
             _candidate(entity_name=character_name, raw_entity_mention=character_name)
@@ -204,7 +210,8 @@ def test_resolve_candidates_preserves_unresolved_placeholders_without_raw_mentio
         _candidate(entity_name="비요른", raw_entity_mention=None, attribute_name="item.도끼"),
     ]
 
-    result = resolver.resolve_candidates(
+    result = _resolve(
+        resolver,
         context=_context(),
         candidates=candidates,
         known_characters=[KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")],
@@ -264,7 +271,8 @@ def test_resolve_candidates_batches_targets_and_preserves_unresolved_items(
         _candidate(entity_name="비요른", raw_entity_mention="비요른", attribute_name="status.부상"),
     ]
 
-    result = resolver.resolve_candidates(
+    result = _resolve(
+        resolver,
         context=_context(),
         candidates=candidates,
         known_characters=[
@@ -315,7 +323,8 @@ def test_resolve_candidates_uses_fallback_when_raw_mention_is_descriptive(
         prompt_path=_prompt_path(tmp_path),
     )
 
-    result = resolver.resolve_candidates(
+    result = _resolve(
+        resolver,
         context=_context(),
         candidates=[
             _candidate(
@@ -355,7 +364,8 @@ def test_resolve_candidates_uses_fallback_for_particle_attached_reference(
         prompt_path=_prompt_path(tmp_path),
     )
 
-    result = resolver.resolve_candidates(
+    result = _resolve(
+        resolver,
         context=_context(),
         candidates=[
             _candidate(
@@ -404,11 +414,16 @@ def test_resolve_candidates_rejects_mismatched_response_candidate_ids(
     )
 
     with pytest.raises(LlmExtractionError, match="candidate IDs"):
-        resolver.resolve_candidates(
+        _resolve(
+            resolver,
             context=_context(),
             candidates=[_candidate(entity_name="미상", raw_entity_mention="나")],
             known_characters=[KnownCharacter(character_id=BJORN_ID, name="비요른 얀델")],
         )
+
+
+def _resolve(resolver: CharacterSubjectResolver, **kwargs):
+    return asyncio.run(resolver.resolve_candidates(**kwargs))
 
 
 class FakeSubjectResolutionClient:
@@ -419,7 +434,7 @@ class FakeSubjectResolutionClient:
         self.last_user_prompt = ""
         self.last_prompt_cache_key = None
 
-    def create_text_response(
+    async def create_text_response(
         self,
         system_prompt: str,
         user_prompt: str,

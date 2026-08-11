@@ -68,9 +68,9 @@ class CharacterSubjectResolver:
         # 운영에서는 OpenAI client를 기본 사용하고, 테스트에서는 fake client를 주입한다.
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
-        self.model = model or get_settings().effective_llm_extraction_model
+        self.model = model or get_settings().effective_llm_subject_resolution_model
 
-    def resolve_candidates(
+    async def resolve_candidates(
         self,
         context: SubjectResolutionChunkContext,
         candidates: list[ExtractedSettingCandidate],
@@ -83,7 +83,7 @@ class CharacterSubjectResolver:
             return SubjectResolutionResult(candidates=candidates)
 
         # 같은 current chunk에서 나온 fallback 대상들은 한 번의 LLM 호출로 같이 판단한다.
-        resolution_response = self._request_resolution(
+        resolution_response = await self._request_resolution(
             context=context,
             targets=fallback_targets,
             known_characters=known_characters,
@@ -146,7 +146,7 @@ class CharacterSubjectResolver:
             fallback_unresolved_count=unresolved_count,
         )
 
-    def _request_resolution(
+    async def _request_resolution(
         self,
         context: SubjectResolutionChunkContext,
         targets: list["_IndexedCandidate"],
@@ -162,19 +162,19 @@ class CharacterSubjectResolver:
 
         try:
             # 동일 문맥의 subject fallback은 한 번만 판단하고 잘못된 응답은 분석 실패로 전파한다.
-            return self._request_once(system_prompt, user_prompt)
+            return await self._request_once(system_prompt, user_prompt)
         except (json.JSONDecodeError, TypeError, ValidationError) as exc:
             raise LlmExtractionError(
                 f"LLM subject resolution failed: {compact_error_message(exc)}"
             ) from exc
 
-    def _request_once(
+    async def _request_once(
         self,
         system_prompt: str,
         user_prompt: str,
     ) -> SubjectResolutionResponse:
         # subject fallback은 후보 재추출이 아니라 주체 해소만 하므로 출력 토큰을 작게 제한한다.
-        response = self.llm_client.create_text_response(
+        response = await self.llm_client.create_text_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=self.model,

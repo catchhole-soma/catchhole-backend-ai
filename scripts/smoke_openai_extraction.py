@@ -1,3 +1,4 @@
+import asyncio
 import json
 from uuid import UUID
 
@@ -14,10 +15,10 @@ SMOKE_SCHEMA_HINTS = (
 )
 
 
-def main() -> None:
+async def run_smoke_openai_extraction() -> None:
     # 실제 OpenAI API key가 .env에 있을 때만 실행하는 수동 smoke 확인용 script
     extractor = CharacterSettingExtractor()
-    result = extractor.extract_from_chunk(
+    result = await extractor.extract_from_chunk(
         source_chunk_id=UUID("00000000-0000-0000-0000-000000000001"),
         episode_no=1,
         episode_title="샘플 회차",
@@ -26,6 +27,10 @@ def main() -> None:
     )
     # key나 원본 OpenAI 응답 전체는 출력하지 않고, schema 검증이 끝난 후보 JSON만 출력한다.
     print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+
+
+def main() -> None:
+    asyncio.run(run_smoke_openai_extraction())
 
 
 if __name__ == "__main__":
