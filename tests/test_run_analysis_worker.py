@@ -7,6 +7,7 @@ from uuid import UUID
 from app.worker.analysis_job_worker import WorkerRunResult
 from scripts.run_analysis_worker import (
     _print_result,
+    _remaining_shutdown_grace_seconds,
     _resolve_worker_concurrency,
     run_worker_loop,
 )
@@ -137,6 +138,51 @@ def test_stop_event_stops_new_claims_and_drains_active_jobs() -> None:
         assert payloads[2].analysis_job_id not in worker.processed_ids
 
     asyncio.run(scenario())
+
+
+def test_stop_event_cancels_in_flight_claim_without_starting_new_job() -> None:
+    async def scenario() -> None:
+        class BlockingClaimWorker(FakeSchedulerWorker):
+            def __init__(self) -> None:
+                super().__init__([_payload(1)])
+                self.claim_started = asyncio.Event()
+                self.claim_cancelled = asyncio.Event()
+
+            async def claim_next(self):
+                self.claim_count += 1
+                self.claim_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    self.claim_cancelled.set()
+                    raise
+
+        worker = BlockingClaimWorker()
+        stop_event = asyncio.Event()
+        scheduler = asyncio.create_task(
+            run_worker_loop(
+                worker=worker,
+                idle_sleep_seconds=1.0,
+                concurrency=1,
+                shutdown_grace_seconds=1.0,
+                stop_event=stop_event,
+            )
+        )
+
+        await worker.claim_started.wait()
+        stop_event.set()
+        await asyncio.wait_for(scheduler, timeout=0.1)
+
+        assert worker.claim_cancelled.is_set()
+        assert worker.processed_ids == set()
+
+    asyncio.run(scenario())
+
+
+def test_shutdown_grace_is_measured_from_stop_request() -> None:
+    assert _remaining_shutdown_grace_seconds(180.0, None, 130.0) == 180.0
+    assert _remaining_shutdown_grace_seconds(180.0, 100.0, 130.0) == 150.0
+    assert _remaining_shutdown_grace_seconds(180.0, 100.0, 300.0) == 0.0
 
 
 def test_shutdown_grace_expiry_cancels_job_for_lease_recovery() -> None:

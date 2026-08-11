@@ -432,11 +432,16 @@ def test_text_generation_cancellation_during_reserve_releases_after_reserve_fini
                 super().__init__()
                 self.reserve_started = asyncio.Event()
                 self.allow_reserve_to_finish = asyncio.Event()
+                self.release_finished = asyncio.Event()
 
             async def reserve_ai_tokens(self, **kwargs) -> None:
                 self.reservations.append(kwargs)
                 self.reserve_started.set()
                 await self.allow_reserve_to_finish.wait()
+
+            async def release_ai_tokens(self, request_id: UUID, outcome: str) -> None:
+                await super().release_ai_tokens(request_id, outcome)
+                self.release_finished.set()
 
         ledger = BlockingReserveLedger()
         semaphore = asyncio.Semaphore(1)
@@ -456,10 +461,13 @@ def test_text_generation_cancellation_during_reserve_releases_after_reserve_fini
         task = asyncio.create_task(client.create_text_response("규칙", "원고"))
         await ledger.reserve_started.wait()
         task.cancel()
-        await asyncio.sleep(0)
-        ledger.allow_reserve_to_finish.set()
         with pytest.raises(asyncio.CancelledError):
-            await task
+            await asyncio.wait_for(task, timeout=0.1)
+
+        assert semaphore.locked() is False
+        assert ledger.releases == []
+        ledger.allow_reserve_to_finish.set()
+        await asyncio.wait_for(ledger.release_finished.wait(), timeout=1)
         return ledger, delegate, semaphore
 
     ledger, delegate, semaphore = asyncio.run(scenario())
@@ -468,6 +476,32 @@ def test_text_generation_cancellation_during_reserve_releases_after_reserve_fini
     assert len(ledger.releases) == 1
     assert delegate.call_count == 0
     assert semaphore.locked() is False
+
+
+def test_ledger_call_cancellation_does_not_wait_for_ledger_completion() -> None:
+    async def scenario() -> None:
+        started = asyncio.Event()
+        allow_completion = asyncio.Event()
+        completed = asyncio.Event()
+
+        async def blocking_ledger_call() -> None:
+            started.set()
+            await allow_completion.wait()
+            completed.set()
+
+        owner = asyncio.create_task(
+            metering._complete_ledger_call_on_cancellation(blocking_ledger_call())
+        )
+        await started.wait()
+        owner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(owner, timeout=0.1)
+
+        assert completed.is_set() is False
+        allow_completion.set()
+        await asyncio.wait_for(completed.wait(), timeout=1)
+
+    asyncio.run(scenario())
 
 
 def test_shared_request_semaphore_limits_parallel_provider_calls_across_jobs() -> None:

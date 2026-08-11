@@ -51,6 +51,7 @@ async def run_worker_loop(
     collect_results = max_iterations is not None
     claim_attempts = 0
     wait_before_next_poll = False
+    shutdown_requested_at: float | None = None
 
     while not stopping.is_set():
         reached_iteration_limit = max_iterations is not None and claim_attempts >= max_iterations
@@ -70,7 +71,7 @@ async def run_worker_loop(
                 break
             claim_attempts += 1
             try:
-                payload = await worker.claim_next()
+                payload, claim_stop_requested_at = await _claim_next_or_stop(worker, stopping)
             except asyncio.CancelledError:
                 slots.release()
                 raise
@@ -78,6 +79,15 @@ async def run_worker_loop(
                 slots.release()
                 _print_failure(exc, phase="claim")
                 wait_before_next_poll = True
+                break
+
+            if claim_stop_requested_at is not None or stopping.is_set():
+                shutdown_requested_at = (
+                    claim_stop_requested_at
+                    if claim_stop_requested_at is not None
+                    else asyncio.get_running_loop().time()
+                )
+                slots.release()
                 break
 
             if payload is None:
@@ -105,10 +115,57 @@ async def run_worker_loop(
             idle_sleep_seconds if wait_before_next_poll else None,
             sleeper,
         )
+        if stopping.is_set() and shutdown_requested_at is None:
+            shutdown_requested_at = asyncio.get_running_loop().time()
         active_tasks = {task for task in active_tasks if not task.done()}
 
-    await _drain_active_jobs(active_tasks, shutdown_grace_seconds)
+    if stopping.is_set() and shutdown_requested_at is None:
+        shutdown_requested_at = asyncio.get_running_loop().time()
+    remaining_grace_seconds = _remaining_shutdown_grace_seconds(
+        shutdown_grace_seconds,
+        shutdown_requested_at,
+        asyncio.get_running_loop().time(),
+    )
+    await _drain_active_jobs(active_tasks, remaining_grace_seconds)
     return results
+
+
+async def _claim_next_or_stop(
+    worker: WorkerSchedulerApi,
+    stop_event: asyncio.Event,
+) -> tuple[WorkerAnalysisJobPayload | None, float | None]:
+    claim_task = asyncio.create_task(worker.claim_next(), name="worker-claim")
+    stop_task = asyncio.create_task(_wait_for_stop_timestamp(stop_event), name="worker-stop-wait")
+    try:
+        done, _ = await asyncio.wait({claim_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+        if stop_task in done:
+            claim_task.cancel()
+            await asyncio.gather(claim_task, return_exceptions=True)
+            return None, stop_task.result()
+
+        stop_task.cancel()
+        await asyncio.gather(stop_task, return_exceptions=True)
+        return await claim_task, None
+    except asyncio.CancelledError:
+        claim_task.cancel()
+        stop_task.cancel()
+        await asyncio.gather(claim_task, stop_task, return_exceptions=True)
+        raise
+
+
+async def _wait_for_stop_timestamp(stop_event: asyncio.Event) -> float:
+    await stop_event.wait()
+    return asyncio.get_running_loop().time()
+
+
+def _remaining_shutdown_grace_seconds(
+    configured_grace_seconds: float,
+    shutdown_requested_at: float | None,
+    now: float,
+) -> float:
+    if shutdown_requested_at is None:
+        return configured_grace_seconds
+    return max(0.0, configured_grace_seconds - (now - shutdown_requested_at))
 
 
 async def _process_claimed_job(

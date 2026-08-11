@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 TException = TypeVar("TException", bound=BaseException)
 AsyncSleeper = Callable[[float], Awaitable[None]]
 RandomSource = Callable[[], float]
+_detached_ledger_tasks: set[asyncio.Task[None]] = set()
 
 NON_RETRYABLE_429_CODES = frozenset(
     {
@@ -140,11 +141,7 @@ class MeteredTextGenerationClient:
                         prompt_cache_key=prompt_cache_key,
                     )
                 except asyncio.CancelledError:
-                    await _finalize_failed_provider_request(
-                        self.ledger,
-                        request_id,
-                        usage=None,
-                    )
+                    _detach_failed_provider_finalization(self.ledger, request_id)
                     raise
                 except Exception as exc:
                     usage = _usage_from_text_error(exc)
@@ -226,11 +223,7 @@ class MeteredEmbeddingClient:
                 try:
                     response = await self.delegate.create_embeddings(inputs)
                 except asyncio.CancelledError:
-                    await _finalize_failed_provider_request(
-                        self.ledger,
-                        request_id,
-                        usage=None,
-                    )
+                    _detach_failed_provider_finalization(self.ledger, request_id)
                     raise
                 except Exception as exc:
                     usage = _usage_from_embedding_error(exc)
@@ -295,7 +288,7 @@ async def _reserve_tokens_cancellation_safe(
     reserved_tokens: int,
     lease_token: UUID,
 ) -> None:
-    """Finish an in-flight reservation before cleaning it up on task cancellation."""
+    """Reserve tokens without delaying owning Job cancellation."""
 
     reservation_task = asyncio.create_task(
         ledger.reserve_ai_tokens(
@@ -311,30 +304,62 @@ async def _reserve_tokens_cancellation_safe(
     try:
         await asyncio.shield(reservation_task)
     except asyncio.CancelledError:
-        try:
-            await asyncio.shield(reservation_task)
-        except Exception:
-            logger.exception(
-                "AI token reservation failed while handling cancellation. request_id=%s",
-                request_id,
-            )
-        else:
-            await _finalize_failed_provider_request(ledger, request_id, usage=None)
+        cleanup_task = asyncio.create_task(
+            _cleanup_cancelled_reservation(ledger, reservation_task, request_id)
+        )
+        _detach_ledger_task(
+            cleanup_task,
+            f"AI token reservation cleanup failed. request_id={request_id}",
+        )
         raise
 
 
 async def _complete_ledger_call_on_cancellation(awaitable: Awaitable[None]) -> None:
-    """Do not leave a reserve/settle/release request half-observed by this process."""
+    """Observe ledger completion without delaying owning Job cancellation."""
 
     ledger_task = asyncio.create_task(awaitable)
     try:
         await asyncio.shield(ledger_task)
-    except asyncio.CancelledError as cancellation:
+    except asyncio.CancelledError:
+        _detach_ledger_task(ledger_task, "Detached AI token ledger call failed.")
+        raise
+
+
+async def _cleanup_cancelled_reservation(
+    ledger: AiTokenLedgerApi,
+    reservation_task: asyncio.Task[None],
+    request_id: UUID,
+) -> None:
+    await reservation_task
+    await _finalize_failed_provider_request(ledger, request_id, usage=None)
+
+
+def _detach_ledger_task(task: asyncio.Task[None], failure_message: str) -> None:
+    _detached_ledger_tasks.add(task)
+
+    def consume_result(completed: asyncio.Task[None]) -> None:
+        _detached_ledger_tasks.discard(completed)
+        if completed.cancelled():
+            return
         try:
-            await asyncio.shield(ledger_task)
+            completed.result()
         except Exception:
-            logger.exception("AI token ledger call failed while handling cancellation.")
-        raise cancellation
+            logger.exception(failure_message)
+
+    task.add_done_callback(consume_result)
+
+
+def _detach_failed_provider_finalization(
+    ledger: AiTokenLedgerApi,
+    request_id: UUID,
+) -> None:
+    cleanup_task = asyncio.create_task(
+        _finalize_failed_provider_request(ledger, request_id, usage=None)
+    )
+    _detach_ledger_task(
+        cleanup_task,
+        f"Cancelled provider request cleanup failed. request_id={request_id}",
+    )
 
 
 async def _finalize_successful_text_request(
