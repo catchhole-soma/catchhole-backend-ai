@@ -385,6 +385,10 @@ def _is_retryable_provider_error(exc: Exception) -> bool:
         status_code = http_error.response.status_code
         if status_code == 429:
             return not _is_non_retryable_429(http_error)
+        if status_code == 408:
+            return True
+        if status_code == 409:
+            return _find_exception(exc, RecoverableEmbeddingProviderError) is not None
         return status_code >= 500
     if _find_exception(exc, httpx.TimeoutException) is not None:
         return True

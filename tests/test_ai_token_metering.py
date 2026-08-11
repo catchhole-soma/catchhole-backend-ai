@@ -279,6 +279,74 @@ def test_text_generation_uses_retry_after_before_local_backoff() -> None:
     assert delegate.call_count == 2
 
 
+def test_text_generation_retries_request_timeout_response() -> None:
+    ledger = FakeLedger()
+    delegate = SequencedTextClient(
+        [
+            _http_status_error(408),
+            LlmTextResponse(text="{}", input_token_count=10, output_token_count=5),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SETTING_EXTRACTION",
+        default_model="gpt-4.1-mini",
+        lease_token=LEASE_TOKEN,
+        max_retries=1,
+        sleeper=record_sleep,
+        random_source=lambda: 0.0,
+    )
+
+    asyncio.run(client.create_text_response("규칙", "원고"))
+
+    assert delegate.call_count == 2
+    assert sleeps == [2.0]
+
+
+@pytest.mark.parametrize("status_code", [408, 409])
+def test_embedding_retries_wrapped_recoverable_http_response(status_code: int) -> None:
+    http_error = _http_status_error(status_code)
+    wrapped_error = RecoverableEmbeddingProviderError("temporary provider error")
+    wrapped_error.__cause__ = http_error
+    delegate = SequencedEmbeddingClient(
+        [
+            wrapped_error,
+            EmbeddingBatchResponse(
+                embeddings=[[0.1]],
+                model="text-embedding-3-small",
+                input_token_count=1,
+            ),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    client = MeteredEmbeddingClient(
+        delegate=delegate,
+        ledger=FakeLedger(),
+        analysis_job_id=ANALYSIS_JOB_ID,
+        model_name="text-embedding-3-small",
+        lease_token=LEASE_TOKEN,
+        max_retries=1,
+        sleeper=record_sleep,
+        random_source=lambda: 0.0,
+    )
+
+    asyncio.run(client.create_embeddings(["첫 청크"]))
+
+    assert delegate.call_count == 2
+    assert sleeps == [2.0]
+
+
 @pytest.mark.parametrize(
     "error_code",
     ["insufficient_quota", "billing_hard_limit_reached", "billing_not_active"],
@@ -561,6 +629,21 @@ class FailingEmbeddingClient:
 
     async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
         raise self.error
+
+
+class SequencedEmbeddingClient:
+    version = "v1"
+
+    def __init__(self, results: list[EmbeddingBatchResponse | Exception]) -> None:
+        self.results = results
+        self.call_count = 0
+
+    async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse:
+        result = self.results[self.call_count]
+        self.call_count += 1
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class FakeEncoding:

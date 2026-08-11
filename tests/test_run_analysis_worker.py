@@ -5,7 +5,11 @@ import re
 from uuid import UUID
 
 from app.worker.analysis_job_worker import WorkerRunResult
-from scripts.run_analysis_worker import _print_result, run_worker_loop
+from scripts.run_analysis_worker import (
+    _print_result,
+    _resolve_worker_concurrency,
+    run_worker_loop,
+)
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -23,6 +27,11 @@ def test_print_result_prefixes_timestamp_when_job_does_not_exist(capsys) -> None
 
     assert re.match(r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\] ", output)
     assert "claimed=False" in output
+
+
+def test_world_comparison_worker_forces_single_scheduler_slot() -> None:
+    assert _resolve_worker_concurrency("world-comparison", 5) == 1
+    assert _resolve_worker_concurrency("analysis", 5) == 5
 
 
 def test_scheduler_sleeps_once_after_first_empty_claim_instead_of_fanning_out() -> None:

@@ -39,7 +39,7 @@ def test_blocking_io_executor_enforces_its_own_thread_limit() -> None:
     asyncio.run(scenario())
 
 
-def test_cancellation_waits_for_started_blocking_write_before_propagating() -> None:
+def test_cancellation_propagates_before_started_blocking_write_finishes() -> None:
     async def scenario() -> None:
         executor = BlockingIoExecutor(max_workers=1)
         started = threading.Event()
@@ -52,12 +52,11 @@ def test_cancellation_waits_for_started_blocking_write_before_propagating() -> N
         task = asyncio.create_task(executor.run(blocking_write))
         await asyncio.to_thread(started.wait, 1)
         task.cancel()
-        await asyncio.sleep(0)
-        assert not task.done()
-
-        release.set()
         with pytest.raises(asyncio.CancelledError):
-            await task
+            await asyncio.wait_for(task, timeout=0.1)
+
+        assert not release.is_set()
+        release.set()
         await executor.aclose()
 
     asyncio.run(scenario())

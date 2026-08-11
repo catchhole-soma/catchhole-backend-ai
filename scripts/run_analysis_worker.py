@@ -231,7 +231,7 @@ async def _async_main(args: argparse.Namespace, settings: Settings) -> None:
         await run_worker_loop(
             worker=worker,
             idle_sleep_seconds=args.idle_sleep_seconds,
-            concurrency=args.concurrency,
+            concurrency=_resolve_worker_concurrency(args.worker_kind, args.concurrency),
             shutdown_grace_seconds=args.shutdown_grace_seconds,
             max_iterations=args.max_iterations,
             stop_event=stop_event,
@@ -295,6 +295,12 @@ def _parse_args(settings: Settings | None = None) -> argparse.Namespace:
         help="Override the second-stage comparison model.",
     )
     return parser.parse_args()
+
+
+def _resolve_worker_concurrency(worker_kind: str, configured_concurrency: int) -> int:
+    if worker_kind == "world-comparison":
+        return 1
+    return configured_concurrency
 
 
 def _install_signal_handlers(stop_event: asyncio.Event) -> None:

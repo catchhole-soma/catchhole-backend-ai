@@ -36,16 +36,20 @@ class BlockingIoExecutor:
         future = loop.run_in_executor(self._executor, partial(function, *args, **kwargs))
         try:
             return await asyncio.shield(future)
-        except asyncio.CancelledError as cancellation:
-            # Python thread는 강제로 중단할 수 없다. DB/S3 critical section이 백그라운드에
-            # 고아로 남지 않도록 완료까지 추적한 뒤 호출 Task의 취소를 다시 전파한다.
-            try:
-                await asyncio.shield(future)
-            except Exception:
-                # shutdown 취소의 의미를 동기 작업 예외가 덮으면 Worker가 Job을 FAILED로
-                # 잘못 보고할 수 있다. 실제 I/O 오류는 남기되 lease 재회수 경로를 유지한다.
-                logger.exception("Blocking I/O failed while its owning Job was being cancelled.")
-            raise cancellation
+        except asyncio.CancelledError:
+            # Python thread 자체는 중단할 수 없으므로 결과만 별도로 회수한다. Job Task에는
+            # 취소를 즉시 전파해 heartbeat가 종료되고 Spring lease 회수가 시작되게 한다.
+            future.add_done_callback(self._consume_detached_result)
+            raise
+
+    @staticmethod
+    def _consume_detached_result(future: asyncio.Future) -> None:
+        if future.cancelled():
+            return
+        try:
+            future.result()
+        except Exception:
+            logger.exception("Detached blocking I/O failed after its owning Job was cancelled.")
 
     async def aclose(self) -> None:
         if self._closed:
