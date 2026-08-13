@@ -8,6 +8,7 @@ from typing import Protocol
 from app.core.config import Settings, get_settings
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunResult
+from app.worker.character_fact_comparison_worker import CharacterFactComparisonWorker
 from app.worker.world_setting_comparison_worker import WorldSettingComparisonWorker
 
 
@@ -264,19 +265,22 @@ def main() -> None:
 
 
 async def _async_main(args: argparse.Namespace, settings: Settings) -> None:
-    worker = (
-        WorldSettingComparisonWorker(
+    if args.worker_kind == "world-comparison":
+        worker: WorkerSchedulerApi = WorldSettingComparisonWorker(
             subject_resolution_model_name=(args.subject_resolution_model_name or args.model_name),
             comparison_model_name=args.comparison_model_name or args.model_name,
         )
-        if args.worker_kind == "world-comparison"
-        else AnalysisJobWorker(
+    elif args.worker_kind == "character-comparison":
+        worker = CharacterFactComparisonWorker(
+            comparison_model_name=args.comparison_model_name or args.model_name,
+        )
+    else:
+        worker = AnalysisJobWorker(
             extraction_model_name=args.extraction_model_name or args.model_name,
             subject_resolution_model_name=(args.subject_resolution_model_name or args.model_name),
             comparison_model_name=args.comparison_model_name or args.model_name,
             embedding_generation_enabled=settings.embedding_generation_enabled,
         )
-    )
 
     try:
         if args.once:
@@ -303,7 +307,7 @@ def _parse_args(settings: Settings | None = None) -> argparse.Namespace:
     parser.add_argument("--once", action="store_true", help="Run one claim attempt and exit.")
     parser.add_argument(
         "--worker-kind",
-        choices=("analysis", "world-comparison"),
+        choices=("analysis", "character-comparison", "world-comparison"),
         default="analysis",
         help="Select the disjoint Spring job type set claimed by this process.",
     )
@@ -355,7 +359,7 @@ def _parse_args(settings: Settings | None = None) -> argparse.Namespace:
 
 
 def _resolve_worker_concurrency(worker_kind: str, configured_concurrency: int) -> int:
-    if worker_kind == "world-comparison":
+    if worker_kind in {"character-comparison", "world-comparison"}:
         return 1
     return configured_concurrency
 

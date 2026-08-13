@@ -6,6 +6,11 @@ from typing import Protocol
 from uuid import UUID
 
 from app.analysis.character_name_resolver import KnownCharacter
+from app.analysis.character_fact_comparison_pipeline import (
+    CharacterFactComparisonPipeline,
+    CharacterFactComparisonRunResult,
+    CharacterFactComparisonSpringApi,
+)
 from app.analysis.character_subject_resolver import (
     CharacterSubjectResolver,
     SubjectResolutionChunkContext,
@@ -59,6 +64,7 @@ from app.usage.metering import (
 )
 from app.worker.lease_heartbeat import HeartbeatSpringApi, WorkerLeaseHeartbeat
 from app.worker.blocking_io import BlockingIoExecutor
+from app.worker.character_fact_services import create_character_fact_comparison_pipeline
 from app.worker.world_setting_services import create_world_setting_comparison_pipeline
 
 logger = logging.getLogger(__name__)
@@ -83,6 +89,7 @@ class WorkerRunSummary:
 
 # SpringWorkerClient가 가져야 하는 메서드 규격
 class SpringWorkerApi(
+    CharacterFactComparisonSpringApi,
     WorldSettingComparisonSpringApi,
     AiTokenLedgerApi,
     HeartbeatSpringApi,
@@ -194,6 +201,7 @@ class AnalysisJobWorker:
         setting_extractor: SettingExtractorApi | None = None,
         subject_resolver: SubjectResolverApi | None = None,
         world_setting_extractor: WorldSettingExtractorApi | None = None,
+        character_fact_comparison_pipeline: CharacterFactComparisonPipeline | None = None,
         world_setting_comparison_pipeline: WorldSettingComparisonPipeline | None = None,
         setting_candidate_service: SettingCandidateService | None = None,
         extraction_model_name: str | None = None,
@@ -214,6 +222,7 @@ class AnalysisJobWorker:
         self._setting_extractor = setting_extractor
         self._subject_resolver = subject_resolver
         self._world_setting_extractor = world_setting_extractor
+        self._character_fact_comparison_pipeline = character_fact_comparison_pipeline
         self._world_setting_comparison_pipeline = world_setting_comparison_pipeline
         self._setting_candidate_service = setting_candidate_service
         self.extraction_model_name = (
@@ -298,6 +307,8 @@ class AnalysisJobWorker:
         try:
             if payload.job_type != AnalysisJobType.SETTING_EXTRACTION:
                 raise ValueError(f"Unsupported analysis job type: {payload.job_type}")
+            if payload.batch_id is None or payload.episode is None:
+                raise ValueError("Setting-extraction job must include batchId and episode.")
             # claim한 job의 현재 진행 상태를 Spring에 보고
             await self.spring_client.report_progress(
                 analysis_job_id=payload.analysis_job_id,
@@ -384,6 +395,10 @@ class AnalysisJobWorker:
             known_characters,
             schema_hints,
         )
+        character_comparison_result = await self._run_character_comparison_stage(
+            payload,
+            checkpoint,
+        )
         world_candidate_count = await self._run_world_extraction_stage(
             payload,
             chunks,
@@ -397,6 +412,10 @@ class AnalysisJobWorker:
                 "chunkCount": len(chunks),
                 **embedding_metrics,
                 **character_metrics,
+                "characterFactComparisonCompletedCount": (
+                    character_comparison_result.completed_count
+                ),
+                "characterFactComparisonFailedCount": character_comparison_result.failed_count,
                 "worldSettingCandidateCount": world_candidate_count,
                 "worldSettingComparisonCompletedCount": comparison_result.completed_count,
                 "worldSettingComparisonFailedCount": comparison_result.failed_count,
@@ -541,7 +560,7 @@ class AnalysisJobWorker:
         await self.spring_client.report_progress(
             payload.analysis_job_id,
             payload.lease_token,
-            AnalysisStep.WORLD_SETTING_EXTRACTION,
+            AnalysisStep.CHARACTER_FACT_COMPARISON,
             EpisodeProcessingStatus.ANALYZING,
             AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED,
         )
@@ -551,6 +570,31 @@ class AnalysisJobWorker:
             "subjectFallbackResolvedCount": fallback_resolved,
             "subjectFallbackUnresolvedCount": fallback_unresolved,
         }
+
+    async def _run_character_comparison_stage(
+        self,
+        payload: WorkerAnalysisJobPayload,
+        checkpoint: AnalysisJobCheckpointStage | None,
+    ) -> CharacterFactComparisonRunResult:
+        if _checkpoint_reached(
+            checkpoint,
+            AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED,
+        ):
+            return CharacterFactComparisonRunResult(0, 0)
+
+        result = await self._get_character_fact_comparison_pipeline(
+            payload.analysis_job_id,
+            payload.lease_token,
+        ).process_all(payload.analysis_job_id, payload.lease_token)
+        # 개별 후보의 실패는 fail endpoint에 기록됐으므로 세계관 단계는 계속 수행한다.
+        await self.spring_client.report_progress(
+            payload.analysis_job_id,
+            payload.lease_token,
+            AnalysisStep.WORLD_SETTING_EXTRACTION,
+            EpisodeProcessingStatus.ANALYZING,
+            AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED,
+        )
+        return result
 
     async def _run_world_extraction_stage(
         self,
@@ -745,6 +789,25 @@ class AnalysisJobWorker:
             analysis_job_id=analysis_job_id,
             lease_token=lease_token,
             subject_resolution_model_name=self.subject_resolution_model_name,
+            comparison_model_name=self.comparison_model_name,
+            provider_client=self._get_llm_provider_client(),
+            request_semaphore=self._llm_request_semaphore,
+            max_retries=self._llm_http_max_retries,
+            retry_base_seconds=self._llm_http_retry_base_seconds,
+        )
+
+    def _get_character_fact_comparison_pipeline(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> CharacterFactComparisonPipeline:
+        if self._character_fact_comparison_pipeline is not None:
+            return self._character_fact_comparison_pipeline
+
+        return create_character_fact_comparison_pipeline(
+            spring_client=self.spring_client,
+            analysis_job_id=analysis_job_id,
+            lease_token=lease_token,
             comparison_model_name=self.comparison_model_name,
             provider_client=self._get_llm_provider_client(),
             request_semaphore=self._llm_request_semaphore,

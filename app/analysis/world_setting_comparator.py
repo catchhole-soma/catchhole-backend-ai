@@ -4,13 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from app.analysis.json_response import request_validated_model
+from app.analysis.json_response import compact_error_message, request_validated_model
 from app.analysis.world_setting_schemas import (
     WorldSettingComparisonDecision,
     WorldSettingSubjectSelection,
 )
 from app.core.config import get_settings
-from app.domain.enums import WorldSettingOperation
+from app.domain.enums import WorldSettingConsolidationStatus, WorldSettingOperation
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.schemas.worker import (
@@ -161,7 +161,7 @@ class WorldSettingComparator:
             model=self.model,
             max_output_tokens=2000,
             max_attempts=self.max_attempts,
-            prompt_cache_key="world-setting-comparison:v6",
+            prompt_cache_key="world-setting-comparison:v7",
             operation_name="World-setting comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -169,7 +169,11 @@ class WorldSettingComparator:
                 candidate,
                 references,
             ),
+            retry_user_prompt_builder=_build_retry_user_prompt,
         )
+        # LLM이 판단할 필요가 없는 불변 필드는 원본 후보에서 복원한다. 단일 ADD/EXCLUDE
+        # 값을 문장만 다듬어 반환했다는 이유로 같은 비교를 반복하지 않게 한다.
+        decision = _normalize_deterministic_fields(decision, candidate)
         decision = _replace_internal_target_references(decision, references)
         return decision, decision.model_dump(mode="json")
 
@@ -179,6 +183,42 @@ def _resolve_max_attempts(max_attempts: int | None) -> int:
     if resolved < 1:
         raise ValueError("max_attempts must be at least 1.")
     return resolved
+
+
+def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
+    """남은 관계형 검증 오류를 다음 비교 시도의 보정 지시로 전달한다."""
+
+    payload = json.loads(original_user_prompt)
+    payload["validation_feedback"] = {
+        "previous_response_rejected": True,
+        "reason": compact_error_message(exc),
+        "correction": (
+            "입력에 실제 존재하는 target ref와 속성 경로만 사용하세요. "
+            "UPDATE와 MERGE는 선택한 기존 속성의 범위명과 설정명을 그대로 유지하고, "
+            "ADD는 기존 속성을 비교 대상으로 지정하지 마세요. JSON 전체를 다시 반환하세요."
+        ),
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _normalize_deterministic_fields(
+    decision: WorldSettingComparisonDecision,
+    candidate: WorkerWorldSettingCandidatePayload,
+) -> WorldSettingComparisonDecision:
+    """비교 판단과 무관하게 원본에서 결정되는 출력 필드를 복원한다."""
+
+    source_values = _source_values(candidate)
+    updates: dict[str, object] = {}
+    if len(source_values) == 1:
+        updates["consolidation_status"] = WorldSettingConsolidationStatus.SINGLE
+    if decision.consolidation_status == WorldSettingConsolidationStatus.CONFLICT:
+        updates["proposed_value"] = candidate.extracted_value
+    if decision.operation in {WorldSettingOperation.ADD, WorldSettingOperation.EXCLUDE}:
+        updates["proposed_scope_name"] = candidate.scope_name
+        updates["proposed_setting_name"] = candidate.setting_name
+        if len(source_values) == 1:
+            updates["proposed_value"] = source_values[0]
+    return decision.model_copy(update=updates)
 
 
 def _validate_subject_refs(
@@ -196,15 +236,8 @@ def _validate_comparison_decision(
     references: list[ComparisonTargetReference],
 ) -> None:
     source_values = _source_values(candidate)
-    if len(source_values) == 1 and decision.consolidation_status != "SINGLE":
-        raise ValueError("A single extracted value must use SINGLE consolidation status.")
     if len(source_values) > 1 and decision.consolidation_status == "SINGLE":
         raise ValueError("Multiple extracted values must use MERGED or CONFLICT status.")
-    if (
-        decision.consolidation_status == "CONFLICT"
-        and decision.proposed_value != candidate.extracted_value
-    ):
-        raise ValueError("CONFLICT must preserve every extracted value for user review.")
 
     references_by_key = {
         target_reference.reference: target_reference.target for target_reference in references
@@ -212,12 +245,9 @@ def _validate_comparison_decision(
     if decision.target_ref is not None and decision.target_ref not in references_by_key:
         raise ValueError(f"Unknown comparison target_ref: {decision.target_ref}")
     if decision.operation in {WorldSettingOperation.ADD, WorldSettingOperation.EXCLUDE}:
-        if decision.proposed_scope_name != candidate.scope_name:
-            raise ValueError("ADD and EXCLUDE must preserve the extracted scope name.")
-        if decision.proposed_setting_name != candidate.setting_name:
-            raise ValueError("ADD and EXCLUDE must preserve the extracted setting name.")
-        if len(source_values) == 1 and decision.proposed_value != source_values[0]:
-            raise ValueError("A single extracted value must be preserved.")
+        # 범위명·설정명·단일 추출값은 compare()가 후보 원본으로 정규화한다.
+        # 여기서는 LLM이 판단한 operation과 비교 대상 관계만 검증한다.
+        pass
     if decision.operation == WorldSettingOperation.ADD:
         return
     if decision.operation == WorldSettingOperation.EXCLUDE:

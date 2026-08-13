@@ -7,7 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.domain.enums import (
     AnalysisJobCheckpointStage,
     AnalysisJobType,
+    CharacterFactComparisonStatus,
+    CharacterFactComparisonOperation,
+    CharacterFactTemporalScope,
     EpisodeProcessingStatus,
+    SettingValueType,
     WorldSettingCategory,
     WorldSettingConsolidationStatus,
     WorldSettingOperation,
@@ -17,6 +21,7 @@ from app.domain.enums import (
 AiTokenPurpose = Literal[
     "SETTING_EXTRACTION",
     "SUBJECT_RESOLUTION",
+    "CHARACTER_FACT_COMPARISON",
     "CHUNK_EMBEDDING",
     "WORLD_SETTING_EXTRACTION",
     "WORLD_SETTING_SUBJECT_RESOLUTION",
@@ -154,7 +159,9 @@ class WorkerAnalysisJobPayload(BaseModel):
     job_type: AnalysisJobType = Field(alias="jobType")
     work_id: UUID = Field(alias="workId")
     work_title: str = Field(alias="workTitle")
-    batch_id: UUID = Field(alias="batchId")
+    # 사용자 재비교용 hidden Job은 레거시 후보에 원본 batch/episode가 없을 수 있다.
+    # 일반 회차 분석 Worker는 처리 시작 시 두 값을 별도로 필수 검증한다.
+    batch_id: UUID | None = Field(default=None, alias="batchId")
     model_name: str | None = Field(default=None, alias="modelName")
     current_step: str | None = Field(default=None, alias="currentStep")
     lease_token: UUID = Field(alias="leaseToken")
@@ -168,6 +175,10 @@ class WorkerAnalysisJobPayload(BaseModel):
         default=None,
         alias="worldSettingCandidateId",
     )
+    setting_candidate_id: UUID | None = Field(
+        default=None,
+        alias="settingCandidateId",
+    )
     character_setting_schemas: list[WorkerAnalysisCharacterSettingSchemaPayload] = Field(
         default_factory=list,
         alias="characterSettingSchemas",
@@ -176,7 +187,7 @@ class WorkerAnalysisJobPayload(BaseModel):
         default_factory=list,
         alias="knownCharacters",
     )
-    episode: WorkerAnalysisEpisodePayload
+    episode: WorkerAnalysisEpisodePayload | None = None
 
 
 class WorkerEvidenceSpan(BaseModel):
@@ -312,6 +323,120 @@ class WorkerWorldSettingComparisonCompleteRequest(BaseModel):
 
 
 class WorkerWorldSettingComparisonFailRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
+
+
+class WorkerCharacterFactComparisonClaimPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_id: UUID = Field(alias="candidateId")
+
+
+class WorkerCharacterFactComparisonCandidatePayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_id: UUID = Field(alias="candidateId")
+    work_id: UUID = Field(alias="workId")
+    # 마이그레이션 이전 후보나 사용자 입력 후보는 원본 회차가 없을 수 있다.
+    source_episode_id: UUID | None = Field(default=None, alias="sourceEpisodeId")
+    entity_name: str = Field(alias="entityName", min_length=1, max_length=100)
+    attribute_name: str = Field(alias="attributeName", min_length=1, max_length=100)
+    attribute_value: str | None = Field(default=None, alias="attributeValue")
+    value_json: Any | None = Field(default=None, alias="valueJson")
+    value_type: SettingValueType | None = Field(default=None, alias="valueType")
+    evidence_spans: list[WorkerEvidenceSpan] = Field(
+        default_factory=list,
+        alias="evidenceSpans",
+    )
+    matched_character_id: UUID = Field(alias="matchedCharacterId")
+    matched_character_name: str = Field(alias="matchedCharacterName", min_length=1, max_length=100)
+    canonical_fact_type: str = Field(alias="canonicalFactType", min_length=1, max_length=30)
+    canonical_fact_key: str = Field(alias="canonicalFactKey", min_length=1, max_length=150)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class WorkerCharacterSnapshotEntry(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    fact_type: str = Field(alias="factType", min_length=1, max_length=30)
+    fact_key: str = Field(alias="factKey", min_length=1, max_length=150)
+    fact_value: str | None = Field(default=None, alias="factValue")
+    value_json: Any | None = Field(default=None, alias="valueJson")
+
+
+class WorkerCharacterPriorFactCandidate(BaseModel):
+    """같은 batch에서 현재 후보보다 먼저 나온 동일 Fact slot의 미확정 후보다."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo")
+    attribute_name: str = Field(alias="attributeName", min_length=1, max_length=100)
+    attribute_value: str | None = Field(default=None, alias="attributeValue")
+    value_json: Any | None = Field(default=None, alias="valueJson")
+    evidence_spans: list[WorkerEvidenceSpan] = Field(
+        default_factory=list,
+        alias="evidenceSpans",
+    )
+    comparison_status: CharacterFactComparisonStatus = Field(alias="comparisonStatus")
+    suggested_operation: CharacterFactComparisonOperation | None = Field(
+        default=None,
+        alias="suggestedOperation",
+    )
+    proposed_fact_value: str | None = Field(default=None, alias="proposedFactValue")
+    proposed_value_json: Any | None = Field(default=None, alias="proposedValueJson")
+
+
+class WorkerCharacterFactComparisonContextResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate: WorkerCharacterFactComparisonCandidatePayload
+    snapshot_entries: list[WorkerCharacterSnapshotEntry] = Field(alias="snapshotEntries")
+    prior_candidates: list[WorkerCharacterPriorFactCandidate] = Field(
+        default_factory=list,
+        alias="priorCandidates",
+        max_length=30,
+    )
+    context_token: str = Field(alias="contextToken", min_length=1, max_length=64)
+
+
+class WorkerRemovedSnapshotEntry(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    fact_type: str = Field(alias="factType", min_length=1, max_length=30)
+    fact_key: str = Field(alias="factKey", min_length=1, max_length=150)
+
+
+class WorkerCharacterFactComparisonCompleteRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    operation: CharacterFactComparisonOperation
+    target_fact_type: str | None = Field(default=None, alias="targetFactType", max_length=30)
+    target_fact_key: str | None = Field(default=None, alias="targetFactKey", max_length=150)
+    removed_snapshot_entries: list[WorkerRemovedSnapshotEntry] = Field(
+        default_factory=list,
+        alias="removedSnapshotEntries",
+        max_length=30,
+    )
+    proposed_fact_value: str | None = Field(
+        default=None,
+        alias="proposedFactValue",
+    )
+    proposed_value_json: Any | None = Field(
+        default=None,
+        alias="proposedValueJson",
+    )
+    temporal_scope: CharacterFactTemporalScope = Field(alias="temporalScope")
+    comparison_reason: str = Field(alias="comparisonReason", min_length=1)
+    context_token: str = Field(alias="contextToken", min_length=1, max_length=64)
+    raw_comparison_json: dict[str, Any] | None = Field(
+        default=None,
+        alias="rawComparisonJson",
+    )
+
+
+class WorkerCharacterFactComparisonFailRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
