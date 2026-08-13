@@ -249,6 +249,47 @@ def test_comparator_sanitizes_snapshot_ref_before_korean_particle_without_touchi
     assert "status.회복" not in decision.comparison_reason
 
 
+def test_comparator_uses_neutral_label_when_snapshot_fact_value_is_missing() -> None:
+    client = FakeTextClient(
+        [
+            {
+                "operation": "UPDATE",
+                "target_ref": "P1",
+                "removed_snapshot_refs": [],
+                "proposed_fact_value": "바바리안",
+                "proposed_value_json": {"value": "바바리안"},
+                "temporal_scope": "PRESENT",
+                "comparison_reason": "P1을 유지한다.",
+            }
+        ]
+    )
+    candidate = _candidate().model_copy(
+        update={
+            "canonical_fact_type": "PROFILE",
+            "canonical_fact_key": "profile.species",
+            "attribute_value": "바바리안",
+            "value_json": {"value": "바바리안"},
+        }
+    )
+    legacy_entry = WorkerCharacterSnapshotEntry(
+        fact_type="PROFILE",
+        fact_key="profile.species",
+        fact_value=None,
+        value_json={"value": "바바리안"},
+    )
+
+    decision, _ = asyncio.run(
+        CharacterFactComparator(llm_client=client, max_attempts=1).compare(
+            candidate,
+            [legacy_entry],
+        )
+    )
+
+    assert decision.comparison_reason == "현재 관련 설정을 유지한다."
+    assert "P1" not in decision.comparison_reason
+    assert "species" not in decision.comparison_reason
+
+
 def test_comparator_guides_different_status_key_to_add_and_remove_on_retry() -> None:
     invalid = {
         "operation": "UPDATE",

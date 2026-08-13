@@ -209,9 +209,7 @@ def _replace_internal_snapshot_references(
     comparison_reason = decision.comparison_reason
     for reference in sorted(references, key=lambda item: len(item.reference), reverse=True):
         display_value = (reference.entry.fact_value or "").strip()
-        if not display_value:
-            display_value = reference.entry.fact_key.rsplit(".", maxsplit=1)[-1]
-        replacement = f"현재 '{display_value}' 설정"
+        replacement = f"현재 '{display_value}' 설정" if display_value else "현재 관련 설정"
         particle_by_input = {
             "을": "을",
             "를": "을",
