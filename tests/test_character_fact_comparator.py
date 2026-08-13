@@ -11,6 +11,7 @@ from app.analysis.character_fact_comparison_schemas import (
 from app.llm.responses import LlmTextResponse
 from app.schemas.worker import (
     WorkerCharacterFactComparisonCandidatePayload,
+    WorkerCharacterFactComparisonCompleteRequest,
     WorkerCharacterPriorFactCandidate,
     WorkerCharacterSnapshotEntry,
 )
@@ -485,8 +486,18 @@ def test_non_snapshot_operations_still_reject_target_and_removals(
         CharacterFactComparisonDecision.model_validate(payload)
 
 
-@pytest.mark.parametrize("operation", ["HISTORY_ONLY", "EXCLUDE", "REVIEW_REQUIRED"])
-def test_non_snapshot_operations_discard_irrelevant_proposed_values(operation: str) -> None:
+@pytest.mark.parametrize(
+    ("operation", "temporal_scope"),
+    [
+        ("HISTORY_ONLY", "PAST"),
+        ("EXCLUDE", "PRESENT"),
+        ("REVIEW_REQUIRED", "PRESENT"),
+    ],
+)
+def test_non_snapshot_operations_discard_irrelevant_proposed_values(
+    operation: str,
+    temporal_scope: str,
+) -> None:
     decision = CharacterFactComparisonDecision.model_validate(
         {
             "operation": operation,
@@ -494,13 +505,56 @@ def test_non_snapshot_operations_discard_irrelevant_proposed_values(operation: s
             "removed_snapshot_refs": [],
             "proposed_fact_value": "provider가 잘못 덧붙인 제안 표시값",
             "proposed_value_json": {"active": False},
-            "temporal_scope": "PRESENT",
+            "temporal_scope": temporal_scope,
             "comparison_reason": "현재 snapshot을 자동 변경하지 않는다.",
         }
     )
 
     assert decision.proposed_fact_value is None
     assert decision.proposed_value_json is None
+
+
+def test_present_candidate_cannot_be_stored_as_history_only() -> None:
+    with pytest.raises(ValueError, match="non-present temporal scope"):
+        CharacterFactComparisonDecision.model_validate(
+            {
+                "operation": "HISTORY_ONLY",
+                "target_ref": None,
+                "removed_snapshot_refs": [],
+                "proposed_fact_value": None,
+                "proposed_value_json": None,
+                "temporal_scope": "PRESENT",
+                "comparison_reason": "현재 사실이지만 이력으로만 둔다.",
+            }
+        )
+
+
+def test_proposed_value_json_requires_an_object() -> None:
+    decision_payload = {
+        "operation": "ADD",
+        "target_ref": None,
+        "removed_snapshot_refs": [],
+        "proposed_fact_value": "36",
+        "proposed_value_json": "36",
+        "temporal_scope": "PRESENT",
+        "comparison_reason": "현재 수치를 추가한다.",
+    }
+    with pytest.raises(ValueError):
+        CharacterFactComparisonDecision.model_validate(decision_payload)
+
+    with pytest.raises(ValueError):
+        WorkerCharacterFactComparisonCompleteRequest.model_validate(
+            {
+                "operation": "ADD",
+                "removedSnapshotEntries": [],
+                "proposedFactValue": "36",
+                "proposedValueJson": "36",
+                "temporalScope": "PRESENT",
+                "comparisonReason": "현재 수치를 추가한다.",
+                "contextToken": "snapshot-v1",
+                "rawComparisonJson": decision_payload,
+            }
+        )
 
 
 class FakeTextClient:

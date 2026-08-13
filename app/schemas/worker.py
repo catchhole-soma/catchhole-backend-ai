@@ -423,7 +423,7 @@ class WorkerCharacterFactComparisonCompleteRequest(BaseModel):
         default=None,
         alias="proposedFactValue",
     )
-    proposed_value_json: Any | None = Field(
+    proposed_value_json: dict[str, Any] | None = Field(
         default=None,
         alias="proposedValueJson",
     )

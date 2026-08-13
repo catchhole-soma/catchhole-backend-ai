@@ -16,7 +16,7 @@ class CharacterFactComparisonDecision(BaseModel):
     target_ref: str | None = None
     removed_snapshot_refs: list[str] = Field(default_factory=list, max_length=30)
     proposed_fact_value: TrimmedFactValue | None = None
-    proposed_value_json: Any | None = None
+    proposed_value_json: dict[str, Any] | None = None
     temporal_scope: CharacterFactTemporalScope
     comparison_reason: TrimmedReason
 
@@ -86,6 +86,11 @@ class CharacterFactComparisonDecision(BaseModel):
             raise ValueError(
                 "PAST and HYPOTHETICAL candidates require HISTORY_ONLY or REVIEW_REQUIRED."
             )
+        if (
+            self.operation == CharacterFactComparisonOperation.HISTORY_ONLY
+            and self.temporal_scope == CharacterFactTemporalScope.PRESENT
+        ):
+            raise ValueError("HISTORY_ONLY requires a non-present temporal scope.")
         if (
             self.temporal_scope == CharacterFactTemporalScope.UNKNOWN
             and self.operation != CharacterFactComparisonOperation.REVIEW_REQUIRED
