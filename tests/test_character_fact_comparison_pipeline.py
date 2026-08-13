@@ -52,6 +52,8 @@ def test_pipeline_maps_refs_to_fact_identity_without_source_ids() -> None:
     assert "sourceFactIds" not in str(payload)
     assert "evidenceSpans" not in str(payload)
     assert "quote" not in str(payload)
+    assert "target_ref" not in request.raw_comparison_json
+    assert "removed_snapshot_refs" not in request.raw_comparison_json
     assert payload["contextToken"] == "snapshot-v1"
 
 

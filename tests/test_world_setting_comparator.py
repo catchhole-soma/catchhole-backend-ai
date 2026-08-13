@@ -105,6 +105,31 @@ def test_comparator_restores_single_extracted_value_without_retry() -> None:
     assert len(text_client.requests) == 1
 
 
+def test_comparator_preserves_single_candidate_merge_value_when_conflict_is_normalized() -> None:
+    candidate = _candidate("서식지", "극지방")
+    merged_value = "혹한 지역과 극지방"
+    text_client = FakeTextClient([{
+        "consolidation_status": "CONFLICT",
+        "operation": "MERGE",
+        "target_ref": "T1",
+        "matched_property_name": "서식지",
+        "proposed_setting_name": "서식지",
+        "proposed_value": merged_value,
+        "comparison_reason": "기존 서식지 설명과 신규 정보를 함께 보존한다.",
+    }])
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=1,
+        ).compare(candidate, [_target()])
+    )
+
+    assert result.consolidation_status == "SINGLE"
+    assert result.operation == "MERGE"
+    assert result.proposed_value == merged_value
+
+
 def test_comparator_restores_add_identity_fields_without_retry() -> None:
     candidate = _candidate("도달 가능성", "미궁 진입 직후 외곽으로 떨어질 수 있다.")
     invalid = {

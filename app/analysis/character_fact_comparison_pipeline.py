@@ -157,7 +157,9 @@ class CharacterFactComparisonPipeline:
                 temporal_scope=decision.temporal_scope,
                 comparison_reason=decision.comparison_reason,
                 context_token=context.context_token,
-                raw_comparison_json=raw_comparison_json,
+                # P1/P2는 한 번의 provider 요청에서만 유효한 임시 참조다. DB 감사 원문에는
+                # 최종 판단만 남기고 재생성할 수 없는 요청 로컬 식별자는 저장하지 않는다.
+                raw_comparison_json=_without_request_local_refs(raw_comparison_json),
             )
             try:
                 await self.spring_client.complete_character_fact_comparison(
@@ -191,3 +193,11 @@ def _has_error_code(exc: httpx.HTTPStatusError, expected_code: str) -> bool:
         return False
     error = payload.get("error") if isinstance(payload, dict) else None
     return isinstance(error, dict) and error.get("code") == expected_code
+
+
+def _without_request_local_refs(raw_comparison_json: dict) -> dict:
+    return {
+        key: value
+        for key, value in raw_comparison_json.items()
+        if key not in {"target_ref", "removed_snapshot_refs"}
+    }

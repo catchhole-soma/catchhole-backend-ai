@@ -211,7 +211,12 @@ def _normalize_deterministic_fields(
     updates: dict[str, object] = {}
     if len(source_values) == 1:
         updates["consolidation_status"] = WorldSettingConsolidationStatus.SINGLE
-    if decision.consolidation_status == WorldSettingConsolidationStatus.CONFLICT:
+    # 실제 복수 원문 값이 충돌할 때만 원문 목록을 보존한다. 단일 후보에서 모델이
+    # CONFLICT를 잘못 반환한 경우에는 SINGLE로 정규화하되 MERGE 최종값은 유지한다.
+    if (
+        len(source_values) > 1
+        and decision.consolidation_status == WorldSettingConsolidationStatus.CONFLICT
+    ):
         updates["proposed_value"] = candidate.extracted_value
     if decision.operation in {WorldSettingOperation.ADD, WorldSettingOperation.EXCLUDE}:
         updates["proposed_scope_name"] = candidate.scope_name
