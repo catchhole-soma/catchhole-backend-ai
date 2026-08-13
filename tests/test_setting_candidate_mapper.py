@@ -6,6 +6,7 @@ import pytest
 from app.analysis.character_name_resolver import CharacterNameMatch
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.domain.enums import (
+    CharacterFactComparisonStatus,
     SettingCandidateKind,
     SettingCandidateMatchStatus,
     SettingCandidateReviewStatus,
@@ -80,6 +81,7 @@ def test_to_entity_maps_extracted_candidate_to_setting_candidate() -> None:
     assert entity.candidate_kind == SettingCandidateKind.SETTING
     assert entity.raw_ai_result_json["entity_name"] == "비요른"
     assert entity.raw_ai_result_json["raw_entity_mention"] == "나"
+    assert entity.comparison_status == CharacterFactComparisonStatus.WAITING_FOR_CHARACTER_MATCH
     assert entity.created_at is None
     assert entity.updated_at is None
 
@@ -187,6 +189,36 @@ def test_to_entity_maps_character_discovery_without_setting_value_fields() -> No
     assert entity.value_type is None
     assert entity.value_json is None
     assert entity.raw_ai_result_json["candidate_kind"] == "CHARACTER_DISCOVERY"
+    assert entity.comparison_status == CharacterFactComparisonStatus.NOT_REQUIRED
+
+
+def test_to_entity_marks_matched_setting_ready_for_comparison() -> None:
+    candidate = ExtractedSettingCandidate(
+        source_chunk_id=CHUNK_ID,
+        entity_type="CHARACTER",
+        entity_name="비요른",
+        raw_entity_mention="비요른",
+        attribute_name="level",
+        attribute_value="1",
+        value_type="NUMBER",
+        value_json={"value": 1},
+        evidence_spans=[ExtractedEvidenceSpan(quote="비요른은 1레벨이다.")],
+        confidence=0.95,
+    )
+
+    entity = SettingCandidateMapper.to_entity(
+        work_id=WORK_ID,
+        episode_id=EPISODE_ID,
+        source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        candidate=candidate,
+        character_match=CharacterNameMatch(
+            matched_character_id=UUID("00000000-0000-0000-0000-000000000099"),
+            match_status=SettingCandidateMatchStatus.MATCHED,
+        ),
+    )
+
+    assert entity.comparison_status == CharacterFactComparisonStatus.PENDING
 
 
 def test_character_discovery_rejects_setting_value_fields() -> None:

@@ -174,6 +174,9 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
     assert "실제 설정값이 달라졌다면 서로 다른 후보로 유지합니다" in (
         llm_client.system_prompt
     )
+    assert "완화·종료·다른 상태로 전환된 현재 결과" in llm_client.system_prompt
+    assert "능력 회복·증상 소멸·행동 변화·외부 효과 해제" in llm_client.system_prompt
+    assert "과거에 상태가 있었다고 역으로 만들어 내지 않습니다" in llm_client.system_prompt
     assert (
         "`schemaKey`, `displayName`, `aliases` 또는 `attributePattern`"
         in llm_client.system_prompt
@@ -393,7 +396,7 @@ class FakeTextGenerationClient:
         assert str(CHUNK_ID) not in user_prompt
         assert max_output_tokens == 4000
         assert prompt_cache_key is not None
-        assert prompt_cache_key.startswith("setting-extraction:v3:")
+        assert prompt_cache_key.startswith("setting-extraction:v5:")
         return LlmTextResponse(
             text="""
             {

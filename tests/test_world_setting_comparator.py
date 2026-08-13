@@ -80,7 +80,7 @@ def test_comparator_accepts_each_supported_operation(
     ]
 
 
-def test_comparator_retries_when_exclude_rewrites_extracted_value() -> None:
+def test_comparator_restores_single_extracted_value_without_retry() -> None:
     candidate = _candidate("현재 소유자", "수아")
     invalid = {
         "consolidation_status": "SINGLE",
@@ -91,7 +91,63 @@ def test_comparator_retries_when_exclude_rewrites_extracted_value() -> None:
         "proposed_value": "다른 값",
         "comparison_reason": "일시적 소유 상태다.",
     }
-    valid = {**invalid, "proposed_value": "수아"}
+    text_client = FakeTextClient([invalid])
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=1,
+        ).compare(candidate, [_target()])
+    )
+
+    assert result.proposed_value == "수아"
+    assert result.consolidation_status == "SINGLE"
+    assert len(text_client.requests) == 1
+
+
+def test_comparator_restores_add_identity_fields_without_retry() -> None:
+    candidate = _candidate("도달 가능성", "미궁 진입 직후 외곽으로 떨어질 수 있다.")
+    invalid = {
+        "consolidation_status": "MERGED",
+        "operation": "ADD",
+        "target_ref": None,
+        "matched_property_name": None,
+        "proposed_scope_name": "다른 범위",
+        "proposed_setting_name": "다듬은 설정명",
+        "proposed_value": "미궁 외곽으로 이동할 가능성이 있다.",
+        "comparison_reason": "기존에 없는 설정이다.",
+    }
+    text_client = FakeTextClient([invalid])
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=1,
+        ).compare(candidate, [_target()])
+    )
+
+    assert result.consolidation_status == "SINGLE"
+    assert result.proposed_scope_name == candidate.scope_name
+    assert result.proposed_setting_name == candidate.setting_name
+    assert result.proposed_value == candidate.extracted_value
+
+
+def test_comparator_passes_validation_reason_to_retry() -> None:
+    candidate = _candidate("서식지", "극지방")
+    invalid = {
+        "consolidation_status": "SINGLE",
+        "operation": "UPDATE",
+        "target_ref": "T1",
+        "matched_property_name": "존재하지 않는 속성",
+        "proposed_setting_name": "존재하지 않는 속성",
+        "proposed_value": "극지방",
+        "comparison_reason": "기존 서식지를 바꾼다.",
+    }
+    valid = {
+        **invalid,
+        "matched_property_name": "서식지",
+        "proposed_setting_name": "서식지",
+    }
     text_client = FakeTextClient([invalid, valid])
 
     result, _ = asyncio.run(
@@ -101,8 +157,12 @@ def test_comparator_retries_when_exclude_rewrites_extracted_value() -> None:
         ).compare(candidate, [_target()])
     )
 
-    assert result.proposed_value == "수아"
-    assert len(text_client.requests) == 2
+    assert result.matched_property_name == "서식지"
+    first_prompt = json.loads(text_client.requests[0]["user_prompt"])
+    retry_prompt = json.loads(text_client.requests[1]["user_prompt"])
+    assert "validation_feedback" not in first_prompt
+    assert retry_prompt["validation_feedback"]["previous_response_rejected"] is True
+    assert "does not exist" in retry_prompt["validation_feedback"]["reason"]
 
 
 def test_comparator_consolidates_multiple_same_key_values_for_add() -> None:
@@ -214,7 +274,7 @@ def test_comparator_preserves_conflicting_values_for_user_review() -> None:
     assert result.proposed_value == candidate.extracted_value
 
 
-def test_comparator_retries_when_conflict_rewrites_source_values() -> None:
+def test_comparator_restores_conflicting_source_values_without_retry() -> None:
     candidate = _candidate("통신 반경", "약 300m\n약 3km")
     invalid = {
         "consolidation_status": "CONFLICT",
@@ -225,18 +285,17 @@ def test_comparator_retries_when_conflict_rewrites_source_values() -> None:
         "proposed_value": "약 300m 또는 약 3km",
         "comparison_reason": "두 수치가 달라 확인이 필요하다.",
     }
-    valid = {**invalid, "proposed_value": candidate.extracted_value}
-    text_client = FakeTextClient([invalid, valid])
+    text_client = FakeTextClient([invalid])
 
     result, _ = asyncio.run(
         WorldSettingComparator(
             llm_client=text_client,
-            max_attempts=2,
+            max_attempts=1,
         ).compare(candidate, [])
     )
 
     assert result.proposed_value == candidate.extracted_value
-    assert len(text_client.requests) == 2
+    assert len(text_client.requests) == 1
 
 
 def test_comparator_never_matches_same_setting_name_from_a_different_scope() -> None:

@@ -10,7 +10,11 @@ from app.clients.spring_worker_client import (
     SpringWorkerClient,
 )
 from app.domain.enums import EpisodeProcessingStatus
-from app.schemas.worker import WorkerAnalysisJobPayload
+from app.schemas.worker import (
+    WorkerAnalysisJobPayload,
+    WorkerCharacterFactComparisonCompleteRequest,
+    WorkerRemovedSnapshotEntry,
+)
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
 WORK_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -64,6 +68,26 @@ def test_claim_returns_none_when_spring_returns_no_content() -> None:
     payload = asyncio.run(client.claim(allowed_job_types=["SETTING_EXTRACTION"]))
 
     assert payload is None
+
+
+def test_hidden_character_comparison_payload_allows_missing_batch_and_episode() -> None:
+    payload = WorkerAnalysisJobPayload.model_validate(
+        {
+            "analysisJobId": str(ANALYSIS_JOB_ID),
+            "jobType": "CHARACTER_FACT_COMPARISON",
+            "workId": str(WORK_ID),
+            "workTitle": "레거시 작품",
+            "batchId": None,
+            "leaseToken": str(LEASE_TOKEN),
+            "leaseExpiresAt": "2026-08-06T12:05:00",
+            "claimAttemptCount": 1,
+            "settingCandidateId": "00000000-0000-0000-0000-000000000099",
+            "episode": None,
+        }
+    )
+
+    assert payload.batch_id is None
+    assert payload.episode is None
 
 
 def test_claim_payload_defaults_character_setting_schemas_when_older_spring_omits_field() -> None:
@@ -339,6 +363,124 @@ def test_world_setting_worker_calls_use_lease_and_parse_structured_context() -> 
     )
 
 
+def test_character_fact_comparison_calls_match_spring_contract() -> None:
+    requests: list[httpx.Request] = []
+    candidate_id = UUID("00000000-0000-0000-0000-000000000030")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/claim-next"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={"data": {"candidateId": str(candidate_id)}},
+            )
+        if request.url.path.endswith("/character-fact-comparison-context"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={"data": _character_comparison_context(candidate_id)},
+            )
+        return _empty_success_response(request, [])
+
+    client = _client(handler)
+
+    async def call_character_comparison_apis():
+        claimed = await client.claim_next_character_fact_comparison(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+        )
+        context = await client.get_character_fact_comparison_context(
+            ANALYSIS_JOB_ID,
+            candidate_id,
+            LEASE_TOKEN,
+        )
+        await client.complete_character_fact_comparison(
+            ANALYSIS_JOB_ID,
+            candidate_id,
+            LEASE_TOKEN,
+            WorkerCharacterFactComparisonCompleteRequest(
+                operation="ADD",
+                removed_snapshot_entries=[
+                    WorkerRemovedSnapshotEntry(
+                        fact_type="STATUS",
+                        fact_key="status.출혈",
+                    )
+                ],
+                proposed_fact_value="완전히 회복됨",
+                proposed_value_json={"active": False},
+                temporal_scope="PRESENT",
+                comparison_reason="완전한 회복 결과가 명시되었다.",
+                context_token="snapshot-v1",
+                raw_comparison_json={"operation": "ADD"},
+            ),
+        )
+        await client.fail_character_fact_comparison(
+            ANALYSIS_JOB_ID,
+            candidate_id,
+            LEASE_TOKEN,
+            "comparison failed",
+        )
+        return claimed, context
+
+    claimed, context = asyncio.run(call_character_comparison_apis())
+
+    assert claimed is not None and claimed.candidate_id == candidate_id
+    assert context.candidate.evidence_spans[0].quote == "상처가 완전히 나았다."
+    assert context.snapshot_entries[0].fact_key == "status.출혈"
+    assert context.prior_candidates[0].attribute_value == "출혈 중"
+    expected_base = (
+        f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
+        f"/setting-candidates/{candidate_id}/character-fact-comparison"
+    )
+    assert [(request.method, request.url.path) for request in requests] == [
+        (
+            "POST",
+            f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
+            "/character-fact-comparisons/claim-next",
+        ),
+        ("POST", f"{expected_base}-context"),
+        ("POST", f"{expected_base}-complete"),
+        ("POST", f"{expected_base}-fail"),
+    ]
+    complete_payload = json.loads(requests[2].content)
+    assert complete_payload == {
+        "operation": "ADD",
+        "removedSnapshotEntries": [{"factType": "STATUS", "factKey": "status.출혈"}],
+        "proposedFactValue": "완전히 회복됨",
+        "proposedValueJson": {"active": False},
+        "temporalScope": "PRESENT",
+        "comparisonReason": "완전한 회복 결과가 명시되었다.",
+        "contextToken": "snapshot-v1",
+        "rawComparisonJson": {"operation": "ADD"},
+    }
+    assert json.loads(requests[3].content) == {"errorMessage": "comparison failed"}
+    assert all(
+        request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN)
+        for request in requests
+    )
+
+
+def test_character_fact_comparison_context_allows_missing_source_episode() -> None:
+    candidate_id = UUID("00000000-0000-0000-0000-000000000030")
+    response_body = _character_comparison_context(candidate_id)
+    response_body["candidate"]["sourceEpisodeId"] = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={"data": response_body})
+
+    client = _client(handler)
+    context = asyncio.run(
+        client.get_character_fact_comparison_context(
+            ANALYSIS_JOB_ID,
+            candidate_id,
+            LEASE_TOKEN,
+        )
+    )
+
+    assert context.candidate.source_episode_id is None
+
+
 def _candidate_payload() -> dict:
     return {
         "candidateId": "00000000-0000-0000-0000-000000000020",
@@ -351,6 +493,49 @@ def _candidate_payload() -> dict:
         "extractedValue": "혹한 지역",
         "evidenceSpans": [{"quote": "바바리안은 혹한 지역에 산다."}],
         "extractionConfidence": 0.95,
+    }
+
+
+def _character_comparison_context(candidate_id: UUID) -> dict:
+    return {
+        "candidate": {
+            "candidateId": str(candidate_id),
+            "workId": str(WORK_ID),
+            "sourceEpisodeId": str(EPISODE_ID),
+            "entityName": "비요른",
+            "attributeName": "status.회복",
+            "attributeValue": "완전히 회복됨",
+            "valueJson": {"active": False},
+            "valueType": "JSON",
+            "evidenceSpans": [{"quote": "상처가 완전히 나았다."}],
+            "matchedCharacterId": "00000000-0000-0000-0000-000000000031",
+            "matchedCharacterName": "비요른",
+            "canonicalFactType": "STATUS",
+            "canonicalFactKey": "status.회복",
+            "confidence": 0.95,
+        },
+        "snapshotEntries": [
+            {
+                "factType": "STATUS",
+                "factKey": "status.출혈",
+                "factValue": "출혈 중",
+                "valueJson": {"active": True},
+            }
+        ],
+        "priorCandidates": [
+            {
+                "sourceEpisodeNo": 1,
+                "attributeName": "status.출혈",
+                "attributeValue": "출혈 중",
+                "valueJson": {"active": True},
+                "evidenceSpans": [{"quote": "상처에서 피가 났다."}],
+                "comparisonStatus": "COMPLETED",
+                "suggestedOperation": "ADD",
+                "proposedFactValue": "출혈 중",
+                "proposedValueJson": {"active": True},
+            }
+        ],
+        "contextToken": "snapshot-v1",
     }
 
 
