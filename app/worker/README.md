@@ -67,6 +67,10 @@ PATCH /api/internal/v1/analysis-jobs/{analysisJobId}/progress
 POST  /api/internal/v1/analysis-jobs/{analysisJobId}/heartbeat
 POST  /api/internal/v1/analysis-jobs/{analysisJobId}/complete
 POST  /api/internal/v1/analysis-jobs/{analysisJobId}/fail
+POST  /api/internal/v1/analysis-jobs/{analysisJobId}/character-fact-comparisons/claim-next
+POST  /api/internal/v1/analysis-jobs/{analysisJobId}/setting-candidates/{candidateId}/character-fact-comparison-context
+POST  /api/internal/v1/analysis-jobs/{analysisJobId}/setting-candidates/{candidateId}/character-fact-comparison-complete
+POST  /api/internal/v1/analysis-jobs/{analysisJobId}/setting-candidates/{candidateId}/character-fact-comparison-fail
 ```
 
 모든 변경 요청은 claim 응답의 `X-Worker-Lease-Token`을 보내며, Worker는 provider 호출 중 60초마다 heartbeat로 lease를 갱신합니다. progress의 `currentStep`은 표시용이고 `episodeStatus`와 기계 판독용 `checkpointStage`를 별도 필드로 전달합니다.
@@ -79,7 +83,7 @@ POST  /api/internal/v1/analysis-jobs/{analysisJobId}/fail
 }
 ```
 
-checkpoint는 `CHUNKS_READY`, `CHARACTER_CANDIDATES_SAVED`, `WORLD_CANDIDATES_PUBLISHED`, `WORLD_COMPARISONS_FINISHED` 순서로만 증가합니다. lease가 만료되어 Job이 다시 claim되면 마지막 checkpoint 이후 stage부터 재개합니다.
+checkpoint는 `CHUNKS_READY`, `CHARACTER_CANDIDATES_SAVED`, `CHARACTER_COMPARISONS_FINISHED`, `WORLD_CANDIDATES_PUBLISHED`, `WORLD_COMPARISONS_FINISHED` 순서로만 증가합니다. lease가 만료되어 Job이 다시 claim되면 마지막 checkpoint 이후 stage부터 재개합니다.
 
 ## 실행 슬롯과 동시성
 
@@ -95,7 +99,7 @@ checkpoint는 `CHUNKS_READY`, `CHARACTER_CANDIDATES_SAVED`, `WORLD_CANDIDATES_PU
 
 슬롯이 없을 때 Job을 미리 claim해 내부 대기열에 쌓지 않습니다. 한 Job 안의 청크와 stage는 순차 처리하고, Job 사이만 비동기로 겹칩니다. `LLM_MAX_CONCURRENT_REQUESTS`는 프로세스별 LLM 요청 상한이며, 동기 DB/S3 경계는 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에서 실행합니다.
 
-현재 운영 검증 rollout은 `SETTING_EXTRACTION` 분석 Worker 2개 × 프로세스당 슬롯 5개 = 최대 10개입니다. 50개 Job 부하 테스트에서 Backend·PostgreSQL·LLM 지표를 확인하고 기준 미달이면 슬롯을 3개로 되돌립니다. 별도 `world-comparison` Worker는 Job·LLM 동시성을 1로 고정합니다. 이 10은 설정 추출 Job 처리 용량이며 provider 계정 전체에 걸친 분산 동시성 제한은 아닙니다.
+현재 운영 검증 rollout은 `SETTING_EXTRACTION` 분석 Worker 2개 × 프로세스당 슬롯 5개 = 최대 10개입니다. 50개 Job 부하 테스트에서 Backend·PostgreSQL·LLM 지표를 확인하고 기준 미달이면 슬롯을 3개로 되돌립니다. 별도 `character-comparison`과 `world-comparison` Worker는 각각 Job·LLM 동시성을 1로 고정합니다. 이 10은 설정 추출 Job 처리 용량이며 provider 계정 전체에 걸친 분산 동시성 제한은 아닙니다.
 
 ## 현재 연결된 실행 흐름
 
@@ -114,6 +118,8 @@ Spring claim
 -> evidence quote 위치 보정
 -> 구체적이지 않은 entity_name 후보 subject fallback 전 토큰 예약·호출 후 정산
 -> setting_candidates 교체 저장
+-> 매칭된 캐릭터 후보별 현재 snapshot context 조회 및 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 제안 저장
+-> CHARACTER_COMPARISONS_FINISHED checkpoint 보고
 -> 세계관 설정 후보 추출 및 Spring 내부 API 게시
 -> 후보별 기존 world_settings 탐색 및 ADD/UPDATE/MERGE/EXCLUDE 비교 저장
 -> WORLD_COMPARISONS_FINISHED checkpoint 보고
@@ -121,9 +127,15 @@ Spring claim
 -> Spring complete 보고
 ```
 
-사용자 재비교는 별도 실행 모드가 담당합니다.
+사용자 재비교는 대상별 별도 실행 모드가 담당합니다.
 
 ```text
+run_analysis_worker.py --worker-kind character-comparison
+-> CHARACTER_FACT_COMPARISON만 claim
+-> 연결된 PENDING 후보 한 건 비교
+-> 후보 COMPLETED/FAILED 저장
+-> Job complete/fail 보고
+
 run_analysis_worker.py --worker-kind world-comparison
 -> WORLD_SETTING_COMPARISON만 claim
 -> 연결된 PENDING 후보 한 건 비교
@@ -140,6 +152,10 @@ run_analysis_worker.py --worker-kind world-comparison
   - 해당 episode의 청킹과 chunk별 설정 추출기를 호출하고, feature flag가 켜진 경우에만 임베딩 서비스를 호출합니다.
   - 실제 Worker 실행에서는 호출할 raw LLM·embedding client를 job ID가 결합된 metered wrapper로 감싸고, 테스트에서 주입한 fake service는 그대로 재사용합니다.
   - 생성·생략된 episode/chunk/embedding/candidate 개수를 `summaryJson`으로 모아 Spring에 완료 보고합니다.
+- `character_fact_comparison_worker.py`, `character_fact_services.py`
+  - 사용자 수정 등으로 생성된 `CHARACTER_FACT_COMPARISON` Job만 claim합니다.
+  - 후보별 snapshot 비교는 순차 처리하고 Job·LLM 동시성을 1로 유지합니다.
+  - Python은 제안만 만들며 CharacterFact append, snapshot 변경과 비교 상태 저장은 Spring이 담당합니다.
 - `MeteredTextGenerationClient`, `MeteredEmbeddingClient`
   - 각 provider 호출마다 Spring 원장에 예상 최대 토큰을 먼저 예약합니다.
   - 성공 또는 usage가 포함된 실패는 실제 token 수로 정산하고, usage를 알 수 없는 실패는 예약을 해제합니다.
@@ -215,6 +231,7 @@ LLM 응답의 JSON 파싱·schema 검증 실패 재시도는 현재 연결되어
 재비교 queue는 별도 프로세스로 실행합니다.
 
 ```bash
+.venv/bin/python -m scripts.run_analysis_worker --worker-kind character-comparison
 .venv/bin/python -m scripts.run_analysis_worker --worker-kind world-comparison
 ```
 

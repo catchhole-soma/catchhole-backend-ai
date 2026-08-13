@@ -1,6 +1,6 @@
 # AI Worker Workflow
 
-Python AI Worker가 Spring 내부 Worker API로 분석 작업을 claim한 뒤, S3 원문을 읽고 청킹/선택적 임베딩/캐릭터·세계관 LLM 추출/세계관 비교/후보 저장/완료 보고까지 수행하는 흐름을 정리합니다.
+Python AI Worker가 Spring 내부 Worker API로 분석 작업을 claim한 뒤, S3 원문을 읽고 청킹/선택적 임베딩/캐릭터·세계관 LLM 추출/캐릭터 Fact 비교/세계관 비교/후보 저장/완료 보고까지 수행하는 흐름을 정리합니다.
 
 프로젝트 전체 분석 job 생성, 업로드 batch와 episode 연결, 사용자-facing 조회/수정/확정 API는 Spring 백엔드 문서가 기준입니다. 이 문서는 Spring 문서의 "Python AI Worker" 구간을 Python 코드 기준으로 자세히 펼친 문서입니다.
 
@@ -18,6 +18,8 @@ Spring claim
 -> 구체적이지 않은 entity_name 후보를 LLM subject fallback으로 해소
 -> raw/entity 캐릭터명을 knownCharacters와 비교
 -> setting_candidates 교체 저장
+-> 매칭된 캐릭터 후보를 현재 WorkCharacter snapshot과 후보별로 비교
+-> ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 제안 저장
 -> 같은 chunk에서 지속 가능한 세계관 속성을 원자 후보로 추출
 -> Spring 내부 API로 world_setting_candidates 게시
 -> 같은 category의 대상명 검색 후 최대 3개 상세 문맥 비교
@@ -27,7 +29,7 @@ Spring claim
 
 실제로 실행하는 모든 AI provider 호출은 `app/usage` wrapper를 통과합니다. 설정 추출 재시도와 subject fallback도 각각 별도 요청으로 예약·정산하며, 임베딩 flag가 꺼져 있으면 임베딩 예약과 provider 호출을 모두 생략합니다. prompt와 응답 본문은 Spring 사용량 원장에 보내지 않습니다. Spring은 이 원장의 `SETTLED` 행을 합산해 최종 analysis job input/output token 수를 기록합니다.
 
-Python Worker는 `analysis_jobs.status`와 세계관 테이블을 DB에서 직접 바꾸지 않습니다. 상태와 세계관 후보 변경은 Spring 내부 API에 보고합니다. 기존 캐릭터 흐름의 `episode_chunks`와 `setting_candidates` 저장만 SQLAlchemy 경계를 유지합니다.
+Python Worker는 `analysis_jobs.status`, 캐릭터 비교 lifecycle/result와 세계관 테이블을 DB에서 직접 바꾸지 않습니다. 이 상태들은 Spring 내부 API에 보고합니다. 기존 캐릭터 흐름의 `episode_chunks`와 `setting_candidates` 최초 저장만 SQLAlchemy 경계를 유지하며, Python은 후보 생성 시 `comparison_status` 초기값만 함께 기록합니다.
 
 ## Job 단위 비동기 실행
 
@@ -54,11 +56,60 @@ flowchart TD
 - 동기 S3·SQLAlchemy 작업은 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에서 수행해 event loop와 heartbeat를 막지 않습니다.
 - 한 Job의 오류는 그 Task에서만 처리하며 다른 실행 중 Job을 취소하지 않습니다.
 - 현재 운영 검증 rollout은 분석 Worker 2개 × 프로세스당 동시 Job 5개 = `SETTING_EXTRACTION` 최대 10개입니다. 50개 Job 부하 테스트가 기준에 미달하면 프로세스당 3개로 되돌립니다.
-- 별도 `world-comparison` Worker는 Job·LLM 동시성을 1로 유지합니다. 따라서 10은 provider 계정 전체의 분산 상한이 아니며, 계정 전체 상한이 필요하면 별도 분산 limiter가 필요합니다.
+- 별도 `world-comparison`, `character-comparison` Worker는 Job·LLM 동시성을 각각 1로 유지합니다. 따라서 10은 provider 계정 전체의 분산 상한이 아니며, 계정 전체 상한이 필요하면 별도 분산 limiter가 필요합니다.
 
 종료 신호를 받으면 scheduler는 신규 claim을 즉시 중단하고 `AI_WORKER_SHUTDOWN_GRACE_SECONDS` 동안 실행 중 Job과 heartbeat를 유지합니다. 운영 내부 grace는 180초이고 Compose `stop_grace_period`는 210초입니다. grace 안에 끝나지 않은 Task는 취소하고 heartbeat를 중단하며, Spring은 5분 lease가 만료된 Job을 마지막 checkpoint부터 회수합니다.
 
 이미 시작된 동기 DB/S3 thread는 Python에서 강제 중단할 수 없어, critical section 완료를 기다리는 동안 heartbeat 종료가 180초를 넘길 수 있습니다. 따라서 내부 grace는 blocking I/O의 절대 timeout이 아니며 Compose의 210초 강제 종료가 최종 상한입니다. 마지막 heartbeat 직후 강제 종료되면 재claim이 lease TTL만큼 추가 지연될 수 있으므로, staging 부하 테스트에서 응답하지 않는 DB/S3와 강제 종료 후 lease 회수까지 함께 확인합니다.
+
+## NVM-264 캐릭터 Fact 2차 비교 흐름
+
+캐릭터 1차 추출 prompt는 기존처럼 지속 설정만 추출하고 단발 사건을 제외합니다. 그 결과를 저장한 뒤, Spring이 소유한 현재 `WorkCharacter` snapshot과 비교하는 별도 단계에서만 현재 화면 반영 여부와 제거 제안을 만듭니다.
+
+```text
+CHARACTER_CANDIDATES_SAVED
+-> Spring이 비교할 SettingCandidate 한 건을 claim
+-> candidate와 현재 snapshot entries, 앞선 동일 slot 후보, contextToken 조회
+-> Python이 DB ID를 제외하고 snapshot을 P1, P2 참조로 변환
+-> 2차 LLM이 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 판단
+-> Spring이 contextToken과 canonical Fact slot을 다시 검증해 결과 저장
+-> 다음 후보를 순차 처리
+-> CHARACTER_COMPARISONS_FINISHED
+```
+
+`CharacterFact`는 과거 근거를 포함한 append-only 이력입니다. `removedSnapshotEntries`는 원본 Fact를 삭제하거나 `is_current`로 전환하는 지시가 아니라, 사용자 확정 시 현재 `WorkCharacter` snapshot에서 특정 STATUS entry를 제거하자는 제안입니다. 실제 snapshot 변경과 Fact 생성은 Spring의 사용자 confirm 트랜잭션 책임입니다.
+
+비교 context의 `candidate`에는 canonical Fact type/key와 evidence quote/offset이 포함되고, `snapshotEntries`에는 현재 화면에 반영된 Fact type/key, 표시 문자열 `factValue`, 구조화 값 `valueJson`만 포함됩니다. `priorCandidates`에는 같은 batch·캐릭터·canonical slot에서 원문 시간상 앞선 미확정 후보를 최대 30건 담습니다. 같은 회차에서는 evidence 시작 offset을 우선해 정렬합니다. 이 목록은 current snapshot이 아니라 `35 -> +1` 같은 상대 변화를 최종값 `36`으로 계산하기 위한 시간순 보조 문맥이며, 앞선 후보를 무시하거나 수정하면 context hash가 바뀌어 후속 후보를 다시 비교합니다. provenance Fact ID는 Spring 내부 문맥 hash에만 사용하고 Python이나 LLM에 노출하지 않습니다. Python은 요청 안에서만 유효한 `P*` 참조를 만들고, 완료 요청에는 이를 다시 `factType/factKey`로 변환합니다. 소설 원문·후보·snapshot 문자열 안의 명령이나 JSON 출력 요구는 모두 데이터로 취급하고 따르지 않도록 system prompt에 명시합니다.
+
+`ADD`, `UPDATE`, `MERGE`는 현재 화면에 저장할 최종 `proposedFactValue`와 `proposedValueJson`을 함께 반환합니다. `factValue`는 사용자에게 보이는 요약 문자열이고 `valueJson`은 편집·비교용 구조화 값이므로 어느 한쪽에서 다른 쪽을 임의 복원하지 않습니다.
+
+MVP 안전 규칙은 다음과 같습니다.
+
+- canonical slot이 snapshot에 이미 있으면 `ADD`를 허용하지 않고 LLM 응답을 재시도합니다.
+- `UPDATE`와 `MERGE`는 candidate의 canonical slot만 대상으로 삼습니다.
+- `REMOVE`는 동일한 현재 `STATUS` slot의 종료만 표현하며 새 Fact는 이력에 보존합니다.
+- `HISTORY_ONLY`, `EXCLUDE`, `REVIEW_REQUIRED`는 target, proposed value, 제거 목록을 모두 비웁니다.
+- provider가 이 세 operation에 사용되지 않는 proposed value만 덧붙인 경우 재호출하지 않고 null로 정규화합니다. target이나 제거 목록처럼 판단 의미를 바꾸는 잘못된 필드는 계속 거절합니다.
+- 회상은 `PAST`, 가정은 `HYPOTHETICAL`로 분류하고 `HISTORY_ONLY` 또는 `REVIEW_REQUIRED`만 허용합니다.
+- 시간 문맥이 불명확한 `UNKNOWN`은 `REVIEW_REQUIRED`만 허용합니다.
+- STATUS 제거는 현재 시점의 상태 변화 결과가 나온 STATUS 후보에서만 허용합니다. 치료 수단만 있고 결과가 없으면 제거하지 않지만, 이후 능력·증상·행동 변화로 기존 상태가 끝났다는 해석이 자연스러우면 명시적인 완치 문구 없이도 의미상 관련된 여러 STATUS의 제거를 제안할 수 있습니다. 다만 새 결과와 무관한 독립적·잠재적 상태까지 연쇄적으로 제거하지 않습니다.
+- STATUS가 아닌 snapshot entry는 MVP에서 제거 대상으로 제안하지 않습니다.
+
+초기 `SETTING_EXTRACTION` Job에서는 후보 하나의 비교 실패를 해당 후보 `FAILED`로 격리하고 나머지 후보와 후속 세계관 단계를 계속합니다. 사용자가 재비교를 요청해 생성된 `CHARACTER_FACT_COMPARISON` 전용 Job은 후보 하나라도 실패하면 Job 전체를 실패 처리합니다.
+
+완료 시점에 snapshot이 달라져 Spring이 HTTP 409와 `SETTING_CANDIDATE_COMPARISON_STALE`을 반환하면 최신 context로 최대 3회 다시 비교합니다. 그 외 409나 오류 코드는 stale 재시도로 숨기지 않습니다.
+
+```bash
+.venv/bin/python -m scripts.run_analysis_worker --worker-kind character-comparison
+```
+
+전용 Worker는 candidate를 순차 처리하고 실행 동시성을 1로 강제합니다. 전체 Fact 이력·RAG를 prompt에 넣거나 여러 후보를 한 번에 묶는 최적화는 MVP 범위에 포함하지 않습니다.
+
+### 배포·기존 Job 호환
+
+Spring Flyway의 비교 컬럼과 내부 API/checkpoint를 먼저 배포한 뒤 AI 이미지를 교체합니다. 배포 중인 `RUNNING` Job은 가능하면 먼저 drain해 구·신 Worker가 서로 다른 checkpoint 계약으로 같은 Job을 이어 처리하지 않게 합니다.
+
+새 checkpoint는 기존 세계관 checkpoint보다 앞에 삽입됩니다. 배포 전에 이미 `WORLD_CANDIDATES_PUBLISHED` 또는 `WORLD_COMPARISONS_FINISHED`까지 간 Job은 enum 순서상 `CHARACTER_COMPARISONS_FINISHED`도 지난 것으로 판단하므로 캐릭터 2차 비교를 소급 실행하지 않습니다. 해당 회차에도 비교 제안이 필요하면 배포 후 회차 재분석 Job을 새로 생성합니다.
 
 ## NVM-260 세계관 확장 흐름
 
@@ -67,6 +118,8 @@ flowchart TD
 ```text
 CHUNKS_READY
 -> CHARACTER_CANDIDATES_SAVED
+-> 캐릭터 Fact 2차 비교
+-> CHARACTER_COMPARISONS_FINISHED
 -> chunk별 세계관 속성 추출 및 동일 분류·대상·설정명 후보 통합
 -> 2차 LLM이 단일값·안전한 통합·서로 다른 내용(SINGLE/MERGED/CONFLICT) 판정
 -> Backend 내부 API로 후보 전체 게시
@@ -171,7 +224,9 @@ flowchart TD
     AH --> AI["기존 캐릭터 매칭 상태 계산<br/>MATCHED / UNRESOLVED / AMBIGUOUS"]
     AI --> AJ["analysis_job_id 기준<br/>기존 setting_candidates 삭제"]
     AJ --> AK["새 setting_candidates 저장"]
-    AK --> AL["summaryJson 생성<br/>chunk/embedding/candidate 처리 개수"]
+    AK --> AKC["캐릭터 후보별 현재 snapshot 비교<br/>개별 실패는 후보에 기록"]
+    AKC --> AKW["세계관 후보 추출·게시·비교"]
+    AKW --> AL["summaryJson 생성<br/>chunk/embedding/candidate/비교 처리 개수"]
     AL --> AM["SpringWorkerClient.complete()"]
     AM --> AN["heartbeat 종료·슬롯 반환"]
     AN --> C
@@ -203,6 +258,8 @@ sequenceDiagram
     participant Subject as CharacterSubjectResolver
     participant CandidateService as SettingCandidateService
     participant CandidateRepo as SettingCandidateRepository
+    participant CharacterComparison as CharacterFactComparisonPipeline
+    participant WorldPipeline as WorldSettingPipeline
 
     Runner->>Runner: 빈 실행 슬롯 확보
     Runner->>Worker: claim_next()
@@ -266,6 +323,10 @@ sequenceDiagram
         CandidateService->>CandidateRepo: save_all(candidates)
         CandidateRepo-->>CandidateService: saved candidates
         CandidateService-->>Worker: saved candidates
+        Worker->>CharacterComparison: process_all(analysisJobId, leaseToken)
+        CharacterComparison-->>Worker: completed/failed counts
+        Worker->>WorldPipeline: 세계관 후보 추출·게시·process_all()
+        WorldPipeline-->>Worker: candidate/completed/failed counts
         Worker->>Spring: complete(summaryJson)
         Worker-->>Runner: WorkerRunResult(claimed=true)
         Runner->>Runner: 슬롯 반환
@@ -715,7 +776,7 @@ save_items 전체 수집
 
 ### 10. 완료 보고와 실패 보고
 
-캐릭터 후보 저장과 세계관 후보 게시·비교 stage가 끝나면 Worker는 `SpringWorkerClient.complete()`를 호출합니다.
+캐릭터 후보 저장·Fact 비교와 세계관 후보 게시·비교 stage가 끝나면 Worker는 `SpringWorkerClient.complete()`를 호출합니다.
 
 현재 `summaryJson`:
 
@@ -730,6 +791,8 @@ save_items 전체 수집
   "subjectFallbackCallCount": 4,
   "subjectFallbackResolvedCount": 3,
   "subjectFallbackUnresolvedCount": 2,
+  "characterFactComparisonCompletedCount": 39,
+  "characterFactComparisonFailedCount": 1,
   "worldSettingCandidateCount": 7,
   "worldSettingComparisonCompletedCount": 6,
   "worldSettingComparisonFailedCount": 1
@@ -764,10 +827,11 @@ save_items 전체 수집
 | chunk 교체 | `episode_chunks` | 단일 episode의 S3 원문을 읽은 직후 | 해당 episode의 기존 chunk 삭제 후 새 chunk 저장 |
 | chunk 임베딩 | `episode_chunks` 임베딩 필드 | 해당 episode의 chunk 교체 직후 | 외부 API 호출 후 별도 트랜잭션으로 갱신, 실패 시 NULL 유지하고 분석 계속 |
 | 후보 수집 | Python 메모리 `save_items` | chunk별 LLM 추출 후 | DB 저장 전까지 메모리에 누적 |
-| 후보 교체 | `setting_candidates` | 단일 episode의 모든 chunk 처리 완료 후 | `analysis_job_id` 기준 기존 후보 삭제 후 새 후보 저장 |
+| 후보 교체 | `setting_candidates` | 단일 episode의 모든 chunk 처리 완료 후 | `analysis_job_id` 기준 기존 후보 삭제 후 새 후보 저장. Python은 `comparison_status` 최초값만 설정 |
+| 캐릭터 Fact 비교 | Spring `setting_candidates` 비교 컬럼 | 매칭된 후보별 현재 snapshot 비교 후 | Spring이 context token·canonical slot을 검증하고 `COMPLETED` 또는 `FAILED` 전이. Python은 결과 컬럼을 직접 쓰지 않음 |
 | 세계관 후보 게시 | Spring `world_setting_candidates` | 모든 chunk의 세계관 추출·dedupe 후 | lease와 checkpoint를 검증한 Backend 트랜잭션에서 검토 전 후보 교체 |
 | 세계관 비교 | Spring `world_setting_candidates` | 후보별 대상 문맥 비교 후 | Backend가 대상 ID·version·property를 검증하고 `COMPLETED` 또는 `FAILED` 전이 |
-| 작업 완료 | Spring `analysis_jobs` | 마지막 checkpoint 도달 및 모든 세계관 비교가 terminal 상태가 된 후 | Spring 내부 complete API 호출 |
+| 작업 완료 | Spring `analysis_jobs` | 마지막 checkpoint 도달 및 캐릭터·세계관 비교가 terminal 상태가 된 후 | Spring 내부 complete API 호출 |
 | 작업 실패 | Spring `analysis_jobs` | 처리 중 예외 발생 후 | Spring 내부 fail API 호출 |
 
 주의:
@@ -793,7 +857,10 @@ save_items 전체 수집
 | evidence quote 위치 보정 | Python |
 | 캐릭터 주체 subject fallback | Python |
 | 캐릭터명 매칭 상태 계산 | Python |
-| `setting_candidates` 후보 저장 | Python |
+| `setting_candidates` 후보 저장과 comparison 최초 상태 초기화 | Python |
+| 캐릭터 현재 snapshot 비교·제안 생성 | Python |
+| 캐릭터 비교 lifecycle/context token/canonical slot 검증 | Spring 내부 Worker API |
+| 캐릭터 Fact append와 WorkCharacter snapshot 반영 | Spring 사용자 confirm 트랜잭션 |
 | 세계관 후보 추출·동일 key 값·근거 통합 | Python |
 | 세계관 비교 대상명 선택·제안 생성 | Python |
 | `world_setting_candidates` 생성·비교 상태 저장 | Spring 내부 Worker API |
@@ -838,17 +905,23 @@ save_items 전체 수집
     - 검증된 추출 결과가 `setting_candidates`로 저장되는 흐름을 봅니다.
 16. `app/mappers/setting_candidate_mapper.py`
     - LLM 후보와 매칭 결과가 DB 모델 필드로 어떻게 옮겨지는지 봅니다.
-17. `app/analysis/world_setting_extractor.py`, `app/analysis/world_setting_schemas.py`
+17. `app/analysis/character_fact_comparator.py`, `app/analysis/character_fact_comparison_schemas.py`
+    - 현재 snapshot을 `P*` 참조로 숨겨 전달하고 operation·시간 범위·STATUS 제거 규칙을 검증하는 흐름을 봅니다.
+18. `app/analysis/character_fact_comparison_pipeline.py`
+    - 캐릭터 후보 claim부터 stale 문맥 재시도와 후보별 완료/실패 격리를 봅니다.
+19. `app/worker/character_fact_comparison_worker.py`
+    - 사용자 재비교 전용 Job을 동시성 1의 별도 프로세스가 처리하는 흐름을 봅니다.
+20. `app/analysis/world_setting_extractor.py`, `app/analysis/world_setting_schemas.py`
     - 지속 가능한 세계관 속성의 추출 prompt 호출과 출력 계약을 봅니다.
-18. `app/mappers/world_setting_candidate_mapper.py`
+21. `app/mappers/world_setting_candidate_mapper.py`
     - evidence offset 보정, Spring 게시 DTO 변환과 구조적 dedupe를 봅니다.
-19. `app/analysis/world_setting_comparator.py`
+22. `app/analysis/world_setting_comparator.py`
     - `S*` 대상명 선택과 `T*` 상세 속성 비교, operation별 검증 규칙을 봅니다.
-20. `app/analysis/world_setting_pipeline.py`
+23. `app/analysis/world_setting_pipeline.py`
     - 후보 claim부터 문맥 stale 재시도, 비교 완료/실패까지의 orchestration을 봅니다.
-21. `app/worker/world_setting_comparison_worker.py`
+24. `app/worker/world_setting_comparison_worker.py`
     - 공개 recompare가 만든 내부 Job을 별도 프로세스가 처리하는 흐름을 봅니다.
-22. `app/worker/lease_heartbeat.py`, `app/usage/metering.py`
+25. `app/worker/lease_heartbeat.py`, `app/usage/metering.py`
     - 장기 provider 호출의 lease 유지와 요청별 token 예약·정산을 봅니다.
 
 ## adjacent chunk fallback 적용 지점

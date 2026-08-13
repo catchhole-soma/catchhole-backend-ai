@@ -11,6 +11,7 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - 추출 결과를 `setting_candidates` 저장 구조에 맞는 중간 결과로 정리합니다.
 - 근거 문장을 원문에서 다시 찾아 회차 전체 기준 위치를 계산합니다.
 - 추출 후보의 캐릭터명 표현을 기존 캐릭터 목록과 비교해 매칭 상태를 계산합니다.
+- 매칭된 캐릭터 후보와 현재 snapshot을 비교해 현재 화면 반영·검토·제거 제안을 생성합니다.
 - 세계관 후보와 같은 category의 기존 대상을 좁히고 ADD/UPDATE/MERGE/EXCLUDE 제안을 생성합니다.
 - NVM-143의 검증 근거 수집과 NVM-144의 충돌 판정은 후속 단계에서 연결합니다.
 
@@ -39,6 +40,14 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
   - `entity_name`이 비어 있거나 `미상`/지칭어 같은 구체적이지 않은 값인 후보를 `raw_entity_mention`의 형태와 관계없이 LLM으로 한 번 더 해소합니다.
   - 같은 current chunk에서 나온 fallback 대상 후보를 묶어 previous/current/next chunk 문맥과 함께 한 번에 전달합니다.
   - 설정 후보를 다시 추출하지 않고 주체만 판단하며, 정상 응답으로도 해소하지 못한 후보는 `entity_name="미상"`으로 보존합니다.
+- `character_fact_comparison_schemas.py`
+  - 캐릭터 비교 LLM 응답과 operation별 target/proposed/removal/temporal 불변식을 검증합니다.
+- `character_fact_comparator.py`
+  - candidate와 현재 snapshot을 DB 식별자 없는 `P*` 참조로 LLM에 전달합니다.
+  - canonical slot, STATUS 제거, 시간 범위 규칙을 추가로 검증하고 내부 ref가 사용자-facing reason에 남지 않게 치환합니다.
+- `character_fact_comparison_pipeline.py`
+  - Spring에서 비교 후보를 하나씩 claim하고 context 조회, 비교, 완료/실패를 순차 조율합니다.
+  - 정확한 stale error code일 때만 최신 snapshot context로 최대 3회 다시 비교하고 후보별 실패를 격리합니다.
 - `world_setting_extractor.py`, `world_setting_schemas.py`
   - 청크에서 여러 회차에 재사용 가능한 종족·세력·장소·몬스터·능력 체계·규칙/역사·중요 아이템의 원자 속성을 추출합니다.
   - 현재 소유 상태, 날씨, 단발성 사건은 제외하고 confidence를 `0.65`, `0.80`, `0.95` 중 하나로 제한합니다.
@@ -68,7 +77,7 @@ LLM 응답 파싱/검증 실패 메시지와 JSON 객체 파싱은 `json_respons
 `CharacterSettingExtractor`는 LLM 응답이 JSON으로 파싱되지 않거나, `app/analysis/schemas.py`의 Pydantic schema 검증에 실패한 경우에만 재시도합니다.
 설정 후보 배열이 응답 중간에 잘리는 위험을 줄이기 위해 각 추출 요청의 `max_output_tokens`는 4000으로 고정합니다.
 
-세계관 추출·대상 선택·비교도 JSON/schema/참조 검증 실패만 설정된 횟수만큼 재시도합니다. 대상 선택은 입력 ref의 중복·누락 범위를, 비교는 operation별 target/property와 제안 문자열을 Python에서 추가 검증합니다. DB 문맥 version 충돌은 LLM 응답 오류와 별도로 `world_setting_pipeline.py`가 최신 문맥을 다시 받아 최대 3회 처리합니다.
+캐릭터 Fact 비교와 세계관 추출·대상 선택·비교도 JSON/schema/참조 검증 실패만 설정된 횟수만큼 재시도합니다. 캐릭터 비교는 canonical slot과 STATUS 제거·시간 범위 불변식을, 세계관 대상 선택은 입력 ref의 중복·누락 범위를, 세계관 비교는 operation별 target/property와 제안 문자열을 Python에서 추가 검증합니다. DB 문맥 충돌은 LLM 응답 오류와 별도로 각 pipeline이 최신 문맥을 다시 받아 최대 3회 처리합니다.
 
 예를 들어 다음 경우는 재시도 대상입니다.
 

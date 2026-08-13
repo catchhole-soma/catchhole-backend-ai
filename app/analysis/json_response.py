@@ -53,15 +53,17 @@ async def request_validated_model(
     operation_name: str,
     logger: Logger,
     validate_model: Callable[[ModelT], None] | None = None,
+    retry_user_prompt_builder: Callable[[str, Exception], str] | None = None,
 ) -> ModelT:
     """LLM JSON 객체를 Pydantic 모델로 검증하고 동일 요청 범위에서 재시도한다."""
 
     last_error: Exception | None = None
+    current_user_prompt = user_prompt
     for attempt in range(1, max_attempts + 1):
         try:
             response = await client.create_text_response(
                 system_prompt=system_prompt,
-                user_prompt=user_prompt,
+                user_prompt=current_user_prompt,
                 model=model,
                 max_output_tokens=max_output_tokens,
                 prompt_cache_key=prompt_cache_key,
@@ -80,6 +82,10 @@ async def request_validated_model(
                     max_attempts,
                     compact_error_message(exc),
                 )
+                if retry_user_prompt_builder is not None:
+                    # 매번 최초 입력을 기준으로 피드백을 새로 만들어 실패 문구가
+                    # 재시도마다 중첩되지 않게 한다.
+                    current_user_prompt = retry_user_prompt_builder(user_prompt, exc)
     raise LlmExtractionError(
         f"{operation_name} failed after {max_attempts} attempts: "
         f"{compact_error_message(last_error)}"

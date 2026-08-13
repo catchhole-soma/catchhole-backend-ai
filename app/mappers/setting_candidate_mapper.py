@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from app.analysis.character_name_resolver import CharacterNameMatch
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.domain.enums import (
+    CharacterFactComparisonStatus,
     SettingCandidateKind,
     SettingCandidateMatchStatus,
     SettingCandidateReviewStatus,
@@ -31,6 +32,7 @@ class SettingCandidateMapper:
             matched_character_id=None,
             match_status=SettingCandidateMatchStatus.UNRESOLVED,
         )
+        candidate_kind = SettingCandidateKind(candidate.candidate_kind)
         return SettingCandidate(
             id=uuid4(),
             work_id=work_id,
@@ -39,7 +41,7 @@ class SettingCandidateMapper:
             # 원고 파일이 나중에 교체돼도 근거 조회는 분석 당시 원문을 사용한다.
             source_content_s3_key=source_content_s3_key,
             analysis_job_id=analysis_job_id,
-            candidate_kind=SettingCandidateKind(candidate.candidate_kind),
+            candidate_kind=candidate_kind,
             entity_type=SettingEntityType(candidate.entity_type),
             entity_name=entity_name,
             # raw_entity_mention은 원문에 실제 존재한 표현만 저장한다.
@@ -62,6 +64,7 @@ class SettingCandidateMapper:
             confidence=_to_decimal(candidate.confidence),
             review_status=SettingCandidateReviewStatus.PENDING_REVIEW,
             raw_ai_result_json=candidate.model_dump(mode="json"),
+            comparison_status=_initial_comparison_status(candidate_kind, character_match),
         )
 
 
@@ -69,3 +72,21 @@ def _to_decimal(value: float | None) -> Decimal | None:
     if value is None:
         return None
     return Decimal(str(value))
+
+
+def _initial_comparison_status(
+    candidate_kind: SettingCandidateKind,
+    character_match: CharacterNameMatch,
+) -> CharacterFactComparisonStatus:
+    if candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
+        return CharacterFactComparisonStatus.NOT_REQUIRED
+    if (
+        character_match.match_status
+        in {
+            SettingCandidateMatchStatus.MATCHED,
+            SettingCandidateMatchStatus.AUTO_MATCHED_BY_NAME,
+        }
+        and character_match.matched_character_id is not None
+    ):
+        return CharacterFactComparisonStatus.PENDING
+    return CharacterFactComparisonStatus.WAITING_FOR_CHARACTER_MATCH

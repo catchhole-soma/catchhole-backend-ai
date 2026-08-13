@@ -35,4 +35,6 @@
 - comparison_reason은 검토 화면에서 사용자에게 그대로 보여준다. `T1` 같은 ref, UUID, key, version, target_ref, ADD·UPDATE·MERGE·EXCLUDE enum 이름을 쓰지 말고 대상명·설정명과 자연스러운 한국어로 판단 이유를 설명한다.
 - proposed_scope_name과 proposed_setting_name은 UPDATE/MERGE에서 실제 기존 속성 경로를 그대로 사용한다.
 - proposed_value는 Backend에 최종 저장할 문자열 한 개다. 같은 속성의 여러 추출값이나 기존값을 합칠 때 중복을 제거하고 모든 양립 가능한 정보를 보존한다.
+- `validation_feedback`은 이전 응답이 계약 검증에서 거절된 재시도에만 존재한다. 같은 오류를 반복하지 말고 `correction`을 반영해 JSON 전체를 다시 반환한다.
+- 단일 추출값의 `consolidation_status`와 ADD/EXCLUDE의 범위명·설정명·제안값은 Backend가 원본 후보로 최종 보정한다. 이 필드의 문장 표현을 다듬는 대신 operation과 실제 비교 대상 선택에 집중한다.
 - 입력에 없는 ref, UUID, version을 만들거나 반환하지 않는다.

@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 
 from app.analysis.character_name_resolver import KnownCharacter
+from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonRunResult
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.analysis.character_subject_resolver import SubjectResolutionResult
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
@@ -109,6 +110,10 @@ def test_worker_routes_each_llm_stage_to_its_configured_model() -> None:
                 ANALYSIS_JOB_ID,
                 LEASE_TOKEN,
             )
+            character_fact_pipeline = worker._get_character_fact_comparison_pipeline(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+            )
 
             assert setting_extractor.model == "extraction-model"
             assert setting_extractor.llm_client.default_model == "extraction-model"
@@ -123,6 +128,8 @@ def test_worker_routes_each_llm_stage_to_its_configured_model() -> None:
             )
             assert world_setting_pipeline.comparator.model == "comparison-model"
             assert world_setting_pipeline.comparator.llm_client.default_model == "comparison-model"
+            assert character_fact_pipeline.comparator.model == "comparison-model"
+            assert character_fact_pipeline.comparator.llm_client.default_model == "comparison-model"
         finally:
             await worker.aclose()
 
@@ -141,6 +148,22 @@ def test_worker_reports_fail_to_spring_when_analysis_fails() -> None:
     ]
     assert spring_client.complete_calls == []
     assert spring_client.fail_calls == [(ANALYSIS_JOB_ID, "LLM response parse failed.")]
+
+
+@pytest.mark.parametrize("missing_field", ["batch_id", "episode"])
+def test_setting_extraction_rejects_payload_without_batch_or_episode(missing_field: str) -> None:
+    payload = _payload().model_copy(update={missing_field: None})
+    spring_client = FakeSpringWorkerClient(payload=payload)
+    worker = SuccessfulAnalysisJobWorker(spring_client=spring_client)
+
+    with pytest.raises(ValueError, match="must include batchId and episode"):
+        _run_once(worker)
+
+    assert spring_client.progress_calls == []
+    assert spring_client.complete_calls == []
+    assert spring_client.fail_calls == [
+        (ANALYSIS_JOB_ID, "Setting-extraction job must include batchId and episode.")
+    ]
 
 
 def test_worker_cancellation_leaves_job_for_lease_recovery_instead_of_reporting_failure() -> None:
@@ -329,8 +352,10 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "candidateCount": 2,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
-        "subjectFallbackUnresolvedCount": 0,
-        "worldSettingCandidateCount": 0,
+            "subjectFallbackUnresolvedCount": 0,
+            "characterFactComparisonCompletedCount": 0,
+            "characterFactComparisonFailedCount": 0,
+            "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
     }
@@ -414,8 +439,10 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         "candidateCount": 1,
         "subjectFallbackCallCount": 1,
         "subjectFallbackResolvedCount": 1,
-        "subjectFallbackUnresolvedCount": 0,
-        "worldSettingCandidateCount": 0,
+            "subjectFallbackUnresolvedCount": 0,
+            "characterFactComparisonCompletedCount": 0,
+            "characterFactComparisonFailedCount": 0,
+            "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
     }
@@ -503,8 +530,10 @@ def test_worker_skips_chunk_embedding_by_default_and_completes_extraction() -> N
         "candidateCount": 1,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
-        "subjectFallbackUnresolvedCount": 0,
-        "worldSettingCandidateCount": 0,
+            "subjectFallbackUnresolvedCount": 0,
+            "characterFactComparisonCompletedCount": 0,
+            "characterFactComparisonFailedCount": 0,
+            "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
     }
@@ -547,11 +576,38 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         "candidateCount": 0,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
-        "subjectFallbackUnresolvedCount": 0,
-        "worldSettingCandidateCount": 0,
+            "subjectFallbackUnresolvedCount": 0,
+            "characterFactComparisonCompletedCount": 0,
+            "characterFactComparisonFailedCount": 0,
+            "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
     }
+
+
+def test_initial_analysis_isolates_character_comparison_failure() -> None:
+    # 한 후보의 2차 비교 실패는 후보 FAILED로 남지만 같은 회차의 세계관 단계와 Job 완료는 계속된다.
+    spring_client = FakeSpringWorkerClient(payload=_payload())
+    worker = AnalysisJobWorker(
+        spring_client=spring_client,
+        chunking_service=FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 전사다.")]),
+        setting_extractor=FakeSettingExtractor(candidate_groups=[[]]),
+        subject_resolver=FakeSubjectResolver(result=SubjectResolutionResult(candidates=[])),
+        character_fact_comparison_pipeline=FakeCharacterFactComparisonPipeline(
+            CharacterFactComparisonRunResult(completed_count=0, failed_count=1)
+        ),
+        world_setting_extractor=FakeWorldSettingExtractor(),
+        setting_candidate_service=FakeSettingCandidateService(),
+    )
+
+    result = _run_once(worker)
+
+    assert result.claimed is True
+    assert spring_client.fail_calls == []
+    summary = json.loads(spring_client.complete_calls[0][1])
+    assert summary["characterFactComparisonCompletedCount"] == 0
+    assert summary["characterFactComparisonFailedCount"] == 1
+    assert summary["worldSettingCandidateCount"] == 0
     assert spring_client.fail_calls == []
 
 
@@ -677,6 +733,13 @@ class FakeSpringWorkerClient:
     ):
         return None
 
+    async def claim_next_character_fact_comparison(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ):
+        return None
+
 
 class FakeEpisodeChunkingService:
     # 실제 S3/DB 청킹 대신 Worker가 claim payload의 episode_id/content_s3_key를 넘겼는지 기록
@@ -745,6 +808,14 @@ class FakeExtractionResult:
 class FakeWorldSettingExtractor:
     async def extract_from_chunk(self, chunk_text: str, episode_no=None, episode_title=None):
         return WorldSettingExtractionResult(candidates=[])
+
+
+class FakeCharacterFactComparisonPipeline:
+    def __init__(self, result: CharacterFactComparisonRunResult) -> None:
+        self.result = result
+
+    async def process_all(self, analysis_job_id, lease_token):
+        return self.result
 
 
 class FakeSettingCandidateService:

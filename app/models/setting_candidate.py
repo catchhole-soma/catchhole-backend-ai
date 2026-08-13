@@ -1,12 +1,16 @@
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Numeric, String, Text
+from sqlalchemy import BigInteger, DateTime, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.enums import (
+    CharacterFactComparisonOperation,
+    CharacterFactComparisonStatus,
+    CharacterFactTemporalScope,
     SettingCandidateKind,
     SettingCandidateMatchStatus,
     SettingCandidateReviewStatus,
@@ -43,3 +47,23 @@ class SettingCandidate(TimestampMixin, Base):
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
     review_status: Mapped[SettingCandidateReviewStatus] = mapped_column(String(30))
     raw_ai_result_json: Mapped[dict | None] = mapped_column(JSONB)
+    # Python은 최초 상태만 기록하고, claim 이후 비교 생명주기와 결과는 Spring이 소유한다.
+    comparison_status: Mapped[CharacterFactComparisonStatus] = mapped_column(
+        String(40),
+        default=CharacterFactComparisonStatus.NOT_REQUIRED,
+    )
+    suggested_operation: Mapped[CharacterFactComparisonOperation | None] = mapped_column(
+        String(30)
+    )
+    temporal_scope: Mapped[CharacterFactTemporalScope | None] = mapped_column(String(30))
+    comparison_target_fact_type: Mapped[str | None] = mapped_column(String(30))
+    comparison_target_fact_key: Mapped[str | None] = mapped_column(String(150))
+    proposed_fact_value: Mapped[str | None] = mapped_column(Text)
+    proposed_value_json: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    removed_snapshot_entries_json: Mapped[list[dict] | None] = mapped_column(JSONB)
+    comparison_reason: Mapped[str | None] = mapped_column(Text)
+    comparison_base_snapshot_version: Mapped[int | None] = mapped_column(BigInteger)
+    comparison_context_hash: Mapped[str | None] = mapped_column(String(64))
+    raw_comparison_json: Mapped[dict | None] = mapped_column(JSONB)
+    compared_at: Mapped[datetime | None] = mapped_column(DateTime)
+    comparison_error_message: Mapped[str | None] = mapped_column(Text)

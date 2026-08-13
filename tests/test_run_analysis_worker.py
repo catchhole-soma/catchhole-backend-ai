@@ -32,6 +32,7 @@ def test_print_result_prefixes_timestamp_when_job_does_not_exist(capsys) -> None
 
 def test_world_comparison_worker_forces_single_scheduler_slot() -> None:
     assert _resolve_worker_concurrency("world-comparison", 5) == 1
+    assert _resolve_worker_concurrency("character-comparison", 5) == 1
     assert _resolve_worker_concurrency("analysis", 5) == 5
 
 

@@ -19,6 +19,10 @@ from app.schemas.worker import (
     WorkerAnalysisJobHeartbeatResponse,
     WorkerAnalysisJobPayload,
     WorkerAnalysisJobProgressRequest,
+    WorkerCharacterFactComparisonClaimPayload,
+    WorkerCharacterFactComparisonCompleteRequest,
+    WorkerCharacterFactComparisonContextResponse,
+    WorkerCharacterFactComparisonFailRequest,
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingCandidatePublishItem,
     WorkerWorldSettingCandidatePublishRequest,
@@ -171,6 +175,78 @@ class SpringWorkerClient:
         )
         response.raise_for_status()
         return WorkerAnalysisJobHeartbeatResponse.model_validate(response.json()["data"])
+
+    async def claim_next_character_fact_comparison(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> WorkerCharacterFactComparisonClaimPayload | None:
+        response = await self.http_client.post(
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                "/character-fact-comparisons/claim-next"
+            ),
+            headers=self._headers(lease_token),
+        )
+        if response.status_code == 204:
+            return None
+        response.raise_for_status()
+        return WorkerCharacterFactComparisonClaimPayload.model_validate(
+            response.json()["data"]
+        )
+
+    async def get_character_fact_comparison_context(
+        self,
+        analysis_job_id: UUID,
+        candidate_id: UUID,
+        lease_token: UUID,
+    ) -> WorkerCharacterFactComparisonContextResponse:
+        response = await self.http_client.post(
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/setting-candidates/{candidate_id}/character-fact-comparison-context"
+            ),
+            headers=self._headers(lease_token),
+        )
+        response.raise_for_status()
+        return WorkerCharacterFactComparisonContextResponse.model_validate(
+            response.json()["data"]
+        )
+
+    async def complete_character_fact_comparison(
+        self,
+        analysis_job_id: UUID,
+        candidate_id: UUID,
+        lease_token: UUID,
+        request: WorkerCharacterFactComparisonCompleteRequest,
+    ) -> None:
+        response = await self.http_client.post(
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/setting-candidates/{candidate_id}/character-fact-comparison-complete"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
+        )
+        response.raise_for_status()
+
+    async def fail_character_fact_comparison(
+        self,
+        analysis_job_id: UUID,
+        candidate_id: UUID,
+        lease_token: UUID,
+        error_message: str,
+    ) -> None:
+        request = WorkerCharacterFactComparisonFailRequest(error_message=error_message)
+        response = await self.http_client.post(
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/setting-candidates/{candidate_id}/character-fact-comparison-fail"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True),
+        )
+        response.raise_for_status()
 
     async def publish_world_setting_candidates(
         self,
