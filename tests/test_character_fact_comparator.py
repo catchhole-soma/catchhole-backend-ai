@@ -223,7 +223,7 @@ def test_comparator_requires_update_target_to_match_canonical_fact_key() -> None
     assert "canonical Fact key" in retry_prompt["validation_feedback"]["reason"]
 
 
-def test_comparator_sanitizes_snapshot_ref_before_korean_particle_without_touching_p10() -> None:
+def test_comparator_retries_fabricated_reason_ref_and_sanitizes_known_ref() -> None:
     client = FakeTextClient(
         [
             {
@@ -234,19 +234,34 @@ def test_comparator_sanitizes_snapshot_ref_before_korean_particle_without_touchi
                 "proposed_value_json": {"active": True},
                 "temporal_scope": "PRESENT",
                 "comparison_reason": "P1을 갱신하되 P10은 별도 근거다.",
+            },
+            {
+                "operation": "UPDATE",
+                "target_ref": "P1",
+                "removed_snapshot_refs": [],
+                "proposed_fact_value": "회복 중",
+                "proposed_value_json": {"active": True},
+                "temporal_scope": "PRESENT",
+                "comparison_reason": "P1을 갱신한다.",
             }
         ]
     )
 
     decision, _ = asyncio.run(
-        CharacterFactComparator(llm_client=client, max_attempts=1).compare(
+        CharacterFactComparator(llm_client=client, max_attempts=2).compare(
             _candidate(),
             [_snapshot_entry("STATUS", "status.회복", {"active": True})],
         )
     )
 
-    assert decision.comparison_reason == "현재 '현재 표시값' 설정을 갱신하되 P10은 별도 근거다."
+    assert decision.comparison_reason == "현재 '현재 표시값' 설정을 갱신한다."
     assert "status.회복" not in decision.comparison_reason
+    assert "P10" not in decision.comparison_reason
+    assert len(client.requests) == 2
+    retry_prompt = json.loads(client.requests[1]["user_prompt"])
+    assert "Unknown snapshot refs in comparison reason" in (
+        retry_prompt["validation_feedback"]["reason"]
+    )
 
 
 def test_comparator_uses_neutral_label_when_snapshot_fact_value_is_missing() -> None:

@@ -25,6 +25,7 @@ COMPARISON_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "llm" / "prompts" / "character_fact_comparison.md"
 )
 logger = logging.getLogger(__name__)
+SNAPSHOT_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])P[0-9]+(?![A-Za-z0-9])")
 
 
 @dataclass(frozen=True)
@@ -169,6 +170,12 @@ def _validate_comparison_decision(
     unknown_refs = requested_refs - entries_by_ref.keys()
     if unknown_refs:
         raise ValueError(f"Unknown snapshot refs: {sorted(unknown_refs)}")
+    reason_refs = set(SNAPSHOT_REFERENCE_PATTERN.findall(decision.comparison_reason))
+    unknown_reason_refs = reason_refs - entries_by_ref.keys()
+    if unknown_reason_refs:
+        raise ValueError(
+            f"Unknown snapshot refs in comparison reason: {sorted(unknown_reason_refs)}"
+        )
 
     if decision.target_ref is not None:
         target = entries_by_ref[decision.target_ref]
