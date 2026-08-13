@@ -26,6 +26,20 @@ COMPARISON_PROMPT_PATH = (
 )
 logger = logging.getLogger(__name__)
 SNAPSHOT_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])P[0-9]+(?![A-Za-z0-9])")
+UUID_PATTERN = re.compile(
+    r"(?<![A-Fa-f0-9])"
+    r"[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[1-5][A-Fa-f0-9]{3}-"
+    r"[89ABab][A-Fa-f0-9]{3}-[A-Fa-f0-9]{12}"
+    r"(?![A-Fa-f0-9])"
+)
+INTERNAL_REASON_TERM_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])(?:"
+    r"snapshot|canonical(?:\s+Fact)?|Fact(?:\s+(?:type|key))?|"
+    r"ADD|UPDATE|MERGE|REMOVE|HISTORY_ONLY|EXCLUDE|REVIEW_REQUIRED|"
+    r"AGE|LEVEL|PROFILE|STAT|SKILL|ITEM|STATUS"
+    r")(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -66,11 +80,13 @@ class CharacterFactComparator:
         if len(exact_target_refs) > 1:
             raise ValueError("Canonical snapshot slot must be unique.")
         exact_target_ref = exact_target_refs[0] if exact_target_refs else None
-        allowed_operations = (
-            ["UPDATE", "MERGE", "HISTORY_ONLY", "EXCLUDE", "REVIEW_REQUIRED"]
-            if exact_target_ref is not None
-            else ["ADD", "HISTORY_ONLY", "EXCLUDE", "REVIEW_REQUIRED"]
-        )
+        if exact_target_ref is None:
+            allowed_operations = ["ADD", "HISTORY_ONLY", "EXCLUDE", "REVIEW_REQUIRED"]
+        else:
+            allowed_operations = ["UPDATE", "MERGE"]
+            if candidate.canonical_fact_type == "STATUS":
+                allowed_operations.append("REMOVE")
+            allowed_operations.extend(["HISTORY_ONLY", "EXCLUDE", "REVIEW_REQUIRED"])
         # DB 식별자는 provider에 노출하지 않고 이번 요청 안에서만 유효한 참조를 사용한다.
         prompt_payload = {
             "candidate": {
@@ -114,7 +130,7 @@ class CharacterFactComparator:
             model=self.model,
             max_output_tokens=2000,
             max_attempts=self.max_attempts,
-            prompt_cache_key="character-fact-comparison:v4",
+            prompt_cache_key="character-fact-comparison:v5",
             operation_name="Character-fact comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -136,10 +152,12 @@ def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
         "previous_response_rejected": True,
         "reason": compact_error_message(exc),
         "correction": (
-            "allowed_operations 중 하나만 선택하세요. UPDATE 또는 MERGE는 "
+            "allowed_operations 중 하나만 선택하세요. UPDATE, MERGE 또는 REMOVE는 "
             "exact_target_ref가 null이 아닐 때만 사용할 수 있고 target_ref는 "
             "exact_target_ref와 정확히 같아야 합니다. 의미가 비슷하지만 key가 다른 "
-            "STATUS를 대체하려면 ADD와 removed_snapshot_refs를 사용하세요."
+            "STATUS를 대체하려면 ADD와 removed_snapshot_refs를 사용하세요. 동일한 "
+            "STATUS가 종료됐다면 REMOVE와 exact_target_ref를 사용하세요. 판단 이유에는 "
+            "내부 key·enum·UUID를 쓰지 말고 사용자가 이해할 수 있는 한국어만 쓰세요."
         ),
     }
     return json.dumps(payload, ensure_ascii=False)
@@ -176,6 +194,7 @@ def _validate_comparison_decision(
         raise ValueError(
             f"Unknown snapshot refs in comparison reason: {sorted(unknown_reason_refs)}"
         )
+    _validate_user_facing_reason(decision.comparison_reason, candidate, references)
 
     if decision.target_ref is not None:
         target = entries_by_ref[decision.target_ref]
@@ -183,12 +202,20 @@ def _validate_comparison_decision(
             target.fact_type != candidate.canonical_fact_type
             or target.fact_key != candidate.canonical_fact_key
         ):
-            raise ValueError("UPDATE and MERGE must target the candidate's canonical Fact key.")
+            raise ValueError(
+                "UPDATE, MERGE, and REMOVE must target the candidate's canonical Fact key."
+            )
         if decision.target_ref in decision.removed_snapshot_refs:
             raise ValueError("The comparison target must not also be removed.")
 
     if decision.operation == CharacterFactComparisonOperation.ADD and exact_slot_refs:
         raise ValueError("ADD is invalid when the canonical Fact slot already exists.")
+
+    if decision.operation == CharacterFactComparisonOperation.REMOVE:
+        if candidate.canonical_fact_type != "STATUS":
+            raise ValueError("REMOVE is only allowed for a canonical STATUS slot.")
+        if decision.removed_snapshot_refs:
+            raise ValueError("REMOVE must not include additional removed snapshot refs.")
 
     for removed_ref in decision.removed_snapshot_refs:
         if entries_by_ref[removed_ref].fact_type != "STATUS":
@@ -207,6 +234,27 @@ def _validate_comparison_decision(
         raise ValueError(
             "Snapshot removal requires an explicit PRESENT STATUS addition or replacement."
         )
+
+
+def _validate_user_facing_reason(
+    comparison_reason: str,
+    candidate: WorkerCharacterFactComparisonCandidatePayload,
+    references: list[CharacterSnapshotReference],
+) -> None:
+    """검토 화면에 그대로 노출되는 설명에서 내부 구현 식별자를 거절한다."""
+
+    internal_fact_keys = {
+        candidate.canonical_fact_key,
+        *(reference.entry.fact_key for reference in references),
+    }
+    normalized_reason = comparison_reason.casefold()
+    leaked_fact_keys = sorted(
+        fact_key for fact_key in internal_fact_keys if fact_key.casefold() in normalized_reason
+    )
+    if leaked_fact_keys:
+        raise ValueError("comparison_reason must not expose internal Fact keys.")
+    if UUID_PATTERN.search(comparison_reason) or INTERNAL_REASON_TERM_PATTERN.search(comparison_reason):
+        raise ValueError("comparison_reason must not expose internal implementation terms.")
 
 
 def _replace_internal_snapshot_references(

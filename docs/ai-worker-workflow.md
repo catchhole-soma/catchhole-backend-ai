@@ -19,7 +19,7 @@ Spring claim
 -> raw/entity 캐릭터명을 knownCharacters와 비교
 -> setting_candidates 교체 저장
 -> 매칭된 캐릭터 후보를 현재 WorkCharacter snapshot과 후보별로 비교
--> ADD/UPDATE/MERGE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 제안 저장
+-> ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 제안 저장
 -> 같은 chunk에서 지속 가능한 세계관 속성을 원자 후보로 추출
 -> Spring 내부 API로 world_setting_candidates 게시
 -> 같은 category의 대상명 검색 후 최대 3개 상세 문맥 비교
@@ -71,7 +71,7 @@ CHARACTER_CANDIDATES_SAVED
 -> Spring이 비교할 SettingCandidate 한 건을 claim
 -> candidate와 현재 snapshot entries, 앞선 동일 slot 후보, contextToken 조회
 -> Python이 DB ID를 제외하고 snapshot을 P1, P2 참조로 변환
--> 2차 LLM이 ADD/UPDATE/MERGE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 판단
+-> 2차 LLM이 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 판단
 -> Spring이 contextToken과 canonical Fact slot을 다시 검증해 결과 저장
 -> 다음 후보를 순차 처리
 -> CHARACTER_COMPARISONS_FINISHED
@@ -87,6 +87,7 @@ MVP 안전 규칙은 다음과 같습니다.
 
 - canonical slot이 snapshot에 이미 있으면 `ADD`를 허용하지 않고 LLM 응답을 재시도합니다.
 - `UPDATE`와 `MERGE`는 candidate의 canonical slot만 대상으로 삼습니다.
+- `REMOVE`는 동일한 현재 `STATUS` slot의 종료만 표현하며 새 Fact는 이력에 보존합니다.
 - `HISTORY_ONLY`, `EXCLUDE`, `REVIEW_REQUIRED`는 target, proposed value, 제거 목록을 모두 비웁니다.
 - provider가 이 세 operation에 사용되지 않는 proposed value만 덧붙인 경우 재호출하지 않고 null로 정규화합니다. target이나 제거 목록처럼 판단 의미를 바꾸는 잘못된 필드는 계속 거절합니다.
 - 회상은 `PAST`, 가정은 `HYPOTHETICAL`로 분류하고 `HISTORY_ONLY` 또는 `REVIEW_REQUIRED`만 허용합니다.

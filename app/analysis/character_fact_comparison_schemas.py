@@ -37,9 +37,11 @@ class CharacterFactComparisonDecision(BaseModel):
             CharacterFactComparisonOperation.HISTORY_ONLY,
             CharacterFactComparisonOperation.EXCLUDE,
             CharacterFactComparisonOperation.REVIEW_REQUIRED,
+            CharacterFactComparisonOperation.REMOVE,
             "HISTORY_ONLY",
             "EXCLUDE",
             "REVIEW_REQUIRED",
+            "REMOVE",
         }:
             return payload
         normalized = dict(payload)
@@ -55,11 +57,12 @@ class CharacterFactComparisonDecision(BaseModel):
         target_required = self.operation in {
             CharacterFactComparisonOperation.UPDATE,
             CharacterFactComparisonOperation.MERGE,
+            CharacterFactComparisonOperation.REMOVE,
         }
         if target_required and self.target_ref is None:
-            raise ValueError("UPDATE and MERGE require target_ref.")
+            raise ValueError("UPDATE, MERGE, and REMOVE require target_ref.")
         if not target_required and self.target_ref is not None:
-            raise ValueError("Only UPDATE and MERGE may include target_ref.")
+            raise ValueError("Only UPDATE, MERGE, and REMOVE may include target_ref.")
 
         changes_snapshot = self.operation in {
             CharacterFactComparisonOperation.ADD,
@@ -94,6 +97,7 @@ class CharacterFactComparisonDecision(BaseModel):
             CharacterFactComparisonOperation.HISTORY_ONLY,
             CharacterFactComparisonOperation.EXCLUDE,
             CharacterFactComparisonOperation.REVIEW_REQUIRED,
+            CharacterFactComparisonOperation.REMOVE,
         }:
             if self.removed_snapshot_refs:
                 raise ValueError(f"{self.operation} must not remove snapshot entries.")

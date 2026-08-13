@@ -93,6 +93,7 @@ class CharacterFactComparisonOperation(StrEnum):
     ADD = "ADD"
     UPDATE = "UPDATE"
     MERGE = "MERGE"
+    REMOVE = "REMOVE"
     HISTORY_ONLY = "HISTORY_ONLY"
     EXCLUDE = "EXCLUDE"
     REVIEW_REQUIRED = "REVIEW_REQUIRED"

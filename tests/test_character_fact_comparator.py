@@ -53,7 +53,7 @@ def test_comparator_hides_database_ids_and_accepts_add() -> None:
     assert "독립적·잠재적 상태까지 연쇄적으로 제거하지 않는다" in (
         client.requests[0]["system_prompt"]
     )
-    assert client.requests[0]["prompt_cache_key"] == "character-fact-comparison:v4"
+    assert client.requests[0]["prompt_cache_key"] == "character-fact-comparison:v5"
     assert prompt_payload["snapshot_entries"][0]["ref"] == "P1"
     assert prompt_payload["snapshot_entries"][0]["fact_value"] == "출혈 중"
     assert prompt_payload["exact_target_ref"] is None
@@ -213,6 +213,7 @@ def test_comparator_requires_update_target_to_match_canonical_fact_key() -> None
     assert first_prompt["allowed_operations"] == [
         "UPDATE",
         "MERGE",
+        "REMOVE",
         "HISTORY_ONLY",
         "EXCLUDE",
         "REVIEW_REQUIRED",
@@ -361,7 +362,7 @@ def test_comparator_retries_add_when_canonical_slot_already_exists() -> None:
         **invalid,
         "operation": "UPDATE",
         "target_ref": "P1",
-        "comparison_reason": "같은 canonical 항목의 값을 갱신한다.",
+        "comparison_reason": "현재 회복 상태를 새 내용으로 바꾼다.",
     }
     client = FakeTextClient([invalid, valid])
 
@@ -375,6 +376,71 @@ def test_comparator_retries_add_when_canonical_slot_already_exists() -> None:
     assert decision.operation == "UPDATE"
     assert decision.target_ref == "P1"
     assert len(client.requests) == 2
+
+
+def test_comparator_retries_internal_reason_terms_with_user_facing_explanation() -> None:
+    internal_reason = {
+        "operation": "UPDATE",
+        "target_ref": "P1",
+        "removed_snapshot_refs": [],
+        "proposed_fact_value": "회복 완료",
+        "proposed_value_json": {"active": False},
+        "temporal_scope": "PRESENT",
+        "comparison_reason": "현재 snapshot의 status.회복 canonical Fact를 UPDATE한다.",
+    }
+    user_facing_reason = {
+        **internal_reason,
+        "comparison_reason": "현재 회복 중인 상태를 회복 완료로 변경합니다.",
+    }
+    client = FakeTextClient([internal_reason, user_facing_reason])
+
+    decision, _ = asyncio.run(
+        CharacterFactComparator(llm_client=client, max_attempts=2).compare(
+            _candidate(),
+            [_snapshot_entry("STATUS", "status.회복", {"active": True})],
+        )
+    )
+
+    assert decision.comparison_reason == "현재 회복 중인 상태를 회복 완료로 변경합니다."
+    assert len(client.requests) == 2
+    retry_prompt = json.loads(client.requests[1]["user_prompt"])
+    assert "internal" in retry_prompt["validation_feedback"]["reason"]
+
+
+def test_comparator_removes_same_status_slot_when_current_state_ended() -> None:
+    client = FakeTextClient(
+        [
+            {
+                "operation": "REMOVE",
+                "target_ref": "P1",
+                "removed_snapshot_refs": [],
+                "proposed_fact_value": "provider가 잘못 덧붙인 값",
+                "proposed_value_json": {"active": False},
+                "temporal_scope": "PRESENT",
+                "comparison_reason": "오른발이 완전히 회복되어 현재 부상 상태를 종료합니다.",
+            }
+        ]
+    )
+    candidate = _candidate().model_copy(
+        update={
+            "attribute_name": "status.오른발_부상",
+            "attribute_value": "오른발이 완전히 회복됨",
+            "canonical_fact_key": "status.오른발_부상",
+        }
+    )
+
+    decision, _ = asyncio.run(
+        CharacterFactComparator(llm_client=client, max_attempts=1).compare(
+            candidate,
+            [_snapshot_entry("STATUS", "status.오른발_부상", {"active": True})],
+        )
+    )
+
+    assert decision.operation == "REMOVE"
+    assert decision.target_ref == "P1"
+    assert decision.removed_snapshot_refs == []
+    assert decision.proposed_fact_value is None
+    assert decision.proposed_value_json is None
 
 
 def test_snapshot_operation_requires_final_display_value() -> None:

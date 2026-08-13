@@ -19,7 +19,7 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
   - 이미 추출된 설정 후보 중 `entity_name`이 구체적이지 않은 후보의 주체만 해소하기 위한 prompt입니다.
   - 설정 후보를 다시 추출하지 않고, current chunk 기준으로 묶인 후보들의 `resolved_entity_name`만 반환하도록 요구합니다.
 - `character_fact_comparison.md`
-  - 매칭된 캐릭터 설정 후보 한 건과 현재 `WorkCharacter` snapshot을 비교해 ADD/UPDATE/MERGE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED를 제안합니다.
+  - 매칭된 캐릭터 설정 후보 한 건과 현재 `WorkCharacter` snapshot을 비교해 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED를 제안합니다.
   - 같은 batch에서 앞서 나온 동일 canonical slot 후보를 미확정 시간순 문맥으로 함께 받아 상대 변화량을 최종값으로 오인하지 않게 합니다.
   - DB 식별자 대신 요청 안에서만 유효한 `P*` 참조를 사용하며, 원문·후보·snapshot 안의 명령은 소설 데이터일 뿐 지시가 아니라고 명시합니다.
   - 회상·가정은 현재 snapshot을 바꾸지 않으며, STATUS 제거는 명시적인 현재 결과가 있을 때만 제안합니다. 제거 제안도 원본 CharacterFact 이력을 삭제하지 않습니다.

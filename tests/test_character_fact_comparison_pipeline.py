@@ -73,6 +73,39 @@ def test_pipeline_rebuilds_context_on_stale_409_up_to_success() -> None:
     assert len(spring.completions) == 3
 
 
+def test_pipeline_maps_same_slot_remove_without_proposed_value() -> None:
+    spring = FakeSpringApi([CANDIDATE_ID])
+    comparator = FakeComparator(
+        [
+            CharacterFactComparisonDecision(
+                operation="REMOVE",
+                target_ref="P1",
+                removed_snapshot_refs=[],
+                proposed_fact_value=None,
+                proposed_value_json=None,
+                temporal_scope="PRESENT",
+                comparison_reason="회복이 완료되어 현재 회복 상태를 종료한다.",
+            )
+        ]
+    )
+
+    result = asyncio.run(
+        CharacterFactComparisonPipeline(spring, comparator).process_all(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+        )
+    )
+
+    assert result.completed_count == 1
+    request = spring.completions[0]
+    assert request.operation == "REMOVE"
+    assert request.target_fact_type == "STATUS"
+    assert request.target_fact_key == "status.회복"
+    assert request.proposed_fact_value is None
+    assert request.proposed_value_json is None
+    assert request.removed_snapshot_entries == []
+
+
 def test_pipeline_isolates_failed_candidate_and_processes_next_candidate() -> None:
     second_candidate_id = UUID("00000000-0000-0000-0000-000000000005")
     spring = FakeSpringApi([CANDIDATE_ID, second_candidate_id])
