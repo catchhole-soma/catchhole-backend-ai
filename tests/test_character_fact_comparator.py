@@ -188,7 +188,7 @@ def test_comparator_requires_update_target_to_match_canonical_fact_key() -> None
         "temporal_scope": "PRESENT",
         "comparison_reason": "P1을 갱신한다.",
     }
-    valid = {**invalid, "target_ref": "P2"}
+    valid = {**invalid, "target_ref": "P2", "comparison_reason": "P2를 갱신한다."}
     client = FakeTextClient([invalid, valid])
 
     decision, raw = asyncio.run(
@@ -203,6 +203,8 @@ def test_comparator_requires_update_target_to_match_canonical_fact_key() -> None
 
     assert decision.target_ref == "P2"
     assert "P2" not in decision.comparison_reason
+    assert "status.회복" not in decision.comparison_reason
+    assert "현재 '현재 표시값' 설정을 갱신한다." == decision.comparison_reason
     assert raw["comparison_reason"] == decision.comparison_reason
     assert len(client.requests) == 2
     first_prompt = json.loads(client.requests[0]["user_prompt"])
@@ -219,6 +221,32 @@ def test_comparator_requires_update_target_to_match_canonical_fact_key() -> None
     assert retry_prompt["validation_feedback"]["previous_response_rejected"] is True
     assert "exact_target_ref" in retry_prompt["validation_feedback"]["correction"]
     assert "canonical Fact key" in retry_prompt["validation_feedback"]["reason"]
+
+
+def test_comparator_sanitizes_snapshot_ref_before_korean_particle_without_touching_p10() -> None:
+    client = FakeTextClient(
+        [
+            {
+                "operation": "UPDATE",
+                "target_ref": "P1",
+                "removed_snapshot_refs": [],
+                "proposed_fact_value": "회복 중",
+                "proposed_value_json": {"active": True},
+                "temporal_scope": "PRESENT",
+                "comparison_reason": "P1을 갱신하되 P10은 별도 근거다.",
+            }
+        ]
+    )
+
+    decision, _ = asyncio.run(
+        CharacterFactComparator(llm_client=client, max_attempts=1).compare(
+            _candidate(),
+            [_snapshot_entry("STATUS", "status.회복", {"active": True})],
+        )
+    )
+
+    assert decision.comparison_reason == "현재 '현재 표시값' 설정을 갱신하되 P10은 별도 근거다."
+    assert "status.회복" not in decision.comparison_reason
 
 
 def test_comparator_guides_different_status_key_to_add_and_remove_on_retry() -> None:

@@ -208,9 +208,29 @@ def _replace_internal_snapshot_references(
 ) -> CharacterFactComparisonDecision:
     comparison_reason = decision.comparison_reason
     for reference in sorted(references, key=lambda item: len(item.reference), reverse=True):
+        display_value = (reference.entry.fact_value or "").strip()
+        if not display_value:
+            display_value = reference.entry.fact_key.rsplit(".", maxsplit=1)[-1]
+        replacement = f"현재 '{display_value}' 설정"
+        particle_by_input = {
+            "을": "을",
+            "를": "을",
+            "이": "이",
+            "가": "이",
+            "은": "은",
+            "는": "은",
+            "과": "과",
+            "와": "과",
+            "으로": "으로",
+            "로": "으로",
+        }
         comparison_reason = re.sub(
-            rf"\b{re.escape(reference.reference)}\b",
-            f"현재 '{reference.entry.fact_key}' 설정",
+            # Python의 Unicode \b는 숫자 뒤 한글 조사도 word 문자로 보므로 `P1을`을 놓친다.
+            # ASCII ref 토큰의 좌우만 제한해 조사와 붙은 표현은 치환하고 P1/P10은 구분한다.
+            rf"(?<![A-Za-z0-9]){re.escape(reference.reference)}"
+            rf"(?P<particle>으로|을|를|이|가|은|는|과|와|로)?(?![A-Za-z0-9])",
+            lambda match: replacement
+            + particle_by_input.get(match.group("particle") or "", match.group("particle") or ""),
             comparison_reason,
         )
     if comparison_reason == decision.comparison_reason:
