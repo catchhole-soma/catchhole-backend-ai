@@ -35,6 +35,9 @@ Python AI 서버가 PostgreSQL을 직접 읽거나 써야 할 때 사용하는 S
   - `evidence_spans[].start_offset`, `end_offset`은 Python Worker가 quote를 다시 찾아 계산한 회차 전체 원문 기준 위치입니다. quote를 찾지 못하면 `null`로 저장될 수 있습니다.
   - `raw_entity_mention`, `matched_character_id`, `match_status`로 LLM 원문 표현과 기존 캐릭터 매칭 결과를 저장합니다.
   - `review_status`는 최초 저장 시 `PENDING_REVIEW`로 둡니다.
+  - 캐릭터 Fact 2차 비교 컬럼은 Spring Flyway 스키마를 그대로 mirror합니다. Python 직접 저장 시에는 후보 종류와 캐릭터 매칭 상태에 따라 `comparison_status`만 `NOT_REQUIRED`, `WAITING_FOR_CHARACTER_MATCH`, `PENDING` 중 하나로 초기화합니다.
+  - `PROCESSING` 이후 lifecycle, operation·temporal scope·제안 JSON·context token 결과는 Spring 내부 API가 소유하며 Python SQLAlchemy session에서 직접 갱신하지 않습니다.
+  - `compared_at`은 Spring migration의 timezone 없는 `TIMESTAMP`와 맞춘 `DateTime`입니다. 문자열 길이와 nullable 여부도 Flyway 정의를 기준으로 유지합니다.
 - `upload_batch.py`
   - Spring의 `upload_batches` 테이블과 매핑됩니다.
   - 업로드 묶음과 분석 작업의 연결 정보를 읽을 때 사용합니다.

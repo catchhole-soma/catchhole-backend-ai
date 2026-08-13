@@ -35,13 +35,14 @@ uvicorn app.main:app --reload
 .venv/bin/python -m scripts.run_analysis_worker
 ```
 
-기본 프로세스는 회차 `SETTING_EXTRACTION` Job만 claim합니다. 사용자가 요청한 세계관 후보 재비교는 동일 이미지를 별도 프로세스로 실행합니다.
+기본 프로세스는 회차 `SETTING_EXTRACTION` Job만 claim합니다. 사용자가 요청한 캐릭터 Fact 또는 세계관 후보 재비교는 동일 이미지를 별도 프로세스로 실행합니다.
 
 ```bash
+.venv/bin/python -m scripts.run_analysis_worker --worker-kind character-comparison
 .venv/bin/python -m scripts.run_analysis_worker --worker-kind world-comparison
 ```
 
-장기 실행 runner는 빈 실행 슬롯을 확보한 뒤 Job 하나를 claim해 즉시 비동기 Task로 처리합니다. 한 Job 안의 청크는 순차 처리하고, 다른 Job이 OpenAI 응답을 기다리는 동안 event loop가 나머지 Job을 진행합니다. 현재 운영 검증값은 Backend 저장소의 Compose에서 분석 Worker 2개를 실행하고 프로세스당 동시 Job 5개로 `SETTING_EXTRACTION` Job을 최대 10개 처리합니다. 별도 세계관 재비교 Worker는 Job·LLM 동시성을 1로 유지합니다.
+장기 실행 runner는 빈 실행 슬롯을 확보한 뒤 Job 하나를 claim해 즉시 비동기 Task로 처리합니다. 한 Job 안의 청크는 순차 처리하고, 다른 Job이 OpenAI 응답을 기다리는 동안 event loop가 나머지 Job을 진행합니다. 현재 운영 검증값은 Backend 저장소의 Compose에서 분석 Worker 2개를 실행하고 프로세스당 동시 Job 5개로 `SETTING_EXTRACTION` Job을 최대 10개 처리합니다. 별도 캐릭터·세계관 재비교 Worker는 각각 Job·LLM 동시성을 1로 유지합니다.
 
 S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 후보 추출, 근거 위치 보정,
 지칭어 subject fallback, 캐릭터 매칭 상태 계산을 확인하려면 다음 runner를 사용합니다.
@@ -118,8 +119,12 @@ docker run --rm --env-file .env catchhole-ai:local
 
 ```bash
 docker run --rm --env-file .env catchhole-ai:local \
+  python -m scripts.run_analysis_worker --worker-kind character-comparison
+docker run --rm --env-file .env catchhole-ai:local \
   python -m scripts.run_analysis_worker --worker-kind world-comparison
 ```
+
+운영 Compose는 동일 AI 이미지를 `ai-worker`, `ai-character-comparison-worker`, `ai-world-comparison-worker` 세 서비스로 실행해야 합니다. 전용 서비스가 빠지면 해당 재비교 Job은 생성돼도 claim되지 않습니다. 공유 DB 컬럼과 내부 API가 먼저 필요하므로 `RUNNING` Job을 가능한 drain한 뒤 Spring Flyway/API를 먼저, AI 서비스를 다음 순서로 배포합니다.
 
 FastAPI 서버를 확인해야 할 때는 command를 override합니다.
 
@@ -145,7 +150,7 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `LLM_API_KEY`: 설정 추출/검증에 사용할 LLM API 키
 - `LLM_EXTRACTION_MODEL`: 회차 원문에서 캐릭터 Fact·세계관 설정 후보를 추출하는 모델명. 현재 기본값은 `gpt-5.6-terra`입니다.
 - `LLM_SUBJECT_RESOLUTION_MODEL`: 캐릭터 Fact와 세계관 후보의 주체를 기존 캐릭터·세계관 대상에 연결하는 모델명. 현재 기본값은 `gpt-5.6-luna`입니다.
-- `LLM_COMPARISON_MODEL`: 세계관 후보와 확정 데이터를 비교해 반영 방식을 제안하는 모델명. 현재 기본값은 `gpt-5.6-luna`입니다.
+- `LLM_COMPARISON_MODEL`: 캐릭터 Fact·세계관 후보와 현재 확정 데이터를 비교해 반영 방식을 제안하는 모델명. 현재 기본값은 `gpt-5.6-luna`입니다.
 - `LLM_MODEL`: 단계별 모델 변수가 없을 때 사용하는 하위 호환 기본 모델명
 - `LLM_REASONING_EFFORT`: GPT-5.6 추론 강도. MVP 기본값은 `none`이며 품질 평가 후 상향합니다.
 - `OPENAI_RESPONSES_API_URL`: OpenAI Responses API endpoint

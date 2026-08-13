@@ -18,6 +18,11 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 - `character_subject_resolution.md`
   - 이미 추출된 설정 후보 중 `entity_name`이 구체적이지 않은 후보의 주체만 해소하기 위한 prompt입니다.
   - 설정 후보를 다시 추출하지 않고, current chunk 기준으로 묶인 후보들의 `resolved_entity_name`만 반환하도록 요구합니다.
+- `character_fact_comparison.md`
+  - 매칭된 캐릭터 설정 후보 한 건과 현재 `WorkCharacter` snapshot을 비교해 ADD/UPDATE/MERGE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED를 제안합니다.
+  - 같은 batch에서 앞서 나온 동일 canonical slot 후보를 미확정 시간순 문맥으로 함께 받아 상대 변화량을 최종값으로 오인하지 않게 합니다.
+  - DB 식별자 대신 요청 안에서만 유효한 `P*` 참조를 사용하며, 원문·후보·snapshot 안의 명령은 소설 데이터일 뿐 지시가 아니라고 명시합니다.
+  - 회상·가정은 현재 snapshot을 바꾸지 않으며, STATUS 제거는 명시적인 현재 결과가 있을 때만 제안합니다. 제거 제안도 원본 CharacterFact 이력을 삭제하지 않습니다.
 - `world_setting_extraction.md`
   - 회차 청크에서 일시적 사건·현재 상태를 제외하고 지속 가능한 세계관 속성을 한 행 단위로 추출합니다.
   - 7개 category, 원문 evidence quote, 고정 confidence 단계와 문자열 속성값을 요구합니다.
@@ -37,6 +42,7 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 - user prompt의 `known_character_names`에 이미 있는 이름은 발견 후보로 반환하지 않습니다. 같은 신규 이름은 청크당 가장 명확한 근거 하나만 반환합니다.
 - 이름과 지속 속성이 한 문장에 함께 있으면 같은 `entity_name`의 발견 후보와 설정 후보를 각각 반환할 수 있습니다. 예를 들어 `케닉의 넷째 아들 세룸`은 `세룸` 발견과 활성 schema에 맞는 가족 관계 설정을 함께 만들 수 있습니다.
 - 같은 청크의 동일 캐릭터·`attribute_name`·`value_type`·`value_json` 설정은 근거 문장마다 반복하지 않고 가장 직접적인 근거 하나만 반환합니다. 표시용 `attribute_value`만 다르면 중복으로 보고, 실제 `value_json`이 다르면 값 변화 가능성을 보존합니다.
+- 현재 적용 중인 상태뿐 아니라 완화·종료·전환된 현재 결과도 STATUS 후보로 보존합니다. 특정 행동을 고정 기준으로 삼지 않고 능력·증상·행동·적용 효과의 변화를 종합하되, 치료 수단만 있고 결과가 없으면 회복 완료로 추출하지 않습니다.
 - Backend confirm에서 exact/alias match는 canonical `schemaKey`를, pattern match는 구체
   `SettingCandidate.attributeName`을 `CharacterFact.factKey`로 확정합니다.
 - `raw_entity_mention`은 원문에 실제 등장한 표현이고, `entity_name`은 원문 맥락에서 정리한 후보 캐릭터명입니다.
