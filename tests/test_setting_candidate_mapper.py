@@ -86,6 +86,79 @@ def test_to_entity_maps_extracted_candidate_to_setting_candidate() -> None:
     assert entity.updated_at is None
 
 
+def test_to_entity_normalizes_number_display_and_preserves_raw_ai_value() -> None:
+    candidate = ExtractedSettingCandidate(
+        source_chunk_id=CHUNK_ID,
+        entity_name="비요른",
+        attribute_name="stats.mental",
+        attribute_value="정신이 영구적으로 1 상승",
+        value_type="NUMBER",
+        value_json={"name": "정신", "value": 36.5},
+        evidence_spans=[ExtractedEvidenceSpan(quote="정신이 영구적으로 1 상승했다.")],
+    )
+
+    entity = SettingCandidateMapper.to_entity(
+        work_id=WORK_ID,
+        episode_id=EPISODE_ID,
+        source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        candidate=candidate,
+    )
+
+    assert entity.attribute_value == "36.5"
+    assert entity.value_json == {"name": "정신", "value": 36.5}
+    assert entity.raw_ai_result_json["attribute_value"] == "정신이 영구적으로 1 상승"
+
+
+def test_to_entity_normalizes_boolean_display_and_preserves_raw_ai_value() -> None:
+    candidate = ExtractedSettingCandidate(
+        source_chunk_id=CHUNK_ID,
+        entity_name="비요른",
+        attribute_name="status.awakened",
+        attribute_value="각성 상태",
+        value_type="BOOLEAN",
+        value_json={"value": True},
+        evidence_spans=[ExtractedEvidenceSpan(quote="그는 각성했다.")],
+    )
+
+    entity = SettingCandidateMapper.to_entity(
+        work_id=WORK_ID,
+        episode_id=EPISODE_ID,
+        source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        candidate=candidate,
+    )
+
+    assert entity.attribute_value == "true"
+    assert entity.raw_ai_result_json["attribute_value"] == "각성 상태"
+
+
+@pytest.mark.parametrize(
+    ("value_type", "value_json", "message"),
+    [
+        ("NUMBER", {"value": "12"}, "JSON number"),
+        ("NUMBER", {"value": True}, "JSON number"),
+        ("BOOLEAN", {"value": "true"}, "JSON boolean"),
+        ("BOOLEAN", {"active": True}, "typed value field"),
+    ],
+)
+def test_extracted_candidate_rejects_invalid_deterministic_scalar_json(
+    value_type: str,
+    value_json: dict,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        ExtractedSettingCandidate(
+            source_chunk_id=CHUNK_ID,
+            entity_name="비요른",
+            attribute_name="stats.test",
+            attribute_value="12",
+            value_type=value_type,
+            value_json=value_json,
+            evidence_spans=[ExtractedEvidenceSpan(quote="명시된 설정")],
+        )
+
+
 def test_to_entity_uses_entity_name_stripped_during_extraction_validation() -> None:
     candidate = ExtractedSettingCandidate(
         source_chunk_id=CHUNK_ID,

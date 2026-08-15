@@ -396,7 +396,7 @@ class FakeTextGenerationClient:
         assert str(CHUNK_ID) not in user_prompt
         assert max_output_tokens == 4000
         assert prompt_cache_key is not None
-        assert prompt_cache_key.startswith("setting-extraction:v5:")
+        assert prompt_cache_key.startswith("setting-extraction:v6:")
         return LlmTextResponse(
             text="""
             {

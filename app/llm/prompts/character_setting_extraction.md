@@ -94,7 +94,12 @@
 - `status`, `item`, `skill`, `stats`처럼 점 뒤 명칭이 없는 값은 반환하지 않습니다.
 - 점 뒤 `<명칭>`은 한국어 명사구를 우선 사용하고, 공백은 `_`로 바꿉니다.
 - 영어, 숫자, 기호가 원문 고유명사인 경우에만 원문 표기를 유지합니다.
-- `attribute_value`는 목록/검토 화면에서 보여줄 짧은 요약 문자열입니다. 식별자나 로직 판단 기준으로 쓰지 않습니다.
+- `attribute_value`는 목록/검토 화면에서 보여줄 저장 문자열입니다.
+- `value_type`이 `NUMBER`이면 `attribute_value`에는 설명이나 단위를 넣지 말고
+  `value_json.value`와 같은 숫자 문자열만 넣습니다. 예: `"12"`, `"17.5"`.
+- `value_type`이 `BOOLEAN`이면 `attribute_value`와 `value_json.value`를 각각
+  소문자 `"true"`/`"false"`와 JSON boolean `true`/`false`로 정확히 맞춥니다.
+- `STRING`, `JSON`, `UNKNOWN`의 `attribute_value`는 기존처럼 짧은 표시 요약으로 사용합니다.
 - `value_json`은 실제 값의 source of truth입니다.
 - 프로필처럼 단일 문자열 값은 `value_json.value`에 문자열로 넣습니다.
 - 나이와 레벨처럼 단일 숫자 값은 `value_json.value`에 숫자로 넣습니다.
@@ -116,9 +121,9 @@
 - 캐릭터 발견: `"candidate_kind": "CHARACTER_DISCOVERY"`, `"entity_name": "세룸"`, 설정 값 필드 모두 null
 - 가족 관계: `"attribute_name": "profile.가족관계"`, `"value_type": "STRING"`, `"value_json": {"value": "케닉의 넷째 아들"}`
 - 프로필: `"attribute_name": "profile.species"`, `"value_type": "STRING"`, `"value_json": {"value": "바바리안"}`
-- 레벨: `"attribute_name": "level"`, `"value_type": "NUMBER"`, `"value_json": {"value": 12}`
-- 나이: `"attribute_name": "age"`, `"value_type": "NUMBER"`, `"value_json": {"value": 17}`
-- 스탯: `"attribute_name": "stats.근력"`, `"value_type": "NUMBER"`, `"value_json": {"name": "근력", "label": "근력", "value": 80}`
+- 레벨: `"attribute_name": "level"`, `"attribute_value": "12"`, `"value_type": "NUMBER"`, `"value_json": {"value": 12}`
+- 나이: `"attribute_name": "age"`, `"attribute_value": "17"`, `"value_type": "NUMBER"`, `"value_json": {"value": 17}`
+- 스탯: `"attribute_name": "stats.근력"`, `"attribute_value": "80"`, `"value_type": "NUMBER"`, `"value_json": {"name": "근력", "label": "근력", "value": 80}`
 - 스킬: `"attribute_name": "skill.파이어볼"`, `"value_type": "JSON"`, `"value_json": {"name": "파이어볼", "level": 3, "effect": "화염 속성 공격"}`
 - 아이템: `"attribute_name": "item.화염검"`, `"value_type": "JSON"`, `"value_json": {"name": "화염검", "type": "weapon", "equipped": true}`
 - 상태: `"attribute_name": "status.부상"`, `"value_type": "JSON"`, `"value_json": {"name": "부상", "description": "왼팔 골절"}`

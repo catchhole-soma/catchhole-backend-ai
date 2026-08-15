@@ -27,6 +27,7 @@
 - `CHARACTER_DISCOVERY`의 캐릭터 매칭은 `entity_name`만 기준으로 한다. `케닉의 넷째 아들 세룸` 같은 `raw_entity_mention` 안의 기존 관계자 이름을 발견 대상 캐릭터로 오연결하거나 subject fallback으로 재해석하지 않는다.
 - 같은 분석 작업의 `SETTING` 후보는 확정된 캐릭터 ID 또는 정규화한 구체 이름, `attribute_name`, `value_type`, canonical `value_json`이 모두 같을 때만 저장 전에 중복 제거하고 더 높은 confidence의 근거를 남긴다. 값이 다르거나 주체가 `AMBIGUOUS`인 후보는 변화·다른 인물 가능성이 있으므로 유지한다.
 - `SettingCandidate.value_json`은 `JSONB(none_as_null=True)`로 매핑한다. `CHARACTER_DISCOVERY`의 Python `None`은 JSON literal `null`이 아니라 DB check constraint가 요구하는 SQL `NULL`로 저장해야 한다.
+- `NUMBER`/`BOOLEAN` 후보는 Pydantic 경계에서 `value_json.value`의 JSON 타입을 검증하고 Mapper가 저장 `attribute_value`를 그 값의 canonical 표현(NUMBER 숫자 문자열, BOOLEAN 소문자 `true`/`false`)으로 만든다. LLM이 보낸 원래 표시 문구는 Mapper 변환 전 payload로 `raw_ai_result_json`에 보존하고, 비교 proposal도 Spring에 보내기 전 같은 canonical 규칙을 적용한다. 표시값과 snapshot 대표값이 다른 상태를 새로 저장하지 않기 위함이다.
 
 ## Async Worker Runtime
 

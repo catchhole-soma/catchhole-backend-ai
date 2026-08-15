@@ -1,7 +1,7 @@
-from dataclasses import dataclass
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
@@ -21,7 +21,7 @@ DEFAULT_PROMPT_PATH = (
 )
 # 이 파일 전용 로그 객체를 만든다
 logger = logging.getLogger(__name__)
-SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v5"
+SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v6"
 
 
 @dataclass(frozen=True)

@@ -6,6 +6,7 @@ from uuid import UUID
 import httpx
 
 from app.analysis.character_fact_comparator import CharacterFactComparator
+from app.domain.setting_values import normalize_setting_display_value
 from app.schemas.worker import (
     WorkerCharacterFactComparisonClaimPayload,
     WorkerCharacterFactComparisonCompleteRequest,
@@ -152,7 +153,11 @@ class CharacterFactComparisonPipeline:
                     )
                     for reference in decision.removed_snapshot_refs
                 ],
-                proposed_fact_value=decision.proposed_fact_value,
+                proposed_fact_value=normalize_setting_display_value(
+                    context.candidate.value_type,
+                    decision.proposed_value_json,
+                    decision.proposed_fact_value,
+                ),
                 proposed_value_json=decision.proposed_value_json,
                 temporal_scope=decision.temporal_scope,
                 comparison_reason=decision.comparison_reason,

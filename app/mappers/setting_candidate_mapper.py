@@ -11,6 +11,7 @@ from app.domain.enums import (
     SettingEntityType,
     SettingValueType,
 )
+from app.domain.setting_values import normalize_setting_display_value
 from app.models.setting_candidate import SettingCandidate
 
 
@@ -33,6 +34,12 @@ class SettingCandidateMapper:
             match_status=SettingCandidateMatchStatus.UNRESOLVED,
         )
         candidate_kind = SettingCandidateKind(candidate.candidate_kind)
+        value_type = (
+            SettingValueType(candidate.value_type)
+            if candidate.value_type is not None
+            else None
+        )
+        raw_ai_result_json = candidate.model_dump(mode="json")
         return SettingCandidate(
             id=uuid4(),
             work_id=work_id,
@@ -50,12 +57,12 @@ class SettingCandidateMapper:
             matched_character_id=character_match.matched_character_id,
             match_status=character_match.match_status,
             attribute_name=candidate.attribute_name,
-            attribute_value=candidate.attribute_value,
-            value_type=(
-                SettingValueType(candidate.value_type)
-                if candidate.value_type is not None
-                else None
+            attribute_value=normalize_setting_display_value(
+                value_type,
+                candidate.value_json,
+                candidate.attribute_value,
             ),
+            value_type=value_type,
             value_json=candidate.value_json,
             evidence_spans=[
                 evidence_span.model_dump(mode="json")
@@ -63,7 +70,7 @@ class SettingCandidateMapper:
             ],
             confidence=_to_decimal(candidate.confidence),
             review_status=SettingCandidateReviewStatus.PENDING_REVIEW,
-            raw_ai_result_json=candidate.model_dump(mode="json"),
+            raw_ai_result_json=raw_ai_result_json,
             comparison_status=_initial_comparison_status(candidate_kind, character_match),
         )
 
