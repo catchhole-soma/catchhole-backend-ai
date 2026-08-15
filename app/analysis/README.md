@@ -64,6 +64,7 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
   - LLM에서 받은 설정 후보 JSON을 검증하기 위한 Python 내부 schema를 정의합니다.
   - FastAPI 응답 DTO가 아니라, 외부 LLM 출력이 저장 가능한 구조인지 확인하는 경계 객체입니다.
   - 필수 필드 누락, 잘못된 값 타입, 빈 근거 문장과 후보 종류별 payload 불일치는 이 단계에서 걸러집니다.
+  - `NUMBER`/`BOOLEAN`은 `value_json.value`가 각각 JSON number/boolean인지 검증해 문자열 scalar를 저장 경계까지 보내지 않습니다.
 - `exceptions.py`
   - Analysis 내부 흐름에서만 사용하는 예외를 정의합니다.
   - FastAPI 응답용 공통 예외와 분리해 Worker가 분석 실패 사유를 구분할 수 있게 합니다.
@@ -86,8 +87,9 @@ LLM 응답 파싱/검증 실패 메시지와 JSON 객체 파싱은 `json_respons
 - `value_type` enum 범위 밖 값
 - `confidence`가 0~1 범위를 벗어난 값
 - `SETTING`인데 `attribute_name`, `value_type`, `value_json`이 없거나, `CHARACTER_DISCOVERY`인데 설정 값 필드가 채워진 값
+- `NUMBER`의 `value_json.value`가 문자열이거나 `BOOLEAN`의 `value_json.value`가 JSON boolean이 아닌 값
 
-반대로 프롬프트 정책상 좋지 않은 값이더라도 schema상 문자열로 유효하면 현재는 재시도하지 않습니다.
+반대로 scalar JSON 타입처럼 명시적으로 강제한 계약이 아닌 프롬프트 정책 위반은, schema상 문자열로 유효하면 현재 재시도하지 않습니다.
 
 `source_chunk_id`는 이 재시도 정책의 예외입니다. LLM이 생성할 필드가 아니라 호출자가 이미 알고 있는 `EpisodeChunk.id`이므로, 응답에 값이 없거나 잘못된 UUID가 있어도 현재 입력 ID로 덮어쓴 뒤 검증합니다. 따라서 LLM의 UUID 복사 실수로 같은 요청을 반복하지 않습니다.
 
