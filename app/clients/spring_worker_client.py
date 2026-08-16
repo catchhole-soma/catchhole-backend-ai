@@ -2,7 +2,11 @@ from uuid import UUID
 
 import httpx
 
-from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.clients.exceptions import (
+    AiTokenQuotaExhaustedError,
+    SpringWorkerHttpError,
+    WorkerLeaseExpiredError,
+)
 from app.core.config import Settings, get_settings
 from app.domain.enums import (
     AnalysisFailureCode,
@@ -78,7 +82,7 @@ class SpringWorkerClient:
         # 204 No Content면 가져갈 job이 없다는 뜻
         if response.status_code == 204:
             return None
-        response.raise_for_status()
+        _raise_for_spring_status(response)
         return WorkerAnalysisJobPayload.model_validate(response.json()["data"])
 
     # Spring에 보낼 진행 상태 보고 요청 DTO
@@ -101,7 +105,7 @@ class SpringWorkerClient:
             json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
         # HTTP 응답이 4xx/5xx이면 예외를 발생
-        response.raise_for_status()
+        _raise_for_spring_status(response)
 
     async def complete(
         self,
@@ -123,7 +127,7 @@ class SpringWorkerClient:
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, exclude_none=True),
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
 
     # Spring에 보낼 분석 실패 요청 DTO
     async def fail(
@@ -142,7 +146,7 @@ class SpringWorkerClient:
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True),
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
 
     # AI provider 호출 전에 예상 최대량을 Spring 원장에 예약한다.
     # 같은 requestId 재요청은 멱등하므로 일시 장애에는 정산과 동일하게 재시도한다.
@@ -179,7 +183,7 @@ class SpringWorkerClient:
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/heartbeat"),
             headers=self._headers(lease_token),
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
         return WorkerAnalysisJobHeartbeatResponse.model_validate(response.json()["data"])
 
     async def claim_next_character_fact_comparison(
@@ -196,7 +200,7 @@ class SpringWorkerClient:
         )
         if response.status_code == 204:
             return None
-        response.raise_for_status()
+        _raise_for_spring_status(response)
         return WorkerCharacterFactComparisonClaimPayload.model_validate(response.json()["data"])
 
     async def get_character_fact_comparison_context(
@@ -212,7 +216,7 @@ class SpringWorkerClient:
             ),
             headers=self._headers(lease_token),
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
         return WorkerCharacterFactComparisonContextResponse.model_validate(response.json()["data"])
 
     async def complete_character_fact_comparison(
@@ -230,7 +234,7 @@ class SpringWorkerClient:
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
 
     async def fail_character_fact_comparison(
         self,
@@ -252,7 +256,7 @@ class SpringWorkerClient:
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True),
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
 
     async def publish_world_setting_candidates(
         self,
@@ -266,7 +270,7 @@ class SpringWorkerClient:
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
         return [
             WorkerWorldSettingCandidatePayload.model_validate(candidate_payload)
             for candidate_payload in response.json()["data"]
@@ -286,7 +290,7 @@ class SpringWorkerClient:
         )
         if response.status_code == 204:
             return None
-        response.raise_for_status()
+        _raise_for_spring_status(response)
         return WorkerWorldSettingCandidatePayload.model_validate(response.json()["data"])
 
     async def get_world_setting_subjects(
@@ -302,7 +306,7 @@ class SpringWorkerClient:
             headers=self._headers(lease_token),
             params={"category": category, "page": page, "size": size},
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
         return WorkerWorldSettingSubjectPageResponse.model_validate(response.json()["data"])
 
     async def get_world_setting_comparison_context(
@@ -323,7 +327,7 @@ class SpringWorkerClient:
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, mode="json"),
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
         return WorkerWorldSettingComparisonContextResponse.model_validate(response.json()["data"])
 
     async def complete_world_setting_comparison(
@@ -341,7 +345,7 @@ class SpringWorkerClient:
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
 
     async def fail_world_setting_comparison(
         self,
@@ -363,7 +367,7 @@ class SpringWorkerClient:
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True),
         )
-        response.raise_for_status()
+        _raise_for_spring_status(response)
 
     # provider가 반환한 실제 usage로 예약을 정산하고 남은 예약량을 반환한다.
     async def settle_ai_tokens(
@@ -413,11 +417,13 @@ class SpringWorkerClient:
                     and _spring_error_code(response) == "AI_TOKEN_QUOTA_EXHAUSTED"
                 ):
                     raise AiTokenQuotaExhaustedError()
-                response.raise_for_status()
+                _raise_for_spring_status(response)
                 return
             except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
                 if attempt == 2:
                     raise
+            except WorkerLeaseExpiredError:
+                raise
             except httpx.HTTPStatusError as exc:
                 retryable = exc.response.status_code in {408, 409, 429} or (
                     exc.response.status_code >= 500
@@ -448,3 +454,19 @@ def _spring_error_code(response: httpx.Response) -> str | None:
     error = payload.get("error") if isinstance(payload, dict) else None
     code = error.get("code") if isinstance(error, dict) else None
     return code if isinstance(code, str) else None
+
+
+def _raise_for_spring_status(response: httpx.Response) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        error_type = (
+            WorkerLeaseExpiredError
+            if _spring_error_code(response) == WorkerLeaseExpiredError.error_code
+            else SpringWorkerHttpError
+        )
+        raise error_type(
+            str(exc),
+            request=exc.request,
+            response=exc.response,
+        ) from exc

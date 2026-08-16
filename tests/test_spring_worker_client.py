@@ -5,7 +5,11 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
-from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.clients.exceptions import (
+    AiTokenQuotaExhaustedError,
+    SpringWorkerHttpError,
+    WorkerLeaseExpiredError,
+)
 from app.clients.spring_worker_client import (
     INTERNAL_API_KEY_HEADER,
     WORKER_LEASE_TOKEN_HEADER,
@@ -318,6 +322,36 @@ def test_ai_token_quota_conflict_is_typed_and_never_retried() -> None:
         )
 
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("error_code", "expected_error_type"),
+    [
+        ("ANALYSIS_JOB_LEASE_CONFLICT", WorkerLeaseExpiredError),
+        ("INTERNAL_SERVER_ERROR", SpringWorkerHttpError),
+    ],
+)
+def test_spring_worker_http_failure_is_typed_by_source(
+    error_code: str,
+    expected_error_type: type[SpringWorkerHttpError],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=409,
+            request=request,
+            json={"error": {"code": error_code}},
+        )
+
+    client = _client(handler)
+
+    with pytest.raises(expected_error_type):
+        asyncio.run(
+            client.report_progress(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+                "SETTING_EXTRACTION",
+            )
+        )
 
 
 def test_ai_token_release_retries_temporary_spring_failure() -> None:

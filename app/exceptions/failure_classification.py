@@ -3,7 +3,11 @@ from typing import TypeVar
 import httpx
 
 from app.analysis.exceptions import ComparisonValidationError, LlmExtractionError
-from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.clients.exceptions import (
+    AiTokenQuotaExhaustedError,
+    SpringWorkerHttpError,
+    WorkerLeaseExpiredError,
+)
 from app.domain.enums import AnalysisFailureCode
 from app.llm.exceptions import (
     LlmIncompleteResponseError,
@@ -39,6 +43,10 @@ def is_token_quota_exhausted(exc: BaseException) -> bool:
 def _common_failure_code(exc: BaseException) -> AnalysisFailureCode | None:
     if is_token_quota_exhausted(exc):
         return AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED
+    if _find_exception(exc, WorkerLeaseExpiredError) is not None:
+        return AnalysisFailureCode.WORKER_LEASE_EXPIRED
+    if _find_exception(exc, SpringWorkerHttpError) is not None:
+        return AnalysisFailureCode.UNEXPECTED_ERROR
     if _find_exception(exc, LlmOutputTruncatedError) is not None:
         return AnalysisFailureCode.LLM_OUTPUT_TRUNCATED
     if any(
