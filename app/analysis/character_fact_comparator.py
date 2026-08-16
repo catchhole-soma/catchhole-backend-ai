@@ -13,6 +13,7 @@ from app.domain.enums import (
     CharacterFactComparisonOperation,
     CharacterFactTemporalScope,
 )
+from app.domain.setting_values import normalize_setting_display_value
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.schemas.worker import (
@@ -130,7 +131,7 @@ class CharacterFactComparator:
             model=self.model,
             max_output_tokens=2000,
             max_attempts=self.max_attempts,
-            prompt_cache_key="character-fact-comparison:v5",
+            prompt_cache_key="character-fact-comparison:v6",
             operation_name="Character-fact comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -141,6 +142,7 @@ class CharacterFactComparator:
             retry_user_prompt_builder=_build_retry_user_prompt,
         )
         decision = _replace_internal_snapshot_references(decision, references)
+        decision = _normalize_scalar_proposal(decision, candidate)
         return decision, decision.model_dump(mode="json")
 
 
@@ -235,6 +237,33 @@ def _validate_comparison_decision(
             "Snapshot removal requires an explicit PRESENT STATUS addition or replacement."
         )
 
+    if decision.operation in {
+        CharacterFactComparisonOperation.ADD,
+        CharacterFactComparisonOperation.UPDATE,
+        CharacterFactComparisonOperation.MERGE,
+    }:
+        normalize_setting_display_value(
+            candidate.value_type,
+            decision.proposed_value_json,
+            decision.proposed_fact_value,
+        )
+
+
+def _normalize_scalar_proposal(
+    decision: CharacterFactComparisonDecision,
+    candidate: WorkerCharacterFactComparisonCandidatePayload,
+) -> CharacterFactComparisonDecision:
+    if decision.proposed_value_json is None:
+        return decision
+    normalized = normalize_setting_display_value(
+        candidate.value_type,
+        decision.proposed_value_json,
+        decision.proposed_fact_value,
+    )
+    if normalized == decision.proposed_fact_value:
+        return decision
+    return decision.model_copy(update={"proposed_fact_value": normalized})
+
 
 def _validate_user_facing_reason(
     comparison_reason: str,
@@ -282,8 +311,8 @@ def _replace_internal_snapshot_references(
             # ASCII ref 토큰의 좌우만 제한해 조사와 붙은 표현은 치환하고 P1/P10은 구분한다.
             rf"(?<![A-Za-z0-9]){re.escape(reference.reference)}"
             rf"(?P<particle>으로|을|를|이|가|은|는|과|와|로)?(?![A-Za-z0-9])",
-            lambda match: replacement
-            + particle_by_input.get(match.group("particle") or "", match.group("particle") or ""),
+            lambda match, replacement=replacement, particles=particle_by_input: replacement
+            + particles.get(match.group("particle") or "", match.group("particle") or ""),
             comparison_reason,
         )
     if comparison_reason == decision.comparison_reason:

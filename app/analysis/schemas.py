@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
+from app.domain.setting_values import normalize_setting_display_value
+
 
 # 후보가 원문 어디에서 나왔는지 보여주기 위한 근거 정보
 class ExtractedEvidenceSpan(BaseModel):
@@ -47,6 +49,11 @@ class ExtractedSettingCandidate(BaseModel):
                 raise ValueError(
                     "SETTING candidate requires attribute_name, value_type, and value_json."
                 )
+            normalize_setting_display_value(
+                self.value_type,
+                self.value_json,
+                self.attribute_value,
+            )
             return self
 
         if any(

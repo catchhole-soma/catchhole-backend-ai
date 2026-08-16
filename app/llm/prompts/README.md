@@ -52,8 +52,11 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 - user prompt의 `character_setting_schemas`는 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`만 포함합니다.
 - 고정 schema와 명확히 대응하면 canonical `schemaKey`와 schema `valueType`을 사용하고, 동적 schema는 `attributePattern`의 `*`를 구체 명칭으로 치환합니다.
 - 시간·사건·타임라인 정보와 제공된 schema에 대응하지 않는 설정은 후보에서 제외합니다. 가까운 schema로 fuzzy 정규화하거나 새 key를 만들지 않습니다.
-- `attribute_value`는 목록/검토 화면 표시용 summary이며, 로직 판단 기준으로 사용하지 않습니다.
-- `value_json`은 실제 값의 source of truth입니다. 나이/레벨은 `{"value": number}` 형태를 우선 사용합니다.
+- `NUMBER`와 `BOOLEAN` 후보의 저장 `attribute_value`는 `value_json.value`에서 결정합니다.
+  NUMBER는 숫자 문자열, BOOLEAN은 소문자 `true`/`false`이며 LLM의 원래 표시 문구는
+  `raw_ai_result_json`에 보존합니다. 그 밖의 타입은 기존 표시 summary를 유지합니다.
+- `value_json`은 실제 값의 source of truth입니다. NUMBER/BOOLEAN의 `value`가 선언 타입과
+  다르면 추출 응답을 거절하고 재시도합니다.
 - `source_chunk_id`는 prompt 출력 필드가 아니며 Python Worker가 현재 입력 chunk ID로 결정합니다.
 - `evidence_spans[].quote`는 위치 보정 기준이므로 원문 일부를 요약/의역하지 않고 그대로 복사해야 합니다.
 - `evidence_spans[].start_offset`, `end_offset`은 LLM이 계산하지 않고 Python Worker가 quote 검색으로 보정합니다.

@@ -8,6 +8,7 @@ from app.analysis.character_fact_comparator import CharacterFactComparator
 from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonDecision,
 )
+from app.domain.enums import SettingValueType
 from app.llm.responses import LlmTextResponse
 from app.schemas.worker import (
     WorkerCharacterFactComparisonCandidatePayload,
@@ -54,7 +55,7 @@ def test_comparator_hides_database_ids_and_accepts_add() -> None:
     assert "독립적·잠재적 상태까지 연쇄적으로 제거하지 않는다" in (
         client.requests[0]["system_prompt"]
     )
-    assert client.requests[0]["prompt_cache_key"] == "character-fact-comparison:v5"
+    assert client.requests[0]["prompt_cache_key"] == "character-fact-comparison:v6"
     assert prompt_payload["snapshot_entries"][0]["ref"] == "P1"
     assert prompt_payload["snapshot_entries"][0]["fact_value"] == "출혈 중"
     assert prompt_payload["exact_target_ref"] is None
@@ -122,6 +123,38 @@ def test_comparator_passes_prior_same_slot_candidates_as_unconfirmed_chronology(
             "proposed_value_json": {"value": 35},
         }
     ]
+
+
+def test_comparator_retries_invalid_number_json_and_normalizes_display_value() -> None:
+    invalid = {
+        "operation": "ADD",
+        "target_ref": None,
+        "removed_snapshot_refs": [],
+        "proposed_fact_value": "정신 36",
+        "proposed_value_json": {"value": "36"},
+        "temporal_scope": "PRESENT",
+        "comparison_reason": "현재 정신 수치를 추가한다.",
+    }
+    valid = {**invalid, "proposed_value_json": {"value": 36}}
+    client = FakeTextClient([invalid, valid])
+    candidate = _candidate().model_copy(
+        update={
+            "attribute_name": "stats.mental",
+            "attribute_value": "35",
+            "value_json": {"value": 35},
+            "value_type": SettingValueType.NUMBER,
+            "canonical_fact_type": "STAT",
+            "canonical_fact_key": "stats.mental",
+        }
+    )
+
+    decision, raw = asyncio.run(
+        CharacterFactComparator(llm_client=client, max_attempts=2).compare(candidate, [])
+    )
+
+    assert decision.proposed_fact_value == "36"
+    assert raw["proposed_fact_value"] == "36"
+    assert len(client.requests) == 2
 
 
 def test_comparator_allows_only_status_snapshot_removal() -> None:

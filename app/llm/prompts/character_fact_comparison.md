@@ -55,7 +55,10 @@ CharacterFact는 삭제하지 않는 시간순 기록이며, snapshot은 사용�
 대체해야 한다면 `ADD`와 `removed_snapshot_refs`를 함께 사용한다.
 `ADD`, `UPDATE`, `MERGE`는 최종 snapshot을 그대로 저장할 수 있도록
 `proposed_fact_value`와 `proposed_value_json`을 모두 반드시 반환한다.
-`proposed_fact_value`는 기존 값과 신규 정보를 반영한 간결한 사용자 표시 문자열이다.
+`proposed_fact_value`는 기존 값과 신규 정보를 반영한 사용자 표시 문자열이다.
+candidate의 `value_type`이 `NUMBER`이면 설명이나 단위를 넣지 않고
+`proposed_value_json.value`와 같은 숫자 문자열만 반환한다. `BOOLEAN`이면 소문자
+`true` 또는 `false`만 반환하고 `proposed_value_json.value`도 같은 JSON boolean으로 둔다.
 `REMOVE`는 동일한 현재 STATUS를 종료할 때만 사용하고 `proposed_fact_value`,
 `proposed_value_json`, `removed_snapshot_refs`를 모두 비운다. `HISTORY_ONLY`, `EXCLUDE`, `REVIEW_REQUIRED`는 `target_ref`, `removed_snapshot_refs`,
 `proposed_fact_value`, `proposed_value_json`을 모두 비운다. 같은 canonical Fact 항목이 이미 있으면
