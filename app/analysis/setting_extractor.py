@@ -102,48 +102,47 @@ class CharacterSettingExtractor:
         current_max_output_tokens = self.max_output_tokens
         truncation_retry_used = False
         for attempt in range(1, self.max_attempts + 1):
-            try:
-                # 예외가 없다면 정상적으로 return
-                return await self._extract_once(
-                    system_prompt,
-                    user_prompt,
-                    source_chunk_id,
-                    prompt_cache_key,
-                    current_max_output_tokens,
-                )
-            except LlmOutputTruncatedError as exc:
-                last_error = exc
-                can_expand_once = (
-                    not truncation_retry_used
-                    and attempt < self.max_attempts
-                    and self.truncation_retry_max_output_tokens > current_max_output_tokens
-                )
-                if not can_expand_once:
-                    raise
-                truncation_retry_used = True
-                current_max_output_tokens = self.truncation_retry_max_output_tokens
-                logger.warning(
-                    "Setting extraction output truncated; increasing cap once. "
-                    "attempt=%s/%s max_output_tokens=%s next_max_output_tokens=%s "
-                    "output_tokens=%s reason=%s",
-                    attempt,
-                    self.max_attempts,
-                    exc.max_output_tokens,
-                    current_max_output_tokens,
-                    exc.output_token_count,
-                    exc.incomplete_reason,
-                )
-            except (json.JSONDecodeError, ValidationError) as exc:
-                last_error = exc
-                if attempt == self.max_attempts:
-                    # 최대 반복횟수가 되면 for문 종료 후 아래의 LlmExtractionError을 만든다.
+            while True:
+                try:
+                    # 예외가 없다면 정상적으로 return
+                    return await self._extract_once(
+                        system_prompt,
+                        user_prompt,
+                        source_chunk_id,
+                        prompt_cache_key,
+                        current_max_output_tokens,
+                    )
+                except LlmOutputTruncatedError as exc:
+                    can_expand_once = (
+                        not truncation_retry_used
+                        and self.truncation_retry_max_output_tokens > current_max_output_tokens
+                    )
+                    if not can_expand_once:
+                        raise
+                    truncation_retry_used = True
+                    current_max_output_tokens = self.truncation_retry_max_output_tokens
+                    logger.warning(
+                        "Setting extraction output truncated; increasing cap once. "
+                        "attempt=%s/%s max_output_tokens=%s next_max_output_tokens=%s "
+                        "output_tokens=%s reason=%s",
+                        attempt,
+                        self.max_attempts,
+                        exc.max_output_tokens,
+                        current_max_output_tokens,
+                        exc.output_token_count,
+                        exc.incomplete_reason,
+                    )
+                except (json.JSONDecodeError, ValidationError) as exc:
+                    last_error = exc
+                    if attempt < self.max_attempts:
+                        logger.warning(
+                            "LLM extraction response validation failed. retrying "
+                            "attempt=%s/%s error=%s",
+                            attempt,
+                            self.max_attempts,
+                            compact_error_message(exc),
+                        )
                     break
-                logger.warning(
-                    "LLM extraction response validation failed. retrying attempt=%s/%s error=%s",
-                    attempt,
-                    self.max_attempts,
-                    compact_error_message(exc),
-                )
 
         raise LlmExtractionError(
             "LLM extraction failed after "

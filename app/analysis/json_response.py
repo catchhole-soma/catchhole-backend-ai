@@ -6,7 +6,7 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from app.analysis.exceptions import ComparisonValidationError, LlmExtractionError
-from app.llm.exceptions import LlmOutputTruncatedError
+from app.llm.exceptions import LlmIncompleteResponseError, LlmOutputTruncatedError
 from app.llm.protocols import TextGenerationClient
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -75,6 +75,9 @@ async def request_validated_model(
             return result
         except LlmOutputTruncatedError:
             # 같은 prompt와 같은 cap 재시도는 같은 절단을 반복하므로 상위 정책에 즉시 맡긴다.
+            raise
+        except LlmIncompleteResponseError:
+            # provider가 완료하지 못한 응답은 JSON/schema 보정으로 회복할 수 없다.
             raise
         except (TypeError, ValueError) as exc:
             last_error = exc

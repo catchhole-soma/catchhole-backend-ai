@@ -425,6 +425,26 @@ def test_second_truncation_stops_without_repeating_the_same_cap() -> None:
     assert llm_client.max_output_token_calls == [4000, 8000]
 
 
+def test_truncation_expansion_does_not_consume_validation_retry_budget() -> None:
+    llm_client = InvalidTwiceThenTruncateAndSucceedClient()
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        max_attempts=3,
+        max_output_tokens=4000,
+        truncation_retry_max_output_tokens=8000,
+    )
+
+    result = _extract(
+        extractor,
+        source_chunk_id=CHUNK_ID,
+        chunk_text="가" * 2522,
+        schema_hints=_schema_hints(31),
+    )
+
+    assert result.candidates == []
+    assert llm_client.max_output_token_calls == [4000, 4000, 4000, 8000]
+
+
 def test_expanded_cap_is_reserved_before_provider_and_quota_stops_second_call() -> None:
     delegate = TruncateThenSuccessClient()
     ledger = RecordingTokenLedger(quota_failure_reservation=2)
@@ -796,6 +816,26 @@ class AlwaysTruncatedClient:
             input_token_count=2522,
             output_token_count=max_output_tokens,
         )
+
+
+class InvalidTwiceThenTruncateAndSucceedClient:
+    def __init__(self) -> None:
+        self.max_output_token_calls: list[int] = []
+
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
+        max_output_tokens = kwargs["max_output_tokens"]
+        self.max_output_token_calls.append(max_output_tokens)
+        call_count = len(self.max_output_token_calls)
+        if call_count <= 2:
+            return LlmTextResponse(text="invalid JSON")
+        if call_count == 3:
+            raise LlmOutputTruncatedError(
+                "output truncated",
+                incomplete_reason="max_output_tokens",
+                max_output_tokens=max_output_tokens,
+                output_token_count=max_output_tokens,
+            )
+        return LlmTextResponse(text='{"candidates": []}')
 
 
 class RecordingTokenLedger:
