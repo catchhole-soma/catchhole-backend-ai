@@ -3,7 +3,9 @@ import json
 from uuid import UUID, uuid4
 
 import httpx
+import pytest
 
+from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.clients.spring_worker_client import (
     INTERNAL_API_KEY_HEADER,
     WORKER_LEASE_TOKEN_HEADER,
@@ -183,7 +185,10 @@ def test_fail_calls_spring_fail_api() -> None:
     assert request.method == "POST"
     assert request.url.path == f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}/fail"
     assert request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN)
-    assert json.loads(request.content) == {"errorMessage": "LLM 응답 오류"}
+    assert json.loads(request.content) == {
+        "failureCode": "UNEXPECTED_ERROR",
+        "errorMessage": "LLM 응답 오류",
+    }
 
 
 def test_ai_token_reserve_settle_and_release_call_internal_apis() -> None:
@@ -281,6 +286,40 @@ def test_ai_token_reservation_retries_with_same_idempotency_key() -> None:
     assert {json.loads(request.content)["requestId"] for request in requests} == {str(request_id)}
 
 
+def test_ai_token_quota_conflict_is_typed_and_never_retried() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            status_code=409,
+            request=request,
+            json={
+                "error": {
+                    "code": "AI_TOKEN_QUOTA_EXHAUSTED",
+                    "message": "충전이 필요합니다.",
+                }
+            },
+        )
+
+    client = _client(handler)
+
+    with pytest.raises(AiTokenQuotaExhaustedError, match="quota is exhausted"):
+        asyncio.run(
+            client.reserve_ai_tokens(
+                request_id=uuid4(),
+                analysis_job_id=ANALYSIS_JOB_ID,
+                purpose="SETTING_EXTRACTION",
+                attempt=1,
+                model_name="gpt-5.6-terra",
+                reserved_tokens=4256,
+                lease_token=LEASE_TOKEN,
+            )
+        )
+
+    assert len(requests) == 1
+
+
 def test_ai_token_release_retries_temporary_spring_failure() -> None:
     requests: list[httpx.Request] = []
 
@@ -324,6 +363,7 @@ def test_world_setting_worker_calls_use_lease_and_parse_structured_context() -> 
         return _empty_success_response(request, [])
 
     client = _client(handler)
+
     async def call_world_setting_apis():
         candidates = await client.publish_world_setting_candidates(
             ANALYSIS_JOB_ID,
@@ -353,7 +393,7 @@ def test_world_setting_worker_calls_use_lease_and_parse_structured_context() -> 
         )
         return candidate, claimed, context
 
-    candidate, claimed, context = asyncio.run(call_world_setting_apis())
+    _candidate_result, claimed, context = asyncio.run(call_world_setting_apis())
 
     assert claimed is not None
     assert claimed.scope_name == "1층"
@@ -436,8 +476,10 @@ def test_character_fact_comparison_calls_match_spring_contract() -> None:
     assert [(request.method, request.url.path) for request in requests] == [
         (
             "POST",
-            f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
-            "/character-fact-comparisons/claim-next",
+            (
+                f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
+                "/character-fact-comparisons/claim-next"
+            ),
         ),
         ("POST", f"{expected_base}-context"),
         ("POST", f"{expected_base}-complete"),
@@ -454,10 +496,12 @@ def test_character_fact_comparison_calls_match_spring_contract() -> None:
         "contextToken": "snapshot-v1",
         "rawComparisonJson": {"operation": "ADD"},
     }
-    assert json.loads(requests[3].content) == {"errorMessage": "comparison failed"}
+    assert json.loads(requests[3].content) == {
+        "failureCode": "COMPARISON_VALIDATION_FAILED",
+        "errorMessage": "comparison failed",
+    }
     assert all(
-        request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN)
-        for request in requests
+        request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN) for request in requests
     )
 
 

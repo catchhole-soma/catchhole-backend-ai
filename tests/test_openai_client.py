@@ -5,7 +5,11 @@ import logging
 import httpx
 import pytest
 
-from app.llm.exceptions import LlmResponseValidationError
+from app.llm.exceptions import (
+    LlmIncompleteResponseError,
+    LlmOutputTruncatedError,
+    LlmResponseValidationError,
+)
 from app.llm.openai_client import OpenAIResponsesClient
 
 
@@ -71,6 +75,7 @@ def test_create_text_response_sends_cache_key_and_logs_cache_usage(caplog) -> No
         return httpx.Response(
             status_code=200,
             json={
+                "status": "completed",
                 "output_text": "{}",
                 "usage": {
                     "input_tokens": 1400,
@@ -159,9 +164,7 @@ def test_create_text_response_does_not_inherit_none_for_o_series_override() -> N
         ),
     )
 
-    asyncio.run(
-        client.create_text_response(system_prompt="규칙", user_prompt="원문", model="o3")
-    )
+    asyncio.run(client.create_text_response(system_prompt="규칙", user_prompt="원문", model="o3"))
 
     request_body = json.loads(requests[0].content)
     assert request_body["model"] == "o3"
@@ -178,6 +181,7 @@ def test_malformed_success_response_preserves_reported_usage() -> None:
                 lambda request: httpx.Response(
                     status_code=200,
                     json={
+                        "status": "completed",
                         "output": [{"content": "invalid"}],
                         "usage": {
                             "input_tokens": 120,
@@ -196,6 +200,159 @@ def test_malformed_success_response_preserves_reported_usage() -> None:
     assert exc_info.value.input_token_count == 120
     assert exc_info.value.cached_input_token_count == 20
     assert exc_info.value.output_token_count == 30
+
+
+@pytest.mark.parametrize("reason", ["max_tokens", "max_output_tokens"])
+def test_incomplete_output_limit_response_is_typed_as_truncation(reason: str) -> None:
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    status_code=200,
+                    request=request,
+                    json={
+                        "status": "incomplete",
+                        "incomplete_details": {"reason": reason},
+                        "output_text": '{"candidates": [',
+                        "usage": {
+                            "input_tokens": 2522,
+                            "input_tokens_details": {"cached_tokens": 1200},
+                            "output_tokens": 4000,
+                        },
+                    },
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(LlmOutputTruncatedError) as exc_info:
+        asyncio.run(
+            client.create_text_response(
+                system_prompt="규칙",
+                user_prompt="원문",
+                max_output_tokens=4000,
+            )
+        )
+
+    assert exc_info.value.incomplete_reason == reason
+    assert exc_info.value.max_output_tokens == 4000
+    assert exc_info.value.input_token_count == 2522
+    assert exc_info.value.cached_input_token_count == 1200
+    assert exc_info.value.output_token_count == 4000
+
+
+def test_other_incomplete_response_is_never_treated_as_success() -> None:
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    status_code=200,
+                    request=request,
+                    json={
+                        "status": "incomplete",
+                        "incomplete_details": {"reason": "content_filter"},
+                        "output_text": "{}",
+                        "usage": {"input_tokens": 10, "output_tokens": 1},
+                    },
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(LlmIncompleteResponseError):
+        asyncio.run(client.create_text_response(system_prompt="규칙", user_prompt="원문"))
+
+
+def test_missing_response_status_is_never_treated_as_success() -> None:
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    status_code=200,
+                    request=request,
+                    json={
+                        "output_text": "{}",
+                        "usage": {"input_tokens": 10, "output_tokens": 1},
+                    },
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(LlmIncompleteResponseError):
+        asyncio.run(client.create_text_response(system_prompt="규칙", user_prompt="원문"))
+
+
+def test_output_at_cap_with_incomplete_json_is_typed_as_truncation() -> None:
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    status_code=200,
+                    request=request,
+                    json={
+                        "status": "completed",
+                        "output_text": '{"candidates": [',
+                        "usage": {"input_tokens": 2522, "output_tokens": 4000},
+                    },
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(LlmOutputTruncatedError) as exc_info:
+        asyncio.run(
+            client.create_text_response(
+                system_prompt="규칙",
+                user_prompt="원문",
+                max_output_tokens=4000,
+            )
+        )
+
+    assert exc_info.value.incomplete_reason == "output_token_limit_reached"
+
+
+def test_complete_json_at_exact_cap_remains_a_success() -> None:
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    status_code=200,
+                    request=request,
+                    json={
+                        "status": "completed",
+                        "output_text": '{"candidates": []}',
+                        "usage": {"input_tokens": 2522, "output_tokens": 4000},
+                    },
+                )
+            )
+        ),
+    )
+
+    response = asyncio.run(
+        client.create_text_response(
+            system_prompt="규칙",
+            user_prompt="원문",
+            max_output_tokens=4000,
+        )
+    )
+
+    assert response.text == '{"candidates": []}'
 
 
 def test_create_text_response_requires_api_key() -> None:
@@ -217,6 +374,7 @@ def _response(request: httpx.Request, requests: list[httpx.Request]) -> httpx.Re
     return httpx.Response(
         status_code=200,
         json={
+            "status": "completed",
             "output_text": '{"candidates":[]}',
             "usage": {
                 "input_tokens": 10,

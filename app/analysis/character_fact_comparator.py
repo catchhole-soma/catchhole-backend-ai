@@ -56,11 +56,18 @@ class CharacterFactComparator:
         prompt_path: Path = COMPARISON_PROMPT_PATH,
         model: str | None = None,
         max_attempts: int | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
+        settings = get_settings()
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
-        self.model = model or get_settings().effective_llm_comparison_model
+        self.model = model or settings.effective_llm_comparison_model
         self.max_attempts = _resolve_max_attempts(max_attempts)
+        self.max_output_tokens = (
+            settings.llm_comparison_max_output_tokens
+            if max_output_tokens is None
+            else max_output_tokens
+        )
 
     async def compare(
         self,
@@ -129,7 +136,7 @@ class CharacterFactComparator:
             system_prompt=self.prompt_path.read_text(encoding="utf-8"),
             user_prompt=json.dumps(prompt_payload, ensure_ascii=False),
             model=self.model,
-            max_output_tokens=2000,
+            max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
             prompt_cache_key="character-fact-comparison:v6",
             operation_name="Character-fact comparison",
@@ -282,7 +289,9 @@ def _validate_user_facing_reason(
     )
     if leaked_fact_keys:
         raise ValueError("comparison_reason must not expose internal Fact keys.")
-    if UUID_PATTERN.search(comparison_reason) or INTERNAL_REASON_TERM_PATTERN.search(comparison_reason):
+    if UUID_PATTERN.search(comparison_reason) or INTERNAL_REASON_TERM_PATTERN.search(
+        comparison_reason
+    ):
         raise ValueError("comparison_reason must not expose internal implementation terms.")
 
 
@@ -311,8 +320,10 @@ def _replace_internal_snapshot_references(
             # ASCII ref 토큰의 좌우만 제한해 조사와 붙은 표현은 치환하고 P1/P10은 구분한다.
             rf"(?<![A-Za-z0-9]){re.escape(reference.reference)}"
             rf"(?P<particle>으로|을|를|이|가|은|는|과|와|로)?(?![A-Za-z0-9])",
-            lambda match, replacement=replacement, particles=particle_by_input: replacement
-            + particles.get(match.group("particle") or "", match.group("particle") or ""),
+            lambda match, replacement=replacement, particles=particle_by_input: (
+                replacement
+                + particles.get(match.group("particle") or "", match.group("particle") or "")
+            ),
             comparison_reason,
         )
     if comparison_reason == decision.comparison_reason:

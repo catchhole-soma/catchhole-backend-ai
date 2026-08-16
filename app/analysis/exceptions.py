@@ -2,3 +2,7 @@
 # worker가 실패 사유를 구분하기 위한 목적
 class LlmExtractionError(Exception):
     """LLM 응답을 설정 후보 구조로 변환하지 못했을 때 사용하는 analysis 내부 예외."""
+
+
+class ComparisonValidationError(LlmExtractionError):
+    """LLM 비교 응답을 도메인 결정으로 검증하지 못한 경우다."""

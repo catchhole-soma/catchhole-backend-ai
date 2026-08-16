@@ -5,10 +5,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.enums import (
+    AnalysisFailureCode,
     AnalysisJobCheckpointStage,
     AnalysisJobType,
-    CharacterFactComparisonStatus,
     CharacterFactComparisonOperation,
+    CharacterFactComparisonStatus,
     CharacterFactTemporalScope,
     EpisodeProcessingStatus,
     SettingValueType,
@@ -78,6 +79,7 @@ class WorkerAnalysisJobCompleteRequest(BaseModel):
 # Worker가 분석 실패를 Spring에 보고할 때 쓰는 DTO
 class WorkerAnalysisJobFailRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+    failure_code: AnalysisFailureCode = Field(alias="failureCode")
     # 실패 사유
     error_message: str = Field(alias="errorMessage", min_length=1)
 
@@ -325,6 +327,7 @@ class WorkerWorldSettingComparisonCompleteRequest(BaseModel):
 class WorkerWorldSettingComparisonFailRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    failure_code: AnalysisFailureCode = Field(alias="failureCode")
     error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
 
 
@@ -439,4 +442,5 @@ class WorkerCharacterFactComparisonCompleteRequest(BaseModel):
 class WorkerCharacterFactComparisonFailRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    failure_code: AnalysisFailureCode = Field(alias="failureCode")
     error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)

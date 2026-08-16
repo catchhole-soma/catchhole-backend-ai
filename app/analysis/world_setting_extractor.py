@@ -22,6 +22,7 @@ class WorldSettingExtractor:
         prompt_path: Path = DEFAULT_PROMPT_PATH,
         model: str | None = None,
         max_attempts: int | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         settings = get_settings()
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
@@ -29,6 +30,11 @@ class WorldSettingExtractor:
         self.model = model or settings.effective_llm_extraction_model
         self.max_attempts = (
             settings.llm_extraction_max_attempts if max_attempts is None else max_attempts
+        )
+        self.max_output_tokens = (
+            settings.llm_world_setting_extraction_max_output_tokens
+            if max_output_tokens is None
+            else max_output_tokens
         )
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be at least 1.")
@@ -53,7 +59,7 @@ class WorldSettingExtractor:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=self.model,
-            max_output_tokens=3000,
+            max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
             prompt_cache_key=WORLD_SETTING_EXTRACTION_CACHE_KEY,
             operation_name="World-setting extraction",

@@ -3,9 +3,11 @@ from collections import deque
 from uuid import UUID
 
 import httpx
+import pytest
 
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonPipeline
 from app.analysis.character_fact_comparison_schemas import CharacterFactComparisonDecision
+from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.schemas.worker import (
     WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterFactComparisonClaimPayload,
@@ -120,8 +122,26 @@ def test_pipeline_isolates_failed_candidate_and_processes_next_candidate() -> No
 
     assert result.completed_count == 1
     assert result.failed_count == 1
-    assert spring.failures == [(CANDIDATE_ID, "malformed response")]
+    assert spring.failures == [(CANDIDATE_ID, "malformed response", "COMPARISON_VALIDATION_FAILED")]
     assert len(spring.completions) == 1
+
+
+def test_pipeline_bubbles_quota_failure_before_claiming_next_candidate() -> None:
+    second_candidate_id = UUID("00000000-0000-0000-0000-000000000005")
+    spring = FakeSpringApi([CANDIDATE_ID, second_candidate_id])
+    comparator = FakeComparator([AiTokenQuotaExhaustedError(), _add_decision()])
+
+    with pytest.raises(AiTokenQuotaExhaustedError):
+        asyncio.run(
+            CharacterFactComparisonPipeline(spring, comparator).process_all(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+            )
+        )
+
+    assert spring.claim_count == 1
+    assert list(spring.candidate_ids) == [second_candidate_id]
+    assert spring.failures == []
 
 
 class FakeSpringApi:
@@ -133,10 +153,12 @@ class FakeSpringApi:
         self.candidate_ids = deque(candidate_ids)
         self.stale_completion_count = stale_completion_count
         self.context_call_count = 0
+        self.claim_count = 0
         self.completions = []
-        self.failures: list[tuple[UUID, str]] = []
+        self.failures: list[tuple[UUID, str, str]] = []
 
     async def claim_next_character_fact_comparison(self, analysis_job_id, lease_token):
+        self.claim_count += 1
         if not self.candidate_ids:
             return None
         return WorkerCharacterFactComparisonClaimPayload(candidate_id=self.candidate_ids.popleft())
@@ -174,8 +196,9 @@ class FakeSpringApi:
         candidate_id,
         lease_token,
         error_message,
+        failure_code,
     ):
-        self.failures.append((candidate_id, error_message))
+        self.failures.append((candidate_id, error_message, failure_code.value))
 
 
 class FakeComparator:

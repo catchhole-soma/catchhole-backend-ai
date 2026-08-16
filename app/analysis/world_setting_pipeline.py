@@ -10,7 +10,9 @@ from app.analysis.world_setting_comparator import (
     WorldSettingComparator,
     WorldSettingSubjectResolver,
 )
-from app.domain.enums import WorldSettingCategory
+from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.domain.enums import AnalysisFailureCode, WorldSettingCategory
+from app.exceptions.failure_classification import comparison_failure_code
 from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonCompleteRequest,
@@ -62,6 +64,7 @@ class WorldSettingComparisonSpringApi(Protocol):
         candidate_id: UUID,
         lease_token: UUID,
         error_message: str,
+        failure_code: AnalysisFailureCode,
     ) -> None: ...
 
 
@@ -112,6 +115,9 @@ class WorldSettingComparisonPipeline:
         try:
             await self._compare_with_fresh_context(analysis_job_id, lease_token, candidate)
             return True
+        except AiTokenQuotaExhaustedError:
+            # Job 단위 원자적 중단은 Spring이 수행하므로 후보 실패로 삼키지 않는다.
+            raise
         except Exception as exc:
             error_message = (str(exc) or exc.__class__.__name__)[:1000]
             await self.spring_client.fail_world_setting_comparison(
@@ -119,6 +125,7 @@ class WorldSettingComparisonPipeline:
                 candidate.candidate_id,
                 lease_token,
                 error_message,
+                comparison_failure_code(exc),
             )
             logger.exception(
                 "World-setting comparison failed. analysis_job_id=%s candidate_id=%s",

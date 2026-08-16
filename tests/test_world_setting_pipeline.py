@@ -2,9 +2,11 @@ import asyncio
 from uuid import UUID
 
 import httpx
+import pytest
 
 from app.analysis.world_setting_pipeline import WorldSettingComparisonPipeline
 from app.analysis.world_setting_schemas import WorldSettingComparisonDecision
+from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonContextResponse,
@@ -166,7 +168,31 @@ def test_pipeline_fails_only_claimed_candidate_when_comparator_fails() -> None:
 
     assert result.completed_count == 0
     assert result.failed_count == 1
-    assert spring.failures == [(CANDIDATE_ID, "malformed LLM response")]
+    assert spring.failures == [
+        (CANDIDATE_ID, "malformed LLM response", "COMPARISON_VALIDATION_FAILED")
+    ]
+
+
+def test_pipeline_bubbles_quota_failure_without_claiming_or_failing_next_candidate() -> None:
+    second_candidate = _candidate().model_copy(
+        update={"candidate_id": UUID("00000000-0000-0000-0000-000000000099")}
+    )
+    spring = FakeSpringApi(candidate=_candidate())
+    spring.candidates.append(second_candidate)
+    spring.subjects = []
+    spring.context = _context(targets=[])
+    pipeline = WorldSettingComparisonPipeline(
+        spring,
+        FakeSubjectResolver([]),
+        QuotaFailingComparator(),
+    )
+
+    with pytest.raises(AiTokenQuotaExhaustedError):
+        asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+
+    assert spring.claim_count == 1
+    assert list(spring.candidates) == [second_candidate]
+    assert spring.failures == []
 
 
 class FakeSpringApi:
@@ -180,10 +206,12 @@ class FakeSpringApi:
         self.context = _context()
         self.context_target_ids: list[list[UUID]] = []
         self.completions = []
-        self.failures: list[tuple[UUID, str]] = []
+        self.failures: list[tuple[UUID, str, str]] = []
+        self.claim_count = 0
         self.stale_completion_count = stale_completion_count
 
     async def claim_next_world_setting_comparison(self, analysis_job_id, lease_token):
+        self.claim_count += 1
         return self.candidates.pop(0) if self.candidates else None
 
     async def get_world_setting_subjects(
@@ -229,8 +257,9 @@ class FakeSpringApi:
         candidate_id,
         lease_token,
         error_message,
+        failure_code,
     ):
-        self.failures.append((candidate_id, error_message))
+        self.failures.append((candidate_id, error_message, failure_code.value))
 
 
 class FakeSubjectResolver:
@@ -254,6 +283,11 @@ class FakeComparator:
 class FailingComparator:
     async def compare(self, candidate, targets):
         raise ValueError("malformed LLM response")
+
+
+class QuotaFailingComparator:
+    async def compare(self, candidate, targets):
+        raise AiTokenQuotaExhaustedError()
 
 
 def _candidate(scope_name: str | None = None) -> WorkerWorldSettingCandidatePayload:

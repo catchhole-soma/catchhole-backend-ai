@@ -6,7 +6,10 @@ from uuid import UUID
 import httpx
 
 from app.analysis.character_fact_comparator import CharacterFactComparator
+from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.domain.enums import AnalysisFailureCode
 from app.domain.setting_values import normalize_setting_display_value
+from app.exceptions.failure_classification import comparison_failure_code
 from app.schemas.worker import (
     WorkerCharacterFactComparisonClaimPayload,
     WorkerCharacterFactComparisonCompleteRequest,
@@ -46,6 +49,7 @@ class CharacterFactComparisonSpringApi(Protocol):
         candidate_id: UUID,
         lease_token: UUID,
         error_message: str,
+        failure_code: AnalysisFailureCode,
     ) -> None: ...
 
 
@@ -106,6 +110,8 @@ class CharacterFactComparisonPipeline:
                 candidate_id,
             )
             return True
+        except AiTokenQuotaExhaustedError:
+            raise
         except Exception as exc:
             error_message = (str(exc) or exc.__class__.__name__)[:1000]
             await self.spring_client.fail_character_fact_comparison(
@@ -113,6 +119,7 @@ class CharacterFactComparisonPipeline:
                 candidate_id,
                 lease_token,
                 error_message,
+                comparison_failure_code(exc),
             )
             logger.exception(
                 "Character-fact comparison failed. analysis_job_id=%s candidate_id=%s",

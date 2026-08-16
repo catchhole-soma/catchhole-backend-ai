@@ -1,11 +1,12 @@
-from collections.abc import Callable
 import json
+from collections.abc import Callable
 from logging import Logger
 from typing import TypeVar
 
 from pydantic import BaseModel
 
-from app.analysis.exceptions import LlmExtractionError
+from app.analysis.exceptions import ComparisonValidationError, LlmExtractionError
+from app.llm.exceptions import LlmOutputTruncatedError
 from app.llm.protocols import TextGenerationClient
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -72,6 +73,9 @@ async def request_validated_model(
             if validate_model is not None:
                 validate_model(result)
             return result
+        except LlmOutputTruncatedError:
+            # 같은 prompt와 같은 cap 재시도는 같은 절단을 반복하므로 상위 정책에 즉시 맡긴다.
+            raise
         except (TypeError, ValueError) as exc:
             last_error = exc
             if attempt < max_attempts:
@@ -86,7 +90,12 @@ async def request_validated_model(
                     # 매번 최초 입력을 기준으로 피드백을 새로 만들어 실패 문구가
                     # 재시도마다 중첩되지 않게 한다.
                     current_user_prompt = retry_user_prompt_builder(user_prompt, exc)
-    raise LlmExtractionError(
+    error_type = (
+        ComparisonValidationError
+        if "comparison" in operation_name.casefold()
+        else LlmExtractionError
+    )
+    raise error_type(
         f"{operation_name} failed after {max_attempts} attempts: "
         f"{compact_error_message(last_error)}"
     ) from last_error

@@ -48,11 +48,18 @@ class WorldSettingSubjectResolver:
         prompt_path: Path = SUBJECT_PROMPT_PATH,
         model: str | None = None,
         max_attempts: int | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
+        settings = get_settings()
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
-        self.model = model or get_settings().effective_llm_subject_resolution_model
+        self.model = model or settings.effective_llm_subject_resolution_model
         self.max_attempts = _resolve_max_attempts(max_attempts)
+        self.max_output_tokens = (
+            settings.llm_subject_resolution_max_output_tokens
+            if max_output_tokens is None
+            else max_output_tokens
+        )
 
     async def select_subjects(
         self,
@@ -91,7 +98,7 @@ class WorldSettingSubjectResolver:
                 ensure_ascii=False,
             ),
             model=self.model,
-            max_output_tokens=2000,
+            max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
             prompt_cache_key="world-setting-subject-resolution:v1",
             operation_name="World-setting subject resolution",
@@ -114,11 +121,18 @@ class WorldSettingComparator:
         prompt_path: Path = COMPARISON_PROMPT_PATH,
         model: str | None = None,
         max_attempts: int | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
+        settings = get_settings()
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
-        self.model = model or get_settings().effective_llm_comparison_model
+        self.model = model or settings.effective_llm_comparison_model
         self.max_attempts = _resolve_max_attempts(max_attempts)
+        self.max_output_tokens = (
+            settings.llm_comparison_max_output_tokens
+            if max_output_tokens is None
+            else max_output_tokens
+        )
 
     async def compare(
         self,
@@ -159,7 +173,7 @@ class WorldSettingComparator:
             system_prompt=self.prompt_path.read_text(encoding="utf-8"),
             user_prompt=json.dumps(raw_payload, ensure_ascii=False),
             model=self.model,
-            max_output_tokens=2000,
+            max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
             prompt_cache_key="world-setting-comparison:v7",
             operation_name="World-setting comparison",

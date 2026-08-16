@@ -6,6 +6,7 @@ from app.analysis.character_fact_comparison_pipeline import CharacterFactCompari
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import get_settings
 from app.domain.enums import AnalysisJobType, AnalysisStep
+from app.exceptions.failure_classification import analysis_failure_code
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.schemas.worker import WorkerAnalysisJobPayload
@@ -124,6 +125,7 @@ class CharacterFactComparisonWorker:
                     payload.analysis_job_id,
                     payload.lease_token,
                     (str(exc) or exc.__class__.__name__)[:1000],
+                    analysis_failure_code(exc),
                 )
             except Exception:
                 logger.exception(

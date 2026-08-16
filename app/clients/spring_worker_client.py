@@ -2,8 +2,10 @@ from uuid import UUID
 
 import httpx
 
+from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.core.config import Settings, get_settings
 from app.domain.enums import (
+    AnalysisFailureCode,
     AnalysisJobCheckpointStage,
     AnalysisJobType,
     EpisodeProcessingStatus,
@@ -129,8 +131,12 @@ class SpringWorkerClient:
         analysis_job_id: UUID,
         lease_token: UUID,
         error_message: str,
+        failure_code: AnalysisFailureCode = AnalysisFailureCode.UNEXPECTED_ERROR,
     ) -> None:
-        request = WorkerAnalysisJobFailRequest(error_message=error_message)
+        request = WorkerAnalysisJobFailRequest(
+            failure_code=failure_code,
+            error_message=error_message,
+        )
         response = await self.http_client.post(
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/fail"),
             headers=self._headers(lease_token),
@@ -191,9 +197,7 @@ class SpringWorkerClient:
         if response.status_code == 204:
             return None
         response.raise_for_status()
-        return WorkerCharacterFactComparisonClaimPayload.model_validate(
-            response.json()["data"]
-        )
+        return WorkerCharacterFactComparisonClaimPayload.model_validate(response.json()["data"])
 
     async def get_character_fact_comparison_context(
         self,
@@ -209,9 +213,7 @@ class SpringWorkerClient:
             headers=self._headers(lease_token),
         )
         response.raise_for_status()
-        return WorkerCharacterFactComparisonContextResponse.model_validate(
-            response.json()["data"]
-        )
+        return WorkerCharacterFactComparisonContextResponse.model_validate(response.json()["data"])
 
     async def complete_character_fact_comparison(
         self,
@@ -236,8 +238,12 @@ class SpringWorkerClient:
         candidate_id: UUID,
         lease_token: UUID,
         error_message: str,
+        failure_code: AnalysisFailureCode = AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
     ) -> None:
-        request = WorkerCharacterFactComparisonFailRequest(error_message=error_message)
+        request = WorkerCharacterFactComparisonFailRequest(
+            failure_code=failure_code,
+            error_message=error_message,
+        )
         response = await self.http_client.post(
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
@@ -343,8 +349,12 @@ class SpringWorkerClient:
         candidate_id: UUID,
         lease_token: UUID,
         error_message: str,
+        failure_code: AnalysisFailureCode = AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
     ) -> None:
-        request = WorkerWorldSettingComparisonFailRequest(error_message=error_message)
+        request = WorkerWorldSettingComparisonFailRequest(
+            failure_code=failure_code,
+            error_message=error_message,
+        )
         response = await self.http_client.post(
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
@@ -398,6 +408,11 @@ class SpringWorkerClient:
                     headers=self._headers(lease_token),
                     json=payload,
                 )
+                if (
+                    response.status_code == 409
+                    and _spring_error_code(response) == "AI_TOKEN_QUOTA_EXHAUSTED"
+                ):
+                    raise AiTokenQuotaExhaustedError()
                 response.raise_for_status()
                 return
             except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
@@ -423,3 +438,13 @@ class SpringWorkerClient:
         if lease_token is not None:
             headers[WORKER_LEASE_TOKEN_HEADER] = str(lease_token)
         return headers
+
+
+def _spring_error_code(response: httpx.Response) -> str | None:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    return code if isinstance(code, str) else None

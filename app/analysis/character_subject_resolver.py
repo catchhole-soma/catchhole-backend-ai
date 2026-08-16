@@ -1,13 +1,13 @@
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-import json
 from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
 
 from app.analysis.character_name_resolver import (
-    KnownCharacter,
     UNKNOWN_ENTITY_NAME,
+    KnownCharacter,
     is_concrete_character_name,
     is_usable_subject_resolution_name,
 )
@@ -64,11 +64,18 @@ class CharacterSubjectResolver:
         llm_client: TextGenerationClient | None = None,
         prompt_path: Path = DEFAULT_PROMPT_PATH,
         model: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
+        settings = get_settings()
         # 운영에서는 OpenAI client를 기본 사용하고, 테스트에서는 fake client를 주입한다.
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
-        self.model = model or get_settings().effective_llm_subject_resolution_model
+        self.model = model or settings.effective_llm_subject_resolution_model
+        self.max_output_tokens = (
+            settings.llm_subject_resolution_max_output_tokens
+            if max_output_tokens is None
+            else max_output_tokens
+        )
 
     async def resolve_candidates(
         self,
@@ -178,7 +185,7 @@ class CharacterSubjectResolver:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=self.model,
-            max_output_tokens=1000,
+            max_output_tokens=self.max_output_tokens,
             prompt_cache_key=SUBJECT_RESOLUTION_CACHE_KEY,
         )
         return SubjectResolutionResponse.model_validate(parse_json_object(response.text))

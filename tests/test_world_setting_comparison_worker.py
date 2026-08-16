@@ -42,7 +42,7 @@ def test_comparison_worker_fails_job_when_candidate_comparison_failed() -> None:
         _run_once(worker)
 
     assert spring.complete_calls == []
-    assert spring.fail_calls == [ANALYSIS_JOB_ID]
+    assert spring.fail_calls == [(ANALYSIS_JOB_ID, "UNEXPECTED_ERROR")]
 
 
 def test_comparison_pipeline_routes_subject_resolution_and_comparison_models() -> None:
@@ -90,8 +90,8 @@ class FakeSpringApi:
     async def complete(self, analysis_job_id, lease_token, **kwargs):
         self.complete_calls.append(analysis_job_id)
 
-    async def fail(self, analysis_job_id, lease_token, error_message):
-        self.fail_calls.append(analysis_job_id)
+    async def fail(self, analysis_job_id, lease_token, error_message, failure_code):
+        self.fail_calls.append((analysis_job_id, failure_code.value))
 
 
 def _payload() -> WorkerAnalysisJobPayload:

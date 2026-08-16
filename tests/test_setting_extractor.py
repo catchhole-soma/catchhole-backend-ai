@@ -6,7 +6,10 @@ import pytest
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
+from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.llm.exceptions import LlmOutputTruncatedError
 from app.llm.responses import LlmTextResponse
+from app.usage.metering import MeteredTextGenerationClient
 
 CHUNK_ID = UUID("00000000-0000-0000-0000-000000000001")
 DEFAULT_SCHEMA_HINTS = (
@@ -159,27 +162,20 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
     assert "실제 캐릭터명이 명확히 연결되면 반드시 해당 이름" in llm_client.system_prompt
     assert "현재 청크만으로 한 캐릭터를 유일하게 특정할 수 없을 때만" in llm_client.system_prompt
     assert "설정의 주체 자체를 가리키는 최소 표현만 사용합니다" in llm_client.system_prompt
-    assert "`나`, `그`, `그녀`, `주인공` 같은 지칭어를 넣지 않습니다" in (
-        llm_client.system_prompt
-    )
+    assert "`나`, `그`, `그녀`, `주인공` 같은 지칭어를 넣지 않습니다" in (llm_client.system_prompt)
     assert "타임라인에 해당하는 정보는 현재 추출하지 않습니다" in llm_client.system_prompt
-    assert "별도 설정이 없더라도 원문에서 이름이 명시된 신규 캐릭터" in (
-        llm_client.system_prompt
-    )
+    assert "별도 설정이 없더라도 원문에서 이름이 명시된 신규 캐릭터" in (llm_client.system_prompt)
     assert "`candidate_kind`를 `CHARACTER_DISCOVERY`" in llm_client.system_prompt
     assert "출생 순서, 가족 관계, 서열은 `age`가 아니며" in llm_client.system_prompt
     assert "동일한 캐릭터, 동일한 `attribute_name`, 동일한 `value_type`" in (
         llm_client.system_prompt
     )
-    assert "실제 설정값이 달라졌다면 서로 다른 후보로 유지합니다" in (
-        llm_client.system_prompt
-    )
+    assert "실제 설정값이 달라졌다면 서로 다른 후보로 유지합니다" in (llm_client.system_prompt)
     assert "완화·종료·다른 상태로 전환된 현재 결과" in llm_client.system_prompt
     assert "능력 회복·증상 소멸·행동 변화·외부 효과 해제" in llm_client.system_prompt
     assert "과거에 상태가 있었다고 역으로 만들어 내지 않습니다" in llm_client.system_prompt
     assert (
-        "`schemaKey`, `displayName`, `aliases` 또는 `attributePattern`"
-        in llm_client.system_prompt
+        "`schemaKey`, `displayName`, `aliases` 또는 `attributePattern`" in llm_client.system_prompt
     )
     assert "time.<시간 또는 사건명>" not in llm_client.system_prompt
     assert "skill.<스킬명>" in llm_client.system_prompt
@@ -375,6 +371,89 @@ def test_extract_from_chunk_raises_error_after_max_attempts(tmp_path) -> None:
         )
 
     assert llm_client.call_count == 2
+
+
+def test_2522_character_31_schema_reproduction_expands_cap_once() -> None:
+    delegate = TruncateThenSuccessClient()
+    ledger = RecordingTokenLedger()
+    metered_client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=UUID("00000000-0000-0000-0000-000000000010"),
+        purpose="SETTING_EXTRACTION",
+        default_model="gpt-5.6-terra",
+        lease_token=UUID("00000000-0000-0000-0000-000000000011"),
+    )
+    extractor = CharacterSettingExtractor(
+        llm_client=metered_client,
+        max_attempts=3,
+        max_output_tokens=4000,
+        truncation_retry_max_output_tokens=8000,
+    )
+
+    result = _extract(
+        extractor,
+        source_chunk_id=CHUNK_ID,
+        chunk_text="가" * 2522,
+        schema_hints=_schema_hints(31),
+    )
+
+    assert result.candidates == []
+    assert delegate.max_output_token_calls == [4000, 8000]
+    assert len(ledger.reservations) == 2
+    assert ledger.reservations[1]["reserved_tokens"] > ledger.reservations[0]["reserved_tokens"]
+    assert [settlement[-1] for settlement in ledger.settlements] == ["FAILURE", "SUCCESS"]
+
+
+def test_second_truncation_stops_without_repeating_the_same_cap() -> None:
+    llm_client = AlwaysTruncatedClient()
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        max_attempts=3,
+        max_output_tokens=4000,
+        truncation_retry_max_output_tokens=8000,
+    )
+
+    with pytest.raises(LlmOutputTruncatedError):
+        _extract(
+            extractor,
+            source_chunk_id=CHUNK_ID,
+            chunk_text="가" * 2522,
+            schema_hints=_schema_hints(31),
+        )
+
+    assert llm_client.max_output_token_calls == [4000, 8000]
+
+
+def test_expanded_cap_is_reserved_before_provider_and_quota_stops_second_call() -> None:
+    delegate = TruncateThenSuccessClient()
+    ledger = RecordingTokenLedger(quota_failure_reservation=2)
+    metered_client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=UUID("00000000-0000-0000-0000-000000000010"),
+        purpose="SETTING_EXTRACTION",
+        default_model="gpt-5.6-terra",
+        lease_token=UUID("00000000-0000-0000-0000-000000000011"),
+    )
+    extractor = CharacterSettingExtractor(
+        llm_client=metered_client,
+        max_attempts=3,
+        max_output_tokens=4000,
+        truncation_retry_max_output_tokens=8000,
+    )
+
+    with pytest.raises(AiTokenQuotaExhaustedError):
+        _extract(
+            extractor,
+            source_chunk_id=CHUNK_ID,
+            chunk_text="가" * 2522,
+            schema_hints=_schema_hints(31),
+        )
+
+    assert delegate.max_output_token_calls == [4000]
+    assert len(ledger.reservations) == 2
+    assert ledger.reservations[1]["reserved_tokens"] > ledger.reservations[0]["reserved_tokens"]
 
 
 def _extract(extractor: CharacterSettingExtractor, **kwargs):
@@ -679,3 +758,82 @@ class AlwaysMissingFieldClient:
             }
             """
         )
+
+
+class TruncateThenSuccessClient:
+    def __init__(self) -> None:
+        self.max_output_token_calls: list[int] = []
+
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
+        max_output_tokens = kwargs["max_output_tokens"]
+        self.max_output_token_calls.append(max_output_tokens)
+        if len(self.max_output_token_calls) == 1:
+            raise LlmOutputTruncatedError(
+                "output truncated",
+                incomplete_reason="max_output_tokens",
+                max_output_tokens=max_output_tokens,
+                input_token_count=2522,
+                output_token_count=max_output_tokens,
+            )
+        return LlmTextResponse(
+            text='{"candidates": []}',
+            input_token_count=2522,
+            output_token_count=100,
+        )
+
+
+class AlwaysTruncatedClient:
+    def __init__(self) -> None:
+        self.max_output_token_calls: list[int] = []
+
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
+        max_output_tokens = kwargs["max_output_tokens"]
+        self.max_output_token_calls.append(max_output_tokens)
+        raise LlmOutputTruncatedError(
+            "output truncated",
+            incomplete_reason="max_output_tokens",
+            max_output_tokens=max_output_tokens,
+            input_token_count=2522,
+            output_token_count=max_output_tokens,
+        )
+
+
+class RecordingTokenLedger:
+    def __init__(self, quota_failure_reservation: int | None = None) -> None:
+        self.quota_failure_reservation = quota_failure_reservation
+        self.reservations: list[dict] = []
+        self.settlements: list[tuple] = []
+        self.releases: list[tuple] = []
+
+    async def reserve_ai_tokens(self, **kwargs) -> None:
+        self.reservations.append(kwargs)
+        if len(self.reservations) == self.quota_failure_reservation:
+            raise AiTokenQuotaExhaustedError()
+
+    async def settle_ai_tokens(
+        self,
+        request_id,
+        input_tokens,
+        cached_input_tokens,
+        output_tokens,
+        outcome,
+    ) -> None:
+        self.settlements.append(
+            (request_id, input_tokens, cached_input_tokens, output_tokens, outcome)
+        )
+
+    async def release_ai_tokens(self, request_id, outcome) -> None:
+        self.releases.append((request_id, outcome))
+
+
+def _schema_hints(count: int) -> tuple[CharacterSettingSchemaHint, ...]:
+    return tuple(
+        CharacterSettingSchemaHint(
+            schema_key=f"custom.setting_{index}",
+            display_name=f"설정 {index}",
+            attribute_pattern=None,
+            aliases=(f"별칭 {index}",),
+            value_type="STRING",
+        )
+        for index in range(count)
+    )

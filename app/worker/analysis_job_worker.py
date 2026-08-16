@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.character_fact_comparison_pipeline import (
     CharacterFactComparisonPipeline,
     CharacterFactComparisonRunResult,
     CharacterFactComparisonSpringApi,
 )
+from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.character_subject_resolver import (
     CharacterSubjectResolver,
     SubjectResolutionChunkContext,
@@ -30,6 +30,7 @@ from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import get_settings
 from app.db.session import get_session_maker
 from app.domain.enums import (
+    AnalysisFailureCode,
     AnalysisJobCheckpointStage,
     AnalysisJobType,
     AnalysisStep,
@@ -41,6 +42,7 @@ from app.embeddings.services.episode_chunk_embedding import (
     EpisodeChunkEmbeddingResult,
     EpisodeChunkEmbeddingService,
 )
+from app.exceptions.failure_classification import analysis_failure_code
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.mappers.world_setting_candidate_mapper import WorldSettingCandidateMapper
@@ -62,9 +64,9 @@ from app.usage.metering import (
     MeteredEmbeddingClient,
     MeteredTextGenerationClient,
 )
-from app.worker.lease_heartbeat import HeartbeatSpringApi, WorkerLeaseHeartbeat
 from app.worker.blocking_io import BlockingIoExecutor
 from app.worker.character_fact_services import create_character_fact_comparison_pipeline
+from app.worker.lease_heartbeat import HeartbeatSpringApi, WorkerLeaseHeartbeat
 from app.worker.world_setting_services import create_world_setting_comparison_pipeline
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,7 @@ class SpringWorkerApi(
         analysis_job_id: UUID,
         lease_token: UUID,
         error_message: str,
+        failure_code: AnalysisFailureCode,
     ) -> None: ...
 
     async def publish_world_setting_candidates(
@@ -336,6 +339,7 @@ class AnalysisJobWorker:
                     analysis_job_id=payload.analysis_job_id,
                     lease_token=payload.lease_token,
                     error_message=self._error_message(exc),
+                    failure_code=analysis_failure_code(exc),
                 )
             except Exception:
                 logger.exception(
