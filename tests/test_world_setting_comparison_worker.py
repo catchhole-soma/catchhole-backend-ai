@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 
 from app.analysis.world_setting_pipeline import WorldSettingComparisonRunResult
+from app.domain.enums import AnalysisFailureCode
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.worker.world_setting_comparison_worker import WorldSettingComparisonWorker
 from app.worker.world_setting_services import create_world_setting_comparison_pipeline
@@ -35,14 +36,20 @@ def test_comparison_worker_fails_job_when_candidate_comparison_failed() -> None:
     spring = FakeSpringApi(_payload())
     worker = WorldSettingComparisonWorker(
         spring_client=spring,
-        comparison_pipeline=FakePipeline(WorldSettingComparisonRunResult(0, 1)),
+        comparison_pipeline=FakePipeline(
+            WorldSettingComparisonRunResult(
+                0,
+                1,
+                AnalysisFailureCode.LLM_PROVIDER_ERROR,
+            )
+        ),
     )
 
     with pytest.raises(RuntimeError, match="recomparison failed"):
         _run_once(worker)
 
     assert spring.complete_calls == []
-    assert spring.fail_calls == [(ANALYSIS_JOB_ID, "UNEXPECTED_ERROR")]
+    assert spring.fail_calls == [(ANALYSIS_JOB_ID, "LLM_PROVIDER_ERROR")]
 
 
 def test_comparison_pipeline_routes_subject_resolution_and_comparison_models() -> None:

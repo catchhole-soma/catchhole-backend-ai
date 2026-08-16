@@ -8,6 +8,7 @@ import pytest
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonPipeline
 from app.analysis.character_fact_comparison_schemas import CharacterFactComparisonDecision
 from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.domain.enums import AnalysisFailureCode
 from app.schemas.worker import (
     WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterFactComparisonClaimPayload,
@@ -122,6 +123,7 @@ def test_pipeline_isolates_failed_candidate_and_processes_next_candidate() -> No
 
     assert result.completed_count == 1
     assert result.failed_count == 1
+    assert result.first_failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
     assert spring.failures == [(CANDIDATE_ID, "malformed response", "COMPARISON_VALIDATION_FAILED")]
     assert len(spring.completions) == 1
 
@@ -141,7 +143,9 @@ def test_pipeline_bubbles_quota_failure_before_claiming_next_candidate() -> None
 
     assert spring.claim_count == 1
     assert list(spring.candidate_ids) == [second_candidate_id]
-    assert spring.failures == []
+    assert spring.failures == [
+        (CANDIDATE_ID, "AI token quota is exhausted.", "AI_TOKEN_QUOTA_EXHAUSTED")
+    ]
 
 
 class FakeSpringApi:

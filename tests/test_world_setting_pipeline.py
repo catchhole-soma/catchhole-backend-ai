@@ -7,6 +7,7 @@ import pytest
 from app.analysis.world_setting_pipeline import WorldSettingComparisonPipeline
 from app.analysis.world_setting_schemas import WorldSettingComparisonDecision
 from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.domain.enums import AnalysisFailureCode
 from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonContextResponse,
@@ -168,6 +169,7 @@ def test_pipeline_fails_only_claimed_candidate_when_comparator_fails() -> None:
 
     assert result.completed_count == 0
     assert result.failed_count == 1
+    assert result.first_failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
     assert spring.failures == [
         (CANDIDATE_ID, "malformed LLM response", "COMPARISON_VALIDATION_FAILED")
     ]
@@ -192,7 +194,9 @@ def test_pipeline_bubbles_quota_failure_without_claiming_or_failing_next_candida
 
     assert spring.claim_count == 1
     assert list(spring.candidates) == [second_candidate]
-    assert spring.failures == []
+    assert spring.failures == [
+        (CANDIDATE_ID, "AI token quota is exhausted.", "AI_TOKEN_QUOTA_EXHAUSTED")
+    ]
 
 
 class FakeSpringApi:

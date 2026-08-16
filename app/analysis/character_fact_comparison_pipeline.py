@@ -57,6 +57,7 @@ class CharacterFactComparisonSpringApi(Protocol):
 class CharacterFactComparisonRunResult:
     completed_count: int
     failed_count: int
+    first_failure_code: AnalysisFailureCode | None = None
 
 
 class CharacterFactComparisonPipeline:
@@ -81,52 +82,68 @@ class CharacterFactComparisonPipeline:
 
         completed_count = 0
         failed_count = 0
+        first_failure_code: AnalysisFailureCode | None = None
         while True:
             claimed = await self.spring_client.claim_next_character_fact_comparison(
                 analysis_job_id,
                 lease_token,
             )
             if claimed is None:
-                return CharacterFactComparisonRunResult(completed_count, failed_count)
-            if await self._process_claimed_candidate(
+                return CharacterFactComparisonRunResult(
+                    completed_count,
+                    failed_count,
+                    first_failure_code,
+                )
+            failure_code = await self._process_claimed_candidate(
                 analysis_job_id,
                 lease_token,
                 claimed.candidate_id,
-            ):
+            )
+            if failure_code is None:
                 completed_count += 1
             else:
                 failed_count += 1
+                if first_failure_code is None:
+                    first_failure_code = failure_code
 
     async def _process_claimed_candidate(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
         candidate_id: UUID,
-    ) -> bool:
+    ) -> AnalysisFailureCode | None:
         try:
             await self._compare_with_fresh_context(
                 analysis_job_id,
                 lease_token,
                 candidate_id,
             )
-            return True
-        except AiTokenQuotaExhaustedError:
+            return None
+        except AiTokenQuotaExhaustedError as exc:
+            await self.spring_client.fail_character_fact_comparison(
+                analysis_job_id,
+                candidate_id,
+                lease_token,
+                (str(exc) or exc.__class__.__name__)[:1000],
+                AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
+            )
             raise
         except Exception as exc:
             error_message = (str(exc) or exc.__class__.__name__)[:1000]
+            failure_code = comparison_failure_code(exc)
             await self.spring_client.fail_character_fact_comparison(
                 analysis_job_id,
                 candidate_id,
                 lease_token,
                 error_message,
-                comparison_failure_code(exc),
+                failure_code,
             )
             logger.exception(
                 "Character-fact comparison failed. analysis_job_id=%s candidate_id=%s",
                 analysis_job_id,
                 candidate_id,
             )
-            return False
+            return failure_code
 
     async def _compare_with_fresh_context(
         self,

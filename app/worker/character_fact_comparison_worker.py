@@ -5,7 +5,7 @@ import logging
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonPipeline
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import get_settings
-from app.domain.enums import AnalysisJobType, AnalysisStep
+from app.domain.enums import AnalysisFailureCode, AnalysisJobType, AnalysisStep
 from app.exceptions.failure_classification import analysis_failure_code
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
@@ -88,6 +88,7 @@ class CharacterFactComparisonWorker:
         return await self.process_claimed(payload)
 
     async def process_claimed(self, payload: WorkerAnalysisJobPayload) -> WorkerRunResult:
+        candidate_failure_code: AnalysisFailureCode | None = None
         try:
             self._validate_payload(payload)
             await self.spring_client.report_progress(
@@ -107,6 +108,7 @@ class CharacterFactComparisonWorker:
                 )
                 lease_heartbeat.raise_if_failed()
             if result.failed_count:
+                candidate_failure_code = result.first_failure_code
                 raise RuntimeError("Character-fact candidate recomparison failed.")
             await self.spring_client.complete(
                 payload.analysis_job_id,
@@ -125,7 +127,7 @@ class CharacterFactComparisonWorker:
                     payload.analysis_job_id,
                     payload.lease_token,
                     (str(exc) or exc.__class__.__name__)[:1000],
-                    analysis_failure_code(exc),
+                    candidate_failure_code or analysis_failure_code(exc),
                 )
             except Exception:
                 logger.exception(

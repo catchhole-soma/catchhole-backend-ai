@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonRunResult
+from app.domain.enums import AnalysisFailureCode
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.worker.character_fact_comparison_worker import CharacterFactComparisonWorker
 from app.worker.character_fact_services import create_character_fact_comparison_pipeline
@@ -35,14 +36,20 @@ def test_character_comparison_worker_fails_job_when_candidate_failed() -> None:
     spring = FakeSpringApi(_payload())
     worker = CharacterFactComparisonWorker(
         spring_client=spring,
-        comparison_pipeline=FakePipeline(CharacterFactComparisonRunResult(0, 1)),
+        comparison_pipeline=FakePipeline(
+            CharacterFactComparisonRunResult(
+                0,
+                1,
+                AnalysisFailureCode.LLM_OUTPUT_TRUNCATED,
+            )
+        ),
     )
 
     with pytest.raises(RuntimeError, match="recomparison failed"):
         _run_once(worker)
 
     assert spring.complete_calls == []
-    assert spring.fail_calls == [(ANALYSIS_JOB_ID, "UNEXPECTED_ERROR")]
+    assert spring.fail_calls == [(ANALYSIS_JOB_ID, "LLM_OUTPUT_TRUNCATED")]
 
 
 def test_character_comparison_worker_requires_candidate_id() -> None:
