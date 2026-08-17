@@ -94,7 +94,16 @@ class OpenAIResponsesClient:
         # 4xx/5xx 응답이면 httpx.HTTPStatusError를 발생
         response.raise_for_status()
         # OpenAI 응답 JSON을 dict로 바꾼 뒤, 필요한 text와 token usage만 내부 schema로 정리
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise LlmResponseValidationError(
+                "OpenAI response body must contain valid JSON."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise LlmResponseValidationError(
+                "OpenAI response body must contain a JSON object."
+            )
         raw_usage = payload.get("usage") or {}
         usage = raw_usage if isinstance(raw_usage, dict) else {}
         input_details = usage.get("input_tokens_details") or {}

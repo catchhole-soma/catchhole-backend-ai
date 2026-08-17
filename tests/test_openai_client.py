@@ -202,6 +202,46 @@ def test_malformed_success_response_preserves_reported_usage() -> None:
     assert exc_info.value.output_token_count == 30
 
 
+def test_invalid_json_response_is_typed_as_response_validation_failure() -> None:
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    status_code=200,
+                    request=request,
+                    content=b"not-json",
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(LlmResponseValidationError, match="valid JSON"):
+        asyncio.run(client.create_text_response(system_prompt="규칙", user_prompt="원문"))
+
+
+def test_non_object_json_response_is_typed_as_response_validation_failure() -> None:
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    status_code=200,
+                    request=request,
+                    json=[],
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(LlmResponseValidationError, match="JSON object"):
+        asyncio.run(client.create_text_response(system_prompt="규칙", user_prompt="원문"))
+
+
 @pytest.mark.parametrize("reason", ["max_tokens", "max_output_tokens"])
 def test_incomplete_output_limit_response_is_typed_as_truncation(reason: str) -> None:
     client = OpenAIResponsesClient(
