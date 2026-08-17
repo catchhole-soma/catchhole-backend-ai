@@ -3,9 +3,14 @@ from collections import deque
 from uuid import UUID
 
 import httpx
+import pytest
 
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonPipeline
 from app.analysis.character_fact_comparison_schemas import CharacterFactComparisonDecision
+from app.analysis.exceptions import ComparisonValidationError
+from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.domain.enums import AnalysisFailureCode
+from app.llm.exceptions import LlmResponseValidationError
 from app.schemas.worker import (
     WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterFactComparisonClaimPayload,
@@ -106,10 +111,27 @@ def test_pipeline_maps_same_slot_remove_without_proposed_value() -> None:
     assert request.removed_snapshot_entries == []
 
 
-def test_pipeline_isolates_failed_candidate_and_processes_next_candidate() -> None:
+@pytest.mark.parametrize(
+    ("first_error", "expected_code"),
+    [
+        (
+            ComparisonValidationError("malformed response"),
+            AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+        ),
+        (
+            LlmResponseValidationError("malformed provider payload"),
+            AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR,
+        ),
+        (RuntimeError("post-processing failed"), AnalysisFailureCode.UNEXPECTED_ERROR),
+    ],
+)
+def test_pipeline_isolates_failed_candidate_and_processes_next_candidate(
+    first_error: Exception,
+    expected_code: AnalysisFailureCode,
+) -> None:
     second_candidate_id = UUID("00000000-0000-0000-0000-000000000005")
     spring = FakeSpringApi([CANDIDATE_ID, second_candidate_id])
-    comparator = FakeComparator([ValueError("malformed response"), _add_decision()])
+    comparator = FakeComparator([first_error, _add_decision()])
 
     result = asyncio.run(
         CharacterFactComparisonPipeline(spring, comparator).process_all(
@@ -120,8 +142,29 @@ def test_pipeline_isolates_failed_candidate_and_processes_next_candidate() -> No
 
     assert result.completed_count == 1
     assert result.failed_count == 1
-    assert spring.failures == [(CANDIDATE_ID, "malformed response")]
+    assert result.first_failure_code is expected_code
+    assert spring.failures == [(CANDIDATE_ID, str(first_error), expected_code.value)]
     assert len(spring.completions) == 1
+
+
+def test_pipeline_bubbles_quota_failure_before_claiming_next_candidate() -> None:
+    second_candidate_id = UUID("00000000-0000-0000-0000-000000000005")
+    spring = FakeSpringApi([CANDIDATE_ID, second_candidate_id])
+    comparator = FakeComparator([AiTokenQuotaExhaustedError(), _add_decision()])
+
+    with pytest.raises(AiTokenQuotaExhaustedError):
+        asyncio.run(
+            CharacterFactComparisonPipeline(spring, comparator).process_all(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+            )
+        )
+
+    assert spring.claim_count == 1
+    assert list(spring.candidate_ids) == [second_candidate_id]
+    assert spring.failures == [
+        (CANDIDATE_ID, "AI token quota is exhausted.", "AI_TOKEN_QUOTA_EXHAUSTED")
+    ]
 
 
 class FakeSpringApi:
@@ -133,10 +176,12 @@ class FakeSpringApi:
         self.candidate_ids = deque(candidate_ids)
         self.stale_completion_count = stale_completion_count
         self.context_call_count = 0
+        self.claim_count = 0
         self.completions = []
-        self.failures: list[tuple[UUID, str]] = []
+        self.failures: list[tuple[UUID, str, str]] = []
 
     async def claim_next_character_fact_comparison(self, analysis_job_id, lease_token):
+        self.claim_count += 1
         if not self.candidate_ids:
             return None
         return WorkerCharacterFactComparisonClaimPayload(candidate_id=self.candidate_ids.popleft())
@@ -174,8 +219,9 @@ class FakeSpringApi:
         candidate_id,
         lease_token,
         error_message,
+        failure_code,
     ):
-        self.failures.append((candidate_id, error_message))
+        self.failures.append((candidate_id, error_message, failure_code.value))
 
 
 class FakeComparator:

@@ -67,6 +67,43 @@ def test_async_worker_settings_are_loaded_from_environment(monkeypatch) -> None:
     assert settings.llm_http_retry_base_seconds == 2
 
 
+def test_purpose_output_caps_are_loaded_independently(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS", "4100")
+    monkeypatch.setenv("LLM_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS", "8200")
+    monkeypatch.setenv("LLM_WORLD_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS", "3100")
+    monkeypatch.setenv("LLM_SUBJECT_RESOLUTION_MAX_OUTPUT_TOKENS", "1100")
+    monkeypatch.setenv("LLM_COMPARISON_MAX_OUTPUT_TOKENS", "2100")
+    monkeypatch.setenv("LLM_PROVIDER_MAX_OUTPUT_TOKENS", "128000")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_setting_extraction_max_output_tokens == 4100
+    assert settings.llm_setting_extraction_retry_max_output_tokens == 8200
+    assert settings.llm_world_setting_extraction_max_output_tokens == 3100
+    assert settings.llm_subject_resolution_max_output_tokens == 1100
+    assert settings.llm_comparison_max_output_tokens == 2100
+    assert settings.llm_provider_max_output_tokens == 128000
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "llm_setting_extraction_max_output_tokens": 8001,
+            "llm_setting_extraction_retry_max_output_tokens": 8000,
+        },
+        {
+            "llm_comparison_max_output_tokens": 2001,
+            "llm_provider_max_output_tokens": 2000,
+        },
+        {"llm_setting_extraction_max_output_tokens": 0},
+    ],
+)
+def test_purpose_output_caps_reject_invalid_configuration(overrides: dict) -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **overrides)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

@@ -4,18 +4,19 @@ from uuid import UUID
 
 import pytest
 
-from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonRunResult
-from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
+from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.character_subject_resolver import SubjectResolutionResult
+from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
 from app.analysis.world_setting_schemas import WorldSettingExtractionResult
+from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.domain.enums import AnalysisJobCheckpointStage, EpisodeProcessingStatus
 from app.embeddings.exceptions import (
     EmbeddingDataIntegrityError,
     RecoverableEmbeddingProviderError,
 )
 from app.embeddings.services.episode_chunk_embedding import EpisodeChunkEmbeddingResult
-from app.domain.enums import EpisodeProcessingStatus
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisEpisodePayload, WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import (
@@ -147,7 +148,26 @@ def test_worker_reports_fail_to_spring_when_analysis_fails() -> None:
         (ANALYSIS_JOB_ID, "SETTING_EXTRACTION", EpisodeProcessingStatus.ANALYZING)
     ]
     assert spring_client.complete_calls == []
-    assert spring_client.fail_calls == [(ANALYSIS_JOB_ID, "LLM response parse failed.")]
+    assert spring_client.fail_calls == [
+        (ANALYSIS_JOB_ID, "LLM response parse failed.", "UNEXPECTED_ERROR")
+    ]
+
+
+def test_worker_reports_token_quota_failure_with_typed_code() -> None:
+    spring_client = FakeSpringWorkerClient(payload=_payload())
+    worker = QuotaFailingAnalysisJobWorker(spring_client=spring_client)
+
+    with pytest.raises(AiTokenQuotaExhaustedError):
+        _run_once(worker)
+
+    assert spring_client.complete_calls == []
+    assert spring_client.fail_calls == [
+        (
+            ANALYSIS_JOB_ID,
+            "AI token quota is exhausted.",
+            "AI_TOKEN_QUOTA_EXHAUSTED",
+        )
+    ]
 
 
 @pytest.mark.parametrize("missing_field", ["batch_id", "episode"])
@@ -162,7 +182,11 @@ def test_setting_extraction_rejects_payload_without_batch_or_episode(missing_fie
     assert spring_client.progress_calls == []
     assert spring_client.complete_calls == []
     assert spring_client.fail_calls == [
-        (ANALYSIS_JOB_ID, "Setting-extraction job must include batchId and episode.")
+        (
+            ANALYSIS_JOB_ID,
+            "Setting-extraction job must include batchId and episode.",
+            "UNEXPECTED_ERROR",
+        )
     ]
 
 
@@ -272,6 +296,7 @@ def test_worker_fails_before_data_changes_when_claim_has_no_character_schemas() 
         (
             ANALYSIS_JOB_ID,
             "Analysis job claim must include at least one characterSettingSchemas entry.",
+            "UNEXPECTED_ERROR",
         )
     ]
 
@@ -352,13 +377,50 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "candidateCount": 2,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
-            "subjectFallbackUnresolvedCount": 0,
-            "characterFactComparisonCompletedCount": 0,
-            "characterFactComparisonFailedCount": 0,
-            "worldSettingCandidateCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
+        "characterFactComparisonCompletedCount": 0,
+        "characterFactComparisonFailedCount": 0,
+        "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
     }
+    assert spring_client.fail_calls == []
+
+
+def test_chunks_ready_retry_reuses_stored_chunks_after_zero_candidate_failure() -> None:
+    """후보 저장 전 실패한 재현 Job은 청크를 교체하지 않고 추출부터 안전하게 재개한다."""
+
+    chunk = _chunk(0, "비요른은 1레벨 바바리안이다.")
+    payload = _payload().model_copy(
+        update={"checkpoint_stage": AnalysisJobCheckpointStage.CHUNKS_READY}
+    )
+    spring_client = FakeSpringWorkerClient(payload=payload)
+    chunk_store = FakeEpisodeChunkingService(chunks=[chunk])
+    candidate = _candidate(chunk.id, attribute_name="level")
+    setting_candidate_service = FakeSettingCandidateService()
+    assert setting_candidate_service.saved_candidates == []
+
+    worker = AnalysisJobWorker(
+        spring_client=spring_client,
+        chunking_service=chunk_store,
+        episode_chunk_service=chunk_store,
+        episode_chunk_embedding_service=FakeEpisodeChunkEmbeddingService(),
+        setting_extractor=FakeSettingExtractor(candidate_groups=[[candidate]]),
+        subject_resolver=FakeSubjectResolver(
+            result=SubjectResolutionResult(candidates=[candidate])
+        ),
+        world_setting_extractor=FakeWorldSettingExtractor(),
+        setting_candidate_service=setting_candidate_service,
+    )
+
+    result = _run_once(worker)
+
+    assert result.claimed is True
+    assert chunk_store.loaded_episode_ids == [EPISODE_ID]
+    assert chunk_store.requested_episode_ids == []
+    assert chunk_store.requested_content_s3_keys == []
+    assert setting_candidate_service.saved_candidates == [candidate]
+    assert setting_candidate_service.request["candidate_count"] == 1
     assert spring_client.fail_calls == []
 
 
@@ -439,10 +501,10 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         "candidateCount": 1,
         "subjectFallbackCallCount": 1,
         "subjectFallbackResolvedCount": 1,
-            "subjectFallbackUnresolvedCount": 0,
-            "characterFactComparisonCompletedCount": 0,
-            "characterFactComparisonFailedCount": 0,
-            "worldSettingCandidateCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
+        "characterFactComparisonCompletedCount": 0,
+        "characterFactComparisonFailedCount": 0,
+        "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
     }
@@ -530,10 +592,10 @@ def test_worker_skips_chunk_embedding_by_default_and_completes_extraction() -> N
         "candidateCount": 1,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
-            "subjectFallbackUnresolvedCount": 0,
-            "characterFactComparisonCompletedCount": 0,
-            "characterFactComparisonFailedCount": 0,
-            "worldSettingCandidateCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
+        "characterFactComparisonCompletedCount": 0,
+        "characterFactComparisonFailedCount": 0,
+        "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
     }
@@ -576,10 +638,10 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         "candidateCount": 0,
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
-            "subjectFallbackUnresolvedCount": 0,
-            "characterFactComparisonCompletedCount": 0,
-            "characterFactComparisonFailedCount": 0,
-            "worldSettingCandidateCount": 0,
+        "subjectFallbackUnresolvedCount": 0,
+        "characterFactComparisonCompletedCount": 0,
+        "characterFactComparisonFailedCount": 0,
+        "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
     }
@@ -633,7 +695,9 @@ def test_worker_fails_analysis_when_chunk_embedding_data_is_inconsistent() -> No
 
     assert setting_extractor.requests == []
     assert spring_client.complete_calls == []
-    assert spring_client.fail_calls == [(ANALYSIS_JOB_ID, "embedding update target is missing")]
+    assert spring_client.fail_calls == [
+        (ANALYSIS_JOB_ID, "embedding update target is missing", "UNEXPECTED_ERROR")
+    ]
 
 
 class SuccessfulAnalysisJobWorker(AnalysisJobWorker):
@@ -644,6 +708,11 @@ class SuccessfulAnalysisJobWorker(AnalysisJobWorker):
 class FailingAnalysisJobWorker(AnalysisJobWorker):
     async def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
         raise RuntimeError("LLM response parse failed.")
+
+
+class QuotaFailingAnalysisJobWorker(AnalysisJobWorker):
+    async def _run_analysis_steps(self, payload: WorkerAnalysisJobPayload) -> WorkerRunSummary:
+        raise AiTokenQuotaExhaustedError()
 
 
 class CancellableAnalysisJobWorker(AnalysisJobWorker):
@@ -678,7 +747,7 @@ class FakeSpringWorkerClient:
         self.claim_model_name: str | None = None
         self.progress_calls: list[tuple[UUID, str, EpisodeProcessingStatus]] = []
         self.complete_calls: list[tuple[UUID, str | None, int | None, int | None]] = []
-        self.fail_calls: list[tuple[UUID, str]] = []
+        self.fail_calls: list[tuple[UUID, str, str]] = []
 
     async def claim(
         self,
@@ -712,8 +781,14 @@ class FakeSpringWorkerClient:
             (analysis_job_id, summary_json, input_token_count, output_token_count)
         )
 
-    async def fail(self, analysis_job_id: UUID, lease_token: UUID, error_message: str) -> None:
-        self.fail_calls.append((analysis_job_id, error_message))
+    async def fail(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+        error_message: str,
+        failure_code,
+    ) -> None:
+        self.fail_calls.append((analysis_job_id, error_message, failure_code.value))
 
     async def heartbeat(self, analysis_job_id: UUID, lease_token: UUID) -> None:
         return None
@@ -747,6 +822,7 @@ class FakeEpisodeChunkingService:
         self.chunks = chunks
         self.requested_episode_ids: list[UUID] = []
         self.requested_content_s3_keys: list[str] = []
+        self.loaded_episode_ids: list[UUID] = []
 
     def replace_chunks_from_s3_content(
         self,
@@ -755,6 +831,10 @@ class FakeEpisodeChunkingService:
     ) -> list[EpisodeChunk]:
         self.requested_episode_ids.append(episode_id)
         self.requested_content_s3_keys.append(content_s3_key)
+        return self.chunks
+
+    def get_episode_chunks(self, episode_id: UUID) -> list[EpisodeChunk]:
+        self.loaded_episode_ids.append(episode_id)
         return self.chunks
 
 

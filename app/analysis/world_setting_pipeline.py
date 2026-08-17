@@ -10,7 +10,9 @@ from app.analysis.world_setting_comparator import (
     WorldSettingComparator,
     WorldSettingSubjectResolver,
 )
-from app.domain.enums import WorldSettingCategory
+from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.domain.enums import AnalysisFailureCode, WorldSettingCategory
+from app.exceptions.failure_classification import comparison_failure_code
 from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonCompleteRequest,
@@ -62,6 +64,7 @@ class WorldSettingComparisonSpringApi(Protocol):
         candidate_id: UUID,
         lease_token: UUID,
         error_message: str,
+        failure_code: AnalysisFailureCode,
     ) -> None: ...
 
 
@@ -69,6 +72,7 @@ class WorldSettingComparisonSpringApi(Protocol):
 class WorldSettingComparisonRunResult:
     completed_count: int
     failed_count: int
+    first_failure_code: AnalysisFailureCode | None = None
 
 
 class WorldSettingComparisonPipeline:
@@ -91,41 +95,64 @@ class WorldSettingComparisonPipeline:
     ) -> WorldSettingComparisonRunResult:
         completed_count = 0
         failed_count = 0
+        first_failure_code: AnalysisFailureCode | None = None
         while True:
             candidate = await self.spring_client.claim_next_world_setting_comparison(
                 analysis_job_id,
                 lease_token,
             )
             if candidate is None:
-                return WorldSettingComparisonRunResult(completed_count, failed_count)
-            if await self._process_claimed_candidate(analysis_job_id, lease_token, candidate):
+                return WorldSettingComparisonRunResult(
+                    completed_count,
+                    failed_count,
+                    first_failure_code,
+                )
+            failure_code = await self._process_claimed_candidate(
+                analysis_job_id,
+                lease_token,
+                candidate,
+            )
+            if failure_code is None:
                 completed_count += 1
             else:
                 failed_count += 1
+                if first_failure_code is None:
+                    first_failure_code = failure_code
 
     async def _process_claimed_candidate(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
         candidate: WorkerWorldSettingCandidatePayload,
-    ) -> bool:
+    ) -> AnalysisFailureCode | None:
         try:
             await self._compare_with_fresh_context(analysis_job_id, lease_token, candidate)
-            return True
+            return None
+        except AiTokenQuotaExhaustedError as exc:
+            await self.spring_client.fail_world_setting_comparison(
+                analysis_job_id,
+                candidate.candidate_id,
+                lease_token,
+                (str(exc) or exc.__class__.__name__)[:1000],
+                AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
+            )
+            raise
         except Exception as exc:
             error_message = (str(exc) or exc.__class__.__name__)[:1000]
+            failure_code = comparison_failure_code(exc)
             await self.spring_client.fail_world_setting_comparison(
                 analysis_job_id,
                 candidate.candidate_id,
                 lease_token,
                 error_message,
+                failure_code,
             )
             logger.exception(
                 "World-setting comparison failed. analysis_job_id=%s candidate_id=%s",
                 analysis_job_id,
                 candidate.candidate_id,
             )
-            return False
+            return failure_code
 
     async def _compare_with_fresh_context(
         self,

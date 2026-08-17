@@ -1,12 +1,12 @@
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
-from functools import lru_cache
 import logging
 import math
 import random
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from functools import lru_cache
 from typing import Protocol, TypeVar
 from uuid import UUID, uuid4
 
@@ -18,7 +18,11 @@ from app.embeddings.exceptions import (
     RecoverableEmbeddingProviderError,
 )
 from app.embeddings.responses import EmbeddingBatchResponse
-from app.llm.exceptions import LlmResponseValidationError
+from app.llm.exceptions import (
+    LlmIncompleteResponseError,
+    LlmOutputTruncatedError,
+    LlmResponseValidationError,
+)
 from app.llm.protocols import TextGenerationClient
 from app.llm.responses import LlmTextResponse
 
@@ -145,6 +149,19 @@ class MeteredTextGenerationClient:
                     raise
                 except Exception as exc:
                     usage = _usage_from_text_error(exc)
+                    if isinstance(exc, (LlmOutputTruncatedError, LlmIncompleteResponseError)):
+                        logger.warning(
+                            "LLM response incomplete. purpose=%s attempt=%s "
+                            "max_output_tokens=%s input_tokens=%s cached_input_tokens=%s "
+                            "output_tokens=%s reason=%s",
+                            self.purpose,
+                            self._attempt,
+                            max_output_tokens,
+                            exc.input_token_count,
+                            exc.cached_input_token_count,
+                            exc.output_token_count,
+                            exc.incomplete_reason,
+                        )
                     await _finalize_failed_provider_request(
                         self.ledger,
                         request_id,
@@ -470,8 +487,8 @@ def _retry_after_seconds(exc: Exception) -> float | None:
         except (TypeError, ValueError, OverflowError):
             return None
         if retry_at.tzinfo is None:
-            retry_at = retry_at.replace(tzinfo=timezone.utc)
-        seconds = (retry_at - datetime.now(timezone.utc)).total_seconds()
+            retry_at = retry_at.replace(tzinfo=UTC)
+        seconds = (retry_at - datetime.now(UTC)).total_seconds()
     return max(0.0, seconds)
 
 
@@ -487,7 +504,7 @@ def _estimate_text_token_upper_bound(
         content_tokens = len(encoding.encode(system_prompt, disallowed_special=())) + len(
             encoding.encode(user_prompt, disallowed_special=())
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - tokenizer cache 장애도 분석을 막지 않는다.
         # 미지원 모델이나 tokenizer cache 장애 시 분석은 계속하되 기존 byte 상한으로 되돌아간다.
         return _estimate_text_token_byte_upper_bound(
             system_prompt,

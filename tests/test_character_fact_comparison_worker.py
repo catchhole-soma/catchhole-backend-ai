@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonRunResult
+from app.domain.enums import AnalysisFailureCode
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.worker.character_fact_comparison_worker import CharacterFactComparisonWorker
 from app.worker.character_fact_services import create_character_fact_comparison_pipeline
@@ -35,14 +36,20 @@ def test_character_comparison_worker_fails_job_when_candidate_failed() -> None:
     spring = FakeSpringApi(_payload())
     worker = CharacterFactComparisonWorker(
         spring_client=spring,
-        comparison_pipeline=FakePipeline(CharacterFactComparisonRunResult(0, 1)),
+        comparison_pipeline=FakePipeline(
+            CharacterFactComparisonRunResult(
+                0,
+                1,
+                AnalysisFailureCode.LLM_OUTPUT_TRUNCATED,
+            )
+        ),
     )
 
     with pytest.raises(RuntimeError, match="recomparison failed"):
         _run_once(worker)
 
     assert spring.complete_calls == []
-    assert spring.fail_calls == [ANALYSIS_JOB_ID]
+    assert spring.fail_calls == [(ANALYSIS_JOB_ID, "LLM_OUTPUT_TRUNCATED")]
 
 
 def test_character_comparison_worker_requires_candidate_id() -> None:
@@ -56,7 +63,7 @@ def test_character_comparison_worker_requires_candidate_id() -> None:
     with pytest.raises(ValueError, match="settingCandidateId"):
         _run_once(worker)
 
-    assert spring.fail_calls == [ANALYSIS_JOB_ID]
+    assert spring.fail_calls == [(ANALYSIS_JOB_ID, "UNEXPECTED_ERROR")]
 
 
 def test_character_comparison_pipeline_uses_comparison_model_and_token_purpose() -> None:
@@ -104,8 +111,8 @@ class FakeSpringApi:
     async def complete(self, analysis_job_id, lease_token, **kwargs):
         self.complete_calls.append(analysis_job_id)
 
-    async def fail(self, analysis_job_id, lease_token, error_message):
-        self.fail_calls.append(analysis_job_id)
+    async def fail(self, analysis_job_id, lease_token, error_message, failure_code):
+        self.fail_calls.append((analysis_job_id, failure_code.value))
 
 
 def _payload() -> WorkerAnalysisJobPayload:

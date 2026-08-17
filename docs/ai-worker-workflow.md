@@ -58,6 +58,20 @@ flowchart TD
 - 현재 운영 검증 rollout은 분석 Worker 2개 × 프로세스당 동시 Job 5개 = `SETTING_EXTRACTION` 최대 10개입니다. 50개 Job 부하 테스트가 기준에 미달하면 프로세스당 3개로 되돌립니다.
 - 별도 `world-comparison`, `character-comparison` Worker는 Job·LLM 동시성을 각각 1로 유지합니다. 따라서 10은 provider 계정 전체의 분산 상한이 아니며, 계정 전체 상한이 필요하면 별도 분산 limiter가 필요합니다.
 
+### 동시 Job 10개 토큰 경계 부하 테스트
+
+staging에서 실제 운영과 같은 Spring·PostgreSQL·Worker 이미지로 다음 순서를 반복합니다. 원고·prompt·provider 응답 본문은 측정 로그에 남기지 않습니다.
+
+1. 전용 회원 하나에 50개 단일 회차 `SETTING_EXTRACTION` Job을 만들고, 시작 직전 `ai_token_accounts`와 해당 회원의 `ai_token_usages` 건수·합계를 기록합니다.
+2. 분석 Worker 2개를 각각 `AI_WORKER_CONCURRENCY=5`, `LLM_MAX_CONCURRENT_REQUESTS=5`로 기동합니다. 재비교 Worker는 각각 1을 유지합니다.
+3. 첫 실행은 모든 Job을 처리할 충분한 잔액으로 scheduler의 동시 실행 상한 10, heartbeat 유지, Job별 완료·실패 격리를 확인합니다.
+4. 두 번째 실행은 같은 회원의 잔액이 10개 Job의 예약 경쟁 중 경계값에 도달하도록 지급량을 낮춥니다. 계정 잠금 중 `used + reserved`가 `granted`를 넘지 않고, 거절된 reserve가 `AI_TOKEN_QUOTA_EXHAUSTED` 409 한 번으로 끝나는지 확인합니다.
+5. 토큰 부족이 발생한 각 Job에서 그 응답 이후 새 provider 예약·후속 후보 claim이 없고, 다른 실행 중 Job은 계속 완료되는지 Job ID와 request ID로 대조합니다.
+6. 종료 후 request ID 중복, `RESERVED` 누수, 중복 정산, 음수 잔액이 없고 `analysis_jobs.failure_code`, 후보별 `comparison_failure_code`, 배치 중단 건수가 일치하는지 조회합니다.
+7. 완료된 후보·1차 추출을 보존한 채 추가 사용량 지급과 배치 재개를 실행해 중단 후보만 처리되는지 확인합니다.
+
+통과 기준은 활성 분석 Job 10개 이하, 원장 초과 사용·중복 차감 0건, 다른 Job 취소 0건, 내부 URL이 포함된 공개 실패 문구 0건입니다. Backend·PostgreSQL lock wait 또는 provider 오류율이 rollout 기준을 넘거나 heartbeat가 불안정하면 프로세스당 `AI_WORKER_CONCURRENCY=3`, `LLM_MAX_CONCURRENT_REQUESTS=3`으로 되돌려 같은 절차를 재실행합니다.
+
 종료 신호를 받으면 scheduler는 신규 claim을 즉시 중단하고 `AI_WORKER_SHUTDOWN_GRACE_SECONDS` 동안 실행 중 Job과 heartbeat를 유지합니다. 운영 내부 grace는 180초이고 Compose `stop_grace_period`는 210초입니다. grace 안에 끝나지 않은 Task는 취소하고 heartbeat를 중단하며, Spring은 5분 lease가 만료된 Job을 마지막 checkpoint부터 회수합니다.
 
 이미 시작된 동기 DB/S3 thread는 Python에서 강제 중단할 수 없어, critical section 완료를 기다리는 동안 heartbeat 종료가 180초를 넘길 수 있습니다. 따라서 내부 grace는 blocking I/O의 절대 timeout이 아니며 Compose의 210초 강제 종료가 최종 상한입니다. 마지막 heartbeat 직후 강제 종료되면 재claim이 lease TTL만큼 추가 지연될 수 있으므로, staging 부하 테스트에서 응답하지 않는 DB/S3와 강제 종료 후 lease 회수까지 함께 확인합니다.
@@ -523,7 +537,7 @@ LLM이 분석할 청크 원문
 - 시간·사건·타임라인 정보와 schema의 `schemaKey`, `displayName`, `aliases` 또는 `attributePattern`에 대응하지 않는 설정은 후보에서 제외합니다.
 - fuzzy alias 매칭이나 schema 자동 생성은 수행하지 않습니다.
 - 같은 청크의 동일 캐릭터·`attribute_name`·`value_type`·`value_json` 후보는 가장 직접적인 근거 하나만 반환합니다. 같은 설정 key라도 실제 `value_json`이 다르면 별도 후보로 유지합니다.
-- 설정 후보 배열의 응답 잘림을 줄이기 위해 추출 호출에는 `max_output_tokens=4000`을 사용합니다.
+- 목적별 출력 상한은 환경변수로 주입합니다. 기본값은 설정 추출 4,000, 설정 추출 절단 재시도 8,000, 세계관 추출 3,000, 주체 해소 1,000, 비교 2,000이며 모두 양수이고 provider 상한 128,000 이하인지 기동 시 검증합니다.
 
 LLM 응답 처리:
 
@@ -538,6 +552,8 @@ LLM 응답 처리:
 
 - JSON 문법이 깨진 경우 재시도합니다.
 - 필수 필드 누락, enum 범위 오류, confidence 범위 오류처럼 schema 검증에 실패하면 재시도합니다.
+- Responses API가 `status=incomplete`와 출력 상한 reason을 반환하거나, JSON 파싱 실패 시 실제 `outputTokens`가 설정한 상한과 같으면 `LLM_OUTPUT_TRUNCATED`로 분류합니다. 설정 추출만 상한을 4,000에서 8,000으로 한 번 높여 재시도하고, 두 번째 절단은 즉시 종료합니다.
+- 상향 재시도는 8,000 기준 예상 최대량을 새 request ID로 먼저 예약합니다. Spring이 quota 409를 반환하면 provider를 호출하지 않습니다.
 - `source_chunk_id` 누락·오형식은 Worker가 결정적으로 보정하므로 재시도 사유가 아닙니다.
 - schema상 유효한 문자열이지만 프롬프트 정책상 애매한 값은 현재 재시도하지 않습니다.
 
@@ -809,16 +825,19 @@ save_items 전체 수집
 - OpenAI Embeddings Client도 임베딩 입력 token usage를 `EmbeddingBatchResponse`와 `EpisodeChunkEmbeddingResult`에 담습니다.
 - 실제 provider client는 `app/usage`의 metered wrapper로 감싸며, 호출 전 예상량을 Spring 원장에 예약하고 호출 후 provider usage로 정산합니다.
 - 설정 추출 재시도와 subject fallback은 호출마다 별도 요청으로 남고, 임베딩은 feature flag가 켜진 경우에만 예약·정산합니다.
+- HTTP 200이어도 Responses API `status`가 `completed`가 아니면 성공으로 사용하지 않습니다. 출력 절단처럼 usage가 있는 실패는 `FAILURE`로 실제 사용량을 정산하고, 목적·시도·상한·input/cached/output·incomplete reason만 구조화 로그로 남깁니다.
 - Spring complete/fail은 해당 Job의 `SETTLED` 원장을 합산해 `analysis_jobs.input_token_count`, `output_token_count`를 확정합니다.
 
 처리 중 예외가 발생하면:
 
-1. `SpringWorkerClient.fail(analysis_job_id, lease_token, error_message)`를 호출합니다.
+1. 예외 체인을 토큰 부족·출력 절단·네트워크·provider·응답 파싱·비교 검증·lease·예상 밖 오류로 분류하고 `SpringWorkerClient.fail(analysis_job_id, lease_token, error_message, failure_code)`를 호출합니다.
 2. error message는 최대 1000자로 잘라 Spring에 전달합니다.
 3. 예외는 다시 밖으로 전파합니다.
 4. 장기 실행 runner는 예외를 해당 Job Task 안에서 격리하고 슬롯을 반환합니다. 다른 실행 중 Job은 취소하지 않으며 `--once` 실행은 예외를 그대로 종료 상태로 전달합니다.
 5. 종료 grace를 넘겨 Task가 취소되면 신규 fail 전이를 강제하지 않고 heartbeat를 중단합니다. Spring이 lease 만료와 checkpoint 정책으로 Job을 회수하며, 진행 중이던 token 예약도 lease 회수 시 정리합니다.
 6. heartbeat가 일시 오류 재시도 뒤에도 실패하거나 lease conflict를 받으면 그 Job Task만 취소하고 같은 lease 재회수 경로를 사용합니다. 다른 Job Task는 계속 실행합니다.
+
+Spring reserve가 409 `AI_TOKEN_QUOTA_EXHAUSTED`를 반환하면 HTTP 재시도 대상에서 제외합니다. 후보 비교 pipeline은 현재 후보를 같은 코드로 실패 보고하고 예외를 Job 경계까지 전파해 다음 후보 claim을 중단합니다. 이미 완료한 후보와 캐릭터·세계관 1차 추출 결과는 변경하지 않으며 scheduler의 다른 Job Task는 계속 실행합니다.
 
 ## 저장 부수효과와 트랜잭션 경계
 

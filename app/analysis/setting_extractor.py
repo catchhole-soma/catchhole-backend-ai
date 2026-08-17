@@ -9,9 +9,10 @@ from pydantic import ValidationError
 
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
-from app.analysis.json_response import compact_error_message, parse_json_object
+from app.analysis.json_response import parse_json_object, safe_validation_error_summary
 from app.analysis.schemas import CharacterSettingExtractionResult
 from app.core.config import get_settings
+from app.llm.exceptions import LlmOutputTruncatedError
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 
@@ -41,6 +42,8 @@ class CharacterSettingExtractor:
         prompt_path: Path = DEFAULT_PROMPT_PATH,
         model: str | None = None,
         max_attempts: int | None = None,
+        max_output_tokens: int | None = None,
+        truncation_retry_max_output_tokens: int | None = None,
     ) -> None:
         settings = get_settings()
         # 실제 실행에서는 OpenAI client를 쓰고, 테스트에서는 fake client를 주입
@@ -50,8 +53,24 @@ class CharacterSettingExtractor:
         self.max_attempts = (
             settings.llm_extraction_max_attempts if max_attempts is None else max_attempts
         )
+        self.max_output_tokens = (
+            settings.llm_setting_extraction_max_output_tokens
+            if max_output_tokens is None
+            else max_output_tokens
+        )
+        self.truncation_retry_max_output_tokens = (
+            settings.llm_setting_extraction_retry_max_output_tokens
+            if truncation_retry_max_output_tokens is None
+            else truncation_retry_max_output_tokens
+        )
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be at least 1.")
+        if self.max_output_tokens < 1:
+            raise ValueError("max_output_tokens must be at least 1.")
+        if self.truncation_retry_max_output_tokens < self.max_output_tokens:
+            raise ValueError(
+                "truncation_retry_max_output_tokens must be at least max_output_tokens."
+            )
 
     async def extract_from_chunk(
         self,
@@ -80,31 +99,55 @@ class CharacterSettingExtractor:
 
         # LLM 응답은 JSON 형식을 항상 지키지 않을 수 있으므로 파싱/검증 실패만 재시도
         last_error: Exception | None = None
+        current_max_output_tokens = self.max_output_tokens
+        truncation_retry_used = False
         for attempt in range(1, self.max_attempts + 1):
-            try:
-                # 예외가 없다면 정상적으로 return
-                return await self._extract_once(
-                    system_prompt,
-                    user_prompt,
-                    source_chunk_id,
-                    prompt_cache_key,
-                )
-            except (json.JSONDecodeError, ValidationError) as exc:
-                last_error = exc
-                if attempt == self.max_attempts:
-                    # 최대 반복횟수가 되면 for문 종료 후 아래의 LlmExtractionError을 만든다.
+            while True:
+                try:
+                    # 예외가 없다면 정상적으로 return
+                    return await self._extract_once(
+                        system_prompt,
+                        user_prompt,
+                        source_chunk_id,
+                        prompt_cache_key,
+                        current_max_output_tokens,
+                    )
+                except LlmOutputTruncatedError as exc:
+                    can_expand_once = (
+                        not truncation_retry_used
+                        and self.truncation_retry_max_output_tokens > current_max_output_tokens
+                    )
+                    if not can_expand_once:
+                        raise
+                    truncation_retry_used = True
+                    current_max_output_tokens = self.truncation_retry_max_output_tokens
+                    logger.warning(
+                        "Setting extraction output truncated; increasing cap once. "
+                        "attempt=%s/%s max_output_tokens=%s next_max_output_tokens=%s "
+                        "output_tokens=%s reason=%s",
+                        attempt,
+                        self.max_attempts,
+                        exc.max_output_tokens,
+                        current_max_output_tokens,
+                        exc.output_token_count,
+                        exc.incomplete_reason,
+                    )
+                except (json.JSONDecodeError, ValidationError) as exc:
+                    last_error = exc
+                    if attempt < self.max_attempts:
+                        logger.warning(
+                            "LLM extraction response validation failed. retrying "
+                            "attempt=%s/%s error=%s",
+                            attempt,
+                            self.max_attempts,
+                            safe_validation_error_summary(exc),
+                        )
                     break
-                logger.warning(
-                    "LLM extraction response validation failed. retrying attempt=%s/%s error=%s",
-                    attempt,
-                    self.max_attempts,
-                    compact_error_message(exc),
-                )
 
         raise LlmExtractionError(
             "LLM extraction failed after "
-            f"{self.max_attempts} attempts: {compact_error_message(last_error)}"
-        ) from last_error
+            f"{self.max_attempts} attempts: {safe_validation_error_summary(last_error)}"
+        ) from None
 
     async def _extract_once(
         self,
@@ -112,13 +155,14 @@ class CharacterSettingExtractor:
         user_prompt: str,
         source_chunk_id: UUID,
         prompt_cache_key: str,
+        max_output_tokens: int,
     ) -> CharacterSettingExtractionResult:
         # 시스템 프롬프트 + 사용자 프롬프트를 조합하여 LLM에 요청
         response = await self.llm_client.create_text_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=self.model,
-            max_output_tokens=4000,
+            max_output_tokens=max_output_tokens,
             prompt_cache_key=prompt_cache_key,
         )
         # source_chunk_id는 Worker가 이미 알고 있는 식별자이므로 LLM 응답을 신뢰하지 않고

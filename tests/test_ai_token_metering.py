@@ -1,17 +1,22 @@
 import asyncio
+import logging
 from uuid import UUID
 
 import httpx
 import pytest
 
-import app.usage.metering as metering
-from app.embeddings.responses import EmbeddingBatchResponse
 from app.embeddings.exceptions import (
     EmbeddingResponseValidationError,
     RecoverableEmbeddingProviderError,
 )
-from app.llm.exceptions import LlmResponseValidationError
+from app.embeddings.responses import EmbeddingBatchResponse
+from app.llm.exceptions import (
+    LlmIncompleteResponseError,
+    LlmOutputTruncatedError,
+    LlmResponseValidationError,
+)
 from app.llm.responses import LlmTextResponse
+from app.usage import metering
 from app.usage.metering import (
     MeteredEmbeddingClient,
     MeteredTextGenerationClient,
@@ -157,6 +162,109 @@ def test_text_validation_error_settles_reported_usage() -> None:
     request_id = ledger.reservations[0]["request_id"]
     assert ledger.settlements == [(request_id, 120, 20, 30, "FAILURE")]
     assert ledger.releases == []
+
+
+def test_output_truncation_is_settled_once_without_provider_retry_or_prompt_logging(
+    caplog,
+) -> None:
+    ledger = FakeLedger()
+    delegate = SequencedTextClient(
+        [
+            LlmOutputTruncatedError(
+                "provider output truncated",
+                incomplete_reason="max_output_tokens",
+                max_output_tokens=4000,
+                input_token_count=2522,
+                cached_input_token_count=1200,
+                output_token_count=4000,
+            )
+        ]
+    )
+    client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SETTING_EXTRACTION",
+        default_model="gpt-5.6-terra",
+        lease_token=LEASE_TOKEN,
+        max_retries=3,
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="app.usage.metering"),
+        pytest.raises(LlmOutputTruncatedError),
+    ):
+        asyncio.run(
+            client.create_text_response(
+                "SECRET_SYSTEM_PROMPT",
+                "SECRET_NOVEL_BODY",
+                max_output_tokens=4000,
+            )
+        )
+
+    request_id = ledger.reservations[0]["request_id"]
+    assert delegate.call_count == 1
+    assert ledger.settlements == [(request_id, 2522, 1200, 4000, "FAILURE")]
+    assert ledger.releases == []
+    assert "purpose=SETTING_EXTRACTION" in caplog.text
+    assert "attempt=1" in caplog.text
+    assert "max_output_tokens=4000" in caplog.text
+    assert "input_tokens=2522" in caplog.text
+    assert "cached_input_tokens=1200" in caplog.text
+    assert "output_tokens=4000" in caplog.text
+    assert "reason=max_output_tokens" in caplog.text
+    assert "SECRET_SYSTEM_PROMPT" not in caplog.text
+    assert "SECRET_NOVEL_BODY" not in caplog.text
+
+
+def test_incomplete_response_logs_reason_and_usage_without_retry_or_prompt_logging(caplog) -> None:
+    ledger = FakeLedger()
+    delegate = SequencedTextClient(
+        [
+            LlmIncompleteResponseError(
+                "provider response incomplete",
+                incomplete_reason="content_filter",
+                input_token_count=510,
+                cached_input_token_count=200,
+                output_token_count=12,
+            )
+        ]
+    )
+    client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SUBJECT_RESOLUTION",
+        default_model="gpt-5.6-luna",
+        lease_token=LEASE_TOKEN,
+        max_retries=3,
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="app.usage.metering"),
+        pytest.raises(LlmIncompleteResponseError),
+    ):
+        asyncio.run(
+            client.create_text_response(
+                "SECRET_SYSTEM_PROMPT",
+                "SECRET_NOVEL_BODY",
+                max_output_tokens=1000,
+            )
+        )
+
+    request_id = ledger.reservations[0]["request_id"]
+    assert delegate.call_count == 1
+    assert ledger.settlements == [(request_id, 510, 200, 12, "FAILURE")]
+    assert ledger.releases == []
+    assert "purpose=SUBJECT_RESOLUTION" in caplog.text
+    assert "attempt=1" in caplog.text
+    assert "max_output_tokens=1000" in caplog.text
+    assert "input_tokens=510" in caplog.text
+    assert "cached_input_tokens=200" in caplog.text
+    assert "output_tokens=12" in caplog.text
+    assert "reason=content_filter" in caplog.text
+    assert "SECRET_SYSTEM_PROMPT" not in caplog.text
+    assert "SECRET_NOVEL_BODY" not in caplog.text
 
 
 def test_wrapped_embedding_http_error_settles_reported_usage() -> None:
@@ -582,7 +690,7 @@ def test_known_model_reservation_uses_tokenizer_instead_of_utf8_bytes() -> None:
 def test_unknown_model_reservation_keeps_conservative_byte_fallback() -> None:
     reservation = _estimate_text_token_upper_bound("규칙", "원고", "unknown-model", 100)
 
-    assert reservation == len("규칙원고".encode("utf-8")) + 100 + 512
+    assert reservation == len("규칙원고".encode()) + 100 + 512
 
 
 class FakeLedger:

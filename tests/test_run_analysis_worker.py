@@ -1,9 +1,10 @@
 import asyncio
+import re
 from collections import deque
 from dataclasses import dataclass
-import re
 from uuid import UUID
 
+from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.worker.analysis_job_worker import WorkerRunResult
 from scripts.run_analysis_worker import (
     _print_result,
@@ -111,6 +112,38 @@ def test_one_job_failure_does_not_cancel_its_peer() -> None:
 
         assert [result.analysis_job_id for result in results] == [succeeded.analysis_job_id]
         assert worker.processed_ids == {failed.analysis_job_id, succeeded.analysis_job_id}
+
+    asyncio.run(scenario())
+
+
+def test_one_quota_interrupted_job_does_not_cancel_its_peer() -> None:
+    async def scenario() -> None:
+        interrupted = _payload(1)
+        succeeded = _payload(2)
+
+        class QuotaInterruptedWorker(FakeSchedulerWorker):
+            async def process_claimed(self, payload: FakePayload) -> WorkerRunResult:
+                if payload.analysis_job_id == interrupted.analysis_job_id:
+                    self.started_count += 1
+                    self.processed_ids.add(payload.analysis_job_id)
+                    raise AiTokenQuotaExhaustedError()
+                return await super().process_claimed(payload)
+
+        worker = QuotaInterruptedWorker([interrupted, succeeded])
+
+        results = await run_worker_loop(
+            worker=worker,
+            idle_sleep_seconds=1.0,
+            concurrency=2,
+            shutdown_grace_seconds=1.0,
+            max_iterations=2,
+        )
+
+        assert [result.analysis_job_id for result in results] == [succeeded.analysis_job_id]
+        assert worker.processed_ids == {
+            interrupted.analysis_job_id,
+            succeeded.analysis_job_id,
+        }
 
     asyncio.run(scenario())
 

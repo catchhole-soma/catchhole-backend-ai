@@ -5,6 +5,7 @@ from uuid import UUID
 
 import httpx
 
+from app.clients.exceptions import SpringWorkerTransportError
 from app.schemas.worker import WorkerAnalysisJobHeartbeatResponse
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,8 @@ class WorkerLeaseHeartbeat:
 
 
 def _is_retryable_heartbeat_error(exc: Exception) -> bool:
+    if isinstance(exc, SpringWorkerTransportError):
+        return True
     if isinstance(exc, httpx.HTTPStatusError):
         status_code = exc.response.status_code
         return status_code in {408, 429} or status_code >= 500
