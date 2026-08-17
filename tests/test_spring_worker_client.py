@@ -8,6 +8,7 @@ import pytest
 from app.clients.exceptions import (
     AiTokenQuotaExhaustedError,
     SpringWorkerHttpError,
+    SpringWorkerTransportError,
     WorkerLeaseExpiredError,
 )
 from app.clients.spring_worker_client import (
@@ -352,6 +353,47 @@ def test_spring_worker_http_failure_is_typed_by_source(
                 "SETTING_EXTRACTION",
             )
         )
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError],
+)
+def test_spring_worker_transport_failure_is_typed_by_source(
+    error_type: type[httpx.TransportError],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error_type("Spring transport failed", request=request)
+
+    client = _client(handler)
+
+    with pytest.raises(SpringWorkerTransportError) as exc_info:
+        asyncio.run(
+            client.report_progress(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+                "SETTING_EXTRACTION",
+            )
+        )
+
+    assert isinstance(exc_info.value.__cause__, error_type)
+
+
+def test_ai_token_settlement_retries_temporary_spring_transport_failure() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) < 3:
+            raise httpx.ConnectError("Spring unavailable", request=request)
+        return httpx.Response(status_code=200, request=request)
+
+    client = _client(handler)
+    request_id = uuid4()
+
+    asyncio.run(client.settle_ai_tokens(request_id, 100, 10, 20, "SUCCESS"))
+
+    assert len(requests) == 3
 
 
 def test_ai_token_release_retries_temporary_spring_failure() -> None:

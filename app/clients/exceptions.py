@@ -14,6 +14,10 @@ class SpringWorkerHttpError(httpx.HTTPStatusError):
     """Spring Worker API가 반환한 HTTP 실패다."""
 
 
+class SpringWorkerTransportError(RuntimeError):
+    """Spring Worker API 요청이 응답 전에 전송 계층에서 실패한 경우다."""
+
+
 class WorkerLeaseExpiredError(SpringWorkerHttpError):
     """Spring이 Worker lease 만료 또는 불일치를 반환한 경우다."""
 

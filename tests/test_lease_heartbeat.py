@@ -1,11 +1,11 @@
 import asyncio
 from uuid import UUID
 
-import pytest
 import httpx
+import pytest
 
+from app.clients.exceptions import SpringWorkerTransportError
 from app.worker.lease_heartbeat import WorkerLeaseHeartbeat
-
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
 LEASE_TOKEN = UUID("00000000-0000-0000-0000-000000000002")
@@ -56,7 +56,7 @@ def test_transient_heartbeat_failures_are_retried_before_cancelling_job() -> Non
     async def scenario() -> None:
         spring = SequencedHeartbeatSpringApi(
             [
-                httpx.ReadTimeout("spring timeout"),
+                SpringWorkerTransportError("spring timeout"),
                 httpx.ConnectError("spring unavailable"),
                 None,
             ]

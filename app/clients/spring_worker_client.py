@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -5,6 +6,7 @@ import httpx
 from app.clients.exceptions import (
     AiTokenQuotaExhaustedError,
     SpringWorkerHttpError,
+    SpringWorkerTransportError,
     WorkerLeaseExpiredError,
 )
 from app.core.config import Settings, get_settings
@@ -74,7 +76,8 @@ class SpringWorkerClient:
             current_step=current_step,
             allowed_job_types=allowed_job_types,
         )
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url("/api/internal/v1/analysis-jobs/claim"),
             headers=self._headers(),
             json=request.model_dump(by_alias=True, exclude_none=True),
@@ -99,7 +102,8 @@ class SpringWorkerClient:
             episode_status=episode_status,
             checkpoint_stage=checkpoint_stage,
         )
-        response = await self.http_client.patch(
+        response = await self._request(
+            "PATCH",
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/progress"),
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
@@ -122,7 +126,8 @@ class SpringWorkerClient:
             output_token_count=output_token_count,
         )
         # Spring 내부 API에 완료 보고 POST 요청
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/complete"),
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, exclude_none=True),
@@ -141,7 +146,8 @@ class SpringWorkerClient:
             failure_code=failure_code,
             error_message=error_message,
         )
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/fail"),
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True),
@@ -179,7 +185,8 @@ class SpringWorkerClient:
         analysis_job_id: UUID,
         lease_token: UUID,
     ) -> WorkerAnalysisJobHeartbeatResponse:
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/heartbeat"),
             headers=self._headers(lease_token),
         )
@@ -191,7 +198,8 @@ class SpringWorkerClient:
         analysis_job_id: UUID,
         lease_token: UUID,
     ) -> WorkerCharacterFactComparisonClaimPayload | None:
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 "/character-fact-comparisons/claim-next"
@@ -209,7 +217,8 @@ class SpringWorkerClient:
         candidate_id: UUID,
         lease_token: UUID,
     ) -> WorkerCharacterFactComparisonContextResponse:
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 f"/setting-candidates/{candidate_id}/character-fact-comparison-context"
@@ -226,7 +235,8 @@ class SpringWorkerClient:
         lease_token: UUID,
         request: WorkerCharacterFactComparisonCompleteRequest,
     ) -> None:
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 f"/setting-candidates/{candidate_id}/character-fact-comparison-complete"
@@ -248,7 +258,8 @@ class SpringWorkerClient:
             failure_code=failure_code,
             error_message=error_message,
         )
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 f"/setting-candidates/{candidate_id}/character-fact-comparison-fail"
@@ -265,7 +276,8 @@ class SpringWorkerClient:
         candidates: list[WorkerWorldSettingCandidatePublishItem],
     ) -> list[WorkerWorldSettingCandidatePayload]:
         request = WorkerWorldSettingCandidatePublishRequest(candidates=candidates)
-        response = await self.http_client.put(
+        response = await self._request(
+            "PUT",
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/world-setting-candidates"),
             headers=self._headers(lease_token),
             json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
@@ -281,7 +293,8 @@ class SpringWorkerClient:
         analysis_job_id: UUID,
         lease_token: UUID,
     ) -> WorkerWorldSettingCandidatePayload | None:
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 "/world-setting-comparisons/claim-next"
@@ -301,7 +314,8 @@ class SpringWorkerClient:
         page: int,
         size: int = 500,
     ) -> WorkerWorldSettingSubjectPageResponse:
-        response = await self.http_client.get(
+        response = await self._request(
+            "GET",
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/world-setting-subjects"),
             headers=self._headers(lease_token),
             params={"category": category, "page": page, "size": size},
@@ -319,7 +333,8 @@ class SpringWorkerClient:
         request = WorkerWorldSettingComparisonContextRequest(
             target_world_setting_ids=target_world_setting_ids
         )
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 f"/world-setting-candidates/{candidate_id}/comparison-context"
@@ -337,7 +352,8 @@ class SpringWorkerClient:
         lease_token: UUID,
         request: WorkerWorldSettingComparisonCompleteRequest,
     ) -> None:
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 f"/world-setting-candidates/{candidate_id}/comparison-complete"
@@ -359,7 +375,8 @@ class SpringWorkerClient:
             failure_code=failure_code,
             error_message=error_message,
         )
-        response = await self.http_client.post(
+        response = await self._request(
+            "POST",
             self._url(
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 f"/world-setting-candidates/{candidate_id}/comparison-fail"
@@ -407,7 +424,8 @@ class SpringWorkerClient:
 
         for attempt in range(3):
             try:
-                response = await self.http_client.post(
+                response = await self._request(
+                    "POST",
                     self._url(path),
                     headers=self._headers(lease_token),
                     json=payload,
@@ -419,7 +437,7 @@ class SpringWorkerClient:
                     raise AiTokenQuotaExhaustedError()
                 _raise_for_spring_status(response)
                 return
-            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
+            except SpringWorkerTransportError:
                 if attempt == 2:
                     raise
             except WorkerLeaseExpiredError:
@@ -433,6 +451,14 @@ class SpringWorkerClient:
 
     async def aclose(self) -> None:
         await self.http_client.aclose()
+
+    async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        try:
+            return await self.http_client.request(method, url, **kwargs)
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            raise SpringWorkerTransportError(
+                f"Spring Worker API {method} request failed before receiving a response."
+            ) from exc
 
     # base_url과 path를 합쳐 실제 요청 URL을 만듦
     def _url(self, path: str) -> str:

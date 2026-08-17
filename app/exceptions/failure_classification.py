@@ -6,6 +6,7 @@ from app.analysis.exceptions import ComparisonValidationError, LlmExtractionErro
 from app.clients.exceptions import (
     AiTokenQuotaExhaustedError,
     SpringWorkerHttpError,
+    SpringWorkerTransportError,
     WorkerLeaseExpiredError,
 )
 from app.domain.enums import AnalysisFailureCode
@@ -45,6 +46,8 @@ def _common_failure_code(exc: BaseException) -> AnalysisFailureCode | None:
         return AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED
     if _find_exception(exc, WorkerLeaseExpiredError) is not None:
         return AnalysisFailureCode.WORKER_LEASE_EXPIRED
+    if _find_exception(exc, SpringWorkerTransportError) is not None:
+        return AnalysisFailureCode.UNEXPECTED_ERROR
     if _find_exception(exc, SpringWorkerHttpError) is not None:
         return AnalysisFailureCode.UNEXPECTED_ERROR
     if _find_exception(exc, LlmOutputTruncatedError) is not None:

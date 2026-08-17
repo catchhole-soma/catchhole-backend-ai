@@ -5,6 +5,7 @@ from app.analysis.exceptions import ComparisonValidationError, LlmExtractionErro
 from app.clients.exceptions import (
     AiTokenQuotaExhaustedError,
     SpringWorkerHttpError,
+    SpringWorkerTransportError,
     WorkerLeaseExpiredError,
 )
 from app.domain.enums import AnalysisFailureCode
@@ -64,6 +65,15 @@ def test_comparison_parse_failure_uses_comparison_specific_code() -> None:
 
 def test_spring_worker_http_failure_is_not_classified_as_provider_failure() -> None:
     error = _http_status_error(SpringWorkerHttpError, "INTERNAL_SERVER_ERROR")
+
+    assert analysis_failure_code(error) is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert comparison_failure_code(error) is AnalysisFailureCode.UNEXPECTED_ERROR
+
+
+def test_spring_worker_transport_failure_is_not_classified_as_llm_network_failure() -> None:
+    request = httpx.Request("PATCH", "https://spring.test/progress")
+    error = SpringWorkerTransportError("Spring transport failed")
+    error.__cause__ = httpx.ConnectError("Spring unavailable", request=request)
 
     assert analysis_failure_code(error) is AnalysisFailureCode.UNEXPECTED_ERROR
     assert comparison_failure_code(error) is AnalysisFailureCode.UNEXPECTED_ERROR
