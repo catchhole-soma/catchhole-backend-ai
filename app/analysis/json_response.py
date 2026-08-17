@@ -6,7 +6,11 @@ from typing import TypeVar
 from pydantic import BaseModel, ValidationError
 
 from app.analysis.exceptions import ComparisonValidationError, LlmExtractionError
-from app.llm.exceptions import LlmIncompleteResponseError, LlmOutputTruncatedError
+from app.llm.exceptions import (
+    LlmIncompleteResponseError,
+    LlmOutputTruncatedError,
+    LlmResponseValidationError,
+)
 from app.llm.protocols import TextGenerationClient
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -121,7 +125,12 @@ async def request_validated_model(
         if "comparison" in operation_name.casefold()
         else LlmExtractionError
     )
+    sanitized_cause = (
+        LlmResponseValidationError(safe_validation_error_summary(last_error))
+        if isinstance(last_error, LlmResponseValidationError)
+        else None
+    )
     raise error_type(
         f"{operation_name} failed after {max_attempts} attempts: "
         f"{safe_validation_error_summary(last_error)}"
-    ) from None
+    ) from sanitized_cause
