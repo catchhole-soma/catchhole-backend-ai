@@ -3,7 +3,7 @@ from collections.abc import Callable
 from logging import Logger
 from typing import TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.analysis.exceptions import ComparisonValidationError, LlmExtractionError
 from app.llm.exceptions import LlmIncompleteResponseError, LlmOutputTruncatedError
@@ -40,6 +40,29 @@ def compact_error_message(exc: Exception | None, max_length: int = 500) -> str:
     if exc is None:
         return "unknown error"
     return (str(exc) or exc.__class__.__name__)[:max_length]
+
+
+def safe_validation_error_summary(exc: Exception | None) -> str:
+    """Provider 값 없이 검증 실패 종류만 운영 로그와 Job 오류에 남긴다."""
+
+    if exc is None:
+        return "unknown error"
+    if not isinstance(exc, ValidationError):
+        return exc.__class__.__name__
+    error_types = sorted(
+        {
+            error_type
+            for error in exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            )
+            if isinstance(error_type := error.get("type"), str)
+        }
+    )
+    if not error_types:
+        return "ValidationError"
+    return f"ValidationError(types={','.join(error_types)})"
 
 
 async def request_validated_model(
@@ -87,7 +110,7 @@ async def request_validated_model(
                     operation_name,
                     attempt,
                     max_attempts,
-                    compact_error_message(exc),
+                    safe_validation_error_summary(exc),
                 )
                 if retry_user_prompt_builder is not None:
                     # 매번 최초 입력을 기준으로 피드백을 새로 만들어 실패 문구가
@@ -100,5 +123,5 @@ async def request_validated_model(
     )
     raise error_type(
         f"{operation_name} failed after {max_attempts} attempts: "
-        f"{compact_error_message(last_error)}"
-    ) from last_error
+        f"{safe_validation_error_summary(last_error)}"
+    ) from None

@@ -12,7 +12,7 @@ from app.analysis.character_name_resolver import (
     is_usable_subject_resolution_name,
 )
 from app.analysis.exceptions import LlmExtractionError
-from app.analysis.json_response import compact_error_message, parse_json_object
+from app.analysis.json_response import parse_json_object, safe_validation_error_summary
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.core.config import get_settings
 from app.domain.enums import SettingCandidateKind
@@ -172,8 +172,8 @@ class CharacterSubjectResolver:
             return await self._request_once(system_prompt, user_prompt)
         except (json.JSONDecodeError, TypeError, ValidationError) as exc:
             raise LlmExtractionError(
-                f"LLM subject resolution failed: {compact_error_message(exc)}"
-            ) from exc
+                f"LLM subject resolution failed: {safe_validation_error_summary(exc)}"
+            ) from None
 
     async def _request_once(
         self,

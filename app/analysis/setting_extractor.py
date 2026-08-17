@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
-from app.analysis.json_response import compact_error_message, parse_json_object
+from app.analysis.json_response import parse_json_object, safe_validation_error_summary
 from app.analysis.schemas import CharacterSettingExtractionResult
 from app.core.config import get_settings
 from app.llm.exceptions import LlmOutputTruncatedError
@@ -140,14 +140,14 @@ class CharacterSettingExtractor:
                             "attempt=%s/%s error=%s",
                             attempt,
                             self.max_attempts,
-                            compact_error_message(exc),
+                            safe_validation_error_summary(exc),
                         )
                     break
 
         raise LlmExtractionError(
             "LLM extraction failed after "
-            f"{self.max_attempts} attempts: {compact_error_message(last_error)}"
-        ) from last_error
+            f"{self.max_attempts} attempts: {safe_validation_error_summary(last_error)}"
+        ) from None
 
     async def _extract_once(
         self,

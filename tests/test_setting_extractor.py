@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from uuid import UUID
 
 import pytest
@@ -306,6 +307,35 @@ def test_extract_from_chunk_retries_when_required_field_is_missing(tmp_path) -> 
 
     assert llm_client.call_count == 2
     assert result.candidates[0].source_chunk_id == CHUNK_ID
+
+
+def test_schema_validation_retry_log_omits_provider_values(tmp_path, caplog) -> None:
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
+    llm_client = SensitiveInvalidSchemaClient()
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        prompt_path=prompt_path,
+        max_attempts=2,
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="app.analysis.setting_extractor"),
+        pytest.raises(LlmExtractionError) as exc_info,
+    ):
+        _extract(
+            extractor,
+            source_chunk_id=CHUNK_ID,
+            chunk_text="SECRET_NOVEL_BODY",
+            schema_hints=DEFAULT_SCHEMA_HINTS,
+        )
+
+    assert llm_client.call_count == 2
+    assert "ValidationError" in caplog.text
+    assert "list_type" in caplog.text
+    assert "SECRET_PROVIDER_VALUE" not in caplog.text
+    assert "SECRET_NOVEL_BODY" not in caplog.text
+    assert "SECRET_PROVIDER_VALUE" not in str(exc_info.value)
 
 
 def test_extract_from_chunk_retries_when_entity_name_is_whitespace_only(tmp_path) -> None:
@@ -778,6 +808,15 @@ class AlwaysMissingFieldClient:
             }
             """
         )
+
+
+class SensitiveInvalidSchemaClient:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
+        self.call_count += 1
+        return LlmTextResponse(text='{"candidates":"SECRET_PROVIDER_VALUE"}')
 
 
 class TruncateThenSuccessClient:
