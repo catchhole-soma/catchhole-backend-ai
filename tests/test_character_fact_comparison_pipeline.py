@@ -7,8 +7,10 @@ import pytest
 
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonPipeline
 from app.analysis.character_fact_comparison_schemas import CharacterFactComparisonDecision
+from app.analysis.exceptions import ComparisonValidationError
 from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.domain.enums import AnalysisFailureCode
+from app.llm.exceptions import LlmResponseValidationError
 from app.schemas.worker import (
     WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterFactComparisonClaimPayload,
@@ -109,10 +111,27 @@ def test_pipeline_maps_same_slot_remove_without_proposed_value() -> None:
     assert request.removed_snapshot_entries == []
 
 
-def test_pipeline_isolates_failed_candidate_and_processes_next_candidate() -> None:
+@pytest.mark.parametrize(
+    ("first_error", "expected_code"),
+    [
+        (
+            ComparisonValidationError("malformed response"),
+            AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+        ),
+        (
+            LlmResponseValidationError("malformed provider payload"),
+            AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR,
+        ),
+        (RuntimeError("post-processing failed"), AnalysisFailureCode.UNEXPECTED_ERROR),
+    ],
+)
+def test_pipeline_isolates_failed_candidate_and_processes_next_candidate(
+    first_error: Exception,
+    expected_code: AnalysisFailureCode,
+) -> None:
     second_candidate_id = UUID("00000000-0000-0000-0000-000000000005")
     spring = FakeSpringApi([CANDIDATE_ID, second_candidate_id])
-    comparator = FakeComparator([ValueError("malformed response"), _add_decision()])
+    comparator = FakeComparator([first_error, _add_decision()])
 
     result = asyncio.run(
         CharacterFactComparisonPipeline(spring, comparator).process_all(
@@ -123,8 +142,8 @@ def test_pipeline_isolates_failed_candidate_and_processes_next_candidate() -> No
 
     assert result.completed_count == 1
     assert result.failed_count == 1
-    assert result.first_failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
-    assert spring.failures == [(CANDIDATE_ID, "malformed response", "COMPARISON_VALIDATION_FAILED")]
+    assert result.first_failure_code is expected_code
+    assert spring.failures == [(CANDIDATE_ID, str(first_error), expected_code.value)]
     assert len(spring.completions) == 1
 
 

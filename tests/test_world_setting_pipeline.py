@@ -4,6 +4,7 @@ from uuid import UUID
 import httpx
 import pytest
 
+from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.world_setting_pipeline import WorldSettingComparisonPipeline
 from app.analysis.world_setting_schemas import WorldSettingComparisonDecision
 from app.clients.exceptions import AiTokenQuotaExhaustedError
@@ -286,7 +287,7 @@ class FakeComparator:
 
 class FailingComparator:
     async def compare(self, candidate, targets):
-        raise ValueError("malformed LLM response")
+        raise ComparisonValidationError("malformed LLM response")
 
 
 class QuotaFailingComparator:

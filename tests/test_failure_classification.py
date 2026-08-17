@@ -13,7 +13,11 @@ from app.exceptions.failure_classification import (
     analysis_failure_code,
     comparison_failure_code,
 )
-from app.llm.exceptions import LlmIncompleteResponseError, LlmOutputTruncatedError
+from app.llm.exceptions import (
+    LlmIncompleteResponseError,
+    LlmOutputTruncatedError,
+    LlmResponseValidationError,
+)
 
 
 @pytest.mark.parametrize(
@@ -39,6 +43,10 @@ from app.llm.exceptions import LlmIncompleteResponseError, LlmOutputTruncatedErr
             LlmIncompleteResponseError("provider incomplete"),
             AnalysisFailureCode.LLM_PROVIDER_ERROR,
         ),
+        (
+            LlmResponseValidationError("malformed provider payload"),
+            AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR,
+        ),
         (LlmExtractionError("invalid JSON"), AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR),
         (RuntimeError("unknown"), AnalysisFailureCode.UNEXPECTED_ERROR),
     ],
@@ -57,10 +65,32 @@ def test_failure_classification_follows_exception_cause_chain() -> None:
     assert analysis_failure_code(wrapped) is AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED
 
 
-def test_comparison_parse_failure_uses_comparison_specific_code() -> None:
-    assert comparison_failure_code(ComparisonValidationError("invalid decision")) is (
-        AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
-    )
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            ComparisonValidationError("invalid decision"),
+            AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+        ),
+        (
+            LlmExtractionError("invalid JSON"),
+            AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR,
+        ),
+        (RuntimeError("post-processing failed"), AnalysisFailureCode.UNEXPECTED_ERROR),
+    ],
+)
+def test_comparison_failure_code_preserves_distinct_categories(
+    error: Exception,
+    expected: AnalysisFailureCode,
+) -> None:
+    assert comparison_failure_code(error) is expected
+
+
+def test_provider_payload_failure_takes_precedence_over_comparison_wrapper() -> None:
+    error = ComparisonValidationError("comparison failed")
+    error.__cause__ = LlmResponseValidationError("malformed provider payload")
+
+    assert comparison_failure_code(error) is AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR
 
 
 def test_spring_worker_http_failure_is_not_classified_as_provider_failure() -> None:
