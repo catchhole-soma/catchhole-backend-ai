@@ -10,7 +10,11 @@ from app.embeddings.exceptions import (
     RecoverableEmbeddingProviderError,
 )
 from app.embeddings.responses import EmbeddingBatchResponse
-from app.llm.exceptions import LlmOutputTruncatedError, LlmResponseValidationError
+from app.llm.exceptions import (
+    LlmIncompleteResponseError,
+    LlmOutputTruncatedError,
+    LlmResponseValidationError,
+)
 from app.llm.responses import LlmTextResponse
 from app.usage import metering
 from app.usage.metering import (
@@ -205,8 +209,60 @@ def test_output_truncation_is_settled_once_without_provider_retry_or_prompt_logg
     assert "purpose=SETTING_EXTRACTION" in caplog.text
     assert "attempt=1" in caplog.text
     assert "max_output_tokens=4000" in caplog.text
+    assert "input_tokens=2522" in caplog.text
+    assert "cached_input_tokens=1200" in caplog.text
     assert "output_tokens=4000" in caplog.text
     assert "reason=max_output_tokens" in caplog.text
+    assert "SECRET_SYSTEM_PROMPT" not in caplog.text
+    assert "SECRET_NOVEL_BODY" not in caplog.text
+
+
+def test_incomplete_response_logs_reason_and_usage_without_retry_or_prompt_logging(caplog) -> None:
+    ledger = FakeLedger()
+    delegate = SequencedTextClient(
+        [
+            LlmIncompleteResponseError(
+                "provider response incomplete",
+                incomplete_reason="content_filter",
+                input_token_count=510,
+                cached_input_token_count=200,
+                output_token_count=12,
+            )
+        ]
+    )
+    client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SUBJECT_RESOLUTION",
+        default_model="gpt-5.6-luna",
+        lease_token=LEASE_TOKEN,
+        max_retries=3,
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="app.usage.metering"),
+        pytest.raises(LlmIncompleteResponseError),
+    ):
+        asyncio.run(
+            client.create_text_response(
+                "SECRET_SYSTEM_PROMPT",
+                "SECRET_NOVEL_BODY",
+                max_output_tokens=1000,
+            )
+        )
+
+    request_id = ledger.reservations[0]["request_id"]
+    assert delegate.call_count == 1
+    assert ledger.settlements == [(request_id, 510, 200, 12, "FAILURE")]
+    assert ledger.releases == []
+    assert "purpose=SUBJECT_RESOLUTION" in caplog.text
+    assert "attempt=1" in caplog.text
+    assert "max_output_tokens=1000" in caplog.text
+    assert "input_tokens=510" in caplog.text
+    assert "cached_input_tokens=200" in caplog.text
+    assert "output_tokens=12" in caplog.text
+    assert "reason=content_filter" in caplog.text
     assert "SECRET_SYSTEM_PROMPT" not in caplog.text
     assert "SECRET_NOVEL_BODY" not in caplog.text
 

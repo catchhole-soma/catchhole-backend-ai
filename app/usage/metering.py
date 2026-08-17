@@ -18,7 +18,11 @@ from app.embeddings.exceptions import (
     RecoverableEmbeddingProviderError,
 )
 from app.embeddings.responses import EmbeddingBatchResponse
-from app.llm.exceptions import LlmOutputTruncatedError, LlmResponseValidationError
+from app.llm.exceptions import (
+    LlmIncompleteResponseError,
+    LlmOutputTruncatedError,
+    LlmResponseValidationError,
+)
 from app.llm.protocols import TextGenerationClient
 from app.llm.responses import LlmTextResponse
 
@@ -145,13 +149,16 @@ class MeteredTextGenerationClient:
                     raise
                 except Exception as exc:
                     usage = _usage_from_text_error(exc)
-                    if isinstance(exc, LlmOutputTruncatedError):
+                    if isinstance(exc, (LlmOutputTruncatedError, LlmIncompleteResponseError)):
                         logger.warning(
-                            "LLM output truncated. purpose=%s attempt=%s "
-                            "max_output_tokens=%s output_tokens=%s reason=%s",
+                            "LLM response incomplete. purpose=%s attempt=%s "
+                            "max_output_tokens=%s input_tokens=%s cached_input_tokens=%s "
+                            "output_tokens=%s reason=%s",
                             self.purpose,
                             self._attempt,
-                            exc.max_output_tokens,
+                            max_output_tokens,
+                            exc.input_token_count,
+                            exc.cached_input_token_count,
                             exc.output_token_count,
                             exc.incomplete_reason,
                         )

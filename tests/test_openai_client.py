@@ -258,15 +258,24 @@ def test_other_incomplete_response_is_never_treated_as_success() -> None:
                         "status": "incomplete",
                         "incomplete_details": {"reason": "content_filter"},
                         "output_text": "{}",
-                        "usage": {"input_tokens": 10, "output_tokens": 1},
+                        "usage": {
+                            "input_tokens": 10,
+                            "input_tokens_details": {"cached_tokens": 4},
+                            "output_tokens": 1,
+                        },
                     },
                 )
             )
         ),
     )
 
-    with pytest.raises(LlmIncompleteResponseError):
+    with pytest.raises(LlmIncompleteResponseError) as exc_info:
         asyncio.run(client.create_text_response(system_prompt="규칙", user_prompt="원문"))
+
+    assert exc_info.value.incomplete_reason == "content_filter"
+    assert exc_info.value.input_token_count == 10
+    assert exc_info.value.cached_input_token_count == 4
+    assert exc_info.value.output_token_count == 1
 
 
 def test_missing_response_status_is_never_treated_as_success() -> None:

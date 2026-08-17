@@ -39,3 +39,20 @@ class LlmOutputTruncatedError(LlmResponseValidationError):
 
 class LlmIncompleteResponseError(LlmResponseValidationError):
     """HTTP 200이지만 Responses API 상태가 completed가 아닌 provider 실패다."""
+
+    def __init__(
+        self,
+        message: str,
+        input_token_count: int | None = None,
+        cached_input_token_count: int | None = None,
+        output_token_count: int | None = None,
+        *,
+        incomplete_reason: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            input_token_count=input_token_count,
+            cached_input_token_count=cached_input_token_count,
+            output_token_count=output_token_count,
+        )
+        self.incomplete_reason = incomplete_reason
