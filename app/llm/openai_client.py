@@ -61,6 +61,8 @@ class OpenAIResponsesClient:
         request_body = {
             # 호출별 model이 있으면 그걸 쓰고, 없으면 Settings의 기본 모델을 쓴다.
             "model": effective_model,
+            # 웹소설 원문과 분석 결과가 provider 측에 저장되지 않도록 호출마다 강제한다.
+            "store": False,
             "input": [
                 {
                     "role": "system",

@@ -50,6 +50,7 @@ def test_create_text_response_calls_openai_responses_api() -> None:
     assert request.url.path == "/v1/responses"
     assert json.loads(request.content) == {
         "model": "gpt-4.1-mini",
+        "store": False,
         "input": [
             {
                 "role": "system",

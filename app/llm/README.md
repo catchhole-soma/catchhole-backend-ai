@@ -22,6 +22,7 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
 
 - `openai_client.py`
   - OpenAI Responses API를 호출합니다.
+  - 원고와 분석 결과가 provider 측에 저장되지 않도록 모든 요청에 `store: false`를 강제합니다.
   - `LLM_API_KEY`, 단계별 `LLM_EXTRACTION_MODEL`·`LLM_SUBJECT_RESOLUTION_MODEL`·`LLM_COMPARISON_MODEL`, fallback `LLM_MODEL`, `LLM_REASONING_EFFORT`, `OPENAI_RESPONSES_API_URL` 설정을 사용합니다.
   - 운영 기본 라우팅은 후보 추출 `gpt-5.6-terra`, 주체 해소·비교 `gpt-5.6-luna`이며 공통 MVP 추론 강도는 `none`입니다.
   - 같은 정적 prompt prefix를 공유하는 호출에는 안정적인 `prompt_cache_key`를 전달합니다.
