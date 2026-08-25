@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 
-# 청크는 문단 경계를 우선해 약 2,500자로 묶고, 한 청크가 3,000자를 넘지 않게 한다.
+# 청크는 문단 경계를 우선해 약 6,000자로 묶고, 한 청크가 7,000자를 넘지 않게 한다.
 # 마지막 청크와 짧은 회차는 1,000자보다 작을 수 있다.
-DEFAULT_TARGET_CHARS = 2500
-DEFAULT_MAX_CHARS = 3000
+DEFAULT_TARGET_CHARS = 6000
+DEFAULT_MAX_CHARS = 7000
 DEFAULT_MIN_CHARS = 1000
 
 #Java의 record와 유사한 형식 (현재는 한 파일의 내부 응답 경우에 사용 중)
@@ -51,7 +51,7 @@ def split_into_chunks(
             continue
 
         current.append(paragraph)
-        # target에 도달한 뒤 확정해야 기본 청크가 2,500자 안팎의 문맥을 갖는다.
+        # target에 도달한 뒤 확정해야 기본 청크가 6,000자 안팎의 문맥을 갖는다.
         if _combined_length(current) >= target_chars and _combined_length(current) >= min_chars:
             _flush_chunk(chunks, current, text)
             current = []

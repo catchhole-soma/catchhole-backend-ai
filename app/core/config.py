@@ -35,12 +35,13 @@ class Settings(BaseSettings):
     openai_responses_api_url: str = "https://api.openai.com/v1/responses"
     # LLM 응답 JSON 파싱/검증 실패 시 전체 시도 횟수
     llm_extraction_max_attempts: int = 3
-    # purpose별 Responses API 출력 상한. 설정 추출만 truncation 시 한 번 8K로 확장한다.
-    llm_setting_extraction_max_output_tokens: int = 4000
-    llm_setting_extraction_retry_max_output_tokens: int = 8000
-    llm_world_setting_extraction_max_output_tokens: int = 3000
-    llm_subject_resolution_max_output_tokens: int = 1000
-    llm_comparison_max_output_tokens: int = 2000
+    # purpose별 Responses API 출력 상한. 캐릭터·세계관 추출은 truncation 시 한 번 확장한다.
+    llm_setting_extraction_max_output_tokens: int = 6000
+    llm_setting_extraction_retry_max_output_tokens: int = 12000
+    llm_world_setting_extraction_max_output_tokens: int = 5000
+    llm_world_setting_extraction_retry_max_output_tokens: int = 10000
+    llm_subject_resolution_max_output_tokens: int = 2000
+    llm_comparison_max_output_tokens: int = 3000
     # 현재 사용 모델의 공식 최대 출력 한도보다 큰 오설정을 시작 시 차단한다.
     llm_provider_max_output_tokens: int = 128000
     # 한 프로세스 안에서 token 예약부터 provider 정산까지 동시에 수행할 LLM 요청 상한
@@ -90,6 +91,7 @@ class Settings(BaseSettings):
         "llm_setting_extraction_max_output_tokens",
         "llm_setting_extraction_retry_max_output_tokens",
         "llm_world_setting_extraction_max_output_tokens",
+        "llm_world_setting_extraction_retry_max_output_tokens",
         "llm_subject_resolution_max_output_tokens",
         "llm_comparison_max_output_tokens",
         "llm_provider_max_output_tokens",
@@ -112,10 +114,18 @@ class Settings(BaseSettings):
             raise ValueError(
                 "LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS must not exceed its retry limit."
             )
+        if (
+            self.llm_world_setting_extraction_max_output_tokens
+            > self.llm_world_setting_extraction_retry_max_output_tokens
+        ):
+            raise ValueError(
+                "LLM_WORLD_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS must not exceed its retry limit."
+            )
         configured_limits = (
             self.llm_setting_extraction_max_output_tokens,
             self.llm_setting_extraction_retry_max_output_tokens,
             self.llm_world_setting_extraction_max_output_tokens,
+            self.llm_world_setting_extraction_retry_max_output_tokens,
             self.llm_subject_resolution_max_output_tokens,
             self.llm_comparison_max_output_tokens,
         )

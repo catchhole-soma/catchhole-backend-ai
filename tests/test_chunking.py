@@ -18,13 +18,11 @@ def test_split_paragraphs_keeps_offsets_from_episode_source() -> None:
 
 
 def test_split_into_chunks_groups_paragraphs_with_source_positions() -> None:
-    text = "\n".join(
-        [
-            "첫 번째 문단입니다.",
-            "두 번째 문단입니다.",
-            "세 번째 문단입니다.",
-            "네 번째 문단입니다.",
-        ]
+    text = (
+        "첫 번째 문단입니다.\n"
+        "두 번째 문단입니다.\n"
+        "세 번째 문단입니다.\n"
+        "네 번째 문단입니다."
     )
 
     chunks = split_into_chunks(text, target_chars=25, max_chars=50, min_chars=10)
@@ -70,14 +68,14 @@ def test_split_into_chunks_preserves_source_control_characters_and_offsets() -> 
     assert text[chunks[0].start_offset : chunks[0].end_offset] == text
 
 
-def test_default_chunk_policy_targets_2500_and_caps_at_3000_characters() -> None:
+def test_default_chunk_policy_targets_6000_and_caps_at_7000_characters() -> None:
     paragraph = "가" * 480
-    text = "\n".join(paragraph for _ in range(13))
+    text = "\n".join(paragraph for _ in range(30))
 
     chunks = split_into_chunks(text)
 
-    assert DEFAULT_TARGET_CHARS == 2500
-    assert DEFAULT_MAX_CHARS == 3000
+    assert DEFAULT_TARGET_CHARS == 6000
+    assert DEFAULT_MAX_CHARS == 7000
     assert len(chunks) == 3
     assert all(len(chunk.chunk_text) <= DEFAULT_MAX_CHARS for chunk in chunks)
     assert all(
@@ -91,9 +89,9 @@ def test_default_chunk_policy_targets_2500_and_caps_at_3000_characters() -> None
 
 
 def test_default_chunk_policy_caps_combined_source_slice_with_blank_lines() -> None:
-    text = ("가" * 600) + ("\r\n" * 20) + ("나" * 2900)
+    text = ("가" * 1600) + ("\r\n" * 20) + ("나" * 6500)
 
     chunks = split_into_chunks(text)
 
-    assert [len(chunk.chunk_text) for chunk in chunks] == [600, 2900]
+    assert [len(chunk.chunk_text) for chunk in chunks] == [1600, 6500]
     assert all(len(chunk.chunk_text) <= DEFAULT_MAX_CHARS for chunk in chunks)
