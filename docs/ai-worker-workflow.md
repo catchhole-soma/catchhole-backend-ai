@@ -426,9 +426,9 @@ Python은 읽은 문자열의 BOM, CRLF, 탭, 특수 공백을 제거하거나 �
 
 | 값 | 의미 |
 | --- | --- |
-| `target_chars = 2500` | 가능하면 이 길이에 도달한 뒤 chunk를 확정 |
+| `target_chars = 6000` | 가능하면 이 길이에 도달한 뒤 chunk를 확정 |
 | `min_chars = 1000` | 너무 짧은 chunk를 피하기 위한 최소 기준 |
-| `max_chars = 3000` | 청크 상한 및 긴 단일 문단 분할 기준 |
+| `max_chars = 7000` | 청크 상한 및 긴 단일 문단 분할 기준 |
 
 청킹 규칙:
 
@@ -437,6 +437,8 @@ Python은 읽은 문자열의 BOM, CRLF, 탭, 특수 공백을 제거하거나 �
 3. 일반 문단은 현재 chunk 후보에 합쳐봅니다.
 4. 합친 길이가 `target_chars`에 도달하고 `min_chars` 이상이면 해당 문단까지 포함해 chunk를 확정합니다.
 5. 문맥 보존을 위해 문단 경계를 우선하므로, chunk 길이가 항상 `target_chars` 이하로 고정되지는 않습니다.
+
+`target_chars`와 `max_chars`는 회차 전체 길이가 아니라 청크 한 건의 기준입니다. 긴 회차는 여러 청크로 나뉘고, 여러 회차를 한 번에 요청해도 Spring이 회차별 Job을 만들므로 각 회차에 같은 6,000/7,000 정책을 독립 적용합니다.
 
 `EpisodeChunkDraft.chunk_text`는 문단 문자열을 새로 조립하지 않습니다.
 
@@ -537,7 +539,7 @@ LLM이 분석할 청크 원문
 - 시간·사건·타임라인 정보와 schema의 `schemaKey`, `displayName`, `aliases` 또는 `attributePattern`에 대응하지 않는 설정은 후보에서 제외합니다.
 - fuzzy alias 매칭이나 schema 자동 생성은 수행하지 않습니다.
 - 같은 청크의 동일 캐릭터·`attribute_name`·`value_type`·`value_json` 후보는 가장 직접적인 근거 하나만 반환합니다. 같은 설정 key라도 실제 `value_json`이 다르면 별도 후보로 유지합니다.
-- 목적별 출력 상한은 환경변수로 주입합니다. 기본값은 설정 추출 4,000, 설정 추출 절단 재시도 8,000, 세계관 추출 3,000, 주체 해소 1,000, 비교 2,000이며 모두 양수이고 provider 상한 128,000 이하인지 기동 시 검증합니다.
+- 목적별 출력 상한은 환경변수로 주입합니다. 기본값은 캐릭터 추출 6,000·절단 재시도 12,000, 세계관 추출 5,000·절단 재시도 10,000, 주체 해소 2,000, 비교 3,000이며 모두 양수이고 provider 상한 128,000 이하인지 기동 시 검증합니다.
 
 LLM 응답 처리:
 
@@ -552,8 +554,8 @@ LLM 응답 처리:
 
 - JSON 문법이 깨진 경우 재시도합니다.
 - 필수 필드 누락, enum 범위 오류, confidence 범위 오류처럼 schema 검증에 실패하면 재시도합니다.
-- Responses API가 `status=incomplete`와 출력 상한 reason을 반환하거나, JSON 파싱 실패 시 실제 `outputTokens`가 설정한 상한과 같으면 `LLM_OUTPUT_TRUNCATED`로 분류합니다. 설정 추출만 상한을 4,000에서 8,000으로 한 번 높여 재시도하고, 두 번째 절단은 즉시 종료합니다.
-- 상향 재시도는 8,000 기준 예상 최대량을 새 request ID로 먼저 예약합니다. Spring이 quota 409를 반환하면 provider를 호출하지 않습니다.
+- Responses API가 `status=incomplete`와 출력 상한 reason을 반환하거나, JSON 파싱 실패 시 실제 `outputTokens`가 설정한 상한과 같으면 `LLM_OUTPUT_TRUNCATED`로 분류합니다. 캐릭터 추출은 6,000에서 12,000, 세계관 추출은 5,000에서 10,000으로 한 번만 높여 재시도하고 두 번째 절단은 즉시 종료합니다.
+- 절단 상향은 JSON/schema 검증 재시도 횟수를 소비하지 않습니다. 확장 호출은 증가한 상한 기준 예상 최대량을 새 request ID로 먼저 예약하며, Spring이 quota 409를 반환하면 provider를 호출하지 않습니다.
 - `source_chunk_id` 누락·오형식은 Worker가 결정적으로 보정하므로 재시도 사유가 아닙니다.
 - schema상 유효한 문자열이지만 프롬프트 정책상 애매한 값은 현재 재시도하지 않습니다.
 

@@ -34,6 +34,7 @@
 
 - 장기 실행 runner는 `AI_WORKER_CONCURRENCY`개의 실행 슬롯만 유지한다. 반드시 빈 슬롯을 확보한 뒤 Job 하나를 claim해 즉시 Task로 실행하고, 슬롯 없이 Job을 미리 claim해 프로세스 내부 대기열에 쌓지 않는다.
 - 한 Job 안의 청크와 분석 stage는 순차 처리한다. `LLM_MAX_CONCURRENT_REQUESTS`는 프로세스 내부 provider 호출 상한이고, 동기 DB/S3 작업은 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에 넘긴다.
+- 회차 원문 청킹 기본값은 목표 6,000자·최대 7,000자·최소 1,000자다. 여러 회차 분석 요청도 Spring이 만든 회차별 Job에서 각각 같은 정책을 적용하며 한 Job 안에서 회차 원문을 합치지 않는다.
 - 운영 `SETTING_EXTRACTION` 검증 rollout은 분석 Worker 2개 × 프로세스당 동시 Job 5개 = 최대 10개다. 별도 `character-comparison`과 `world-comparison` 프로세스는 각각 Job·LLM 동시성을 1로 유지한다. 10은 설정 추출 Job 용량이며 여러 프로세스와 재비교 Worker를 합친 provider 계정 전체의 분산 상한은 아니다. 50개 Job 부하 테스트에서 Backend·PostgreSQL·LLM 지표를 확인하고 기준 미달이면 프로세스당 3개로 되돌린다.
 - 각 Job의 lease token, heartbeat, 토큰 예약·정산, 실패 상태는 Task별로 분리한다. 한 Task의 예외가 실행 중인 다른 Job을 취소하지 않으며 heartbeat도 Job별 독립 Task로 실행한다.
 - 종료 신호를 받으면 신규 claim을 즉시 중단하고 `AI_WORKER_SHUTDOWN_GRACE_SECONDS` 동안 실행 중 Job과 heartbeat를 유지한다. 운영 내부 grace는 180초, Compose `stop_grace_period`는 210초로 두며, grace를 넘긴 취소 Job은 heartbeat를 중단해 Spring의 lease 회수 경로로 재처리한다.
@@ -62,7 +63,7 @@
 - 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra·Luna의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
 - GPT-5.6 모델의 토큰 예약량은 `o200k_base` tokenizer로 계산한다. 사용하는 tiktoken 버전이 모델 별칭을 모를 수 있으므로 모델명 자동 탐지 실패를 byte 상한으로 방치하지 않는다.
 - Responses API는 HTTP 200만으로 성공을 판정하지 않고 `status=completed`를 요구한다. `status=incomplete`와 `incomplete_details.reason=max_tokens|max_output_tokens`, 또는 JSON 파싱 실패와 `outputTokens == maxOutputTokens`가 함께 나타나면 `LLM_OUTPUT_TRUNCATED`로 분류한다.
-- 출력 상한은 목적별 환경변수로 주입하고 모두 양수이며 provider 최대 상한 이하인지 기동 시 검증한다. 기본값은 설정 추출 4,000, 절단 재시도 8,000, 세계관 추출 3,000, 주체 해소 1,000, 비교 2,000, provider 상한 128,000이다.
-- 설정 추출의 출력 절단만 동일 입력으로 상한을 4,000→8,000으로 한 번 확장한다. 두 번째 절단은 종료하고, 일반 JSON 문법·schema 오류의 기존 재시도와 섞지 않는다. 확장 호출도 증가한 최대량을 먼저 예약하며 quota 예약이 거절되면 provider를 호출하지 않는다.
+- 출력 상한은 목적별 환경변수로 주입하고 모두 양수이며 provider 최대 상한 이하인지 기동 시 검증한다. 기본값은 캐릭터 추출 6,000·절단 재시도 12,000, 세계관 추출 5,000·절단 재시도 10,000, 주체 해소 2,000, 비교 3,000, provider 상한 128,000이다.
+- 캐릭터·세계관 추출의 출력 절단은 동일 입력으로 각각 6,000→12,000, 5,000→10,000으로 한 번만 확장한다. 두 번째 절단은 종료하고 일반 JSON 문법·schema 오류의 기존 재시도 횟수와 섞지 않는다. 확장 호출도 증가한 최대량을 먼저 예약하며 quota 예약이 거절되면 provider를 호출하지 않는다.
 - provider 사용량이 포함된 실패·출력 절단은 실제 input/cached/output을 `FAILURE`로 정산한다. 로그에는 목적·시도·출력 상한·사용량·incomplete reason만 남기고 prompt, 원고, 응답 본문, 내부 인증값은 남기지 않는다.
 - Worker가 Spring에 보고하는 실패는 `AnalysisFailureCode`를 반드시 포함한다. 분석과 비교 분류기는 토큰 부족·출력 절단·네트워크·provider·응답 파싱·비교 검증·lease 만료·예상 밖 오류를 구분하고 자유 형식 예외 문자열로 복구 정책을 결정하지 않는다.
