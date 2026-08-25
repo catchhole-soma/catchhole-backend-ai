@@ -45,9 +45,9 @@ output_tokens       = 9
 | `SETTING_EXTRACTION` | 26,409.8 | 10,689.7 | 6,185.8 | 1.73배 |
 | `SUBJECT_RESOLUTION` | 19,094.0 | 6,347.0 | 4,711.5 | 1.36배 |
 
-Worker 재시작 전 프로세스는 변경 전 byte 기반 예약 코드를 계속 사용했습니다. 재시작 후에는 모델 tokenizer로 계산한 input에 10%와 256 token의 안전 여유, 호출별 최대 output을 더하는 현재 정책이 적용되었습니다.
+Worker 재시작 전 프로세스는 변경 전 byte 기반 예약 코드를 계속 사용했습니다. 재시작 후에는 모델 tokenizer로 계산한 input에 10%와 256 token의 안전 여유, 호출별 최대 output을 더하는 당시 정책이 적용되었습니다.
 
-설정 추출 예약량이 실제 사용량보다 큰 주된 이유는 실제 output이 수백 token이어도 후보가 많은 응답이 잘리지 않도록 `max_output_tokens=4000` 전체를 예약하기 때문입니다. `reserved_tokens`는 provider 청구량이 아니라 호출 중 quota를 임시로 확보하는 값이며, 응답 후 실제 usage로 정산됩니다.
+이 검증 당시 설정 추출 상한은 `max_output_tokens=4000`이었습니다. 현재 캐릭터 추출 기본값은 6,000이고 절단 시 12,000으로 한 번 확장하므로 이 표의 예약량 수치를 현재 운영값으로 해석하지 않습니다. `reserved_tokens`는 provider 청구량이 아니라 호출 중 quota를 임시로 확보하는 값이며, 응답 후 실제 usage로 정산됩니다.
 
 ### 비용 추정
 

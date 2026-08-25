@@ -154,6 +154,10 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `LLM_MODEL`: 단계별 모델 변수가 없을 때 사용하는 하위 호환 기본 모델명
 - `LLM_REASONING_EFFORT`: GPT-5.6 추론 강도. MVP 기본값은 `none`이며 품질 평가 후 상향합니다.
 - `OPENAI_RESPONSES_API_URL`: OpenAI Responses API endpoint
+- `LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 캐릭터 설정 추출의 최초 6,000·절단 재시도 12,000 token 상한
+- `LLM_WORLD_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_WORLD_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 세계관 추출의 최초 5,000·절단 재시도 10,000 token 상한
+- `LLM_SUBJECT_RESOLUTION_MAX_OUTPUT_TOKENS`, `LLM_COMPARISON_MAX_OUTPUT_TOKENS`: 주체 해소 2,000·비교 3,000 token 상한
+- `LLM_PROVIDER_MAX_OUTPUT_TOKENS`: 목적별 상한을 검증할 provider 전체 출력 상한. 기본값은 128,000입니다.
 - `LLM_HTTP_MAX_RETRIES`: 429/5xx/timeout 같은 일시 provider 오류의 재시도 횟수. 최초 요청은 제외하며 운영 기본값은 3입니다.
 - `LLM_HTTP_RETRY_BASE_SECONDS`: provider 재시도의 지수 backoff 기준값. 운영 기본값 2초에서 2초, 4초, 8초와 jitter를 적용하고 `Retry-After`가 있으면 우선합니다.
 - `AI_WORKER_CONCURRENCY`: 현재 프로세스가 동시에 실행할 Job 슬롯 수. 운영 검증값은 5입니다.

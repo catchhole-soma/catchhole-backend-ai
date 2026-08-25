@@ -523,7 +523,7 @@ class FakeTextGenerationClient:
         # source_chunk_id는 LLM이 만들 값이 아니므로 prompt에 노출하지 않는다.
         assert "JSON만 반환하세요." in system_prompt
         assert str(CHUNK_ID) not in user_prompt
-        assert max_output_tokens == 4000
+        assert max_output_tokens == 6000
         assert prompt_cache_key is not None
         assert prompt_cache_key.startswith("setting-extraction:v6:")
         return LlmTextResponse(

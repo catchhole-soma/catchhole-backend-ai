@@ -82,44 +82,69 @@ async def request_validated_model(
     logger: Logger,
     validate_model: Callable[[ModelT], None] | None = None,
     retry_user_prompt_builder: Callable[[str, Exception], str] | None = None,
+    truncation_retry_max_output_tokens: int | None = None,
 ) -> ModelT:
     """LLM JSON 객체를 Pydantic 모델로 검증하고 동일 요청 범위에서 재시도한다."""
 
     last_error: Exception | None = None
     current_user_prompt = user_prompt
+    current_max_output_tokens = max_output_tokens
+    truncation_retry_used = False
     for attempt in range(1, max_attempts + 1):
-        try:
-            response = await client.create_text_response(
-                system_prompt=system_prompt,
-                user_prompt=current_user_prompt,
-                model=model,
-                max_output_tokens=max_output_tokens,
-                prompt_cache_key=prompt_cache_key,
-            )
-            result = response_model.model_validate(parse_json_object(response.text))
-            if validate_model is not None:
-                validate_model(result)
-            return result
-        except LlmOutputTruncatedError:
-            # 같은 prompt와 같은 cap 재시도는 같은 절단을 반복하므로 상위 정책에 즉시 맡긴다.
-            raise
-        except LlmIncompleteResponseError:
-            # provider가 완료하지 못한 응답은 JSON/schema 보정으로 회복할 수 없다.
-            raise
-        except (TypeError, ValueError) as exc:
-            last_error = exc
-            if attempt < max_attempts:
+        while True:
+            try:
+                response = await client.create_text_response(
+                    system_prompt=system_prompt,
+                    user_prompt=current_user_prompt,
+                    model=model,
+                    max_output_tokens=current_max_output_tokens,
+                    prompt_cache_key=prompt_cache_key,
+                )
+                result = response_model.model_validate(parse_json_object(response.text))
+                if validate_model is not None:
+                    validate_model(result)
+                return result
+            except LlmOutputTruncatedError as exc:
+                can_expand_once = (
+                    not truncation_retry_used
+                    and truncation_retry_max_output_tokens is not None
+                    and truncation_retry_max_output_tokens > current_max_output_tokens
+                )
+                if not can_expand_once:
+                    # 같은 prompt와 같은 cap 재시도는 같은 절단을 반복하므로 즉시 종료한다.
+                    raise
+                truncation_retry_used = True
+                current_max_output_tokens = truncation_retry_max_output_tokens
                 logger.warning(
-                    "%s response validation failed. retrying attempt=%s/%s error=%s",
+                    "%s output truncated; increasing cap once. "
+                    "attempt=%s/%s max_output_tokens=%s next_max_output_tokens=%s "
+                    "output_tokens=%s reason=%s",
                     operation_name,
                     attempt,
                     max_attempts,
-                    safe_validation_error_summary(exc),
+                    exc.max_output_tokens,
+                    current_max_output_tokens,
+                    exc.output_token_count,
+                    exc.incomplete_reason,
                 )
-                if retry_user_prompt_builder is not None:
-                    # 매번 최초 입력을 기준으로 피드백을 새로 만들어 실패 문구가
-                    # 재시도마다 중첩되지 않게 한다.
-                    current_user_prompt = retry_user_prompt_builder(user_prompt, exc)
+            except LlmIncompleteResponseError:
+                # provider가 완료하지 못한 응답은 JSON/schema 보정으로 회복할 수 없다.
+                raise
+            except (TypeError, ValueError) as exc:
+                last_error = exc
+                if attempt < max_attempts:
+                    logger.warning(
+                        "%s response validation failed. retrying attempt=%s/%s error=%s",
+                        operation_name,
+                        attempt,
+                        max_attempts,
+                        safe_validation_error_summary(exc),
+                    )
+                    if retry_user_prompt_builder is not None:
+                        # 매번 최초 입력을 기준으로 피드백을 새로 만들어 실패 문구가
+                        # 재시도마다 중첩되지 않게 한다.
+                        current_user_prompt = retry_user_prompt_builder(user_prompt, exc)
+                break
     error_type = (
         ComparisonValidationError
         if "comparison" in operation_name.casefold()

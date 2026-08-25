@@ -23,6 +23,7 @@ class WorldSettingExtractor:
         model: str | None = None,
         max_attempts: int | None = None,
         max_output_tokens: int | None = None,
+        truncation_retry_max_output_tokens: int | None = None,
     ) -> None:
         settings = get_settings()
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
@@ -36,8 +37,19 @@ class WorldSettingExtractor:
             if max_output_tokens is None
             else max_output_tokens
         )
+        self.truncation_retry_max_output_tokens = (
+            settings.llm_world_setting_extraction_retry_max_output_tokens
+            if truncation_retry_max_output_tokens is None
+            else truncation_retry_max_output_tokens
+        )
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be at least 1.")
+        if self.max_output_tokens < 1:
+            raise ValueError("max_output_tokens must be at least 1.")
+        if self.truncation_retry_max_output_tokens < self.max_output_tokens:
+            raise ValueError(
+                "truncation_retry_max_output_tokens must be at least max_output_tokens."
+            )
 
     async def extract_from_chunk(
         self,
@@ -64,4 +76,5 @@ class WorldSettingExtractor:
             prompt_cache_key=WORLD_SETTING_EXTRACTION_CACHE_KEY,
             operation_name="World-setting extraction",
             logger=logger,
+            truncation_retry_max_output_tokens=self.truncation_retry_max_output_tokens,
         )

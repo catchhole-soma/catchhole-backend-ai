@@ -6,6 +6,7 @@ import pytest
 
 from app.analysis.world_setting_extractor import WorldSettingExtractor
 from app.analysis.world_setting_schemas import ExtractedWorldSettingCandidate
+from app.llm.exceptions import LlmOutputTruncatedError
 from app.llm.responses import LlmTextResponse
 from app.mappers.world_setting_candidate_mapper import WorldSettingCandidateMapper
 from app.models.episode_chunk import EpisodeChunk
@@ -61,6 +62,68 @@ def test_world_setting_extractor_accepts_empty_result_for_temporary_event() -> N
     )
 
     assert result.candidates == []
+
+
+def test_world_setting_extractor_expands_output_cap_once_after_truncation() -> None:
+    client = FakeTextClient([
+        _truncated_error(5000),
+        json.dumps({"candidates": []}),
+    ])
+
+    result = asyncio.run(
+        WorldSettingExtractor(
+            llm_client=client,
+            max_attempts=3,
+            max_output_tokens=5000,
+            truncation_retry_max_output_tokens=10000,
+        ).extract_from_chunk("미궁에는 여러 층의 규칙이 존재한다.")
+    )
+
+    assert result.candidates == []
+    assert [request["max_output_tokens"] for request in client.requests] == [5000, 10000]
+
+
+def test_world_setting_extractor_stops_after_second_truncation() -> None:
+    client = FakeTextClient([
+        _truncated_error(5000),
+        _truncated_error(10000),
+    ])
+
+    with pytest.raises(LlmOutputTruncatedError):
+        asyncio.run(
+            WorldSettingExtractor(
+                llm_client=client,
+                max_attempts=3,
+                max_output_tokens=5000,
+                truncation_retry_max_output_tokens=10000,
+            ).extract_from_chunk("미궁에는 여러 층의 규칙이 존재한다.")
+        )
+
+    assert [request["max_output_tokens"] for request in client.requests] == [5000, 10000]
+
+
+def test_world_setting_truncation_expansion_does_not_consume_validation_attempt() -> None:
+    client = FakeTextClient([
+        _response(category="RACE", confidence=0.7),
+        _truncated_error(5000),
+        json.dumps({"candidates": []}),
+    ])
+
+    result = asyncio.run(
+        WorldSettingExtractor(
+            llm_client=client,
+            max_attempts=2,
+            max_output_tokens=5000,
+            truncation_retry_max_output_tokens=10000,
+        ).extract_from_chunk("미궁에는 여러 층의 규칙이 존재한다.")
+    )
+
+    assert result.candidates == []
+    assert [request["max_output_tokens"] for request in client.requests] == [
+        5000,
+        5000,
+        10000,
+    ]
 
 
 def test_world_setting_extractor_accepts_one_level_scope() -> None:
@@ -223,11 +286,23 @@ def _response(
     )
 
 
+def _truncated_error(max_output_tokens: int) -> LlmOutputTruncatedError:
+    return LlmOutputTruncatedError(
+        "output truncated",
+        incomplete_reason="max_output_tokens",
+        max_output_tokens=max_output_tokens,
+        output_token_count=max_output_tokens,
+    )
+
+
 class FakeTextClient:
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[str | Exception]) -> None:
         self.responses = responses
         self.requests: list[dict] = []
 
     async def create_text_response(self, **kwargs) -> LlmTextResponse:
         self.requests.append(kwargs)
-        return LlmTextResponse(text=self.responses.pop(0))
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return LlmTextResponse(text=response)

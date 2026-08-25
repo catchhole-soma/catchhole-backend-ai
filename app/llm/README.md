@@ -75,7 +75,7 @@ Spring의 `ai_token_usages`를 기준으로 조회합니다.
 현재 단계에서는 prompt로 JSON 응답을 요구하고, Python schema로 결과를 검증합니다.
 
 JSON 파싱 실패 또는 Python schema 검증 실패는 `CharacterSettingExtractor`에서 재시도합니다. 다만 프롬프트 정책 위반까지 강제하지는 않습니다.
-설정 후보 추출 요청은 후보 배열이 응답 중간에 잘리는 위험을 줄이기 위해 `max_output_tokens=4000`을 사용하며, 다른 LLM 호출의 기본 출력 한도는 변경하지 않습니다.
+캐릭터 설정 추출은 `max_output_tokens=6000`에서 시작해 출력 절단 시 12000으로, 세계관 추출은 5000에서 시작해 절단 시 10000으로 한 번만 확장합니다. 주체 해소는 2000, 비교는 3000을 사용하며 절단 확장 재시도는 하지 않습니다.
 
 예를 들어 `attribute_name`이 `item`처럼 suffix 없이 오거나, `confidence`가 `0.0`인 응답은 프롬프트상 원하지 않는 값이지만 현재 schema만으로는 통과할 수 있습니다.
 
