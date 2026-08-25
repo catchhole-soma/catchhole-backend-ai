@@ -241,7 +241,17 @@ def test_worker_close_attempts_every_owned_resource_after_one_close_fails() -> N
     assert blocking_executor.closed is True
 
 
-def test_worker_injects_bounded_executor_into_embedding_persistence() -> None:
+def test_worker_injects_bounded_executor_into_embedding_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unused_session_factory() -> None:
+        raise AssertionError("This test must not access the database.")
+
+    monkeypatch.setattr(
+        "app.worker.analysis_job_worker.get_session_maker",
+        lambda: unused_session_factory,
+    )
+
     async def scenario() -> None:
         worker = AnalysisJobWorker(
             spring_client=FakeSpringWorkerClient(payload=None),
