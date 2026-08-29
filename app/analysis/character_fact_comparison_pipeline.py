@@ -7,7 +7,7 @@ import httpx
 
 from app.analysis.character_fact_comparator import CharacterFactComparator
 from app.clients.exceptions import AiTokenQuotaExhaustedError
-from app.domain.enums import AnalysisFailureCode
+from app.domain.enums import AnalysisFailureCode, CharacterFactComparisonOperation
 from app.domain.setting_values import normalize_setting_display_value
 from app.exceptions.failure_classification import comparison_failure_code
 from app.schemas.worker import (
@@ -166,6 +166,17 @@ class CharacterFactComparisonPipeline:
                 f"P{index}": entry for index, entry in enumerate(context.snapshot_entries, start=1)
             }
             target = None if decision.target_ref is None else entries_by_ref[decision.target_ref]
+            proposed_fact_value = decision.proposed_fact_value
+            if decision.operation in {
+                CharacterFactComparisonOperation.ADD,
+                CharacterFactComparisonOperation.UPDATE,
+                CharacterFactComparisonOperation.MERGE,
+            }:
+                proposed_fact_value = normalize_setting_display_value(
+                    context.candidate.value_type,
+                    decision.proposed_value_json,
+                    decision.proposed_fact_value,
+                )
             request = WorkerCharacterFactComparisonCompleteRequest(
                 operation=decision.operation,
                 target_fact_type=None if target is None else target.fact_type,
@@ -177,11 +188,7 @@ class CharacterFactComparisonPipeline:
                     )
                     for reference in decision.removed_snapshot_refs
                 ],
-                proposed_fact_value=normalize_setting_display_value(
-                    context.candidate.value_type,
-                    decision.proposed_value_json,
-                    decision.proposed_fact_value,
-                ),
+                proposed_fact_value=proposed_fact_value,
                 proposed_value_json=decision.proposed_value_json,
                 temporal_scope=decision.temporal_scope,
                 comparison_reason=decision.comparison_reason,

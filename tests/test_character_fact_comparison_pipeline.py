@@ -112,6 +112,124 @@ def test_pipeline_maps_same_slot_remove_without_proposed_value() -> None:
 
 
 @pytest.mark.parametrize(
+    ("value_type", "operation", "temporal_scope", "target_ref"),
+    [
+        ("NUMBER", "EXCLUDE", "PRESENT", None),
+        ("NUMBER", "HISTORY_ONLY", "PAST", None),
+        ("NUMBER", "REVIEW_REQUIRED", "UNKNOWN", None),
+        ("NUMBER", "REMOVE", "PRESENT", "P1"),
+        ("BOOLEAN", "EXCLUDE", "PRESENT", None),
+        ("BOOLEAN", "HISTORY_ONLY", "PAST", None),
+        ("BOOLEAN", "REVIEW_REQUIRED", "UNKNOWN", None),
+        ("BOOLEAN", "REMOVE", "PRESENT", "P1"),
+    ],
+)
+def test_pipeline_keeps_non_applying_scalar_proposals_null(
+    value_type: str,
+    operation: str,
+    temporal_scope: str,
+    target_ref: str | None,
+) -> None:
+    spring = FakeSpringApi([CANDIDATE_ID], candidate_value_type=value_type)
+    comparator = FakeComparator(
+        [
+            CharacterFactComparisonDecision(
+                operation=operation,
+                target_ref=target_ref,
+                proposed_fact_value=None,
+                proposed_value_json=None,
+                temporal_scope=temporal_scope,
+                comparison_reason="현재 설정에 값을 반영하지 않는다.",
+            )
+        ]
+    )
+
+    result = asyncio.run(
+        CharacterFactComparisonPipeline(spring, comparator).process_all(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+        )
+    )
+
+    assert result.completed_count == 1
+    assert result.failed_count == 0
+    assert spring.failures == []
+    request = spring.completions[0]
+    assert request.proposed_fact_value is None
+    assert request.proposed_value_json is None
+
+
+@pytest.mark.parametrize("operation", ["ADD", "UPDATE", "MERGE"])
+def test_pipeline_requires_number_value_field_for_applying_operations(operation: str) -> None:
+    spring = FakeSpringApi([CANDIDATE_ID], candidate_value_type="NUMBER")
+    comparator = FakeComparator(
+        [
+            CharacterFactComparisonDecision(
+                operation=operation,
+                target_ref=None if operation == "ADD" else "P1",
+                proposed_fact_value="2",
+                proposed_value_json={},
+                temporal_scope="PRESENT",
+                comparison_reason="현재 숫자 설정을 반영한다.",
+            )
+        ]
+    )
+
+    result = asyncio.run(
+        CharacterFactComparisonPipeline(spring, comparator).process_all(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+        )
+    )
+
+    assert result.completed_count == 0
+    assert result.failed_count == 1
+    assert result.first_failure_code is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert spring.completions == []
+    assert spring.failures[0][2] == AnalysisFailureCode.UNEXPECTED_ERROR.value
+    assert "NUMBER value_json must contain a typed value field" in spring.failures[0][1]
+
+
+@pytest.mark.parametrize(
+    ("value_type", "proposed_value_json", "expected_error"),
+    [
+        ("NUMBER", {"value": "2"}, "NUMBER value_json.value must be a JSON number"),
+        ("BOOLEAN", {"value": "true"}, "BOOLEAN value_json.value must be a JSON boolean"),
+    ],
+)
+def test_pipeline_rejects_wrong_scalar_proposal_types(
+    value_type: str,
+    proposed_value_json: dict,
+    expected_error: str,
+) -> None:
+    spring = FakeSpringApi([CANDIDATE_ID], candidate_value_type=value_type)
+    comparator = FakeComparator(
+        [
+            CharacterFactComparisonDecision(
+                operation="ADD",
+                proposed_fact_value="2" if value_type == "NUMBER" else "true",
+                proposed_value_json=proposed_value_json,
+                temporal_scope="PRESENT",
+                comparison_reason="현재 scalar 설정을 반영한다.",
+            )
+        ]
+    )
+
+    result = asyncio.run(
+        CharacterFactComparisonPipeline(spring, comparator).process_all(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+        )
+    )
+
+    assert result.completed_count == 0
+    assert result.failed_count == 1
+    assert result.first_failure_code is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert spring.completions == []
+    assert expected_error in spring.failures[0][1]
+
+
+@pytest.mark.parametrize(
     ("first_error", "expected_code"),
     [
         (
@@ -172,9 +290,11 @@ class FakeSpringApi:
         self,
         candidate_ids: list[UUID],
         stale_completion_count: int = 0,
+        candidate_value_type: str = "JSON",
     ) -> None:
         self.candidate_ids = deque(candidate_ids)
         self.stale_completion_count = stale_completion_count
+        self.candidate_value_type = candidate_value_type
         self.context_call_count = 0
         self.claim_count = 0
         self.completions = []
@@ -193,7 +313,11 @@ class FakeSpringApi:
         lease_token,
     ):
         self.context_call_count += 1
-        return _context(candidate_id, f"snapshot-v{self.context_call_count}")
+        return _context(
+            candidate_id,
+            f"snapshot-v{self.context_call_count}",
+            self.candidate_value_type,
+        )
 
     async def complete_character_fact_comparison(
         self,
@@ -248,22 +372,47 @@ def _add_decision() -> CharacterFactComparisonDecision:
 def _context(
     candidate_id: UUID,
     context_token: str,
+    candidate_value_type: str = "JSON",
 ) -> WorkerCharacterFactComparisonContextResponse:
+    candidate_values = {
+        "JSON": {
+            "attributeName": "status.회복",
+            "attributeValue": "완전히 회복됨",
+            "valueJson": {"active": False},
+            "canonicalFactType": "STATUS",
+            "canonicalFactKey": "status.회복",
+        },
+        "NUMBER": {
+            "attributeName": "level",
+            "attributeValue": "1",
+            "valueJson": {"value": 1},
+            "canonicalFactType": "LEVEL",
+            "canonicalFactKey": "level",
+        },
+        "BOOLEAN": {
+            "attributeName": "profile.awake",
+            "attributeValue": "true",
+            "valueJson": {"value": True},
+            "canonicalFactType": "PROFILE",
+            "canonicalFactKey": "profile.awake",
+        },
+    }
+    values = candidate_values[candidate_value_type]
     candidate = WorkerCharacterFactComparisonCandidatePayload.model_validate(
         {
             "candidateId": str(candidate_id),
             "workId": "00000000-0000-0000-0000-000000000020",
             "sourceEpisodeId": "00000000-0000-0000-0000-000000000021",
             "entityName": "비요른",
-            "attributeName": "status.회복",
-            "attributeValue": "완전히 회복됨",
-            "valueJson": {"active": False},
-            "valueType": "JSON",
+            "attributeName": values["attributeName"],
+            "attributeValue": values["attributeValue"],
+            "valueJson": values["valueJson"],
+            "valueType": candidate_value_type,
             "evidenceSpans": [{"quote": "상처가 완전히 나았다."}],
             "matchedCharacterId": "00000000-0000-0000-0000-000000000010",
             "matchedCharacterName": "비요른",
-            "canonicalFactType": "STATUS",
-            "canonicalFactKey": "status.회복",
+            "canonicalFactType": values["canonicalFactType"],
+            "canonicalFactKey": values["canonicalFactKey"],
             "confidence": 0.95,
         }
     )
@@ -271,10 +420,10 @@ def _context(
         candidate=candidate,
         snapshot_entries=[
             WorkerCharacterSnapshotEntry(
-                fact_type="STATUS",
-                fact_key="status.회복",
-                fact_value="회복 중",
-                value_json={"active": True},
+                fact_type=values["canonicalFactType"],
+                fact_key=values["canonicalFactKey"],
+                fact_value=values["attributeValue"],
+                value_json=values["valueJson"],
             ),
             WorkerCharacterSnapshotEntry(
                 fact_type="STATUS",
