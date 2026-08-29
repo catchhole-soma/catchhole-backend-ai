@@ -14,6 +14,7 @@ from app.domain.enums import (
     EpisodeProcessingStatus,
     SettingValueType,
     WorldSettingCategory,
+    WorldSettingComparisonReviewReason,
     WorldSettingConsolidationStatus,
     WorldSettingOperation,
 )
@@ -302,6 +303,10 @@ class WorkerWorldSettingComparisonCompleteRequest(BaseModel):
     matched_property_name: str | None = Field(default=None, alias="matchedPropertyName")
     consolidation_status: WorldSettingConsolidationStatus = Field(alias="consolidationStatus")
     suggested_operation: WorldSettingOperation = Field(alias="suggestedOperation")
+    comparison_review_reason: WorldSettingComparisonReviewReason | None = Field(
+        default=None,
+        alias="comparisonReviewReason",
+    )
     proposed_scope_name: str | None = Field(
         default=None,
         alias="proposedScopeName",

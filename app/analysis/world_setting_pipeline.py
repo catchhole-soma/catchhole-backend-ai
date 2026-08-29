@@ -187,6 +187,7 @@ class WorldSettingComparisonPipeline:
                 matched_property_name=decision.matched_property_name,
                 consolidation_status=decision.consolidation_status,
                 suggested_operation=decision.operation,
+                comparison_review_reason=decision.review_reason,
                 proposed_scope_name=decision.proposed_scope_name,
                 proposed_setting_name=decision.proposed_setting_name,
                 proposed_value=decision.proposed_value,

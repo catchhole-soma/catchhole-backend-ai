@@ -30,7 +30,7 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
   - 같은 category의 기존 대상명 중 후보와 의미상 같은 대상을 최대 3개까지 고릅니다.
   - UUID 대신 Worker가 만든 `S*` 참조만 입력·출력에 사용합니다.
 - `world_setting_comparison.md`
-  - 후보 속성과 최대 3개 기존 대상의 현재 properties를 비교해 ADD/UPDATE/MERGE/EXCLUDE를 제안합니다.
+  - 후보 속성과 최대 3개 기존 대상의 현재 properties를 비교해 ADD/UPDATE/MERGE/EXCLUDE/REVIEW_REQUIRED를 제안합니다.
   - UUID/version 대신 `T*` 참조를 사용하고, UPDATE/MERGE의 실제 속성명과 최종 문자열을 반환합니다.
 
 ## 설정 후보 출력 계약
@@ -82,6 +82,7 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 - 대상 탐색과 상세 비교 prompt에는 Backend UUID와 version을 넣지 않습니다. LLM은 입력에 있는 `S*`/`T*` ref만 반환합니다.
 - 대상 탐색은 같은 대상일 가능성이 없으면 빈 목록을 반환하고, 단순 연관성만으로 선택하지 않습니다.
 - ADD/EXCLUDE는 추출 설정명과 값을 보존합니다. UPDATE/MERGE는 선택한 target에 실제 존재하는 속성명을 그대로 사용합니다.
+- 후보 scope가 없고 다른 scope의 동명 속성만 관련될 수 있으면 자동으로 그 scope를 채우지 않고 `REVIEW_REQUIRED + SCOPE_UNRESOLVED`를 반환합니다. 기존 matched 경로는 보존하고 proposed 경로는 원본 후보의 root 경로를 유지합니다.
 - 기존 속성과 중복되어 EXCLUDE할 때는 해당 `T*` 참조와 실제 속성명을 함께 반환해 Backend가 비교 당시 기존값을 보존합니다. 특정 기존 속성과 비교하지 않은 일시적 사건 등의 제외만 매칭 속성명을 비웁니다.
 - MERGE의 `proposed_value`는 기존·신규 정보를 모두 보존하되 중복을 제거한 최종 문자열 한 개입니다.
 - Python schema가 ref와 operation별 필드를 검증하고, Backend가 실제 대상 ID·현재 version·속성 존재 여부를 다시 검증합니다.

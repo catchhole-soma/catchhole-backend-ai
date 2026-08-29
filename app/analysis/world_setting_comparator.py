@@ -1,5 +1,6 @@
 import json
 import logging
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -10,7 +11,11 @@ from app.analysis.world_setting_schemas import (
     WorldSettingSubjectSelection,
 )
 from app.core.config import get_settings
-from app.domain.enums import WorldSettingConsolidationStatus, WorldSettingOperation
+from app.domain.enums import (
+    WorldSettingComparisonReviewReason,
+    WorldSettingConsolidationStatus,
+    WorldSettingOperation,
+)
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.schemas.worker import (
@@ -39,6 +44,13 @@ class SubjectReference:
 class ComparisonTargetReference:
     reference: str
     target: WorkerWorldSettingComparisonTarget
+
+
+@dataclass(frozen=True)
+class ScopeAmbiguityMatch:
+    target_ref: str
+    scope_name: str
+    property_name: str
 
 
 class WorldSettingSubjectResolver:
@@ -175,7 +187,7 @@ class WorldSettingComparator:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="world-setting-comparison:v7",
+            prompt_cache_key="world-setting-comparison:v9",
             operation_name="World-setting comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -185,8 +197,12 @@ class WorldSettingComparator:
             ),
             retry_user_prompt_builder=_build_retry_user_prompt,
         )
-        # LLM이 판단할 필요가 없는 불변 필드는 원본 후보에서 복원한다. 단일 ADD/EXCLUDE
-        # 값을 문장만 다듬어 반환했다는 이유로 같은 비교를 반복하지 않게 한다.
+        # scope 없는 후보를 다른 scope의 동명 속성에 연결한 응답은 실패로 재시도하지
+        # 않고 사용자가 범위를 선택하는 정상 검토 결과로 바꾼다.
+        decision = _normalize_scope_ambiguity(decision, candidate, references)
+        # LLM이 판단할 필요가 없는 불변 필드는 원본 후보에서 복원한다. 단일
+        # ADD/EXCLUDE/REVIEW_REQUIRED 값을 문장만 다듬어 반환했다는 이유로 같은 비교를
+        # 반복하지 않게 한다.
         decision = _normalize_deterministic_fields(decision, candidate)
         decision = _replace_internal_target_references(decision, references)
         return decision, decision.model_dump(mode="json")
@@ -209,7 +225,9 @@ def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
         "correction": (
             "입력에 실제 존재하는 target ref와 속성 경로만 사용하세요. "
             "UPDATE와 MERGE는 선택한 기존 속성의 범위명과 설정명을 그대로 유지하고, "
-            "ADD는 기존 속성을 비교 대상으로 지정하지 마세요. JSON 전체를 다시 반환하세요."
+            "ADD는 기존 속성을 비교 대상으로 지정하지 마세요. 후보 범위가 없고 다른 "
+            "범위의 동명 속성만 관련될 수 있으면 REVIEW_REQUIRED와 SCOPE_UNRESOLVED를 "
+            "사용하세요. JSON 전체를 다시 반환하세요."
         ),
     }
     return json.dumps(payload, ensure_ascii=False)
@@ -232,7 +250,11 @@ def _normalize_deterministic_fields(
         and decision.consolidation_status == WorldSettingConsolidationStatus.CONFLICT
     ):
         updates["proposed_value"] = candidate.extracted_value
-    if decision.operation in {WorldSettingOperation.ADD, WorldSettingOperation.EXCLUDE}:
+    if decision.operation in {
+        WorldSettingOperation.ADD,
+        WorldSettingOperation.EXCLUDE,
+        WorldSettingOperation.REVIEW_REQUIRED,
+    }:
         updates["proposed_scope_name"] = candidate.scope_name
         updates["proposed_setting_name"] = candidate.setting_name
         if len(source_values) == 1:
@@ -263,6 +285,16 @@ def _validate_comparison_decision(
     }
     if decision.target_ref is not None and decision.target_ref not in references_by_key:
         raise ValueError(f"Unknown comparison target_ref: {decision.target_ref}")
+    if decision.operation == WorldSettingOperation.REVIEW_REQUIRED:
+        if not _is_scope_ambiguity_match(decision, candidate, references_by_key):
+            raise ValueError(
+                "SCOPE_UNRESOLVED must match a same-name property under a different scope."
+            )
+        return
+    if _is_scope_ambiguity_match(decision, candidate, references_by_key):
+        # 구버전 또는 비결정적인 모델이 UPDATE/MERGE/EXCLUDE로 반환해도 실제 concrete
+        # operation으로 통과시키지 않고 compare()에서 REVIEW_REQUIRED로 정규화한다.
+        return
     if decision.operation in {WorldSettingOperation.ADD, WorldSettingOperation.EXCLUDE}:
         # 범위명·설정명·단일 추출값은 compare()가 후보 원본으로 정규화한다.
         # 여기서는 LLM이 판단한 operation과 비교 대상 관계만 검증한다.
@@ -297,6 +329,106 @@ def _validate_comparison_decision(
         raise ValueError("UPDATE and MERGE must preserve the stored property name.")
 
 
+def _normalize_scope_ambiguity(
+    decision: WorldSettingComparisonDecision,
+    candidate: WorkerWorldSettingCandidatePayload,
+    references: list[ComparisonTargetReference],
+) -> WorldSettingComparisonDecision:
+    match = _find_scope_ambiguity_match(decision, candidate, references)
+    if match is None:
+        return decision
+    matched_path = f"{match.scope_name} › {match.property_name}"
+    return decision.model_copy(
+        update={
+            "operation": WorldSettingOperation.REVIEW_REQUIRED,
+            "review_reason": WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED,
+            "target_ref": match.target_ref,
+            "matched_scope_name": match.scope_name,
+            "matched_property_name": match.property_name,
+            "proposed_scope_name": candidate.scope_name,
+            "proposed_setting_name": candidate.setting_name,
+            "comparison_reason": (
+                f"후보에는 범위가 없지만 기존 '{matched_path}' 설정과 관련될 수 있어 "
+                "적용 범위 확인이 필요합니다."
+            ),
+        }
+    )
+
+
+def _find_scope_ambiguity_match(
+    decision: WorldSettingComparisonDecision,
+    candidate: WorkerWorldSettingCandidatePayload,
+    references: list[ComparisonTargetReference],
+) -> ScopeAmbiguityMatch | None:
+    """모델의 operation과 무관하게 범위가 빠진 동명 후보를 찾는다."""
+
+    if candidate.scope_name is not None:
+        return None
+
+    candidate_name = _normalized_name(candidate.setting_name)
+    scoped_matches: list[ScopeAmbiguityMatch] = []
+    for target_reference in references:
+        for property in target_reference.target.properties:
+            if _normalized_name(property.setting_name) != candidate_name:
+                continue
+            # 후보와 동일한 root 경로가 하나라도 있으면 scope가 빠진 것이 아니다.
+            if property.scope_name is None:
+                return None
+            scoped_matches.append(
+                ScopeAmbiguityMatch(
+                    target_ref=target_reference.reference,
+                    scope_name=property.scope_name,
+                    property_name=property.setting_name,
+                )
+            )
+
+    if not scoped_matches:
+        return None
+
+    # 모델이 실제 scoped 경로를 골랐다면 그 선택을 보존한다. ADD처럼 경로를 전혀
+    # 반환하지 않은 경우에는 같은 target, 그마저 없으면 입력 순서의 첫 경로를 쓴다.
+    for match in scoped_matches:
+        if (
+            decision.target_ref == match.target_ref
+            and decision.matched_scope_name == match.scope_name
+            and _normalized_name(decision.matched_property_name or "")
+            == _normalized_name(match.property_name)
+        ):
+            return match
+    if decision.target_ref is not None:
+        for match in scoped_matches:
+            if match.target_ref == decision.target_ref:
+                return match
+    return scoped_matches[0]
+
+
+def _is_scope_ambiguity_match(
+    decision: WorldSettingComparisonDecision,
+    candidate: WorkerWorldSettingCandidatePayload,
+    references_by_key: dict[str, WorkerWorldSettingComparisonTarget],
+) -> bool:
+    if (
+        candidate.scope_name is not None
+        or decision.target_ref is None
+        or decision.matched_scope_name is None
+        or decision.matched_property_name is None
+        or _normalized_name(decision.matched_property_name)
+        != _normalized_name(candidate.setting_name)
+    ):
+        return False
+    target = references_by_key.get(decision.target_ref)
+    if target is None:
+        return False
+    # 같은 root 경로가 이미 있으면 그 경로를 우선 비교해야 하므로 scope 미확정이 아니다.
+    if _has_property(target, candidate.scope_name, candidate.setting_name):
+        return False
+    return _has_property(
+        target,
+        decision.matched_scope_name,
+        decision.matched_property_name,
+    )
+
+
 def _has_property(
     target: WorkerWorldSettingComparisonTarget,
     scope_name: str | None,
@@ -306,6 +438,10 @@ def _has_property(
         property.scope_name == scope_name and property.setting_name == setting_name
         for property in target.properties
     )
+
+
+def _normalized_name(value: str) -> str:
+    return unicodedata.normalize("NFC", value).strip().casefold()
 
 
 def _replace_internal_target_references(

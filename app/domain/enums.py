@@ -132,6 +132,11 @@ class WorldSettingOperation(StrEnum):
     UPDATE = "UPDATE"
     MERGE = "MERGE"
     EXCLUDE = "EXCLUDE"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+
+
+class WorldSettingComparisonReviewReason(StrEnum):
+    SCOPE_UNRESOLVED = "SCOPE_UNRESOLVED"
 
 
 class WorldSettingConsolidationStatus(StrEnum):

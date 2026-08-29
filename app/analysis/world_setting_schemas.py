@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 from app.analysis.schemas import ExtractedEvidenceSpan
 from app.domain.enums import (
     WorldSettingCategory,
+    WorldSettingComparisonReviewReason,
     WorldSettingConsolidationStatus,
     WorldSettingOperation,
 )
@@ -43,6 +44,7 @@ class WorldSettingSubjectSelection(BaseModel):
 class WorldSettingComparisonDecision(BaseModel):
     consolidation_status: WorldSettingConsolidationStatus
     operation: WorldSettingOperation
+    review_reason: WorldSettingComparisonReviewReason | None = None
     target_ref: str | None = None
     matched_scope_name: TrimmedName | None = None
     matched_property_name: TrimmedName | None = None
@@ -64,4 +66,16 @@ class WorldSettingComparisonDecision(BaseModel):
             raise ValueError("UPDATE and MERGE require target_ref and matched_property_name.")
         if self.operation == WorldSettingOperation.ADD and self.matched_property_name is not None:
             raise ValueError("ADD must not include matched_property_name.")
+        if self.operation == WorldSettingOperation.REVIEW_REQUIRED:
+            if (
+                self.review_reason != WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED
+                or self.target_ref is None
+                or self.matched_scope_name is None
+                or self.matched_property_name is None
+            ):
+                raise ValueError(
+                    "Scope REVIEW_REQUIRED requires SCOPE_UNRESOLVED and a scoped matched property."
+                )
+        elif self.review_reason is not None:
+            raise ValueError("Only REVIEW_REQUIRED may include review_reason.")
         return self

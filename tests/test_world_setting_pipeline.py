@@ -156,6 +156,58 @@ def test_pipeline_keeps_duplicate_exclude_target_and_matched_property() -> None:
     assert request.matched_property_name == "서식지"
 
 
+def test_pipeline_forwards_scope_unresolved_review_without_failing() -> None:
+    candidate = _candidate()
+    spring = FakeSpringApi(candidate=candidate)
+    spring.subjects = [_subject(TARGET_ID, "바바리안")]
+    spring.context = WorkerWorldSettingComparisonContextResponse(
+        candidate=candidate,
+        exact_target_world_setting_id=TARGET_ID,
+        targets=[
+            WorkerWorldSettingComparisonTarget(
+                world_setting_id=TARGET_ID,
+                subject_name="바바리안",
+                properties=[
+                    WorkerWorldSettingProperty(
+                        scope_name="1층",
+                        setting_name="서식지",
+                        value="혹한 지역",
+                    )
+                ],
+                version=3,
+            )
+        ],
+    )
+    pipeline = WorldSettingComparisonPipeline(
+        spring,
+        FakeSubjectResolver([]),
+        FakeComparator(
+            WorldSettingComparisonDecision(
+                consolidation_status="SINGLE",
+                operation="REVIEW_REQUIRED",
+                review_reason="SCOPE_UNRESOLVED",
+                target_ref="T1",
+                matched_scope_name="1층",
+                matched_property_name="서식지",
+                proposed_scope_name=None,
+                proposed_setting_name="서식지",
+                proposed_value="극지방",
+                comparison_reason="후보의 적용 범위를 확인해야 한다.",
+            )
+        ),
+    )
+
+    result = asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+
+    assert result.completed_count == 1
+    assert result.failed_count == 0
+    request = spring.completions[0]
+    assert request.suggested_operation == "REVIEW_REQUIRED"
+    assert request.comparison_review_reason == "SCOPE_UNRESOLVED"
+    assert request.matched_scope_name == "1층"
+    assert request.proposed_scope_name is None
+
+
 def test_pipeline_fails_only_claimed_candidate_when_comparator_fails() -> None:
     spring = FakeSpringApi(candidate=_candidate())
     spring.subjects = []
