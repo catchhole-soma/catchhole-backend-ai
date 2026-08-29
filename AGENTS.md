@@ -20,6 +20,7 @@
 - 세계관 비교 prompt에는 Backend UUID를 노출하지 않는다. Worker가 만든 `S*`/`T*` 참조만 LLM에 제공하고, 실제 대상 ID·현재 property·version 검증과 `beforeValue` 산출은 Spring이 담당한다.
 - 세계관 `comparisonReason`은 검토 화면에 그대로 노출되는 사용자 문장이다. `S*`/`T*` 참조, UUID, key, version, operation enum 같은 내부 용어를 저장하지 않으며, 모델이 대상 참조를 반환하면 실제 대상명을 사용한 자연스러운 한국어로 치환한다.
 - 기존 속성과 의미가 같아 세계관 후보를 `EXCLUDE`할 때는 2차 비교 결과에 해당 `target_ref`와 실제 `matched_property_name`을 함께 반환한다. Backend가 비교 당시 기존값을 `beforeValue`로 보존해야 하며, 일시적 사건처럼 특정 기존 속성과 비교하지 않은 제외만 두 값을 비울 수 있다.
+- 세계관 후보의 `scope_name`이 비어 있고 같은 `setting_name`의 기존 속성이 특정 scope 아래에만 있으면 기존 scope를 자동 상속하거나 concrete operation으로 통과시키지 않는다. 모델이 matched 경로 없이 root `ADD`를 반환하더라도 입력 target을 기준으로 범위 모호성을 다시 판정하고, cross-scope `UPDATE/MERGE/EXCLUDE`와 함께 `REVIEW_REQUIRED + SCOPE_UNRESOLVED`로 정규화해 기존 matched 경로와 후보의 root 제안을 Spring Worker API에 전달한다. 후보 scope가 명시됐거나 설정명이 다른 잘못된 match, 그리고 다른 concrete operation의 full-path 검증은 계속 거절한다.
 - 분석 progress 요청은 표시용 `currentStep`과 대상 회차에 적용할 `episodeStatus`를 함께 보낸다. 자유 형식 문구에서 상태를 추론하지 않도록 `EpisodeProcessingStatus` enum을 명시적으로 직렬화한다.
 - claim payload는 복수 `episodes`가 아니라 단일 `episode`를 받는다. 한 `AnalysisJob`은 한 회차만 처리하고, 회차 사이의 반복과 실패 격리는 Spring의 Job queue가 담당한다.
 - 장기 실행 runner는 한 Job의 실패를 Spring에 보고한 뒤 다음 claim을 계속한다. 개별 분석 예외로 Worker 프로세스 전체를 종료하지 않는다.

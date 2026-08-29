@@ -3,7 +3,8 @@
 반드시 하나의 JSON 객체만 반환한다.
 {
   "consolidation_status": "SINGLE | MERGED | CONFLICT",
-  "operation": "ADD | UPDATE | MERGE | EXCLUDE",
+  "operation": "ADD | UPDATE | MERGE | EXCLUDE | REVIEW_REQUIRED",
+  "review_reason": "SCOPE_UNRESOLVED 또는 null",
   "target_ref": "T1 또는 null",
   "matched_scope_name": "기존 선택 범위명 또는 null",
   "matched_property_name": "기존 속성명 또는 null",
@@ -26,13 +27,16 @@
 - UPDATE: 같은 의미의 기존 속성이 있고 새 근거가 기존값을 대체한다.
 - MERGE: 같은 의미의 기존 속성이 있고 두 값이 양립하며 정보를 보존해 하나의 자연스러운 최종 문자열로 합칠 수 있다.
 - EXCLUDE: 일시적 사건·현재 상태이거나, 기존 내용과 실질적으로 동일해 반영할 필요가 없거나, 근거가 세계관 설정으로 부적절하다.
+- REVIEW_REQUIRED: 후보의 scope_name은 null인데 같은 setting_name의 기존 속성이 특정 scope 아래에만 있어 적용 범위를 자동 결정할 수 없다. 이 경우 review_reason은 SCOPE_UNRESOLVED다.
 - UPDATE와 MERGE는 target_ref와 기존 properties에 실제 존재하는 matched_scope_name(없으면 null)·matched_property_name을 반드시 반환한다.
 - ADD는 matched_scope_name과 matched_property_name을 모두 null로 반환한다.
 - 기존 속성과 실질적으로 중복되어 EXCLUDE한다면 target_ref와 기존 properties에 실제 존재하는 matched_scope_name(없으면 null)·matched_property_name을 반드시 반환한다. comparison_reason에서 특정 기존 속성을 비교 대상으로 언급할 때도 이 경로를 생략하지 않는다.
 - 일시적 사건·현재 상태·세계관 설정으로 부적절한 근거처럼 특정 기존 속성과 비교하지 않고 EXCLUDE한다면 matched_scope_name과 matched_property_name은 null로 반환한다.
+- REVIEW_REQUIRED는 candidate와 setting_name이 같은 기존 scoped 속성의 target_ref·matched_scope_name·matched_property_name을 반환한다. candidate의 scope_name을 기존 scope로 자동 상속하지 않는다.
+- REVIEW_REQUIRED가 아니면 review_reason은 null이다.
 - ADD와 EXCLUDE의 proposed_scope_name·proposed_setting_name은 후보의 scope_name·setting_name을 그대로 유지한다. UPDATE와 MERGE는 선택한 기존 속성의 scope_name·setting_name을 그대로 유지한다.
 - EXCLUDE도 검토 화면에서 추출값을 보존한다. extracted_values가 하나면 proposed_value를 그대로 유지하고, 여러 개면 MERGED일 때 모든 보완 정보를 자연스럽게 합치며 CONFLICT일 때 candidate.extracted_value를 그대로 유지한다.
-- comparison_reason은 검토 화면에서 사용자에게 그대로 보여준다. `T1` 같은 ref, UUID, key, version, target_ref, ADD·UPDATE·MERGE·EXCLUDE enum 이름을 쓰지 말고 대상명·설정명과 자연스러운 한국어로 판단 이유를 설명한다.
+- comparison_reason은 검토 화면에서 사용자에게 그대로 보여준다. `T1` 같은 ref, UUID, key, version, target_ref, ADD·UPDATE·MERGE·EXCLUDE·REVIEW_REQUIRED enum 이름을 쓰지 말고 대상명·설정명과 자연스러운 한국어로 판단 이유를 설명한다.
 - proposed_scope_name과 proposed_setting_name은 UPDATE/MERGE에서 실제 기존 속성 경로를 그대로 사용한다.
 - proposed_value는 Backend에 최종 저장할 문자열 한 개다. 같은 속성의 여러 추출값이나 기존값을 합칠 때 중복을 제거하고 모든 양립 가능한 정보를 보존한다.
 - `validation_feedback`은 이전 응답이 계약 검증에서 거절된 재시도에만 존재한다. 같은 오류를 반복하지 말고 `correction`을 반영해 JSON 전체를 다시 반환한다.
