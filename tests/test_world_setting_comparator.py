@@ -433,6 +433,158 @@ def test_comparator_turns_unscoped_same_name_match_into_scope_review(
     assert len(text_client.requests) == 1
 
 
+@pytest.mark.parametrize("operation", ["UPDATE", "MERGE", "EXCLUDE"])
+def test_comparator_scopes_root_property_check_to_selected_target(
+    operation: str,
+) -> None:
+    candidate = _candidate("광원", "벽의 수정들이 주변을 밝힌다.")
+    decision = {
+        "consolidation_status": "SINGLE",
+        "operation": operation,
+        "target_ref": "T2",
+        "matched_scope_name": "1층",
+        "matched_property_name": "광원",
+        "proposed_scope_name": "1층",
+        "proposed_setting_name": "광원",
+        "proposed_value": candidate.extracted_value,
+        "comparison_reason": "1층의 기존 광원 설정과 관련된다.",
+    }
+    unrelated_target = WorkerWorldSettingComparisonTarget(
+        world_setting_id=UUID("00000000-0000-0000-0000-000000000005"),
+        subject_name="성곽",
+        properties=[
+            WorkerWorldSettingProperty(
+                scope_name=None,
+                setting_name="광원",
+                value="마법등이 주변을 밝힌다.",
+            )
+        ],
+        version=1,
+    )
+    selected_target = WorkerWorldSettingComparisonTarget(
+        world_setting_id=TARGET_ID,
+        subject_name=candidate.subject_name,
+        properties=[
+            WorkerWorldSettingProperty(
+                scope_name="1층",
+                setting_name="광원",
+                value="벽의 수정들이 광원 역할을 한다.",
+            )
+        ],
+        version=2,
+    )
+    text_client = FakeTextClient([decision])
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=1,
+        ).compare(candidate, [unrelated_target, selected_target])
+    )
+
+    assert result.operation == "REVIEW_REQUIRED"
+    assert result.review_reason == "SCOPE_UNRESOLVED"
+    assert result.target_ref == "T2"
+    assert result.matched_scope_name == "1층"
+    assert result.matched_property_name == "광원"
+
+
+def test_comparator_preserves_unmatched_exclusion_during_scope_normalization() -> None:
+    candidate = _candidate("광원", "잠시 불빛이 번쩍였다.")
+    decision = {
+        "consolidation_status": "SINGLE",
+        "operation": "EXCLUDE",
+        "target_ref": None,
+        "matched_scope_name": None,
+        "matched_property_name": None,
+        "proposed_scope_name": None,
+        "proposed_setting_name": "광원",
+        "proposed_value": candidate.extracted_value,
+        "comparison_reason": "일시적인 사건이어서 확정 설정으로 반영하지 않는다.",
+    }
+    target = WorkerWorldSettingComparisonTarget(
+        world_setting_id=TARGET_ID,
+        subject_name=candidate.subject_name,
+        properties=[
+            WorkerWorldSettingProperty(
+                scope_name="1층",
+                setting_name="광원",
+                value="벽의 수정들이 광원 역할을 한다.",
+            )
+        ],
+        version=2,
+    )
+    text_client = FakeTextClient([decision])
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=1,
+        ).compare(candidate, [target])
+    )
+
+    assert result.operation == "EXCLUDE"
+    assert result.review_reason is None
+    assert result.target_ref is None
+    assert result.matched_scope_name is None
+    assert result.matched_property_name is None
+
+
+def test_comparator_does_not_assign_targetless_add_to_possible_subject() -> None:
+    candidate = _candidate("광원", "천장의 수정이 주변을 밝힌다.")
+    decision = {
+        "consolidation_status": "SINGLE",
+        "operation": "ADD",
+        "target_ref": None,
+        "matched_scope_name": None,
+        "matched_property_name": None,
+        "proposed_scope_name": None,
+        "proposed_setting_name": "광원",
+        "proposed_value": candidate.extracted_value,
+        "comparison_reason": "새 대상의 루트 광원 설정으로 추가한다.",
+    }
+    possible_targets = [
+        WorkerWorldSettingComparisonTarget(
+            world_setting_id=UUID("00000000-0000-0000-0000-000000000005"),
+            subject_name="동부 바바리안",
+            properties=[
+                WorkerWorldSettingProperty(
+                    scope_name="1층",
+                    setting_name="광원",
+                    value="마법등이 주변을 밝힌다.",
+                )
+            ],
+            version=1,
+        ),
+        WorkerWorldSettingComparisonTarget(
+            world_setting_id=UUID("00000000-0000-0000-0000-000000000006"),
+            subject_name="서부 바바리안",
+            properties=[
+                WorkerWorldSettingProperty(
+                    scope_name="2층",
+                    setting_name="광원",
+                    value="횃불이 주변을 밝힌다.",
+                )
+            ],
+            version=1,
+        ),
+    ]
+    text_client = FakeTextClient([decision])
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(
+            llm_client=text_client,
+            max_attempts=1,
+        ).compare(candidate, possible_targets)
+    )
+
+    assert result.operation == "ADD"
+    assert result.review_reason is None
+    assert result.target_ref is None
+    assert result.matched_scope_name is None
+    assert result.matched_property_name is None
+
+
 def test_comparator_detects_scope_ambiguity_when_model_returns_root_add() -> None:
     candidate = _candidate("광원", "벽의 수정들이 주변을 밝힌다.")
     decision = {
@@ -448,7 +600,7 @@ def test_comparator_detects_scope_ambiguity_when_model_returns_root_add() -> Non
     }
     target = WorkerWorldSettingComparisonTarget(
         world_setting_id=TARGET_ID,
-        subject_name="미궁",
+        subject_name=candidate.subject_name,
         properties=[
             WorkerWorldSettingProperty(
                 scope_name="1층",

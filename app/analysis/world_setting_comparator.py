@@ -360,46 +360,95 @@ def _find_scope_ambiguity_match(
     candidate: WorkerWorldSettingCandidatePayload,
     references: list[ComparisonTargetReference],
 ) -> ScopeAmbiguityMatch | None:
-    """모델의 operation과 무관하게 범위가 빠진 동명 후보를 찾는다."""
+    """모델이 선택했거나 후보명으로 확정되는 대상 안에서 범위 누락을 찾는다."""
 
     if candidate.scope_name is not None:
         return None
 
     candidate_name = _normalized_name(candidate.setting_name)
-    scoped_matches: list[ScopeAmbiguityMatch] = []
-    for target_reference in references:
-        for property in target_reference.target.properties:
-            if _normalized_name(property.setting_name) != candidate_name:
-                continue
-            # 후보와 동일한 root 경로가 하나라도 있으면 scope가 빠진 것이 아니다.
-            if property.scope_name is None:
-                return None
-            scoped_matches.append(
-                ScopeAmbiguityMatch(
-                    target_ref=target_reference.reference,
-                    scope_name=property.scope_name,
-                    property_name=property.setting_name,
-                )
+    selected_path: tuple[str, str] | None = None
+    if (
+        decision.target_ref is not None
+        and decision.matched_scope_name is not None
+        and decision.matched_property_name is not None
+        and _normalized_name(decision.matched_property_name) == candidate_name
+    ):
+        selected_reference = next(
+            (
+                target_reference
+                for target_reference in references
+                if target_reference.reference == decision.target_ref
+            ),
+            None,
+        )
+        selected_path = (
+            decision.matched_scope_name,
+            decision.matched_property_name,
+        )
+    elif (
+        decision.operation == WorldSettingOperation.ADD
+        and decision.matched_scope_name is None
+        and decision.matched_property_name is None
+    ):
+        if decision.target_ref is not None:
+            selected_reference = next(
+                (
+                    target_reference
+                    for target_reference in references
+                    if target_reference.reference == decision.target_ref
+                ),
+                None,
             )
-
-    if not scoped_matches:
+        else:
+            candidate_subject = _normalized_name(candidate.subject_name)
+            exact_subject_matches = [
+                target_reference
+                for target_reference in references
+                if _normalized_name(target_reference.target.subject_name) == candidate_subject
+            ]
+            if len(exact_subject_matches) != 1:
+                return None
+            selected_reference = exact_subject_matches[0]
+    else:
         return None
 
-    # 모델이 실제 scoped 경로를 골랐다면 그 선택을 보존한다. ADD처럼 경로를 전혀
-    # 반환하지 않은 경우에는 같은 target, 그마저 없으면 입력 순서의 첫 경로를 쓴다.
-    for match in scoped_matches:
-        if (
-            decision.target_ref == match.target_ref
-            and decision.matched_scope_name == match.scope_name
-            and _normalized_name(decision.matched_property_name or "")
-            == _normalized_name(match.property_name)
+    if selected_reference is None:
+        return None
+
+    same_name_properties = [
+        property
+        for property in selected_reference.target.properties
+        if _normalized_name(property.setting_name) == candidate_name
+    ]
+    # 선택한 대상에 같은 root 경로가 있으면 scope가 빠진 것이 아니다.
+    if any(property.scope_name is None for property in same_name_properties):
+        return None
+
+    if selected_path is not None:
+        selected_scope_name, selected_property_name = selected_path
+        if not _has_property(
+            selected_reference.target,
+            selected_scope_name,
+            selected_property_name,
         ):
-            return match
-    if decision.target_ref is not None:
-        for match in scoped_matches:
-            if match.target_ref == decision.target_ref:
-                return match
-    return scoped_matches[0]
+            return None
+        return ScopeAmbiguityMatch(
+            target_ref=selected_reference.reference,
+            scope_name=selected_scope_name,
+            property_name=selected_property_name,
+        )
+
+    scoped_property = next(
+        (property for property in same_name_properties if property.scope_name is not None),
+        None,
+    )
+    if scoped_property is None:
+        return None
+    return ScopeAmbiguityMatch(
+        target_ref=selected_reference.reference,
+        scope_name=scoped_property.scope_name,
+        property_name=scoped_property.setting_name,
+    )
 
 
 def _is_scope_ambiguity_match(
@@ -420,7 +469,11 @@ def _is_scope_ambiguity_match(
     if target is None:
         return False
     # 같은 root 경로가 이미 있으면 그 경로를 우선 비교해야 하므로 scope 미확정이 아니다.
-    if _has_property(target, candidate.scope_name, candidate.setting_name):
+    if any(
+        property.scope_name is None
+        and _normalized_name(property.setting_name) == _normalized_name(candidate.setting_name)
+        for property in target.properties
+    ):
         return False
     return _has_property(
         target,
