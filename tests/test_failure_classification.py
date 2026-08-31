@@ -100,6 +100,39 @@ def test_spring_worker_http_failure_is_not_classified_as_provider_failure() -> N
     assert comparison_failure_code(error) is AnalysisFailureCode.UNEXPECTED_ERROR
 
 
+def test_world_setting_contract_validation_400_has_dedicated_comparison_code() -> None:
+    error = _http_status_error(
+        SpringWorkerHttpError,
+        "WORLD_SETTING_COMPARISON_TARGET_INVALID",
+        status_code=400,
+        reason_code="PROPOSED_PATH_MISMATCH",
+    )
+
+    assert analysis_failure_code(error) is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert comparison_failure_code(error) is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_code"),
+    [
+        (400, "UNKNOWN_CLIENT_ERROR"),
+        (500, "WORLD_SETTING_COMPARISON_TARGET_INVALID"),
+        (503, "COMMON_INTERNAL_SERVER_ERROR"),
+    ],
+)
+def test_unknown_spring_failures_remain_unexpected(
+    status_code: int,
+    error_code: str,
+) -> None:
+    error = _http_status_error(
+        SpringWorkerHttpError,
+        error_code,
+        status_code=status_code,
+    )
+
+    assert comparison_failure_code(error) is AnalysisFailureCode.UNEXPECTED_ERROR
+
+
 def test_spring_worker_transport_failure_is_not_classified_as_llm_network_failure() -> None:
     request = httpx.Request("PATCH", "https://spring.test/progress")
     error = SpringWorkerTransportError("Spring transport failed")
@@ -122,11 +155,30 @@ def test_raw_provider_http_failure_remains_provider_error() -> None:
     assert analysis_failure_code(error) is AnalysisFailureCode.LLM_PROVIDER_ERROR
 
 
-def _http_status_error(error_type, error_code: str) -> httpx.HTTPStatusError:
+def _http_status_error(
+    error_type,
+    error_code: str,
+    status_code: int = 500,
+    reason_code: str | None = None,
+) -> httpx.HTTPStatusError:
     request = httpx.Request("POST", "https://service.test/request")
     response = httpx.Response(
-        500,
+        status_code,
         request=request,
-        json={"error": {"code": error_code}},
+        json={
+            "error": {
+                "code": error_code,
+                "context": {"reasonCode": reason_code} if reason_code else {},
+            }
+        },
     )
+    if issubclass(error_type, SpringWorkerHttpError):
+        return error_type(
+            "request failed",
+            request=request,
+            response=response,
+            status_code=status_code,
+            spring_error_code=error_code,
+            spring_reason_code=reason_code,
+        )
     return error_type("request failed", request=request, response=response)

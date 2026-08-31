@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import math
 import random
@@ -23,7 +24,7 @@ from app.llm.exceptions import (
     LlmOutputTruncatedError,
     LlmResponseValidationError,
 )
-from app.llm.protocols import TextGenerationClient
+from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.llm.responses import LlmTextResponse
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ class MeteredTextGenerationClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema: LlmResponseSchema | None = None,
     ) -> LlmTextResponse:
         effective_model = model or self.default_model
         reserved_tokens = _estimate_text_token_upper_bound(
@@ -121,6 +123,7 @@ class MeteredTextGenerationClient:
             user_prompt,
             effective_model,
             max_output_tokens,
+            response_schema,
         )
         for retry_index in range(self.max_retries + 1):
             async with _optional_semaphore(self.request_semaphore):
@@ -143,6 +146,7 @@ class MeteredTextGenerationClient:
                         model=model,
                         max_output_tokens=max_output_tokens,
                         prompt_cache_key=prompt_cache_key,
+                        response_schema=response_schema,
                     )
                 except asyncio.CancelledError:
                     _detach_failed_provider_finalization(self.ledger, request_id)
@@ -497,19 +501,22 @@ def _estimate_text_token_upper_bound(
     user_prompt: str,
     model: str,
     max_output_tokens: int,
+    response_schema: LlmResponseSchema | None = None,
 ) -> int:
+    schema_text = _serialize_response_schema(response_schema)
     try:
         encoding = _encoding_for_model(model)
         # 원고에 특수 토큰 표기와 같은 문자열이 있어도 일반 텍스트로 세어 예약이 중단되지 않게 한다.
         content_tokens = len(encoding.encode(system_prompt, disallowed_special=())) + len(
             encoding.encode(user_prompt, disallowed_special=())
-        )
+        ) + len(encoding.encode(schema_text, disallowed_special=()))
     except Exception:  # noqa: BLE001 - tokenizer cache 장애도 분석을 막지 않는다.
         # 미지원 모델이나 tokenizer cache 장애 시 분석은 계속하되 기존 byte 상한으로 되돌아간다.
         return _estimate_text_token_byte_upper_bound(
             system_prompt,
             user_prompt,
             max_output_tokens,
+            schema_text,
         )
 
     # Responses API message framing과 tokenizer 차이를 10% + 256 token으로 흡수하고,
@@ -530,9 +537,29 @@ def _estimate_text_token_byte_upper_bound(
     system_prompt: str,
     user_prompt: str,
     max_output_tokens: int,
+    schema_text: str = "",
 ) -> int:
-    prompt_bytes = len(system_prompt.encode("utf-8")) + len(user_prompt.encode("utf-8"))
+    prompt_bytes = (
+        len(system_prompt.encode("utf-8"))
+        + len(user_prompt.encode("utf-8"))
+        + len(schema_text.encode("utf-8"))
+    )
     return prompt_bytes + max_output_tokens + 512
+
+
+def _serialize_response_schema(response_schema: LlmResponseSchema | None) -> str:
+    if response_schema is None:
+        return ""
+    return json.dumps(
+        {
+            "name": response_schema.name,
+            "schema": response_schema.schema,
+            "strict": response_schema.strict,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _estimate_embedding_token_upper_bound(inputs: Sequence[str]) -> int:

@@ -15,6 +15,7 @@ from app.domain.enums import (
     SettingValueType,
     WorldSettingCategory,
     WorldSettingComparisonReviewReason,
+    WorldSettingComparisonValidationReason,
     WorldSettingConsolidationStatus,
     WorldSettingOperation,
 )
@@ -334,6 +335,16 @@ class WorkerWorldSettingComparisonFailRequest(BaseModel):
 
     failure_code: AnalysisFailureCode = Field(alias="failureCode")
     error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
+    source_error_code: str | None = Field(
+        default=None,
+        alias="sourceErrorCode",
+        max_length=100,
+        pattern=r"^[A-Z][A-Z0-9_]*$",
+    )
+    source_reason_code: WorldSettingComparisonValidationReason | None = Field(
+        default=None,
+        alias="sourceReasonCode",
+    )
 
 
 class WorkerCharacterFactComparisonClaimPayload(BaseModel):

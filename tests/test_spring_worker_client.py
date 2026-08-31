@@ -16,7 +16,7 @@ from app.clients.spring_worker_client import (
     WORKER_LEASE_TOKEN_HEADER,
     SpringWorkerClient,
 )
-from app.domain.enums import EpisodeProcessingStatus
+from app.domain.enums import AnalysisFailureCode, EpisodeProcessingStatus
 from app.schemas.worker import (
     WorkerAnalysisJobPayload,
     WorkerCharacterFactComparisonCompleteRequest,
@@ -309,7 +309,7 @@ def test_ai_token_quota_conflict_is_typed_and_never_retried() -> None:
 
     client = _client(handler)
 
-    with pytest.raises(AiTokenQuotaExhaustedError, match="quota is exhausted"):
+    with pytest.raises(AiTokenQuotaExhaustedError, match="quota is exhausted") as exc_info:
         asyncio.run(
             client.reserve_ai_tokens(
                 request_id=uuid4(),
@@ -323,6 +323,9 @@ def test_ai_token_quota_conflict_is_typed_and_never_retried() -> None:
         )
 
     assert len(requests) == 1
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.spring_error_code == "AI_TOKEN_QUOTA_EXHAUSTED"
+    assert exc_info.value.spring_reason_code is None
 
 
 @pytest.mark.parametrize(
@@ -345,7 +348,7 @@ def test_spring_worker_http_failure_is_typed_by_source(
 
     client = _client(handler)
 
-    with pytest.raises(expected_error_type):
+    with pytest.raises(expected_error_type) as exc_info:
         asyncio.run(
             client.report_progress(
                 ANALYSIS_JOB_ID,
@@ -353,6 +356,90 @@ def test_spring_worker_http_failure_is_typed_by_source(
                 "SETTING_EXTRACTION",
             )
         )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.spring_error_code == error_code
+    assert exc_info.value.spring_reason_code is None
+
+
+def test_spring_worker_http_failure_preserves_allowed_validation_reason() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=400,
+            request=request,
+            json={
+                "error": {
+                    "code": "WORLD_SETTING_COMPARISON_TARGET_INVALID",
+                    "context": {"reasonCode": "PROPOSED_PATH_MISMATCH"},
+                }
+            },
+        )
+
+    client = _client(handler)
+
+    with pytest.raises(SpringWorkerHttpError) as exc_info:
+        asyncio.run(
+            client.report_progress(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+                "WORLD_SETTING_COMPARISON",
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.spring_error_code == "WORLD_SETTING_COMPARISON_TARGET_INVALID"
+    assert exc_info.value.spring_reason_code == "PROPOSED_PATH_MISMATCH"
+
+
+def test_spring_worker_http_failure_discards_unapproved_reason_value() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=400,
+            request=request,
+            json={
+                "error": {
+                    "code": "WORLD_SETTING_COMPARISON_TARGET_INVALID",
+                    "context": {"reasonCode": "candidate value was secret"},
+                }
+            },
+        )
+
+    client = _client(handler)
+
+    with pytest.raises(SpringWorkerHttpError) as exc_info:
+        asyncio.run(
+            client.report_progress(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+                "WORLD_SETTING_COMPARISON",
+            )
+        )
+
+    assert exc_info.value.spring_error_code == "WORLD_SETTING_COMPARISON_TARGET_INVALID"
+    assert exc_info.value.spring_reason_code is None
+
+
+def test_spring_worker_http_failure_discards_unsafe_error_code() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=400,
+            request=request,
+            json={"error": {"code": "internal URL https://secret.example"}},
+        )
+
+    client = _client(handler)
+
+    with pytest.raises(SpringWorkerHttpError) as exc_info:
+        asyncio.run(
+            client.report_progress(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+                "WORLD_SETTING_COMPARISON",
+            )
+        )
+
+    assert exc_info.value.spring_error_code is None
+    assert exc_info.value.spring_reason_code is None
 
 
 @pytest.mark.parametrize(
@@ -467,6 +554,15 @@ def test_world_setting_worker_calls_use_lease_and_parse_structured_context() -> 
             LEASE_TOKEN,
             [],
         )
+        await client.fail_world_setting_comparison(
+            ANALYSIS_JOB_ID,
+            candidate.candidate_id,
+            LEASE_TOKEN,
+            "backend request failed",
+            AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+            source_error_code="WORLD_SETTING_COMPARISON_TARGET_INVALID",
+            source_reason_code="PROPOSED_PATH_MISMATCH",
+        )
         return candidate, claimed, context
 
     _candidate_result, claimed, context = asyncio.run(call_world_setting_apis())
@@ -474,6 +570,12 @@ def test_world_setting_worker_calls_use_lease_and_parse_structured_context() -> 
     assert claimed is not None
     assert claimed.scope_name == "1층"
     assert context.candidate.evidence_spans[0].quote == "바바리안은 혹한 지역에 산다."
+    assert json.loads(requests[-1].content) == {
+        "failureCode": "COMPARISON_VALIDATION_FAILED",
+        "errorMessage": "backend request failed",
+        "sourceErrorCode": "WORLD_SETTING_COMPARISON_TARGET_INVALID",
+        "sourceReasonCode": "PROPOSED_PATH_MISMATCH",
+    }
     assert all(
         request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN) for request in requests
     )

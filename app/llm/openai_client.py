@@ -9,6 +9,7 @@ from app.llm.exceptions import (
     LlmOutputTruncatedError,
     LlmResponseValidationError,
 )
+from app.llm.protocols import LlmResponseSchema
 from app.llm.responses import LlmTextResponse
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class OpenAIResponsesClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema: LlmResponseSchema | None = None,
     ) -> LlmTextResponse:
         if not self.api_key:
             raise ValueError("LLM_API_KEY is required.")
@@ -78,6 +80,15 @@ class OpenAIResponsesClient:
         # 같은 정적 prefix를 공유하는 요청만 동일한 key를 사용해 cache routing을 돕는다.
         if prompt_cache_key is not None:
             request_body["prompt_cache_key"] = prompt_cache_key
+        if response_schema is not None:
+            request_body["text"] = {
+                "format": {
+                    "type": "json_schema",
+                    "name": response_schema.name,
+                    "schema": response_schema.schema,
+                    "strict": response_schema.strict,
+                }
+            }
         effective_reasoning_effort = _resolve_reasoning_effort(
             effective_model,
             self.reasoning_effort,

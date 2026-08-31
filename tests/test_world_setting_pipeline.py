@@ -7,7 +7,7 @@ import pytest
 from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.world_setting_pipeline import WorldSettingComparisonPipeline
 from app.analysis.world_setting_schemas import WorldSettingComparisonDecision
-from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
 from app.domain.enums import AnalysisFailureCode
 from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
@@ -128,6 +128,49 @@ def test_pipeline_rebuilds_context_after_stale_completion() -> None:
     assert len(spring.completions) == 2
 
 
+def test_pipeline_does_not_recompare_backend_contract_400_and_preserves_source() -> None:
+    spring = FakeSpringApi(
+        candidate=_candidate(),
+        completion_failure_code="WORLD_SETTING_COMPARISON_TARGET_INVALID",
+        completion_failure_reason_code="PROPOSED_PATH_MISMATCH",
+        completion_failure_status=400,
+    )
+    spring.subjects = [_subject(TARGET_ID, "바바리안")]
+    spring.context = _context()
+    pipeline = WorldSettingComparisonPipeline(
+        spring,
+        FakeSubjectResolver([]),
+        FakeComparator(
+            WorldSettingComparisonDecision(
+                consolidation_status="SINGLE",
+                operation="UPDATE",
+                target_ref="T1",
+                matched_property_name="서식지",
+                proposed_setting_name="서식지",
+                proposed_value="극지방",
+                comparison_reason="새 근거가 기존 서식지를 구체화한다.",
+            )
+        ),
+    )
+
+    result = asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+
+    assert result.completed_count == 0
+    assert result.failed_count == 1
+    assert result.first_failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
+    assert len(spring.context_target_ids) == 1
+    assert len(spring.completions) == 1
+    assert spring.failures == [
+        (
+            CANDIDATE_ID,
+            "backend request failed",
+            "COMPARISON_VALIDATION_FAILED",
+            "WORLD_SETTING_COMPARISON_TARGET_INVALID",
+            "PROPOSED_PATH_MISMATCH",
+        )
+    ]
+
+
 def test_pipeline_keeps_duplicate_exclude_target_and_matched_property() -> None:
     spring = FakeSpringApi(candidate=_candidate())
     spring.subjects = [_subject(TARGET_ID, "바바리안")]
@@ -224,7 +267,13 @@ def test_pipeline_fails_only_claimed_candidate_when_comparator_fails() -> None:
     assert result.failed_count == 1
     assert result.first_failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
     assert spring.failures == [
-        (CANDIDATE_ID, "malformed LLM response", "COMPARISON_VALIDATION_FAILED")
+        (
+            CANDIDATE_ID,
+            "malformed LLM response",
+            "COMPARISON_VALIDATION_FAILED",
+            None,
+            None,
+        )
     ]
 
 
@@ -248,7 +297,13 @@ def test_pipeline_bubbles_quota_failure_without_claiming_or_failing_next_candida
     assert spring.claim_count == 1
     assert list(spring.candidates) == [second_candidate]
     assert spring.failures == [
-        (CANDIDATE_ID, "AI token quota is exhausted.", "AI_TOKEN_QUOTA_EXHAUSTED")
+        (
+            CANDIDATE_ID,
+            "AI token quota is exhausted.",
+            "AI_TOKEN_QUOTA_EXHAUSTED",
+            None,
+            None,
+        )
     ]
 
 
@@ -257,15 +312,21 @@ class FakeSpringApi:
         self,
         candidate: WorkerWorldSettingCandidatePayload,
         stale_completion_count: int = 0,
+        completion_failure_code: str | None = None,
+        completion_failure_reason_code: str | None = None,
+        completion_failure_status: int = 400,
     ) -> None:
         self.candidates = [candidate]
         self.subjects: list[WorkerWorldSettingSubject] = []
         self.context = _context()
         self.context_target_ids: list[list[UUID]] = []
         self.completions = []
-        self.failures: list[tuple[UUID, str, str]] = []
+        self.failures: list[tuple[UUID, str, str, str | None, str | None]] = []
         self.claim_count = 0
         self.stale_completion_count = stale_completion_count
+        self.completion_failure_code = completion_failure_code
+        self.completion_failure_reason_code = completion_failure_reason_code
+        self.completion_failure_status = completion_failure_status
 
     async def claim_next_world_setting_comparison(self, analysis_job_id, lease_token):
         self.claim_count += 1
@@ -300,13 +361,16 @@ class FakeSpringApi:
         self.completions.append(request)
         if self.stale_completion_count:
             self.stale_completion_count -= 1
-            http_request = httpx.Request("POST", "http://spring.local/comparison-complete")
-            response = httpx.Response(
+            raise _spring_http_error(
                 409,
-                request=http_request,
-                json={"error": {"code": "WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE"}},
+                "WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE",
             )
-            raise httpx.HTTPStatusError("stale", request=http_request, response=response)
+        if self.completion_failure_code is not None:
+            raise _spring_http_error(
+                self.completion_failure_status,
+                self.completion_failure_code,
+                self.completion_failure_reason_code,
+            )
 
     async def fail_world_setting_comparison(
         self,
@@ -315,8 +379,18 @@ class FakeSpringApi:
         lease_token,
         error_message,
         failure_code,
+        source_error_code=None,
+        source_reason_code=None,
     ):
-        self.failures.append((candidate_id, error_message, failure_code.value))
+        self.failures.append(
+            (
+                candidate_id,
+                error_message,
+                failure_code.value,
+                source_error_code,
+                source_reason_code,
+            )
+        )
 
 
 class FakeSubjectResolver:
@@ -345,6 +419,32 @@ class FailingComparator:
 class QuotaFailingComparator:
     async def compare(self, candidate, targets):
         raise AiTokenQuotaExhaustedError()
+
+
+def _spring_http_error(
+    status_code: int,
+    error_code: str,
+    reason_code: str | None = None,
+) -> SpringWorkerHttpError:
+    request = httpx.Request("POST", "http://spring.local/comparison-complete")
+    response = httpx.Response(
+        status_code,
+        request=request,
+        json={
+            "error": {
+                "code": error_code,
+                "context": {"reasonCode": reason_code} if reason_code else {},
+            }
+        },
+    )
+    return SpringWorkerHttpError(
+        "backend request failed",
+        request=request,
+        response=response,
+        status_code=status_code,
+        spring_error_code=error_code,
+        spring_reason_code=reason_code,
+    )
 
 
 def _candidate(scope_name: str | None = None) -> WorkerWorldSettingCandidatePayload:

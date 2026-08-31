@@ -1,11 +1,14 @@
 import asyncio
+import json
 import logging
 from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
+from app.analysis.schemas import CharacterSettingExtractionResult, CharacterSettingProviderResponse
 from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
 from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.llm.exceptions import LlmOutputTruncatedError
@@ -24,8 +27,59 @@ DEFAULT_SCHEMA_HINTS = (
 )
 
 
+def _valid_setting_payload(*, provider_payload: bool = False) -> dict:
+    payload = {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "Synthetic Character",
+        "raw_entity_mention": "Synthetic Character",
+        "attribute_name": "level",
+        "attribute_value": "12",
+        "value_type": "NUMBER",
+        "value_json": {
+            "value": 12,
+            **({"extra_json": None} if provider_payload else {}),
+        },
+        "evidence_spans": [
+            {
+                "quote": "Synthetic Character reached level 12.",
+                "start_offset": None,
+                "end_offset": None,
+            }
+        ],
+        "confidence": 0.9,
+    }
+    if not provider_payload:
+        payload["source_chunk_id"] = str(CHUNK_ID)
+    return payload
+
+
+def _valid_discovery_payload(*, provider_payload: bool = False) -> dict:
+    payload = {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "Synthetic Character",
+        "raw_entity_mention": "Synthetic Character",
+        "attribute_name": None,
+        "attribute_value": None,
+        "value_type": None,
+        "value_json": None,
+        "evidence_spans": [
+            {
+                "quote": "Synthetic Character appeared.",
+                "start_offset": None,
+                "end_offset": None,
+            }
+        ],
+        "confidence": 0.9,
+    }
+    if not provider_payload:
+        payload["source_chunk_id"] = str(CHUNK_ID)
+    return payload
+
+
 def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
-    # LLM의 source_chunk_id가 잘못되어도 Worker 입력 ID로 보정해 검증된 후보를 돌려준다.
+    # Provider 출력에 없는 source_chunk_id를 Worker 입력 ID로 결합한다.
     prompt_path = tmp_path / "prompt.md"
     prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
     extractor = CharacterSettingExtractor(
@@ -52,6 +106,29 @@ def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
     assert candidate.value_type == "NUMBER"
     assert candidate.value_json == {"value": 12}
     assert candidate.evidence_spans[0].quote == "카엘은 12레벨 검사"
+
+
+def test_extract_from_chunk_ignores_provider_source_chunk_id(tmp_path) -> None:
+    provider_payload = _valid_setting_payload(provider_payload=True)
+    provider_payload["source_chunk_id"] = "provider-controlled-id"
+    llm_client = InvalidPayloadThenEmptyClient(provider_payload)
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        prompt_path=prompt_path,
+        max_attempts=1,
+    )
+
+    result = _extract(
+        extractor,
+        source_chunk_id=CHUNK_ID,
+        chunk_text="synthetic manuscript text",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
+    )
+
+    assert llm_client.call_count == 1
+    assert result.candidates[0].source_chunk_id == CHUNK_ID
 
 
 def test_extract_from_chunk_parses_character_discovery_and_family_setting(
@@ -309,6 +386,161 @@ def test_extract_from_chunk_retries_when_required_field_is_missing(tmp_path) -> 
     assert result.candidates[0].source_chunk_id == CHUNK_ID
 
 
+def test_setting_candidate_requires_setting_fields() -> None:
+    payload = _valid_setting_payload()
+    del payload["attribute_name"]
+
+    with pytest.raises(ValidationError):
+        CharacterSettingExtractionResult.model_validate({"candidates": [payload]})
+
+
+def test_character_discovery_forbids_setting_fields() -> None:
+    payload = _valid_discovery_payload()
+    payload["attribute_name"] = "profile.family_relation"
+
+    with pytest.raises(ValidationError):
+        CharacterSettingExtractionResult.model_validate({"candidates": [payload]})
+
+
+@pytest.mark.parametrize(
+    "value_json",
+    [
+        {},
+        {"value": "12"},
+        {"value": True},
+    ],
+)
+def test_number_candidate_requires_json_number_value(value_json) -> None:
+    payload = _valid_setting_payload()
+    payload["value_json"] = value_json
+
+    with pytest.raises(ValidationError):
+        CharacterSettingExtractionResult.model_validate({"candidates": [payload]})
+
+
+@pytest.mark.parametrize("value", ["true", 1, 0])
+def test_boolean_candidate_requires_json_boolean_value(value) -> None:
+    payload = _valid_setting_payload()
+    payload["value_type"] = "BOOLEAN"
+    payload["value_json"] = {"value": value}
+
+    with pytest.raises(ValidationError):
+        CharacterSettingExtractionResult.model_validate({"candidates": [payload]})
+
+
+def test_setting_extraction_passes_discriminated_strict_schema_to_provider() -> None:
+    llm_client = RecordingTextGenerationClient()
+    extractor = CharacterSettingExtractor(llm_client=llm_client, max_attempts=1)
+
+    _extract(
+        extractor,
+        source_chunk_id=CHUNK_ID,
+        chunk_text="synthetic character setting",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
+    )
+
+    response_schema = llm_client.response_schema
+    assert response_schema is not None
+    assert response_schema.name == "character_setting_extraction"
+    assert response_schema.strict is True
+    schema_text = json.dumps(response_schema.schema, ensure_ascii=False, sort_keys=True)
+    assert '"const": "SETTING"' in schema_text
+    assert '"const": "CHARACTER_DISCOVERY"' in schema_text
+    assert '"const": "NUMBER"' in schema_text
+    assert '"type": "number"' in schema_text
+    assert '"const": "BOOLEAN"' in schema_text
+    assert '"type": "boolean"' in schema_text
+    assert '"source_chunk_id"' not in schema_text
+    _assert_all_objects_are_strict(response_schema.schema)
+
+
+def test_provider_json_wire_value_is_restored_before_domain_validation() -> None:
+    payload = _valid_setting_payload(provider_payload=True)
+    payload["attribute_name"] = "skill.synthetic"
+    payload["attribute_value"] = "Synthetic Skill"
+    payload["value_type"] = "JSON"
+    payload["value_json"] = {
+        "extra_json": '{"name":"Synthetic Skill","level":3,"active":true}'
+    }
+
+    provider_result = CharacterSettingProviderResponse.model_validate(
+        {"candidates": [payload]}
+    )
+    result = provider_result.to_extraction_result(CHUNK_ID)
+
+    assert result.candidates[0].value_json == {
+        "name": "Synthetic Skill",
+        "level": 3,
+        "active": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("invalid_payload", "reason_code", "field_loc"),
+    [
+        (
+            {**_valid_setting_payload(provider_payload=True), "attribute_name": None},
+            "SETTING_REQUIRED_FIELD_MISSING",
+            "candidates.0.attribute_name",
+        ),
+        (
+            {
+                **_valid_discovery_payload(provider_payload=True),
+                "attribute_name": "SECRET_PROVIDER_SETTING_VALUE",
+            },
+            "DISCOVERY_SETTING_FIELD_FORBIDDEN",
+            "candidates.0.attribute_name",
+        ),
+        (
+            {
+                **_valid_setting_payload(provider_payload=True),
+                "value_json": {"value": "SECRET_PROVIDER_NUMBER"},
+            },
+            "NUMBER_TYPED_VALUE_INVALID",
+            "candidates.0.value_json.value",
+        ),
+        (
+            {
+                **_valid_setting_payload(provider_payload=True),
+                "value_type": "BOOLEAN",
+                "value_json": {"value": "SECRET_PROVIDER_BOOLEAN"},
+            },
+            "BOOLEAN_TYPED_VALUE_INVALID",
+            "candidates.0.value_json.value",
+        ),
+    ],
+)
+def test_validation_retry_uses_only_safe_reason_and_field_location(
+    invalid_payload,
+    reason_code,
+    field_loc,
+    caplog,
+) -> None:
+    analysis_job_id = UUID("00000000-0000-0000-0000-000000000099")
+    llm_client = InvalidPayloadThenEmptyClient(invalid_payload)
+    extractor = CharacterSettingExtractor(llm_client=llm_client, max_attempts=2)
+
+    with caplog.at_level(logging.WARNING, logger="app.analysis.setting_extractor"):
+        result = _extract(
+            extractor,
+            analysis_job_id=analysis_job_id,
+            source_chunk_id=CHUNK_ID,
+            chunk_text="synthetic manuscript text",
+            schema_hints=DEFAULT_SCHEMA_HINTS,
+        )
+
+    assert result.candidates == []
+    assert llm_client.call_count == 2
+    assert reason_code not in llm_client.user_prompts[0]
+    assert reason_code in llm_client.user_prompts[1]
+    assert field_loc in llm_client.user_prompts[1]
+    assert "SECRET_PROVIDER" not in llm_client.user_prompts[1]
+    assert "SECRET_PROVIDER" not in caplog.text
+    assert f"analysis_job_id={analysis_job_id}" in caplog.text
+    assert f"source_chunk_id={CHUNK_ID}" in caplog.text
+    assert "repeated_reason_count=1" in caplog.text
+
+
 def test_schema_validation_retry_log_omits_provider_values(tmp_path, caplog) -> None:
     prompt_path = tmp_path / "prompt.md"
     prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
@@ -331,11 +563,46 @@ def test_schema_validation_retry_log_omits_provider_values(tmp_path, caplog) -> 
         )
 
     assert llm_client.call_count == 2
-    assert "ValidationError" in caplog.text
-    assert "list_type" in caplog.text
+    assert "reason_code=RESPONSE_SCHEMA_INVALID" in caplog.text
+    assert "field_locs=candidates" in caplog.text
     assert "SECRET_PROVIDER_VALUE" not in caplog.text
     assert "SECRET_NOVEL_BODY" not in caplog.text
     assert "SECRET_PROVIDER_VALUE" not in str(exc_info.value)
+
+
+def test_unknown_provider_field_name_is_redacted_from_validation_feedback(
+    tmp_path,
+    caplog,
+) -> None:
+    provider_payload = _valid_setting_payload(provider_payload=True)
+    provider_payload["SECRET_PROVIDER_PROPERTY"] = "synthetic value"
+    llm_client = AlwaysInvalidPayloadClient(provider_payload)
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        prompt_path=prompt_path,
+        max_attempts=2,
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="app.analysis.setting_extractor"),
+        pytest.raises(LlmExtractionError) as exc_info,
+    ):
+        _extract(
+            extractor,
+            source_chunk_id=CHUNK_ID,
+            chunk_text="synthetic manuscript text",
+            schema_hints=DEFAULT_SCHEMA_HINTS,
+        )
+
+    assert llm_client.call_count == 2
+    assert "candidates.0.unexpected_field" in llm_client.user_prompts[1]
+    assert "candidates.0.unexpected_field" in caplog.text
+    assert "candidates.0.unexpected_field" in str(exc_info.value)
+    assert "SECRET_PROVIDER_PROPERTY" not in llm_client.user_prompts[1]
+    assert "SECRET_PROVIDER_PROPERTY" not in caplog.text
+    assert "SECRET_PROVIDER_PROPERTY" not in str(exc_info.value)
 
 
 def test_extract_from_chunk_retries_when_entity_name_is_whitespace_only(tmp_path) -> None:
@@ -510,6 +777,22 @@ def _extract(extractor: CharacterSettingExtractor, **kwargs):
     return asyncio.run(extractor.extract_from_chunk(**kwargs))
 
 
+def _assert_all_objects_are_strict(schema: object) -> None:
+    if isinstance(schema, list):
+        for item in schema:
+            _assert_all_objects_are_strict(item)
+        return
+    if not isinstance(schema, dict):
+        return
+    if schema.get("type") == "object":
+        assert schema.get("additionalProperties") is False
+        assert set(schema.get("properties", {})) == set(schema.get("required", []))
+    assert "oneOf" not in schema
+    assert "discriminator" not in schema
+    for value in schema.values():
+        _assert_all_objects_are_strict(value)
+
+
 class FakeTextGenerationClient:
     # 정상 LLM 응답을 흉내 내는 기본 fake client
     async def create_text_response(
@@ -519,25 +802,27 @@ class FakeTextGenerationClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema=None,
     ) -> LlmTextResponse:
         # source_chunk_id는 LLM이 만들 값이 아니므로 prompt에 노출하지 않는다.
         assert "JSON만 반환하세요." in system_prompt
         assert str(CHUNK_ID) not in user_prompt
         assert max_output_tokens == 6000
         assert prompt_cache_key is not None
-        assert prompt_cache_key.startswith("setting-extraction:v6:")
+        assert prompt_cache_key.startswith("setting-extraction:v7:")
         return LlmTextResponse(
             text="""
             {
               "candidates": [
                 {
-                  "source_chunk_id": "c80fc205-7fdd-8ab0-8b351745a174",
+                  "candidate_kind": "SETTING",
                   "entity_type": "CHARACTER",
                   "entity_name": "카엘",
+                  "raw_entity_mention": "카엘",
                   "attribute_name": "level",
                   "attribute_value": "12",
                   "value_type": "NUMBER",
-                  "value_json": {"value": 12},
+                  "value_json": {"value": 12, "extra_json": null},
                   "evidence_spans": [
                     {
                       "quote": "카엘은 12레벨 검사",
@@ -558,6 +843,7 @@ class RecordingTextGenerationClient:
         self.system_prompt = ""
         self.user_prompt = ""
         self.prompt_cache_key = None
+        self.response_schema = None
         self.call_count = 0
 
     async def create_text_response(
@@ -567,11 +853,13 @@ class RecordingTextGenerationClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema=None,
     ) -> LlmTextResponse:
         self.call_count += 1
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
         self.prompt_cache_key = prompt_cache_key
+        self.response_schema = response_schema
         return LlmTextResponse(text='{"candidates": []}')
 
 
@@ -583,6 +871,7 @@ class CharacterDiscoveryTextGenerationClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema=None,
     ) -> LlmTextResponse:
         assert 'known_character_names:\n["케닉"]' in user_prompt
         return LlmTextResponse(
@@ -615,7 +904,7 @@ class CharacterDiscoveryTextGenerationClient:
                   "attribute_name": "profile.family_relation",
                   "attribute_value": "케닉의 넷째 아들",
                   "value_type": "STRING",
-                  "value_json": {"value": "케닉의 넷째 아들"},
+                  "value_json": {"value": "케닉의 넷째 아들", "extra_json": null},
                   "evidence_spans": [
                     {
                       "quote": "케닉의 넷째 아들 세룸은 나와라!",
@@ -643,6 +932,7 @@ class RetryThenSuccessClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema=None,
     ) -> LlmTextResponse:
         self.call_count += 1
         if self.call_count == 1:
@@ -653,6 +943,7 @@ class RetryThenSuccessClient:
             model=model,
             max_output_tokens=max_output_tokens,
             prompt_cache_key=prompt_cache_key,
+            response_schema=response_schema,
         )
 
 
@@ -668,6 +959,7 @@ class MissingFieldThenSuccessClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema=None,
     ) -> LlmTextResponse:
         self.call_count += 1
         if self.call_count == 1:
@@ -676,12 +968,13 @@ class MissingFieldThenSuccessClient:
                 {
                   "candidates": [
                     {
-                      "source_chunk_id": "00000000-0000-0000-0000-000000000001",
+                      "candidate_kind": "SETTING",
                       "entity_type": "CHARACTER",
                       "entity_name": "카엘",
+                      "raw_entity_mention": "카엘",
                       "attribute_name": "level",
                       "attribute_value": "12",
-                      "value_json": {"value": 12},
+                      "value_json": {"value": 12, "extra_json": null},
                       "evidence_spans": [
                         {
                           "quote": "카엘은 12레벨 검사",
@@ -701,6 +994,7 @@ class MissingFieldThenSuccessClient:
             model=model,
             max_output_tokens=max_output_tokens,
             prompt_cache_key=prompt_cache_key,
+            response_schema=response_schema,
         )
 
 
@@ -715,6 +1009,7 @@ class WhitespaceEntityNameThenSuccessClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema=None,
     ) -> LlmTextResponse:
         self.call_count += 1
         if self.call_count == 1:
@@ -723,14 +1018,14 @@ class WhitespaceEntityNameThenSuccessClient:
                 {
                   "candidates": [
                     {
-                      "source_chunk_id": "00000000-0000-0000-0000-000000000001",
+                      "candidate_kind": "SETTING",
                       "entity_type": "CHARACTER",
                       "entity_name": "   ",
                       "raw_entity_mention": "카엘",
                       "attribute_name": "level",
                       "attribute_value": "12",
                       "value_type": "NUMBER",
-                      "value_json": {"value": 12},
+                      "value_json": {"value": 12, "extra_json": null},
                       "evidence_spans": [
                         {
                           "quote": "카엘은 12레벨 검사",
@@ -750,6 +1045,7 @@ class WhitespaceEntityNameThenSuccessClient:
             model=model,
             max_output_tokens=max_output_tokens,
             prompt_cache_key=prompt_cache_key,
+            response_schema=response_schema,
         )
 
 
@@ -765,6 +1061,7 @@ class AlwaysInvalidJsonClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema=None,
     ) -> LlmTextResponse:
         self.call_count += 1
         return LlmTextResponse(text="이 응답은 끝까지 JSON이 아닙니다.")
@@ -782,6 +1079,7 @@ class AlwaysMissingFieldClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema=None,
     ) -> LlmTextResponse:
         self.call_count += 1
         return LlmTextResponse(
@@ -789,12 +1087,13 @@ class AlwaysMissingFieldClient:
             {
               "candidates": [
                 {
-                  "source_chunk_id": "00000000-0000-0000-0000-000000000001",
+                  "candidate_kind": "SETTING",
                   "entity_type": "CHARACTER",
                   "entity_name": "카엘",
+                  "raw_entity_mention": "카엘",
                   "attribute_name": "level",
                   "attribute_value": "12",
-                  "value_json": {"value": 12},
+                  "value_json": {"value": 12, "extra_json": null},
                   "evidence_spans": [
                     {
                       "quote": "카엘은 12레벨 검사",
@@ -817,6 +1116,42 @@ class SensitiveInvalidSchemaClient:
     async def create_text_response(self, **kwargs) -> LlmTextResponse:
         self.call_count += 1
         return LlmTextResponse(text='{"candidates":"SECRET_PROVIDER_VALUE"}')
+
+
+class InvalidPayloadThenEmptyClient:
+    def __init__(self, invalid_payload: dict) -> None:
+        self.invalid_payload = invalid_payload
+        self.call_count = 0
+        self.user_prompts: list[str] = []
+
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
+        self.call_count += 1
+        self.user_prompts.append(kwargs["user_prompt"])
+        if self.call_count == 1:
+            return LlmTextResponse(
+                text=json.dumps(
+                    {"candidates": [self.invalid_payload]},
+                    ensure_ascii=False,
+                )
+            )
+        return LlmTextResponse(text='{"candidates": []}')
+
+
+class AlwaysInvalidPayloadClient:
+    def __init__(self, invalid_payload: dict) -> None:
+        self.invalid_payload = invalid_payload
+        self.call_count = 0
+        self.user_prompts: list[str] = []
+
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
+        self.call_count += 1
+        self.user_prompts.append(kwargs["user_prompt"])
+        return LlmTextResponse(
+            text=json.dumps(
+                {"candidates": [self.invalid_payload]},
+                ensure_ascii=False,
+            )
+        )
 
 
 class TruncateThenSuccessClient:

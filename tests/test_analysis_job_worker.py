@@ -351,6 +351,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         {
             "source_chunk_id": chunking_service.chunks[0].id,
             "chunk_text": chunk_text,
+            "analysis_job_id": ANALYSIS_JOB_ID,
             "episode_no": 1,
             "episode_title": "첫 번째 회차",
             "schema_hints": SCHEMA_HINTS,
@@ -871,6 +872,7 @@ class FakeSettingExtractor:
         self,
         source_chunk_id: UUID,
         chunk_text: str,
+        analysis_job_id: UUID | None = None,
         episode_no: int | None = None,
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
@@ -880,6 +882,7 @@ class FakeSettingExtractor:
             {
                 "source_chunk_id": source_chunk_id,
                 "chunk_text": chunk_text,
+                "analysis_job_id": analysis_job_id,
                 "episode_no": episode_no,
                 "episode_title": episode_title,
                 "schema_hints": schema_hints,

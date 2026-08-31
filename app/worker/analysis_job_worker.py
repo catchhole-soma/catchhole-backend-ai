@@ -167,6 +167,7 @@ class SettingExtractorApi(Protocol):
         self,
         source_chunk_id: UUID,
         chunk_text: str,
+        analysis_job_id: UUID | None = None,
         episode_no: int | None = None,
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
@@ -521,6 +522,7 @@ class AnalysisJobWorker:
             extraction_result = await setting_extractor.extract_from_chunk(
                 source_chunk_id=chunk.id,
                 chunk_text=chunk.chunk_text,
+                analysis_job_id=payload.analysis_job_id,
                 episode_no=episode.episode_no,
                 episode_title=episode.title,
                 schema_hints=schema_hints,

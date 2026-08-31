@@ -100,12 +100,18 @@
 - `value_type`이 `BOOLEAN`이면 `attribute_value`와 `value_json.value`를 각각
   소문자 `"true"`/`"false"`와 JSON boolean `true`/`false`로 정확히 맞춥니다.
 - `STRING`, `JSON`, `UNKNOWN`의 `attribute_value`는 기존처럼 짧은 표시 요약으로 사용합니다.
-- `value_json`은 실제 값의 source of truth입니다.
-- 프로필처럼 단일 문자열 값은 `value_json.value`에 문자열로 넣습니다.
-- 나이와 레벨처럼 단일 숫자 값은 `value_json.value`에 숫자로 넣습니다.
-- 스탯, 스킬, 아이템, 상태 값은 `value_json`에 구조화된 JSON으로 넣습니다.
-- `skill.*`, `item.*`, `status.*` 같은 동적 JSON 후보의 `value_json.name`에는 점 뒤 구체 명칭을 넣습니다.
-- 원문에서 확인되지 않은 `value_json` 필드는 만들지 않습니다.
+- `value_json`은 structured output wire 형식이며 `value`와 `extra_json`을 사용합니다.
+- `NUMBER`의 `value`는 JSON number, `BOOLEAN`의 `value`는 JSON boolean,
+  `STRING`의 `value`는 JSON string이어야 합니다.
+- `NUMBER`, `BOOLEAN`, `STRING`에 부가 필드가 없으면 `extra_json`은 null입니다.
+- 스탯처럼 typed `value` 외에 `name`, `label` 같은 부가 필드가 있으면 `extra_json`에
+  그 부가 필드만 담은 JSON object 문자열을 넣습니다. `value`를 중복해 넣지 않습니다.
+- `JSON`은 `value` 필드를 만들지 않고, 실제 구조화 JSON object 전체를 `extra_json` 문자열에 넣습니다.
+- `UNKNOWN`은 확인 가능한 scalar를 `value`에 넣고, 나머지 object 필드가 있으면
+  `extra_json`에 JSON object 문자열로 넣습니다. 둘 다 없으면 `value`와 `extra_json`을 null로 둡니다.
+- `skill.*`, `item.*`, `status.*` 같은 동적 JSON 후보의 복원된 JSON object에는
+  점 뒤 구체 명칭을 `name`으로 넣습니다.
+- `extra_json`은 반드시 JSON object를 직렬화한 문자열이어야 하며, 원문에서 확인되지 않은 필드는 만들지 않습니다.
 - `confidence`는 근거가 명확할수록 높게 둡니다.
   - 시스템창/설정표처럼 직접 수치가 나온 경우: 0.9~1.0
   - 원문 문장으로 명확히 확인되는 프로필/상태/소유: 0.7~0.9
@@ -119,14 +125,14 @@
 `attribute_name`과 `value_json` 예시:
 
 - 캐릭터 발견: `"candidate_kind": "CHARACTER_DISCOVERY"`, `"entity_name": "세룸"`, 설정 값 필드 모두 null
-- 가족 관계: `"attribute_name": "profile.가족관계"`, `"value_type": "STRING"`, `"value_json": {"value": "케닉의 넷째 아들"}`
-- 프로필: `"attribute_name": "profile.species"`, `"value_type": "STRING"`, `"value_json": {"value": "바바리안"}`
-- 레벨: `"attribute_name": "level"`, `"attribute_value": "12"`, `"value_type": "NUMBER"`, `"value_json": {"value": 12}`
-- 나이: `"attribute_name": "age"`, `"attribute_value": "17"`, `"value_type": "NUMBER"`, `"value_json": {"value": 17}`
-- 스탯: `"attribute_name": "stats.근력"`, `"attribute_value": "80"`, `"value_type": "NUMBER"`, `"value_json": {"name": "근력", "label": "근력", "value": 80}`
-- 스킬: `"attribute_name": "skill.파이어볼"`, `"value_type": "JSON"`, `"value_json": {"name": "파이어볼", "level": 3, "effect": "화염 속성 공격"}`
-- 아이템: `"attribute_name": "item.화염검"`, `"value_type": "JSON"`, `"value_json": {"name": "화염검", "type": "weapon", "equipped": true}`
-- 상태: `"attribute_name": "status.부상"`, `"value_type": "JSON"`, `"value_json": {"name": "부상", "description": "왼팔 골절"}`
+- 가족 관계: `"value_type": "STRING"`, `"value_json": {"value": "케닉의 넷째 아들", "extra_json": null}`
+- 프로필: `"value_type": "STRING"`, `"value_json": {"value": "바바리안", "extra_json": null}`
+- 레벨: `"value_type": "NUMBER"`, `"value_json": {"value": 12, "extra_json": null}`
+- 나이: `"value_type": "NUMBER"`, `"value_json": {"value": 17, "extra_json": null}`
+- 스탯: `"value_type": "NUMBER"`, `"value_json": {"value": 80, "extra_json": "{\"name\":\"근력\",\"label\":\"근력\"}"}`
+- 스킬: `"value_type": "JSON"`, `"value_json": {"extra_json": "{\"name\":\"파이어볼\",\"level\":3,\"effect\":\"화염 속성 공격\"}"}`
+- 아이템: `"value_type": "JSON"`, `"value_json": {"extra_json": "{\"name\":\"화염검\",\"type\":\"weapon\",\"equipped\":true}"}`
+- 상태: `"value_type": "JSON"`, `"value_json": {"extra_json": "{\"name\":\"부상\",\"description\":\"왼팔 골절\"}"}`
 
 잘못된 예시:
 
@@ -147,9 +153,10 @@
       "raw_entity_mention": "원문에 실제 나온 최소 주체 표현",
       "attribute_name": "profile.<프로필명> | age | level | stats.<스탯명> | skill.<스킬명> | item.<아이템명> | status.<상태명>",
       "attribute_value": "목록에서 보여줄 요약값",
-      "value_type": "STRING | NUMBER | BOOLEAN | JSON | UNKNOWN",
+      "value_type": "NUMBER",
       "value_json": {
-        "value": "실제 구조화 값"
+        "value": 12,
+        "extra_json": null
       },
       "evidence_spans": [
         {

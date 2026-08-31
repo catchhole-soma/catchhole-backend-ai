@@ -1,3 +1,5 @@
+import re
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -16,6 +18,7 @@ from app.domain.enums import (
     AnalysisJobType,
     EpisodeProcessingStatus,
     WorldSettingCategory,
+    WorldSettingComparisonValidationReason,
 )
 from app.schemas.worker import (
     AiTokenReleaseRequest,
@@ -44,6 +47,16 @@ from app.schemas.worker import (
 # Spring 내부 API 인증용 헤더 이름
 INTERNAL_API_KEY_HEADER = "X-Internal-Api-Key"
 WORKER_LEASE_TOKEN_HEADER = "X-Worker-Lease-Token"
+ALLOWED_SPRING_REASON_CODES = frozenset(
+    reason.value for reason in WorldSettingComparisonValidationReason
+)
+SPRING_ERROR_CODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{0,99}$")
+
+
+@dataclass(frozen=True)
+class _SpringErrorDetails:
+    code: str | None
+    reason_code: str | None
 
 
 class SpringWorkerClient:
@@ -370,10 +383,14 @@ class SpringWorkerClient:
         lease_token: UUID,
         error_message: str,
         failure_code: AnalysisFailureCode = AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+        source_error_code: str | None = None,
+        source_reason_code: str | None = None,
     ) -> None:
         request = WorkerWorldSettingComparisonFailRequest(
             failure_code=failure_code,
             error_message=error_message,
+            source_error_code=source_error_code,
+            source_reason_code=source_reason_code,
         )
         response = await self._request(
             "POST",
@@ -382,7 +399,7 @@ class SpringWorkerClient:
                 f"/world-setting-candidates/{candidate_id}/comparison-fail"
             ),
             headers=self._headers(lease_token),
-            json=request.model_dump(by_alias=True),
+            json=request.model_dump(by_alias=True, exclude_none=True),
         )
         _raise_for_spring_status(response)
 
@@ -430,11 +447,13 @@ class SpringWorkerClient:
                     headers=self._headers(lease_token),
                     json=payload,
                 )
-                if (
-                    response.status_code == 409
-                    and _spring_error_code(response) == "AI_TOKEN_QUOTA_EXHAUSTED"
-                ):
-                    raise AiTokenQuotaExhaustedError()
+                spring_error = _spring_error_details(response)
+                if response.status_code == 409 and spring_error.code == "AI_TOKEN_QUOTA_EXHAUSTED":
+                    raise AiTokenQuotaExhaustedError(
+                        status_code=response.status_code,
+                        spring_error_code=spring_error.code,
+                        spring_reason_code=spring_error.reason_code,
+                    )
                 _raise_for_spring_status(response)
                 return
             except SpringWorkerTransportError:
@@ -472,27 +491,44 @@ class SpringWorkerClient:
         return headers
 
 
-def _spring_error_code(response: httpx.Response) -> str | None:
+def _spring_error_details(response: httpx.Response) -> _SpringErrorDetails:
     try:
         payload = response.json()
     except ValueError:
-        return None
+        return _SpringErrorDetails(None, None)
     error = payload.get("error") if isinstance(payload, dict) else None
     code = error.get("code") if isinstance(error, dict) else None
-    return code if isinstance(code, str) else None
+    context = error.get("context") if isinstance(error, dict) else None
+    reason_code = context.get("reasonCode") if isinstance(context, dict) else None
+    return _SpringErrorDetails(
+        code=(
+            code
+            if isinstance(code, str) and SPRING_ERROR_CODE_PATTERN.fullmatch(code)
+            else None
+        ),
+        reason_code=(
+            reason_code
+            if isinstance(reason_code, str) and reason_code in ALLOWED_SPRING_REASON_CODES
+            else None
+        ),
+    )
 
 
 def _raise_for_spring_status(response: httpx.Response) -> None:
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        spring_error = _spring_error_details(response)
         error_type = (
             WorkerLeaseExpiredError
-            if _spring_error_code(response) == WorkerLeaseExpiredError.error_code
+            if spring_error.code == WorkerLeaseExpiredError.error_code
             else SpringWorkerHttpError
         )
         raise error_type(
             str(exc),
             request=exc.request,
             response=exc.response,
+            status_code=response.status_code,
+            spring_error_code=spring_error.code,
+            spring_reason_code=spring_error.reason_code,
         ) from exc

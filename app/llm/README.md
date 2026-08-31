@@ -29,6 +29,7 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
   - GPT-5.6 explicit cache breakpoint는 아직 사용하지 않으며, 현재는 정적 prefix 우선 배치와 cache key로 implicit cache 재사용을 돕습니다.
   - debug 로그에는 prompt 본문 없이 cached input 필드의 존재 여부와 token usage만 남깁니다.
   - 응답 텍스트와 token usage를 `LlmTextResponse`로 반환합니다.
+  - 호출별 `LlmResponseSchema`가 있을 때만 Responses API의 `text.format=json_schema`를 전달합니다. 현재는 캐릭터 설정 추출에만 적용합니다.
 - `responses.py`
   - LLM 호출 결과를 내부에서 전달하기 위한 `dataclass` 값 객체를 둡니다.
 - `protocols.py`
@@ -72,14 +73,14 @@ Spring의 `ai_token_usages`를 기준으로 조회합니다.
 
 ## 현재 추출 방식
 
-현재 단계에서는 prompt로 JSON 응답을 요구하고, Python schema로 결과를 검증합니다.
+캐릭터 설정 추출은 Pydantic에서 생성한 strict JSON Schema를 Responses API에 전달하고, 응답을 Provider wire model과 저장 경계 model로 두 번 검증합니다. 그 밖의 LLM 호출은 기존 prompt + Python schema 검증을 유지합니다.
 
-JSON 파싱 실패 또는 Python schema 검증 실패는 `CharacterSettingExtractor`에서 재시도합니다. 다만 프롬프트 정책 위반까지 강제하지는 않습니다.
+JSON 파싱 실패 또는 Python schema 검증 실패는 `CharacterSettingExtractor`에서 재시도합니다. 다음 요청에는 최초 prompt와 값이 제거된 `reasonCode + fieldLocs`만 넣고 실패 응답 원문은 prompt나 로그에 남기지 않습니다. 다만 attribute 이름 정책처럼 schema로 표현하지 않은 프롬프트 정책 위반까지 강제하지는 않습니다.
 캐릭터 설정 추출은 `max_output_tokens=6000`에서 시작해 출력 절단 시 12000으로, 세계관 추출은 5000에서 시작해 절단 시 10000으로 한 번만 확장합니다. 주체 해소는 2000, 비교는 3000을 사용하며 절단 확장 재시도는 하지 않습니다.
 
 예를 들어 `attribute_name`이 `item`처럼 suffix 없이 오거나, `confidence`가 `0.0`인 응답은 프롬프트상 원하지 않는 값이지만 현재 schema만으로는 통과할 수 있습니다.
 
-OpenAI Structured Outputs의 JSON schema 강제, attribute policy validator, chunk별 재시도 이력 기록은 후속 이슈에서 다룹니다.
+attribute policy validator와 영구적인 chunk별 재시도 이력 저장은 후속 이슈에서 다룹니다. 현재 재시도 로그는 job/chunk ID, attempt, 안전한 reason과 반복 횟수만 포함합니다.
 
 세계관 추출·대상 탐색·비교는 `app/analysis/json_response.py`의 공통 JSON/Pydantic 검증 재시도를 사용합니다. `S*`/`T*` ref 범위, 최대 대상 수, UPDATE/MERGE의 실제 속성명, ADD/EXCLUDE의 추출값 보존 규칙은 provider 응답 뒤 Python에서 추가 검증합니다. 실제 UUID와 version은 prompt에 포함하지 않습니다.
 

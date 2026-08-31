@@ -1,6 +1,16 @@
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Any, Protocol
 
 from app.llm.responses import LlmTextResponse
+
+
+@dataclass(frozen=True)
+class LlmResponseSchema:
+    """Provider 호출 하나에만 적용할 structured output 계약."""
+
+    name: str
+    schema: dict[str, Any]
+    strict: bool = True
 
 
 class TextGenerationClient(Protocol):
@@ -13,4 +23,5 @@ class TextGenerationClient(Protocol):
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema: LlmResponseSchema | None = None,
     ) -> LlmTextResponse: ...

@@ -27,6 +27,10 @@ Spring 기준으로는 `AppException`, `ErrorCode`, 전역 예외 handler 조합
 - `handlers.py`
   - FastAPI app에 exception handler를 등록합니다.
   - `AppException`, `RequestValidationError`, 예상하지 못한 `Exception`을 공통 응답 형태로 바꿉니다.
+- `failure_classification.py`
+  - Worker 예외 체인을 사용자용 상위 failure code로 분류합니다.
+  - 세계관 comparison-complete의 HTTP 400 `WORLD_SETTING_COMPARISON_TARGET_INVALID`만 `COMPARISON_VALIDATION_FAILED`로 분류하고, 임의의 4xx/5xx를 검증 실패로 확대하지 않습니다.
+  - Spring typed exception에서 `sourceErrorCode`와 허용된 `sourceReasonCode`를 별도로 꺼내 후보 실패 보고에 사용합니다.
 
 ## 응답 형태
 

@@ -149,6 +149,8 @@ claim 요청은 `allowedJobTypes`를 필수로 보내고 성공 응답의 lease 
 
 초기 회차 분석의 후보별 비교 실패는 해당 후보를 `FAILED`로 기록하고 다른 후보와 Job 완료를 계속합니다. 사용자가 `/recompare`를 호출하면 Backend가 공개 분석 목록에 노출하지 않는 `WORLD_SETTING_COMPARISON` Job을 만들고, 다음 별도 runner가 그 Job type만 claim합니다.
 
+comparison-complete에서 Backend가 HTTP 400 `WORLD_SETTING_COMPARISON_TARGET_INVALID`를 반환하면 Worker는 같은 LLM 결과를 다시 만들지 않습니다. 후보의 사용자용 `comparisonFailureCode`는 `COMPARISON_VALIDATION_FAILED`로 두고, Backend 원본 `sourceErrorCode`와 허용된 enum `sourceReasonCode`는 별도 필드로 실패 API에 전달합니다. 알 수 없는 4xx/5xx는 이 분류로 흡수하지 않습니다. HTTP 409도 정확한 `WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE`일 때만 최신 context로 다시 비교합니다.
+
 ```bash
 .venv/bin/python -m scripts.run_analysis_worker --worker-kind world-comparison
 ```
@@ -176,7 +178,7 @@ LLM에는 DB UUID를 전달하지 않고 Worker가 만든 `S*`와 `T*` 참조만
 - offset은 `Episode.content_s3_key`로 읽은 S3 회차 원문 기준입니다.
 - `chunk_text`는 문단을 새로 이어 붙인 값이 아니라 원문에서 잘라낸 slice입니다.
 - LLM이 반환한 숫자 offset은 신뢰하지 않고, `quote`를 실제 `chunk_text`에서 찾아 다시 계산합니다.
-- LLM이 반환한 `source_chunk_id`는 신뢰하지 않고, Pydantic 검증 전에 Worker 입력 `EpisodeChunk.id`로 강제합니다.
+- `source_chunk_id`는 LLM 출력 schema에서 제외하고, wire 검증 뒤 Worker 입력 `EpisodeChunk.id`를 결합합니다.
 - 캐릭터명 매칭은 LLM이 DB 매칭을 직접 하는 것이 아니라, Python resolver가 `knownCharacters`와 비교해 계산합니다.
 
 ## 전체 흐름
@@ -215,9 +217,9 @@ flowchart TD
     RD --> S
     RE --> S
     S --> T["LLM user prompt 구성<br/>schema hints + metadata + chunk_text"]
-    T --> U["OpenAI Responses API 호출"]
-    U --> V{"JSON parse / schema 검증 성공?"}
-    V -- "실패, 재시도 남음" --> U
+    T --> U["strict JSON Schema와 함께<br/>OpenAI Responses API 호출"]
+    U --> V{"Provider wire + 저장 경계<br/>Pydantic 이중 검증 성공?"}
+    V -- "실패, 안전한 reason/loc로 재시도" --> U
     V -- "실패, 재시도 소진" --> VX["LlmExtractionError"]
     V -- "성공" --> W["ExtractedSettingCandidate 목록 생성"]
 
@@ -319,9 +321,9 @@ sequenceDiagram
         loop chunk in chunks
             Worker->>Extractor: extract_from_chunk(sourceChunkId, chunkText, episodeNo, title, schemaHints)
             Extractor->>Extractor: system/user prompt 구성
-            Extractor->>LLM: create_text_response()
+            Extractor->>LLM: create_text_response(strict response schema)
             LLM-->>Extractor: text response
-            Extractor->>Extractor: JSON parse + sourceChunkId 강제 + schema validation
+            Extractor->>Extractor: wire schema validation + sourceChunkId 결합 + domain schema validation
             Extractor-->>Worker: CharacterSettingExtractionResult
             Worker->>Evidence: resolve_candidate_evidence_offsets(candidates, chunkText, chunkStartOffset)
             Evidence-->>Worker: offset 보정된 candidates
@@ -543,27 +545,27 @@ LLM이 분석할 청크 원문
 
 LLM 응답 처리:
 
-1. 응답 텍스트 앞뒤 공백을 제거합니다.
-2. JSON 코드블록으로 감싼 경우 바깥 fence를 제거합니다.
-3. 앞뒤 설명 문장이 섞인 경우 첫 JSON 객체 범위를 잘라냅니다.
-4. `json.loads()`로 파싱합니다.
-5. 각 후보의 `source_chunk_id`를 현재 입력 `EpisodeChunk.id`로 덮어씁니다.
-6. `CharacterSettingExtractionResult` Pydantic schema로 검증합니다.
+1. Pydantic discriminator model에서 만든 strict JSON Schema를 호출별 `text.format`으로 전달합니다.
+2. 응답을 `json.loads()`로 파싱하고 source ID가 없는 Provider wire model로 검증합니다.
+3. wire의 typed `value`와 검증된 `extra_json` object를 기존 내부 `value_json` dict로 복원합니다.
+4. 각 후보에 현재 입력 `EpisodeChunk.id`를 `source_chunk_id`로 결합합니다.
+5. `CharacterSettingExtractionResult` 저장 경계 Pydantic schema로 다시 검증합니다.
 
 재시도 기준:
 
 - JSON 문법이 깨진 경우 재시도합니다.
 - 필수 필드 누락, enum 범위 오류, confidence 범위 오류처럼 schema 검증에 실패하면 재시도합니다.
+- 다음 시도는 최초 prompt에 값이 제거된 `reasonCode + fieldLocs`만 붙입니다. Provider 응답 원문은 prompt와 로그에 재사용하지 않으며 후보 하나만 잘못돼도 전체 응답을 재시도합니다.
 - Responses API가 `status=incomplete`와 출력 상한 reason을 반환하거나, JSON 파싱 실패 시 실제 `outputTokens`가 설정한 상한과 같으면 `LLM_OUTPUT_TRUNCATED`로 분류합니다. 캐릭터 추출은 6,000에서 12,000, 세계관 추출은 5,000에서 10,000으로 한 번만 높여 재시도하고 두 번째 절단은 즉시 종료합니다.
 - 절단 상향은 JSON/schema 검증 재시도 횟수를 소비하지 않습니다. 확장 호출은 증가한 상한 기준 예상 최대량을 새 request ID로 먼저 예약하며, Spring이 quota 409를 반환하면 provider를 호출하지 않습니다.
-- `source_chunk_id` 누락·오형식은 Worker가 결정적으로 보정하므로 재시도 사유가 아닙니다.
+- `source_chunk_id`는 Provider 출력 계약에 포함하지 않고 Worker가 결정적으로 결합합니다.
 - schema상 유효한 문자열이지만 프롬프트 정책상 애매한 값은 현재 재시도하지 않습니다.
 
 LLM 출력 계약:
 
 | 필드 | 역할 |
 | --- | --- |
-| `source_chunk_id` | Worker가 현재 입력 `EpisodeChunk.id`로 주입하는 후보 근거 식별자. LLM 값은 사용하지 않음 |
+| `source_chunk_id` | Provider 출력에는 없고 Worker가 현재 입력 `EpisodeChunk.id`로 결합하는 후보 근거 식별자 |
 | `candidate_kind` | 값이 있는 설정은 `SETTING`, 이름 존재 확인은 `CHARACTER_DISCOVERY` |
 | `entity_type` | 현재는 캐릭터 중심 |
 | `entity_name` | LLM이 청크 문맥에서 정리한 후보 캐릭터명 |
@@ -571,7 +573,7 @@ LLM 출력 계약:
 | `attribute_name` | `SETTING`에서 먼저 `SettingCandidate.attributeName`에 저장되는 후보 key. `CHARACTER_DISCOVERY`는 null |
 | `attribute_value` | `SETTING`의 목록/검토 화면 표시용 요약 문자열. `CHARACTER_DISCOVERY`는 null |
 | `value_type` | `SETTING`의 값 타입. `CHARACTER_DISCOVERY`는 null |
-| `value_json` | `SETTING` 실제 값의 source of truth. `CHARACTER_DISCOVERY`는 null |
+| `value_json` | wire에서는 typed `value`와 `extra_json`을 사용하고, Worker가 기존 내부 dict로 복원. `CHARACTER_DISCOVERY`는 null |
 | `evidence_spans[].quote` | 원문에서 복사한 근거 문장 |
 | `evidence_spans[].start_offset/end_offset` | LLM 값은 사용하지 않고 후처리에서 재계산 |
 | `confidence` | 후보 신뢰도 |

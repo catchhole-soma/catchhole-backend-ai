@@ -8,7 +8,7 @@ import pytest
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonPipeline
 from app.analysis.character_fact_comparison_schemas import CharacterFactComparisonDecision
 from app.analysis.exceptions import ComparisonValidationError
-from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
 from app.domain.enums import AnalysisFailureCode
 from app.llm.exceptions import LlmResponseValidationError
 from app.schemas.worker import (
@@ -335,7 +335,13 @@ class FakeSpringApi:
                 request=http_request,
                 json={"error": {"code": "SETTING_CANDIDATE_COMPARISON_STALE"}},
             )
-            raise httpx.HTTPStatusError("stale", request=http_request, response=response)
+            raise SpringWorkerHttpError(
+                "stale",
+                request=http_request,
+                response=response,
+                status_code=409,
+                spring_error_code="SETTING_CANDIDATE_COMPARISON_STALE",
+            )
 
     async def fail_character_fact_comparison(
         self,
