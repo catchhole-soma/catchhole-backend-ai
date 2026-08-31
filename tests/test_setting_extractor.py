@@ -108,6 +108,29 @@ def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
     assert candidate.evidence_spans[0].quote == "카엘은 12레벨 검사"
 
 
+def test_extract_from_chunk_ignores_provider_source_chunk_id(tmp_path) -> None:
+    provider_payload = _valid_setting_payload(provider_payload=True)
+    provider_payload["source_chunk_id"] = "provider-controlled-id"
+    llm_client = InvalidPayloadThenEmptyClient(provider_payload)
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        prompt_path=prompt_path,
+        max_attempts=1,
+    )
+
+    result = _extract(
+        extractor,
+        source_chunk_id=CHUNK_ID,
+        chunk_text="synthetic manuscript text",
+        schema_hints=DEFAULT_SCHEMA_HINTS,
+    )
+
+    assert llm_client.call_count == 1
+    assert result.candidates[0].source_chunk_id == CHUNK_ID
+
+
 def test_extract_from_chunk_parses_character_discovery_and_family_setting(
     tmp_path,
 ) -> None:
@@ -545,6 +568,41 @@ def test_schema_validation_retry_log_omits_provider_values(tmp_path, caplog) -> 
     assert "SECRET_PROVIDER_VALUE" not in caplog.text
     assert "SECRET_NOVEL_BODY" not in caplog.text
     assert "SECRET_PROVIDER_VALUE" not in str(exc_info.value)
+
+
+def test_unknown_provider_field_name_is_redacted_from_validation_feedback(
+    tmp_path,
+    caplog,
+) -> None:
+    provider_payload = _valid_setting_payload(provider_payload=True)
+    provider_payload["SECRET_PROVIDER_PROPERTY"] = "synthetic value"
+    llm_client = AlwaysInvalidPayloadClient(provider_payload)
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("JSON만 반환하세요.", encoding="utf-8")
+    extractor = CharacterSettingExtractor(
+        llm_client=llm_client,
+        prompt_path=prompt_path,
+        max_attempts=2,
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="app.analysis.setting_extractor"),
+        pytest.raises(LlmExtractionError) as exc_info,
+    ):
+        _extract(
+            extractor,
+            source_chunk_id=CHUNK_ID,
+            chunk_text="synthetic manuscript text",
+            schema_hints=DEFAULT_SCHEMA_HINTS,
+        )
+
+    assert llm_client.call_count == 2
+    assert "candidates.0.unexpected_field" in llm_client.user_prompts[1]
+    assert "candidates.0.unexpected_field" in caplog.text
+    assert "candidates.0.unexpected_field" in str(exc_info.value)
+    assert "SECRET_PROVIDER_PROPERTY" not in llm_client.user_prompts[1]
+    assert "SECRET_PROVIDER_PROPERTY" not in caplog.text
+    assert "SECRET_PROVIDER_PROPERTY" not in str(exc_info.value)
 
 
 def test_extract_from_chunk_retries_when_entity_name_is_whitespace_only(tmp_path) -> None:
@@ -1077,6 +1135,23 @@ class InvalidPayloadThenEmptyClient:
                 )
             )
         return LlmTextResponse(text='{"candidates": []}')
+
+
+class AlwaysInvalidPayloadClient:
+    def __init__(self, invalid_payload: dict) -> None:
+        self.invalid_payload = invalid_payload
+        self.call_count = 0
+        self.user_prompts: list[str] = []
+
+    async def create_text_response(self, **kwargs) -> LlmTextResponse:
+        self.call_count += 1
+        self.user_prompts.append(kwargs["user_prompt"])
+        return LlmTextResponse(
+            text=json.dumps(
+                {"candidates": [self.invalid_payload]},
+                ensure_ascii=False,
+            )
+        )
 
 
 class TruncateThenSuccessClient:

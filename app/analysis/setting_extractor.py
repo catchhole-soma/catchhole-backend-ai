@@ -33,6 +33,27 @@ SETTING_EXTRACTION_RESPONSE_SCHEMA = LlmResponseSchema(
     schema=character_setting_provider_json_schema(),
     strict=True,
 )
+_SAFE_VALIDATION_PATH_FIELDS = frozenset(
+    {
+        "candidates",
+        "entity_type",
+        "entity_name",
+        "raw_entity_mention",
+        "evidence_spans",
+        "quote",
+        "start_offset",
+        "end_offset",
+        "confidence",
+        "candidate_kind",
+        "attribute_name",
+        "attribute_value",
+        "value_type",
+        "value_json",
+        "extra_json",
+        "value",
+    }
+)
+_UNEXPECTED_VALIDATION_PATH_FIELD = "unexpected_field"
 
 
 @dataclass(frozen=True)
@@ -214,6 +235,11 @@ class CharacterSettingExtractor:
         )
         # source_chunk_id는 Provider schema에 넣지 않고 Worker 입력으로만 결합한다.
         payload = parse_json_object(response.text)
+        candidates = payload.get("candidates")
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                if isinstance(candidate, dict):
+                    candidate.pop("source_chunk_id", None)
         provider_result = CharacterSettingProviderResponse.model_validate(payload)
         return provider_result.to_extraction_result(source_chunk_id)
 
@@ -338,7 +364,16 @@ def _safe_field_loc(raw_loc: object, reason_code: str) -> str:
         "bool",
         "nullable",
     }
-    safe_segments = [str(segment) for segment in location if segment not in ignored_segments]
+    safe_segments: list[str] = []
+    for segment in location:
+        if segment in ignored_segments:
+            continue
+        if isinstance(segment, int):
+            safe_segments.append(str(segment))
+        elif isinstance(segment, str) and segment in _SAFE_VALIDATION_PATH_FIELDS:
+            safe_segments.append(segment)
+        else:
+            safe_segments.append(_UNEXPECTED_VALIDATION_PATH_FIELD)
     if (
         reason_code == "SETTING_REQUIRED_FIELD_MISSING"
         and len(safe_segments) == 2
