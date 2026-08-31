@@ -4,15 +4,16 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-import httpx
-
 from app.analysis.world_setting_comparator import (
     WorldSettingComparator,
     WorldSettingSubjectResolver,
 )
-from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
 from app.domain.enums import AnalysisFailureCode, WorldSettingCategory
-from app.exceptions.failure_classification import comparison_failure_code
+from app.exceptions.failure_classification import (
+    comparison_failure_code,
+    spring_failure_source,
+)
 from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonCompleteRequest,
@@ -65,6 +66,8 @@ class WorldSettingComparisonSpringApi(Protocol):
         lease_token: UUID,
         error_message: str,
         failure_code: AnalysisFailureCode,
+        source_error_code: str | None = None,
+        source_reason_code: str | None = None,
     ) -> None: ...
 
 
@@ -129,23 +132,29 @@ class WorldSettingComparisonPipeline:
             await self._compare_with_fresh_context(analysis_job_id, lease_token, candidate)
             return None
         except AiTokenQuotaExhaustedError as exc:
+            source_error_code, source_reason_code = spring_failure_source(exc)
             await self.spring_client.fail_world_setting_comparison(
                 analysis_job_id,
                 candidate.candidate_id,
                 lease_token,
                 (str(exc) or exc.__class__.__name__)[:1000],
                 AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
+                source_error_code=source_error_code,
+                source_reason_code=source_reason_code,
             )
             raise
         except Exception as exc:
             error_message = (str(exc) or exc.__class__.__name__)[:1000]
             failure_code = comparison_failure_code(exc)
+            source_error_code, source_reason_code = spring_failure_source(exc)
             await self.spring_client.fail_world_setting_comparison(
                 analysis_job_id,
                 candidate.candidate_id,
                 lease_token,
                 error_message,
                 failure_code,
+                source_error_code=source_error_code,
+                source_reason_code=source_reason_code,
             )
             logger.exception(
                 "World-setting comparison failed. analysis_job_id=%s candidate_id=%s",
@@ -210,10 +219,12 @@ class WorldSettingComparisonPipeline:
                     request,
                 )
                 return
-            except httpx.HTTPStatusError as exc:
-                if not _has_error_code(exc, CONTEXT_STALE_ERROR_CODE) or (
-                    attempt == self.max_context_attempts
-                ):
+            except SpringWorkerHttpError as exc:
+                is_stale = (
+                    exc.status_code == 409
+                    and exc.spring_error_code == CONTEXT_STALE_ERROR_CODE
+                )
+                if not is_stale or attempt == self.max_context_attempts:
                     raise
                 logger.info(
                     "World-setting comparison context changed; rebuilding. "
@@ -265,12 +276,3 @@ class WorldSettingComparisonPipeline:
 
 def _normalized_name(value: str) -> str:
     return unicodedata.normalize("NFC", value.strip()).casefold()
-
-
-def _has_error_code(exc: httpx.HTTPStatusError, expected_code: str) -> bool:
-    try:
-        payload = exc.response.json()
-    except ValueError:
-        return False
-    error = payload.get("error") if isinstance(payload, dict) else None
-    return isinstance(error, dict) and error.get("code") == expected_code

@@ -168,17 +168,18 @@ run_analysis_worker.py --worker-kind world-comparison
 - `CharacterSettingExtractor`
   - 저장된 chunk 하나를 LLM에 보내 캐릭터 설정 후보와 명시적 신규 캐릭터 발견 후보를 추출합니다.
   - claim의 `knownCharacters` 대표 이름을 prompt에 전달해 이미 등록된 이름의 발견 후보를 억제합니다. `characterId`는 prompt에 전달하지 않습니다.
-  - LLM 응답의 `source_chunk_id`는 사용하지 않고 현재 입력 chunk ID로 강제합니다.
-  - LLM 응답 JSON을 `app/analysis/schemas.py` 기준으로 검증합니다.
+  - `source_chunk_id`는 Provider schema에서 제외하고 wire 검증 뒤 현재 입력 chunk ID를 결합합니다.
+  - Pydantic strict schema를 Provider에 전달하고 wire model과 저장 경계 model로 응답을 두 번 검증합니다. 실패 재시도에는 원문 응답 대신 안전한 reason/field loc만 전달합니다.
   - schema hint는 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType` 다섯 필드만 가진 prompt 입력 전용 값입니다.
-  - `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않으며 기존 응답 shape도 변경하지 않습니다.
+  - `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않으며 Provider wire 값은 검증 뒤 기존 저장 `value_json` shape로 복원합니다.
   - fuzzy alias 매칭이나 schema 자동 생성은 하지 않고, 시간·사건·타임라인 정보와 등록 schema에 대응하지 않는 설정은 후보에서 제외합니다.
 - `WorldSettingExtractor`, `WorldSettingCandidateMapper`
   - 같은 회차 chunk에서 지속 가능한 세계관 속성을 한 속성 단위로 추출하고 evidence offset을 보정합니다.
   - 분석 Job 전체에서 구조적으로 같은 후보만 exact dedupe한 뒤 Spring 내부 API로 게시합니다.
 - `WorldSettingComparisonPipeline`
   - exact 대상이 없으면 같은 category의 대상명을 `S*` 참조로 좁히고, 최대 3개 상세 문맥을 `T*` 참조로 비교합니다.
-  - LLM에는 UUID/version을 노출하지 않으며, Backend의 문맥 stale 응답에는 최신 문맥으로 최대 3회 다시 비교합니다.
+  - LLM에는 UUID/version을 노출하지 않으며, 정확한 Backend stale 409에만 최신 문맥으로 최대 3회 다시 비교합니다.
+  - 계약 검증 400은 같은 결과를 다시 생성하지 않고 상위 failure code와 Backend source code/reason을 분리해 실패 API에 전달합니다.
   - 후보별 오류는 해당 후보를 `FAILED`로 기록하고 초기 회차 Job의 다른 후보 처리를 계속합니다.
 - `WorldSettingComparisonWorker`
   - 공개 recompare 요청이 만든 숨김 `WORLD_SETTING_COMPARISON` Job만 claim합니다.

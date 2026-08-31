@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -9,12 +10,16 @@ from pydantic import ValidationError
 
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
-from app.analysis.json_response import parse_json_object, safe_validation_error_summary
-from app.analysis.schemas import CharacterSettingExtractionResult
+from app.analysis.json_response import parse_json_object
+from app.analysis.schemas import (
+    CharacterSettingExtractionResult,
+    CharacterSettingProviderResponse,
+    character_setting_provider_json_schema,
+)
 from app.core.config import get_settings
 from app.llm.exceptions import LlmOutputTruncatedError
 from app.llm.openai_client import OpenAIResponsesClient
-from app.llm.protocols import TextGenerationClient
+from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 
 # 기본 prompt 파일 위치, analysis 패키지 기준으로 app/llm/prompts 아래 파일을 찾는다.
 DEFAULT_PROMPT_PATH = (
@@ -22,7 +27,12 @@ DEFAULT_PROMPT_PATH = (
 )
 # 이 파일 전용 로그 객체를 만든다
 logger = logging.getLogger(__name__)
-SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v6"
+SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v7"
+SETTING_EXTRACTION_RESPONSE_SCHEMA = LlmResponseSchema(
+    name="character_setting_extraction",
+    schema=character_setting_provider_json_schema(),
+    strict=True,
+)
 
 
 @dataclass(frozen=True)
@@ -32,6 +42,23 @@ class CharacterSettingSchemaHint:
     attribute_pattern: str | None
     aliases: tuple[str, ...]
     value_type: str
+
+
+@dataclass(frozen=True)
+class _SafeValidationFeedback:
+    reason_code: str
+    field_locs: tuple[str, ...]
+
+    def prompt_json(self) -> str:
+        return json.dumps(
+            {
+                "reasonCode": self.reason_code,
+                "fieldLocs": list(self.field_locs),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
 
 
 # 청크 하나를 캐릭터 설정 후보 추출 결과로 바꾸는 분석 유스케이스
@@ -76,6 +103,7 @@ class CharacterSettingExtractor:
         self,
         source_chunk_id: UUID,
         chunk_text: str,
+        analysis_job_id: UUID | None = None,
         episode_no: int | None = None,
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
@@ -97,8 +125,10 @@ class CharacterSettingExtractor:
         )
         prompt_cache_key = _build_schema_cache_key(schema_summary_json)
 
-        # LLM 응답은 JSON 형식을 항상 지키지 않을 수 있으므로 파싱/검증 실패만 재시도
-        last_error: Exception | None = None
+        # Provider schema와 저장 경계 schema 검증 실패만 안전한 사유와 함께 재시도한다.
+        last_feedback: _SafeValidationFeedback | None = None
+        repeated_reason_counts: Counter[str] = Counter()
+        current_user_prompt = user_prompt
         current_max_output_tokens = self.max_output_tokens
         truncation_retry_used = False
         for attempt in range(1, self.max_attempts + 1):
@@ -107,7 +137,7 @@ class CharacterSettingExtractor:
                     # 예외가 없다면 정상적으로 return
                     return await self._extract_once(
                         system_prompt,
-                        user_prompt,
+                        current_user_prompt,
                         source_chunk_id,
                         prompt_cache_key,
                         current_max_output_tokens,
@@ -132,21 +162,37 @@ class CharacterSettingExtractor:
                         exc.output_token_count,
                         exc.incomplete_reason,
                     )
-                except (json.JSONDecodeError, ValidationError) as exc:
-                    last_error = exc
+                except (json.JSONDecodeError, TypeError, ValidationError) as exc:
+                    last_feedback = _safe_validation_feedback(exc)
+                    repeated_reason_counts[last_feedback.reason_code] += 1
+                    logger.warning(
+                        "LLM extraction response validation failed. "
+                        "attempt=%s/%s analysis_job_id=%s source_chunk_id=%s "
+                        "reason_code=%s field_locs=%s repeated_reason_count=%s will_retry=%s",
+                        attempt,
+                        self.max_attempts,
+                        analysis_job_id,
+                        source_chunk_id,
+                        last_feedback.reason_code,
+                        ",".join(last_feedback.field_locs),
+                        repeated_reason_counts[last_feedback.reason_code],
+                        attempt < self.max_attempts,
+                    )
                     if attempt < self.max_attempts:
-                        logger.warning(
-                            "LLM extraction response validation failed. retrying "
-                            "attempt=%s/%s error=%s",
-                            attempt,
-                            self.max_attempts,
-                            safe_validation_error_summary(exc),
+                        current_user_prompt = _build_retry_user_prompt(
+                            user_prompt,
+                            last_feedback,
                         )
                     break
 
+        final_feedback = last_feedback or _SafeValidationFeedback(
+            reason_code="RESPONSE_SCHEMA_INVALID",
+            field_locs=("response",),
+        )
         raise LlmExtractionError(
             "LLM extraction failed after "
-            f"{self.max_attempts} attempts: {safe_validation_error_summary(last_error)}"
+            f"{self.max_attempts} attempts: reasonCode={final_feedback.reason_code} "
+            f"fieldLocs={','.join(final_feedback.field_locs)}"
         ) from None
 
     async def _extract_once(
@@ -164,16 +210,12 @@ class CharacterSettingExtractor:
             model=self.model,
             max_output_tokens=max_output_tokens,
             prompt_cache_key=prompt_cache_key,
+            response_schema=SETTING_EXTRACTION_RESPONSE_SCHEMA,
         )
-        # source_chunk_id는 Worker가 이미 알고 있는 식별자이므로 LLM 응답을 신뢰하지 않고
-        # 현재 입력 chunk ID로 강제한 뒤 내부 schema를 검증한다.
+        # source_chunk_id는 Provider schema에 넣지 않고 Worker 입력으로만 결합한다.
         payload = parse_json_object(response.text)
-        candidates = payload.get("candidates")
-        if isinstance(candidates, list):
-            for candidate in candidates:
-                if isinstance(candidate, dict):
-                    candidate["source_chunk_id"] = str(source_chunk_id)
-        return CharacterSettingExtractionResult.model_validate(payload)
+        provider_result = CharacterSettingProviderResponse.model_validate(payload)
+        return provider_result.to_extraction_result(source_chunk_id)
 
     def _load_system_prompt(self) -> str:
         return self.prompt_path.read_text(encoding="utf-8")
@@ -209,6 +251,102 @@ class CharacterSettingExtractor:
             f"metadata:\n{json.dumps(metadata, ensure_ascii=False, sort_keys=True)}\n\n"
             f"chunk_text:\n{chunk_text}"
         )
+
+
+def _build_retry_user_prompt(
+    original_user_prompt: str,
+    feedback: _SafeValidationFeedback,
+) -> str:
+    # 이전 Provider 응답은 절대 재주입하지 않고 최초 입력에 안전한 수정 지시만 붙인다.
+    return (
+        f"{original_user_prompt}\n\n"
+        "previous_response_correction:\n"
+        f"{feedback.prompt_json()}\n"
+        "위 reasonCode와 fieldLocs만 고쳐 전체 응답을 다시 생성하세요."
+    )
+
+
+def _safe_validation_feedback(exc: Exception) -> _SafeValidationFeedback:
+    if isinstance(exc, json.JSONDecodeError):
+        return _SafeValidationFeedback("RESPONSE_JSON_INVALID", ("response",))
+    if not isinstance(exc, ValidationError):
+        return _SafeValidationFeedback("RESPONSE_SCHEMA_INVALID", ("response",))
+
+    errors = exc.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    )
+    reason_code = _validation_reason_code(errors)
+    field_locs = tuple(
+        dict.fromkeys(
+            _safe_field_loc(error.get("loc"), reason_code)
+            for error in errors
+        )
+    )
+    return _SafeValidationFeedback(
+        reason_code=reason_code,
+        field_locs=field_locs or ("response",),
+    )
+
+
+def _validation_reason_code(errors: list[dict]) -> str:
+    locations = [tuple(error.get("loc") or ()) for error in errors]
+    error_types = {error.get("type") for error in errors}
+
+    if any("CHARACTER_DISCOVERY" in location for location in locations):
+        return "DISCOVERY_SETTING_FIELD_FORBIDDEN"
+
+    setting_locations = [location for location in locations if "SETTING" in location]
+    if setting_locations:
+        if any(
+            "attribute_name" in location
+            or "value_type" in location
+            or (location and location[-1] == "value_json")
+            for location in setting_locations
+        ) or "union_tag_not_found" in error_types:
+            return "SETTING_REQUIRED_FIELD_MISSING"
+        if any("NUMBER" in location for location in setting_locations):
+            return "NUMBER_TYPED_VALUE_INVALID"
+        if any("BOOLEAN" in location for location in setting_locations):
+            return "BOOLEAN_TYPED_VALUE_INVALID"
+
+    if "number_typed_value_invalid" in error_types:
+        return "NUMBER_TYPED_VALUE_INVALID"
+    if "boolean_typed_value_invalid" in error_types:
+        return "BOOLEAN_TYPED_VALUE_INVALID"
+    if "discovery_setting_field_forbidden" in error_types:
+        return "DISCOVERY_SETTING_FIELD_FORBIDDEN"
+    if "setting_required_field_missing" in error_types:
+        return "SETTING_REQUIRED_FIELD_MISSING"
+    return "RESPONSE_SCHEMA_INVALID"
+
+
+def _safe_field_loc(raw_loc: object, reason_code: str) -> str:
+    location = tuple(raw_loc) if isinstance(raw_loc, (tuple, list)) else ()
+    ignored_segments = {
+        "SETTING",
+        "CHARACTER_DISCOVERY",
+        "STRING",
+        "NUMBER",
+        "BOOLEAN",
+        "JSON",
+        "UNKNOWN",
+        "int",
+        "float",
+        "str",
+        "bool",
+        "nullable",
+    }
+    safe_segments = [str(segment) for segment in location if segment not in ignored_segments]
+    if (
+        reason_code == "SETTING_REQUIRED_FIELD_MISSING"
+        and len(safe_segments) == 2
+        and safe_segments[0] == "candidates"
+        and safe_segments[1].isdigit()
+    ):
+        safe_segments.append("value_type")
+    return ".".join(safe_segments) or "response"
 
 
 def _serialize_schema_hints(

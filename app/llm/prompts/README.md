@@ -14,7 +14,7 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 - `character_setting_extraction.md`
   - 웹소설 회차 청크에서 캐릭터 중심 설정 후보와 명시적 신규 캐릭터 발견 후보를 추출하기 위한 prompt입니다.
   - `setting_candidates` 저장 구조를 고려해 `candidate_kind`, `entity_type`, `attribute_name`, `value_json`, `evidence_spans` 등을 반환하도록 요구합니다.
-  - `source_chunk_id`는 LLM 출력에 맡기지 않고 응답 파싱 후 현재 입력 `EpisodeChunk.id`로 주입합니다.
+  - `source_chunk_id`는 Provider schema에서 제외하고 wire 응답 검증 뒤 현재 입력 `EpisodeChunk.id`를 결합합니다.
 - `character_subject_resolution.md`
   - 이미 추출된 설정 후보 중 `entity_name`이 구체적이지 않은 후보의 주체만 해소하기 위한 prompt입니다.
   - 설정 후보를 다시 추출하지 않고, current chunk 기준으로 묶인 후보들의 `resolved_entity_name`만 반환하도록 요구합니다.
@@ -57,7 +57,10 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
   `raw_ai_result_json`에 보존합니다. 그 밖의 타입은 기존 표시 summary를 유지합니다.
 - `value_json`은 실제 값의 source of truth입니다. NUMBER/BOOLEAN의 `value`가 선언 타입과
   다르면 추출 응답을 거절하고 재시도합니다.
-- `source_chunk_id`는 prompt 출력 필드가 아니며 Python Worker가 현재 입력 chunk ID로 결정합니다.
+- strict structured output wire에서는 NUMBER/BOOLEAN/STRING의 typed `value`와 nullable
+  `extra_json`을 사용합니다. JSON의 임의 object는 `extra_json` object 문자열로 받아
+  Pydantic 검증 후 기존 `value_json` dict로 복원합니다.
+- `source_chunk_id`는 prompt·Provider schema 출력 필드가 아니며 Python Worker가 현재 입력 chunk ID로 결정합니다.
 - `evidence_spans[].quote`는 위치 보정 기준이므로 원문 일부를 요약/의역하지 않고 그대로 복사해야 합니다.
 - `evidence_spans[].start_offset`, `end_offset`은 LLM이 계산하지 않고 Python Worker가 quote 검색으로 보정합니다.
 

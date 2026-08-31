@@ -11,6 +11,7 @@ from app.llm.exceptions import (
     LlmResponseValidationError,
 )
 from app.llm.openai_client import OpenAIResponsesClient
+from app.llm.protocols import LlmResponseSchema
 
 
 def test_default_http_client_uses_120_second_read_timeout() -> None:
@@ -107,6 +108,44 @@ def test_create_text_response_sends_cache_key_and_logs_cache_usage(caplog) -> No
     assert response.cached_input_token_count == 1024
     assert "cached_tokens_present=True" in caplog.text
     assert "cached_tokens=1024" in caplog.text
+
+
+def test_create_text_response_sends_optional_strict_json_schema() -> None:
+    requests: list[httpx.Request] = []
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: _response(request, requests))
+        ),
+    )
+    response_schema = LlmResponseSchema(
+        name="character_setting_extraction",
+        schema={
+            "type": "object",
+            "properties": {"candidates": {"type": "array", "items": {}}},
+            "required": ["candidates"],
+            "additionalProperties": False,
+        },
+    )
+
+    asyncio.run(
+        client.create_text_response(
+            system_prompt="규칙",
+            user_prompt="원문",
+            response_schema=response_schema,
+        )
+    )
+
+    assert json.loads(requests[0].content)["text"] == {
+        "format": {
+            "type": "json_schema",
+            "name": "character_setting_extraction",
+            "schema": response_schema.schema,
+            "strict": True,
+        }
+    }
 
 
 def test_create_text_response_sends_configured_reasoning_effort() -> None:

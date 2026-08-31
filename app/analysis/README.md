@@ -28,7 +28,7 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
   - 청크 하나를 LLM에 보내 캐릭터 설정 후보와 이름 발견 후보를 추출합니다.
   - Spring claim DTO를 Worker가 변환한 immutable schema hint를 user prompt에 포함합니다.
   - claim의 기존 캐릭터 대표 이름을 user prompt에 포함해 이미 등록된 이름의 발견 후보를 만들지 않게 합니다. Backend 내부 매칭용 ID는 prompt에 포함하지 않습니다.
-  - prompt 로드, user prompt 구성, JSON 파싱, 결정적 `source_chunk_id` 주입, schema 검증, 검증 실패 재시도를 담당합니다.
+  - prompt 로드, user prompt 구성, 호출별 strict structured output schema 전달, JSON 파싱, 결정적 `source_chunk_id` 결합, schema 이중 검증과 안전한 교정 재시도를 담당합니다.
 - `evidence_span_resolver.py`
   - LLM이 반환한 `evidence_spans[].quote`를 청크 원문에서 다시 찾아 offset을 보정합니다.
   - exact match를 우선 사용하고, 실패하면 공백/줄바꿈 정규화 기반 검색을 시도합니다.
@@ -57,25 +57,27 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
   - 기존 속성과 중복되어 EXCLUDE하면 해당 `T*`와 실제 속성명을 검증해 Backend가 기존값을 저장할 수 있게 전달합니다.
 - `world_setting_pipeline.py`
   - 후보 claim, 대상명 페이지 조회, 비교 문맥 조회, 결과 저장을 조율합니다.
-  - 문맥 version 충돌은 새 문맥으로 최대 3회 다시 비교하고, 후보 하나의 실패는 해당 후보에만 기록합니다.
+  - 정확한 HTTP 409 `WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE`만 새 문맥으로 최대 3회 다시 비교합니다.
+  - Backend 계약 검증 400은 같은 LLM 결과를 다시 생성하지 않고 `COMPARISON_VALIDATION_FAILED`와 원본 source code/reason을 분리해 후보에 기록합니다.
 - `json_response.py`
   - 세계관 추출·대상 선택·비교가 공유하는 JSON 객체 파싱, Pydantic 검증, 제한 재시도를 담당합니다.
 - `schemas.py`
-  - LLM에서 받은 설정 후보 JSON을 검증하기 위한 Python 내부 schema를 정의합니다.
+  - LLM wire 응답과 저장 직전 설정 후보를 각각 검증하는 Pydantic schema를 정의합니다.
   - FastAPI 응답 DTO가 아니라, 외부 LLM 출력이 저장 가능한 구조인지 확인하는 경계 객체입니다.
-  - 필수 필드 누락, 잘못된 값 타입, 빈 근거 문장과 후보 종류별 payload 불일치는 이 단계에서 걸러집니다.
-  - `NUMBER`/`BOOLEAN`은 `value_json.value`가 각각 JSON number/boolean인지 검증해 문자열 scalar를 저장 경계까지 보내지 않습니다.
+  - `SETTING`/`CHARACTER_DISCOVERY`와 `SETTING`의 value type을 discriminator로 나눠 필수·null 전용 필드를 Provider JSON Schema에도 노출합니다.
+  - strict schema에서 임의 object key를 열지 않기 위해 부가 구조는 검증된 `extra_json` object 문자열로 받고 내부 `value_json` dict로 복원합니다.
+  - `NUMBER`/`BOOLEAN`은 wire schema와 저장 경계 모두에서 `value_json.value`가 각각 JSON number/boolean인지 검증합니다.
 - `exceptions.py`
   - Analysis 내부 흐름에서만 사용하는 예외를 정의합니다.
   - FastAPI 응답용 공통 예외와 분리해 Worker가 분석 실패 사유를 구분할 수 있게 합니다.
 
 ## 실패 메시지 처리
 
-LLM 응답 파싱/검증 실패 메시지와 JSON 객체 파싱은 `json_response.py`에서 공통 처리합니다. 캐릭터 추출은 현재 chunk ID를 응답에 주입하는 고유 단계가 있어 자체 retry loop를 유지하되 같은 오류 메시지 helper를 사용합니다.
+LLM 응답 JSON 객체 파싱은 `json_response.py`의 helper를 사용합니다. 캐릭터 추출은 Provider 응답에 원문 기반 값이 들어 있으므로 자체 retry loop에서 실패를 `reasonCode + fieldLocs`로만 축약합니다. 로그와 다음 prompt에는 Provider 응답 원문·실제 필드 값·검증 메시지를 넣지 않으며, `analysis_job_id`, `source_chunk_id`, attempt, 같은 reason 반복 횟수만 기록합니다.
 
 ## 재시도 기준
 
-`CharacterSettingExtractor`의 일반 검증 재시도는 LLM 응답이 JSON으로 파싱되지 않거나, `app/analysis/schemas.py`의 Pydantic schema 검증에 실패한 경우에만 수행합니다.
+`CharacterSettingExtractor`의 일반 검증 재시도는 LLM 응답이 JSON으로 파싱되지 않거나, Provider wire model 또는 저장 경계 model의 Pydantic 검증에 실패한 경우에만 수행합니다. 다음 시도는 항상 최초 prompt에 안전한 `reasonCode + fieldLocs`만 붙여 만들며 이전 실패 응답은 재주입하지 않습니다. 후보 하나라도 검증에 실패하면 전체 응답을 재시도하고 일부 후보만 저장하지 않습니다.
 캐릭터 설정 추출은 최초 `max_output_tokens=6000`을 사용하고 출력 절단 시 12000으로 한 번만 확장합니다. 세계관 추출도 5000에서 시작해 절단 시 10000으로 한 번만 확장하며, 이 확장은 JSON/schema 검증 재시도 횟수를 소비하지 않습니다.
 
 캐릭터 Fact 비교와 세계관 추출·대상 선택·비교도 JSON/schema/참조 검증 실패만 설정된 횟수만큼 재시도합니다. 캐릭터 비교는 canonical slot과 STATUS 제거·시간 범위 불변식을, 세계관 대상 선택은 입력 ref의 중복·누락 범위를, 세계관 비교는 operation별 target/property와 제안 문자열을 Python에서 추가 검증합니다. DB 문맥 충돌은 LLM 응답 오류와 별도로 각 pipeline이 최신 문맥을 다시 받아 최대 3회 처리합니다.
@@ -91,7 +93,7 @@ LLM 응답 파싱/검증 실패 메시지와 JSON 객체 파싱은 `json_respons
 
 반대로 scalar JSON 타입처럼 명시적으로 강제한 계약이 아닌 프롬프트 정책 위반은, schema상 문자열로 유효하면 현재 재시도하지 않습니다.
 
-`source_chunk_id`는 이 재시도 정책의 예외입니다. LLM이 생성할 필드가 아니라 호출자가 이미 알고 있는 `EpisodeChunk.id`이므로, 응답에 값이 없거나 잘못된 UUID가 있어도 현재 입력 ID로 덮어쓴 뒤 검증합니다. 따라서 LLM의 UUID 복사 실수로 같은 요청을 반복하지 않습니다.
+`source_chunk_id`는 LLM이 생성할 필드가 아니라 호출자가 이미 알고 있는 `EpisodeChunk.id`입니다. 따라서 Provider strict schema에서 제외하고 wire 검증을 통과한 후보에 Worker 입력 ID를 결합한 뒤 저장 경계 schema로 다시 검증합니다.
 
 예를 들어 다음 값은 현재 schema 검증만으로는 통과할 수 있습니다.
 

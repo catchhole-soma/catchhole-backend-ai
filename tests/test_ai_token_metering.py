@@ -15,6 +15,7 @@ from app.llm.exceptions import (
     LlmOutputTruncatedError,
     LlmResponseValidationError,
 )
+from app.llm.protocols import LlmResponseSchema
 from app.llm.responses import LlmTextResponse
 from app.usage import metering
 from app.usage.metering import (
@@ -66,6 +67,52 @@ def test_text_generation_reserves_and_settles_actual_usage() -> None:
     assert ledger.reservations[0]["reserved_tokens"] >= 100
     assert ledger.settlements == [(request_id, 120, 20, 30, "SUCCESS")]
     assert ledger.releases == []
+
+
+def test_text_generation_forwards_and_reserves_structured_output_schema() -> None:
+    ledger = FakeLedger()
+    delegate = FakeTextClient(
+        response=LlmTextResponse(
+            text='{"candidates":[]}',
+            input_token_count=20,
+            output_token_count=5,
+        )
+    )
+    client = MeteredTextGenerationClient(
+        delegate=delegate,
+        ledger=ledger,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        purpose="SETTING_EXTRACTION",
+        default_model="gpt-5.6-terra",
+        lease_token=LEASE_TOKEN,
+    )
+    response_schema = LlmResponseSchema(
+        name="character_setting_extraction",
+        schema={
+            "type": "object",
+            "properties": {"candidates": {"type": "array"}},
+            "required": ["candidates"],
+            "additionalProperties": False,
+        },
+    )
+
+    asyncio.run(
+        client.create_text_response(
+            "규칙",
+            "원고",
+            max_output_tokens=100,
+            response_schema=response_schema,
+        )
+    )
+
+    without_schema = _estimate_text_token_upper_bound(
+        "규칙",
+        "원고",
+        "gpt-5.6-terra",
+        100,
+    )
+    assert delegate.requests[0]["response_schema"] is response_schema
+    assert ledger.reservations[0]["reserved_tokens"] > without_schema
 
 
 def test_text_generation_releases_reservation_when_usage_is_unavailable() -> None:
@@ -731,8 +778,10 @@ class FakeTextClient:
     ) -> None:
         self.response = response
         self.error = error
+        self.requests: list[dict] = []
 
     async def create_text_response(self, **kwargs) -> LlmTextResponse:
+        self.requests.append(kwargs)
         if self.error is not None:
             raise self.error
         assert self.response is not None

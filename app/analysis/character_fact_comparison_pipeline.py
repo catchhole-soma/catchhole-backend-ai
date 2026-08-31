@@ -3,10 +3,8 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-import httpx
-
 from app.analysis.character_fact_comparator import CharacterFactComparator
-from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
 from app.domain.enums import AnalysisFailureCode, CharacterFactComparisonOperation
 from app.domain.setting_values import normalize_setting_display_value
 from app.exceptions.failure_classification import comparison_failure_code
@@ -205,10 +203,12 @@ class CharacterFactComparisonPipeline:
                     request,
                 )
                 return
-            except httpx.HTTPStatusError as exc:
-                if not _has_error_code(exc, CONTEXT_STALE_ERROR_CODE) or (
-                    attempt == self.max_context_attempts
-                ):
+            except SpringWorkerHttpError as exc:
+                is_stale = (
+                    exc.status_code == 409
+                    and exc.spring_error_code == CONTEXT_STALE_ERROR_CODE
+                )
+                if not is_stale or attempt == self.max_context_attempts:
                     raise
                 logger.info(
                     "Character snapshot changed; rebuilding comparison context. "
@@ -218,17 +218,6 @@ class CharacterFactComparisonPipeline:
                     attempt,
                     self.max_context_attempts,
                 )
-
-
-def _has_error_code(exc: httpx.HTTPStatusError, expected_code: str) -> bool:
-    if exc.response.status_code != 409:
-        return False
-    try:
-        payload = exc.response.json()
-    except ValueError:
-        return False
-    error = payload.get("error") if isinstance(payload, dict) else None
-    return isinstance(error, dict) and error.get("code") == expected_code
 
 
 def _without_request_local_refs(raw_comparison_json: dict) -> dict:

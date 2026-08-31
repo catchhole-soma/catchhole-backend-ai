@@ -33,6 +33,13 @@ def analysis_failure_code(exc: BaseException) -> AnalysisFailureCode:
 
 
 def comparison_failure_code(exc: BaseException) -> AnalysisFailureCode:
+    spring_error = _find_exception(exc, SpringWorkerHttpError)
+    if (
+        spring_error is not None
+        and spring_error.status_code == 400
+        and spring_error.spring_error_code == "WORLD_SETTING_COMPARISON_TARGET_INVALID"
+    ):
+        return AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
     common_code = _common_failure_code(exc)
     if common_code is not None:
         return common_code
@@ -47,6 +54,16 @@ def comparison_failure_code(exc: BaseException) -> AnalysisFailureCode:
 
 def is_token_quota_exhausted(exc: BaseException) -> bool:
     return _find_exception(exc, AiTokenQuotaExhaustedError) is not None
+
+
+def spring_failure_source(exc: BaseException) -> tuple[str | None, str | None]:
+    spring_error = _find_exception(exc, SpringWorkerHttpError)
+    if spring_error is not None:
+        return spring_error.spring_error_code, spring_error.spring_reason_code
+    quota_error = _find_exception(exc, AiTokenQuotaExhaustedError)
+    if quota_error is not None:
+        return quota_error.spring_error_code, quota_error.spring_reason_code
+    return None, None
 
 
 def _common_failure_code(exc: BaseException) -> AnalysisFailureCode | None:
