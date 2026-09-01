@@ -5,9 +5,11 @@ import math
 import random
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from functools import lru_cache
+from time import perf_counter_ns
 from typing import Protocol, TypeVar
 from uuid import UUID, uuid4
 
@@ -75,6 +77,47 @@ class EmbeddingApi(Protocol):
     async def create_embeddings(self, inputs: list[str]) -> EmbeddingBatchResponse: ...
 
 
+@dataclass(frozen=True)
+class TextGenerationUsageSnapshot:
+    provider_request_count: int = 0
+    provider_latency_ms: int = 0
+    input_token_count: int = 0
+    cached_input_token_count: int = 0
+    output_token_count: int = 0
+
+    def since(
+        self,
+        earlier: "TextGenerationUsageSnapshot",
+    ) -> "TextGenerationUsageSnapshot":
+        return TextGenerationUsageSnapshot(
+            provider_request_count=(
+                self.provider_request_count - earlier.provider_request_count
+            ),
+            provider_latency_ms=self.provider_latency_ms - earlier.provider_latency_ms,
+            input_token_count=self.input_token_count - earlier.input_token_count,
+            cached_input_token_count=(
+                self.cached_input_token_count - earlier.cached_input_token_count
+            ),
+            output_token_count=self.output_token_count - earlier.output_token_count,
+        )
+
+    def __add__(
+        self,
+        other: "TextGenerationUsageSnapshot",
+    ) -> "TextGenerationUsageSnapshot":
+        return TextGenerationUsageSnapshot(
+            provider_request_count=(
+                self.provider_request_count + other.provider_request_count
+            ),
+            provider_latency_ms=self.provider_latency_ms + other.provider_latency_ms,
+            input_token_count=self.input_token_count + other.input_token_count,
+            cached_input_token_count=(
+                self.cached_input_token_count + other.cached_input_token_count
+            ),
+            output_token_count=self.output_token_count + other.output_token_count,
+        )
+
+
 class MeteredTextGenerationClient:
     """OpenAI 호출마다 최대량을 예약하고 응답 usage로 실제 사용량을 정산한다."""
 
@@ -92,6 +135,7 @@ class MeteredTextGenerationClient:
         sleeper: AsyncSleeper = asyncio.sleep,
         random_source: RandomSource = random.random,
         jitter_max_seconds: float = 1.0,
+        monotonic_ns: Callable[[], int] = perf_counter_ns,
     ) -> None:
         _validate_retry_configuration(max_retries, retry_base_seconds, jitter_max_seconds)
         self.delegate = delegate
@@ -106,7 +150,22 @@ class MeteredTextGenerationClient:
         self.sleeper = sleeper
         self.random_source = random_source
         self.jitter_max_seconds = jitter_max_seconds
+        self.monotonic_ns = monotonic_ns
         self._attempt = 0
+        self._provider_request_count = 0
+        self._provider_latency_ns = 0
+        self._input_token_count = 0
+        self._cached_input_token_count = 0
+        self._output_token_count = 0
+
+    def usage_snapshot(self) -> TextGenerationUsageSnapshot:
+        return TextGenerationUsageSnapshot(
+            provider_request_count=self._provider_request_count,
+            provider_latency_ms=self._provider_latency_ns // 1_000_000,
+            input_token_count=self._input_token_count,
+            cached_input_token_count=self._cached_input_token_count,
+            output_token_count=self._output_token_count,
+        )
 
     async def create_text_response(
         self,
@@ -140,19 +199,28 @@ class MeteredTextGenerationClient:
                     lease_token=self.lease_token,
                 )
                 try:
-                    response = await self.delegate.create_text_response(
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                        model=model,
-                        max_output_tokens=max_output_tokens,
-                        prompt_cache_key=prompt_cache_key,
-                        response_schema=response_schema,
-                    )
+                    self._provider_request_count += 1
+                    provider_started_ns = self.monotonic_ns()
+                    try:
+                        response = await self.delegate.create_text_response(
+                            system_prompt=system_prompt,
+                            user_prompt=user_prompt,
+                            model=model,
+                            max_output_tokens=max_output_tokens,
+                            prompt_cache_key=prompt_cache_key,
+                            response_schema=response_schema,
+                        )
+                    finally:
+                        self._provider_latency_ns += max(
+                            0,
+                            self.monotonic_ns() - provider_started_ns,
+                        )
                 except asyncio.CancelledError:
                     _detach_failed_provider_finalization(self.ledger, request_id)
                     raise
                 except Exception as exc:
                     usage = _usage_from_text_error(exc)
+                    self._record_usage(usage)
                     if isinstance(exc, (LlmOutputTruncatedError, LlmIncompleteResponseError)):
                         logger.warning(
                             "LLM response incomplete. purpose=%s attempt=%s "
@@ -181,6 +249,16 @@ class MeteredTextGenerationClient:
                         jitter_max_seconds=self.jitter_max_seconds,
                     )
                 else:
+                    self._record_usage(
+                        (
+                            response.input_token_count,
+                            response.cached_input_token_count or 0,
+                            response.output_token_count,
+                        )
+                        if isinstance(response.input_token_count, int)
+                        and isinstance(response.output_token_count, int)
+                        else None
+                    )
                     await _finalize_successful_text_request(
                         self.ledger,
                         request_id,
@@ -191,6 +269,14 @@ class MeteredTextGenerationClient:
             await self.sleeper(retry_delay)
 
         raise AssertionError("Provider retry loop terminated unexpectedly.")
+
+    def _record_usage(self, usage: tuple[int, int, int] | None) -> None:
+        if usage is None:
+            return
+        input_tokens, cached_input_tokens, output_tokens = usage
+        self._input_token_count += input_tokens
+        self._cached_input_token_count += cached_input_tokens
+        self._output_token_count += output_tokens
 
 
 class MeteredEmbeddingClient:

@@ -123,6 +123,7 @@ class WorldSettingComparisonWorker:
                     {
                         "worldSettingComparisonCompletedCount": result.completed_count,
                         "worldSettingComparisonFailedCount": result.failed_count,
+                        **result.summary_metrics(),
                     },
                     ensure_ascii=False,
                 ),

@@ -48,6 +48,7 @@ def test_text_generation_reserves_and_settles_actual_usage() -> None:
             output_token_count=30,
         )
     )
+    monotonic_values = iter([1_000_000, 6_000_000])
     client = MeteredTextGenerationClient(
         delegate=delegate,
         ledger=ledger,
@@ -55,6 +56,7 @@ def test_text_generation_reserves_and_settles_actual_usage() -> None:
         purpose="SETTING_EXTRACTION",
         default_model="gpt-4.1-mini",
         lease_token=LEASE_TOKEN,
+        monotonic_ns=monotonic_values.__next__,
     )
 
     response = asyncio.run(client.create_text_response("규칙", "원고", max_output_tokens=100))
@@ -67,6 +69,12 @@ def test_text_generation_reserves_and_settles_actual_usage() -> None:
     assert ledger.reservations[0]["reserved_tokens"] >= 100
     assert ledger.settlements == [(request_id, 120, 20, 30, "SUCCESS")]
     assert ledger.releases == []
+    usage = client.usage_snapshot()
+    assert usage.provider_request_count == 1
+    assert usage.provider_latency_ms == 5
+    assert usage.input_token_count == 120
+    assert usage.cached_input_token_count == 20
+    assert usage.output_token_count == 30
 
 
 def test_text_generation_forwards_and_reserves_structured_output_schema() -> None:
@@ -209,6 +217,8 @@ def test_text_validation_error_settles_reported_usage() -> None:
     request_id = ledger.reservations[0]["request_id"]
     assert ledger.settlements == [(request_id, 120, 20, 30, "FAILURE")]
     assert ledger.releases == []
+    assert client.usage_snapshot().provider_request_count == 1
+    assert client.usage_snapshot().input_token_count == 120
 
 
 def test_output_truncation_is_settled_once_without_provider_retry_or_prompt_logging(
