@@ -270,7 +270,7 @@ class WorkerWorldSettingSubjectResolutionRequestItem(BaseModel):
     candidate_id: UUID = Field(alias="candidateId")
     target_world_setting_ids: list[UUID] = Field(
         alias="targetWorldSettingIds",
-        max_length=3,
+        max_length=20,
     )
 
 
@@ -285,7 +285,7 @@ class WorkerWorldSettingSubjectResolutionResult(BaseModel):
     resolution_type: WorldSettingSubjectResolutionType = Field(alias="resolutionType")
     canonical_subject_key: str = Field(alias="canonicalSubjectKey", min_length=1)
     canonical_subject_name: str = Field(alias="canonicalSubjectName", min_length=1)
-    target_world_setting_ids: list[UUID] = Field(alias="targetWorldSettingIds", max_length=3)
+    target_world_setting_ids: list[UUID] = Field(alias="targetWorldSettingIds", max_length=20)
 
 
 class WorkerWorldSettingSubjectResolutionResponse(BaseModel):
@@ -308,7 +308,7 @@ class WorkerWorldSettingComparisonBatchPayload(BaseModel):
     )
     resolved_target_world_setting_ids: list[UUID] = Field(
         alias="resolvedTargetWorldSettingIds",
-        max_length=3,
+        max_length=20,
     )
     raw_scope_name: str | None = Field(default=None, alias="rawScopeName")
     candidates: list[WorkerWorldSettingComparisonBatchCandidate] = Field(

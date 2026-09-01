@@ -37,6 +37,7 @@ from app.usage.metering import TextGenerationUsageSnapshot
 logger = logging.getLogger(__name__)
 CONTEXT_STALE_ERROR_CODE = "WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE"
 SUBJECT_RESOLUTION_STALE_ERROR_CODE = "WORLD_SETTING_SUBJECT_RESOLUTION_STALE"
+MAX_SUBJECT_RESOLUTION_TARGETS = 20
 
 
 class WorldSettingComparisonSpringApi(Protocol):
@@ -359,16 +360,34 @@ class WorldSettingComparisonPipeline:
                     if _normalized_name(subject.subject_name) == candidate_key
                 ]
                 if exact_matches:
+                    if len(exact_matches) > MAX_SUBJECT_RESOLUTION_TARGETS:
+                        raise ComparisonValidationError(
+                            "World-setting subject resolution found more than 20 "
+                            "normalized exact targets."
+                        )
                     target_ids = [
                         subject.world_setting_id for subject in exact_matches
                     ]
                 else:
-                    target_ids = [
-                        reference.world_setting_id
-                        for reference in await self.subject_resolver.select_subjects(
+                    try:
+                        selected_subjects = await self.subject_resolver.select_subjects(
                             candidate,
                             subjects,
                         )
+                    except AiTokenQuotaExhaustedError as exc:
+                        source_error_code, source_reason_code = spring_failure_source(exc)
+                        await self.spring_client.fail_world_setting_comparison(
+                            analysis_job_id,
+                            candidate.candidate_id,
+                            lease_token,
+                            (str(exc) or exc.__class__.__name__)[:1000],
+                            AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
+                            source_error_code=source_error_code,
+                            source_reason_code=source_reason_code,
+                        )
+                        raise
+                    target_ids = [
+                        reference.world_setting_id for reference in selected_subjects
                     ]
                 resolutions.append(
                     WorkerWorldSettingSubjectResolutionRequestItem(

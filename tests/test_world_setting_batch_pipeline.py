@@ -4,6 +4,7 @@ from uuid import UUID
 import httpx
 import pytest
 
+from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.world_setting_comparator import SubjectReference
 from app.analysis.world_setting_pipeline import WorldSettingComparisonPipeline
 from app.analysis.world_setting_schemas import (
@@ -183,6 +184,41 @@ def test_batch_pipeline_submits_every_normalized_exact_subject_match() -> None:
     ] == [[TARGET_ID, SECOND_TARGET_ID], [TARGET_ID, SECOND_TARGET_ID]]
 
 
+def test_batch_pipeline_submits_up_to_twenty_normalized_exact_subject_matches() -> None:
+    spring = ManyExactSubjectPreparingSpringApi([_batch()], exact_match_count=20)
+    resolver = FakeBatchSubjectResolver(TARGET_ID, "고블린")
+    pipeline = WorldSettingComparisonPipeline(
+        spring,
+        resolver,
+        FakeBatchComparator(_merged_decision()),
+    )
+
+    result = asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+
+    assert result.completed_count == 0
+    assert resolver.llm_client.provider_request_count == 0
+    assert len(spring.resolution_requests) == 1
+    assert all(
+        len(item.target_world_setting_ids) == 20
+        for item in spring.resolution_requests[0].resolutions
+    )
+
+
+def test_batch_pipeline_rejects_more_than_twenty_exact_subject_matches_explicitly() -> None:
+    spring = ManyExactSubjectPreparingSpringApi([_batch()], exact_match_count=21)
+    pipeline = WorldSettingComparisonPipeline(
+        spring,
+        FakeBatchSubjectResolver(TARGET_ID, "고블린"),
+        FakeBatchComparator(_merged_decision()),
+    )
+
+    with pytest.raises(ComparisonValidationError, match="more than 20"):
+        asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+
+    assert spring.resolution_requests == []
+    assert spring.claim_count == 0
+
+
 def test_batch_pipeline_rebuilds_whole_batch_after_stale_completion() -> None:
     spring = FakeBatchSpringApi([_batch()], stale_completion_count=1)
     comparator = FakeBatchComparator(_merged_decision())
@@ -298,6 +334,39 @@ def test_batch_pipeline_stops_after_quota_failure_without_claiming_next_batch() 
             None,
         )
     ]
+
+
+def test_batch_pipeline_reports_subject_resolution_quota_failure_before_stopping() -> None:
+    original = _batch()
+    batch = original.model_copy(
+        update={
+            "candidates": [
+                candidate.model_copy(update={"subject_name": "고블린 무리"})
+                for candidate in original.candidates
+            ]
+        }
+    )
+    spring = PreparingBatchSpringApi([batch])
+    pipeline = WorldSettingComparisonPipeline(
+        spring,
+        QuotaFailingSubjectResolver(),
+        FakeBatchComparator(_merged_decision()),
+    )
+
+    with pytest.raises(AiTokenQuotaExhaustedError):
+        asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+
+    assert spring.candidate_failures == [
+        (
+            batch.candidates[0].candidate_id,
+            "AI token quota is exhausted.",
+            AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
+            None,
+            None,
+        )
+    ]
+    assert spring.resolution_requests == []
+    assert spring.claim_count == 0
 
 
 class FakeBatchSpringApi:
@@ -427,6 +496,7 @@ class PreparingBatchSpringApi(FakeBatchSpringApi):
         self.resolution_completed = False
         self.resolution_requests = []
         self.reset_batch_ids: list[UUID] = []
+        self.candidate_failures = []
 
     async def get_pending_world_setting_subject_resolutions(
         self,
@@ -476,6 +546,26 @@ class PreparingBatchSpringApi(FakeBatchSpringApi):
         lease_token,
     ):
         self.reset_batch_ids.append(comparison_batch_id)
+
+    async def fail_world_setting_comparison(
+        self,
+        analysis_job_id,
+        candidate_id,
+        lease_token,
+        error_message,
+        failure_code,
+        source_error_code=None,
+        source_reason_code=None,
+    ):
+        self.candidate_failures.append(
+            (
+                candidate_id,
+                error_message,
+                failure_code,
+                source_error_code,
+                source_reason_code,
+            )
+        )
 
 
 class PartialSubjectResolutionSpringApi(FakeBatchSpringApi):
@@ -537,6 +627,36 @@ class DuplicateExactSubjectPreparingSpringApi(PreparingBatchSpringApi):
         lease_token,
     ):
         self.claim_count += 1
+
+
+class ManyExactSubjectPreparingSpringApi(DuplicateExactSubjectPreparingSpringApi):
+    def __init__(
+        self,
+        batches: list[WorkerWorldSettingComparisonBatchPayload],
+        exact_match_count: int,
+    ) -> None:
+        super().__init__(batches)
+        self.exact_match_count = exact_match_count
+
+    async def get_world_setting_subjects(
+        self,
+        analysis_job_id,
+        lease_token,
+        category,
+        page,
+        size=500,
+    ):
+        return WorkerWorldSettingSubjectPageResponse(
+            subjects=[
+                WorkerWorldSettingSubject(
+                    world_setting_id=UUID(int=index + 100),
+                    subject_name="STRASSE",
+                )
+                for index in range(self.exact_match_count)
+            ],
+            page=page,
+            has_next=False,
+        )
 
 
 class StaleSubjectResolutionSpringApi(PreparingBatchSpringApi):
@@ -675,6 +795,11 @@ class FakeBatchSubjectResolver:
     async def select_subjects(self, candidate, subjects):
         self.llm_client.record(input_tokens=10, output_tokens=2)
         return [self.reference]
+
+
+class QuotaFailingSubjectResolver:
+    async def select_subjects(self, candidate, subjects):
+        raise AiTokenQuotaExhaustedError()
 
 
 class FakeBatchComparator:
