@@ -90,6 +90,10 @@ cluster/coverage metric 없이 legacy stale 재시도·실패 격리를 유지�
 `AI_TOKEN_QUOTA_EXHAUSTED`이면 현재 batch를 실패 보고하고 다음 batch를 claim하지 않은 채 Job 경계로 전파합니다.
 
 문맥·대상 상한을 넘는 oversized cluster는 Backend가 `REVIEW_REQUIRED`로 처리하고 자체 count metric을 냅니다.
+출력은 단건 비교 3000·세계관 batch 비교 16000 token 상한을 사용합니다. batch 호출 전에
+모든 source 값·실제 target 경로·decision JSON overhead·안전 여유를 tokenizer로 계산하고, 최소 예상 출력이
+16000을 넘으면 provider를 호출하지 않고 후보별 `BATCH_LIMIT_EXCEEDED` 검토 decision으로
+전환해 원문과 provenance를 보존합니다.
 현재 Python pipeline은 그 결과를 별도 응답으로 받지 않으므로 `clusterOverflowOrReviewRequiredCount`는 Backend
 count가 아니며 0으로 추정하지 않고 `null`로 보고합니다. 한 provider 요청에서 여러 decision을 만든 경우
 cluster usage는 source 후보 수 비율로 정수 배분하고 `PROPORTIONAL_SHARED_BATCH_REQUEST`라고 명시합니다.

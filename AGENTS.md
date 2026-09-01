@@ -19,6 +19,7 @@
 - 신규 `setting_candidates` 비교 컬럼과 내부 API/checkpoint가 먼저 존재해야 Python의 직접 후보 저장과 후속 stage가 동작한다. 운영은 가능한 `RUNNING` Job을 drain한 뒤 Spring Flyway/API, AI 이미지 순으로 배포하고 같은 AI 이미지를 기본·`character-comparison`·`world-comparison` 세 서비스로 기동한다. 이전 세계관 checkpoint에 이미 도달한 Job은 새 캐릭터 비교를 소급 실행하지 않으므로 필요하면 회차를 재분석한다.
 - 세계관 비교 prompt에는 Backend UUID를 노출하지 않는다. Worker가 만든 `S*`/`T*` 참조만 LLM에 제공하고, 실제 대상 ID·현재 property·version 검증과 `beforeValue` 산출은 Spring이 담당한다.
 - 세계관 묶음 비교는 후보별 canonical 주체를 먼저 해소해 Spring에 원자 저장한 뒤 시작한다. Spring이 `analysis job + source episode + category + canonical subject key + normalized raw scope`가 같은 후보만 한 batch로 claim하며, Worker는 claim된 batch를 원문 이름으로 다시 묶거나 나누지 않는다.
+- canonical 주체 해소에서 정규화한 이름의 exact 대상은 최대 20개까지 모두 Spring에 보내 `AMBIGUOUS` 판정을 맡기고, LLM이 고르는 fuzzy 후보만 최대 3개로 유지한다. exact 대상이 20개를 넘으면 DTO 생성 전에 명시적 비교 검증 오류로 중단하며 앞의 일부만 잘라 보내지 않는다.
 - 한 세계관 batch는 독립 속성별로 여러 decision을 반환할 수 있다. 모든 `C*` 후보 ref는 decisions 전체에서 정확히 한 번만 사용하고, 같은 속성의 여러 source를 합친 decision은 검수·확정 시에도 source 전체를 한 원자 단위로 처리한다. singleton decision을 별도 단건 비교로 다시 호출하지 않는다.
 - 세계관 batch의 독립 decision은 source가 하나여도 신규 `ADD`라면 2차 LLM이 제안한 canonical `proposed_scope_name`·`proposed_setting_name`을 보존한다. 단, raw와 다른 새 scope는 현재 ADD, 기존 scoped property, 또는 `existing_root_property_names_to_move`로 함께 옮길 실제 root property를 합쳐 서로 다른 최종 하위 속성이 둘 이상일 때만 허용한다. 범위명과 설정명은 같을 수 없다. 독립 decision끼리 같은 상위 scope를 공유해도 source를 한 decision으로 합치지 않으며, 기존 단건 비교의 raw path 보정 규칙을 batch decision에 적용하지 않는다.
 - batch context stale은 batch 전체 비교를 다시 만들고, canonical 주체 해소가 stale이면 기존 batch를 닫은 뒤 주체 해소와 새 batch claim부터 제한 횟수 안에서 다시 수행한다. quota·lease 만료·oversized batch는 부분 decision을 남기지 않는다.
@@ -70,7 +71,7 @@
 - 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra·Luna의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
 - GPT-5.6 모델의 토큰 예약량은 `o200k_base` tokenizer로 계산한다. 사용하는 tiktoken 버전이 모델 별칭을 모를 수 있으므로 모델명 자동 탐지 실패를 byte 상한으로 방치하지 않는다.
 - Responses API는 HTTP 200만으로 성공을 판정하지 않고 `status=completed`를 요구한다. `status=incomplete`와 `incomplete_details.reason=max_tokens|max_output_tokens`, 또는 JSON 파싱 실패와 `outputTokens == maxOutputTokens`가 함께 나타나면 `LLM_OUTPUT_TRUNCATED`로 분류한다.
-- 출력 상한은 목적별 환경변수로 주입하고 모두 양수이며 provider 최대 상한 이하인지 기동 시 검증한다. 기본값은 캐릭터 추출 6,000·절단 재시도 12,000, 세계관 추출 5,000·절단 재시도 10,000, 주체 해소 2,000, 비교 3,000, provider 상한 128,000이다.
+- 출력 상한은 목적별 환경변수로 주입하고 모두 양수이며 provider 최대 상한 이하인지 기동 시 검증한다. 기본값은 캐릭터 추출 6,000·절단 재시도 12,000, 세계관 추출 5,000·절단 재시도 10,000, 주체 해소 2,000, 단건 비교 3,000, 세계관 batch 비교 16,000, provider 상한 128,000이다. batch의 contract-complete 최소 출력 예상치가 16,000을 넘으면 provider를 호출하지 않고 `BATCH_LIMIT_EXCEEDED` 검토로 전환한다.
 - 캐릭터·세계관 추출의 출력 절단은 동일 입력으로 각각 6,000→12,000, 5,000→10,000으로 한 번만 확장한다. 두 번째 절단은 종료하고 일반 JSON 문법·schema 오류의 기존 재시도 횟수와 섞지 않는다. 확장 호출도 증가한 최대량을 먼저 예약하며 quota 예약이 거절되면 provider를 호출하지 않는다.
 - provider 사용량이 포함된 실패·출력 절단은 실제 input/cached/output을 `FAILURE`로 정산한다. 로그에는 목적·시도·출력 상한·사용량·incomplete reason만 남기고 prompt, 원고, 응답 본문, 내부 인증값은 남기지 않는다.
 - Worker가 Spring에 보고하는 실패는 `AnalysisFailureCode`를 반드시 포함한다. 분석과 비교 분류기는 토큰 부족·출력 절단·네트워크·provider·응답 파싱·비교 검증·lease 만료·예상 밖 오류를 구분하고 자유 형식 예외 문자열로 복구 정책을 결정하지 않는다.
