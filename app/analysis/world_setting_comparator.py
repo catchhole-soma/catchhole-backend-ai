@@ -1,10 +1,13 @@
 import json
 import logging
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
+
+import tiktoken
 
 from app.analysis.json_response import compact_error_message, request_validated_model
 from app.analysis.world_setting_schemas import (
@@ -168,6 +171,7 @@ class WorldSettingComparator:
         model: str | None = None,
         max_attempts: int | None = None,
         max_output_tokens: int | None = None,
+        batch_max_output_tokens: int | None = None,
         batch_prompt_path: Path = BATCH_COMPARISON_PROMPT_PATH,
     ) -> None:
         settings = get_settings()
@@ -180,6 +184,11 @@ class WorldSettingComparator:
             settings.llm_comparison_max_output_tokens
             if max_output_tokens is None
             else max_output_tokens
+        )
+        self.batch_max_output_tokens = (
+            settings.llm_world_setting_batch_comparison_max_output_tokens
+            if batch_max_output_tokens is None
+            else batch_max_output_tokens
         )
 
     async def compare(
@@ -284,15 +293,28 @@ class WorldSettingComparator:
                 for target_reference in references
             ],
         }
+        minimum_output_tokens = _estimate_batch_minimum_output_tokens(
+            candidates,
+            targets,
+            self.model,
+        )
+        if minimum_output_tokens > self.batch_max_output_tokens:
+            oversized_result = _batch_limit_review_result(candidates, references)
+            raw_result = oversized_result.model_dump(mode="json")
+            raw_result["output_budget"] = {
+                "estimated_minimum_tokens": minimum_output_tokens,
+                "max_output_tokens": self.batch_max_output_tokens,
+            }
+            return oversized_result, raw_result
         result = await request_validated_model(
             client=self.llm_client,
             response_model=WorldSettingComparisonBatchResult,
             system_prompt=self.batch_prompt_path.read_text(encoding="utf-8"),
             user_prompt=json.dumps(raw_payload, ensure_ascii=False),
             model=self.model,
-            max_output_tokens=self.max_output_tokens,
+            max_output_tokens=self.batch_max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="world-setting-comparison-batch:v4",
+            prompt_cache_key="world-setting-comparison-batch:v5",
             operation_name="World-setting batch comparison",
             logger=logger,
             validate_model=lambda comparison_result: _validate_batch_comparison_result(
@@ -315,6 +337,126 @@ def _resolve_max_attempts(max_attempts: int | None) -> int:
     if resolved < 1:
         raise ValueError("max_attempts must be at least 1.")
     return resolved
+
+
+def _estimate_batch_minimum_output_tokens(
+    candidates: list[WorkerWorldSettingComparisonBatchCandidate],
+    targets: list[WorkerWorldSettingComparisonTarget],
+    model: str,
+) -> int:
+    """Estimate a conservative contract-complete batch response size.
+
+    The worst valid shape has one decision per candidate and may need to repeat
+    every source value verbatim for conflict review. JSON framing is measured by
+    the same tokenizer family used for GPT-5.6 quota reservation, then padded for
+    short comparison reasons and provider/tokenizer variance.
+    """
+
+    try:
+        encoding = (
+            tiktoken.get_encoding("o200k_base")
+            if model.startswith("gpt-5.6")
+            else tiktoken.encoding_for_model(model)
+        )
+    except Exception:  # noqa: BLE001 - byte counts keep the guard active.
+        encoding = None
+
+    def token_weight(value: str) -> int:
+        serialized_value = json.dumps(value, ensure_ascii=False)
+        if encoding is None:
+            return len(serialized_value.encode("utf-8"))
+        return len(encoding.encode(serialized_value, disallowed_special=()))
+
+    scope_names = [
+        name
+        for name in (
+            [candidate.scope_name for candidate in candidates]
+            + [
+                property.scope_name
+                for target in targets
+                for property in target.properties
+            ]
+        )
+        if name is not None
+    ]
+    setting_names = [
+        candidate.setting_name for candidate in candidates
+    ] + [
+        property.setting_name
+        for target in targets
+        for property in target.properties
+    ]
+    longest_scope_name = max(scope_names, key=token_weight, default=None)
+    longest_setting_name = max(setting_names, key=token_weight)
+    longest_path = (
+        f"{longest_scope_name} › {longest_setting_name}"
+        if longest_scope_name is not None
+        else longest_setting_name
+    )
+
+    decisions = [
+        {
+            "source_candidate_refs": [candidate.candidate_ref],
+            "existing_root_property_names_to_move": [],
+            "consolidation_status": "CONFLICT",
+            "operation": "REVIEW_REQUIRED",
+            "review_reason": "SCOPE_UNRESOLVED",
+            "target_ref": "T20",
+            "matched_scope_name": longest_scope_name,
+            "matched_property_name": longest_setting_name,
+            "proposed_scope_name": longest_scope_name,
+            "proposed_setting_name": longest_setting_name,
+            "proposed_value": candidate.extracted_value,
+            "comparison_reason": (
+                f"기존 '{longest_path}' 설정과 원문 값을 비교한 결과를 "
+                "사용자가 확인할 수 있도록 보존합니다."
+            ),
+        }
+        for candidate in candidates
+    ]
+    serialized = json.dumps(
+        {"decisions": decisions},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    if encoding is not None:
+        measured_tokens = len(encoding.encode(serialized, disallowed_special=()))
+    else:
+        measured_tokens = len(serialized.encode("utf-8"))
+    return math.ceil(measured_tokens * 1.2) + 512
+
+
+def _batch_limit_review_result(
+    candidates: list[WorkerWorldSettingComparisonBatchCandidate],
+    references: list[ComparisonTargetReference],
+) -> WorldSettingComparisonBatchResult:
+    """Hold an output-oversized batch for review without calling the provider."""
+
+    target_ref = references[0].reference if len(references) == 1 else None
+    decisions = [
+        WorldSettingComparisonBatchDecision(
+            source_candidate_refs=[candidate.candidate_ref],
+            existing_root_property_names_to_move=[],
+            consolidation_status=(
+                WorldSettingConsolidationStatus.SINGLE
+                if len(_source_values(candidate)) == 1
+                else WorldSettingConsolidationStatus.CONFLICT
+            ),
+            operation=WorldSettingOperation.REVIEW_REQUIRED,
+            review_reason=WorldSettingComparisonReviewReason.BATCH_LIMIT_EXCEEDED,
+            target_ref=target_ref,
+            matched_scope_name=None,
+            matched_property_name=None,
+            proposed_scope_name=candidate.scope_name,
+            proposed_setting_name=candidate.setting_name,
+            proposed_value=candidate.extracted_value,
+            comparison_reason=(
+                "비교 결과가 출력 한도를 넘어 자동 비교하지 않았습니다."
+            ),
+        )
+        for candidate in candidates
+    ]
+    return WorldSettingComparisonBatchResult(decisions=decisions)
 
 
 def _build_batch_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
@@ -358,9 +500,15 @@ def _validate_batch_comparison_result(
         if duplicated_refs:
             raise ValueError(f"Duplicated source candidate refs: {sorted(duplicated_refs)}")
         seen_refs.update(source_refs)
-        sources = [candidates_by_ref[ref] for ref in decision.source_candidate_refs]
-        if len(sources) > 1 and decision.consolidation_status == "SINGLE":
-            raise ValueError("A multi-source decision must use MERGED or CONFLICT status.")
+        selected_source_refs = set(decision.source_candidate_refs)
+        sources = [
+            candidate
+            for candidate in candidates
+            if candidate.candidate_ref in selected_source_refs
+        ]
+        source_values = [value for source in sources for value in _source_values(source)]
+        if len(source_values) > 1 and decision.consolidation_status == "SINGLE":
+            raise ValueError("Multiple extracted values must use MERGED or CONFLICT status.")
         normalized_scopes = {
             None
             if source.scope_name is None
@@ -378,19 +526,24 @@ def _validate_batch_comparison_result(
                 "its target_ref."
             )
 
-        if decision.operation == WorldSettingOperation.REVIEW_REQUIRED:
-            if len(sources) != 1 or not _is_scope_ambiguity_match(
-                decision,
-                sources[0],
-                references_by_key,
-            ):
-                raise ValueError("SCOPE_UNRESOLVED must identify one ambiguous source candidate.")
-            continue
-        if len(sources) == 1 and _is_scope_ambiguity_match(
-            decision,
-            sources[0],
-            references_by_key,
+        if (
+            decision.operation == WorldSettingOperation.REVIEW_REQUIRED
+            and decision.review_reason
+            == WorldSettingComparisonReviewReason.BATCH_LIMIT_EXCEEDED
         ):
+            raise ValueError("The provider must not classify output-budget overflow.")
+        scope_ambiguity_match = _find_batch_scope_ambiguity_match(
+            decision,
+            sources,
+            references,
+        )
+        if decision.operation == WorldSettingOperation.REVIEW_REQUIRED:
+            if scope_ambiguity_match is None:
+                raise ValueError(
+                    "SCOPE_UNRESOLVED must identify compatible ambiguous source candidates."
+                )
+            continue
+        if scope_ambiguity_match is not None:
             continue
         if decision.operation == WorldSettingOperation.ADD:
             if decision.matched_scope_name is not None or decision.matched_property_name is not None:
@@ -469,21 +622,19 @@ def _project_batch_comparison_result(
     """LLM batch 결과에 저장 전 deterministic normalization을 적용한다."""
 
     normalized_decisions: list[WorldSettingComparisonBatchDecision] = []
-    candidates_by_ref = {candidate.candidate_ref: candidate for candidate in candidates}
     for decision in result.decisions:
-        sources = [candidates_by_ref[ref] for ref in decision.source_candidate_refs]
-        normalized = decision
-        if len(sources) == 1:
-            normalized = _normalize_scope_ambiguity(
-                normalized,
-                sources[0],
-                references,
-            )
-            normalized = _normalize_deterministic_fields(
-                normalized,
-                sources[0],
-                preserve_canonical_add_path=True,
-            )
+        selected_source_refs = set(decision.source_candidate_refs)
+        sources = [
+            candidate
+            for candidate in candidates
+            if candidate.candidate_ref in selected_source_refs
+        ]
+        normalized = _normalize_batch_scope_ambiguity(
+            decision,
+            sources,
+            references,
+        )
+        normalized = _normalize_batch_deterministic_fields(normalized, sources)
         if (
             normalized.operation != WorldSettingOperation.ADD
             and normalized.existing_root_property_names_to_move
@@ -709,6 +860,30 @@ def _normalize_deterministic_fields(
     return decision.model_copy(update=updates)
 
 
+def _normalize_batch_deterministic_fields(
+    decision: WorldSettingComparisonBatchDecision,
+    sources: list[WorkerWorldSettingComparisonBatchCandidate],
+) -> WorldSettingComparisonBatchDecision:
+    """Restore fields that are deterministic across every source in a batch decision."""
+
+    normalized = decision
+    if len(sources) == 1:
+        normalized = _normalize_deterministic_fields(
+            normalized,
+            sources[0],
+            preserve_canonical_add_path=True,
+        )
+    if normalized.consolidation_status == WorldSettingConsolidationStatus.CONFLICT:
+        normalized = normalized.model_copy(
+            update={
+                "proposed_value": "\n".join(
+                    source.extracted_value for source in sources
+                )
+            }
+        )
+    return normalized
+
+
 def _validate_subject_refs(
     selection: WorldSettingSubjectSelection,
     allowed_refs: set[str],
@@ -801,6 +976,73 @@ def _normalize_scope_ambiguity(
             ),
         }
     )
+
+
+def _normalize_batch_scope_ambiguity(
+    decision: WorldSettingComparisonBatchDecision,
+    sources: list[WorkerWorldSettingComparisonBatchCandidate],
+    references: list[ComparisonTargetReference],
+) -> WorldSettingComparisonBatchDecision:
+    match = _find_batch_scope_ambiguity_match(decision, sources, references)
+    if match is None:
+        return decision
+    matched_path = f"{match.scope_name} › {match.property_name}"
+    return decision.model_copy(
+        update={
+            "operation": WorldSettingOperation.REVIEW_REQUIRED,
+            "review_reason": WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED,
+            "target_ref": match.target_ref,
+            "matched_scope_name": match.scope_name,
+            "matched_property_name": match.property_name,
+            "proposed_scope_name": None,
+            "proposed_setting_name": sources[0].setting_name,
+            "comparison_reason": (
+                f"후보들에는 범위가 없지만 기존 '{matched_path}' 설정과 "
+                "관련될 수 있어 적용 범위 확인이 필요합니다."
+            ),
+            "existing_root_property_names_to_move": [],
+        }
+    )
+
+
+def _find_batch_scope_ambiguity_match(
+    decision: WorldSettingComparisonBatchDecision,
+    sources: list[WorkerWorldSettingComparisonBatchCandidate],
+    references: list[ComparisonTargetReference],
+) -> ScopeAmbiguityMatch | None:
+    """Return one shared ambiguity path or reject a partially compatible group."""
+
+    matches = [
+        _find_scope_ambiguity_match(decision, source, references)
+        for source in sources
+    ]
+    matched = [match for match in matches if match is not None]
+    if not matched:
+        return None
+    normalized_setting_names = {
+        _backend_duplicate_key(source.setting_name) for source in sources
+    }
+    if (
+        len(matched) != len(sources)
+        or any(source.scope_name is not None for source in sources)
+        or len(normalized_setting_names) != 1
+    ):
+        raise ValueError(
+            "A scope-unresolved decision must contain only compatible unscoped same-name sources."
+        )
+    match_keys = {
+        (
+            match.target_ref,
+            _backend_duplicate_key(match.scope_name),
+            _backend_duplicate_key(match.property_name),
+        )
+        for match in matched
+    }
+    if len(match_keys) != 1:
+        raise ValueError(
+            "All scope-unresolved sources must identify the same existing scoped property."
+        )
+    return matched[0]
 
 
 def _find_scope_ambiguity_match(

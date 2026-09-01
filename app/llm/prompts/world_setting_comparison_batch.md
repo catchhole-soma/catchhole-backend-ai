@@ -59,8 +59,13 @@ canonical-subject batch다. 이 batch를 다시 주체별로 나누지 말고, �
 - ADD는 새 canonical 속성을 만든다. 여러 raw setting_name을 하나로 합치는 경우 raw 경로와 다른 proposed_scope_name·proposed_setting_name을 제안할 수 있다.
 - UPDATE와 MERGE는 실제 기존 속성을 선택하고 matched 경로와 proposed 경로를 그대로 유지한다.
 - EXCLUDE는 일시적 사건, 현재 상태, 부적절한 근거, 기존 속성과 실질적으로 같은 내용에 사용한다. 기존 속성과 비교했다면 실제 matched 경로를 포함한다.
-- REVIEW_REQUIRED는 scope_name이 없는 단일 후보가 같은 이름의 기존 scoped 속성 중 어디에 속하는지 자동 결정할 수 없을 때만 사용한다. review_reason은 SCOPE_UNRESOLVED다.
+- REVIEW_REQUIRED는 scope_name이 없는 후보 하나 또는 같은 setting_name의 여러 후보가 모두
+  같은 기존 scoped 속성을 가리키지만 그 범위를 자동 결정할 수 없을 때 사용한다.
+  일부 후보만 해당하거나 서로 다른 target·scoped 속성을 가리키면 한 decision으로 묶지
+  않는다. review_reason은 SCOPE_UNRESOLVED다.
 - proposed_value는 최종 저장 문자열 하나다. MERGED라면 중복을 제거하되 모든 양립 가능한 정보를 보존한다.
+- CONFLICT라면 source_candidate_refs의 모든 extracted_value를 빠짐없이 보존하고 임의로 하나를
+  선택하거나 삭제하지 않는다.
 - comparison_reason에는 C1, T1 같은 ref, UUID, key, version, enum 이름을 쓰지 않는다. 대상명과 속성명을 사용해 자연스러운 한국어로 설명한다.
 - validation_feedback이 있으면 이전 응답의 계약 오류를 수정해 JSON 전체를 다시 반환한다.
 

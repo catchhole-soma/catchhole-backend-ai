@@ -1940,6 +1940,272 @@ def test_comparator_still_retries_unscoped_match_to_different_setting_name() -> 
     assert len(text_client.requests) == 2
 
 
+def test_batch_comparator_retries_single_for_one_source_with_multiple_values() -> None:
+    candidate = _batch_candidate("C1", "무기", "검을 사용한다.\n몽둥이를 사용한다.")
+    single = {
+        "source_candidate_refs": ["C1"],
+        "consolidation_status": "SINGLE",
+        "operation": "ADD",
+        "target_ref": "T1",
+        "proposed_scope_name": "전투 특성",
+        "proposed_setting_name": "무기",
+        "proposed_value": "검 또는 몽둥이를 사용한다.",
+        "comparison_reason": "두 무기 정보를 정리한다.",
+    }
+    client = FakeTextClient(
+        [
+            {"decisions": [single]},
+            {"decisions": [{**single, "consolidation_status": "MERGED"}]},
+        ]
+    )
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(llm_client=client, max_attempts=2).compare_batch(
+            "RACE", [candidate], [_target()]
+        )
+    )
+
+    assert result.decisions[0].consolidation_status == "MERGED"
+    assert len(client.requests) == 2
+
+
+def test_batch_comparator_rebuilds_conflict_value_in_input_candidate_order() -> None:
+    candidates = [
+        _batch_candidate("C1", "무기", "검만 사용한다."),
+        _batch_candidate("C2", "무기", "몽둥이만 사용한다."),
+    ]
+    client = FakeTextClient(
+        [
+            {
+                "decisions": [
+                    {
+                        "source_candidate_refs": ["C2", "C1"],
+                        "consolidation_status": "CONFLICT",
+                        "operation": "ADD",
+                        "target_ref": "T1",
+                        "proposed_scope_name": "전투 특성",
+                        "proposed_setting_name": "무기",
+                        "proposed_value": "검만 사용한다.",
+                        "comparison_reason": "두 무기 설명이 충돌한다.",
+                    }
+                ]
+            }
+        ]
+    )
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(llm_client=client, max_attempts=1).compare_batch(
+            "RACE", candidates, [_target()]
+        )
+    )
+
+    assert result.decisions[0].proposed_value == "검만 사용한다.\n몽둥이만 사용한다."
+
+
+def test_batch_comparator_normalizes_compatible_multi_source_scope_ambiguity() -> None:
+    candidates = [
+        _batch_candidate("C1", "광원", "벽의 수정이 주변을 밝힌다.").model_copy(
+            update={"scope_name": None}
+        ),
+        _batch_candidate("C2", "광원", "수정은 항상 빛을 낸다.").model_copy(
+            update={"scope_name": None}
+        ),
+    ]
+    target = _target().model_copy(
+        update={
+            "properties": [
+                WorkerWorldSettingProperty(
+                    scope_name="1층",
+                    setting_name="광원",
+                    value="벽의 수정이 광원 역할을 한다.",
+                )
+            ]
+        }
+    )
+    client = FakeTextClient(
+        [
+            {
+                "decisions": [
+                    {
+                        "source_candidate_refs": ["C1", "C2"],
+                        "consolidation_status": "MERGED",
+                        "operation": "ADD",
+                        "target_ref": "T1",
+                        "proposed_scope_name": None,
+                        "proposed_setting_name": "광원",
+                        "proposed_value": "벽의 수정은 항상 주변을 밝힌다.",
+                        "comparison_reason": "루트 광원 설정으로 추가한다.",
+                    }
+                ]
+            }
+        ]
+    )
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(llm_client=client, max_attempts=1).compare_batch(
+            "LOCATION", candidates, [target]
+        )
+    )
+
+    decision = result.decisions[0]
+    assert decision.operation == "REVIEW_REQUIRED"
+    assert decision.review_reason == "SCOPE_UNRESOLVED"
+    assert decision.matched_scope_name == "1층"
+    assert decision.matched_property_name == "광원"
+    assert decision.proposed_scope_name is None
+    assert decision.proposed_value == "벽의 수정은 항상 주변을 밝힌다."
+    assert len(client.requests) == 1
+
+
+def test_batch_comparator_rejects_partially_compatible_scope_ambiguity() -> None:
+    candidates = [
+        _batch_candidate("C1", "광원", "벽의 수정이 주변을 밝힌다.").model_copy(
+            update={"scope_name": None}
+        ),
+        _batch_candidate("C2", "조도", "주변이 밝다.").model_copy(
+            update={"scope_name": None}
+        ),
+    ]
+    target = _target().model_copy(
+        update={
+            "properties": [
+                WorkerWorldSettingProperty(
+                    scope_name="1층",
+                    setting_name="광원",
+                    value="벽의 수정이 광원 역할을 한다.",
+                )
+            ]
+        }
+    )
+    client = FakeTextClient(
+        [
+            {
+                "decisions": [
+                    {
+                        "source_candidate_refs": ["C1", "C2"],
+                        "consolidation_status": "MERGED",
+                        "operation": "ADD",
+                        "target_ref": "T1",
+                        "proposed_scope_name": None,
+                        "proposed_setting_name": "광원",
+                        "proposed_value": "주변을 밝힌다.",
+                        "comparison_reason": "두 밝기 정보를 합친다.",
+                    }
+                ]
+            }
+        ]
+    )
+
+    with pytest.raises(ComparisonValidationError):
+        asyncio.run(
+            WorldSettingComparator(llm_client=client, max_attempts=1).compare_batch(
+                "LOCATION", candidates, [target]
+            )
+        )
+
+
+def test_batch_comparator_uses_16000_output_tokens_but_single_keeps_3000() -> None:
+    batch_candidate = _batch_candidate("C1", "무기", "검을 사용한다.")
+    batch_response = {
+        "decisions": [
+            {
+                "source_candidate_refs": ["C1"],
+                "consolidation_status": "SINGLE",
+                "operation": "ADD",
+                "target_ref": "T1",
+                "proposed_scope_name": "전투 특성",
+                "proposed_setting_name": "무기",
+                "proposed_value": "검을 사용한다.",
+                "comparison_reason": "새 무기 설정이다.",
+            }
+        ]
+    }
+    single_response = {
+        "consolidation_status": "SINGLE",
+        "operation": "ADD",
+        "target_ref": "T1",
+        "proposed_setting_name": "무기",
+        "proposed_value": "검을 사용한다.",
+        "comparison_reason": "새 무기 설정이다.",
+    }
+    client = FakeTextClient([batch_response, single_response])
+    comparator = WorldSettingComparator(llm_client=client, max_attempts=1)
+
+    asyncio.run(comparator.compare_batch("RACE", [batch_candidate], [_target()]))
+    asyncio.run(comparator.compare(_candidate("무기", "검을 사용한다."), [_target()]))
+
+    assert [request["max_output_tokens"] for request in client.requests] == [16000, 3000]
+
+
+def test_batch_comparator_holds_output_oversize_for_review_without_provider_call() -> None:
+    candidates = [
+        _batch_candidate("C1", "무기", "검을 사용한다.\n몽둥이를 사용한다."),
+        _batch_candidate("C2", "전투 규칙", "가" * 30_000),
+    ]
+    client = FakeTextClient([])
+
+    result, raw = asyncio.run(
+        WorldSettingComparator(llm_client=client, max_attempts=1).compare_batch(
+            "RACE", candidates, [_target()]
+        )
+    )
+
+    assert client.requests == []
+    assert [decision.source_candidate_refs for decision in result.decisions] == [
+        ["C1"],
+        ["C2"],
+    ]
+    assert [decision.consolidation_status for decision in result.decisions] == [
+        "CONFLICT",
+        "SINGLE",
+    ]
+    assert all(
+        decision.operation == "REVIEW_REQUIRED"
+        and decision.review_reason == "BATCH_LIMIT_EXCEEDED"
+        and decision.matched_scope_name is None
+        and decision.matched_property_name is None
+        and decision.existing_root_property_names_to_move == []
+        for decision in result.decisions
+    )
+    assert raw["output_budget"]["max_output_tokens"] == 16000
+    assert raw["output_budget"]["estimated_minimum_tokens"] > 16000
+
+
+def test_batch_comparator_counts_long_target_paths_before_provider_call() -> None:
+    candidates = [
+        _batch_candidate(f"C{index}", f"설정 {index}", "짧은 원문 값")
+        for index in range(1, 21)
+    ]
+    long_scope_name = "".join(chr(0x4E00 + index) for index in range(100))
+    long_setting_name = "".join(chr(0x5000 + index) for index in range(100))
+    target = _target().model_copy(
+        update={
+            "properties": [
+                WorkerWorldSettingProperty(
+                    scope_name=long_scope_name,
+                    setting_name=long_setting_name,
+                    value="기존 값",
+                )
+            ]
+        }
+    )
+    client = FakeTextClient([])
+
+    result, raw = asyncio.run(
+        WorldSettingComparator(llm_client=client, max_attempts=1).compare_batch(
+            "RACE", candidates, [target]
+        )
+    )
+
+    assert client.requests == []
+    assert len(result.decisions) == 20
+    assert all(
+        decision.review_reason == "BATCH_LIMIT_EXCEEDED"
+        for decision in result.decisions
+    )
+    assert raw["output_budget"]["estimated_minimum_tokens"] > 16000
+
+
 class FakeTextClient:
     def __init__(self, responses: list[dict]) -> None:
         self.responses = responses
