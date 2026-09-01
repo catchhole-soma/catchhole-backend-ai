@@ -79,3 +79,28 @@ class WorldSettingComparisonDecision(BaseModel):
         elif self.review_reason is not None:
             raise ValueError("Only REVIEW_REQUIRED may include review_reason.")
         return self
+
+
+class WorldSettingComparisonBatchDecision(WorldSettingComparisonDecision):
+    source_candidate_refs: list[str] = Field(min_length=1, max_length=20)
+    existing_root_property_names_to_move: list[TrimmedName] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_source_refs(self) -> "WorldSettingComparisonBatchDecision":
+        if len(set(self.source_candidate_refs)) != len(self.source_candidate_refs):
+            raise ValueError("source_candidate_refs must not contain duplicates.")
+        if len(set(self.existing_root_property_names_to_move)) != len(
+            self.existing_root_property_names_to_move
+        ):
+            raise ValueError("existing_root_property_names_to_move must not contain duplicates.")
+        return self
+
+
+class WorldSettingComparisonBatchResult(BaseModel):
+    decisions: list[WorldSettingComparisonBatchDecision] = Field(
+        min_length=1,
+        max_length=20,
+    )
