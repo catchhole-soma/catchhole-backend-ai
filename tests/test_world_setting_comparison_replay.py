@@ -95,7 +95,7 @@ def test_loader_uses_read_only_sql_and_reconstructs_pre_comparison_context() -> 
     )
     assert any("mutation-capabilities" in sql for sql in session.sql)
     assert any(
-        "id AS mutation_key" in sql and "COALESCE" not in sql
+        "candidate.id AS mutation_key" in sql and "COALESCE" not in sql
         for sql in session.sql
     )
     assert all(
@@ -272,8 +272,128 @@ def test_loader_uses_shared_decision_key_when_v38_column_exists() -> None:
     load_replay_dataset(session, WORK_ID)
 
     assert any(
-        "COALESCE(comparison_decision_id, id) AS mutation_key" in sql
+        "COALESCE(candidate.comparison_decision_id, candidate.id) AS mutation_key" in sql
         for sql in session.sql
+    )
+
+
+def test_loader_reverses_applied_root_property_moves_from_decision_snapshot() -> None:
+    session = FakeReadSession(
+        candidates=_candidate_rows(),
+        targets=[
+            {
+                "id": TARGET_ID,
+                "category": "RACE",
+                "subject_name": "바바리안",
+                "properties_json": {
+                    "신체 능력": {
+                        "생명력": "기존 생명력 값",
+                        "근력 기댓값": "100이다.",
+                    }
+                },
+                "version": 4,
+                "created_at": BASE_TIME - timedelta(days=30),
+            }
+        ],
+        mutations=[
+            {
+                "mutation_key": UUID("30000000-0000-0000-0000-000000000001"),
+                "target_world_setting_id": TARGET_ID,
+                "final_operation": "ADD",
+                "matched_scope_name": None,
+                "matched_property_name": None,
+                "final_scope_name": "신체 능력",
+                "final_setting_name": "근력 기댓값",
+                "before_value": None,
+                "base_world_setting_version": 3,
+                "reviewed_at": BASE_TIME + timedelta(days=10),
+                "applied_world_setting_version": 4,
+                "root_move_snapshots": [
+                    {"settingName": "생명력", "beforeValue": "기존 생명력 값"}
+                ],
+                "root_moves_applied_version": 4,
+                "root_moves_disabled": False,
+                "id": UUID("40000000-0000-0000-0000-000000000001"),
+            }
+        ],
+        has_comparison_decision_id=True,
+        has_root_move_snapshots=True,
+        has_root_move_state=True,
+    )
+
+    dataset = load_replay_dataset(session, WORK_ID)
+
+    assert dataset.reconstruction_fallback_count == 0
+    assert all(
+        episode.targets[0].properties
+        == (
+            WorkerWorldSettingProperty(
+                scope_name=None,
+                setting_name="생명력",
+                value="기존 생명력 값",
+            ),
+        )
+        and episode.targets[0].version == 3
+        for episode in dataset.episodes
+    )
+    assert any(
+        "LEFT JOIN world_setting_comparison_decisions AS decision" in sql
+        and "root_property_moves_applied_world_setting_version" in sql
+        for sql in session.sql
+    )
+
+
+def test_loader_marks_root_move_version_mismatch_as_inexact() -> None:
+    session = FakeReadSession(
+        candidates=_candidate_rows(),
+        targets=[
+            {
+                "id": TARGET_ID,
+                "category": "RACE",
+                "subject_name": "바바리안",
+                "properties_json": {
+                    "신체 능력": {
+                        "생명력": "기존 생명력 값",
+                        "근력 기댓값": "100이다.",
+                    }
+                },
+                "version": 4,
+                "created_at": BASE_TIME - timedelta(days=30),
+            }
+        ],
+        mutations=[
+            {
+                "mutation_key": UUID("30000000-0000-0000-0000-000000000001"),
+                "target_world_setting_id": TARGET_ID,
+                "final_operation": "ADD",
+                "matched_scope_name": None,
+                "matched_property_name": None,
+                "final_scope_name": "신체 능력",
+                "final_setting_name": "근력 기댓값",
+                "before_value": None,
+                "base_world_setting_version": 3,
+                "reviewed_at": BASE_TIME + timedelta(days=10),
+                "applied_world_setting_version": 4,
+                "root_move_snapshots": [
+                    {"settingName": "생명력", "beforeValue": "기존 생명력 값"}
+                ],
+                "root_moves_applied_version": 5,
+                "root_moves_disabled": False,
+                "id": UUID("40000000-0000-0000-0000-000000000001"),
+            }
+        ],
+        has_comparison_decision_id=True,
+        has_root_move_snapshots=True,
+        has_root_move_state=True,
+    )
+
+    dataset = load_replay_dataset(session, WORK_ID)
+
+    assert dataset.reconstruction_fallback_count == 4
+    assert all(
+        episode.targets[0].properties[0].scope_name is None
+        and episode.targets[0].properties[0].setting_name == "생명력"
+        for episode in dataset.episodes
     )
 
 
@@ -766,12 +886,16 @@ class FakeReadSession:
         targets: list[dict[str, Any]] | None = None,
         mutations: list[dict[str, Any]] | None = None,
         has_comparison_decision_id: bool = False,
+        has_root_move_snapshots: bool = False,
+        has_root_move_state: bool = False,
     ) -> None:
         self.eligible_work_ids = eligible_work_ids or []
         self.candidates = candidates or []
         self.targets = targets or []
         self.mutations = mutations or []
         self.has_comparison_decision_id = has_comparison_decision_id
+        self.has_root_move_snapshots = has_root_move_snapshots
+        self.has_root_move_state = has_root_move_state
         self.sql: list[str] = []
 
     def execute(self, statement: Any, parameters: dict[str, Any] | None = None) -> FakeResult:
@@ -791,7 +915,9 @@ class FakeReadSession:
                     {
                         "has_comparison_decision_id": (
                             self.has_comparison_decision_id
-                        )
+                        ),
+                        "has_root_move_snapshots": self.has_root_move_snapshots,
+                        "has_root_move_state": self.has_root_move_state,
                     }
                 ]
             )
