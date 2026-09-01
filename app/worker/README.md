@@ -121,7 +121,10 @@ Spring claim
 -> 매칭된 캐릭터 후보별 현재 snapshot context 조회 및 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 제안 저장
 -> CHARACTER_COMPARISONS_FINISHED checkpoint 보고
 -> 세계관 설정 후보 추출 및 Spring 내부 API 게시
--> 후보별 기존 world_settings 탐색 및 ADD/UPDATE/MERGE/EXCLUDE 비교 저장
+-> 미해소 world_setting 후보의 canonical 주체를 먼저 저장
+-> Backend가 canonical 주체와 raw scope별로 만든 비교 batch claim
+-> batch 안의 독립 속성을 하나 이상의 decision으로 비교
+-> source_candidate_refs coverage·context version 검증 후 batch 완료 보고
 -> WORLD_COMPARISONS_FINISHED checkpoint 보고
 -> summaryJson 생성
 -> Spring complete 보고
@@ -138,8 +141,8 @@ run_analysis_worker.py --worker-kind character-comparison
 
 run_analysis_worker.py --worker-kind world-comparison
 -> WORLD_SETTING_COMPARISON만 claim
--> 연결된 PENDING 후보 한 건 비교
--> 후보 COMPLETED/FAILED 저장
+-> 연결된 PENDING 후보를 한 건짜리 canonical batch로 claim
+-> batch COMPLETED/FAILED 저장
 -> Job complete/fail 보고
 ```
 
@@ -177,13 +180,21 @@ run_analysis_worker.py --worker-kind world-comparison
   - 같은 회차 chunk에서 지속 가능한 세계관 속성을 한 속성 단위로 추출하고 evidence offset을 보정합니다.
   - 분석 Job 전체에서 구조적으로 같은 후보만 exact dedupe한 뒤 Spring 내부 API로 게시합니다.
 - `WorldSettingComparisonPipeline`
-  - exact 대상이 없으면 같은 category의 대상명을 `S*` 참조로 좁히고, 최대 3개 상세 문맥을 `T*` 참조로 비교합니다.
+  - canonical 주체가 미해소된 후보를 먼저 조회해 같은 category의 대상명을 `S*` 참조로 좁히고, 선택한 target ID 목록 전체를 Backend에 원자 저장합니다.
+  - Backend가 `job + 회차 + category + canonical 주체 + raw scope`로 만든 batch만 claim하고, claim에 고정된 상세 문맥을 `T*` 참조로 비교합니다.
   - LLM에는 UUID/version을 노출하지 않으며, 정확한 Backend stale 409에만 최신 문맥으로 최대 3회 다시 비교합니다.
   - 계약 검증 400은 같은 결과를 다시 생성하지 않고 상위 failure code와 Backend source code/reason을 분리해 실패 API에 전달합니다.
-  - 후보별 오류는 해당 후보를 `FAILED`로 기록하고 초기 회차 Job의 다른 후보 처리를 계속합니다.
+  - claim된 batch를 AI에서 다시 주체별로 나누지 않으며, 같은 주체·scope 안의 독립 속성만 별도 decision으로 나눕니다.
+  - `source_candidate_refs`가 입력 후보를 정확히 한 번씩 덮는지 검증하며, 위반 시 부분 decision 없이 batch 전체를 실패 처리합니다.
+  - raw와 다른 새 scope는 기존 scoped child, 이번 batch의 독립 `ADD`, `existing_root_property_names_to_move`로 옮길 실제 root를 합친 최종 child가 둘 이상일 때만 허용합니다. 범위명과 설정명이 같거나 형제가 없는 합성 scope는 재시도하며, 기존 root는 새 source 후보로 병합하지 않고 이동 계획으로만 보존합니다.
+  - 여러 source가 한 decision을 공유하면 Backend 검토에서도 같은 원자 단위입니다. source 하나의 작가 수정·제외는 decision-wide root 이동을 비활성화하고, 수정 없는 그룹 확정만 root 이동과 새 property를 함께 반영합니다.
+  - context stale은 batch 전체 문맥과 LLM 결과를 다시 만들고, subject-resolution stale은 기존 batch를 reset한 뒤 주체 해소와 새 batch claim부터 다시 수행합니다. singleton을 별도 재비교하지 않습니다.
+  - quota exhaustion은 현재 batch를 실패 보고한 뒤 다음 batch claim 없이 Job 경계로 전파합니다. 계약 검증 400은 같은 LLM 결과를 재생성하지 않고 `COMPARISON_VALIDATION_FAILED`와 Backend source code/reason을 분리합니다.
+  - batch API가 없는 legacy Spring client는 후보별 claim 경로로 호환하며 batch metric은 생성하지 않습니다.
+  - Backend가 oversized cluster를 `REVIEW_REQUIRED`로 처리하고 count를 발행하지만, 현재 AI summary는 그 Backend count를 수신하지 않습니다.
 - `WorldSettingComparisonWorker`
   - 공개 recompare 요청이 만든 숨김 `WORLD_SETTING_COMPARISON` Job만 claim합니다.
-  - 연결 후보 하나가 성공해야 Job을 완료하고, 후보 비교 실패는 Job 실패로 보고합니다.
+  - 연결 후보 하나짜리 canonical batch가 성공해야 Job을 완료하고, batch 비교 실패는 Job 실패로 보고합니다.
 - `WorkerLeaseHeartbeat`
   - provider 호출 중 60초마다 현재 Job의 5분 lease를 연장합니다. 일시적인 408/429/5xx·network 오류는 2초, 4초 간격으로 재시도하고, 최종 실패나 lease conflict에서는 해당 Job Task만 취소해 중복 실행 대신 lease 재회수 경로로 보냅니다.
 - `EpisodeChunkEmbeddingService`
@@ -331,12 +342,16 @@ Spring, DB, S3 없이 로컬 텍스트 파일 하나만으로 청킹부터 설�
 
 현재 debug JSON은 최종 청킹 결과와 최종 설정 후보를 저장합니다.
 summary에는 subject fallback 호출/해소/미해소 개수가 함께 들어갑니다.
+
+세계관 batch summary에는 batch/decision/cluster 수, 평균 후보 수, clustered/singleton 수, validation failure,
+stale retry, metered provider request/input/cached-input/output token 합계와 batch·cluster별 usage를 포함할 수
+있습니다. Backend의 oversized-group `REVIEW_REQUIRED` count는 별도 Backend metric입니다.
+여러 decision을 한 provider 요청에서 만든 경우 cluster별 정수 usage는 source 후보 수에 비례해 배분하며,
+`usageAttribution=PROPORTIONAL_SHARED_BATCH_REQUEST`로 표시합니다. cluster usage 합계는 batch usage와 같지만
+decision마다 독립 호출했다는 뜻은 아닙니다. AI가 받지 못하는 overflow count는 0이 아니라 `null`로 보고합니다.
 각 `settingCandidates[]`에는 `matched_character_id`, `match_status`, `evidenceMatches`가 포함됩니다.
 
-- LLM 재시도 횟수
-- 재시도 실패 사유
-- 모델명
-- token usage
-- chunk별 quote match 실패 개수 요약
-
-위 값은 아직 구조화해서 저장하지 않습니다. 특히 LLM Client가 응답의 token usage를 읽어도 설정 추출·재시도·subject fallback 결과에서 Worker로 전달하지 않으므로 Spring 완료 보고와 `analysis_jobs` 토큰 컬럼에는 반영되지 않습니다. 재시도 여부는 실행 중 warning 로그로만 확인할 수 있으며, 사용량 집계와 debug 출력 확장은 후속 작업에서 함께 검토합니다.
+provider 호출의 모델·시도·input/cached-input/output token은 Spring 토큰 원장에 요청별로 예약·정산되고,
+Job 완료 시 `analysis_jobs` 합계에 반영됩니다. 세계관 batch 비교는 이 원장 계측과 별도로 batch·cluster별
+provider 요청 수, token, provider latency를 `summaryJson`에 기록합니다. 다만 추출 단계의 청크별 재시도 사유와
+quote match 실패 개수는 아직 같은 수준의 세부 summary로 구조화하지 않으며 실행 로그와 stage 결과로 확인합니다.

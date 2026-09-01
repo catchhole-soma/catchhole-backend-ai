@@ -56,9 +56,44 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
   - Backend가 반환한 현재 속성 문맥은 UUID/version 없이 `T*` 참조로 LLM에 전달해 ADD/UPDATE/MERGE/EXCLUDE를 판단합니다.
   - 기존 속성과 중복되어 EXCLUDE하면 해당 `T*`와 실제 속성명을 검증해 Backend가 기존값을 저장할 수 있게 전달합니다.
 - `world_setting_pipeline.py`
-  - 후보 claim, 대상명 페이지 조회, 비교 문맥 조회, 결과 저장을 조율합니다.
-  - 정확한 HTTP 409 `WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE`만 새 문맥으로 최대 3회 다시 비교합니다.
+  - 미해소 후보의 canonical 주체 저장, canonical batch claim, 비교 문맥 조회, 결과 저장을 조율합니다.
+  - 정확한 HTTP 409 `WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE`은 같은 batch의 새 문맥으로 다시 비교하고, `WORLD_SETTING_SUBJECT_RESOLUTION_STALE`은 기존 batch를 reset한 뒤 주체 해소와 새 batch claim부터 다시 수행합니다.
   - Backend 계약 검증 400은 같은 LLM 결과를 다시 생성하지 않고 `COMPARISON_VALIDATION_FAILED`와 원본 source code/reason을 분리해 후보에 기록합니다.
+
+### 세계관 batch 비교 계약
+
+Worker는 미해소 후보를 먼저 조회하고, 전체 subject 페이지의 exact 이름 또는 `S*` subject resolution 결과를
+후보별 target ID 목록으로 Backend에 원자 저장합니다. Backend는 저장된 canonical key를 사용해
+`job + 회차 + category + canonical subject + raw scope`가 같은 후보만 batch로 묶습니다. Worker는 claim된 batch를
+다시 주체별로 나누지 않으며, batch 안에서 독립 속성만 별도 decision으로 나눕니다.
+
+독립 decision은 source 후보가 하나여도 신규 `ADD`라면 2차 LLM이 제안한 canonical scope/name을 유지합니다.
+다만 raw와 다른 새 scope는 현재 ADD와 기존 문맥을 합친 최종 하위 속성이 둘 이상일 때만 허용합니다. 기존 root
+속성을 새 ADD의 형제로 옮겨야 할 때는 `existing_root_property_names_to_move`에 실제 root 속성명을 기록하며,
+범위명과 설정명이 같거나 형제가 없는 단일 속성용 범위는 validation에서 거절합니다. 따라서 `생명력`,
+`근력 기댓값`을 별도 속성으로 유지하면서 둘 다 `신체 능력` 범위 아래 정리할 수 있고, 공통 scope 때문에 source를
+병합하지 않습니다. 단일 추출값과 evidence도 원본 그대로 보존합니다. legacy 단건 비교만 기존처럼
+`ADD/EXCLUDE` 경로를 1차 raw path로 보정합니다.
+
+각 batch decision의 `source_candidate_refs`는 입력 후보를 정확히 한 번씩 모두 덮어야 합니다. unknown/중복/누락
+ref, 서로 다른 explicit scope 혼합, 잘못된 target ref, operation별 필드 위반은 부분 저장 없이 batch 전체
+validation failure입니다. 완료 요청에는 decision, source ref coverage, canonical subject, target ID, context
+version, raw comparison JSON을 보내며 원본 evidence/provenance는 Worker가 재작성하지 않습니다.
+
+singleton decision도 batch 완료에 포함되며 별도 단건 recompare로 다시 실행하지 않습니다. batch API를 지원하지
+않는 legacy Spring client는 기존 `claim_next_world_setting_comparison` 경로로 후보별 처리하므로 batch
+cluster/coverage metric 없이 legacy stale 재시도·실패 격리를 유지합니다.
+
+정확한 `WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE` 409는 전체 batch의 context·LLM 결과를 다시 만들어
+최대 3회 재시도합니다. `WORLD_SETTING_SUBJECT_RESOLUTION_STALE` 409는 reset endpoint로 기존 batch를 닫고
+주체 해소부터 다시 수행한 뒤 새 batch를 claim합니다. 다른 409/4xx/5xx는 batch 실패로 보고합니다. quota가
+`AI_TOKEN_QUOTA_EXHAUSTED`이면 현재 batch를 실패 보고하고 다음 batch를 claim하지 않은 채 Job 경계로 전파합니다.
+
+문맥·대상 상한을 넘는 oversized cluster는 Backend가 `REVIEW_REQUIRED`로 처리하고 자체 count metric을 냅니다.
+현재 Python pipeline은 그 결과를 별도 응답으로 받지 않으므로 `clusterOverflowOrReviewRequiredCount`는 Backend
+count가 아니며 0으로 추정하지 않고 `null`로 보고합니다. 한 provider 요청에서 여러 decision을 만든 경우
+cluster usage는 source 후보 수 비율로 정수 배분하고 `PROPORTIONAL_SHARED_BATCH_REQUEST`라고 명시합니다.
+cluster usage 합계는 batch 관측값과 같지만 decision마다 독립 호출했다는 뜻은 아닙니다.
 - `json_response.py`
   - 세계관 추출·대상 선택·비교가 공유하는 JSON 객체 파싱, Pydantic 검증, 제한 재시도를 담당합니다.
 - `schemas.py`

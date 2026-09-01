@@ -22,8 +22,9 @@ Spring claim
 -> ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 제안 저장
 -> 같은 chunk에서 지속 가능한 세계관 속성을 원자 후보로 추출
 -> Spring 내부 API로 world_setting_candidates 게시
--> 같은 category의 대상명 검색 후 최대 3개 상세 문맥 비교
--> 후보별 ADD/UPDATE/MERGE/EXCLUDE 제안 저장
+-> 후보별 canonical 주체를 먼저 해소해 Spring에 원자 저장
+-> Spring이 같은 회차·category·canonical 주체·raw scope 후보를 batch로 claim
+-> batch 전체 source를 하나 이상의 ADD/UPDATE/MERGE/EXCLUDE decision으로 저장
 -> Spring complete/fail 보고
 ```
 
@@ -138,16 +139,86 @@ CHUNKS_READY
 -> 2차 LLM이 단일값·안전한 통합·서로 다른 내용(SINGLE/MERGED/CONFLICT) 판정
 -> Backend 내부 API로 후보 전체 게시
 -> WORLD_CANDIDATES_PUBLISHED
--> 후보마다 같은 category의 대상명만 페이지 조회
--> exact 대상 또는 LLM이 선택한 최대 3개 대상의 properties/version 조회
--> ADD/UPDATE/MERGE/EXCLUDE 비교 완료 또는 후보 FAILED 기록
+-> canonical 주체가 미해소된 후보와 category별 기존 대상명 조회
+-> exact 이름 또는 LLM 선택 결과를 후보별 target ID 목록으로 Backend에 원자 저장
+-> Backend가 job + 회차 + category + canonical 주체 + raw scope로 batch 생성
+-> batch에 고정된 대상의 properties/version 조회
+-> source 후보 전체를 하나 이상의 속성 decision으로 비교해 batch 완료 또는 FAILED 기록
 -> WORLD_COMPARISONS_FINISHED
 -> Job complete
 ```
 
+### 세계관 batch 비교 세부 계약
+
+Worker는 먼저 `GET .../world-setting-subject-resolutions/pending`으로 미해소 후보를 받고, category의 모든 subject
+페이지를 읽어 exact 이름 또는 `S*` 주체 해소 결과를 target ID 목록으로 만든다. 그 전체를
+`PUT .../world-setting-subject-resolutions`에 보내면 Backend가 후보별 canonical key와 표시명을 원자 저장한다.
+Backend는 이 결과를 기준으로 `job + source episode + category + canonical subject + normalized raw scope`가 같은
+후보만 claim batch로 묶는다. 따라서 서로 다른 canonical 주체의 실패·quota·20개 상한은 서로 전파되지 않는다.
+
+claim payload의 canonical key·표시명·고정 target ID 목록은 해당 batch의 기준값이다. Worker가 claim 뒤 주체를
+다시 고르거나 batch를 다시 나누지 않는다. 같은 canonical 주체와 scope 안에서도 독립 속성은 각각 decision으로
+나눈다. 독립 decision끼리는 source를 합치지 않은 채 같은 canonical `proposedScopeName`을 공유할 수 있으며,
+source 하나짜리 신규 `ADD`도 2차 LLM의 canonical scope/name 제안을 유지한다. 단, raw와 다른 새 scope는 현재
+ADD와 기존 문맥에 실제 형제 속성이 둘 이상일 때만 허용한다. 기존 root 속성을 함께 옮기는 제안은
+`existingRootPropertyNamesToMove`에 기록하고 이름·값을 보존한다. `scopeName == settingName` 또는 형제 없는
+단일 속성용 scope는 Worker 검증에서 재시도한다. 각 decision의 `source_candidate_refs`는 입력 후보를 정확히 한
+번씩 모두 덮어야 하며, 누락·중복·unknown
+ref, scope 혼합, target/property 계약 위반은 부분 저장 없이 batch 전체 validation failure가 된다. 완료 요청에는
+source coverage, canonical subject, Backend 검증용 target ID, context version, raw comparison JSON을 함께 보내고
+1차 evidence/provenance는 변경하지 않는다.
+
+singleton decision도 batch 완료에 포함되므로 별도 단건 recompare를 하지 않는다. batch API를 지원하지 않는
+구형 Spring client에서는 legacy 후보별 claim 경로로 처리하며, 이 호환 경로에는 batch cluster/coverage metric이
+없다. 완료 요청이 정확한 `WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE` 409를 받으면 이미 처리한 일부만
+재전송하지 않고 context와 LLM 결과를 batch 전체에 대해 새로 만들어 최대 3회 시도한다. canonical target 자체가
+바뀌거나 삭제되어 `WORLD_SETTING_SUBJECT_RESOLUTION_STALE` 409가 오면 reset endpoint로 기존 batch를 닫고,
+미해소 후보 조회와 주체 해소부터 다시 수행한 뒤 새 batch를 claim한다. quota가 `AI_TOKEN_QUOTA_EXHAUSTED`이면
+현재 batch를 실패 보고하고 다음 batch를 claim하지 않은 채 Job 경계로 전파한다.
+
+문맥·대상 안전 한도를 넘는 oversized cluster는 Backend가 `REVIEW_REQUIRED`로 처리하고 자체 count metric을
+발행한다. 현재 AI Worker는 그 count를 별도 응답으로 받지 않으므로 `clusterOverflowOrReviewRequiredCount`를
+Backend count로 해석하지 않는다.
+
+### 새 후보로 기존 root 설정을 재범위화하는 흐름
+
+아래 흐름은 이전 회차에 root로 확정된 설정과 나중 회차의 독립 `ADD` 후보를 공통 범위 아래에 정리하는
+batch 비교 경로다. 기존 root 설정은 새 source 후보로 복제하거나 새 후보와 병합하지 않고, 새 `ADD` decision의
+이동 계획으로만 참조한다.
+
+```mermaid
+flowchart TD
+    A["기존 확정본<br/>바바리안 › 생명력"] --> B["새 회차 1차 후보<br/>바바리안 › 근력 기댓값"]
+    B --> C["canonical 주체 해소<br/>기존 바바리안 target ID 고정"]
+    C --> D["batch context 조회<br/>target properties + version"]
+    D --> E["2차 LLM batch 비교<br/>독립 SINGLE ADD 유지"]
+    E --> F{"raw와 다른<br/>새 scope 제안?"}
+    F -- "아니오" --> G["일반 ADD 경로 검증"]
+    F -- "예" --> H["최종 scope child 집합 계산<br/>기존 scoped child + batch ADD + root 이동"]
+    H --> I{"서로 다른 child가<br/>2개 이상인가?"}
+    I -- "아니오" --> J["합성 singleton scope 거절<br/>validation feedback으로 전체 JSON 재시도"]
+    J --> E
+    I -- "예" --> K["root 실존·ADD+scope·이름 차이·<br/>최종 경로와 scalar/object 충돌 검증"]
+    K -- "실패" --> J
+    K -- "성공" --> L["complete 요청<br/>새 ADD + existingRootPropertyNamesToMove<br/>+ contextVersions"]
+    G --> L
+    L --> M["Backend가 현재 root 이름·값 재검증<br/>이동 snapshot 저장"]
+    M --> N["후보 COMPLETED<br/>사용자 확정 전 WorldSetting은 변경하지 않음"]
+```
+
+예를 들어 기존 root `생명력`과 새 `근력 기댓값`을 `신체 능력` 아래에 정리할 때 Worker는 새 후보의
+`sourceCandidateRefs`만 유지하고 `existingRootPropertyNamesToMove=["생명력"]`를 보낸다. AI는 이동할 기존값을
+완료 payload에 복사하지 않으며, Backend가 최신 확정본에서 실제 값을 읽어 snapshot을 만든다. context가 stale이면
+이동 계획 일부만 재사용하지 않고 최신 properties로 batch 전체 비교를 다시 수행한다.
+
+한 decision이 여러 `sourceCandidateRefs`를 가지면 그 source 전체가 같은 비교 결정과 이동 계획을 공유한다.
+Backend 검토 경계에서는 일부 source만 원안대로 확정해 이동을 살리는 부분 적용을 허용하지 않는다. source 하나라도
+사용자가 AI안과 다르게 수정하거나 제외하면 이동 계획을 decision 전체에서 비활성화하고, 원안을 그대로 승인한 경우에만
+그룹 확정 트랜잭션에서 root 이동과 새 property를 함께 반영한다.
+
 claim 요청은 `allowedJobTypes`를 필수로 보내고 성공 응답의 lease token을 모든 상태 변경·토큰 예약·세계관 API에 사용합니다. 5분 lease는 백그라운드 heartbeat가 60초마다 갱신하며, 만료 후 재claim 시 마지막 checkpoint 이후 단계부터 재개합니다.
 
-초기 회차 분석의 후보별 비교 실패는 해당 후보를 `FAILED`로 기록하고 다른 후보와 Job 완료를 계속합니다. 사용자가 `/recompare`를 호출하면 Backend가 공개 분석 목록에 노출하지 않는 `WORLD_SETTING_COMPARISON` Job을 만들고, 다음 별도 runner가 그 Job type만 claim합니다.
+초기 회차 분석의 batch 비교 실패는 그 batch의 후보 전체를 `FAILED`로 기록하고 다른 canonical batch와 Job 처리를 계속합니다. 사용자가 `/recompare`를 호출하면 Backend가 공개 분석 목록에 노출하지 않는 `WORLD_SETTING_COMPARISON` Job을 만들고, 다음 별도 runner가 그 Job type만 claim합니다. 사용자 재비교는 연결 후보 하나짜리 batch이므로 동일한 batch 계약을 사용합니다.
 
 comparison-complete에서 Backend가 HTTP 400 `WORLD_SETTING_COMPARISON_TARGET_INVALID`를 반환하면 Worker는 같은 LLM 결과를 다시 만들지 않습니다. 후보의 사용자용 `comparisonFailureCode`는 `COMPARISON_VALIDATION_FAILED`로 두고, Backend 원본 `sourceErrorCode`와 허용된 enum `sourceReasonCode`는 별도 필드로 실패 API에 전달합니다. 알 수 없는 4xx/5xx는 이 분류로 흡수하지 않습니다. HTTP 409도 정확한 `WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE`일 때만 최신 context로 다시 비교합니다.
 
@@ -813,11 +884,72 @@ save_items 전체 수집
   "subjectFallbackUnresolvedCount": 2,
   "characterFactComparisonCompletedCount": 39,
   "characterFactComparisonFailedCount": 1,
-  "worldSettingCandidateCount": 7,
-  "worldSettingComparisonCompletedCount": 6,
-  "worldSettingComparisonFailedCount": 1
+  "worldSettingCandidateCount": 2,
+  "worldSettingComparisonCompletedCount": 2,
+  "worldSettingComparisonFailedCount": 0,
+  "worldComparisonBatchCount": 1,
+  "worldComparisonDecisionCount": 1,
+  "worldComparisonClusterCount": 1,
+  "averageCandidatesPerBatch": 2.0,
+  "averageCandidatesPerCluster": 2.0,
+  "clusteredCandidateCount": 2,
+  "singletonCandidateCount": 0,
+  "batchValidationFailureCount": 0,
+  "staleBatchRetryCount": 0,
+  "clusterOverflowOrReviewRequiredCount": null,
+  "worldComparisonProviderRequestCount": 2,
+  "worldComparisonProviderLatencyMs": 810,
+  "worldComparisonInputTokenCount": 3200,
+  "worldComparisonCachedInputTokenCount": 500,
+  "worldComparisonOutputTokenCount": 420,
+  "worldComparisonSubjectResolutionUsage": {
+    "providerRequestCount": 1,
+    "providerLatencyMs": 310,
+    "inputTokenCount": 1200,
+    "cachedInputTokenCount": 0,
+    "outputTokenCount": 120
+  },
+  "worldComparisonBatchUsages": [{
+    "batchSequence": 1,
+    "candidateCount": 2,
+    "clusterCount": 1,
+    "providerRequestCount": 1,
+    "providerLatencyMs": 500,
+    "inputTokenCount": 2000,
+    "cachedInputTokenCount": 500,
+    "outputTokenCount": 300
+  }],
+  "worldComparisonClusterUsages": [{
+    "batchSequence": 1,
+    "contextAttempt": 1,
+    "clusterSequence": 1,
+    "sourceCandidateCount": 2,
+    "usageAttribution": "PROPORTIONAL_SHARED_BATCH_REQUEST",
+    "providerRequestCount": 1,
+    "providerLatencyMs": 500,
+    "inputTokenCount": 2000,
+    "cachedInputTokenCount": 500,
+    "outputTokenCount": 300
+  }]
 }
 ```
+
+실제 `worldComparisonBatchUsages`에는 batch별 후보·cluster 수와 관측된 provider 요청·latency·token 합계가
+들어갑니다. `worldComparisonClusterUsages`는 decision마다 한 행을 만들되, 여러 decision을 한 provider 요청에서
+함께 생성하므로 `usageAttribution=PROPORTIONAL_SHARED_BATCH_REQUEST`로 source 후보 수에 비례해 정수 사용량을
+배분합니다. 이 행들을 합하면 batch 관측값과 정확히 같지만, 각 decision이 독립 provider 호출을 했다는 뜻은
+아닙니다. 비교 결과가 계약 검증 전에 실패하면 `clusterSequence=0`,
+`usageAttribution=UNASSIGNED_FAILED_BATCH_REQUEST` 한 행으로 호출 사용량을 보존합니다.
+
+`clusterOverflowOrReviewRequiredCount`는 AI가 Backend 내부 overflow 처리 횟수를 받지 못하므로 `null`입니다.
+실제 값은 Backend의 `clusterOverflowOrReviewRequiredCount` 구조화 로그와 `BATCH_LIMIT_EXCEEDED` decision으로
+확인합니다.
+
+2026-08-31에 1~4화 후보 52개를 `gpt-5.6-luna`로 단건/묶음 각각 한 번 replay한 결과,
+묶음 방식은 Provider 호출을 68회에서 42회로, 입력+출력 토큰을 90,840에서 47,322로 줄였습니다.
+반면 Provider 지연 시간 합계는 245,349ms에서 296,418ms로 늘었고 2건의 operation 판단이 달랐으므로,
+속도나 결과 동등성을 입증한 것으로 해석하지 않습니다. 개인정보 없는 상세 집계와 해석은
+[`world-setting-comparison-ab-episodes-1-4.md`](world-setting-comparison-ab-episodes-1-4.md)를 봅니다.
 
 `embeddingSkippedChunkCount`는 feature flag 비활성화로 의도적으로 생략한 수이고, `embeddingFailedChunkCount`는 flag 활성화 중 복구 가능한 provider 장애로 생성하지 못한 수입니다.
 
@@ -853,7 +985,7 @@ Spring reserve가 409 `AI_TOKEN_QUOTA_EXHAUSTED`를 반환하면 HTTP 재시도 
 | 후보 교체 | `setting_candidates` | 단일 episode의 모든 chunk 처리 완료 후 | `analysis_job_id` 기준 기존 후보 삭제 후 새 후보 저장. Python은 `comparison_status` 최초값만 설정 |
 | 캐릭터 Fact 비교 | Spring `setting_candidates` 비교 컬럼 | 매칭된 후보별 현재 snapshot 비교 후 | Spring이 context token·canonical slot을 검증하고 `COMPLETED` 또는 `FAILED` 전이. Python은 결과 컬럼을 직접 쓰지 않음 |
 | 세계관 후보 게시 | Spring `world_setting_candidates` | 모든 chunk의 세계관 추출·dedupe 후 | lease와 checkpoint를 검증한 Backend 트랜잭션에서 검토 전 후보 교체 |
-| 세계관 비교 | Spring `world_setting_candidates` | 후보별 대상 문맥 비교 후 | Backend가 대상 ID·version·property를 검증하고 `COMPLETED` 또는 `FAILED` 전이 |
+| 세계관 비교 | Spring comparison batch·decision·source 및 `world_setting_candidates` projection | canonical 주체 해소 뒤 batch 전체 문맥 비교 후 | Backend가 source 전체 coverage·대상 ID·version·property를 검증하고 batch를 원자적으로 `COMPLETED`, `FAILED`, `REVIEW_REQUIRED` 전이 |
 | 작업 완료 | Spring `analysis_jobs` | 마지막 checkpoint 도달 및 캐릭터·세계관 비교가 terminal 상태가 된 후 | Spring 내부 complete API 호출 |
 | 작업 실패 | Spring `analysis_jobs` | 처리 중 예외 발생 후 | Spring 내부 fail API 호출 |
 
