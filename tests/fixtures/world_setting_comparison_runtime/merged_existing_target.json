@@ -1,0 +1,138 @@
+{
+  "batch": {
+    "comparisonBatchId": "10000000-0000-0000-0000-000000000155",
+    "workId": "20000000-0000-0000-0000-000000000155",
+    "sourceEpisodeId": "30000000-0000-0000-0000-000000000013",
+    "category": "MONSTER",
+    "resolutionType": "EXISTING",
+    "canonicalSubjectKey": "TARGET:40000000-0000-0000-0000-000000000001",
+    "canonicalSubjectName": "고블린",
+    "resolvedTargetWorldSettingIds": [
+      "40000000-0000-0000-0000-000000000001"
+    ],
+    "rawScopeName": null,
+    "candidates": [
+      {
+        "candidateRef": "C1",
+        "candidateId": "50000000-0000-0000-0000-000000000001",
+        "subjectName": "고블린 떼",
+        "scopeName": null,
+        "settingName": "무기",
+        "extractedValue": "녹슨 단검을 주로 사용한다.",
+        "evidenceSpans": [
+          {
+            "quote": "고블린 떼는 녹슨 단검을 꽉 쥐었다.",
+            "startOffset": 12,
+            "endOffset": 35
+          }
+        ],
+        "extractionConfidence": 0.95
+      },
+      {
+        "candidateRef": "C2",
+        "candidateId": "50000000-0000-0000-0000-000000000002",
+        "subjectName": "고블린 무리",
+        "scopeName": null,
+        "settingName": "무기",
+        "extractedValue": "일부는 돌도끼를 휘두른다.",
+        "evidenceSpans": [
+          {
+            "quote": "다른 고블린은 돌도끼를 휘둘렀다.",
+            "startOffset": 48,
+            "endOffset": 69
+          }
+        ],
+        "extractionConfidence": 0.8
+      }
+    ]
+  },
+  "completion": {
+    "contextVersions": [
+      {
+        "worldSettingId": "40000000-0000-0000-0000-000000000001",
+        "version": 7
+      }
+    ],
+    "decisions": [
+      {
+        "decisionRef": "D1",
+        "sourceCandidateRefs": ["C1", "C2"],
+        "existingRootPropertyNamesToMove": [],
+        "canonicalSubjectName": "고블린",
+        "targetWorldSettingId": "40000000-0000-0000-0000-000000000001",
+        "matchedScopeName": null,
+        "matchedPropertyName": "무기",
+        "consolidationStatus": "MERGED",
+        "suggestedOperation": "MERGE",
+        "comparisonReviewReason": null,
+        "proposedScopeName": null,
+        "proposedSettingName": "무기",
+        "proposedValue": "녹슨 단검을 주로 사용하며 일부는 돌도끼를 휘두른다.",
+        "comparisonReason": "두 후보는 고블린이 사용하는 서로 다른 무기 정보를 보완한다."
+      }
+    ],
+    "rawComparisonJson": {
+      "schemaVersion": "world-comparison-batch-v1"
+    }
+  },
+  "expectedRuntimeResult": {
+    "schemaVersion": "world-setting-comparison-runtime-v1",
+    "comparisonBatchId": "10000000-0000-0000-0000-000000000155",
+    "workId": "20000000-0000-0000-0000-000000000155",
+    "sourceEpisodeId": "30000000-0000-0000-0000-000000000013",
+    "category": "MONSTER",
+    "subjectResolutionType": "EXISTING",
+    "canonicalSubjectKey": "TARGET:40000000-0000-0000-0000-000000000001",
+    "canonicalSubjectName": "고블린",
+    "canonicalTargetWorldSettingIds": [
+      "40000000-0000-0000-0000-000000000001"
+    ],
+    "decisions": [
+      {
+        "decisionRef": "D1",
+        "sourceCandidates": [
+          {
+            "candidateId": "50000000-0000-0000-0000-000000000001",
+            "rawSubjectName": "고블린 떼",
+            "rawScopeName": null,
+            "rawSettingName": "무기",
+            "extractedValue": "녹슨 단검을 주로 사용한다.",
+            "evidenceSpans": [
+              {
+                "quote": "고블린 떼는 녹슨 단검을 꽉 쥐었다.",
+                "startOffset": 12,
+                "endOffset": 35
+              }
+            ]
+          },
+          {
+            "candidateId": "50000000-0000-0000-0000-000000000002",
+            "rawSubjectName": "고블린 무리",
+            "rawScopeName": null,
+            "rawSettingName": "무기",
+            "extractedValue": "일부는 돌도끼를 휘두른다.",
+            "evidenceSpans": [
+              {
+                "quote": "다른 고블린은 돌도끼를 휘둘렀다.",
+                "startOffset": 48,
+                "endOffset": 69
+              }
+            ]
+          }
+        ],
+        "existingRootPropertyNamesToMove": [],
+        "canonicalSubjectName": "고블린",
+        "targetWorldSettingId": "40000000-0000-0000-0000-000000000001",
+        "matchedScopeName": null,
+        "matchedPropertyName": "무기",
+        "consolidationStatus": "MERGED",
+        "operation": "MERGE",
+        "reviewReason": null,
+        "proposedScopeName": null,
+        "proposedSettingName": "무기",
+        "proposedValue": "녹슨 단검을 주로 사용하며 일부는 돌도끼를 휘두른다.",
+        "comparisonReason": "두 후보는 고블린이 사용하는 서로 다른 무기 정보를 보완한다."
+      }
+    ]
+  }
+}
