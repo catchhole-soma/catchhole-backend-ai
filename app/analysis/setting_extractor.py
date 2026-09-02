@@ -27,7 +27,7 @@ DEFAULT_PROMPT_PATH = (
 )
 # 이 파일 전용 로그 객체를 만든다
 logger = logging.getLogger(__name__)
-SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v7"
+SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v10"
 SETTING_EXTRACTION_RESPONSE_SCHEMA = LlmResponseSchema(
     name="character_setting_extraction",
     schema=character_setting_provider_json_schema(),
@@ -51,6 +51,7 @@ _SAFE_VALIDATION_PATH_FIELDS = frozenset(
         "value_json",
         "extra_json",
         "value",
+        "active",
     }
 )
 _UNEXPECTED_VALIDATION_PATH_FIELD = "unexpected_field"
@@ -274,6 +275,8 @@ class CharacterSettingExtractor:
             f"{schema_summary_json}\n\n"
             "known_character_names:\n"
             f"{_serialize_known_character_names(known_characters)}\n\n"
+            "active_character_statuses:\n"
+            f"{_serialize_active_character_statuses(known_characters)}\n\n"
             f"metadata:\n{json.dumps(metadata, ensure_ascii=False, sort_keys=True)}\n\n"
             f"chunk_text:\n{chunk_text}"
         )
@@ -305,10 +308,7 @@ def _safe_validation_feedback(exc: Exception) -> _SafeValidationFeedback:
     )
     reason_code = _validation_reason_code(errors)
     field_locs = tuple(
-        dict.fromkeys(
-            _safe_field_loc(error.get("loc"), reason_code)
-            for error in errors
-        )
+        dict.fromkeys(_safe_field_loc(error.get("loc"), reason_code) for error in errors)
     )
     return _SafeValidationFeedback(
         reason_code=reason_code,
@@ -325,12 +325,15 @@ def _validation_reason_code(errors: list[dict]) -> str:
 
     setting_locations = [location for location in locations if "SETTING" in location]
     if setting_locations:
-        if any(
-            "attribute_name" in location
-            or "value_type" in location
-            or (location and location[-1] == "value_json")
-            for location in setting_locations
-        ) or "union_tag_not_found" in error_types:
+        if (
+            any(
+                "attribute_name" in location
+                or "value_type" in location
+                or (location and location[-1] == "value_json")
+                for location in setting_locations
+            )
+            or "union_tag_not_found" in error_types
+        ):
             return "SETTING_REQUIRED_FIELD_MISSING"
         if any("NUMBER" in location for location in setting_locations):
             return "NUMBER_TYPED_VALUE_INVALID"
@@ -341,6 +344,8 @@ def _validation_reason_code(errors: list[dict]) -> str:
         return "NUMBER_TYPED_VALUE_INVALID"
     if "boolean_typed_value_invalid" in error_types:
         return "BOOLEAN_TYPED_VALUE_INVALID"
+    if "status_active_value_invalid" in error_types:
+        return "STATUS_ACTIVE_VALUE_INVALID"
     if "discovery_setting_field_forbidden" in error_types:
         return "DISCOVERY_SETTING_FIELD_FORBIDDEN"
     if "setting_required_field_missing" in error_types:
@@ -419,6 +424,34 @@ def _serialize_schema_hints(
 def _serialize_known_character_names(known_characters: tuple[KnownCharacter, ...]) -> str:
     return json.dumps(
         [character.name for character in known_characters],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _serialize_active_character_statuses(
+    known_characters: tuple[KnownCharacter, ...],
+) -> str:
+    """LLM에는 캐릭터명·Fact key·표시값만 전달하고 내부 ID/이력은 숨긴다."""
+
+    statuses = [
+        {
+            "characterName": character.name,
+            "factKey": status.fact_key,
+            "factValue": status.fact_value,
+        }
+        for character in known_characters
+        for status in character.active_statuses
+    ]
+    return json.dumps(
+        sorted(
+            statuses,
+            key=lambda item: (
+                item["characterName"],
+                item["factKey"],
+                item["factValue"] or "",
+            ),
+        ),
         ensure_ascii=False,
         separators=(",", ":"),
     )

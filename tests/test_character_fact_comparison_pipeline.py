@@ -32,7 +32,7 @@ def test_pipeline_maps_refs_to_fact_identity_without_source_ids() -> None:
                 target_ref="P1",
                 removed_snapshot_refs=["P2"],
                 proposed_fact_value="완전히 회복됨",
-                proposed_value_json={"active": False},
+                proposed_value_json={"active": True},
                 temporal_scope="PRESENT",
                 comparison_reason="명시적으로 회복했다.",
             )
@@ -78,14 +78,14 @@ def test_pipeline_rebuilds_context_on_stale_409_up_to_success() -> None:
     assert len(spring.completions) == 3
 
 
-def test_pipeline_maps_same_slot_remove_without_proposed_value() -> None:
+def test_pipeline_maps_remove_set_without_target_or_proposed_value() -> None:
     spring = FakeSpringApi([CANDIDATE_ID])
     comparator = FakeComparator(
         [
             CharacterFactComparisonDecision(
                 operation="REMOVE",
-                target_ref="P1",
-                removed_snapshot_refs=[],
+                target_ref=None,
+                removed_snapshot_refs=["P1", "P2"],
                 proposed_fact_value=None,
                 proposed_value_json=None,
                 temporal_scope="PRESENT",
@@ -104,11 +104,16 @@ def test_pipeline_maps_same_slot_remove_without_proposed_value() -> None:
     assert result.completed_count == 1
     request = spring.completions[0]
     assert request.operation == "REMOVE"
-    assert request.target_fact_type == "STATUS"
-    assert request.target_fact_key == "status.회복"
+    assert request.target_fact_type is None
+    assert request.target_fact_key is None
     assert request.proposed_fact_value is None
     assert request.proposed_value_json is None
-    assert request.removed_snapshot_entries == []
+    assert [entry.fact_key for entry in request.removed_snapshot_entries] == [
+        "status.회복",
+        "status.출혈",
+    ]
+    assert "target_ref" not in request.raw_comparison_json
+    assert "removed_snapshot_refs" not in request.raw_comparison_json
 
 
 @pytest.mark.parametrize(
@@ -117,11 +122,9 @@ def test_pipeline_maps_same_slot_remove_without_proposed_value() -> None:
         ("NUMBER", "EXCLUDE", "PRESENT", None),
         ("NUMBER", "HISTORY_ONLY", "PAST", None),
         ("NUMBER", "REVIEW_REQUIRED", "UNKNOWN", None),
-        ("NUMBER", "REMOVE", "PRESENT", "P1"),
         ("BOOLEAN", "EXCLUDE", "PRESENT", None),
         ("BOOLEAN", "HISTORY_ONLY", "PAST", None),
         ("BOOLEAN", "REVIEW_REQUIRED", "UNKNOWN", None),
-        ("BOOLEAN", "REMOVE", "PRESENT", "P1"),
     ],
 )
 def test_pipeline_keeps_non_applying_scalar_proposals_null(
@@ -369,7 +372,7 @@ def _add_decision() -> CharacterFactComparisonDecision:
     return CharacterFactComparisonDecision(
         operation="ADD",
         proposed_fact_value="완전히 회복됨",
-        proposed_value_json={"active": False},
+        proposed_value_json={"active": True},
         temporal_scope="PRESENT",
         comparison_reason="새 상태를 추가한다.",
     )
@@ -384,7 +387,7 @@ def _context(
         "JSON": {
             "attributeName": "status.회복",
             "attributeValue": "완전히 회복됨",
-            "valueJson": {"active": False},
+            "valueJson": {"active": True},
             "canonicalFactType": "STATUS",
             "canonicalFactKey": "status.회복",
         },

@@ -9,12 +9,26 @@ from app.domain.enums import SettingCandidateKind, SettingCandidateMatchStatus
 # 이미 DB에 존재하는 캐릭터 정보.
 # LLM이 추출한 후보의 이름이 이 목록 중 누구와 매칭되는지 판단한다.
 @dataclass(frozen=True)
+class ActiveCharacterStatus:
+    """회차 시작 시점에 활성인 STATUS의 최소 표시 문맥."""
+
+    fact_key: str
+    # provenance가 없는 legacy snapshot은 표시값을 복원하지 못할 수 있다.
+    fact_value: str | None
+
+
+@dataclass(frozen=True)
 class KnownCharacter:
     # 기존 캐릭터 ID
     character_id: UUID
 
     # 대표 이름
     name: str
+
+    # 1차 추출이 상태 지속·악화·완화·종료 근거를 놓치지 않게 하는 읽기 전용 문맥.
+    # DB 식별자와 provenance/history는 이 경계에 넣지 않는다.
+    active_statuses: tuple[ActiveCharacterStatus, ...] = ()
+
 
 # 매칭 비교에 사용할 수 있도록 이름을 미리 정규화한 캐릭터 정보.
 @dataclass(frozen=True)
@@ -154,12 +168,11 @@ def resolve_candidate_character(
     #
     # 다만 "나은", "그로"처럼 이름 끝이 조사와 우연히 같은 기존 캐릭터는 조사 제거보다
     # exact-name 일치를 우선한다. "나", "그", "주인공" 자체는 지칭어이므로 예외가 아니다.
-    if (
-        not _is_concrete_normalized_character_name(normalized_entity_name)
-        and not _is_safe_exact_name_match(
-            normalized_entity_name,
-            exact_entity_matches,
-        )
+    if not _is_concrete_normalized_character_name(
+        normalized_entity_name
+    ) and not _is_safe_exact_name_match(
+        normalized_entity_name,
+        exact_entity_matches,
     ):
         return CharacterNameMatch(
             matched_character_id=None,

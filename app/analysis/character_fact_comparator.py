@@ -75,6 +75,11 @@ class CharacterFactComparator:
         snapshot_entries: list[WorkerCharacterSnapshotEntry],
         prior_candidates: list[WorkerCharacterPriorFactCandidate] | None = None,
     ) -> tuple[CharacterFactComparisonDecision, dict]:
+        _validate_status_active_value(
+            candidate.canonical_fact_type,
+            candidate.value_json,
+            field_name="candidate.value_json",
+        )
         references = [
             CharacterSnapshotReference(reference=f"P{index}", entry=entry)
             for index, entry in enumerate(snapshot_entries, start=1)
@@ -88,13 +93,17 @@ class CharacterFactComparator:
         if len(exact_target_refs) > 1:
             raise ValueError("Canonical snapshot slot must be unique.")
         exact_target_ref = exact_target_refs[0] if exact_target_refs else None
-        if exact_target_ref is None:
-            allowed_operations = ["ADD", "HISTORY_ONLY", "EXCLUDE", "REVIEW_REQUIRED"]
-        else:
-            allowed_operations = ["UPDATE", "MERGE"]
-            if candidate.canonical_fact_type == "STATUS":
-                allowed_operations.append("REMOVE")
-            allowed_operations.extend(["HISTORY_ONLY", "EXCLUDE", "REVIEW_REQUIRED"])
+        explicit_inactive_status = _is_explicit_inactive_status(candidate)
+        allowed_operations: list[str] = []
+        if not explicit_inactive_status:
+            if exact_target_ref is None:
+                allowed_operations.append("ADD")
+            else:
+                allowed_operations.extend(["UPDATE", "MERGE"])
+        has_current_status = any(reference.entry.fact_type == "STATUS" for reference in references)
+        if candidate.canonical_fact_type == "STATUS" and has_current_status:
+            allowed_operations.append("REMOVE")
+        allowed_operations.extend(["HISTORY_ONLY", "EXCLUDE", "REVIEW_REQUIRED"])
         # DB 식별자는 provider에 노출하지 않고 이번 요청 안에서만 유효한 참조를 사용한다.
         prompt_payload = {
             "candidate": {
@@ -138,7 +147,7 @@ class CharacterFactComparator:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="character-fact-comparison:v6",
+            prompt_cache_key="character-fact-comparison:v9",
             operation_name="Character-fact comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -161,11 +170,14 @@ def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
         "previous_response_rejected": True,
         "reason": compact_error_message(exc),
         "correction": (
-            "allowed_operations 중 하나만 선택하세요. UPDATE, MERGE 또는 REMOVE는 "
-            "exact_target_ref가 null이 아닐 때만 사용할 수 있고 target_ref는 "
-            "exact_target_ref와 정확히 같아야 합니다. 의미가 비슷하지만 key가 다른 "
-            "STATUS를 대체하려면 ADD와 removed_snapshot_refs를 사용하세요. 동일한 "
-            "STATUS가 종료됐다면 REMOVE와 exact_target_ref를 사용하세요. 판단 이유에는 "
+            "allowed_operations 중 하나만 선택하세요. UPDATE와 MERGE만 target_ref를 "
+            "사용하며 exact_target_ref와 정확히 같아야 합니다. 현재 후보를 snapshot에 "
+            "남기지 않고 관련 STATUS를 끝내려면 REMOVE, target_ref=null, 한 개 이상의 "
+            "removed_snapshot_refs를 사용하세요. 현재 후보도 지속 상태로 남겨야 하면 "
+            "ADD/UPDATE/MERGE와 removed_snapshot_refs를 함께 사용하세요. candidate 또는 "
+            "proposed STATUS의 value_json.active가 boolean false이면 ADD/UPDATE/MERGE를 "
+            "선택하지 마세요. active가 있으면 문자열이 아닌 JSON boolean이어야 합니다. "
+            "판단 이유에는 "
             "내부 key·enum·UUID를 쓰지 말고 사용자가 이해할 수 있는 한국어만 쓰세요."
         ),
     }
@@ -184,6 +196,11 @@ def _validate_comparison_decision(
     candidate: WorkerCharacterFactComparisonCandidatePayload,
     references: list[CharacterSnapshotReference],
 ) -> None:
+    _validate_status_active_value(
+        candidate.canonical_fact_type,
+        candidate.value_json,
+        field_name="candidate.value_json",
+    )
     entries_by_ref = {reference.reference: reference.entry for reference in references}
     exact_slot_refs = {
         reference.reference
@@ -211,20 +228,33 @@ def _validate_comparison_decision(
             target.fact_type != candidate.canonical_fact_type
             or target.fact_key != candidate.canonical_fact_key
         ):
-            raise ValueError(
-                "UPDATE, MERGE, and REMOVE must target the candidate's canonical Fact key."
-            )
+            raise ValueError("UPDATE and MERGE must target the candidate's canonical Fact key.")
         if decision.target_ref in decision.removed_snapshot_refs:
             raise ValueError("The comparison target must not also be removed.")
 
     if decision.operation == CharacterFactComparisonOperation.ADD and exact_slot_refs:
         raise ValueError("ADD is invalid when the canonical Fact slot already exists.")
 
+    applies_to_snapshot = decision.operation in {
+        CharacterFactComparisonOperation.ADD,
+        CharacterFactComparisonOperation.UPDATE,
+        CharacterFactComparisonOperation.MERGE,
+    }
+    if applies_to_snapshot:
+        _validate_status_active_value(
+            candidate.canonical_fact_type,
+            decision.proposed_value_json,
+            field_name="proposed_value_json",
+        )
+        if _is_explicit_inactive_status(candidate) or _has_explicit_inactive_status_value(
+            candidate.canonical_fact_type,
+            decision.proposed_value_json,
+        ):
+            raise ValueError("An explicitly inactive STATUS value must not enter the snapshot.")
+
     if decision.operation == CharacterFactComparisonOperation.REMOVE:
         if candidate.canonical_fact_type != "STATUS":
             raise ValueError("REMOVE is only allowed for a canonical STATUS slot.")
-        if decision.removed_snapshot_refs:
-            raise ValueError("REMOVE must not include additional removed snapshot refs.")
 
     for removed_ref in decision.removed_snapshot_refs:
         if entries_by_ref[removed_ref].fact_type != "STATUS":
@@ -238,22 +268,58 @@ def _validate_comparison_decision(
             CharacterFactComparisonOperation.ADD,
             CharacterFactComparisonOperation.UPDATE,
             CharacterFactComparisonOperation.MERGE,
+            CharacterFactComparisonOperation.REMOVE,
         }
     ):
-        raise ValueError(
-            "Snapshot removal requires an explicit PRESENT STATUS addition or replacement."
-        )
+        raise ValueError("Snapshot removal requires a PRESENT STATUS transition.")
 
-    if decision.operation in {
-        CharacterFactComparisonOperation.ADD,
-        CharacterFactComparisonOperation.UPDATE,
-        CharacterFactComparisonOperation.MERGE,
-    }:
+    if applies_to_snapshot:
         normalize_setting_display_value(
             candidate.value_type,
             decision.proposed_value_json,
             decision.proposed_fact_value,
         )
+
+
+def _is_explicit_inactive_status(
+    candidate: WorkerCharacterFactComparisonCandidatePayload,
+) -> bool:
+    return _has_explicit_inactive_status_value(
+        candidate.canonical_fact_type,
+        candidate.value_json,
+    )
+
+
+def _has_explicit_inactive_status_value(
+    canonical_fact_type: str,
+    value_json: object,
+) -> bool:
+    return (
+        canonical_fact_type == "STATUS"
+        and isinstance(value_json, dict)
+        and value_json.get("active") is False
+    )
+
+
+def _validate_status_active_value(
+    canonical_fact_type: str,
+    value_json: object,
+    *,
+    field_name: str,
+) -> None:
+    """STATUS의 active는 오직 JSON boolean만 허용한다.
+
+    문자열 ``"false"``는 truthy 값으로 다뤄질 수 있어 종료 후보가 현재 snapshot에
+    들어가는 우회를 만든다. 실제 값은 오류 메시지나 로그에 노출하지 않는다.
+    """
+
+    if (
+        canonical_fact_type == "STATUS"
+        and isinstance(value_json, dict)
+        and "active" in value_json
+        and type(value_json["active"]) is not bool
+    ):
+        raise ValueError(f"{field_name}.active must be a JSON boolean for STATUS.")
 
 
 def _normalize_scalar_proposal(

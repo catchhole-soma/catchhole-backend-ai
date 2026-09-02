@@ -46,10 +46,13 @@ class ExtractedSettingCandidate(BaseModel):
         StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
     ]
     raw_entity_mention: str | None = Field(default=None, max_length=100)
-    attribute_name: Annotated[
-        str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
-    ] | None = None
+    attribute_name: (
+        Annotated[
+            str,
+            StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+        ]
+        | None
+    ) = None
     attribute_value: str | None = None
     value_type: SettingValueType | None = None
     value_json: dict[str, Any] | None = None
@@ -63,6 +66,15 @@ class ExtractedSettingCandidate(BaseModel):
                 raise PydanticCustomError(
                     "setting_required_field_missing",
                     "SETTING candidate is missing a required setting field.",
+                )
+            if (
+                self.attribute_name.startswith("status.")
+                and "active" in self.value_json
+                and type(self.value_json["active"]) is not bool
+            ):
+                raise PydanticCustomError(
+                    "status_active_value_invalid",
+                    "STATUS value_json.active must be a JSON boolean.",
                 )
             _validate_typed_setting_value(self.value_type, self.value_json, self.attribute_value)
             return self

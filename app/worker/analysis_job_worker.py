@@ -10,7 +10,7 @@ from app.analysis.character_fact_comparison_pipeline import (
     CharacterFactComparisonRunResult,
     CharacterFactComparisonSpringApi,
 )
-from app.analysis.character_name_resolver import KnownCharacter
+from app.analysis.character_name_resolver import ActiveCharacterStatus, KnownCharacter
 from app.analysis.character_subject_resolver import (
     CharacterSubjectResolver,
     SubjectResolutionChunkContext,
@@ -380,6 +380,13 @@ class AnalysisJobWorker:
             KnownCharacter(
                 character_id=character.character_id,
                 name=character.name,
+                active_statuses=tuple(
+                    ActiveCharacterStatus(
+                        fact_key=status.fact_key,
+                        fact_value=status.fact_value,
+                    )
+                    for status in character.active_statuses
+                ),
             )
             for character in payload.known_characters
         ]
@@ -495,6 +502,12 @@ class AnalysisJobWorker:
         known_characters: list[KnownCharacter],
         schema_hints: tuple[CharacterSettingSchemaHint, ...],
     ) -> dict[str, int]:
+        status_context_character_count = sum(
+            bool(character.active_statuses) for character in known_characters
+        )
+        status_context_entry_count = sum(
+            len(character.active_statuses) for character in known_characters
+        )
         if _checkpoint_reached(
             checkpoint,
             AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED,
@@ -504,6 +517,9 @@ class AnalysisJobWorker:
                 "subjectFallbackCallCount": 0,
                 "subjectFallbackResolvedCount": 0,
                 "subjectFallbackUnresolvedCount": 0,
+                "statusContextCharacterCount": status_context_character_count,
+                "statusContextEntryCount": status_context_entry_count,
+                "statusInactiveCandidateCount": 0,
             }
 
         setting_extractor = self._get_setting_extractor(
@@ -518,6 +534,7 @@ class AnalysisJobWorker:
         fallback_calls = 0
         fallback_resolved = 0
         fallback_unresolved = 0
+        status_inactive_candidate_count = 0
         episode = payload.episode
         for index, chunk in enumerate(chunks):
             extraction_result = await setting_extractor.extract_from_chunk(
@@ -548,6 +565,10 @@ class AnalysisJobWorker:
             fallback_calls += resolution.fallback_call_count
             fallback_resolved += resolution.fallback_resolved_count
             fallback_unresolved += resolution.fallback_unresolved_count
+            status_inactive_candidate_count += sum(
+                _is_explicit_inactive_status_candidate(candidate)
+                for candidate in resolution.candidates
+            )
             save_items.extend(
                 SettingCandidateSaveItem(
                     episode_id=episode.episode_id,
@@ -576,6 +597,11 @@ class AnalysisJobWorker:
             "subjectFallbackCallCount": fallback_calls,
             "subjectFallbackResolvedCount": fallback_resolved,
             "subjectFallbackUnresolvedCount": fallback_unresolved,
+            "statusContextCharacterCount": status_context_character_count,
+            "statusContextEntryCount": status_context_entry_count,
+            # active=false가 wire 값에 명시된 1차 후보만 세는 lower-bound다.
+            # 포괄적 회복 후보처럼 2차에서 REMOVE가 될 모든 후보 수를 뜻하지 않는다.
+            "statusInactiveCandidateCount": status_inactive_candidate_count,
         }
 
     async def _run_character_comparison_stage(
@@ -844,3 +870,19 @@ def _checkpoint_reached(
         return False
     checkpoints = list(AnalysisJobCheckpointStage)
     return checkpoints.index(current) >= checkpoints.index(target)
+
+
+def _is_explicit_inactive_status_candidate(candidate: ExtractedSettingCandidate) -> bool:
+    """wire JSON에 boolean active=false가 명시된 STATUS 후보만 센다.
+
+    이 값은 관측용 lower-bound다. 치료 후 기능 회복처럼 별도 active 필드 없이도
+    2차 비교에서 REMOVE가 될 수 있는 후보는 의도적으로 포함하지 않는다.
+    """
+
+    return (
+        candidate.candidate_kind == "SETTING"
+        and candidate.attribute_name is not None
+        and candidate.attribute_name.startswith("status.")
+        and isinstance(candidate.value_json, dict)
+        and candidate.value_json.get("active") is False
+    )

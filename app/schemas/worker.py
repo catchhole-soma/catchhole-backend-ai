@@ -137,12 +137,25 @@ class WorkerAnalysisEpisodePayload(BaseModel):
     char_count: int = Field(alias="charCount")
 
 
+# Spring이 Worker에게 내려주는 캐릭터별 활성 STATUS 최소 문맥 DTO
+class WorkerAnalysisActiveCharacterStatusPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    fact_key: str = Field(alias="factKey", min_length=1, max_length=150)
+    # provenance가 없는 legacy snapshot은 표시값이 없을 수 있으며 Worker가 값을 합성하지 않는다.
+    fact_value: str | None = Field(alias="factValue")
+
+
 # Spring이 Worker에게 내려주는 기존 캐릭터 정보 DTO
 class WorkerAnalysisKnownCharacterPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     character_id: UUID = Field(alias="characterId")
     name: str
+    active_statuses: list[WorkerAnalysisActiveCharacterStatusPayload] = Field(
+        default_factory=list,
+        alias="activeStatuses",
+    )
 
 
 # Spring이 Worker에게 내려주는 캐릭터 설정 schema hint DTO

@@ -27,14 +27,15 @@ Spring 기준으로는 Request/Response DTO에 가깝습니다.
   - Python Worker와 Spring 내부 Worker API 사이에서 사용하는 request/response payload를 정의합니다.
   - `modelName`, `analysisJobId`, `contentS3Key` 같은 Spring JSON 필드를 Python 코드에서는 `model_name`, `analysis_job_id`, `content_s3_key`로 다룰 수 있게 alias를 둡니다.
   - claim payload는 복수 `episodes`가 아니라 단일 `episode`를 필수로 받으며, 한 `AnalysisJob`의 회차 하나를 표현합니다.
-  - claim payload의 `knownCharacters`는 Python에서 `known_characters`로 받고, `characterId`와 이름을 캐릭터명 매칭에 사용합니다. LLM prompt에는 내부 ID를 제외한 대표 이름만 전달합니다.
+  - claim payload의 `knownCharacters`는 Python에서 `known_characters`로 받고, `characterId`와 이름을 캐릭터명 매칭에 사용합니다. 각 항목의 `activeStatuses`는 회차 시작 시점의 활성 STATUS만 담으며 `factKey`, nullable `factValue` 외의 ID·구조화 값·provenance·history를 포함하지 않습니다.
+  - 캐릭터 1차 추출 prompt에는 내부 ID를 제외한 대표 이름과 모든 활성 STATUS의 `characterName + factKey + factValue`만 전달합니다. 복원할 수 없는 legacy 표시값은 null로 유지하고 항목을 버리거나 설명을 합성하지 않습니다.
   - claim payload의 `characterSettingSchemas`는 Python에서 `character_setting_schemas`로 받습니다. 각 항목은 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType`만 포함합니다.
   - 이전 payload를 역직렬화할 수 있도록 필드가 없으면 빈 목록으로 파싱하지만, 빈 목록은 현재 분석 계약과 호환되는 입력이 아닙니다. Worker는 원문·청크·후보를 변경하기 전에 해당 job을 실패 보고해 후보 0개 교체를 막습니다.
   - claim payload의 lease token/만료 시각, claim 횟수, checkpoint와 선택 `worldSettingCandidateId`/`settingCandidateId`를 타입이 지정된 필드로 검증합니다.
   - 세계관 후보 게시, 대상명 페이지, 최대 3개 비교 문맥, context version과 ADD/UPDATE/MERGE/EXCLUDE 완료 요청을 정의합니다.
   - 캐릭터 Fact 비교는 `{candidate, snapshotEntries, contextToken}` 문맥을 받습니다. candidate에는 canonical Fact slot과 원문 근거가 있고, snapshot entry에는 현재값의 canonical slot, 사용자 표시 문자열 `factValue`, 구조화 값 `valueJson`만 포함됩니다. provenance Fact ID는 Spring 내부의 문맥 무결성 검증에만 사용하며 Python에는 노출하지 않습니다.
   - snapshot을 변경하는 비교 결과는 최종 표시 문자열 `proposedFactValue`와 구조화 값 `proposedValueJson`을 함께 Spring에 전달합니다. 이 둘을 분리해야 복합 JSON 설정도 상세 화면에서 동일한 표시값으로 복원할 수 있습니다.
-  - 캐릭터 비교 완료 요청은 DB ID나 원문 quote/offset을 되돌려 보내지 않고 operation, canonical target, 제거할 snapshot key, proposed JSON, temporal scope, reason, context token만 전달합니다.
+  - 캐릭터 비교 완료 요청은 DB ID나 원문 quote/offset을 되돌려 보내지 않고 operation, canonical target, 제거할 snapshot key, proposed JSON, temporal scope, reason, context token만 전달합니다. canonical `REMOVE`는 target 없이 `removedSnapshotEntries`를 하나 이상 보내며, 같은 key와 다른 key의 관련 STATUS를 모두 표현할 수 있습니다.
   - Worker DTO의 raw JSON은 `dict`/`list` 경계로 유지하고 Backend 전용 Jackson 객체나 UUID 생성 책임을 Python schema에 넣지 않습니다.
 
 ## 다른 값 객체와의 구분

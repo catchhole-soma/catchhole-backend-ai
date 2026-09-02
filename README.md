@@ -60,7 +60,9 @@ S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 
 
 `episodeId`, `workId`, `analysisJobId`는 넘기지 않으면 실행할 때마다 가상 UUID를 생성합니다.
 `--known-characters-json`을 넘기면 Spring claim payload의 `knownCharacters`처럼 기존 캐릭터 목록을 주입해
-`matched_character_id`, `match_status`까지 확인할 수 있습니다. 이 runner는 `episode_chunks`나
+`matched_character_id`, `match_status`까지 확인할 수 있습니다. 각 캐릭터에 선택적인
+`activeStatuses: [{factKey, factValue}]`를 넣으면 운영과 동일하게 회차 시작 상태 문맥도 1차 prompt에
+전달됩니다. 이 runner는 `episode_chunks`나
 `setting_candidates`에 저장하지 않고, 결과를 콘솔과 JSON 파일로만 출력합니다.
 
 필수 인자인 `--character-setting-schemas-json`에는 Spring claim payload의

@@ -18,6 +18,7 @@ from app.clients.spring_worker_client import (
 )
 from app.domain.enums import AnalysisFailureCode, EpisodeProcessingStatus
 from app.schemas.worker import (
+    WorkerAnalysisActiveCharacterStatusPayload,
     WorkerAnalysisJobPayload,
     WorkerCharacterFactComparisonCompleteRequest,
     WorkerRemovedSnapshotEntry,
@@ -56,6 +57,14 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
     assert payload.character_setting_schemas[0].aliases == ["근력", "힘", "strength"]
     assert payload.character_setting_schemas[1].attribute_pattern == "skill.*"
     assert payload.character_setting_schemas[1].value_type == "JSON"
+    assert payload.known_characters[0].name == "비요른 얀델"
+    assert [
+        (status.fact_key, status.fact_value)
+        for status in payload.known_characters[0].active_statuses
+    ] == [
+        ("status.오른발_부상", "오른발이 크게 다쳐 걷기 어려움"),
+        ("status.마비독", None),
+    ]
     assert set(payload.character_setting_schemas[0].model_dump()) == {
         "schema_key",
         "display_name",
@@ -126,6 +135,48 @@ def test_claim_payload_defaults_character_setting_schemas_when_older_spring_omit
     )
 
     assert payload.character_setting_schemas == []
+
+
+def test_known_character_defaults_active_statuses_when_older_spring_omits_field() -> None:
+    payload = WorkerAnalysisJobPayload.model_validate(
+        {
+            "analysisJobId": str(ANALYSIS_JOB_ID),
+            "jobType": "SETTING_EXTRACTION",
+            "workId": str(WORK_ID),
+            "workTitle": "빛나는 검사 로맨스",
+            "batchId": str(BATCH_ID),
+            "leaseToken": str(LEASE_TOKEN),
+            "leaseExpiresAt": "2026-08-06T12:05:00",
+            "claimAttemptCount": 1,
+            "knownCharacters": [
+                {
+                    "characterId": "00000000-0000-0000-0000-000000000099",
+                    "name": "비요른 얀델",
+                }
+            ],
+            "episode": {
+                "episodeId": str(EPISODE_ID),
+                "episodeNo": 1,
+                "title": "첫 번째 회차",
+                "contentS3Key": "works/work-id/episodes/episode-id.txt",
+                "contentS3Version": None,
+                "contentHash": "hash",
+                "charCount": 1234,
+            },
+        }
+    )
+
+    assert payload.known_characters[0].active_statuses == []
+
+
+def test_active_status_requires_fact_key_and_explicit_nullable_fact_value() -> None:
+    with pytest.raises(ValueError):
+        WorkerAnalysisActiveCharacterStatusPayload.model_validate({"factKey": "status.부상"})
+
+    status = WorkerAnalysisActiveCharacterStatusPayload.model_validate(
+        {"factKey": "status.부상", "factValue": None}
+    )
+    assert status.fact_value is None
 
 
 # 진행 상태 보고 API를 PATCH로 올바른 URL과 Body로 호출하는지 확인
@@ -656,9 +707,7 @@ def test_world_setting_batch_calls_match_spring_contract() -> None:
                     "data": {
                         "comparisonBatchId": str(comparison_batch_id),
                         "candidates": [candidate],
-                        "exactTargets": [
-                            {"candidateRef": "C1", "worldSettingId": str(target_id)}
-                        ],
+                        "exactTargets": [{"candidateRef": "C1", "worldSettingId": str(target_id)}],
                         "targets": [
                             {
                                 "worldSettingId": str(target_id),
@@ -742,10 +791,7 @@ def test_world_setting_batch_calls_match_spring_contract() -> None:
             f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
             "/world-setting-subject-resolutions/pending"
         ),
-        (
-            f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
-            "/world-setting-subject-resolutions"
-        ),
+        (f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}/world-setting-subject-resolutions"),
         (
             f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
             "/world-setting-comparison-batches/claim-next"
@@ -769,18 +815,13 @@ def test_world_setting_batch_calls_match_spring_contract() -> None:
             }
         ]
     }
-    assert json.loads(requests[3].content) == {
-        "targetWorldSettingIds": [str(target_id)]
-    }
+    assert json.loads(requests[3].content) == {"targetWorldSettingIds": [str(target_id)]}
     complete_payload = json.loads(requests[4].content)
     assert complete_payload["decisions"][0]["decisionRef"] == "D1"
     assert complete_payload["decisions"][0]["sourceCandidateRefs"] == ["C1"]
-    assert complete_payload["decisions"][0]["existingRootPropertyNamesToMove"] == [
-        "기존 사냥 습성"
-    ]
+    assert complete_payload["decisions"][0]["existingRootPropertyNamesToMove"] == ["기존 사냥 습성"]
     assert all(
-        request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN)
-        for request in requests
+        request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN) for request in requests
     )
 
 
@@ -1049,6 +1090,22 @@ def _claim_response(request: httpx.Request, requests: list[httpx.Request]) -> ht
                         "aliases": [],
                         "valueType": "JSON",
                     },
+                ],
+                "knownCharacters": [
+                    {
+                        "characterId": "00000000-0000-0000-0000-000000000099",
+                        "name": "비요른 얀델",
+                        "activeStatuses": [
+                            {
+                                "factKey": "status.오른발_부상",
+                                "factValue": "오른발이 크게 다쳐 걷기 어려움",
+                            },
+                            {
+                                "factKey": "status.마비독",
+                                "factValue": None,
+                            },
+                        ],
+                    }
                 ],
                 "episode": {
                     "episodeId": str(EPISODE_ID),
