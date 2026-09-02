@@ -13,6 +13,13 @@ def get_engine() -> Engine:
     settings = get_settings() #core.config의 설정값 읽기
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is required to create a database engine.")
+    if settings.database_url.startswith("postgresql"):
+        return create_engine(
+            settings.database_url,
+            pool_pre_ping=True,
+            pool_size=settings.database_pool_size,
+            max_overflow=settings.database_pool_max_overflow,
+        )
     return create_engine(settings.database_url, pool_pre_ping=True)
 
 
