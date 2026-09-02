@@ -46,7 +46,8 @@
 - 장기 실행 runner는 `AI_WORKER_CONCURRENCY`개의 실행 슬롯만 유지한다. 반드시 빈 슬롯을 확보한 뒤 Job 하나를 claim해 즉시 Task로 실행하고, 슬롯 없이 Job을 미리 claim해 프로세스 내부 대기열에 쌓지 않는다.
 - 한 Job 안의 청크와 분석 stage는 순차 처리한다. `LLM_MAX_CONCURRENT_REQUESTS`는 프로세스 내부 provider 호출 상한이고, 동기 DB/S3 작업은 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에 넘긴다.
 - 회차 원문 청킹 기본값은 목표 6,000자·최대 7,000자·최소 1,000자다. 여러 회차 분석 요청도 Spring이 만든 회차별 Job에서 각각 같은 정책을 적용하며 한 Job 안에서 회차 원문을 합치지 않는다.
-- 운영 `SETTING_EXTRACTION` 검증 rollout은 분석 Worker 2개 × 프로세스당 동시 Job 5개 = 최대 10개다. 별도 `character-comparison`과 `world-comparison` 프로세스는 각각 Job·LLM 동시성을 1로 유지한다. 10은 설정 추출 Job 용량이며 여러 프로세스와 재비교 Worker를 합친 provider 계정 전체의 분산 상한은 아니다. 50개 Job 부하 테스트에서 Backend·PostgreSQL·LLM 지표를 확인하고 기준 미달이면 프로세스당 3개로 되돌린다.
+- 운영 `SETTING_EXTRACTION` 기본값은 분석 Worker 5개 × 프로세스당 동시 Job 10개 = 최대 50개다. 별도 `character-comparison`과 `world-comparison` 프로세스는 각각 Job·LLM 동시성을 1로 유지한다. 50은 설정 추출 Job 용량이며 여러 프로세스와 재비교 Worker를 합친 provider 계정 전체의 분산 상한은 아니다. 50개 Job 부하 테스트에서 Backend·PostgreSQL·LLM 지표가 기준에 미달하면 Worker 5개는 유지하고 프로세스당 Job과 LLM 요청을 5개로 낮춰 최대 25개로 되돌린다.
+- 운영 SQLAlchemy 연결 풀은 설정 추출 Worker마다 `DATABASE_POOL_SIZE=3`, `DATABASE_POOL_MAX_OVERFLOW=0`을 사용하고 두 비교 Worker는 각각 연결 1개로 고정한다. Spring HikariCP 10개를 포함한 전체 애플리케이션의 최대 PostgreSQL 연결 수를 27개로 제한하기 위함이다.
 - 각 Job의 lease token, heartbeat, 토큰 예약·정산, 실패 상태는 Task별로 분리한다. 한 Task의 예외가 실행 중인 다른 Job을 취소하지 않으며 heartbeat도 Job별 독립 Task로 실행한다.
 - 종료 신호를 받으면 신규 claim을 즉시 중단하고 `AI_WORKER_SHUTDOWN_GRACE_SECONDS` 동안 실행 중 Job과 heartbeat를 유지한다. 운영 내부 grace는 180초, Compose `stop_grace_period`는 210초로 두며, grace를 넘긴 취소 Job은 heartbeat를 중단해 Spring의 lease 회수 경로로 재처리한다.
 

@@ -99,7 +99,7 @@ checkpoint는 `CHUNKS_READY`, `CHARACTER_CANDIDATES_SAVED`, `CHARACTER_COMPARISO
 
 슬롯이 없을 때 Job을 미리 claim해 내부 대기열에 쌓지 않습니다. 한 Job 안의 청크와 stage는 순차 처리하고, Job 사이만 비동기로 겹칩니다. `LLM_MAX_CONCURRENT_REQUESTS`는 프로세스별 LLM 요청 상한이며, 동기 DB/S3 경계는 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에서 실행합니다.
 
-현재 운영 검증 rollout은 `SETTING_EXTRACTION` 분석 Worker 2개 × 프로세스당 슬롯 5개 = 최대 10개입니다. 50개 Job 부하 테스트에서 Backend·PostgreSQL·LLM 지표를 확인하고 기준 미달이면 슬롯을 3개로 되돌립니다. 별도 `character-comparison`과 `world-comparison` Worker는 각각 Job·LLM 동시성을 1로 고정합니다. 이 10은 설정 추출 Job 처리 용량이며 provider 계정 전체에 걸친 분산 동시성 제한은 아닙니다.
+현재 운영 기본값은 `SETTING_EXTRACTION` 분석 Worker 5개 × 프로세스당 슬롯 10개 = 최대 50개입니다. 50개 Job 부하 테스트에서 Backend·PostgreSQL·LLM 지표가 기준에 미달하면 Worker 5개는 유지하고 슬롯과 프로세스당 LLM 요청을 5개로 낮춰 최대 25개로 되돌립니다. 별도 `character-comparison`과 `world-comparison` Worker는 각각 Job·LLM 동시성을 1로 고정합니다. 이 50은 설정 추출 Job 처리 용량이며 provider 계정 전체에 걸친 분산 동시성 제한은 아닙니다.
 
 ## 현재 연결된 실행 흐름
 
