@@ -17,6 +17,57 @@ Worker 서버에는 다음 파일을 둔다.
 - `AI_IMAGE`에는 발행이 성공한 이미지의 `sha-<short-sha>` 태그를 넣는다. 자동 배포는 이 값을 배포 대상 SHA로 갱신한다.
 - AWS 액세스 키와 비밀 액세스 키는 `worker.env`에 넣지 않는다. Amazon EC2 인스턴스 역할을 사용한다.
 
+## Worker 서버 인스턴스 역할과 메타데이터 설정
+
+Worker 컨테이너는 고정 AWS 액세스 키 대신 Worker 서버용 Amazon EC2 인스턴스 역할로 Amazon S3에 접근한다. Worker 서버용 Amazon EC2 인스턴스에 필요한 Amazon S3 버킷 읽기·쓰기 권한이 있는 역할을 연결한다.
+
+Docker 브리지 네트워크 안의 컨테이너가 Instance Metadata Service Version 2 응답을 받을 수 있도록 Worker 서버용 Amazon EC2 인스턴스의 메타데이터 응답 홉 제한을 `2`로 설정한다. Amazon EC2 콘솔에서 인스턴스를 선택한 뒤 **작업 → 인스턴스 설정 → 인스턴스 메타데이터 옵션 수정**에서 다음과 같이 설정한다.
+
+- Instance Metadata Service: 활성화
+- Instance Metadata Service Version 2: 필수
+- 메타데이터 응답 홉 제한: `2`
+
+AWS Command Line Interface로 수정할 때는 아래 인스턴스 ID를 실제 Worker 서버용 Amazon EC2 인스턴스 ID로 바꾼다.
+
+```bash
+aws ec2 modify-instance-metadata-options \
+  --instance-id replace-with-worker-ec2-instance-id \
+  --http-endpoint enabled \
+  --http-tokens required \
+  --http-put-response-hop-limit 2 \
+  --region ap-northeast-2
+```
+
+적용 상태를 확인한다.
+
+```bash
+aws ec2 describe-instances \
+  --instance-ids replace-with-worker-ec2-instance-id \
+  --region ap-northeast-2 \
+  --query 'Reservations[0].Instances[0].MetadataOptions.{Endpoint:HttpEndpoint,Tokens:HttpTokens,HopLimit:HttpPutResponseHopLimit,State:State}' \
+  --output table
+```
+
+`Endpoint=enabled`, `Tokens=required`, `HopLimit=2`, `State=applied`여야 한다. 호스트에서의 AWS 자격 증명 검증만으로 대체하지 않고, Worker 서버에서 Docker 컨테이너를 직접 실행해 역할과 Amazon S3 권한을 확인한다. 버킷 이름은 `worker.env`의 `AWS_S3_BUCKET` 실제 값으로 바꾼다.
+
+```bash
+sudo docker run --rm \
+  -e AWS_REGION=ap-northeast-2 \
+  public.ecr.aws/aws-cli/aws-cli:latest \
+  sts get-caller-identity
+```
+
+```bash
+sudo docker run --rm \
+  -e AWS_REGION=ap-northeast-2 \
+  public.ecr.aws/aws-cli/aws-cli:latest \
+  s3api get-bucket-location \
+  --bucket replace-with-s3-bucket-name \
+  --region ap-northeast-2
+```
+
+첫 번째 명령은 Worker 서버용 인스턴스 역할의 ARN을 포함한 응답을 반환해야 하고, 두 번째 명령은 버킷 위치를 오류 없이 반환해야 한다. `Unable to locate credentials`가 나오면 인스턴스 역할 연결과 메타데이터 홉 제한을 다시 확인한다. `AccessDenied`가 나오면 인스턴스 역할의 Amazon S3 정책을 확인한다.
+
 ## 네트워크와 인증 계약
 
 `worker.env`의 API 서버 주소에는 API 서버용 Amazon EC2 인스턴스의 사설 IPv4 주소를 사용한다.
@@ -46,6 +97,7 @@ curl -fsS http://replace-with-api-private-ip:8080/actuator/health
 Worker의 PostgreSQL 연결 문자열은 다음 형식을 사용한다.
 
 ```dotenv
+APP_TIMEZONE=Asia/Seoul
 DATABASE_URL=postgresql+psycopg://catchhole_admin:replace-with-url-encoded-password@replace-with-rds-endpoint:5432/catchhole?sslmode=require
 DATABASE_POOL_SIZE=3
 DATABASE_POOL_MAX_OVERFLOW=0
@@ -58,6 +110,14 @@ Worker 서버에서 PostgreSQL 클라이언트로 연결을 확인한다. 아래
 ```bash
 psql "host=replace-with-rds-endpoint port=5432 dbname=catchhole user=catchhole_admin sslmode=require" -W
 ```
+
+접속한 PostgreSQL 프롬프트에서 시간대를 확인한다.
+
+```sql
+SHOW timezone;
+```
+
+결과는 `Asia/Seoul`이어야 한다. Amazon RDS 파라미터 그룹은 API 서버 배포 문서의 절차에 따라 `timezone=Asia/Seoul`로 설정한다. Worker는 또한 SQLAlchemy가 새 PostgreSQL 연결을 만들 때마다 `worker.env`의 `APP_TIMEZONE`을 session 연결 옵션으로 전달한다.
 
 ## 50개 작업 슬롯
 

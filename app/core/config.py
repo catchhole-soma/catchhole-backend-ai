@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     app_name: str = "CatchHole AI Backend"
     app_version: str = "0.1.0"
     app_env: str = "local"
+    tz: str = "Asia/Seoul"
 
     # DB 연결 URL
     database_url: str = ""
