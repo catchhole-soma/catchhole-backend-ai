@@ -14,6 +14,7 @@ Worker 서버에는 다음 파일을 둔다.
 
 - `compose.worker.prod.yml`은 인공지능 작업 서버 저장소에서 내려받는다.
 - `worker.env`는 `deploy/worker.env.example`을 기준으로 서버에서 직접 작성하고 커밋하지 않는다.
+- `AI_IMAGE`에는 발행이 성공한 이미지의 `sha-<short-sha>` 태그를 넣는다. 자동 배포는 이 값을 배포 대상 SHA로 갱신한다.
 - AWS 액세스 키와 비밀 액세스 키는 `worker.env`에 넣지 않는다. Amazon EC2 인스턴스 역할을 사용한다.
 
 ## 네트워크와 인증 계약
@@ -231,9 +232,15 @@ sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml u
 sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml ps
 ```
 
+롤백 원인을 해결한 뒤에는 GitHub Actions에서 복구할 SHA에 대응하는 성공한 `Deploy Worker EC2` 실행을 다시 실행한다. 이 Workflow는 해당 publish run의 SHA 태그로 `worker.env`를 갱신한 뒤 전체 Worker를 재배포한다. 이후 새로운 `main` 이미지 발행이 성공해도 같은 방식으로 `AI_IMAGE`가 새 SHA로 자동 갱신되므로 롤백 이미지가 다음 자동 배포에 남지 않는다.
+
 ## GitHub Actions 자동 배포
 
-`.github/workflows/deploy-worker-ec2.yml`은 `Publish AI Image`가 `main` 브랜치에서 성공하거나 사용자가 수동 실행할 때 Worker 서버용 Amazon EC2 인스턴스만 배포한다.
+`.github/workflows/deploy-worker-ec2.yml`은 `main` push에서 시작된 `Publish AI Image`가 성공했을 때만 Worker 서버용 Amazon EC2 인스턴스를 배포한다. 수동 이미지 발행은 Worker 배포로 이어지지 않는다.
+
+배포 전에 Backend 저장소의 최신 `main` 커밋에 대응하는 `Deploy API EC2` 실행이 성공했는지 확인하고 `https://api.catchhole.com/actuator/health`가 응답할 때까지 최대 15분 기다린다. 조건을 충족하지 못하면 Worker 서버에 Systems Manager 명령을 보내지 않는다. 따라서 Backend PR을 먼저 병합하고 Flyway·API 배포가 성공한 다음 AI PR을 병합해야 한다.
+
+배포 Workflow는 `Publish AI Image` 실행의 commit SHA를 기준으로 `compose.worker.prod.yml`을 내려받고 같은 SHA의 `sha-<short-sha>` 이미지 태그를 `worker.env`에 기록한다. `main` 태그나 실행 시점의 최신 Compose를 사용하지 않으므로 서로 다른 커밋의 이미지와 설정이 섞이지 않는다.
 
 인공지능 작업 서버 저장소의 GitHub Actions 비밀값은 다음 이름을 사용한다.
 
