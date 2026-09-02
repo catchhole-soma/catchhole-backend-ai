@@ -1247,8 +1247,35 @@ def _validate_user_facing_reason(
         raise ValueError("comparison_reason must not expose a local reference.")
     if UUID_PATTERN.search(display_reason):
         raise ValueError("comparison_reason must not expose a UUID.")
-    if INTERNAL_REASON_TOKEN_PATTERN.search(display_reason):
+    internal_token_reason = _mask_target_display_names(display_reason, references)
+    if INTERNAL_REASON_TOKEN_PATTERN.search(internal_token_reason):
         raise ValueError("comparison_reason must not expose an internal enum or key.")
+
+
+def _mask_target_display_names(
+    display_reason: str,
+    references: list[ComparisonTargetReference],
+) -> str:
+    display_names: set[str] = set()
+    for target_reference in references:
+        target = target_reference.target
+        if target.subject_name:
+            display_names.add(target.subject_name)
+        for property_value in target.properties:
+            if property_value.scope_name:
+                display_names.add(property_value.scope_name)
+            if property_value.setting_name:
+                display_names.add(property_value.setting_name)
+
+    masked_reason = display_reason
+    for display_name in sorted(display_names, key=len, reverse=True):
+        masked_reason = re.sub(
+            rf"(?<![A-Za-z0-9_]){re.escape(display_name)}(?![A-Za-z0-9_])",
+            "사용자 표시명",
+            masked_reason,
+            flags=re.IGNORECASE,
+        )
+    return masked_reason
 
 
 def _replace_target_reference_text(

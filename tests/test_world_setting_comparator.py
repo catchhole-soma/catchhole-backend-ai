@@ -365,6 +365,80 @@ def test_batch_comparator_retries_user_reason_that_exposes_internal_metadata(
     assert len(text_client.requests) == 2
 
 
+def test_comparator_allows_known_english_target_names_in_user_reason() -> None:
+    candidate = _candidate("Key", "새 키", scope_name="Faction")
+    target = _english_internal_token_target()
+    text_client = FakeTextClient(
+        [
+            {
+                "consolidation_status": "SINGLE",
+                "operation": "MERGE",
+                "target_ref": "T1",
+                "matched_scope_name": "Faction",
+                "matched_property_name": "Key",
+                "proposed_scope_name": "Faction",
+                "proposed_setting_name": "Key",
+                "proposed_value": "기존 키와 새 키",
+                "comparison_reason": (
+                    "T1의 Faction 범위에 있는 Key와 Merge 설정을 함께 검토한다."
+                ),
+            }
+        ]
+    )
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(llm_client=text_client, max_attempts=1).compare(
+            candidate,
+            [target],
+        )
+    )
+
+    assert result.comparison_reason == (
+        "기존 'Location' 설정의 Faction 범위에 있는 "
+        "Key와 Merge 설정을 함께 검토한다."
+    )
+    assert len(text_client.requests) == 1
+
+
+def test_comparator_still_rejects_internal_metadata_near_known_display_name() -> None:
+    candidate = _candidate("Key", "새 키", scope_name="Faction")
+    target = _english_internal_token_target()
+    decision = {
+        "consolidation_status": "SINGLE",
+        "operation": "MERGE",
+        "target_ref": "T1",
+        "matched_scope_name": "Faction",
+        "matched_property_name": "Key",
+        "proposed_scope_name": "Faction",
+        "proposed_setting_name": "Key",
+        "proposed_value": "기존 키와 새 키",
+        "comparison_reason": (
+            "T1의 Key 설정에 canonicalSubjectKey와 operation을 기록한다."
+        ),
+    }
+    text_client = FakeTextClient(
+        [
+            decision,
+            {
+                **decision,
+                "comparison_reason": "T1의 Faction 범위 Key 설정을 보완한다.",
+            },
+        ]
+    )
+
+    result, _ = asyncio.run(
+        WorldSettingComparator(llm_client=text_client, max_attempts=2).compare(
+            candidate,
+            [target],
+        )
+    )
+
+    assert result.comparison_reason == (
+        "기존 'Location' 설정의 Faction 범위 Key 설정을 보완한다."
+    )
+    assert len(text_client.requests) == 2
+
+
 def test_batch_comparator_accepts_normalized_equivalent_source_scope() -> None:
     candidate = _batch_candidate(
         "C1",
@@ -2269,6 +2343,26 @@ def _target() -> WorkerWorldSettingComparisonTarget:
                 setting_name="서식지",
                 value="혹한 지역",
             )
+        ],
+        version=3,
+    )
+
+
+def _english_internal_token_target() -> WorkerWorldSettingComparisonTarget:
+    return WorkerWorldSettingComparisonTarget(
+        world_setting_id=TARGET_ID,
+        subject_name="Location",
+        properties=[
+            WorkerWorldSettingProperty(
+                scope_name="Faction",
+                setting_name="Key",
+                value="기존 키",
+            ),
+            WorkerWorldSettingProperty(
+                scope_name="Faction",
+                setting_name="Merge",
+                value="병합 규칙",
+            ),
         ],
         version=3,
     )
