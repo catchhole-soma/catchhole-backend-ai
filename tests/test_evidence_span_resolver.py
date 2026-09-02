@@ -107,3 +107,84 @@ def test_resolve_candidate_evidence_offsets_resolves_all_candidate_spans() -> No
     assert resolved_span.start_offset == expected_start_offset
     assert resolved_span.end_offset == expected_start_offset + len(quote)
     assert candidate.evidence_spans[0].start_offset is None
+
+
+def test_resolve_candidate_evidence_offsets_orders_spans_by_source_position() -> None:
+    first_quote = "카엘은 숨을 고르고"
+    second_quote = "적들은 그 기세에 물러섰다"
+    candidate = _candidate_with_spans(
+        ExtractedEvidenceSpan(quote=second_quote),
+        ExtractedEvidenceSpan(quote=first_quote),
+    )
+
+    resolved_candidate = resolve_candidate_evidence_offsets(
+        [candidate],
+        chunk_text=LONG_CHUNK_TEXT,
+        chunk_start_offset=200,
+    )[0]
+
+    assert [span.quote for span in resolved_candidate.evidence_spans] == [
+        first_quote,
+        second_quote,
+    ]
+    assert [span.start_offset for span in resolved_candidate.evidence_spans] == [
+        200 + LONG_CHUNK_TEXT.index(first_quote),
+        200 + LONG_CHUNK_TEXT.index(second_quote),
+    ]
+
+
+def test_resolve_candidate_evidence_offsets_deduplicates_repeated_quote() -> None:
+    quote = "상처가 나았다."
+    chunk_text = f"{quote} 잠시 쉬었다. {quote}"
+    candidate = _candidate_with_spans(
+        ExtractedEvidenceSpan(quote=quote, start_offset=999, end_offset=1006),
+        ExtractedEvidenceSpan(quote=quote, start_offset=None, end_offset=None),
+    )
+
+    resolved_candidate = resolve_candidate_evidence_offsets(
+        [candidate],
+        chunk_text=chunk_text,
+        chunk_start_offset=50,
+    )[0]
+
+    assert len(resolved_candidate.evidence_spans) == 1
+    assert resolved_candidate.evidence_spans[0].quote == quote
+    assert resolved_candidate.evidence_spans[0].start_offset == 50
+    assert resolved_candidate.evidence_spans[0].end_offset == 50 + len(quote)
+    assert len(candidate.evidence_spans) == 2
+
+
+def test_resolve_candidate_evidence_offsets_keeps_unmatched_spans_in_input_order() -> None:
+    candidate = _candidate_with_spans(
+        ExtractedEvidenceSpan(quote="두 번째 미확인 근거", start_offset=10, end_offset=20),
+        ExtractedEvidenceSpan(quote="첫 번째 미확인 근거", start_offset=30, end_offset=40),
+    )
+
+    resolved_candidate = resolve_candidate_evidence_offsets(
+        [candidate],
+        chunk_text=LONG_CHUNK_TEXT,
+        chunk_start_offset=100,
+    )[0]
+
+    assert [span.quote for span in resolved_candidate.evidence_spans] == [
+        "두 번째 미확인 근거",
+        "첫 번째 미확인 근거",
+    ]
+    assert all(span.start_offset is None for span in resolved_candidate.evidence_spans)
+    assert all(span.end_offset is None for span in resolved_candidate.evidence_spans)
+
+
+def _candidate_with_spans(
+    *spans: ExtractedEvidenceSpan,
+) -> ExtractedSettingCandidate:
+    return ExtractedSettingCandidate(
+        source_chunk_id=CHUNK_ID,
+        entity_type="CHARACTER",
+        entity_name="카엘",
+        attribute_name="status.회복",
+        attribute_value="회복됨",
+        value_type="JSON",
+        value_json={"name": "회복", "active": False},
+        evidence_spans=list(spans),
+        confidence=0.9,
+    )

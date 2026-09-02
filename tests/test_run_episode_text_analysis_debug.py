@@ -6,13 +6,14 @@ from uuid import uuid4
 
 import pytest
 
-from app.analysis.character_name_resolver import KnownCharacter
+from app.analysis.character_name_resolver import ActiveCharacterStatus, KnownCharacter
 from app.analysis.schemas import CharacterSettingExtractionResult
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
 import scripts.run_episode_text_analysis_debug as debug_runner
 from scripts.run_episode_text_analysis_debug import (
     _load_character_setting_schema_hints,
     _parse_args,
+    load_known_characters,
 )
 
 
@@ -149,3 +150,61 @@ def test_debug_runner_passes_known_characters_to_extractor(monkeypatch, tmp_path
     )
 
     assert captured_known_characters == [known_character]
+
+
+def test_load_known_characters_accepts_active_statuses_and_nullable_value(tmp_path) -> None:
+    path = tmp_path / "known-characters.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "characterId": "00000000-0000-0000-0000-000000000099",
+                    "name": "비요른 얀델",
+                    "activeStatuses": [
+                        {
+                            "factKey": "status.오른발_부상",
+                            "factValue": "오른발이 크게 다쳐 걷기 어려움",
+                        },
+                        {"factKey": "status.마비독", "factValue": None},
+                    ],
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    characters = load_known_characters(path)
+
+    assert characters == [
+        KnownCharacter(
+            character_id=characters[0].character_id,
+            name="비요른 얀델",
+            active_statuses=(
+                ActiveCharacterStatus(
+                    fact_key="status.오른발_부상",
+                    fact_value="오른발이 크게 다쳐 걷기 어려움",
+                ),
+                ActiveCharacterStatus(fact_key="status.마비독", fact_value=None),
+            ),
+        )
+    ]
+
+
+def test_load_known_characters_rejects_active_status_without_fact_value(tmp_path) -> None:
+    path = tmp_path / "known-characters.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "characterId": "00000000-0000-0000-0000-000000000099",
+                    "name": "비요른 얀델",
+                    "activeStatuses": [{"factKey": "status.오른발_부상"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="explicit nullable string factValue"):
+        load_known_characters(path)

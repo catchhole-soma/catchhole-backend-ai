@@ -5,7 +5,7 @@ from uuid import UUID
 import pytest
 
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonRunResult
-from app.analysis.character_name_resolver import KnownCharacter
+from app.analysis.character_name_resolver import ActiveCharacterStatus, KnownCharacter
 from app.analysis.character_subject_resolver import SubjectResolutionResult
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
@@ -23,6 +23,7 @@ from app.worker.analysis_job_worker import (
     AnalysisJobWorker,
     WorkerRunResult,
     WorkerRunSummary,
+    _is_explicit_inactive_status_candidate,
 )
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -415,6 +416,9 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
         "subjectFallbackUnresolvedCount": 0,
+        "statusContextCharacterCount": 0,
+        "statusContextEntryCount": 0,
+        "statusInactiveCandidateCount": 0,
         "characterFactComparisonCompletedCount": 0,
         "characterFactComparisonFailedCount": 0,
         "worldSettingCandidateCount": 0,
@@ -423,6 +427,91 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         **ZERO_WORLD_COMPARISON_METRICS,
     }
     assert spring_client.fail_calls == []
+
+
+def test_worker_passes_all_active_statuses_to_each_chunk_and_reports_metrics() -> None:
+    payload_json = _payload().model_dump(by_alias=True, mode="json")
+    payload_json["knownCharacters"][0]["activeStatuses"] = [
+        {
+            "factKey": "status.오른발_부상",
+            "factValue": "오른발이 크게 다쳐 걷기 어려움",
+        },
+        {
+            "factKey": "status.마비독",
+            "factValue": None,
+        },
+    ]
+    payload = WorkerAnalysisJobPayload.model_validate(payload_json)
+    chunks = [
+        _chunk(0, "포션을 마신 뒤 오른발로 디딜 수 있었다."),
+        _chunk(1, "그는 다시 두 발로 걸었다."),
+    ]
+    inactive_candidate = _candidate(
+        chunks[0].id,
+        attribute_name="status.회복",
+        quote="오른발로 디딜 수 있었다.",
+    ).model_copy(
+        update={
+            "attribute_value": "오른발 기능이 회복됨",
+            "value_type": "JSON",
+            "value_json": {"name": "회복", "active": False},
+        }
+    )
+    setting_extractor = FakeSettingExtractor(candidate_groups=[[inactive_candidate], []])
+    worker = AnalysisJobWorker(
+        spring_client=FakeSpringWorkerClient(payload=payload),
+        chunking_service=FakeEpisodeChunkingService(chunks=chunks),
+        setting_extractor=setting_extractor,
+        subject_resolver=FakeSubjectResolver(
+            result=SubjectResolutionResult(candidates=[inactive_candidate])
+        ),
+        world_setting_extractor=FakeWorldSettingExtractor(),
+        setting_candidate_service=FakeSettingCandidateService(),
+    )
+
+    result = _run_once(worker)
+
+    assert result.claimed is True
+    expected_character = KnownCharacter(
+        character_id=UUID("00000000-0000-0000-0000-000000000005"),
+        name="비요른 얀델",
+        active_statuses=(
+            ActiveCharacterStatus(
+                fact_key="status.오른발_부상",
+                fact_value="오른발이 크게 다쳐 걷기 어려움",
+            ),
+            ActiveCharacterStatus(
+                fact_key="status.마비독",
+                fact_value=None,
+            ),
+        ),
+    )
+    assert [request["known_characters"] for request in setting_extractor.requests] == [
+        (expected_character,),
+        (expected_character,),
+    ]
+    spring_client = worker.spring_client
+    summary = json.loads(spring_client.complete_calls[0][1])
+    assert summary["statusContextCharacterCount"] == 1
+    assert summary["statusContextEntryCount"] == 2
+    assert summary["statusInactiveCandidateCount"] == 1
+
+
+def test_inactive_status_metric_requires_json_boolean_false() -> None:
+    base = _candidate(
+        UUID("00000000-0000-0000-0000-000000000100"),
+        attribute_name="status.회복",
+    ).model_copy(update={"value_type": "JSON"})
+
+    assert _is_explicit_inactive_status_candidate(
+        base.model_copy(update={"value_json": {"active": False}})
+    )
+    assert not _is_explicit_inactive_status_candidate(
+        base.model_copy(update={"value_json": {"active": "false"}})
+    )
+    assert not _is_explicit_inactive_status_candidate(
+        base.model_copy(update={"attribute_name": "item.포션", "value_json": {"active": False}})
+    )
 
 
 def test_chunks_ready_retry_reuses_stored_chunks_after_zero_candidate_failure() -> None:
@@ -540,6 +629,9 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         "subjectFallbackCallCount": 1,
         "subjectFallbackResolvedCount": 1,
         "subjectFallbackUnresolvedCount": 0,
+        "statusContextCharacterCount": 0,
+        "statusContextEntryCount": 0,
+        "statusInactiveCandidateCount": 0,
         "characterFactComparisonCompletedCount": 0,
         "characterFactComparisonFailedCount": 0,
         "worldSettingCandidateCount": 0,
@@ -632,6 +724,9 @@ def test_worker_skips_chunk_embedding_by_default_and_completes_extraction() -> N
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
         "subjectFallbackUnresolvedCount": 0,
+        "statusContextCharacterCount": 0,
+        "statusContextEntryCount": 0,
+        "statusInactiveCandidateCount": 0,
         "characterFactComparisonCompletedCount": 0,
         "characterFactComparisonFailedCount": 0,
         "worldSettingCandidateCount": 0,
@@ -679,6 +774,9 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         "subjectFallbackCallCount": 0,
         "subjectFallbackResolvedCount": 0,
         "subjectFallbackUnresolvedCount": 0,
+        "statusContextCharacterCount": 0,
+        "statusContextEntryCount": 0,
+        "statusInactiveCandidateCount": 0,
         "characterFactComparisonCompletedCount": 0,
         "characterFactComparisonFailedCount": 0,
         "worldSettingCandidateCount": 0,

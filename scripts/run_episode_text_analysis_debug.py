@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from app.analysis.character_name_resolver import (
+    ActiveCharacterStatus,
     KnownCharacter,
     NormalizedKnownCharacter,
     normalize_known_characters,
@@ -24,6 +25,7 @@ from app.schemas.worker import WorkerAnalysisCharacterSettingSchemaPayload
 # 로컬에서 텍스트 파일을 넣으면 청킹 -> llm로 설정후보 추출 -> 인용문 offset 보정 -> fall back 흐름 -> Setting_candidates 응답값을 json 파일로 주는 테스트 코드
 # 실행 방법은 README.md 참고
 # 흐름 실험용 코드라 코드 디테일 부분은 안봐도 될 것 같아요!
+
 
 @dataclass(frozen=True)
 class DebugChunk:
@@ -179,9 +181,7 @@ def main() -> None:
             max_chunks=args.max_chunks,
             known_characters=load_known_characters(args.known_characters_json),
             output_json=args.output_json,
-            schema_hints=load_character_setting_schema_hints(
-                args.character_setting_schemas_json
-            ),
+            schema_hints=load_character_setting_schema_hints(args.character_setting_schemas_json),
         ),
     )
 
@@ -269,9 +269,7 @@ def load_known_characters(path: Path | None) -> list[KnownCharacter]:
             raise ValueError(f"known character at index {index} must be an object.")
 
         character_id = (
-            raw_item.get("characterId")
-            or raw_item.get("character_id")
-            or raw_item.get("id")
+            raw_item.get("characterId") or raw_item.get("character_id") or raw_item.get("id")
         )
         name = raw_item.get("name")
         if character_id is None or name is None:
@@ -283,24 +281,54 @@ def load_known_characters(path: Path | None) -> list[KnownCharacter]:
             KnownCharacter(
                 character_id=UUID(str(character_id)),
                 name=str(name),
+                active_statuses=tuple(
+                    ActiveCharacterStatus(
+                        fact_key=str(status["factKey"]),
+                        fact_value=(
+                            None if status.get("factValue") is None else str(status["factValue"])
+                        ),
+                    )
+                    for status in _validate_debug_active_statuses(
+                        raw_item.get("activeStatuses", raw_item.get("active_statuses", [])),
+                        index,
+                    )
+                ),
             )
         )
     return known_characters
+
+
+def _validate_debug_active_statuses(value: object, character_index: int) -> list[dict]:
+    if not isinstance(value, list):
+        raise ValueError(
+            f"known character activeStatuses at index {character_index} must be an array."
+        )
+    statuses: list[dict] = []
+    for status_index, status in enumerate(value):
+        if (
+            not isinstance(status, dict)
+            or not isinstance(status.get("factKey"), str)
+            or not status["factKey"].strip()
+            or "factValue" not in status
+            or (status["factValue"] is not None and not isinstance(status["factValue"], str))
+        ):
+            raise ValueError(
+                "active status must include non-empty string factKey and explicit nullable "
+                "string factValue at "
+                f"character index {character_index}, status index {status_index}."
+            )
+        statuses.append(status)
+    return statuses
 
 
 def load_character_setting_schema_hints(
     path: Path,
 ) -> tuple[CharacterSettingSchemaHint, ...]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    raw_items = (
-        payload.get("characterSettingSchemas")
-        if isinstance(payload, dict)
-        else payload
-    )
+    raw_items = payload.get("characterSettingSchemas") if isinstance(payload, dict) else payload
     if not isinstance(raw_items, list):
         raise ValueError(
-            "--character-setting-schemas-json must be an array or contain "
-            "characterSettingSchemas."
+            "--character-setting-schemas-json must be an array or contain characterSettingSchemas."
         )
     if not raw_items:
         raise ValueError("--character-setting-schemas-json must not be empty.")
@@ -346,7 +374,11 @@ def _print_candidate_preview(candidates: list[ExtractedSettingCandidate]) -> Non
 
 
 def _format_span(start_offset: int | None, end_offset: int | None, quote: str) -> str:
-    location = "not-found" if start_offset is None or end_offset is None else f"{start_offset}..{end_offset}"
+    location = (
+        "not-found"
+        if start_offset is None or end_offset is None
+        else f"{start_offset}..{end_offset}"
+    )
     return f"{location} quote={quote[:40]!r}"
 
 

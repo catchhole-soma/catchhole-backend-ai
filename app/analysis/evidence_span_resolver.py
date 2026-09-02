@@ -25,19 +25,56 @@ def resolve_candidate_evidence_offsets(
     return [
         candidate.model_copy(
             update={
-                # candidate 안의 evidence_spans만 보정된 span 목록으로 교체한다.
-                "evidence_spans": [
-                    resolve_evidence_span_offsets(
-                        span,
-                        chunk_text=chunk_text,
-                        chunk_start_offset=chunk_start_offset,
-                    )
-                    for span in candidate.evidence_spans
-                ]
+                # 동일 인용문은 후보 안에서 한 번만 보존하고, 찾은 위치 순서로 정렬한다.
+                # 위치를 찾지 못한 span은 null offset으로 유지한 채 뒤에 안정적으로 둔다.
+                "evidence_spans": _resolve_candidate_evidence_spans(
+                    candidate.evidence_spans,
+                    chunk_text=chunk_text,
+                    chunk_start_offset=chunk_start_offset,
+                )
             }
         )
         for candidate in candidates
     ]
+
+
+def _resolve_candidate_evidence_spans(
+    spans: list[ExtractedEvidenceSpan],
+    chunk_text: str,
+    chunk_start_offset: int,
+) -> list[ExtractedEvidenceSpan]:
+    # 같은 quote를 여러 번 반환한 경우 각 span을 독립적으로 str.find()하면 모두 원문의
+    # 첫 위치를 가리킨다. 후보 단위로 첫 quote만 남겨 잘못된 중복 하이라이트를 막는다.
+    unique_spans: list[tuple[int, ExtractedEvidenceSpan]] = []
+    seen_quotes: set[str] = set()
+    for original_index, span in enumerate(spans):
+        if span.quote in seen_quotes:
+            continue
+        seen_quotes.add(span.quote)
+        unique_spans.append((original_index, span))
+
+    resolved_spans = [
+        (
+            original_index,
+            resolve_evidence_span_offsets(
+                span,
+                chunk_text=chunk_text,
+                chunk_start_offset=chunk_start_offset,
+            ),
+        )
+        for original_index, span in unique_spans
+    ]
+
+    # LLM이 복수 근거를 역순으로 반환해도 화면과 저장 결과는 원문 순서를 따른다.
+    # 원문에서 찾지 못한 span 사이에는 위치 정보가 없으므로 기존 입력 순서를 유지한다.
+    resolved_spans.sort(
+        key=lambda item: (
+            item[1].start_offset is None,
+            item[1].start_offset if item[1].start_offset is not None else 0,
+            item[0],
+        )
+    )
+    return [span for _, span in resolved_spans]
 
 
 def resolve_evidence_span_offsets(
@@ -187,7 +224,6 @@ def _with_offsets(
         update={
             # 회차 전체 기준 시작 위치
             "start_offset": chunk_start_offset + start,
-
             # 회차 전체 기준 끝 위치.
             # Python slice처럼 end_offset은 exclusive 값이다.
             "end_offset": chunk_start_offset + end,

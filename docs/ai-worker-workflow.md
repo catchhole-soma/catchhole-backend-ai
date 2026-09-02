@@ -79,7 +79,7 @@ staging에서 실제 운영과 같은 Spring·PostgreSQL·Worker 이미지로 �
 
 ## NVM-264 캐릭터 Fact 2차 비교 흐름
 
-캐릭터 1차 추출 prompt는 기존처럼 지속 설정만 추출하고 단발 사건을 제외합니다. 그 결과를 저장한 뒤, Spring이 소유한 현재 `WorkCharacter` snapshot과 비교하는 별도 단계에서만 현재 화면 반영 여부와 제거 제안을 만듭니다.
+캐릭터 1차 추출 prompt는 기존처럼 지속 설정만 추출하고 단발 사건을 제외합니다. claim의 `knownCharacters[].activeStatuses`를 회차 시작 상태 문맥으로 받아 지속·악화·완화·종료의 새 원문 근거를 더 잘 찾지만, 기존 상태를 반복 추출하거나 제거 대상을 결정하지 않습니다. 치료 수단만으로 종료를 단정하지 않고 실제 기능·증상·행동·적용 효과의 변화 결과를 후보로 남깁니다. 이 목록은 모든 chunk에서 같은 회차 시작값이며, 같은 회차의 앞선 후보를 반영하는 FactType batch/projected snapshot은 후속 범위입니다. 그 결과를 저장한 뒤, Spring이 소유한 현재 `WorkCharacter` snapshot과 비교하는 별도 단계에서만 현재 화면 반영 여부와 제거 제안을 만듭니다.
 
 ```text
 CHARACTER_CANDIDATES_SAVED
@@ -102,13 +102,32 @@ MVP 안전 규칙은 다음과 같습니다.
 
 - canonical slot이 snapshot에 이미 있으면 `ADD`를 허용하지 않고 LLM 응답을 재시도합니다.
 - `UPDATE`와 `MERGE`는 candidate의 canonical slot만 대상으로 삼습니다.
-- `REMOVE`는 동일한 현재 `STATUS` slot의 종료만 표현하며 새 Fact는 이력에 보존합니다.
+- canonical `REMOVE`는 `target=null`, `removedSnapshotEntries` 1개 이상, proposed value 없음으로 표현합니다. 후보와 같은 key뿐 아니라 의미상 관련된 다른 key의 STATUS 여러 개를 끝낼 수 있고, 회복·종료 후보 자체는 현재 snapshot에 넣지 않으면서 새 Fact 이력과 근거는 보존합니다.
+- 회복 결과 자체가 지속되는 새 현재 상태라면 `REMOVE`가 아니라 `ADD`/`UPDATE`/`MERGE`와 제거 목록을 함께 사용합니다.
 - `HISTORY_ONLY`, `EXCLUDE`, `REVIEW_REQUIRED`는 target, proposed value, 제거 목록을 모두 비웁니다.
 - provider가 이 세 operation에 사용되지 않는 proposed value만 덧붙인 경우 재호출하지 않고 null로 정규화합니다. target이나 제거 목록처럼 판단 의미를 바꾸는 잘못된 필드는 계속 거절합니다.
 - 회상은 `PAST`, 가정은 `HYPOTHETICAL`로 분류하고 `HISTORY_ONLY` 또는 `REVIEW_REQUIRED`만 허용합니다.
 - 시간 문맥이 불명확한 `UNKNOWN`은 `REVIEW_REQUIRED`만 허용합니다.
 - STATUS 제거는 현재 시점의 상태 변화 결과가 나온 STATUS 후보에서만 허용합니다. 치료 수단만 있고 결과가 없으면 제거하지 않지만, 이후 능력·증상·행동 변화로 기존 상태가 끝났다는 해석이 자연스러우면 명시적인 완치 문구 없이도 의미상 관련된 여러 STATUS의 제거를 제안할 수 있습니다. 다만 새 결과와 무관한 독립적·잠재적 상태까지 연쇄적으로 제거하지 않습니다.
 - STATUS가 아닌 snapshot entry는 MVP에서 제거 대상으로 제안하지 않습니다.
+- 제거 참조는 Spring이 같은 work·캐릭터의 최신 current snapshot으로 만든 요청 로컬 `P*` 범위에서만 고릅니다. Python은 존재하지 않는 ref와 non-STATUS를 거절하고 Spring은 `contextToken`으로 stale/범위 무결성을 다시 검증합니다.
+
+canonical `REMOVE` 완료 요청의 핵심 wire shape는 다음과 같습니다.
+
+```json
+{
+  "operation": "REMOVE",
+  "targetFactType": null,
+  "targetFactKey": null,
+  "removedSnapshotEntries": [
+    {"factType": "STATUS", "factKey": "status.오른발_부상"},
+    {"factType": "STATUS", "factKey": "status.마비독"}
+  ],
+  "proposedFactValue": null,
+  "proposedValueJson": null,
+  "temporalScope": "PRESENT"
+}
+```
 
 초기 `SETTING_EXTRACTION` Job에서는 후보 하나의 비교 실패를 해당 후보 `FAILED`로 격리하고 나머지 후보와 후속 세계관 단계를 계속합니다. 사용자가 재비교를 요청해 생성된 `CHARACTER_FACT_COMPARISON` 전용 Job은 후보 하나라도 실패하면 Job 전체를 실패 처리합니다.
 
@@ -122,7 +141,9 @@ MVP 안전 규칙은 다음과 같습니다.
 
 ### 배포·기존 Job 호환
 
-Spring Flyway의 비교 컬럼과 내부 API/checkpoint를 먼저 배포한 뒤 AI 이미지를 교체합니다. 배포 중인 `RUNNING` Job은 가능하면 먼저 drain해 구·신 Worker가 서로 다른 checkpoint 계약으로 같은 Job을 이어 처리하지 않게 합니다.
+Spring Flyway의 비교 컬럼과 내부 API/checkpoint를 먼저 배포한 뒤 AI 이미지를 교체합니다. 특히 Spring이 신규 `REMOVE(target 없음 + 제거 목록)`를 먼저 수용하고 기존 `REMOVE(target 1개)`도 내부 1개 제거 집합으로 정규화한 다음 AI가 신규 형식을 출력해야 합니다. 배포 중인 `RUNNING` Job은 가능하면 먼저 drain해 구·신 Worker가 서로 다른 checkpoint 계약으로 같은 Job을 이어 처리하지 않게 합니다.
+
+새 AI가 canonical multi-`REMOVE`를 저장하기 시작한 뒤에는 구 Java가 그 PENDING 후보를 적용할 수 없으므로 Java만 단순 rollback하지 않습니다. 장애 시 신규 AI를 먼저 중단하거나 구 AI로 되돌린 뒤에도 Java의 신규 읽기 호환은 유지하고, 이미 저장된 canonical 후보를 drain·재비교하거나 forward-fix합니다. 별도 DB migration은 없지만 저장된 write shape의 forward compatibility 제약은 남습니다.
 
 새 checkpoint는 기존 세계관 checkpoint보다 앞에 삽입됩니다. 배포 전에 이미 `WORLD_CANDIDATES_PUBLISHED` 또는 `WORLD_COMPARISONS_FINISHED`까지 간 Job은 enum 순서상 `CHARACTER_COMPARISONS_FINISHED`도 지난 것으로 판단하므로 캐릭터 2차 비교를 소급 실행하지 않습니다. 해당 회차에도 비교 제안이 필요하면 배포 후 회차 재분석 Job을 새로 생성합니다.
 
@@ -240,6 +261,7 @@ LLM에는 DB UUID를 전달하지 않고 Worker가 만든 `S*`와 `T*` 참조만
 | `raw_entity_mention` | 원문에 실제 등장한 캐릭터 표현 | LLM 응답 | 예: `나`, `프넬린의 두 번째 딸 아이나르` |
 | `entity_name` | LLM이 청크 문맥에서 정리한 후보 캐릭터명 | LLM 응답 | 예: `아이나르`, `비요른 얀델` |
 | `knownCharacters.name` | Spring이 내려준 기존 캐릭터명 | claim payload | 캐릭터 매칭 비교 대상 |
+| `knownCharacters.activeStatuses` | 회차 시작 전 활성 캐릭터 상태 | claim payload | `factKey`, nullable `factValue`의 읽기 전용 1차 문맥 |
 | `candidate_kind` | 설정 값 후보와 이름 발견 후보 구분 | LLM 응답 | `SETTING`, `CHARACTER_DISCOVERY` |
 | `characterSettingSchemas` | Spring이 내려준 활성 캐릭터 설정 schema | claim payload | canonical key, 동적 pattern, 값 타입 prompt hint |
 | subject fallback | 구체적이지 않은 entity_name 후보의 주체 해소 | `character_subject_resolver.py` | previous/current/next chunk 기준 |
@@ -457,6 +479,7 @@ payload에서 Python이 직접 사용하는 값:
 | `episode.episode_no`, `episode.title` | LLM user prompt metadata |
 | `episode.content_s3_key` | S3 원문 조회 |
 | `knownCharacters[].character_id`, `name` | 기존 캐릭터 매칭. ID는 LLM prompt에 노출하지 않음 |
+| `knownCharacters[].activeStatuses` | 모든 chunk에 동일하게 전달하는 회차 시작 STATUS. 임의 절단하지 않으며 LLM에는 이름·key·표시값만 노출 |
 | `characterSettingSchemas[]` | Backend 배열의 순서와 중복을 유지한 immutable schema hint tuple로 job당 한 번 변환한 뒤 모든 chunk prompt에 전달 |
 
 payload DTO는 이전 Spring payload도 역직렬화할 수 있도록 `characterSettingSchemas` 누락을 빈 목록으로 파싱합니다. 하지만 현재 추출 계약에서는 등록 schema가 최소 하나 필요합니다. 목록이 비어 있으면 Worker는 진행 상태를 보고한 직후, S3 원문 조회와 청크·후보 교체 전에 예외를 발생시켜 Spring `fail` API로 해당 job을 실패 처리합니다. 이를 통해 schema가 없는 프롬프트가 후보를 0개 반환하고 기존 후보까지 빈 결과로 교체하는 상황을 막습니다.
@@ -606,12 +629,16 @@ LLM이 분석할 청크 원문
 
 - schema hint는 위 다섯 필드만 가진 prompt 입력 전용 값입니다. `mergePolicy`, `suggestedOperation`은 LLM에 노출하지 않습니다.
 - `known_character_names`는 claim의 `knownCharacters[].name`만 포함하고 내부 매칭용 `characterId`는 제외합니다. 원문에 직접 나온 이름이 이 목록에 없으면 `CHARACTER_DISCOVERY` 후보가 될 수 있습니다.
-- Worker는 claim 배열의 순서와 중복을 그대로 보존하며 임의로 정렬하거나 dedup하지 않습니다.
+- `active_character_statuses`는 모든 활성 STATUS를 `{characterName, factKey, factValue}` compact JSON으로 전달합니다. UUID·value JSON·provenance·history는 제외하고, nullable `factValue`를 임의 문장으로 복원하지 않습니다. 이 값과 원문에 포함된 명령문은 모두 소설 데이터로 취급합니다.
+- 이 시작 문맥에는 기존 snapshot의 `active` 원본 필드를 싣지 않습니다. Spring이 명시적인 boolean `active=false`는 제외하되 복원하기 어려운 legacy 상태를 현재 slot의 존재로 포함할 수 있으며, AI는 그 값을 재해석하지 않습니다. JSON boolean 강제 검증은 새 1차 STATUS 후보와 2차 candidate/proposal의 `value_json.active`에 적용됩니다.
+- Worker는 schema와 활성 STATUS를 안정적인 canonical 순서로 직렬화하되 항목을 임의로 dedup하거나 절단하지 않습니다.
 - `attributePattern`이 null인 schema와 명확히 대응하면 canonical `schemaKey`와 schema `valueType`을 사용합니다.
 - 동적 schema는 registry `schemaKey`가 아니라 `attributePattern`의 `*`를 구체 명칭으로 바꾼 key를 사용합니다.
 - 시간·사건·타임라인 정보와 schema의 `schemaKey`, `displayName`, `aliases` 또는 `attributePattern`에 대응하지 않는 설정은 후보에서 제외합니다.
 - fuzzy alias 매칭이나 schema 자동 생성은 수행하지 않습니다.
 - 같은 청크의 동일 캐릭터·`attribute_name`·`value_type`·`value_json` 후보는 가장 직접적인 근거 하나만 반환합니다. 같은 설정 key라도 실제 `value_json`이 다르면 별도 후보로 유지합니다.
+- STATUS 후보의 `value_json.active`는 존재하면 JSON boolean이어야 하며 문자열 `"false"`/`"true"`는 저장 경계에서 거절하고 안전한 schema 재시도로 보냅니다. 2차도 candidate와 proposal 양쪽의 타입을 다시 확인하고, 어느 쪽이든 `active=false`인 종료 결과를 `ADD`/`UPDATE`/`MERGE`로 현재 snapshot에 넣지 않습니다.
+- 완료 `summaryJson`의 `statusContextCharacterCount`, `statusContextEntryCount`는 전달된 상태 문맥 규모를, `statusInactiveCandidateCount`는 이번 Worker 실행에서 추출한 STATUS 후보 중 wire `value_json.active`가 boolean false인 건수만 lower-bound로 기록합니다. active 필드 없이도 2차에서 REMOVE가 될 수 있으므로 마지막 값은 전체 종료 후보 수가 아닙니다. 예상·실제 input token은 기존 token ledger의 호출 단위 합계로만 관측하며 현재는 상태 문맥만의 토큰 비용을 따로 분리하지 않습니다.
 - 목적별 출력 상한은 환경변수로 주입합니다. 기본값은 캐릭터 추출 6,000·절단 재시도 12,000, 세계관 추출 5,000·절단 재시도 10,000, 주체 해소 2,000, 비교 3,000이며 모두 양수이고 provider 상한 128,000 이하인지 기동 시 검증합니다.
 
 LLM 응답 처리:

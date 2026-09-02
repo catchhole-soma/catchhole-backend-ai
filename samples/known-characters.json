@@ -1,6 +1,12 @@
 [
   {
     "characterId": "00000000-0000-0000-0000-000000000101",
-    "name": "비요른 얀델"
+    "name": "비요른 얀델",
+    "activeStatuses": [
+      {
+        "factKey": "status.오른발_부상",
+        "factValue": "오른발이 크게 다쳐 걷기 어려움"
+      }
+    ]
   }
 ]

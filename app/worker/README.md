@@ -111,7 +111,7 @@ checkpoint는 `CHUNKS_READY`, `CHARACTER_CANDIDATES_SAVED`, `CHARACTER_COMPARISO
 Spring claim
 -> progress 보고
 -> characterSettingSchemas를 immutable schema hint로 변환
--> knownCharacters 이름을 추출 prompt 입력으로 준비
+-> knownCharacters 이름과 회차 시작 활성 STATUS를 추출 prompt 입력으로 준비
 -> 단일 episode S3 원문 청킹
 -> flag가 켜진 경우에만 저장 청크 batch 임베딩 전 토큰 예약·호출 후 정산
 -> chunk별 캐릭터 설정 후보 추출 전 토큰 예약·호출 후 정산
@@ -170,7 +170,9 @@ run_analysis_worker.py --worker-kind world-comparison
   - 읽은 원문을 `EpisodeChunkService`에 넘겨 기존 chunk 삭제 후 새 chunk 저장을 수행합니다.
 - `CharacterSettingExtractor`
   - 저장된 chunk 하나를 LLM에 보내 캐릭터 설정 후보와 명시적 신규 캐릭터 발견 후보를 추출합니다.
-  - claim의 `knownCharacters` 대표 이름을 prompt에 전달해 이미 등록된 이름의 발견 후보를 억제합니다. `characterId`는 prompt에 전달하지 않습니다.
+  - claim의 `knownCharacters` 대표 이름을 prompt에 전달해 이미 등록된 이름의 발견 후보를 억제합니다. `activeStatuses`는 같은 회차의 모든 chunk에 동일한 회차 시작 문맥으로 전달해 상태 지속·악화·완화·종료 근거를 찾는 데 사용합니다.
+  - prompt에는 `characterName`, `factKey`, nullable `factValue`만 직렬화하고 `characterId`, UUID, value JSON, provenance와 history는 전달하지 않습니다. 상태 목록은 임의 절단하지 않습니다.
+  - 활성 상태가 원문에 반복되거나 계속된다는 사실만으로 같은 후보를 다시 만들지 않습니다. 치료 수단이나 시도만으로 종료를 단정하지 않고 실제 기능·증상·행동·적용 효과의 변화를 새 STATUS 후보와 근거로 추출하며, 제거 결정은 2차 비교에 맡깁니다.
   - `source_chunk_id`는 Provider schema에서 제외하고 wire 검증 뒤 현재 입력 chunk ID를 결합합니다.
   - Pydantic strict schema를 Provider에 전달하고 wire model과 저장 경계 model로 응답을 두 번 검증합니다. 실패 재시도에는 원문 응답 대신 안전한 reason/field loc만 전달합니다.
   - schema hint는 `schemaKey`, `displayName`, `attributePattern`, `aliases`, `valueType` 다섯 필드만 가진 prompt 입력 전용 값입니다.
@@ -310,13 +312,24 @@ Spring, DB, S3 없이 로컬 텍스트 파일 하나만으로 청킹부터 설�
 
 `episodeId`, `workId`, `analysisJobId`는 넘기지 않으면 가상 UUID로 생성합니다.
 `--known-characters-json`은 Spring claim payload의 `knownCharacters`를 대신하는 입력입니다.
-배열 형태 JSON이며 `characterId`, `character_id`, `id` 중 하나와 `name`을 받습니다.
+배열 형태 JSON이며 `characterId`, `character_id`, `id` 중 하나와 `name`, 선택적인
+`activeStatuses`를 받습니다. 상태 항목의 `factValue`는 복원 불가능한 legacy 값일 때 null일 수 있습니다.
 
 ```json
 [
   {
     "characterId": "00000000-0000-0000-0000-000000000101",
-    "name": "비요른 얀델"
+    "name": "비요른 얀델",
+    "activeStatuses": [
+      {
+        "factKey": "status.오른발_부상",
+        "factValue": "오른발이 크게 다쳐 걷기 어려움"
+      },
+      {
+        "factKey": "status.마비독",
+        "factValue": null
+      }
+    ]
   }
 ]
 ```

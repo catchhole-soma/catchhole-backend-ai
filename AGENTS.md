@@ -32,9 +32,13 @@
 - Spring token reserve의 HTTP 409는 응답 `error.code`가 `AI_TOKEN_QUOTA_EXHAUSTED`일 때 전용 비재시도 예외로 바꾼다. 이 예외를 만난 후보를 typed failure로 보고한 뒤 같은 Job의 다음 후보를 claim하지 않으며, 다른 실행 중 Job Task는 취소하지 않는다.
 - `source_chunk_id`는 LLM 생성값이 아니라 Worker가 가진 `EpisodeChunk.id`를 source of truth로 사용한다. LLM 응답에 값이 없거나 잘못되어도 Pydantic 검증 전에 현재 chunk ID로 덮어쓴다.
 - 설정 추출 prompt에는 claim의 `knownCharacters` 대표 이름만 전달하고 Backend 내부 매칭용 `characterId`는 노출하지 않는다. 원문에 명시된 미등록 이름은 `candidate_kind=CHARACTER_DISCOVERY`로 추출하고 설정 payload는 모두 `null`로 두며, 기존 이름과 매칭되는 발견 후보와 같은 분석 안의 중복 발견은 저장 전에 제외한다.
+- `knownCharacters[].activeStatuses`는 회차 시작 전에 활성인 STATUS의 `factKey`와 nullable `factValue`만 포함하고 임의 절단하지 않는다. 1차 prompt에는 상위 대표 이름을 `characterName`으로 결합한 최소 문맥만 전달하며 UUID·value JSON·provenance·history는 노출하지 않는다. 기존 상태의 단순 반복은 재추출하지 않고, 치료 수단만으로 종료를 단정하지 않으며 실제 기능·증상·행동 변화의 근거만 후보로 남긴다. 같은 회차 projected 상태 누적은 이 목록의 책임이 아니다.
+- STATUS 후보의 `value_json.active`는 존재하면 JSON boolean만 허용한다. candidate나 2차 proposal의 `active=false`는 현재 snapshot에 ADD/UPDATE/MERGE하지 않고 REMOVE 또는 비반영 판단으로 처리한다.
+- 회차 시작 `activeStatuses`에는 기존 snapshot의 active 원본 값을 전달하지 않는다. Spring이 현재 slot으로 선택한 factKey와 nullable factValue를 문맥으로 신뢰하며, 신규 후보·제안의 active 타입 검증을 legacy snapshot 값에 소급 적용하지 않는다.
 - `CHARACTER_DISCOVERY`의 캐릭터 매칭은 `entity_name`만 기준으로 한다. `케닉의 넷째 아들 세룸` 같은 `raw_entity_mention` 안의 기존 관계자 이름을 발견 대상 캐릭터로 오연결하거나 subject fallback으로 재해석하지 않는다.
 - 같은 분석 작업의 `SETTING` 후보는 확정된 캐릭터 ID 또는 정규화한 구체 이름, `attribute_name`, `value_type`, canonical `value_json`이 모두 같을 때만 저장 전에 중복 제거하고 더 높은 confidence의 근거를 남긴다. 값이 다르거나 주체가 `AMBIGUOUS`인 후보는 변화·다른 인물 가능성이 있으므로 유지한다.
 - `SettingCandidate.value_json`은 `JSONB(none_as_null=True)`로 매핑한다. `CHARACTER_DISCOVERY`의 Python `None`은 JSON literal `null`이 아니라 DB check constraint가 요구하는 SQL `NULL`로 저장해야 한다.
+- 캐릭터 비교의 canonical `REMOVE`는 `target_ref=null`, `removed_snapshot_refs` 1개 이상, proposal 없음으로 출력한다. candidate와 같은 key 또는 다른 key의 의미상 관련된 현재 STATUS를 요청 로컬 `P*` 참조로 하나 이상 끝낼 수 있지만 non-STATUS·unknown ref·비현재 후보는 거절한다. 기존 `REMOVE + targetRef` 하위 호환 정규화는 먼저 배포되는 Spring이 담당하며 Python은 신규 형식만 생성한다.
 - `NUMBER`/`BOOLEAN` 후보는 Pydantic 경계에서 `value_json.value`의 JSON 타입을 검증하고 Mapper가 저장 `attribute_value`를 그 값의 canonical 표현(NUMBER 숫자 문자열, BOOLEAN 소문자 `true`/`false`)으로 만든다. LLM이 보낸 원래 표시 문구는 Mapper 변환 전 payload로 `raw_ai_result_json`에 보존하고, 비교 proposal도 Spring에 보내기 전 같은 canonical 규칙을 적용한다. 표시값과 snapshot 대표값이 다른 상태를 새로 저장하지 않기 위함이다.
 
 ## Async Worker Runtime

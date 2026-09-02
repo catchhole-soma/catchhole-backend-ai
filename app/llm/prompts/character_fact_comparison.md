@@ -40,27 +40,33 @@ CharacterFact는 삭제하지 않는 시간순 기록이며, snapshot은 사용�
 # operation 기준
 
 - `ADD`: 같은 canonical Fact가 현재 snapshot에 없고 현재 상태로 추가할 수 있다.
-- `UPDATE`: 같은 fact type과 fact key의 현재 값을 새 값으로 교체한다.
-- `MERGE`: 같은 fact type과 fact key의 기존 값과 새 정보를 합친 최종 JSON이 필요하다.
-- `REMOVE`: 같은 STATUS 항목이 현재 시점에 종료되어 timeline에는 새 Fact를 남기되 현재 snapshot에서 제거한다.
+- `UPDATE`: 같은 항목을 하나의 최신 대표값으로 정규화한다. 값 교체·수량 증감·현재 상태 갱신도 포함한다.
+- `MERGE`: 기존값과 신규값이 양립하는 독립된 하위 사실·조건·구성이며, 최종 구조화 값에서 각각을 구분해 보존해야 할 때만 사용한다.
+- 원문의 ‘추가’라는 표현만으로 `MERGE`하지 않는다. 하나의 값이나 요약으로 계산할 수 있으면 `UPDATE`를 우선한다. 예: 식량 약 2일+6일→약 8일은 `UPDATE`, 기존 기술 효과+별도 발동 조건은 `MERGE`다.
+- `REMOVE`: 현재 후보는 종료·회복의 근거 이력으로만 남기고, 의미상 관련된 기존 STATUS를 현재 snapshot에서 하나 이상 제거한다. 같은 key일 필요는 없다.
 - `HISTORY_ONLY`: 회상이나 명확한 과거 상태라 timeline에는 남기되 현재 snapshot에는 반영하지 않는다.
 - `EXCLUDE`: 현재 snapshot과 의미가 같은 중복이거나 캐릭터 설정 후보로 유지할 이유가 없다.
 - `REVIEW_REQUIRED`: 시점, 대상, 충돌 또는 종료 여부를 근거만으로 안전하게 정할 수 없다.
 
-`UPDATE`, `MERGE`, `REMOVE`만 `target_ref`를 사용한다. 대상은 반드시 candidate의
+`UPDATE`, `MERGE`만 `target_ref`를 사용한다. 대상은 반드시 candidate의
 `canonical_fact_type`과 `canonical_fact_key`가 모두 같은 항목이어야 한다.
-`exact_target_ref`가 `null`이면 `UPDATE`, `MERGE`, `REMOVE`를 절대 선택하지 않는다.
-`exact_target_ref`가 있으면 `UPDATE`, `MERGE`, `REMOVE`의 `target_ref`는 반드시 그 값과 정확히 같아야 한다.
-의미가 비슷해도 key가 다른 STATUS는 UPDATE/MERGE 대상이 아니다. 새 상태를 추가하면서 기존 상태를
-대체해야 한다면 `ADD`와 `removed_snapshot_refs`를 함께 사용한다.
+`exact_target_ref`가 `null`이면 `UPDATE`, `MERGE`를 절대 선택하지 않는다.
+`exact_target_ref`가 있으면 `UPDATE`, `MERGE`의 `target_ref`는 반드시 그 값과 정확히 같아야 한다.
+의미가 비슷해도 key가 다른 STATUS는 UPDATE/MERGE 대상이 아니다.
 `ADD`, `UPDATE`, `MERGE`는 최종 snapshot을 그대로 저장할 수 있도록
 `proposed_fact_value`와 `proposed_value_json`을 모두 반드시 반환한다.
 `proposed_fact_value`는 기존 값과 신규 정보를 반영한 사용자 표시 문자열이다.
 candidate의 `value_type`이 `NUMBER`이면 설명이나 단위를 넣지 않고
 `proposed_value_json.value`와 같은 숫자 문자열만 반환한다. `BOOLEAN`이면 소문자
 `true` 또는 `false`만 반환하고 `proposed_value_json.value`도 같은 JSON boolean으로 둔다.
-`REMOVE`는 동일한 현재 STATUS를 종료할 때만 사용하고 `proposed_fact_value`,
-`proposed_value_json`, `removed_snapshot_refs`를 모두 비운다. `HISTORY_ONLY`, `EXCLUDE`, `REVIEW_REQUIRED`는 `target_ref`, `removed_snapshot_refs`,
+candidate가 STATUS이면 candidate와 `proposed_value_json`의 `active`는 존재할 경우 JSON boolean이어야 한다.
+`active: false`는 candidate 자체를 현재 snapshot에 넣지 않는다는 뜻일 뿐, 다른 key의 제거 대상이나 종료 여부를 나타내지 않는다.
+따라서 `ADD`, `UPDATE`, `MERGE`는 선택하지 않되, 후보 근거와 기존 STATUS 사이의 종료 관계가 확인될 때만
+`REMOVE`와 `removed_snapshot_refs`를 사용한다. 관계를 안전하게 판단할 수 없으면 `EXCLUDE` 또는 `REVIEW_REQUIRED`를 사용한다.
+`REMOVE`는 `target_ref`, `proposed_fact_value`, `proposed_value_json`을 비우고
+`removed_snapshot_refs`에 종료할 현재 STATUS를 하나 이상 넣는다. 현재 후보 자체도 지속되는
+새 상태라면 `REMOVE`가 아니라 `ADD`, `UPDATE`, `MERGE` 중 하나와 `removed_snapshot_refs`를
+함께 사용한다. `HISTORY_ONLY`, `EXCLUDE`, `REVIEW_REQUIRED`는 `target_ref`, `removed_snapshot_refs`,
 `proposed_fact_value`, `proposed_value_json`을 모두 비운다. 같은 canonical Fact 항목이 이미 있으면
 `ADD`를 선택하지 않는다.
 
@@ -95,8 +101,8 @@ candidate의 `value_type`이 `NUMBER`이면 설명이나 단위를 넣지 않고
 7. 판단이 팽팽하게 갈리는 경우에만 `REVIEW_REQUIRED`를 사용한다. 현재 서사의 자연스러운 해석이 종료 쪽이고 반대 근거가 없다면 지나치게 보수적으로 유지하지 않는다.
 8. 해소되었다고 판단한 STATUS의 `P*` 참조만 넣는다. AGE, LEVEL, PROFILE, STAT, SKILL, ITEM은 절대 넣지 않는다.
 9. 회상·가정·불명확한 서술에서는 비워 둔다.
-10. candidate와 같은 STATUS 항목 자체가 종료되면 `removed_snapshot_refs`가 아니라 `REMOVE`와
-    `exact_target_ref`를 사용한다.
+10. candidate와 같은 key의 STATUS가 끝나는 경우도 `REMOVE`와 `removed_snapshot_refs`를 사용한다.
+    `target_ref`는 항상 null이다.
 
 # 보안 및 일관성
 
