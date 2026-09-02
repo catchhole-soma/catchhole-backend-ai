@@ -1,4 +1,5 @@
 import asyncio
+import json
 from uuid import UUID
 
 import pytest
@@ -52,6 +53,36 @@ def test_comparison_worker_fails_job_when_candidate_comparison_failed() -> None:
     assert spring.fail_calls == [(ANALYSIS_JOB_ID, "LLM_PROVIDER_ERROR")]
 
 
+def test_comparison_worker_reports_batch_observability_metrics() -> None:
+    spring = FakeSpringApi(_payload())
+    worker = WorldSettingComparisonWorker(
+        spring_client=spring,
+        comparison_pipeline=FakePipeline(
+            WorldSettingComparisonRunResult(
+                completed_count=2,
+                failed_count=0,
+                batch_count=1,
+                decision_count=1,
+                cluster_count=1,
+                clustered_candidate_count=2,
+                singleton_candidate_count=0,
+                stale_batch_retry_count=1,
+            )
+        ),
+    )
+
+    _run_once(worker)
+
+    summary = json.loads(spring.complete_summaries[0])
+    assert summary["worldComparisonBatchCount"] == 1
+    assert summary["worldComparisonClusterCount"] == 1
+    assert summary["averageCandidatesPerBatch"] == 2.0
+    assert summary["averageCandidatesPerCluster"] == 2.0
+    assert summary["clusteredCandidateCount"] == 2
+    assert summary["singletonCandidateCount"] == 0
+    assert summary["staleBatchRetryCount"] == 1
+
+
 def test_comparison_pipeline_routes_subject_resolution_and_comparison_models() -> None:
     pipeline = create_world_setting_comparison_pipeline(
         spring_client=FakeSpringApi(_payload()),
@@ -81,6 +112,7 @@ class FakeSpringApi:
         self.allowed_job_types = None
         self.claim_model_name = None
         self.complete_calls = []
+        self.complete_summaries = []
         self.fail_calls = []
 
     async def claim(self, allowed_job_types, model_name=None, current_step=None):
@@ -96,6 +128,7 @@ class FakeSpringApi:
 
     async def complete(self, analysis_job_id, lease_token, **kwargs):
         self.complete_calls.append(analysis_job_id)
+        self.complete_summaries.append(kwargs.get("summary_json"))
 
     async def fail(self, analysis_job_id, lease_token, error_message, failure_code):
         self.fail_calls.append((analysis_job_id, failure_code.value))

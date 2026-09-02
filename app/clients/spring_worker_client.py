@@ -37,11 +37,18 @@ from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingCandidatePublishItem,
     WorkerWorldSettingCandidatePublishRequest,
+    WorkerWorldSettingComparisonBatchCompleteRequest,
+    WorkerWorldSettingComparisonBatchContextRequest,
+    WorkerWorldSettingComparisonBatchContextResponse,
+    WorkerWorldSettingComparisonBatchPayload,
     WorkerWorldSettingComparisonCompleteRequest,
     WorkerWorldSettingComparisonContextRequest,
     WorkerWorldSettingComparisonContextResponse,
     WorkerWorldSettingComparisonFailRequest,
     WorkerWorldSettingSubjectPageResponse,
+    WorkerWorldSettingSubjectResolutionPendingResponse,
+    WorkerWorldSettingSubjectResolutionRequest,
+    WorkerWorldSettingSubjectResolutionResponse,
 )
 
 # Spring 내부 API 인증용 헤더 이름
@@ -318,6 +325,148 @@ class SpringWorkerClient:
             return None
         _raise_for_spring_status(response)
         return WorkerWorldSettingCandidatePayload.model_validate(response.json()["data"])
+
+    async def claim_next_world_setting_comparison_batch(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> WorkerWorldSettingComparisonBatchPayload | None:
+        response = await self._request(
+            "POST",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                "/world-setting-comparison-batches/claim-next"
+            ),
+            headers=self._headers(lease_token),
+        )
+        if response.status_code == 204:
+            return None
+        _raise_for_spring_status(response)
+        return WorkerWorldSettingComparisonBatchPayload.model_validate(response.json()["data"])
+
+    async def get_pending_world_setting_subject_resolutions(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> WorkerWorldSettingSubjectResolutionPendingResponse:
+        response = await self._request(
+            "GET",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                "/world-setting-subject-resolutions/pending"
+            ),
+            headers=self._headers(lease_token),
+        )
+        _raise_for_spring_status(response)
+        return WorkerWorldSettingSubjectResolutionPendingResponse.model_validate(
+            response.json()["data"]
+        )
+
+    async def complete_world_setting_subject_resolutions(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+        request: WorkerWorldSettingSubjectResolutionRequest,
+    ) -> WorkerWorldSettingSubjectResolutionResponse:
+        response = await self._request(
+            "PUT",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                "/world-setting-subject-resolutions"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, mode="json"),
+        )
+        _raise_for_spring_status(response)
+        return WorkerWorldSettingSubjectResolutionResponse.model_validate(
+            response.json()["data"]
+        )
+
+    async def reset_stale_world_setting_subject_resolution(
+        self,
+        analysis_job_id: UUID,
+        comparison_batch_id: UUID,
+        lease_token: UUID,
+    ) -> None:
+        response = await self._request(
+            "POST",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/world-setting-comparison-batches/{comparison_batch_id}"
+                "/reset-stale-subject-resolution"
+            ),
+            headers=self._headers(lease_token),
+        )
+        _raise_for_spring_status(response)
+
+    async def get_world_setting_comparison_batch_context(
+        self,
+        analysis_job_id: UUID,
+        comparison_batch_id: UUID,
+        lease_token: UUID,
+        target_world_setting_ids: list[UUID],
+    ) -> WorkerWorldSettingComparisonBatchContextResponse:
+        request = WorkerWorldSettingComparisonBatchContextRequest(
+            target_world_setting_ids=target_world_setting_ids
+        )
+        response = await self._request(
+            "POST",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/world-setting-comparison-batches/{comparison_batch_id}/context"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, mode="json"),
+        )
+        _raise_for_spring_status(response)
+        return WorkerWorldSettingComparisonBatchContextResponse.model_validate(
+            response.json()["data"]
+        )
+
+    async def complete_world_setting_comparison_batch(
+        self,
+        analysis_job_id: UUID,
+        comparison_batch_id: UUID,
+        lease_token: UUID,
+        request: WorkerWorldSettingComparisonBatchCompleteRequest,
+    ) -> None:
+        response = await self._request(
+            "POST",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/world-setting-comparison-batches/{comparison_batch_id}/complete"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
+        )
+        _raise_for_spring_status(response)
+
+    async def fail_world_setting_comparison_batch(
+        self,
+        analysis_job_id: UUID,
+        comparison_batch_id: UUID,
+        lease_token: UUID,
+        error_message: str,
+        failure_code: AnalysisFailureCode = AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+        source_error_code: str | None = None,
+        source_reason_code: str | None = None,
+    ) -> None:
+        request = WorkerWorldSettingComparisonFailRequest(
+            failure_code=failure_code,
+            error_message=error_message,
+            source_error_code=source_error_code,
+            source_reason_code=source_reason_code,
+        )
+        response = await self._request(
+            "POST",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/world-setting-comparison-batches/{comparison_batch_id}/fail"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, exclude_none=True),
+        )
+        _raise_for_spring_status(response)
 
     async def get_world_setting_subjects(
         self,

@@ -1,0 +1,108 @@
+{
+  "arms": {
+    "batch": {
+      "batchCount": 25,
+      "cachedInputTokenCount": 24720,
+      "clusterCount": 52,
+      "clusteredCandidateCount": 0,
+      "consolidationStatusCounts": {
+        "CONFLICT": 0,
+        "MERGED": 0,
+        "SINGLE": 52
+      },
+      "decisionCount": 52,
+      "finalStateHash": "34ab04e69b63302b87f7ce64dc98241f6d2dfa523caea16f6217f0cb49faeafa",
+      "inputTokenCount": 37123,
+      "operationCounts": {
+        "ADD": 50,
+        "EXCLUDE": 0,
+        "MERGE": 0,
+        "REVIEW_REQUIRED": 0,
+        "UPDATE": 2
+      },
+      "outputTokenCount": 10199,
+      "proposalHash": "1e9de2bc1f87e0307217393ccffa22d41bc4cc7fb7aea6fab62bcbbdee85b78d",
+      "providerLatencyMs": 296418,
+      "providerRequestCount": 42,
+      "singletonCandidateCount": 52,
+      "stateChangeCounts": {
+        "addedPathCount": 50,
+        "changedPathCount": 2,
+        "removedPathCount": 0
+      }
+    },
+    "single": {
+      "batchCount": 52,
+      "cachedInputTokenCount": 67422,
+      "clusterCount": 52,
+      "clusteredCandidateCount": 0,
+      "consolidationStatusCounts": {
+        "CONFLICT": 0,
+        "MERGED": 0,
+        "SINGLE": 52
+      },
+      "decisionCount": 52,
+      "finalStateHash": "3e1db9b29cb2460bd7b3c0a7a590996fc85e23152a05754852bf2b7b0bbb5a04",
+      "inputTokenCount": 82467,
+      "operationCounts": {
+        "ADD": 52,
+        "EXCLUDE": 0,
+        "MERGE": 0,
+        "REVIEW_REQUIRED": 0,
+        "UPDATE": 0
+      },
+      "outputTokenCount": 8373,
+      "proposalHash": "b1759c8e5bf224c4316c1ee830a875584f3942d970b3491c3d8438f2d45ac77d",
+      "providerLatencyMs": 245349,
+      "providerRequestCount": 68,
+      "singletonCandidateCount": 52,
+      "stateChangeCounts": {
+        "addedPathCount": 52,
+        "changedPathCount": 0,
+        "removedPathCount": 0
+      }
+    }
+  },
+  "dataset": {
+    "candidateCount": 52,
+    "contextReconstructionExact": false,
+    "contextReconstructionFallbackCount": 8,
+    "datasetHash": "7608c04a8b3d7b21313cbcc3c04bc7c68c94f4665d7481f5ee4336c2e6b98380",
+    "episodeCount": 4,
+    "episodeRange": {
+      "from": 1,
+      "to": 4
+    }
+  },
+  "delta": {
+    "addedPathCount": 0,
+    "batchCount": -27,
+    "cachedInputTokenCount": -42702,
+    "changedPathCount": 2,
+    "clusterCount": 0,
+    "decisionCount": 0,
+    "finalStateHashesEqual": false,
+    "inputTokenCount": -45344,
+    "outputTokenCount": 1826,
+    "proposalHashesEqual": false,
+    "providerLatencyMs": 51069,
+    "providerRequestCount": -26,
+    "removedPathCount": 2
+  },
+  "run": {
+    "armOrder": [
+      "single",
+      "batch"
+    ],
+    "cacheInterpretation": "Cached input is reported separately because the later arm may reuse provider prompt cache entries warmed by the earlier arm.",
+    "comparisonArms": [
+      "single",
+      "batch"
+    ],
+    "contextReconstruction": "reverse-confirmed-candidate-history-v2",
+    "databaseAccess": "READ_ONLY",
+    "model": "gpt-5.6-luna",
+    "tokenLedger": "NO_OP"
+  },
+  "schemaVersion": "world-setting-comparison-ab-replay-v1"
+}

@@ -424,6 +424,7 @@ class AnalysisJobWorker:
                 "worldSettingCandidateCount": world_candidate_count,
                 "worldSettingComparisonCompletedCount": comparison_result.completed_count,
                 "worldSettingComparisonFailedCount": comparison_result.failed_count,
+                **comparison_result.summary_metrics(),
             },
             ensure_ascii=False,
         )

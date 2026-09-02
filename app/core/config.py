@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     llm_world_setting_extraction_retry_max_output_tokens: int = 10000
     llm_subject_resolution_max_output_tokens: int = 2000
     llm_comparison_max_output_tokens: int = 3000
+    llm_world_setting_batch_comparison_max_output_tokens: int = 16000
     # 현재 사용 모델의 공식 최대 출력 한도보다 큰 오설정을 시작 시 차단한다.
     llm_provider_max_output_tokens: int = 128000
     # 한 프로세스 안에서 token 예약부터 provider 정산까지 동시에 수행할 LLM 요청 상한
@@ -94,6 +95,7 @@ class Settings(BaseSettings):
         "llm_world_setting_extraction_retry_max_output_tokens",
         "llm_subject_resolution_max_output_tokens",
         "llm_comparison_max_output_tokens",
+        "llm_world_setting_batch_comparison_max_output_tokens",
         "llm_provider_max_output_tokens",
         "llm_max_concurrent_requests",
         "ai_worker_concurrency",
@@ -128,6 +130,7 @@ class Settings(BaseSettings):
             self.llm_world_setting_extraction_retry_max_output_tokens,
             self.llm_subject_resolution_max_output_tokens,
             self.llm_comparison_max_output_tokens,
+            self.llm_world_setting_batch_comparison_max_output_tokens,
         )
         if any(limit > self.llm_provider_max_output_tokens for limit in configured_limits):
             raise ValueError("Purpose output token limits must not exceed the provider limit.")

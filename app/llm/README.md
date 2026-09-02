@@ -76,7 +76,7 @@ Spring의 `ai_token_usages`를 기준으로 조회합니다.
 캐릭터 설정 추출은 Pydantic에서 생성한 strict JSON Schema를 Responses API에 전달하고, 응답을 Provider wire model과 저장 경계 model로 두 번 검증합니다. 그 밖의 LLM 호출은 기존 prompt + Python schema 검증을 유지합니다.
 
 JSON 파싱 실패 또는 Python schema 검증 실패는 `CharacterSettingExtractor`에서 재시도합니다. 다음 요청에는 최초 prompt와 값이 제거된 `reasonCode + fieldLocs`만 넣고 실패 응답 원문은 prompt나 로그에 남기지 않습니다. 다만 attribute 이름 정책처럼 schema로 표현하지 않은 프롬프트 정책 위반까지 강제하지는 않습니다.
-캐릭터 설정 추출은 `max_output_tokens=6000`에서 시작해 출력 절단 시 12000으로, 세계관 추출은 5000에서 시작해 절단 시 10000으로 한 번만 확장합니다. 주체 해소는 2000, 비교는 3000을 사용하며 절단 확장 재시도는 하지 않습니다.
+캐릭터 설정 추출은 `max_output_tokens=6000`에서 시작해 출력 절단 시 12000으로, 세계관 추출은 5000에서 시작해 절단 시 10000으로 한 번만 확장합니다. 주체 해소는 2000, 단건 비교는 3000, 세계관 batch 비교는 16000을 사용하며 절단 확장 재시도는 하지 않습니다. batch의 모든 원문 값·실제 target 경로·decision JSON을 보존하는 최소 출력 예상치가 16000을 넘으면 provider를 호출하지 않고 `BATCH_LIMIT_EXCEEDED` 검토로 전환합니다.
 
 예를 들어 `attribute_name`이 `item`처럼 suffix 없이 오거나, `confidence`가 `0.0`인 응답은 프롬프트상 원하지 않는 값이지만 현재 schema만으로는 통과할 수 있습니다.
 

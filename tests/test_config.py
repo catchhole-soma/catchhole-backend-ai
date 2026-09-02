@@ -13,6 +13,7 @@ def test_purpose_output_caps_use_operational_defaults() -> None:
     assert defaults["llm_world_setting_extraction_retry_max_output_tokens"].default == 10000
     assert defaults["llm_subject_resolution_max_output_tokens"].default == 2000
     assert defaults["llm_comparison_max_output_tokens"].default == 3000
+    assert defaults["llm_world_setting_batch_comparison_max_output_tokens"].default == 16000
     assert defaults["llm_provider_max_output_tokens"].default == 128000
 
 
@@ -86,6 +87,7 @@ def test_purpose_output_caps_are_loaded_independently(monkeypatch) -> None:
     monkeypatch.setenv("LLM_WORLD_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS", "6200")
     monkeypatch.setenv("LLM_SUBJECT_RESOLUTION_MAX_OUTPUT_TOKENS", "1100")
     monkeypatch.setenv("LLM_COMPARISON_MAX_OUTPUT_TOKENS", "2100")
+    monkeypatch.setenv("LLM_WORLD_SETTING_BATCH_COMPARISON_MAX_OUTPUT_TOKENS", "9100")
     monkeypatch.setenv("LLM_PROVIDER_MAX_OUTPUT_TOKENS", "128000")
 
     settings = Settings(_env_file=None)
@@ -96,6 +98,7 @@ def test_purpose_output_caps_are_loaded_independently(monkeypatch) -> None:
     assert settings.llm_world_setting_extraction_retry_max_output_tokens == 6200
     assert settings.llm_subject_resolution_max_output_tokens == 1100
     assert settings.llm_comparison_max_output_tokens == 2100
+    assert settings.llm_world_setting_batch_comparison_max_output_tokens == 9100
     assert settings.llm_provider_max_output_tokens == 128000
 
 
@@ -108,6 +111,10 @@ def test_purpose_output_caps_are_loaded_independently(monkeypatch) -> None:
         },
         {
             "llm_comparison_max_output_tokens": 2001,
+            "llm_provider_max_output_tokens": 2000,
+        },
+        {
+            "llm_world_setting_batch_comparison_max_output_tokens": 2001,
             "llm_provider_max_output_tokens": 2000,
         },
         {

@@ -21,6 +21,11 @@ from app.schemas.worker import (
     WorkerAnalysisJobPayload,
     WorkerCharacterFactComparisonCompleteRequest,
     WorkerRemovedSnapshotEntry,
+    WorkerWorldSettingComparisonBatchCompleteRequest,
+    WorkerWorldSettingComparisonBatchDecision,
+    WorkerWorldSettingContextVersion,
+    WorkerWorldSettingSubjectResolutionRequest,
+    WorkerWorldSettingSubjectResolutionRequestItem,
 )
 
 ANALYSIS_JOB_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -581,6 +586,231 @@ def test_world_setting_worker_calls_use_lease_and_parse_structured_context() -> 
     )
 
 
+def test_world_setting_batch_calls_match_spring_contract() -> None:
+    requests: list[httpx.Request] = []
+    comparison_batch_id = UUID("00000000-0000-0000-0000-000000000040")
+    target_id = UUID("00000000-0000-0000-0000-000000000041")
+    candidate = _batch_candidate_payload()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/world-setting-subject-resolutions/pending"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "data": {
+                        "candidates": [
+                            {
+                                "candidateId": candidate["candidateId"],
+                                "sourceEpisodeId": str(EPISODE_ID),
+                                "category": "RACE",
+                                "subjectName": "고블린족",
+                            }
+                        ]
+                    }
+                },
+            )
+        if request.url.path.endswith("/world-setting-subject-resolutions"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "data": {
+                        "resolutions": [
+                            {
+                                "candidateId": candidate["candidateId"],
+                                "resolutionType": "EXISTING",
+                                "canonicalSubjectKey": f"TARGET:{target_id}",
+                                "canonicalSubjectName": "고블린",
+                                "targetWorldSettingIds": [str(target_id)],
+                            }
+                        ]
+                    }
+                },
+            )
+        if request.url.path.endswith("/claim-next"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "data": {
+                        "comparisonBatchId": str(comparison_batch_id),
+                        "workId": str(WORK_ID),
+                        "sourceEpisodeId": str(EPISODE_ID),
+                        "category": "RACE",
+                        "resolutionType": "EXISTING",
+                        "canonicalSubjectKey": f"TARGET:{target_id}",
+                        "canonicalSubjectName": "고블린",
+                        "resolvedTargetWorldSettingIds": [str(target_id)],
+                        "rawScopeName": "전투 특성",
+                        "candidates": [candidate],
+                    }
+                },
+            )
+        if request.url.path.endswith("/context"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "data": {
+                        "comparisonBatchId": str(comparison_batch_id),
+                        "candidates": [candidate],
+                        "exactTargets": [
+                            {"candidateRef": "C1", "worldSettingId": str(target_id)}
+                        ],
+                        "targets": [
+                            {
+                                "worldSettingId": str(target_id),
+                                "subjectName": "고블린",
+                                "properties": [],
+                                "version": 2,
+                            }
+                        ],
+                    }
+                },
+            )
+        return httpx.Response(200, request=request, json={"data": None})
+
+    client = _client(handler)
+
+    async def call_batch_apis():
+        pending = await client.get_pending_world_setting_subject_resolutions(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+        )
+        resolution_response = await client.complete_world_setting_subject_resolutions(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+            WorkerWorldSettingSubjectResolutionRequest(
+                resolutions=[
+                    WorkerWorldSettingSubjectResolutionRequestItem(
+                        candidate_id=pending.candidates[0].candidate_id,
+                        target_world_setting_ids=[target_id],
+                    )
+                ]
+            ),
+        )
+        assert resolution_response.resolutions[0].canonical_subject_name == "고블린"
+        claimed = await client.claim_next_world_setting_comparison_batch(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+        )
+        assert claimed is not None
+        context = await client.get_world_setting_comparison_batch_context(
+            ANALYSIS_JOB_ID,
+            comparison_batch_id,
+            LEASE_TOKEN,
+            [target_id],
+        )
+        await client.complete_world_setting_comparison_batch(
+            ANALYSIS_JOB_ID,
+            comparison_batch_id,
+            LEASE_TOKEN,
+            WorkerWorldSettingComparisonBatchCompleteRequest(
+                context_versions=[
+                    WorkerWorldSettingContextVersion(
+                        world_setting_id=target_id,
+                        version=2,
+                    )
+                ],
+                decisions=[
+                    WorkerWorldSettingComparisonBatchDecision(
+                        decision_ref="D1",
+                        source_candidate_refs=["C1"],
+                        existing_root_property_names_to_move=["기존 사냥 습성"],
+                        canonical_subject_name="고블린",
+                        target_world_setting_id=target_id,
+                        consolidation_status="SINGLE",
+                        suggested_operation="ADD",
+                        proposed_scope_name="전투 특성",
+                        proposed_setting_name="사냥 전술",
+                        proposed_value="무리를 지어 사냥한다.",
+                        comparison_reason="새 canonical 설정이다.",
+                    )
+                ],
+            ),
+        )
+        return claimed, context
+
+    claimed, context = asyncio.run(call_batch_apis())
+
+    assert claimed.candidates[0].candidate_ref == "C1"
+    assert context.exact_targets[0].world_setting_id == target_id
+    assert [request.url.path for request in requests] == [
+        (
+            f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
+            "/world-setting-subject-resolutions/pending"
+        ),
+        (
+            f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
+            "/world-setting-subject-resolutions"
+        ),
+        (
+            f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
+            "/world-setting-comparison-batches/claim-next"
+        ),
+        (
+            f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
+            f"/world-setting-comparison-batches/{comparison_batch_id}/context"
+        ),
+        (
+            f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
+            f"/world-setting-comparison-batches/{comparison_batch_id}/complete"
+        ),
+    ]
+    assert requests[0].method == "GET"
+    assert requests[1].method == "PUT"
+    assert json.loads(requests[1].content) == {
+        "resolutions": [
+            {
+                "candidateId": candidate["candidateId"],
+                "targetWorldSettingIds": [str(target_id)],
+            }
+        ]
+    }
+    assert json.loads(requests[3].content) == {
+        "targetWorldSettingIds": [str(target_id)]
+    }
+    complete_payload = json.loads(requests[4].content)
+    assert complete_payload["decisions"][0]["decisionRef"] == "D1"
+    assert complete_payload["decisions"][0]["sourceCandidateRefs"] == ["C1"]
+    assert complete_payload["decisions"][0]["existingRootPropertyNamesToMove"] == [
+        "기존 사냥 습성"
+    ]
+    assert all(
+        request.headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN)
+        for request in requests
+    )
+
+
+def test_world_setting_stale_subject_resolution_reset_matches_spring_contract() -> None:
+    requests: list[httpx.Request] = []
+    comparison_batch_id = UUID("00000000-0000-0000-0000-000000000040")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, request=request, json={"data": None})
+
+    client = _client(handler)
+    asyncio.run(
+        client.reset_stale_world_setting_subject_resolution(
+            ANALYSIS_JOB_ID,
+            comparison_batch_id,
+            LEASE_TOKEN,
+        )
+    )
+
+    assert len(requests) == 1
+    assert requests[0].method == "POST"
+    assert requests[0].url.path == (
+        f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
+        f"/world-setting-comparison-batches/{comparison_batch_id}"
+        "/reset-stale-subject-resolution"
+    )
+    assert requests[0].headers[WORKER_LEASE_TOKEN_HEADER] == str(LEASE_TOKEN)
+
+
 def test_character_fact_comparison_calls_match_spring_contract() -> None:
     requests: list[httpx.Request] = []
     candidate_id = UUID("00000000-0000-0000-0000-000000000030")
@@ -714,6 +944,19 @@ def _candidate_payload() -> dict:
         "settingName": "서식지",
         "extractedValue": "혹한 지역",
         "evidenceSpans": [{"quote": "바바리안은 혹한 지역에 산다."}],
+        "extractionConfidence": 0.95,
+    }
+
+
+def _batch_candidate_payload() -> dict:
+    return {
+        "candidateRef": "C1",
+        "candidateId": "00000000-0000-0000-0000-000000000020",
+        "subjectName": "고블린",
+        "scopeName": "전투 특성",
+        "settingName": "사냥 전술",
+        "extractedValue": "무리를 지어 사냥한다.",
+        "evidenceSpans": [{"quote": "고블린은 무리를 지어 사냥했다."}],
         "extractionConfidence": 0.95,
     }
 

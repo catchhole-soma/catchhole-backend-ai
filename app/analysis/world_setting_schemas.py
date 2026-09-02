@@ -67,15 +67,48 @@ class WorldSettingComparisonDecision(BaseModel):
         if self.operation == WorldSettingOperation.ADD and self.matched_property_name is not None:
             raise ValueError("ADD must not include matched_property_name.")
         if self.operation == WorldSettingOperation.REVIEW_REQUIRED:
-            if (
-                self.review_reason != WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED
-                or self.target_ref is None
+            if self.review_reason == WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED and (
+                self.target_ref is None
                 or self.matched_scope_name is None
                 or self.matched_property_name is None
             ):
                 raise ValueError(
                     "Scope REVIEW_REQUIRED requires SCOPE_UNRESOLVED and a scoped matched property."
                 )
+            if self.review_reason == WorldSettingComparisonReviewReason.BATCH_LIMIT_EXCEEDED and (
+                self.matched_scope_name is not None or self.matched_property_name is not None
+            ):
+                raise ValueError("Batch-limit REVIEW_REQUIRED must not include a matched path.")
+            if self.review_reason not in {
+                WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED,
+                WorldSettingComparisonReviewReason.BATCH_LIMIT_EXCEEDED,
+            }:
+                raise ValueError("REVIEW_REQUIRED requires a supported review_reason.")
         elif self.review_reason is not None:
             raise ValueError("Only REVIEW_REQUIRED may include review_reason.")
         return self
+
+
+class WorldSettingComparisonBatchDecision(WorldSettingComparisonDecision):
+    source_candidate_refs: list[str] = Field(min_length=1, max_length=20)
+    existing_root_property_names_to_move: list[TrimmedName] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_source_refs(self) -> "WorldSettingComparisonBatchDecision":
+        if len(set(self.source_candidate_refs)) != len(self.source_candidate_refs):
+            raise ValueError("source_candidate_refs must not contain duplicates.")
+        if len(set(self.existing_root_property_names_to_move)) != len(
+            self.existing_root_property_names_to_move
+        ):
+            raise ValueError("existing_root_property_names_to_move must not contain duplicates.")
+        return self
+
+
+class WorldSettingComparisonBatchResult(BaseModel):
+    decisions: list[WorldSettingComparisonBatchDecision] = Field(
+        min_length=1,
+        max_length=20,
+    )

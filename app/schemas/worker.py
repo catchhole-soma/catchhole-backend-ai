@@ -18,6 +18,7 @@ from app.domain.enums import (
     WorldSettingComparisonValidationReason,
     WorldSettingConsolidationStatus,
     WorldSettingOperation,
+    WorldSettingSubjectResolutionType,
 )
 
 # Spring AI 토큰 원장 계약에서 허용하는 호출 목적과 종료 결과
@@ -237,6 +238,85 @@ class WorkerWorldSettingCandidatePayload(BaseModel):
     extraction_confidence: float | None = Field(default=None, alias="extractionConfidence")
 
 
+class WorkerWorldSettingComparisonBatchCandidate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_ref: str = Field(alias="candidateRef", pattern=r"^C[1-9][0-9]*$")
+    candidate_id: UUID = Field(alias="candidateId")
+    subject_name: str = Field(alias="subjectName", min_length=1, max_length=100)
+    scope_name: str | None = Field(default=None, alias="scopeName", max_length=100)
+    setting_name: str = Field(alias="settingName", min_length=1, max_length=100)
+    extracted_value: str = Field(alias="extractedValue", min_length=1)
+    evidence_spans: list[WorkerEvidenceSpan] = Field(alias="evidenceSpans", min_length=1)
+    extraction_confidence: float | None = Field(default=None, alias="extractionConfidence")
+
+
+class WorkerWorldSettingSubjectResolutionCandidate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_id: UUID = Field(alias="candidateId")
+    source_episode_id: UUID = Field(alias="sourceEpisodeId")
+    category: WorldSettingCategory
+    subject_name: str = Field(alias="subjectName", min_length=1, max_length=100)
+
+
+class WorkerWorldSettingSubjectResolutionPendingResponse(BaseModel):
+    candidates: list[WorkerWorldSettingSubjectResolutionCandidate]
+
+
+class WorkerWorldSettingSubjectResolutionRequestItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_id: UUID = Field(alias="candidateId")
+    target_world_setting_ids: list[UUID] = Field(
+        alias="targetWorldSettingIds",
+        max_length=20,
+    )
+
+
+class WorkerWorldSettingSubjectResolutionRequest(BaseModel):
+    resolutions: list[WorkerWorldSettingSubjectResolutionRequestItem] = Field(min_length=1)
+
+
+class WorkerWorldSettingSubjectResolutionResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_id: UUID = Field(alias="candidateId")
+    resolution_type: WorldSettingSubjectResolutionType = Field(alias="resolutionType")
+    canonical_subject_key: str = Field(alias="canonicalSubjectKey", min_length=1)
+    canonical_subject_name: str = Field(alias="canonicalSubjectName", min_length=1)
+    target_world_setting_ids: list[UUID] = Field(alias="targetWorldSettingIds", max_length=20)
+
+
+class WorkerWorldSettingSubjectResolutionResponse(BaseModel):
+    resolutions: list[WorkerWorldSettingSubjectResolutionResult]
+
+
+class WorkerWorldSettingComparisonBatchPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    comparison_batch_id: UUID = Field(alias="comparisonBatchId")
+    work_id: UUID = Field(alias="workId")
+    source_episode_id: UUID = Field(alias="sourceEpisodeId")
+    category: WorldSettingCategory
+    resolution_type: WorldSettingSubjectResolutionType = Field(alias="resolutionType")
+    canonical_subject_key: str = Field(alias="canonicalSubjectKey", min_length=1)
+    canonical_subject_name: str = Field(
+        alias="canonicalSubjectName",
+        min_length=1,
+        max_length=100,
+    )
+    resolved_target_world_setting_ids: list[UUID] = Field(
+        alias="resolvedTargetWorldSettingIds",
+        max_length=20,
+    )
+    raw_scope_name: str | None = Field(default=None, alias="rawScopeName")
+    candidates: list[WorkerWorldSettingComparisonBatchCandidate] = Field(
+        min_length=1,
+        max_length=20,
+    )
+
+
 class WorkerWorldSettingSubject(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -258,6 +338,15 @@ class WorkerWorldSettingComparisonContextRequest(BaseModel):
     target_world_setting_ids: list[UUID] = Field(
         alias="targetWorldSettingIds",
         max_length=3,
+    )
+
+
+class WorkerWorldSettingComparisonBatchContextRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    target_world_setting_ids: list[UUID] = Field(
+        alias="targetWorldSettingIds",
+        max_length=20,
     )
 
 
@@ -287,6 +376,25 @@ class WorkerWorldSettingComparisonContextResponse(BaseModel):
         alias="exactTargetWorldSettingId",
     )
     targets: list[WorkerWorldSettingComparisonTarget] = Field(max_length=3)
+
+
+class WorkerWorldSettingComparisonExactTarget(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_ref: str = Field(alias="candidateRef", pattern=r"^C[1-9][0-9]*$")
+    world_setting_id: UUID | None = Field(default=None, alias="worldSettingId")
+
+
+class WorkerWorldSettingComparisonBatchContextResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    comparison_batch_id: UUID = Field(alias="comparisonBatchId")
+    candidates: list[WorkerWorldSettingComparisonBatchCandidate] = Field(
+        min_length=1,
+        max_length=20,
+    )
+    exact_targets: list[WorkerWorldSettingComparisonExactTarget] = Field(alias="exactTargets")
+    targets: list[WorkerWorldSettingComparisonTarget] = Field(max_length=20)
 
 
 class WorkerWorldSettingContextVersion(BaseModel):
@@ -323,6 +431,61 @@ class WorkerWorldSettingComparisonCompleteRequest(BaseModel):
     context_versions: list[WorkerWorldSettingContextVersion] = Field(
         alias="contextVersions",
         max_length=3,
+    )
+    raw_comparison_json: dict[str, Any] | None = Field(
+        default=None,
+        alias="rawComparisonJson",
+    )
+
+
+class WorkerWorldSettingComparisonBatchDecision(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    decision_ref: str = Field(alias="decisionRef", pattern=r"^D[1-9][0-9]*$")
+    source_candidate_refs: list[str] = Field(
+        alias="sourceCandidateRefs",
+        min_length=1,
+        max_length=20,
+    )
+    existing_root_property_names_to_move: list[str] = Field(
+        default_factory=list,
+        alias="existingRootPropertyNamesToMove",
+        max_length=20,
+    )
+    canonical_subject_name: str = Field(
+        alias="canonicalSubjectName",
+        min_length=1,
+        max_length=100,
+    )
+    target_world_setting_id: UUID | None = Field(default=None, alias="targetWorldSettingId")
+    matched_scope_name: str | None = Field(default=None, alias="matchedScopeName")
+    matched_property_name: str | None = Field(default=None, alias="matchedPropertyName")
+    consolidation_status: WorldSettingConsolidationStatus = Field(alias="consolidationStatus")
+    suggested_operation: WorldSettingOperation = Field(alias="suggestedOperation")
+    comparison_review_reason: WorldSettingComparisonReviewReason | None = Field(
+        default=None,
+        alias="comparisonReviewReason",
+    )
+    proposed_scope_name: str | None = Field(default=None, alias="proposedScopeName")
+    proposed_setting_name: str = Field(alias="proposedSettingName", min_length=1, max_length=100)
+    proposed_value: str = Field(alias="proposedValue", min_length=1)
+    comparison_reason: str = Field(alias="comparisonReason", min_length=1)
+    raw_comparison_json: dict[str, Any] | None = Field(
+        default=None,
+        alias="rawComparisonJson",
+    )
+
+
+class WorkerWorldSettingComparisonBatchCompleteRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    context_versions: list[WorkerWorldSettingContextVersion] = Field(
+        alias="contextVersions",
+        max_length=20,
+    )
+    decisions: list[WorkerWorldSettingComparisonBatchDecision] = Field(
+        min_length=1,
+        max_length=20,
     )
     raw_comparison_json: dict[str, Any] | None = Field(
         default=None,

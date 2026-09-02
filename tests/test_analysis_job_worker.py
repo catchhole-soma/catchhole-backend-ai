@@ -30,6 +30,32 @@ WORK_ID = UUID("00000000-0000-0000-0000-000000000002")
 BATCH_ID = UUID("00000000-0000-0000-0000-000000000003")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000004")
 LEASE_TOKEN = UUID("00000000-0000-0000-0000-000000000006")
+ZERO_WORLD_COMPARISON_METRICS = {
+    "worldComparisonBatchCount": 0,
+    "worldComparisonDecisionCount": 0,
+    "worldComparisonClusterCount": 0,
+    "averageCandidatesPerBatch": 0.0,
+    "averageCandidatesPerCluster": 0.0,
+    "clusteredCandidateCount": 0,
+    "singletonCandidateCount": 0,
+    "batchValidationFailureCount": 0,
+    "staleBatchRetryCount": 0,
+    "clusterOverflowOrReviewRequiredCount": None,
+    "worldComparisonProviderRequestCount": 0,
+    "worldComparisonProviderLatencyMs": 0,
+    "worldComparisonInputTokenCount": 0,
+    "worldComparisonCachedInputTokenCount": 0,
+    "worldComparisonOutputTokenCount": 0,
+    "worldComparisonSubjectResolutionUsage": {
+        "providerRequestCount": 0,
+        "providerLatencyMs": 0,
+        "inputTokenCount": 0,
+        "cachedInputTokenCount": 0,
+        "outputTokenCount": 0,
+    },
+    "worldComparisonBatchUsages": [],
+    "worldComparisonClusterUsages": [],
+}
 SCHEMA_HINTS = (
     CharacterSettingSchemaHint(
         schema_key="stats.strength",
@@ -394,6 +420,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
+        **ZERO_WORLD_COMPARISON_METRICS,
     }
     assert spring_client.fail_calls == []
 
@@ -518,6 +545,7 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
+        **ZERO_WORLD_COMPARISON_METRICS,
     }
 
 
@@ -609,6 +637,7 @@ def test_worker_skips_chunk_embedding_by_default_and_completes_extraction() -> N
         "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
+        **ZERO_WORLD_COMPARISON_METRICS,
     }
     assert spring_client.fail_calls == []
 
@@ -655,6 +684,7 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
+        **ZERO_WORLD_COMPARISON_METRICS,
     }
 
 
