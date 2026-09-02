@@ -676,6 +676,8 @@ LLM 출력 계약:
 | `evidence_spans[].start_offset/end_offset` | LLM 값은 사용하지 않고 후처리에서 재계산 |
 | `confidence` | 후보 신뢰도 |
 
+상태 전환은 치료·회복 수단과 이후 증상·능력·행동 결과가 떨어져 서술될 수 있으므로 `evidence_spans` 개수에 고정 상한을 두지 않습니다. 다만 후보 하나를 입증하는 최소 충분 근거만 원문 순서대로 유지하고, 같은 과정의 반복 인용은 제외합니다. 이 근거들은 2차 비교에서 읽기 전용 문맥으로 사용되며 2차가 새 인용문을 만들거나 수정하지 않습니다.
+
 ### 6. evidence quote 위치 보정
 
 LLM이 반환한 `evidence_spans[].start_offset`, `end_offset`은 신뢰하지 않습니다. 대신 `quote`를 실제 `chunk_text`에서 다시 찾아 위치를 계산합니다.

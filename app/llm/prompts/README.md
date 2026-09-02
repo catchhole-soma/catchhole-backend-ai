@@ -62,6 +62,7 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
   Pydantic 검증 후 기존 `value_json` dict로 복원합니다.
 - `source_chunk_id`는 prompt·Provider schema 출력 필드가 아니며 Python Worker가 현재 입력 chunk ID로 결정합니다.
 - `evidence_spans[].quote`는 위치 보정 기준이므로 원문 일부를 요약/의역하지 않고 그대로 복사해야 합니다.
+- 상태 전환이 한 문장으로 입증되지 않으면 원인과 결정적인 후속 결과를 원문 순서대로 함께 반환합니다. 근거 수에 고정 상한을 두지 않되, 반복되는 과정 설명은 제외하고 전환을 입증하는 최소 충분 근거만 남깁니다.
 - `evidence_spans[].start_offset`, `end_offset`은 LLM이 계산하지 않고 Python Worker가 quote 검색으로 보정합니다.
 
 ## subject resolution 출력 계약

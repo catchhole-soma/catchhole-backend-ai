@@ -147,7 +147,7 @@ class CharacterFactComparator:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="character-fact-comparison:v8",
+            prompt_cache_key="character-fact-comparison:v9",
             operation_name="Character-fact comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(

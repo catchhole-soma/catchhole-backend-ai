@@ -56,7 +56,7 @@ class ExtractedSettingCandidate(BaseModel):
     attribute_value: str | None = None
     value_type: SettingValueType | None = None
     value_json: dict[str, Any] | None = None
-    evidence_spans: list[ExtractedEvidenceSpan] = Field(min_length=1, max_length=3)
+    evidence_spans: list[ExtractedEvidenceSpan] = Field(min_length=1)
     confidence: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
@@ -186,7 +186,7 @@ class _ProviderCandidateCommon(_StrictProviderModel):
         StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
     ]
     raw_entity_mention: Annotated[str, StringConstraints(max_length=100)] | None
-    evidence_spans: list[_ProviderEvidenceSpan] = Field(min_length=1, max_length=3)
+    evidence_spans: list[_ProviderEvidenceSpan] = Field(min_length=1)
     confidence: float | None = Field(ge=0, le=1)
 
 
