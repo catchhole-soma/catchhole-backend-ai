@@ -10,7 +10,11 @@ from uuid import UUID
 import pytest
 
 from app.analysis.world_setting_schemas import WorldSettingComparisonBatchDecision
-from app.domain.enums import WorldSettingConsolidationStatus, WorldSettingOperation
+from app.domain.enums import (
+    WorldSettingConsolidationStatus,
+    WorldSettingOperation,
+    WorldSettingSubjectResolutionType,
+)
 from app.llm.responses import LlmTextResponse
 from app.schemas.worker import (
     WorkerEvidenceSpan,
@@ -28,6 +32,7 @@ from evals.world_setting_comparison.replay_runner import (
     WorldSettingComparisonReplayRunner,
     _java_uuid_sort_key,
     _proposal_from_decision,
+    _resolve_episode_subjects,
 )
 from evals.world_setting_comparison.replay_snapshot import (
     ReplayCandidate,
@@ -534,6 +539,63 @@ def test_batch_character_limit_holds_entire_cluster_without_provider_comparison(
     assert report["arms"]["batch"]["operationCounts"]["REVIEW_REQUIRED"] == 1
 
 
+def test_replay_exact_subject_resolution_accepts_twenty_targets_as_ambiguous() -> None:
+    episode = _exact_subject_match_episode(target_count=20)
+
+    resolutions = asyncio.run(
+        _resolve_episode_subjects(episode, SimpleNamespace())
+    )
+
+    assert len(resolutions) == 1
+    assert (
+        resolutions[0].resolution_type
+        == WorldSettingSubjectResolutionType.AMBIGUOUS
+    )
+    assert resolutions[0].target_world_setting_ids == tuple(
+        sorted(
+            (target.world_setting_id for target in episode.targets),
+            key=_java_uuid_sort_key,
+        )
+    )
+
+
+def test_replay_exact_subject_resolution_rejects_more_than_twenty_targets() -> None:
+    episode = _exact_subject_match_episode(target_count=21)
+
+    with pytest.raises(ValueError, match="more than 20 normalized exact targets"):
+        asyncio.run(_resolve_episode_subjects(episode, SimpleNamespace()))
+
+
+def test_batch_overflow_preserves_multivalue_conflict_status() -> None:
+    dataset = _runner_dataset(
+        first_episode_candidate_count=1,
+        first_extracted_value=f"{'검' * 15_001}\n{'몽둥이' * 5_001}",
+        episode_count=1,
+    )
+    provider = DeterministicComparisonClient()
+    runner = WorldSettingComparisonReplayRunner(
+        delegate=provider,
+        model="test-model",
+        monotonic_ns=StepClock(),
+    )
+
+    outcome = asyncio.run(runner._run_batch_arm(dataset))
+
+    assert outcome.batch_count == 1
+    assert outcome.usage.provider_request_count == 0
+    assert len(outcome.proposals) == 1
+    proposal = outcome.proposals[0]
+    assert proposal.operation == WorldSettingOperation.REVIEW_REQUIRED.value
+    assert (
+        proposal.consolidation_status
+        == WorldSettingConsolidationStatus.CONFLICT.value
+    )
+    assert (
+        proposal.proposed_value
+        == dataset.episodes[0].candidates[0].payload.extracted_value
+    )
+
+
 def test_ambiguous_candidates_stay_in_separate_batches_with_stable_target_order() -> None:
     negative_target_id = UUID("80000000-0000-0000-0000-000000000001")
     positive_target_id = UUID("00000000-0000-0000-0000-000000000002")
@@ -1021,6 +1083,8 @@ def _candidate_rows() -> list[dict[str, Any]]:
 def _runner_dataset(
     first_episode_candidate_count: int = 2,
     first_evidence_quote: str = "비밀 근거",
+    first_extracted_value: str | None = None,
+    episode_count: int = 4,
 ) -> ReplayDataset:
     target = ReplayTarget(
         world_setting_id=TARGET_ID,
@@ -1038,7 +1102,7 @@ def _runner_dataset(
     )
     episodes: list[ReplayEpisode] = []
     candidate_sequence = 0
-    for episode_no in range(1, 5):
+    for episode_no in range(1, episode_count + 1):
         episode_candidate_count = (
             first_episode_candidate_count if episode_no == 1 else 1
         )
@@ -1063,7 +1127,12 @@ def _runner_dataset(
                 subject_name=subject_name,
                 scope_name=None,
                 setting_name=f"비밀 설정 {candidate_sequence}",
-                extracted_value=f"비밀 값 {candidate_sequence}",
+                extracted_value=(
+                    first_extracted_value
+                    if episode_no == 1 and index == 0
+                    and first_extracted_value is not None
+                    else f"비밀 값 {candidate_sequence}"
+                ),
                 evidence_spans=[
                     WorkerEvidenceSpan(
                         quote=(
@@ -1105,4 +1174,40 @@ def _runner_dataset(
             },
             "test-dataset",
         ),
+    )
+
+
+def _exact_subject_match_episode(target_count: int) -> ReplayEpisode:
+    candidate = ReplayCandidate(
+        episode_no=1,
+        created_at=BASE_TIME,
+        compared_at=BASE_TIME + timedelta(hours=1),
+        payload=WorkerWorldSettingCandidatePayload(
+            candidate_id=UUID("70000000-0000-0000-0000-000000000001"),
+            work_id=WORK_ID,
+            source_episode_id=UUID("80000000-0000-0000-0000-000000000001"),
+            category="RACE",
+            subject_name=" location ",
+            scope_name=None,
+            setting_name="비공개 설정",
+            extracted_value="비공개 값",
+            evidence_spans=[WorkerEvidenceSpan(quote="비공개 근거")],
+            extraction_confidence=0.95,
+        ),
+    )
+    targets = tuple(
+        ReplayTarget(
+            world_setting_id=UUID(int=index),
+            category="RACE",
+            subject_name="LOCATION" if index % 2 else "Location",
+            properties=(),
+            version=1,
+            created_at=BASE_TIME - timedelta(days=1),
+        )
+        for index in range(1, target_count + 1)
+    )
+    return ReplayEpisode(
+        episode_no=1,
+        candidates=(candidate,),
+        targets=targets,
     )

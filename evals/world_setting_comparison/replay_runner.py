@@ -38,6 +38,7 @@ from evals.world_setting_comparison.replay_snapshot import (
 
 MAX_BATCH_CANDIDATES = 20
 MAX_BATCH_INPUT_CHARACTERS = 30_000
+MAX_SUBJECT_RESOLUTION_TARGETS = 20
 
 
 class NoOpAiTokenLedger(AiTokenLedgerApi):
@@ -245,8 +246,11 @@ async def _resolve_episode_subjects(
             if _subject_match_key(subject.subject_name) == candidate_key
         ]
         if exact_matches:
-            if len(exact_matches) > 3:
-                raise ValueError("Exact subject resolution exceeds the three-target contract.")
+            if len(exact_matches) > MAX_SUBJECT_RESOLUTION_TARGETS:
+                raise ValueError(
+                    "Replay subject resolution found more than 20 "
+                    "normalized exact targets."
+                )
             target_ids = tuple(subject.world_setting_id for subject in exact_matches)
         else:
             target_ids = tuple(
@@ -428,6 +432,11 @@ def _overflow_proposal(
     resolution: _SubjectResolution,
 ) -> ReplayProposal:
     payload = resolution.candidate.payload
+    source_values = [
+        value.strip()
+        for value in payload.extracted_value.splitlines()
+        if value.strip()
+    ]
     return ReplayProposal(
         episode_no=episode_no,
         category=str(payload.category),
@@ -441,7 +450,11 @@ def _overflow_proposal(
         ),
         matched_scope_name=None,
         matched_setting_name=None,
-        consolidation_status=WorldSettingConsolidationStatus.SINGLE.value,
+        consolidation_status=(
+            WorldSettingConsolidationStatus.SINGLE.value
+            if len(source_values) <= 1
+            else WorldSettingConsolidationStatus.CONFLICT.value
+        ),
         operation=WorldSettingOperation.REVIEW_REQUIRED.value,
         proposed_scope_name=payload.scope_name,
         proposed_setting_name=payload.setting_name,
