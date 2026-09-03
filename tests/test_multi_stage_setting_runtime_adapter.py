@@ -4,10 +4,15 @@ from decimal import Decimal
 import httpx
 import pytest
 
+import evals.multi_stage_setting.runtime_adapter as runtime_adapter_module
 from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonBatchDecision,
     CharacterFactComparisonBatchResult,
+)
+from app.analysis.character_fact_projection import (
+    CharacterProjectionEntry,
+    CharacterProjectionState,
 )
 from app.analysis.character_name_resolver import ActiveCharacterStatus
 from app.analysis.character_subject_resolver import SubjectResolutionResult
@@ -744,6 +749,97 @@ def test_fixed_runtime_orders_batch_by_evidence_and_maps_q_refs() -> None:
         stage1[1].candidate_id,
         stage1[0].candidate_id,
     ]
+
+
+def test_fixed_runtime_tracks_remove_before_same_slot_add_as_absence_dependency(
+    monkeypatch,
+) -> None:
+    status_ref = character_state_ref("character:bjorn", "STATUS", "status.부상")
+    scenario = ScenarioGold(
+        scenario_id="S1",
+        episode_no=1,
+        source_identifier="01화.txt",
+        source_text="비요른의 부상이 회복되었지만 곧 다시 같은 부상을 입었다.",
+        target_domains={"CHARACTER"},
+        gold_version="v3",
+        start_state_mode="SEED",
+        cumulative_through_episode=0,
+        seed_state=EvaluationState(
+            known_characters=[KnownCharacter(entity_ref="character:bjorn", name="비요른")],
+            character_facts=[
+                _character_state(
+                    "STATUS",
+                    "status.부상",
+                    "기존 부상",
+                    value_type="JSON",
+                    value_json={"name": "부상", "active": True},
+                )
+            ],
+        ),
+        candidate_free=True,
+        review_status="FINAL",
+    )
+    comparator = _RemoveThenAddSameSlotComparator()
+    executions = []
+    production_runner = runtime_adapter_module.execute_character_fact_comparison_batch
+
+    async def capture_execution(*args, **kwargs):
+        execution = await production_runner(*args, **kwargs)
+        executions.append(execution)
+        return execution
+
+    monkeypatch.setattr(
+        runtime_adapter_module,
+        "execute_character_fact_comparison_batch",
+        capture_execution,
+    )
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            GoldSnapshotV3(
+                dataset_version="v3",
+                name="same-slot absence dependency",
+                scenarios=[scenario],
+            ).with_fixture_hash(),
+            mode="FIXED",
+            components=RuntimeComponents(
+                character_extractor=_RemoveThenAddSameSlotExtractor(),
+                character_subject_resolver=_PassThroughSubjectResolver(),
+                character_comparator=comparator,
+                world_comparator=_AddWorldComparator(),
+            ),
+            character_schema_hints=(_status_schema_hint(),),
+            domains={"CHARACTER"},
+        )
+    )
+
+    assert [item.operation for item in bundle.scenarios[0].stage2] == ["REMOVE", "ADD"]
+    assert bundle.scenarios[0].stage2[0].removed_snapshot_refs == [status_ref]
+    assert executions[0].decisions[1].dependency_candidate_refs == ["C1"]
+
+    # C2's ADD is valid only after C1 removed the persisted slot. Replaying C2
+    # without its dependency must remain an invalid transition, not a silent overwrite.
+    state_without_c1 = CharacterProjectionState(
+        [
+            CharacterProjectionEntry(
+                reference="P1",
+                fact_type="STATUS",
+                fact_key="status.부상",
+                fact_value="기존 부상",
+                value_json={"name": "부상", "active": True},
+            )
+        ]
+    )
+    with pytest.raises(ValueError, match="ADD is invalid"):
+        state_without_c1.apply(
+            candidate_ref="C2",
+            projected_snapshot_ref="Q2",
+            fact_type="STATUS",
+            resolved_fact_key="status.부상",
+            value_type="JSON",
+            candidate_value_json={"name": "부상", "active": True},
+            decision=comparator.result.decisions[1],
+        )
 
 
 def test_character_batches_stay_scenario_local_when_evaluation_batch_matches() -> None:
@@ -1663,6 +1759,40 @@ class _SameChunkStatusExtractor:
         )
 
 
+class _RemoveThenAddSameSlotExtractor:
+    async def extract_from_chunk(self, source_chunk_id, **kwargs):
+        common = {
+            "source_chunk_id": source_chunk_id,
+            "candidate_kind": "SETTING",
+            "entity_name": "비요른",
+            "raw_entity_mention": "비요른은",
+            "value_type": "JSON",
+            "confidence": 0.9,
+        }
+        return CharacterSettingExtractionResult(
+            candidates=[
+                ExtractedCharacterSettingCandidate(
+                    **common,
+                    attribute_name="status.회복",
+                    attribute_value="기존 부상이 회복됨",
+                    value_json={"name": "회복", "active": False},
+                    evidence_spans=[
+                        ExtractedEvidenceSpan(quote="부상이 회복되었지만")
+                    ],
+                ),
+                ExtractedCharacterSettingCandidate(
+                    **common,
+                    attribute_name="status.재부상",
+                    attribute_value="같은 부상을 다시 입음",
+                    value_json={"name": "부상", "active": True},
+                    evidence_spans=[
+                        ExtractedEvidenceSpan(quote="다시 같은 부상을 입었다.")
+                    ],
+                ),
+            ]
+        )
+
+
 class _LiveWorldExtractor:
     async def extract_from_chunk(self, **kwargs):
         common = {
@@ -1749,6 +1879,37 @@ class _BatchCapturingCharacterComparator(_AddCharacterComparator):
             )
         )
         return await super().compare_batch(candidates=candidates, **kwargs)
+
+
+class _RemoveThenAddSameSlotComparator:
+    def __init__(self) -> None:
+        self.result = None
+
+    def batch_fits(self, *, candidates, **kwargs):
+        return bool(candidates)
+
+    async def compare_batch(self, *, candidates, snapshot_entries, **kwargs):
+        assert [candidate.candidate_ref for candidate in candidates] == ["C1", "C2"]
+        assert [entry.reference for entry in snapshot_entries] == ["P1"]
+        first, second = candidates
+        self.result = CharacterFactComparisonBatchResult(
+            decisions=[
+                _batch_decision(
+                    first,
+                    operation="REMOVE",
+                    removed_refs=["P1"],
+                    resolved_key="status.부상",
+                ),
+                _batch_decision(
+                    second,
+                    operation="ADD",
+                    value="같은 부상을 다시 입음",
+                    value_json={"name": "부상", "active": True},
+                    resolved_key="status.부상",
+                ),
+            ]
+        )
+        return self.result, self.result.model_dump(mode="json")
 
 
 class _AddWorldComparator:
