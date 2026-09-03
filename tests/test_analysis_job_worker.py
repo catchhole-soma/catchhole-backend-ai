@@ -31,6 +31,23 @@ WORK_ID = UUID("00000000-0000-0000-0000-000000000002")
 BATCH_ID = UUID("00000000-0000-0000-0000-000000000003")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000004")
 LEASE_TOKEN = UUID("00000000-0000-0000-0000-000000000006")
+ZERO_CHARACTER_COMPARISON_METRICS = {
+    "characterComparisonRequestCount": 0,
+    "characterComparisonBatchCount": 0,
+    "characterComparisonAverageCandidatesPerBatch": 0.0,
+    "characterComparisonMaxCandidatesPerBatch": 0,
+    "characterComparisonProviderSegmentCount": 0,
+    "characterComparisonBatchFallbackCandidateCount": 0,
+    "characterComparisonBatchValidationFailureCount": 0,
+    "characterComparisonStaleBatchRetryCount": 0,
+    "characterComparisonProviderRequestCount": 0,
+    "characterComparisonProviderLatencyMs": 0,
+    "characterComparisonInputTokenCount": 0,
+    "characterComparisonCachedInputTokenCount": 0,
+    "characterComparisonOutputTokenCount": 0,
+    "characterComparisonAverageInputTokensPerCandidate": 0.0,
+    "characterComparisonAverageOutputTokensPerCandidate": 0.0,
+}
 ZERO_WORLD_COMPARISON_METRICS = {
     "worldComparisonBatchCount": 0,
     "worldComparisonDecisionCount": 0,
@@ -421,6 +438,7 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
         "statusInactiveCandidateCount": 0,
         "characterFactComparisonCompletedCount": 0,
         "characterFactComparisonFailedCount": 0,
+        **ZERO_CHARACTER_COMPARISON_METRICS,
         "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
@@ -634,6 +652,7 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         "statusInactiveCandidateCount": 0,
         "characterFactComparisonCompletedCount": 0,
         "characterFactComparisonFailedCount": 0,
+        **ZERO_CHARACTER_COMPARISON_METRICS,
         "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
@@ -729,6 +748,7 @@ def test_worker_skips_chunk_embedding_by_default_and_completes_extraction() -> N
         "statusInactiveCandidateCount": 0,
         "characterFactComparisonCompletedCount": 0,
         "characterFactComparisonFailedCount": 0,
+        **ZERO_CHARACTER_COMPARISON_METRICS,
         "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,
@@ -779,6 +799,7 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
         "statusInactiveCandidateCount": 0,
         "characterFactComparisonCompletedCount": 0,
         "characterFactComparisonFailedCount": 0,
+        **ZERO_CHARACTER_COMPARISON_METRICS,
         "worldSettingCandidateCount": 0,
         "worldSettingComparisonCompletedCount": 0,
         "worldSettingComparisonFailedCount": 0,

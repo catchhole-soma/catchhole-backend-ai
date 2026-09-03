@@ -44,7 +44,7 @@ CharacterFact는 삭제하지 않는 시간순 기록이며, snapshot은 사용�
 - `MERGE`: 기존값과 신규값이 양립하는 독립된 하위 사실·조건·구성이며, 최종 구조화 값에서 각각을 구분해 보존해야 할 때만 사용한다.
 - 원문의 ‘추가’라는 표현만으로 `MERGE`하지 않는다. 하나의 값이나 요약으로 계산할 수 있으면 `UPDATE`를 우선한다. 예: 식량 약 2일+6일→약 8일은 `UPDATE`, 기존 기술 효과+별도 발동 조건은 `MERGE`다.
 - `REMOVE`: 현재 후보는 종료·회복의 근거 이력으로만 남기고, 의미상 관련된 기존 STATUS를 현재 snapshot에서 하나 이상 제거한다. 같은 key일 필요는 없다.
-- `HISTORY_ONLY`: 회상이나 명확한 과거 상태라 timeline에는 남기되 현재 snapshot에는 반영하지 않는다.
+- `HISTORY_ONLY`: 회상·과거 상태 또는 현재 벌어졌지만 지속 현재값이 아닌 사용·소비 같은 사건이라 timeline에는 남기되 snapshot에는 반영하지 않는다.
 - `EXCLUDE`: 현재 snapshot과 의미가 같은 중복이거나 캐릭터 설정 후보로 유지할 이유가 없다.
 - `REVIEW_REQUIRED`: 시점, 대상, 충돌 또는 종료 여부를 근거만으로 안전하게 정할 수 없다.
 
@@ -82,7 +82,7 @@ candidate가 STATUS이면 candidate와 `proposed_value_json`의 `active`는 존�
 
 # 시간 범위 기준
 
-- 현재 서술이면 `PRESENT`다.
+- 현재 서술이면 `PRESENT`다. 현재의 비지속 사건은 `PRESENT + HISTORY_ONLY`일 수 있다.
 - 회상, 과거 기록, 이미 끝난 상태면 `PAST`이며 `HISTORY_ONLY` 또는 `REVIEW_REQUIRED`만 선택한다.
 - 가정, 꿈, 예언, 가능성, 조건문이면 `HYPOTHETICAL`이며 `HISTORY_ONLY` 또는 `REVIEW_REQUIRED`만 선택한다.
 - 시점을 판단할 근거가 부족하면 `UNKNOWN`과 `REVIEW_REQUIRED`를 선택한다.

@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domain.enums import (
     AnalysisFailureCode,
@@ -527,6 +527,213 @@ class WorkerCharacterFactComparisonClaimPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     candidate_id: UUID = Field(alias="candidateId")
+
+
+class WorkerCharacterFactComparisonBatchCandidate(BaseModel):
+    """One ordered source candidate in a character comparison batch."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_ref: str = Field(
+        alias="candidateRef",
+        pattern=r"^C[1-9][0-9]*$",
+        max_length=20,
+    )
+    projected_snapshot_ref: str = Field(
+        alias="projectedSnapshotRef",
+        pattern=r"^Q[1-9][0-9]*$",
+        max_length=20,
+    )
+    source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo", ge=1)
+    attribute_value: str | None = Field(default=None, alias="attributeValue")
+    value_json: Any | None = Field(default=None, alias="valueJson")
+    value_type: SettingValueType = Field(alias="valueType")
+    evidence_spans: list[WorkerEvidenceSpan] = Field(
+        default_factory=list,
+        alias="evidenceSpans",
+    )
+    raw_fact_key: str = Field(alias="rawFactKey", min_length=1, max_length=150)
+    initial_canonical_fact_key: str = Field(
+        alias="initialCanonicalFactKey",
+        min_length=1,
+        max_length=150,
+    )
+    canonical_key_resolution: Literal["EXACT", "ALIAS", "PATTERN"] = Field(
+        alias="canonicalKeyResolution"
+    )
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class WorkerCharacterFactComparisonBatchPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    comparison_batch_id: UUID = Field(alias="comparisonBatchId")
+    work_id: UUID = Field(alias="workId")
+    source_episode_id: UUID | None = Field(default=None, alias="sourceEpisodeId")
+    character_ref: str = Field(alias="characterRef", pattern=r"^K[1-9][0-9]*$")
+    matched_character_name: str = Field(alias="matchedCharacterName", min_length=1, max_length=100)
+    canonical_fact_type: str = Field(alias="canonicalFactType", min_length=1, max_length=30)
+    candidates: list[WorkerCharacterFactComparisonBatchCandidate] = Field(
+        min_length=1,
+        max_length=20,
+    )
+
+    @model_validator(mode="after")
+    def validate_group_and_refs(self) -> "WorkerCharacterFactComparisonBatchPayload":
+        candidate_refs = [candidate.candidate_ref for candidate in self.candidates]
+        projected_refs = [candidate.projected_snapshot_ref for candidate in self.candidates]
+        if len(candidate_refs) != len(set(candidate_refs)):
+            raise ValueError("Character batch candidate refs must be unique.")
+        if len(projected_refs) != len(set(projected_refs)):
+            raise ValueError("Character batch projected snapshot refs must be unique.")
+        candidate_indexes = [int(reference[1:]) for reference in candidate_refs]
+        projected_indexes = [int(reference[1:]) for reference in projected_refs]
+        if candidate_indexes != projected_indexes:
+            raise ValueError("Each Cn candidate must own the corresponding Qn slot.")
+        if candidate_indexes != sorted(candidate_indexes):
+            raise ValueError("Character batch candidates must follow local ref chronology.")
+        return self
+
+
+class WorkerCharacterFactComparisonBatchSnapshotEntry(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    snapshot_ref: str = Field(
+        alias="snapshotRef",
+        pattern=r"^P[1-9][0-9]*$",
+        max_length=20,
+    )
+    origin: Literal["PERSISTED", "PRIOR_DECISION"] = "PERSISTED"
+    source_candidate_ref: str | None = Field(
+        default=None,
+        alias="sourceCandidateRef",
+        pattern=r"^C[1-9][0-9]*$",
+    )
+    dependency_candidate_refs: list[
+        Annotated[str, Field(pattern=r"^C[1-9][0-9]*$", max_length=20)]
+    ] = Field(
+        default_factory=list,
+        alias="dependencyCandidateRefs",
+        max_length=20,
+    )
+    fact_type: str = Field(alias="factType", min_length=1, max_length=30)
+    fact_key: str = Field(alias="factKey", min_length=1, max_length=150)
+    fact_value: str | None = Field(default=None, alias="factValue")
+    value_json: Any | None = Field(default=None, alias="valueJson")
+
+
+class WorkerCharacterFactComparisonBatchContextResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    comparison_batch_id: UUID = Field(alias="comparisonBatchId")
+    character_ref: str = Field(alias="characterRef", pattern=r"^K[1-9][0-9]*$")
+    matched_character_name: str = Field(alias="matchedCharacterName", min_length=1, max_length=100)
+    canonical_fact_type: str = Field(alias="canonicalFactType", min_length=1, max_length=30)
+    base_snapshot_version: int = Field(alias="baseSnapshotVersion", ge=0)
+    candidates: list[WorkerCharacterFactComparisonBatchCandidate] = Field(
+        min_length=1,
+        max_length=20,
+    )
+    snapshot_entries: list[WorkerCharacterFactComparisonBatchSnapshotEntry] = Field(
+        default_factory=list,
+        alias="snapshotEntries",
+        max_length=30,
+    )
+    context_token: str = Field(alias="contextToken", min_length=64, max_length=64)
+
+
+class WorkerCharacterFactComparisonBatchDecision(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_ref: str = Field(
+        alias="candidateRef",
+        pattern=r"^C[1-9][0-9]*$",
+        max_length=20,
+    )
+    operation: CharacterFactComparisonOperation
+    resolved_canonical_fact_key: str = Field(
+        alias="resolvedCanonicalFactKey",
+        min_length=1,
+        max_length=150,
+    )
+    target_snapshot_ref: str | None = Field(
+        default=None,
+        alias="targetSnapshotRef",
+        pattern=r"^(?:P|Q)[1-9][0-9]*$",
+        max_length=20,
+    )
+    dependency_candidate_refs: list[
+        Annotated[str, Field(pattern=r"^C[1-9][0-9]*$", max_length=20)]
+    ] = Field(
+        default_factory=list,
+        alias="dependencyCandidateRefs",
+        max_length=20,
+    )
+    removed_snapshot_refs: list[
+        Annotated[str, Field(pattern=r"^(?:P|Q)[1-9][0-9]*$", max_length=20)]
+    ] = Field(
+        default_factory=list,
+        alias="removedSnapshotRefs",
+        max_length=30,
+    )
+    proposed_fact_value: str | None = Field(default=None, alias="proposedFactValue")
+    proposed_value_json: Any | None = Field(default=None, alias="proposedValueJson")
+    temporal_scope: CharacterFactTemporalScope = Field(alias="temporalScope")
+    comparison_reason: str = Field(alias="comparisonReason", min_length=1)
+    raw_comparison_json: dict[str, Any] | None = Field(
+        default=None,
+        alias="rawComparisonJson",
+    )
+
+
+class WorkerCharacterFactComparisonBatchFailure(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    candidate_ref: str = Field(
+        alias="candidateRef",
+        pattern=r"^C[1-9][0-9]*$",
+        max_length=20,
+    )
+    failure_code: AnalysisFailureCode = Field(alias="failureCode")
+    error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
+
+
+class WorkerCharacterFactComparisonBatchCompleteRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    context_token: str = Field(alias="contextToken", min_length=64, max_length=64)
+    decisions: list[WorkerCharacterFactComparisonBatchDecision] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    failures: list[WorkerCharacterFactComparisonBatchFailure] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    raw_comparison_json: dict[str, Any] | None = Field(
+        default=None,
+        alias="rawComparisonJson",
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_coverage(self) -> "WorkerCharacterFactComparisonBatchCompleteRequest":
+        refs = [decision.candidate_ref for decision in self.decisions] + [
+            failure.candidate_ref for failure in self.failures
+        ]
+        if len(refs) != len(set(refs)):
+            raise ValueError("A character batch candidate may be completed only once.")
+        if not refs:
+            raise ValueError("A character batch completion must contain a result.")
+        if len(refs) > 20:
+            raise ValueError("A character batch completion may cover at most 20 candidates.")
+        return self
+
+
+class WorkerCharacterFactComparisonBatchFailRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    failure_code: AnalysisFailureCode = Field(alias="failureCode")
+    error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
 
 
 class WorkerCharacterFactComparisonCandidatePayload(BaseModel):

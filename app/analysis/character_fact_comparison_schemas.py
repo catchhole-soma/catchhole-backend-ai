@@ -90,11 +90,6 @@ class CharacterFactComparisonDecision(BaseModel):
                 "PAST and HYPOTHETICAL candidates require HISTORY_ONLY or REVIEW_REQUIRED."
             )
         if (
-            self.operation == CharacterFactComparisonOperation.HISTORY_ONLY
-            and self.temporal_scope == CharacterFactTemporalScope.PRESENT
-        ):
-            raise ValueError("HISTORY_ONLY requires a non-present temporal scope.")
-        if (
             self.temporal_scope == CharacterFactTemporalScope.UNKNOWN
             and self.operation != CharacterFactComparisonOperation.REVIEW_REQUIRED
         ):
@@ -118,4 +113,28 @@ class CharacterFactComparisonDecision(BaseModel):
                 raise ValueError(f"{self.operation} must not include proposed_value_json.")
             if self.proposed_fact_value is not None:
                 raise ValueError(f"{self.operation} must not include proposed_fact_value.")
+        return self
+
+
+class CharacterFactComparisonBatchDecision(CharacterFactComparisonDecision):
+    """Provider decision for exactly one source candidate in a character batch."""
+
+    candidate_ref: str = Field(pattern=r"^C[1-9][0-9]*$")
+    resolved_canonical_fact_key: str = Field(
+        min_length=1,
+        max_length=150,
+    )
+
+
+class CharacterFactComparisonBatchResult(BaseModel):
+    decisions: list[CharacterFactComparisonBatchDecision] = Field(
+        min_length=1,
+        max_length=20,
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_candidate_refs(self) -> "CharacterFactComparisonBatchResult":
+        candidate_refs = [decision.candidate_ref for decision in self.decisions]
+        if len(candidate_refs) != len(set(candidate_refs)):
+            raise ValueError("Each candidate_ref must appear exactly once in decisions.")
         return self

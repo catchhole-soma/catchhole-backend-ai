@@ -4,20 +4,31 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import tiktoken
+
 from app.analysis.character_fact_comparison_schemas import (
+    CharacterFactComparisonBatchDecision,
+    CharacterFactComparisonBatchResult,
     CharacterFactComparisonDecision,
 )
+from app.analysis.character_fact_projection import (
+    CharacterProjectionEntry,
+    CharacterProjectionState,
+    is_explicit_inactive_status,
+    validate_character_fact_decision,
+    validate_resolved_canonical_fact_key,
+    validate_status_active_value,
+)
+from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.json_response import compact_error_message, request_validated_model
 from app.core.config import get_settings
-from app.domain.enums import (
-    CharacterFactComparisonOperation,
-    CharacterFactTemporalScope,
-)
 from app.domain.setting_values import normalize_setting_display_value
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.schemas.worker import (
     WorkerCharacterFactComparisonCandidatePayload,
+    WorkerCharacterFactComparisonBatchCandidate,
+    WorkerCharacterFactComparisonBatchSnapshotEntry,
     WorkerCharacterPriorFactCandidate,
     WorkerCharacterSnapshotEntry,
 )
@@ -25,8 +36,15 @@ from app.schemas.worker import (
 COMPARISON_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "llm" / "prompts" / "character_fact_comparison.md"
 )
+BATCH_COMPARISON_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "llm"
+    / "prompts"
+    / "character_fact_comparison_batch.md"
+)
+CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v1"
 logger = logging.getLogger(__name__)
-SNAPSHOT_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])P[0-9]+(?![A-Za-z0-9])")
+SNAPSHOT_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])[PQ][0-9]+(?![A-Za-z0-9])")
 UUID_PATTERN = re.compile(
     r"(?<![A-Fa-f0-9])"
     r"[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[1-5][A-Fa-f0-9]{3}-"
@@ -54,19 +72,39 @@ class CharacterFactComparator:
         self,
         llm_client: TextGenerationClient | None = None,
         prompt_path: Path = COMPARISON_PROMPT_PATH,
+        batch_prompt_path: Path = BATCH_COMPARISON_PROMPT_PATH,
         model: str | None = None,
         max_attempts: int | None = None,
         max_output_tokens: int | None = None,
+        batch_max_output_tokens: int | None = None,
+        batch_max_input_tokens: int | None = None,
+        batch_max_candidates: int | None = None,
     ) -> None:
         settings = get_settings()
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
+        self.batch_prompt_path = batch_prompt_path
         self.model = model or settings.effective_llm_comparison_model
         self.max_attempts = _resolve_max_attempts(max_attempts)
         self.max_output_tokens = (
             settings.llm_comparison_max_output_tokens
             if max_output_tokens is None
             else max_output_tokens
+        )
+        self.batch_max_output_tokens = (
+            settings.llm_character_fact_batch_comparison_max_output_tokens
+            if batch_max_output_tokens is None
+            else batch_max_output_tokens
+        )
+        self.batch_max_input_tokens = (
+            settings.llm_character_fact_batch_comparison_max_input_tokens
+            if batch_max_input_tokens is None
+            else batch_max_input_tokens
+        )
+        self.batch_max_candidates = (
+            settings.character_fact_comparison_batch_max_candidates
+            if batch_max_candidates is None
+            else batch_max_candidates
         )
 
     async def compare(
@@ -75,7 +113,7 @@ class CharacterFactComparator:
         snapshot_entries: list[WorkerCharacterSnapshotEntry],
         prior_candidates: list[WorkerCharacterPriorFactCandidate] | None = None,
     ) -> tuple[CharacterFactComparisonDecision, dict]:
-        _validate_status_active_value(
+        validate_status_active_value(
             candidate.canonical_fact_type,
             candidate.value_json,
             field_name="candidate.value_json",
@@ -93,7 +131,10 @@ class CharacterFactComparator:
         if len(exact_target_refs) > 1:
             raise ValueError("Canonical snapshot slot must be unique.")
         exact_target_ref = exact_target_refs[0] if exact_target_refs else None
-        explicit_inactive_status = _is_explicit_inactive_status(candidate)
+        explicit_inactive_status = is_explicit_inactive_status(
+            candidate.canonical_fact_type,
+            candidate.value_json,
+        )
         allowed_operations: list[str] = []
         if not explicit_inactive_status:
             if exact_target_ref is None:
@@ -161,6 +202,94 @@ class CharacterFactComparator:
         decision = _normalize_scalar_proposal(decision, candidate)
         return decision, decision.model_dump(mode="json")
 
+    async def compare_batch(
+        self,
+        *,
+        matched_character_name: str,
+        canonical_fact_type: str,
+        candidates: list[WorkerCharacterFactComparisonBatchCandidate],
+        snapshot_entries: list[
+            WorkerCharacterFactComparisonBatchSnapshotEntry | CharacterProjectionEntry
+        ],
+    ) -> tuple[CharacterFactComparisonBatchResult, dict]:
+        """Compare ordered candidates while projecting each accepted decision in memory."""
+
+        if not candidates:
+            raise ComparisonValidationError(
+                "Character comparison batch must include candidates."
+            )
+        if len(candidates) > self.batch_max_candidates:
+            raise ComparisonValidationError(
+                "character_batch_candidate_limit_exceeded"
+            )
+        initial_entries = _projection_entries(snapshot_entries)
+        _validate_batch_candidates(candidates, canonical_fact_type)
+        prompt_payload = _batch_prompt_payload(
+            matched_character_name,
+            canonical_fact_type,
+            candidates,
+            initial_entries,
+        )
+        system_prompt = self.batch_prompt_path.read_text(encoding="utf-8")
+        user_prompt = json.dumps(prompt_payload, ensure_ascii=False)
+        estimated_input_tokens = _estimate_prompt_tokens(system_prompt, user_prompt, self.model)
+        if estimated_input_tokens > self.batch_max_input_tokens:
+            raise ComparisonValidationError("character_batch_input_limit_exceeded")
+
+        result = await request_validated_model(
+            client=self.llm_client,
+            response_model=CharacterFactComparisonBatchResult,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=self.model,
+            max_output_tokens=self.batch_max_output_tokens,
+            max_attempts=self.max_attempts,
+            prompt_cache_key=CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY,
+            operation_name="Character-fact batch comparison",
+            logger=logger,
+            validate_model=lambda comparison_result: _validate_batch_comparison_result(
+                comparison_result,
+                canonical_fact_type,
+                candidates,
+                initial_entries,
+            ),
+            retry_user_prompt_builder=_build_batch_retry_user_prompt,
+        )
+        normalized_result = _normalize_batch_comparison_result(
+            result,
+            canonical_fact_type,
+            candidates,
+            initial_entries,
+        )
+        raw = normalized_result.model_dump(mode="json")
+        raw["estimated_input_tokens"] = estimated_input_tokens
+        return normalized_result, raw
+
+    def batch_fits(
+        self,
+        *,
+        matched_character_name: str,
+        canonical_fact_type: str,
+        candidates: list[WorkerCharacterFactComparisonBatchCandidate],
+        snapshot_entries: list[
+            WorkerCharacterFactComparisonBatchSnapshotEntry | CharacterProjectionEntry
+        ],
+    ) -> bool:
+        if not candidates or len(candidates) > self.batch_max_candidates:
+            return False
+        initial_entries = _projection_entries(snapshot_entries)
+        prompt_payload = _batch_prompt_payload(
+            matched_character_name,
+            canonical_fact_type,
+            candidates,
+            initial_entries,
+        )
+        return _estimate_prompt_tokens(
+            self.batch_prompt_path.read_text(encoding="utf-8"),
+            json.dumps(prompt_payload, ensure_ascii=False),
+            self.model,
+        ) <= self.batch_max_input_tokens
+
 
 def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
     """검증 실패 이유를 다음 시도의 보정 지시로만 전달한다."""
@@ -184,6 +313,23 @@ def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _build_batch_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
+    payload = json.loads(original_user_prompt)
+    payload["validation_feedback"] = {
+        "previous_response_rejected": True,
+        "reason": compact_error_message(exc),
+        "correction": (
+            "모든 candidate_ref를 입력 순서대로 정확히 한 번 반환하세요. 현재 candidate보다 "
+            "앞에서 활성화된 P*/Q*만 target_ref 또는 removed_snapshot_refs로 사용하세요. "
+            "EXACT/ALIAS와 비-STATUS PATTERN key는 initial_canonical_fact_key 그대로 반환하고, "
+            "STATUS pattern key만 의미가 같은 안정적인 status.* 이름으로 정규화하세요. UPDATE/MERGE는 "
+            "현재 활성인 동일 resolved key만 target으로 삼고, REMOVE는 현재 후보를 snapshot에 "
+            "남기지 않으면서 관련 STATUS를 한 개 이상 종료할 때만 선택하세요."
+        ),
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def _resolve_max_attempts(max_attempts: int | None) -> int:
     resolved = get_settings().llm_extraction_max_attempts if max_attempts is None else max_attempts
     if resolved < 1:
@@ -196,24 +342,24 @@ def _validate_comparison_decision(
     candidate: WorkerCharacterFactComparisonCandidatePayload,
     references: list[CharacterSnapshotReference],
 ) -> None:
-    _validate_status_active_value(
-        candidate.canonical_fact_type,
-        candidate.value_json,
-        field_name="candidate.value_json",
-    )
-    entries_by_ref = {reference.reference: reference.entry for reference in references}
-    exact_slot_refs = {
-        reference.reference
+    entries_by_ref = {
+        reference.reference: CharacterProjectionEntry(
+            reference=reference.reference,
+            fact_type=reference.entry.fact_type,
+            fact_key=reference.entry.fact_key,
+            fact_value=reference.entry.fact_value,
+            value_json=reference.entry.value_json,
+        )
         for reference in references
-        if reference.entry.fact_type == candidate.canonical_fact_type
-        and reference.entry.fact_key == candidate.canonical_fact_key
     }
-    requested_refs = set(decision.removed_snapshot_refs)
-    if decision.target_ref is not None:
-        requested_refs.add(decision.target_ref)
-    unknown_refs = requested_refs - entries_by_ref.keys()
-    if unknown_refs:
-        raise ValueError(f"Unknown snapshot refs: {sorted(unknown_refs)}")
+    validate_character_fact_decision(
+        decision,
+        candidate_fact_type=candidate.canonical_fact_type,
+        resolved_fact_key=candidate.canonical_fact_key,
+        candidate_value_type=candidate.value_type,
+        candidate_value_json=candidate.value_json,
+        entries_by_ref=entries_by_ref,
+    )
     reason_refs = set(SNAPSHOT_REFERENCE_PATTERN.findall(decision.comparison_reason))
     unknown_reason_refs = reason_refs - entries_by_ref.keys()
     if unknown_reason_refs:
@@ -222,104 +368,6 @@ def _validate_comparison_decision(
         )
     _validate_user_facing_reason(decision.comparison_reason, candidate, references)
 
-    if decision.target_ref is not None:
-        target = entries_by_ref[decision.target_ref]
-        if (
-            target.fact_type != candidate.canonical_fact_type
-            or target.fact_key != candidate.canonical_fact_key
-        ):
-            raise ValueError("UPDATE and MERGE must target the candidate's canonical Fact key.")
-        if decision.target_ref in decision.removed_snapshot_refs:
-            raise ValueError("The comparison target must not also be removed.")
-
-    if decision.operation == CharacterFactComparisonOperation.ADD and exact_slot_refs:
-        raise ValueError("ADD is invalid when the canonical Fact slot already exists.")
-
-    applies_to_snapshot = decision.operation in {
-        CharacterFactComparisonOperation.ADD,
-        CharacterFactComparisonOperation.UPDATE,
-        CharacterFactComparisonOperation.MERGE,
-    }
-    if applies_to_snapshot:
-        _validate_status_active_value(
-            candidate.canonical_fact_type,
-            decision.proposed_value_json,
-            field_name="proposed_value_json",
-        )
-        if _is_explicit_inactive_status(candidate) or _has_explicit_inactive_status_value(
-            candidate.canonical_fact_type,
-            decision.proposed_value_json,
-        ):
-            raise ValueError("An explicitly inactive STATUS value must not enter the snapshot.")
-
-    if decision.operation == CharacterFactComparisonOperation.REMOVE:
-        if candidate.canonical_fact_type != "STATUS":
-            raise ValueError("REMOVE is only allowed for a canonical STATUS slot.")
-
-    for removed_ref in decision.removed_snapshot_refs:
-        if entries_by_ref[removed_ref].fact_type != "STATUS":
-            raise ValueError("Only STATUS snapshot entries may be removed in the MVP.")
-
-    if decision.removed_snapshot_refs and (
-        candidate.canonical_fact_type != "STATUS"
-        or decision.temporal_scope != CharacterFactTemporalScope.PRESENT
-        or decision.operation
-        not in {
-            CharacterFactComparisonOperation.ADD,
-            CharacterFactComparisonOperation.UPDATE,
-            CharacterFactComparisonOperation.MERGE,
-            CharacterFactComparisonOperation.REMOVE,
-        }
-    ):
-        raise ValueError("Snapshot removal requires a PRESENT STATUS transition.")
-
-    if applies_to_snapshot:
-        normalize_setting_display_value(
-            candidate.value_type,
-            decision.proposed_value_json,
-            decision.proposed_fact_value,
-        )
-
-
-def _is_explicit_inactive_status(
-    candidate: WorkerCharacterFactComparisonCandidatePayload,
-) -> bool:
-    return _has_explicit_inactive_status_value(
-        candidate.canonical_fact_type,
-        candidate.value_json,
-    )
-
-
-def _has_explicit_inactive_status_value(
-    canonical_fact_type: str,
-    value_json: object,
-) -> bool:
-    return (
-        canonical_fact_type == "STATUS"
-        and isinstance(value_json, dict)
-        and value_json.get("active") is False
-    )
-
-
-def _validate_status_active_value(
-    canonical_fact_type: str,
-    value_json: object,
-    *,
-    field_name: str,
-) -> None:
-    """STATUS의 active는 오직 JSON boolean만 허용한다.
-
-    문자열 ``"false"``는 truthy 값으로 다뤄질 수 있어 종료 후보가 현재 snapshot에
-    들어가는 우회를 만든다. 실제 값은 오류 메시지나 로그에 노출하지 않는다.
-    """
-
-    if (
-        canonical_fact_type == "STATUS"
-        and isinstance(value_json, dict)
-        and "active" in value_json
-        and type(value_json["active"]) is not bool
-    ):
-        raise ValueError(f"{field_name}.active must be a JSON boolean for STATUS.")
 
 
 def _normalize_scalar_proposal(
@@ -345,10 +393,19 @@ def _validate_user_facing_reason(
 ) -> None:
     """검토 화면에 그대로 노출되는 설명에서 내부 구현 식별자를 거절한다."""
 
-    internal_fact_keys = {
+    _validate_user_facing_reason_values(
+        comparison_reason,
         candidate.canonical_fact_key,
-        *(reference.entry.fact_key for reference in references),
-    }
+        [reference.entry.fact_key for reference in references],
+    )
+
+
+def _validate_user_facing_reason_values(
+    comparison_reason: str,
+    candidate_fact_key: str,
+    snapshot_fact_keys: list[str],
+) -> None:
+    internal_fact_keys = {candidate_fact_key, *snapshot_fact_keys}
     normalized_reason = comparison_reason.casefold()
     leaked_fact_keys = sorted(
         fact_key for fact_key in internal_fact_keys if fact_key.casefold() in normalized_reason
@@ -395,3 +452,195 @@ def _replace_internal_snapshot_references(
     if comparison_reason == decision.comparison_reason:
         return decision
     return decision.model_copy(update={"comparison_reason": comparison_reason})
+
+
+def _projection_entries(
+    entries: list[WorkerCharacterFactComparisonBatchSnapshotEntry | CharacterProjectionEntry],
+) -> list[CharacterProjectionEntry]:
+    return [
+        entry
+        if isinstance(entry, CharacterProjectionEntry)
+        else CharacterProjectionEntry(
+            reference=entry.snapshot_ref,
+            origin=entry.origin,
+            source_candidate_ref=entry.source_candidate_ref,
+            dependency_candidate_refs=tuple(entry.dependency_candidate_refs),
+            fact_type=entry.fact_type,
+            fact_key=entry.fact_key,
+            fact_value=entry.fact_value,
+            value_json=entry.value_json,
+        )
+        for entry in entries
+    ]
+
+
+def _validate_batch_candidates(
+    candidates: list[WorkerCharacterFactComparisonBatchCandidate],
+    canonical_fact_type: str,
+) -> None:
+    refs = [candidate.candidate_ref for candidate in candidates]
+    projected_refs = [candidate.projected_snapshot_ref for candidate in candidates]
+    if len(refs) != len(set(refs)):
+        raise ValueError("Character comparison batch candidate refs must be unique.")
+    if len(projected_refs) != len(set(projected_refs)):
+        raise ValueError("Character comparison projected snapshot refs must be unique.")
+    candidate_indexes = [int(reference[1:]) for reference in refs]
+    projected_indexes = [int(reference[1:]) for reference in projected_refs]
+    if candidate_indexes != projected_indexes:
+        raise ValueError("Each Cn candidate must own the corresponding Qn slot.")
+    if candidate_indexes != sorted(candidate_indexes):
+        raise ValueError("Character comparison candidates must follow local ref chronology.")
+    for candidate in candidates:
+        validate_status_active_value(
+            canonical_fact_type,
+            candidate.value_json,
+            field_name=f"candidate[{candidate.candidate_ref}].value_json",
+        )
+
+
+def _batch_prompt_payload(
+    matched_character_name: str,
+    canonical_fact_type: str,
+    candidates: list[WorkerCharacterFactComparisonBatchCandidate],
+    snapshot_entries: list[CharacterProjectionEntry],
+) -> dict:
+    return {
+        "matched_character_name": matched_character_name,
+        "canonical_fact_type": canonical_fact_type,
+        "candidates": [
+            {
+                "candidate_ref": candidate.candidate_ref,
+                "projected_snapshot_ref": candidate.projected_snapshot_ref,
+                "source_episode_no": candidate.source_episode_no,
+                "raw_fact_key": candidate.raw_fact_key,
+                "initial_canonical_fact_key": candidate.initial_canonical_fact_key,
+                "canonical_key_resolution": candidate.canonical_key_resolution,
+                "attribute_value": candidate.attribute_value,
+                "value_json": candidate.value_json,
+                "value_type": candidate.value_type,
+                "confidence": candidate.confidence,
+                "evidence_spans": [
+                    evidence.model_dump(mode="json")
+                    for evidence in candidate.evidence_spans
+                ],
+            }
+            for candidate in candidates
+        ],
+        "snapshot_entries": [
+            {
+                "ref": entry.reference,
+                "origin": entry.origin,
+                "source_candidate_ref": entry.source_candidate_ref,
+                "fact_type": entry.fact_type,
+                "fact_key": entry.fact_key,
+                "fact_value": entry.fact_value,
+                "value_json": entry.value_json,
+            }
+            for entry in snapshot_entries
+        ],
+    }
+
+
+def _validate_batch_comparison_result(
+    result: CharacterFactComparisonBatchResult,
+    canonical_fact_type: str,
+    candidates: list[WorkerCharacterFactComparisonBatchCandidate],
+    initial_entries: list[CharacterProjectionEntry],
+) -> None:
+    expected_refs = [candidate.candidate_ref for candidate in candidates]
+    actual_refs = [decision.candidate_ref for decision in result.decisions]
+    if actual_refs != expected_refs:
+        raise ValueError(
+            "Batch decisions must cover every candidate exactly once in input order."
+        )
+
+    state = CharacterProjectionState(initial_entries)
+    for candidate, decision in zip(candidates, result.decisions, strict=True):
+        validate_resolved_canonical_fact_key(
+            initial_fact_key=candidate.initial_canonical_fact_key,
+            resolved_fact_key=decision.resolved_canonical_fact_key,
+            canonical_key_resolution=candidate.canonical_key_resolution,
+            fact_type=canonical_fact_type,
+        )
+        active_entries = state.entries
+        active_refs = {entry.reference for entry in active_entries}
+        reason_refs = set(SNAPSHOT_REFERENCE_PATTERN.findall(decision.comparison_reason))
+        unknown_reason_refs = reason_refs - active_refs
+        if unknown_reason_refs:
+            raise ValueError(
+                "Unknown or future snapshot refs in comparison reason: "
+                f"{sorted(unknown_reason_refs)}"
+            )
+        _validate_user_facing_reason_values(
+            decision.comparison_reason,
+            decision.resolved_canonical_fact_key,
+            [entry.fact_key for entry in active_entries],
+        )
+        state.apply(
+            candidate_ref=candidate.candidate_ref,
+            projected_snapshot_ref=candidate.projected_snapshot_ref,
+            fact_type=canonical_fact_type,
+            resolved_fact_key=decision.resolved_canonical_fact_key,
+            value_type=candidate.value_type,
+            candidate_value_json=candidate.value_json,
+            decision=decision,
+        )
+
+
+def _normalize_batch_comparison_result(
+    result: CharacterFactComparisonBatchResult,
+    canonical_fact_type: str,
+    candidates: list[WorkerCharacterFactComparisonBatchCandidate],
+    initial_entries: list[CharacterProjectionEntry],
+) -> CharacterFactComparisonBatchResult:
+    state = CharacterProjectionState(initial_entries)
+    normalized_decisions: list[CharacterFactComparisonBatchDecision] = []
+    for candidate, decision in zip(candidates, result.decisions, strict=True):
+        active_entries = state.entries
+        normalized = _normalize_scalar_proposal(decision, candidate)
+        normalized = _replace_projection_references(normalized, active_entries)
+        state.apply(
+            candidate_ref=candidate.candidate_ref,
+            projected_snapshot_ref=candidate.projected_snapshot_ref,
+            fact_type=canonical_fact_type,
+            resolved_fact_key=normalized.resolved_canonical_fact_key,
+            value_type=candidate.value_type,
+            candidate_value_json=candidate.value_json,
+            decision=normalized,
+        )
+        normalized_decisions.append(normalized)
+    return CharacterFactComparisonBatchResult(decisions=normalized_decisions)
+
+
+def _replace_projection_references(
+    decision: CharacterFactComparisonBatchDecision,
+    entries: list[CharacterProjectionEntry],
+) -> CharacterFactComparisonBatchDecision:
+    references = [
+        CharacterSnapshotReference(
+            reference=entry.reference,
+            entry=WorkerCharacterSnapshotEntry(
+                fact_type=entry.fact_type,
+                fact_key=entry.fact_key,
+                fact_value=entry.fact_value,
+                value_json=entry.value_json,
+            ),
+        )
+        for entry in entries
+    ]
+    return _replace_internal_snapshot_references(decision, references)
+
+
+def _estimate_prompt_tokens(system_prompt: str, user_prompt: str, model: str) -> int:
+    try:
+        encoding = (
+            tiktoken.get_encoding("o200k_base")
+            if model.startswith("gpt-5.6")
+            else tiktoken.encoding_for_model(model)
+        )
+        content_tokens = len(encoding.encode(system_prompt, disallowed_special=())) + len(
+            encoding.encode(user_prompt, disallowed_special=())
+        )
+        return int(content_tokens * 1.10) + 256
+    except Exception:  # noqa: BLE001 - a byte bound keeps splitting deterministic.
+        return len(system_prompt.encode("utf-8")) + len(user_prompt.encode("utf-8")) + 512
