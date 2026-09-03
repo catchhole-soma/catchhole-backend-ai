@@ -161,6 +161,29 @@ def test_notion_client_filters_selected_episodes_before_row_validation() -> None
     }
 
 
+def test_notion_client_retrieves_property_name_and_type_schema() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/data_sources/source-id"
+        return httpx.Response(
+            200,
+            json={
+                "properties": {
+                    "회차": {"id": "episode", "type": "number"},
+                    "검수 상태": {"id": "review", "type": "select"},
+                }
+            },
+        )
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = NotionDataSourceClient("secret", client=http_client)
+
+    assert client.retrieve_property_schema("source-id") == {
+        "회차": "number",
+        "검수 상태": "select",
+    }
+
+
 def test_source_file_cannot_escape_private_source_root(tmp_path: Path) -> None:
     source_root = tmp_path / "sources"
     source_root.mkdir()

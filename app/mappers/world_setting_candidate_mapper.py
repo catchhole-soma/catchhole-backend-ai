@@ -46,14 +46,14 @@ class WorldSettingCandidateMapper:
         candidates: list[WorkerWorldSettingCandidatePublishItem],
     ) -> list[WorkerWorldSettingCandidatePublishItem]:
         candidates_by_key: dict[
-            tuple[str, str, str | None, str], list[WorkerWorldSettingCandidatePublishItem]
+            tuple[str, str, str, str], list[WorkerWorldSettingCandidatePublishItem]
         ] = {}
         for candidate in candidates:
-            key = (
+            key = world_setting_path_key(
                 candidate.category,
-                _normalized_name(candidate.subject_name),
-                _normalized_optional_name(candidate.scope_name),
-                _normalized_name(candidate.setting_name),
+                candidate.subject_name,
+                candidate.scope_name,
+                candidate.setting_name,
             )
             candidates_by_key.setdefault(key, []).append(candidate)
         return [
@@ -101,7 +101,7 @@ def _unique_values(values) -> list[str]:
     unique: list[str] = []
     seen: set[str] = set()
     for value in values:
-        normalized = _normalized_name(value)
+        normalized = normalize_world_setting_name(value)
         if normalized in seen:
             continue
         seen.add(normalized)
@@ -109,9 +109,23 @@ def _unique_values(values) -> list[str]:
     return unique
 
 
-def _normalized_name(value: str) -> str:
-    return unicodedata.normalize("NFC", value.strip()).casefold()
+def normalize_world_setting_name(value: str) -> str:
+    """Mirror Java NFC + trim + Locale.ROOT lowercase identity normalization."""
+
+    return unicodedata.normalize("NFC", value.strip()).lower()
 
 
-def _normalized_optional_name(value: str | None) -> str | None:
-    return None if value is None else _normalized_name(value)
+def world_setting_path_key(
+    category: str,
+    subject_name: str,
+    scope_name: str | None,
+    setting_name: str,
+) -> tuple[str, str, str, str]:
+    """Return the canonical identity key shared by production and evaluation."""
+
+    return (
+        str(category),
+        normalize_world_setting_name(subject_name),
+        "" if scope_name is None else normalize_world_setting_name(scope_name),
+        normalize_world_setting_name(setting_name),
+    )
