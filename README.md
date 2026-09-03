@@ -42,7 +42,7 @@ uvicorn app.main:app --reload
 .venv/bin/python -m scripts.run_analysis_worker --worker-kind world-comparison
 ```
 
-장기 실행 runner는 빈 실행 슬롯을 확보한 뒤 Job 하나를 claim해 즉시 비동기 Task로 처리합니다. 한 Job 안의 청크는 순차 처리하고, 다른 Job이 OpenAI 응답을 기다리는 동안 event loop가 나머지 Job을 진행합니다. 현재 운영 검증값은 Backend 저장소의 Compose에서 분석 Worker 2개를 실행하고 프로세스당 동시 Job 5개로 `SETTING_EXTRACTION` Job을 최대 10개 처리합니다. 별도 캐릭터·세계관 재비교 Worker는 각각 Job·LLM 동시성을 1로 유지합니다.
+장기 실행 runner는 빈 실행 슬롯을 확보한 뒤 Job 하나를 claim해 즉시 비동기 Task로 처리합니다. 한 Job 안의 청크는 순차 처리하고, 다른 Job이 OpenAI 응답을 기다리는 동안 event loop가 나머지 Job을 진행합니다. 현재 운영 기본값은 Worker 서버의 분석 Worker 5개가 프로세스당 동시 Job 10개로 `SETTING_EXTRACTION` Job을 최대 50개 처리합니다. 별도 캐릭터·세계관 재비교 Worker는 각각 Job·LLM 동시성을 1로 유지합니다.
 
 S3/DB/Spring 연결 없이 로컬 텍스트 파일 하나로 청킹, LLM 설정 후보 추출, 근거 위치 보정,
 지칭어 subject fallback, 캐릭터 매칭 상태 계산을 확인하려면 다음 runner를 사용합니다.
@@ -126,7 +126,7 @@ docker run --rm --env-file .env catchhole-ai:local \
   python -m scripts.run_analysis_worker --worker-kind world-comparison
 ```
 
-운영 Compose는 동일 AI 이미지를 `ai-worker`, `ai-character-comparison-worker`, `ai-world-comparison-worker` 세 서비스로 실행해야 합니다. 전용 서비스가 빠지면 해당 재비교 Job은 생성돼도 claim되지 않습니다. 공유 DB 컬럼과 내부 API가 먼저 필요하므로 `RUNNING` Job을 가능한 drain한 뒤 Spring Flyway/API를 먼저, AI 서비스를 다음 순서로 배포합니다.
+운영 Worker 서버는 `deploy/compose.worker.prod.yml`로 동일 AI 이미지를 `ai-worker`, `ai-character-comparison-worker`, `ai-world-comparison-worker` 세 서비스로 실행합니다. 전용 서비스가 빠지면 해당 재비교 Job은 생성돼도 claim되지 않습니다. 공유 DB 컬럼과 내부 API가 먼저 필요하므로 `RUNNING` Job을 가능한 drain한 뒤 Spring Flyway/API를 먼저, AI 서비스를 다음 순서로 배포합니다. 전체 절차와 25개 작업 슬롯 fallback은 `deploy/WORKER_EC2_DEPLOYMENT.md`를 따릅니다.
 
 FastAPI 서버를 확인해야 할 때는 command를 override합니다.
 
@@ -135,14 +135,15 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
   uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-`main` 브랜치에 push되면 GitHub Actions가 GHCR에 `ghcr.io/catchhole-soma/catchhole-backend-ai:main`과 short SHA 태그를 발행합니다.
-이미지 발행 후 백엔드 저장소의 EC2 배포 workflow를 호출하려면 AI 저장소의 Repository Secrets에 `BACKEND_DEPLOY_TOKEN`을 설정합니다.
+`main` 브랜치에 push되면 GitHub Actions가 GHCR에 `ghcr.io/catchhole-soma/catchhole-backend-ai:main`과 short SHA 태그를 발행합니다. 이미지 발행이 성공하면 별도의 `Deploy Worker EC2` 작업 흐름이 Worker 서버용 Amazon EC2 인스턴스만 배포합니다. 백엔드 저장소를 호출하는 토큰은 사용하지 않습니다.
 
 ## 환경 변수
 
 `.env.example`을 참고해 `.env`를 생성합니다.
 
 - `DATABASE_URL`: Spring 서버와 공유하는 PostgreSQL 연결 문자열
+- `DATABASE_POOL_SIZE`: SQLAlchemy가 프로세스마다 유지할 기본 PostgreSQL 연결 수. 운영 설정 추출 Worker는 3개를 사용합니다.
+- `DATABASE_POOL_MAX_OVERFLOW`: 기본 연결 풀을 넘어서 만들 수 있는 임시 연결 수. 운영은 0으로 고정합니다.
 - `TZ`: Worker 로그와 timezone 없는 DB timestamp 생성에 사용할 런타임 시간대. 운영 기본값은 `Asia/Seoul`
 - `AWS_REGION`: S3 client가 사용할 AWS 리전
 - `AWS_S3_BUCKET`: 회차 원문과 업로드 파일이 저장되는 S3 버킷
@@ -163,7 +164,7 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `LLM_HTTP_MAX_RETRIES`: 429/5xx/timeout 같은 일시 provider 오류의 재시도 횟수. 최초 요청은 제외하며 운영 기본값은 3입니다.
 - `LLM_HTTP_RETRY_BASE_SECONDS`: provider 재시도의 지수 backoff 기준값. 운영 기본값 2초에서 2초, 4초, 8초와 jitter를 적용하고 `Retry-After`가 있으면 우선합니다.
 - `AI_WORKER_CONCURRENCY`: 현재 프로세스가 동시에 실행할 Job 슬롯 수. 운영 검증값은 5입니다.
-- `LLM_MAX_CONCURRENT_REQUESTS`: 현재 프로세스 안에서 동시에 진행할 LLM HTTP 요청 상한. Job 내부 청크는 순차이므로 운영 검증에서는 Job 동시성과 같은 5를 사용합니다.
+- `LLM_MAX_CONCURRENT_REQUESTS`: 현재 프로세스 안에서 동시에 진행할 LLM HTTP 요청 상한. Job 내부 청크는 순차이므로 운영 기본값은 Job 동시성과 같은 10을 사용합니다.
 - `AI_WORKER_BLOCKING_MAX_WORKERS`: 동기 DB/S3 작업을 event loop 밖에서 수행하는 blocking executor의 최대 Thread 수. 운영 rollout 값은 3입니다.
 - `AI_WORKER_IDLE_SLEEP_SECONDS`: claim할 Job이 없을 때 다음 polling 전 대기 시간. 운영 기본값은 5초입니다.
 - `AI_WORKER_SHUTDOWN_GRACE_SECONDS`: 종료 신호 뒤 신규 claim을 중단하고 실행 중 Job을 기다리는 내부 grace. 운영값은 180초이며 Compose는 더 긴 210초 뒤 강제 종료합니다.
@@ -175,7 +176,7 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 - `SPRING_INTERNAL_API_BASE_URL`: Spring 내부 Worker API base URL. 기본값 `http://localhost:8080`은 로컬 개발용 값입니다.
 - `SPRING_INTERNAL_API_KEY`: Spring 내부 Worker API 호출에 사용할 `X-Internal-Api-Key` 값
 
-`AI_WORKER_CONCURRENCY=5`와 `LLM_MAX_CONCURRENT_REQUESTS=5`는 프로세스별 상한입니다. 운영 Compose의 분석 Worker 2개를 합친 `10`은 `SETTING_EXTRACTION` Job 용량만 뜻합니다. 별도 재비교 Worker와 모든 프로세스를 합친 provider 계정 전체 상한을 강제하려면 프로세스 밖의 분산 limiter가 필요하며 현재 MVP에는 포함하지 않습니다.
+`AI_WORKER_CONCURRENCY=10`과 `LLM_MAX_CONCURRENT_REQUESTS=10`은 프로세스별 상한입니다. 운영 Compose의 분석 Worker 5개를 합친 `50`은 `SETTING_EXTRACTION` Job 용량만 뜻합니다. 별도 재비교 Worker와 모든 프로세스를 합친 provider 계정 전체 상한을 강제하려면 프로세스 밖의 분산 limiter가 필요하며 현재 MVP에는 포함하지 않습니다. 운영 지표가 기준에 미달하면 두 값을 5로 낮춰 전체 용량을 25개로 제한합니다.
 
 ## FastAPI API 초안
 

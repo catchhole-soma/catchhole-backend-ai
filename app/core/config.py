@@ -12,9 +12,12 @@ class Settings(BaseSettings):
     app_name: str = "CatchHole AI Backend"
     app_version: str = "0.1.0"
     app_env: str = "local"
+    tz: str = "Asia/Seoul"
 
     # DB 연결 URL
     database_url: str = ""
+    database_pool_size: int = 3
+    database_pool_max_overflow: int = 0
 
     # AWS 설정
     aws_region: str = "ap-northeast-2"
@@ -100,6 +103,7 @@ class Settings(BaseSettings):
         "llm_max_concurrent_requests",
         "ai_worker_concurrency",
         "ai_worker_blocking_max_workers",
+        "database_pool_size",
     )
     @classmethod
     def validate_positive_integer(cls, value: int) -> int:
@@ -152,6 +156,13 @@ class Settings(BaseSettings):
     def validate_retry_count(cls, value: int) -> int:
         if value < 0:
             raise ValueError("LLM_HTTP_MAX_RETRIES must be zero or greater.")
+        return value
+
+    @field_validator("database_pool_max_overflow")
+    @classmethod
+    def validate_database_pool_max_overflow(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("DATABASE_POOL_MAX_OVERFLOW must be zero or greater.")
         return value
 
     # Spring 내부 API 주소와 내부 API key를 읽음

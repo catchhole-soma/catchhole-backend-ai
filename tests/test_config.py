@@ -80,6 +80,18 @@ def test_async_worker_settings_are_loaded_from_environment(monkeypatch) -> None:
     assert settings.llm_http_retry_base_seconds == 2
 
 
+def test_database_pool_settings_are_loaded_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("DATABASE_POOL_SIZE", "4")
+    monkeypatch.setenv("DATABASE_POOL_MAX_OVERFLOW", "1")
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.database_pool_size == 4
+    assert settings.database_pool_max_overflow == 1
+    assert settings.tz == "Asia/Tokyo"
+
+
 def test_purpose_output_caps_are_loaded_independently(monkeypatch) -> None:
     monkeypatch.setenv("LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS", "4100")
     monkeypatch.setenv("LLM_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS", "8200")
@@ -139,6 +151,8 @@ def test_purpose_output_caps_reject_invalid_configuration(overrides: dict) -> No
         ("ai_worker_shutdown_grace_seconds", 0),
         ("llm_http_retry_base_seconds", 0),
         ("llm_http_max_retries", -1),
+        ("database_pool_size", 0),
+        ("database_pool_max_overflow", -1),
     ],
 )
 def test_async_worker_settings_reject_invalid_limits(field: str, value: int) -> None:

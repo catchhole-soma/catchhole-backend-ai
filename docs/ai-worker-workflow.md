@@ -56,22 +56,22 @@ flowchart TD
 - `LLM_MAX_CONCURRENT_REQUESTS`는 한 프로세스의 실제 LLM HTTP 요청 상한입니다.
 - 동기 S3·SQLAlchemy 작업은 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에서 수행해 event loop와 heartbeat를 막지 않습니다.
 - 한 Job의 오류는 그 Task에서만 처리하며 다른 실행 중 Job을 취소하지 않습니다.
-- 현재 운영 검증 rollout은 분석 Worker 2개 × 프로세스당 동시 Job 5개 = `SETTING_EXTRACTION` 최대 10개입니다. 50개 Job 부하 테스트가 기준에 미달하면 프로세스당 3개로 되돌립니다.
-- 별도 `world-comparison`, `character-comparison` Worker는 Job·LLM 동시성을 각각 1로 유지합니다. 따라서 10은 provider 계정 전체의 분산 상한이 아니며, 계정 전체 상한이 필요하면 별도 분산 limiter가 필요합니다.
+- 현재 운영 기본값은 분석 Worker 5개 × 프로세스당 동시 Job 10개 = `SETTING_EXTRACTION` 최대 50개입니다. 50개 Job 부하 테스트가 기준에 미달하면 Worker 5개는 유지하고 프로세스당 Job과 LLM 요청을 5개로 낮춰 최대 25개로 되돌립니다.
+- 별도 `world-comparison`, `character-comparison` Worker는 Job·LLM 동시성을 각각 1로 유지합니다. 따라서 50은 provider 계정 전체의 분산 상한이 아니며, 계정 전체 상한이 필요하면 별도 분산 limiter가 필요합니다.
 
-### 동시 Job 10개 토큰 경계 부하 테스트
+### 동시 Job 50개 토큰 경계 부하 테스트
 
 staging에서 실제 운영과 같은 Spring·PostgreSQL·Worker 이미지로 다음 순서를 반복합니다. 원고·prompt·provider 응답 본문은 측정 로그에 남기지 않습니다.
 
 1. 전용 회원 하나에 50개 단일 회차 `SETTING_EXTRACTION` Job을 만들고, 시작 직전 `ai_token_accounts`와 해당 회원의 `ai_token_usages` 건수·합계를 기록합니다.
-2. 분석 Worker 2개를 각각 `AI_WORKER_CONCURRENCY=5`, `LLM_MAX_CONCURRENT_REQUESTS=5`로 기동합니다. 재비교 Worker는 각각 1을 유지합니다.
-3. 첫 실행은 모든 Job을 처리할 충분한 잔액으로 scheduler의 동시 실행 상한 10, heartbeat 유지, Job별 완료·실패 격리를 확인합니다.
-4. 두 번째 실행은 같은 회원의 잔액이 10개 Job의 예약 경쟁 중 경계값에 도달하도록 지급량을 낮춥니다. 계정 잠금 중 `used + reserved`가 `granted`를 넘지 않고, 거절된 reserve가 `AI_TOKEN_QUOTA_EXHAUSTED` 409 한 번으로 끝나는지 확인합니다.
+2. 분석 Worker 5개를 각각 `AI_WORKER_CONCURRENCY=10`, `LLM_MAX_CONCURRENT_REQUESTS=10`으로 기동합니다. 재비교 Worker는 각각 1을 유지합니다.
+3. 첫 실행은 모든 Job을 처리할 충분한 잔액으로 scheduler의 동시 실행 상한 50, heartbeat 유지, Job별 완료·실패 격리를 확인합니다.
+4. 두 번째 실행은 같은 회원의 잔액이 50개 Job의 예약 경쟁 중 경계값에 도달하도록 지급량을 낮춥니다. 계정 잠금 중 `used + reserved`가 `granted`를 넘지 않고, 거절된 reserve가 `AI_TOKEN_QUOTA_EXHAUSTED` 409 한 번으로 끝나는지 확인합니다.
 5. 토큰 부족이 발생한 각 Job에서 그 응답 이후 새 provider 예약·후속 후보 claim이 없고, 다른 실행 중 Job은 계속 완료되는지 Job ID와 request ID로 대조합니다.
 6. 종료 후 request ID 중복, `RESERVED` 누수, 중복 정산, 음수 잔액이 없고 `analysis_jobs.failure_code`, 후보별 `comparison_failure_code`, 배치 중단 건수가 일치하는지 조회합니다.
 7. 완료된 후보·1차 추출을 보존한 채 추가 사용량 지급과 배치 재개를 실행해 중단 후보만 처리되는지 확인합니다.
 
-통과 기준은 활성 분석 Job 10개 이하, 원장 초과 사용·중복 차감 0건, 다른 Job 취소 0건, 내부 URL이 포함된 공개 실패 문구 0건입니다. Backend·PostgreSQL lock wait 또는 provider 오류율이 rollout 기준을 넘거나 heartbeat가 불안정하면 프로세스당 `AI_WORKER_CONCURRENCY=3`, `LLM_MAX_CONCURRENT_REQUESTS=3`으로 되돌려 같은 절차를 재실행합니다.
+통과 기준은 활성 분석 Job 50개 이하, 원장 초과 사용·중복 차감 0건, 다른 Job 취소 0건, 내부 URL이 포함된 공개 실패 문구 0건입니다. Backend·PostgreSQL lock wait 또는 provider 오류율이 rollout 기준을 넘거나 heartbeat가 불안정하면 Worker 5개를 유지하고 프로세스당 `AI_WORKER_CONCURRENCY=5`, `LLM_MAX_CONCURRENT_REQUESTS=5`로 낮춰 최대 25개 조건에서 같은 절차를 재실행합니다.
 
 종료 신호를 받으면 scheduler는 신규 claim을 즉시 중단하고 `AI_WORKER_SHUTDOWN_GRACE_SECONDS` 동안 실행 중 Job과 heartbeat를 유지합니다. 운영 내부 grace는 180초이고 Compose `stop_grace_period`는 210초입니다. grace 안에 끝나지 않은 Task는 취소하고 heartbeat를 중단하며, Spring은 5분 lease가 만료된 Job을 마지막 checkpoint부터 회수합니다.
 
