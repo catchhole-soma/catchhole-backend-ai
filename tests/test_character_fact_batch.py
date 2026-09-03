@@ -341,9 +341,10 @@ def test_batch_comparator_projects_in_order_and_hides_transport_ids() -> None:
     serialized = request["user_prompt"]
     assert prompt["candidates"][0]["projected_snapshot_ref"] == "Q1"
     assert prompt["candidates"][0]["canonical_key_resolution"] == "PATTERN"
+    assert "`matched_character_name`" in request["system_prompt"]
     assert str(WORK_ID) not in serialized
     assert str(EPISODE_ID) not in serialized
-    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v1"
+    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v2"
 
 
 def test_batch_pipeline_falls_back_to_singletons_without_losing_projection() -> None:
@@ -531,6 +532,87 @@ def test_singleton_failure_is_not_projected_into_later_candidate() -> None:
     assert completion.decisions[0].dependency_candidate_refs == []
 
 
+def test_singleton_provider_failure_is_isolated_after_batch_validation_fallback() -> None:
+    batch = _batch()
+    comparator = FakeBatchComparator(
+        [
+            ComparisonValidationError("invalid batch"),
+            CharacterFactComparisonBatchResult(
+                decisions=[
+                    _decision(
+                        "C1",
+                        operation="ADD",
+                        resolved_key="status.부상",
+                        value="다리를 다침",
+                    )
+                ]
+            ),
+            httpx.TimeoutException("provider timed out"),
+        ]
+    )
+    spring = FakeBatchSpring(batch, _context(batch))
+
+    result = asyncio.run(
+        CharacterFactComparisonPipeline(spring, comparator).process_all(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+        )
+    )
+
+    assert result.completed_count == 1
+    assert result.failed_count == 1
+    assert spring.failures == []
+    completion = spring.completions[0]
+    assert [decision.candidate_ref for decision in completion.decisions] == ["C1"]
+    assert [failure.candidate_ref for failure in completion.failures] == ["C2"]
+    assert completion.failures[0].failure_code == "LLM_NETWORK_ERROR"
+
+
+def test_singleton_quota_failure_still_aborts_validation_fallback() -> None:
+    batch = _batch()
+    comparator = FakeBatchComparator(
+        [
+            ComparisonValidationError("invalid batch"),
+            CharacterFactComparisonBatchResult(
+                decisions=[
+                    _decision(
+                        "C1",
+                        operation="ADD",
+                        resolved_key="status.부상",
+                        value="다리를 다침",
+                    )
+                ]
+            ),
+            AiTokenQuotaExhaustedError(),
+        ]
+    )
+    spring = FakeBatchSpring(batch, _context(batch))
+
+    with pytest.raises(AiTokenQuotaExhaustedError):
+        asyncio.run(
+            CharacterFactComparisonPipeline(spring, comparator).process_all(
+                ANALYSIS_JOB_ID,
+                LEASE_TOKEN,
+            )
+        )
+
+    assert spring.completions == []
+    assert spring.failures[0][2] == "AI_TOKEN_QUOTA_EXHAUSTED"
+
+
+def test_batch_reason_length_matches_spring_complete_contract() -> None:
+    payload = _decision_payload(
+        "C1",
+        operation="ADD",
+        resolved_key="status.부상",
+        value="다리를 다침",
+        reason="가" * 2001,
+    )
+
+    with pytest.raises(ValueError, match="string_too_long"):
+        CharacterFactComparisonBatchDecision.model_validate(payload)
+
+
 def test_batch_comparator_retries_fixed_key_change() -> None:
     candidate = _candidate("C1", "Q1", "바바리안").model_copy(
         update={
@@ -568,6 +650,57 @@ def test_batch_comparator_retries_fixed_key_change() -> None:
     assert len(client.requests) == 2
     feedback = json.loads(client.requests[1]["user_prompt"])["validation_feedback"]
     assert "fixed canonical Fact key" in feedback["reason"]
+
+
+def test_batch_comparator_retries_add_after_projected_slot_exists() -> None:
+    candidates = [
+        _candidate("C1", "Q1", "부상이 시작됨"),
+        _candidate("C2", "Q2", "부상이 더 심해짐"),
+    ]
+    first = _decision_payload(
+        "C1",
+        operation="ADD",
+        resolved_key="status.부상",
+        value="부상이 시작됨",
+    )
+    invalid_second = _decision_payload(
+        "C2",
+        operation="ADD",
+        resolved_key="status.부상",
+        value="부상이 더 심해짐",
+    )
+    valid_second = _decision_payload(
+        "C2",
+        operation="UPDATE",
+        resolved_key="status.부상",
+        target_ref="Q1",
+        value="부상이 더 심해짐",
+    )
+    client = SequencedTextClient(
+        [
+            {"decisions": [first, invalid_second]},
+            {"decisions": [first, valid_second]},
+        ]
+    )
+
+    result, _ = asyncio.run(
+        CharacterFactComparator(
+            llm_client=client,
+            max_attempts=2,
+            batch_max_input_tokens=100_000,
+        ).compare_batch(
+            matched_character_name="비요른 얀델",
+            canonical_fact_type="STATUS",
+            candidates=candidates,
+            snapshot_entries=[],
+        )
+    )
+
+    assert result.decisions[1].operation == "UPDATE"
+    assert result.decisions[1].target_ref == "Q1"
+    assert len(client.requests) == 2
+    feedback = json.loads(client.requests[1]["user_prompt"])["validation_feedback"]
+    assert "ADD is invalid" in feedback["reason"]
 
 
 def test_batch_comparator_retries_incomplete_candidate_coverage() -> None:

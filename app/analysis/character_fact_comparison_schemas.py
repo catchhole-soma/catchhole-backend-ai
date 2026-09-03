@@ -7,7 +7,10 @@ from app.domain.enums import (
     CharacterFactTemporalScope,
 )
 
-TrimmedReason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+TrimmedReason = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=2000),
+]
 TrimmedFactValue = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 

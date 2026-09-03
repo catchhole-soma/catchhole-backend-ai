@@ -34,6 +34,15 @@ from app.usage.metering import TextGenerationUsageSnapshot
 
 logger = logging.getLogger(__name__)
 CONTEXT_STALE_ERROR_CODE = "SETTING_CANDIDATE_COMPARISON_STALE"
+SINGLETON_ISOLATABLE_FAILURE_CODES = frozenset(
+    {
+        AnalysisFailureCode.LLM_NETWORK_ERROR,
+        AnalysisFailureCode.LLM_PROVIDER_ERROR,
+        AnalysisFailureCode.LLM_OUTPUT_TRUNCATED,
+        AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR,
+        AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+    }
+)
 
 
 class CharacterFactComparisonSpringApi(Protocol):
@@ -276,7 +285,16 @@ async def execute_character_fact_comparison_batch(
                             singleton_result.decisions[0],
                         )
                     )
-                except ComparisonValidationError as exc:
+                except AiTokenQuotaExhaustedError:
+                    # Quota exhaustion is job-scoped. Continuing with later singletons would
+                    # only create more rejected reservations and violate the no-fallback rule.
+                    raise
+                except Exception as exc:
+                    failure_code = comparison_failure_code(exc)
+                    if failure_code not in SINGLETON_ISOLATABLE_FAILURE_CODES:
+                        # Lease/context/transport invariants are not candidate-local provider
+                        # failures and must remain visible to the outer batch/job boundary.
+                        raise
                     failures.append(_candidate_failure(candidate.candidate_ref, exc))
             cursor += len(segment)
             continue

@@ -679,7 +679,11 @@ class WorkerCharacterFactComparisonBatchDecision(BaseModel):
     proposed_fact_value: str | None = Field(default=None, alias="proposedFactValue")
     proposed_value_json: Any | None = Field(default=None, alias="proposedValueJson")
     temporal_scope: CharacterFactTemporalScope = Field(alias="temporalScope")
-    comparison_reason: str = Field(alias="comparisonReason", min_length=1)
+    comparison_reason: str = Field(
+        alias="comparisonReason",
+        min_length=1,
+        max_length=2000,
+    )
     raw_comparison_json: dict[str, Any] | None = Field(
         default=None,
         alias="rawComparisonJson",
