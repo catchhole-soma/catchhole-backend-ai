@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
 import hashlib
@@ -11,25 +10,38 @@ from uuid import UUID, uuid5
 
 import httpx
 
-from app.analysis.character_fact_comparator import CharacterFactComparator
-from app.analysis.character_name_resolver import KnownCharacter as RuntimeKnownCharacter
+from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.analysis.character_fact_comparison_pipeline import (
+    CharacterFactBatchComparator,
+    execute_character_fact_comparison_batch,
+)
+from app.analysis.character_fact_projection import is_explicit_inactive_status
+from app.analysis.character_fact_comparator import (
+    CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY,
+    CharacterFactComparator,
+)
+from app.analysis.character_name_resolver import (
+    ActiveCharacterStatus,
+    KnownCharacter as RuntimeKnownCharacter,
+)
 from app.analysis.character_subject_resolver import (
     CharacterSubjectResolver,
     SubjectResolutionChunkContext,
 )
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.schemas import ExtractedSettingCandidate
-from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
+from app.analysis.setting_extractor import (
+    SETTING_EXTRACTION_CACHE_KEY_VERSION,
+    CharacterSettingExtractor,
+    CharacterSettingSchemaHint,
+)
 from app.analysis.world_setting_comparator import (
     WorldSettingComparator,
     WorldSettingSubjectResolver,
 )
 from app.analysis.world_setting_extractor import WorldSettingExtractor
 from app.chunking.chunk_splitter import EpisodeChunkDraft, split_into_chunks
-from app.domain.enums import (
-    CharacterFactComparisonStatus,
-    SettingCandidateKind,
-)
+from app.domain.enums import CharacterFactComparisonOperation, SettingCandidateKind
 from app.domain.setting_values import normalize_setting_display_value
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.exceptions import LlmResponseValidationError
@@ -41,9 +53,9 @@ from app.mappers.world_setting_candidate_mapper import (
 )
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import (
-    WorkerCharacterFactComparisonCandidatePayload,
-    WorkerCharacterPriorFactCandidate,
-    WorkerCharacterSnapshotEntry,
+    WorkerCharacterFactComparisonBatchCandidate,
+    WorkerCharacterFactComparisonBatchDecision,
+    WorkerCharacterFactComparisonBatchSnapshotEntry,
     WorkerEvidenceSpan,
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonTarget,
@@ -76,6 +88,7 @@ from evals.multi_stage_setting.contracts import (
     WorldStage1Prediction,
     WorldStage2Gold,
     WorldStage2Prediction,
+    character_state_ref,
     infer_character_fact_type,
     known_characters_for_runtime,
     world_path_key,
@@ -90,16 +103,6 @@ from evals.multi_stage_setting.state_effects import (
 
 RUNTIME_UUID_NAMESPACE = UUID("1754f2f4-2b5d-5ef3-bf5c-2e245eea7a35")
 MAX_CHARACTER_CONTEXT_ENTRIES = 30
-MAX_CHARACTER_PRIOR_CANDIDATES = 30
-
-
-class CharacterComparatorApi(Protocol):
-    async def compare(
-        self,
-        candidate: WorkerCharacterFactComparisonCandidatePayload,
-        snapshot_entries: list[WorkerCharacterSnapshotEntry],
-        prior_candidates: list[WorkerCharacterPriorFactCandidate] | None = None,
-    ) -> tuple[Any, dict]: ...
 
 
 class WorldComparatorApi(Protocol):
@@ -188,7 +191,7 @@ class UsageRecordingTextGenerationClient:
 
 @dataclass(frozen=True)
 class RuntimeComponents:
-    character_comparator: CharacterComparatorApi
+    character_comparator: CharacterFactBatchComparator
     world_comparator: WorldComparatorApi
     character_extractor: CharacterSettingExtractor | Any | None = None
     character_subject_resolver: CharacterSubjectResolver | Any | None = None
@@ -202,7 +205,16 @@ class _CharacterRecord:
     candidate_id: str
     candidate: ExtractedSettingCandidate
     canonical_fact_type: CharacterFactType | None = None
+    raw_fact_key: str | None = None
+    canonical_key_resolution: Literal["EXACT", "ALIAS", "PATTERN"] | None = None
     sort_order: int = 0
+
+
+@dataclass(frozen=True)
+class _CharacterBatchSource:
+    source: CharacterStage1Gold | CharacterStage1Prediction
+    raw_fact_key: str
+    canonical_key_resolution: Literal["EXACT", "ALIAS", "PATTERN"]
 
 
 @dataclass(frozen=True)
@@ -319,10 +331,6 @@ async def run_multi_stage_predictions(
     gold_chain = build_gold_state_chain(gold)
     predicted_after: dict[str, EvaluationState] = {}
     scenario_predictions: list[ScenarioPrediction] = []
-    character_priors_by_batch: dict[
-        str,
-        dict[tuple[str, str, str], list[WorkerCharacterPriorFactCandidate]],
-    ] = defaultdict(lambda: defaultdict(list))
     for scenario in sorted(gold.scenarios, key=lambda item: (item.episode_no, item.scenario_id)):
         if scenario.scenario_id not in required_ids:
             continue
@@ -335,8 +343,6 @@ async def run_multi_stage_predictions(
             runtime_before = gold_chain[scenario.scenario_id].before_state.model_copy(deep=True)
 
         usage_before = components.usage.snapshot() if components.usage is not None else (0, 0, 0)
-        batch_key = scenario.evaluation_batch_id or f"scenario:{scenario.scenario_id}"
-        character_priors = character_priors_by_batch[batch_key]
         if mode == EvaluationMode.ORACLE:
             prediction = await _run_oracle_scenario(
                 gold,
@@ -344,7 +350,7 @@ async def run_multi_stage_predictions(
                 runtime_before,
                 components,
                 enabled_domains,
-                character_priors,
+                character_schema_hints,
             )
         else:
             prediction = await _run_live_scenario(
@@ -355,7 +361,6 @@ async def run_multi_stage_predictions(
                 character_schema_hints,
                 max_chunks,
                 enabled_domains,
-                character_priors,
             )
         usage_after = components.usage.snapshot() if components.usage is not None else usage_before
         scenario_usage = (
@@ -394,9 +399,9 @@ async def run_multi_stage_predictions(
         subject_resolution_model=subject_resolution_model,
         comparison_model=comparison_model,
         prompt_versions={
-            "characterExtraction": "setting-extraction:v6",
+            "characterExtraction": SETTING_EXTRACTION_CACHE_KEY_VERSION,
             "characterSubjectResolution": "subject-resolution:v1",
-            "characterComparison": "character-fact-comparison:v6",
+            "characterComparison": CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY,
             "worldExtraction": "world-setting-extraction:v2",
             "worldSubjectResolution": "world-setting-subject-resolution:v1",
             "worldComparison": "world-setting-comparison:v7",
@@ -418,9 +423,7 @@ async def _run_oracle_scenario(
     before_state: EvaluationState,
     components: RuntimeComponents,
     enabled_domains: set[EvaluationDomain],
-    prior_by_slot: dict[
-        tuple[str, str, str], list[WorkerCharacterPriorFactCandidate]
-    ],
+    schema_hints: tuple[CharacterSettingSchemaHint, ...],
 ) -> ScenarioPrediction:
     stage1_gold = [
         row
@@ -441,33 +444,49 @@ async def _run_oracle_scenario(
         ],
         key=lambda item: (item.sort_order, item.decision_id),
     )
+    character_sources: list[_CharacterBatchSource] = []
+    world_decisions: list[WorldStage2Gold] = []
     for decision in decisions:
+        sources = [stage1_by_id[source_id] for source_id in decision.source_gold_ids]
+        if isinstance(decision, CharacterStage2Gold):
+            source = cast(CharacterStage1Gold, sources[0])
+            assert source.fact_key is not None
+            character_sources.append(
+                _CharacterBatchSource(
+                    source=source,
+                    raw_fact_key=source.fact_key,
+                    canonical_key_resolution=_oracle_canonical_key_resolution(
+                        source,
+                        schema_hints,
+                    ),
+                )
+            )
+        else:
+            world_decisions.append(cast(WorldStage2Gold, decision))
+
+    character_stage2, character_failures = await _run_character_batches(
+        scenario,
+        before_state,
+        character_sources,
+        components.character_comparator,
+    )
+    stage2.extend(character_stage2)
+    failures.extend(character_failures)
+
+    for decision in world_decisions:
         try:
             sources = [stage1_by_id[source_id] for source_id in decision.source_gold_ids]
-            if isinstance(decision, CharacterStage2Gold):
-                source = cast(CharacterStage1Gold, sources[0])
-                prediction, prior = await _compare_character_gold(
+            world_sources = [cast(WorldStage1Gold, source) for source in sources]
+            stage2.append(
+                await _compare_world_gold(
                     scenario,
                     before_state,
-                    source,
+                    world_sources,
                     decision,
-                    components.character_comparator,
-                    prior_by_slot,
+                    components.world_comparator,
                 )
-                stage2.append(prediction)
-                prior_by_slot[prior[0]].append(prior[1])
-            else:
-                world_sources = [cast(WorldStage1Gold, source) for source in sources]
-                stage2.append(
-                    await _compare_world_gold(
-                        scenario,
-                        before_state,
-                        world_sources,
-                        cast(WorldStage2Gold, decision),
-                        components.world_comparator,
-                    )
-                )
-        except httpx.HTTPError:
+            )
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
             raise
         except Exception as exc:  # 개별 모델 출력 실패는 다음 후보와 격리한다.
             failures.append(_runtime_failure(decision.domain, 2, decision.decision_id, exc))
@@ -475,7 +494,7 @@ async def _run_oracle_scenario(
         scenario_id=scenario.scenario_id,
         raw_stage1=stage1,
         stage1=stage1,
-        stage2=stage2,
+        stage2=_sort_stage2_by_stage1(stage1, stage2),
         failures=failures,
     )
 
@@ -488,9 +507,6 @@ async def _run_live_scenario(
     schema_hints: tuple[CharacterSettingSchemaHint, ...],
     max_chunks: int | None,
     enabled_domains: set[EvaluationDomain],
-    prior_by_slot: dict[
-        tuple[str, str, str], list[WorkerCharacterPriorFactCandidate]
-    ],
 ) -> ScenarioPrediction:
     if scenario.source_text is None:
         raise ValueError(
@@ -525,7 +541,7 @@ async def _run_live_scenario(
                 schema_hints=schema_hints,
                 known_characters=tuple(known_characters),
             )
-        except httpx.HTTPError:
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
             raise
         except Exception as exc:
             failures.append(
@@ -580,8 +596,14 @@ async def _run_live_scenario(
                 candidate_sort_orders,
                 strict=True,
             ):
-                character_records.append(_CharacterRecord(candidate_id, resolved, None, sort_order))
-        except httpx.HTTPError:
+                character_records.append(
+                    _CharacterRecord(
+                        candidate_id=candidate_id,
+                        candidate=resolved,
+                        sort_order=sort_order,
+                    )
+                )
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
             raise
         except Exception as exc:
             failures.append(
@@ -597,12 +619,19 @@ async def _run_live_scenario(
     canonical_character_records: list[_CharacterRecord] = []
     for record in character_records:
         try:
-            candidate, fact_type = _canonicalize_character_schema(
+            candidate, fact_type, resolution = _canonicalize_character_schema(
                 record.candidate,
                 schema_hints,
             )
             canonical_character_records.append(
-                _CharacterRecord(record.candidate_id, candidate, fact_type, record.sort_order)
+                _CharacterRecord(
+                    candidate_id=record.candidate_id,
+                    candidate=candidate,
+                    canonical_fact_type=fact_type,
+                    raw_fact_key=record.candidate.attribute_name,
+                    canonical_key_resolution=resolution,
+                    sort_order=record.sort_order,
+                )
             )
         except ValueError as exc:
             failures.append(
@@ -618,7 +647,10 @@ async def _run_live_scenario(
         [record.candidate for record in canonical_character_records],
         known_characters,
     )
-    character_runtime_by_id: dict[str, tuple[CharacterStage1Prediction, UUID | None]] = {}
+    character_runtime_by_id: dict[
+        str,
+        tuple[CharacterStage1Prediction, UUID | None, str | None, str | None],
+    ] = {}
     for item in prepared:
         record = canonical_character_records[item.source_index]
         matched_id = item.character_match.matched_character_id
@@ -643,34 +675,44 @@ async def _run_live_scenario(
             sort_order=record.sort_order,
         )
         handoff_stage1.append(prediction)
-        character_runtime_by_id[prediction.candidate_id] = (prediction, matched_id)
+        character_runtime_by_id[prediction.candidate_id] = (
+            prediction,
+            matched_id,
+            record.raw_fact_key,
+            record.canonical_key_resolution,
+        )
 
-    for prediction, matched_id in character_runtime_by_id.values():
+    character_batch_sources: list[_CharacterBatchSource] = []
+    for prediction, matched_id, raw_fact_key, resolution in character_runtime_by_id.values():
         if (
             prediction.candidate_kind != CandidateKind.SETTING
             or matched_id is None
             or prediction.entity_ref is None
             or prediction.fact_type is None
             or prediction.fact_key is None
+            or raw_fact_key is None
+            or resolution is None
         ):
             continue
-        try:
-            decision, prior = await _compare_character_prediction(
-                scenario,
-                before_state,
-                prediction,
-                matched_id,
-                components.character_comparator,
-                prior_by_slot,
+        character_batch_sources.append(
+            _CharacterBatchSource(
+                source=prediction,
+                raw_fact_key=raw_fact_key,
+                canonical_key_resolution=cast(
+                    Literal["EXACT", "ALIAS", "PATTERN"],
+                    resolution,
+                ),
             )
-            stage2.append(decision)
-            prior_by_slot[prior[0]].append(prior[1])
-        except httpx.HTTPError:
-            raise
-        except Exception as exc:
-            failures.append(
-                _runtime_failure(EvaluationDomain.CHARACTER, 2, prediction.candidate_id, exc)
-            )
+        )
+
+    character_stage2, character_failures = await _run_character_batches(
+        scenario,
+        before_state,
+        character_batch_sources,
+        components.character_comparator,
+    )
+    stage2.extend(character_stage2)
+    failures.extend(character_failures)
 
     world_publish_items = []
     world_drafts = (
@@ -713,7 +755,7 @@ async def _run_live_scenario(
                 world_publish_items.append(
                     WorldSettingCandidateMapper.to_publish_item(candidate, chunk)
                 )
-        except httpx.HTTPError:
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
             raise
         except Exception as exc:
             failures.append(
@@ -778,7 +820,7 @@ async def _run_live_scenario(
                     components.world_subject_resolver,
                 )
             )
-        except httpx.HTTPError:
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
             raise
         except Exception as exc:
             failures.append(
@@ -789,129 +831,165 @@ async def _run_live_scenario(
         scenario_id=scenario.scenario_id,
         raw_stage1=raw_stage1,
         stage1=handoff_stage1,
-        stage2=stage2,
+        stage2=_sort_stage2_by_stage1(handoff_stage1, stage2),
         failures=failures,
     )
 
 
-async def _compare_character_gold(
+async def _run_character_batches(
     scenario: ScenarioGold,
     state: EvaluationState,
-    source: CharacterStage1Gold,
-    decision: CharacterStage2Gold,
-    comparator: CharacterComparatorApi,
-    prior_by_slot: dict[tuple[str, str, str], list[WorkerCharacterPriorFactCandidate]],
-) -> tuple[
-    CharacterStage2Prediction,
-    tuple[tuple[str, str, str], WorkerCharacterPriorFactCandidate],
-]:
-    assert source.fact_type is not None and source.fact_key is not None
-    candidate_id = _stable_uuid(scenario.scenario_id, "oracle-character", source.gold_id)
-    character_id = _stable_uuid("character", source.entity_ref)
-    snapshots, refs = _character_snapshots(
-        state,
-        source.entity_ref,
-        source.fact_type,
-        source.fact_key,
-    )
-    runtime_candidate = WorkerCharacterFactComparisonCandidatePayload(
-        candidate_id=candidate_id,
-        work_id=_stable_uuid("work", gold_version_key(scenario)),
-        source_episode_id=_stable_uuid("episode", scenario.scenario_id),
-        entity_name=source.entity_name,
-        attribute_name=source.fact_key,
-        attribute_value=source.display_value,
-        value_json=source.value_json,
-        value_type=source.value_type,
-        evidence_spans=_worker_evidence_from_quotes(source.evidence_quotes),
-        matched_character_id=character_id,
-        matched_character_name=source.entity_name,
-        canonical_fact_type=source.fact_type,
-        canonical_fact_key=source.fact_key,
-    )
-    slot = (source.entity_ref, source.fact_type, source.fact_key)
-    result, _ = await comparator.compare(
-        runtime_candidate,
-        snapshots,
-        _bounded_prior_candidates(prior_by_slot.get(slot, [])),
-    )
-    prediction = _character_stage2_prediction(
-        source.gold_id,
-        result,
-        refs,
-        resolved_canonical_fact_key=source.fact_key,
-    )
-    return prediction, (
-        slot,
-        _character_prior(
-            scenario.episode_no,
-            source.fact_key,
-            source.display_value,
-            source.value_json,
-            source.evidence_quotes,
-            result,
-        ),
-    )
+    sources: list[_CharacterBatchSource],
+    comparator: CharacterFactBatchComparator,
+) -> tuple[list[CharacterStage2Prediction], list[RuntimeFailure]]:
+    """Run one production-equivalent batch per character and FactType in this episode."""
+
+    grouped: dict[tuple[str, CharacterFactType], list[_CharacterBatchSource]] = {}
+    for item in sorted(sources, key=_character_batch_source_sort_key):
+        source = item.source
+        if source.entity_ref is None or source.fact_type is None or source.fact_key is None:
+            continue
+        grouped.setdefault((source.entity_ref, source.fact_type), []).append(item)
+
+    predictions: list[CharacterStage2Prediction] = []
+    failures: list[RuntimeFailure] = []
+    for (entity_ref, fact_type), group in grouped.items():
+        candidates = [
+            _worker_character_batch_candidate(scenario, item, index)
+            for index, item in enumerate(group, start=1)
+        ]
+        snapshots, stable_ref_by_request_ref = _character_batch_snapshots(
+            state,
+            entity_ref,
+            fact_type,
+            [candidate.initial_canonical_fact_key for candidate in candidates],
+        )
+        source_by_candidate_ref = {
+            candidate.candidate_ref: item
+            for candidate, item in zip(candidates, group, strict=True)
+        }
+        candidate_by_ref = {candidate.candidate_ref: candidate for candidate in candidates}
+        try:
+            execution = await execute_character_fact_comparison_batch(
+                comparator,
+                matched_character_name=_character_batch_matched_name(group[0].source),
+                canonical_fact_type=fact_type,
+                candidates=candidates,
+                snapshot_entries=snapshots,
+            )
+            group_predictions: list[CharacterStage2Prediction] = []
+            for decision in execution.decisions:
+                item = source_by_candidate_ref[decision.candidate_ref]
+                group_predictions.append(
+                    _character_batch_stage2_prediction(
+                        _character_batch_source_id(item.source),
+                        decision,
+                        stable_ref_by_request_ref,
+                    )
+                )
+                if decision.operation in {
+                    CharacterFactComparisonOperation.ADD,
+                    CharacterFactComparisonOperation.UPDATE,
+                    CharacterFactComparisonOperation.MERGE,
+                }:
+                    projected_ref = candidate_by_ref[
+                        decision.candidate_ref
+                    ].projected_snapshot_ref
+                    stable_ref_by_request_ref[projected_ref] = character_state_ref(
+                        entity_ref,
+                        fact_type,
+                        decision.resolved_canonical_fact_key,
+                    )
+            predictions.extend(group_predictions)
+            for failure in execution.failures:
+                item = source_by_candidate_ref[failure.candidate_ref]
+                failures.append(
+                    RuntimeFailure(
+                        stage="CHARACTER_STAGE2",
+                        source_id=_character_batch_source_id(item.source),
+                        error_type=failure.failure_code.value,
+                        message=failure.error_message,
+                    )
+                )
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
+            raise
+        except Exception as exc:
+            failures.extend(
+                _runtime_failure(
+                    EvaluationDomain.CHARACTER,
+                    2,
+                    _character_batch_source_id(item.source),
+                    exc,
+                )
+                for item in group
+            )
+    return predictions, failures
 
 
-async def _compare_character_prediction(
+def _worker_character_batch_candidate(
     scenario: ScenarioGold,
-    state: EvaluationState,
-    source: CharacterStage1Prediction,
-    matched_character_id: UUID,
-    comparator: CharacterComparatorApi,
-    prior_by_slot: dict[tuple[str, str, str], list[WorkerCharacterPriorFactCandidate]],
-) -> tuple[
-    CharacterStage2Prediction,
-    tuple[tuple[str, str, str], WorkerCharacterPriorFactCandidate],
-]:
-    assert source.entity_ref is not None and source.fact_type is not None
+    item: _CharacterBatchSource,
+    index: int,
+) -> WorkerCharacterFactComparisonBatchCandidate:
+    source = item.source
     assert source.fact_key is not None and source.value_type is not None
-    snapshots, refs = _character_snapshots(
-        state,
-        source.entity_ref,
-        source.fact_type,
-        source.fact_key,
+    evidence = (
+        _worker_evidence_from_quotes(source.evidence_quotes)
+        if isinstance(source, CharacterStage1Gold)
+        else _worker_evidence(source.evidence_spans)
     )
-    runtime_candidate = WorkerCharacterFactComparisonCandidatePayload(
-        candidate_id=UUID(source.candidate_id),
-        work_id=_stable_uuid("work", gold_version_key(scenario)),
-        source_episode_id=_stable_uuid("episode", scenario.scenario_id),
-        entity_name=source.entity_name,
-        attribute_name=source.fact_key,
+    return WorkerCharacterFactComparisonBatchCandidate(
+        candidate_ref=f"C{index}",
+        projected_snapshot_ref=f"Q{index}",
+        source_episode_no=scenario.episode_no,
         attribute_value=source.display_value,
         value_json=source.value_json,
         value_type=source.value_type,
-        evidence_spans=_worker_evidence(source.evidence_spans),
-        matched_character_id=matched_character_id,
-        matched_character_name=source.matched_character_name or source.entity_name,
-        canonical_fact_type=source.fact_type,
-        canonical_fact_key=source.fact_key,
-        confidence=source.confidence,
-    )
-    slot = (source.entity_ref, source.fact_type, source.fact_key)
-    result, _ = await comparator.compare(
-        runtime_candidate,
-        snapshots,
-        _bounded_prior_candidates(prior_by_slot.get(slot, [])),
-    )
-    prediction = _character_stage2_prediction(
-        source.candidate_id,
-        result,
-        refs,
-        resolved_canonical_fact_key=source.fact_key,
-    )
-    return prediction, (
-        slot,
-        _character_prior(
-            scenario.episode_no,
-            source.fact_key,
-            source.display_value,
-            source.value_json,
-            [span.quote for span in source.evidence_spans],
-            result,
+        evidence_spans=evidence,
+        raw_fact_key=item.raw_fact_key,
+        initial_canonical_fact_key=source.fact_key,
+        canonical_key_resolution=item.canonical_key_resolution,
+        confidence=(
+            None if isinstance(source, CharacterStage1Gold) else source.confidence
         ),
     )
+
+
+def _character_batch_source_sort_key(
+    item: _CharacterBatchSource,
+) -> tuple[int, int, int, str]:
+    return _character_source_chronology_key(item.source)
+
+
+def _character_source_chronology_key(
+    source: CharacterStage1Gold | CharacterStage1Prediction,
+) -> tuple[int, int, int, str]:
+    """Mirror production's evidence-first chronology with deterministic fallbacks."""
+
+    source_id = _character_batch_source_id(source)
+    if isinstance(source, CharacterStage1Prediction):
+        offsets = [
+            span.start_offset
+            for span in source.evidence_spans
+            if span.start_offset is not None
+        ]
+        if offsets:
+            return 0, min(offsets), source.sort_order, source_id
+    return 1, 0, source.sort_order, source_id
+
+
+def _character_batch_source_id(
+    source: CharacterStage1Gold | CharacterStage1Prediction,
+) -> str:
+    return source.gold_id if isinstance(source, CharacterStage1Gold) else source.candidate_id
+
+
+def _character_batch_matched_name(
+    source: CharacterStage1Gold | CharacterStage1Prediction,
+) -> str:
+    if isinstance(source, CharacterStage1Prediction):
+        return source.matched_character_name or source.entity_name
+    return source.entity_name
 
 
 async def _compare_world_gold(
@@ -969,20 +1047,20 @@ async def _compare_world_prediction(
     return _world_stage2_prediction(source.candidate_id, result, target_set)
 
 
-def _character_stage2_prediction(
+def _character_batch_stage2_prediction(
     source_id: str,
-    decision: Any,
+    decision: WorkerCharacterFactComparisonBatchDecision,
     state_ref_by_request_ref: dict[str, str],
-    *,
-    resolved_canonical_fact_key: str,
 ) -> CharacterStage2Prediction:
     return CharacterStage2Prediction(
         source_candidate_id=source_id,
         domain="CHARACTER",
         operation=decision.operation,
-        resolved_canonical_fact_key=resolved_canonical_fact_key,
+        resolved_canonical_fact_key=decision.resolved_canonical_fact_key,
         target_ref=(
-            None if decision.target_ref is None else state_ref_by_request_ref[decision.target_ref]
+            None
+            if decision.target_snapshot_ref is None
+            else state_ref_by_request_ref[decision.target_snapshot_ref]
         ),
         removed_snapshot_refs=[
             state_ref_by_request_ref[reference] for reference in decision.removed_snapshot_refs
@@ -1072,21 +1150,27 @@ def _prediction_from_gold(
 def _canonicalize_character_schema(
     candidate: ExtractedSettingCandidate,
     schema_hints: tuple[CharacterSettingSchemaHint, ...],
-) -> tuple[ExtractedSettingCandidate, CharacterFactType | None]:
+) -> tuple[
+    ExtractedSettingCandidate,
+    CharacterFactType | None,
+    Literal["EXACT", "ALIAS", "PATTERN"] | None,
+]:
     """Mirror Spring's schema resolver before a candidate reaches comparison."""
 
     if candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
-        return candidate, None
+        return candidate, None, None
     assert candidate.attribute_name is not None and candidate.value_type is not None
     attribute_name = candidate.attribute_name.strip()
 
     exact = [hint for hint in schema_hints if hint.schema_key.strip() == attribute_name]
     matches = exact
+    canonical_key_resolution: Literal["EXACT", "ALIAS", "PATTERN"] = "EXACT"
     preserve_attribute_name = False
     if not matches:
         matches = [
             hint for hint in schema_hints if _character_schema_alias_matches(hint, attribute_name)
         ]
+        canonical_key_resolution = "ALIAS"
     if not matches:
         matches = [
             hint
@@ -1094,6 +1178,7 @@ def _canonicalize_character_schema(
             if _character_schema_pattern_matches(hint.attribute_pattern, attribute_name)
         ]
         preserve_attribute_name = bool(matches)
+        canonical_key_resolution = "PATTERN"
     if len(matches) != 1:
         reason = "ambiguous" if matches else "not matched"
         raise ValueError(f"Character setting schema is {reason}.")
@@ -1108,7 +1193,11 @@ def _canonicalize_character_schema(
     )
     if fact_type is None:
         raise ValueError("Character setting schema has no supported canonical factType.")
-    return candidate.model_copy(update={"attribute_name": canonical_key}), fact_type
+    return (
+        candidate.model_copy(update={"attribute_name": canonical_key}),
+        fact_type,
+        canonical_key_resolution,
+    )
 
 
 def _character_schema_alias_matches(
@@ -1183,81 +1272,85 @@ def _character_prediction(
     )
 
 
-def _character_snapshots(
+def _character_batch_snapshots(
     state: EvaluationState,
     entity_ref: str,
-    fact_type: str,
-    fact_key: str,
-) -> tuple[list[WorkerCharacterSnapshotEntry], dict[str, str]]:
-    character_entries = [item for item in state.character_facts if item.entity_ref == entity_ref]
-    exact = [
+    fact_type: CharacterFactType,
+    initial_fact_keys: list[str],
+) -> tuple[list[WorkerCharacterFactComparisonBatchSnapshotEntry], dict[str, str]]:
+    """Mirror Java's exact-slot-first, then factKey ordered 30-entry selection."""
+
+    matching = [
         item
-        for item in character_entries
-        if item.fact_type == fact_type and item.fact_key == fact_key
+        for item in state.character_facts
+        if item.entity_ref == entity_ref and item.fact_type == fact_type
     ]
-    related_statuses = (
-        [
-            item
-            for item in character_entries
-            if fact_type == "STATUS" and item.fact_type == "STATUS" and item.fact_key != fact_key
-        ]
-        if fact_type == "STATUS"
-        else []
+    entry_by_key = {item.fact_key: item for item in matching}
+    entries = []
+    selected_refs: set[str] = set()
+    for fact_key in dict.fromkeys(initial_fact_keys):
+        entry = entry_by_key.get(fact_key)
+        if entry is not None and len(entries) < MAX_CHARACTER_CONTEXT_ENTRIES:
+            entries.append(entry)
+            selected_refs.add(entry.ref)
+    entries.extend(
+        item
+        for item in sorted(matching, key=lambda value: (value.fact_key, value.ref))
+        if item.ref not in selected_refs
     )
-    entries = (
-        exact
-        + sorted(
-            related_statuses,
-            key=lambda item: (
-                item.source_episode_no is None,
-                -(item.source_episode_no or 0),
-                item.source_sort_order is None,
-                -(item.source_sort_order or 0),
-                item.fact_key,
-                item.ref,
-            ),
-        )[: MAX_CHARACTER_CONTEXT_ENTRIES - len(exact)]
-    )
+    entries = entries[:MAX_CHARACTER_CONTEXT_ENTRIES]
     return (
         [
-            WorkerCharacterSnapshotEntry(
+            WorkerCharacterFactComparisonBatchSnapshotEntry(
+                snapshot_ref=f"P{index}",
+                origin="PERSISTED",
                 fact_type=item.fact_type,
                 fact_key=item.fact_key,
                 fact_value=item.value,
                 value_json=item.value_json,
             )
-            for item in entries
+            for index, item in enumerate(entries, start=1)
         ],
         {f"P{index}": item.ref for index, item in enumerate(entries, start=1)},
     )
 
 
-def _character_prior(
-    episode_no: int,
-    fact_key: str,
-    value: str | None,
-    value_json: dict[str, Any] | None,
-    evidence_quotes: list[str],
-    decision: Any,
-) -> WorkerCharacterPriorFactCandidate:
-    return WorkerCharacterPriorFactCandidate(
-        source_episode_no=episode_no,
-        attribute_name=fact_key,
-        attribute_value=value,
-        value_json=value_json,
-        evidence_spans=_worker_evidence_from_quotes(evidence_quotes),
-        comparison_status=CharacterFactComparisonStatus.COMPLETED,
-        suggested_operation=decision.operation,
-        proposed_fact_value=decision.proposed_fact_value,
-        proposed_value_json=decision.proposed_value_json,
+def _oracle_canonical_key_resolution(
+    source: CharacterStage1Gold,
+    schema_hints: tuple[CharacterSettingSchemaHint, ...],
+) -> Literal["EXACT", "PATTERN"]:
+    assert source.fact_key is not None
+    if any(hint.schema_key.strip() == source.fact_key for hint in schema_hints):
+        return "EXACT"
+    if any(
+        _character_schema_pattern_matches(hint.attribute_pattern, source.fact_key)
+        for hint in schema_hints
+    ):
+        return "PATTERN"
+    # ORACLE historically requires no schema fixture. Standard dynamic STATUS keys
+    # therefore retain the production pattern-key normalization capability.
+    return "PATTERN" if source.fact_type == "STATUS" else "EXACT"
+
+
+def _sort_stage2_by_stage1(
+    stage1: list[Stage1Prediction],
+    stage2: list[Stage2Prediction],
+) -> list[Stage2Prediction]:
+    order = {
+        item.candidate_id: (
+            _character_source_chronology_key(item)
+            if isinstance(item, CharacterStage1Prediction)
+            else (1, 0, item.sort_order, item.candidate_id)
+        )
+        for item in stage1
+    }
+    return sorted(
+        stage2,
+        key=lambda item: order.get(
+            item.source_candidate_id,
+            (2, 0, 2**63 - 1, item.source_candidate_id),
+        ),
     )
-
-
-def _bounded_prior_candidates(
-    candidates: list[WorkerCharacterPriorFactCandidate],
-) -> list[WorkerCharacterPriorFactCandidate]:
-    # Spring은 chronology 전체에서 현재 후보 앞의 동일 slot만 모은 뒤 최신 30개를 보낸다.
-    return list(candidates[-MAX_CHARACTER_PRIOR_CANDIDATES:])
 
 
 def _oracle_world_targets(
@@ -1425,8 +1518,25 @@ def _runtime_known_characters(
     ref_by_id: dict[UUID, str] = {}
     for state_character in known_characters_for_runtime(state):
         character_id = _stable_uuid("character", state_character.entity_ref)
+        active_statuses = tuple(
+            ActiveCharacterStatus(fact_key=fact.fact_key, fact_value=fact.value)
+            for fact in sorted(
+                (
+                    item
+                    for item in state.character_facts
+                    if item.entity_ref == state_character.entity_ref
+                    and item.fact_type == "STATUS"
+                    and not is_explicit_inactive_status(item.fact_type, item.value_json)
+                ),
+                key=lambda item: (item.fact_key, item.ref),
+            )
+        )
         characters.append(
-            RuntimeKnownCharacter(character_id=character_id, name=state_character.name)
+            RuntimeKnownCharacter(
+                character_id=character_id,
+                name=state_character.name,
+                active_statuses=active_statuses,
+            )
         )
         ref_by_id[character_id] = state_character.entity_ref
     return characters, ref_by_id

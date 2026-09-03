@@ -4,12 +4,17 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from app.analysis.character_fact_comparison_schemas import CharacterFactComparisonDecision
+from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.analysis.character_fact_comparison_schemas import (
+    CharacterFactComparisonBatchDecision,
+    CharacterFactComparisonBatchResult,
+)
+from app.analysis.character_name_resolver import ActiveCharacterStatus
 from app.analysis.character_subject_resolver import SubjectResolutionResult
 from app.analysis.schemas import (
     CharacterSettingExtractionResult,
     ExtractedEvidenceSpan,
-    ExtractedSettingCandidate,
+    ExtractedCharacterSettingCandidate,
 )
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
 from app.analysis.world_setting_schemas import (
@@ -20,7 +25,6 @@ from app.analysis.world_setting_schemas import (
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.exceptions import LlmResponseValidationError
 from app.llm.responses import LlmTextResponse
-from app.schemas.worker import WorkerCharacterPriorFactCandidate
 from evals.multi_stage_setting.contracts import (
     CharacterStage1Gold,
     CharacterStateEntry,
@@ -40,9 +44,8 @@ from evals.multi_stage_setting.runtime_adapter import (
     RuntimePricing,
     RuntimeUsageCounter,
     UsageRecordingTextGenerationClient,
-    _bounded_prior_candidates,
+    _character_batch_snapshots,
     _character_schema_hash,
-    _character_snapshots,
     create_default_runtime_components,
     run_multi_stage_predictions,
 )
@@ -182,6 +185,105 @@ def test_oracle_runtime_maps_request_local_refs_back_to_stable_state_refs() -> N
     assert '"targetRef":"T1"' not in serialized
 
 
+def test_oracle_character_batch_maps_projected_q_removal_to_stable_ref() -> None:
+    injury_ref = character_state_ref(
+        "character:bjorn",
+        "STATUS",
+        "status.오른발_부상",
+    )
+    scenario = ScenarioGold(
+        scenario_id="S5",
+        episode_no=5,
+        source_identifier="05화.txt",
+        target_domains={"CHARACTER"},
+        gold_version="v3",
+        start_state_mode="SEED",
+        cumulative_through_episode=4,
+        seed_state=EvaluationState(
+            known_characters=[KnownCharacter(entity_ref="character:bjorn", name="비요른")],
+            character_facts=[
+                _character_state(
+                    "STATUS",
+                    "status.오른발_부상",
+                    "오른발을 심하게 다침",
+                    value_type="JSON",
+                    value_json={"active": True},
+                )
+            ],
+        ),
+        review_status="FINAL",
+    )
+    worsening = _character_gold(
+        "C1",
+        "status.오른발_부상",
+        "오른발 부상이 악화됨",
+        {"name": "오른발 부상", "active": True},
+        sort_order=1,
+    )
+    recovery = _character_gold(
+        "C2",
+        "status.회복",
+        "오른발 기능이 회복됨",
+        {"name": "회복", "active": False},
+        sort_order=2,
+    )
+    gold = GoldSnapshotV3(
+        dataset_version="v3",
+        name="oracle projected status",
+        scenarios=[scenario],
+        stage1=[worsening, recovery],
+        stage2=[
+            CharacterStage2Gold(
+                decision_id="D1",
+                scenario_id="S5",
+                episode_no=5,
+                sort_order=1,
+                source_gold_ids=["C1"],
+                domain="CHARACTER",
+                operation="UPDATE",
+                target_ref=injury_ref,
+                proposed_value="오른발 부상이 악화됨",
+                proposed_value_json={"name": "오른발 부상", "active": True},
+                temporal_scope="PRESENT",
+                review_status="FINAL",
+            ),
+            CharacterStage2Gold(
+                decision_id="D2",
+                scenario_id="S5",
+                episode_no=5,
+                sort_order=2,
+                source_gold_ids=["C2"],
+                domain="CHARACTER",
+                operation="REMOVE",
+                removed_snapshot_refs=[injury_ref],
+                temporal_scope="PRESENT",
+                review_status="FINAL",
+            ),
+        ],
+    ).with_fixture_hash()
+    comparator = _ProjectedStatusComparator()
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            gold,
+            mode="ORACLE",
+            components=RuntimeComponents(
+                character_comparator=comparator,
+                world_comparator=_AddWorldComparator(),
+            ),
+            domains={"CHARACTER"},
+        )
+    )
+
+    assert comparator.calls == [(["C1", "C2"], ["P1"])]
+    first, second = bundle.scenarios[0].stage2
+    assert first.target_ref == injury_ref
+    assert second.removed_snapshot_refs == [injury_ref]
+    serialized = bundle.model_dump_json(by_alias=True)
+    assert '"targetRef":"Q1"' not in serialized
+    assert '"removedSnapshotRefs":["Q1"]' not in serialized
+
+
 def test_fixed_runtime_reuses_character_dedupe_and_world_consolidation() -> None:
     scenario = ScenarioGold(
         scenario_id="S1",
@@ -245,6 +347,11 @@ def test_fixed_runtime_reuses_character_dedupe_and_world_consolidation() -> None
     assert bundle.subject_resolution_model == "subject-model"
     assert bundle.comparison_model == "comparison-model"
     assert bundle.character_schema_hash is not None
+    assert bundle.prompt_versions["characterExtraction"] == "setting-extraction:v10"
+    assert (
+        bundle.prompt_versions["characterComparison"]
+        == "character-fact-comparison-batch:v2"
+    )
 
 
 def test_oracle_episode_selection_uses_gold_dependencies_without_running_them() -> None:
@@ -345,7 +452,31 @@ def test_fixed_runtime_generates_known_character_context_from_before_state() -> 
         start_state_mode="SEED",
         cumulative_through_episode=1,
         seed_state=EvaluationState(
-            known_characters=[KnownCharacter(entity_ref="character:bjorn", name="비요른")]
+            known_characters=[KnownCharacter(entity_ref="character:bjorn", name="비요른")],
+            character_facts=[
+                _character_state(
+                    "STATUS",
+                    "status.오른발_부상",
+                    "오른발이 심하게 다쳐 걷기 어려움",
+                    value_type="JSON",
+                    value_json={"active": True},
+                ),
+                _character_state(
+                    "STATUS",
+                    "status.마비독",
+                    "마비독에 중독됨",
+                    value_type="JSON",
+                    value_json={"active": True},
+                ),
+                _character_state(
+                    "STATUS",
+                    "status.종료됨",
+                    "이미 종료된 상태",
+                    value_type="JSON",
+                    value_json={"active": False},
+                ),
+                _character_state("PROFILE", "profile.species", "바바리안"),
+            ],
         ),
         candidate_free=True,
         known_character_names=[],
@@ -372,6 +503,16 @@ def test_fixed_runtime_generates_known_character_context_from_before_state() -> 
     )
 
     assert extractor.known_character_names == ["비요른"]
+    assert extractor.requests[0][0].active_statuses == (
+        ActiveCharacterStatus(
+            fact_key="status.마비독",
+            fact_value="마비독에 중독됨",
+        ),
+        ActiveCharacterStatus(
+            fact_key="status.오른발_부상",
+            fact_value="오른발이 심하게 다쳐 걷기 어려움",
+        ),
+    )
 
 
 def test_fixed_runtime_preserves_duplicate_names_and_latest_creation_order() -> None:
@@ -408,7 +549,45 @@ def test_fixed_runtime_preserves_duplicate_names_and_latest_creation_order() -> 
                     name="미샤",
                     creation_order=2,
                 ),
-            ]
+            ],
+            character_facts=[
+                _character_state(
+                    "STATUS",
+                    "status.오래된_부상",
+                    "오래된 비요른의 부상",
+                    entity_ref="character:older-bjorn",
+                    entity_name="비요른",
+                    value_type="JSON",
+                    value_json={"active": True},
+                ),
+                _character_state(
+                    "STATUS",
+                    "status.새로운_부상",
+                    "새로운 비요른의 부상",
+                    entity_ref="character:newer-bjorn",
+                    entity_name="비요른",
+                    value_type="JSON",
+                    value_json={"active": True},
+                ),
+                _character_state(
+                    "STATUS",
+                    "status.피로",
+                    "미샤의 피로",
+                    entity_ref="character:misha",
+                    entity_name="미샤",
+                    value_type="JSON",
+                    value_json={"active": True},
+                ),
+                _character_state(
+                    "STATUS",
+                    "status.은퇴",
+                    "보내면 안 되는 상태",
+                    entity_ref="character:archived",
+                    entity_name="은퇴자",
+                    value_type="JSON",
+                    value_json={"active": True},
+                ),
+            ],
         ),
         candidate_free=True,
         review_status="FINAL",
@@ -434,10 +613,141 @@ def test_fixed_runtime_preserves_duplicate_names_and_latest_creation_order() -> 
     )
 
     assert extractor.known_character_names == ["비요른", "미샤", "비요른"]
+    assert [
+        tuple(status.fact_key for status in character.active_statuses)
+        for character in extractor.requests[0]
+    ] == [
+        ("status.새로운_부상",),
+        ("status.피로",),
+        ("status.오래된_부상",),
+    ]
 
 
-def test_character_comparison_reuses_same_batch_priors_and_caps_context() -> None:
-    comparator = _PriorCapturingCharacterComparator()
+def test_rolling_runtime_passes_only_previous_predicted_active_statuses() -> None:
+    injury_ref = character_state_ref(
+        "character:bjorn",
+        "STATUS",
+        "status.오른발_부상",
+    )
+    extractor = _RollingStatusExtractor()
+    first = ScenarioGold(
+        scenario_id="S1",
+        episode_no=1,
+        source_identifier="01화.txt",
+        source_text="비요른은 부상이 악화되었지만 완전히 회복했다.",
+        target_domains={"CHARACTER"},
+        gold_version="v3",
+        start_state_mode="SEED",
+        cumulative_through_episode=0,
+        seed_state=EvaluationState(
+            known_characters=[KnownCharacter(entity_ref="character:bjorn", name="비요른")],
+            character_facts=[
+                _character_state(
+                    "STATUS",
+                    "status.오른발_부상",
+                    "오른발이 심하게 다쳐 걷기 어려움",
+                    value_type="JSON",
+                    value_json={"active": True},
+                )
+            ],
+        ),
+        candidate_free=True,
+        review_status="FINAL",
+    )
+    second = ScenarioGold(
+        scenario_id="S2",
+        episode_no=2,
+        source_identifier="02화.txt",
+        source_text="비요른은 길을 걸었다.",
+        target_domains={"CHARACTER"},
+        gold_version="v3",
+        start_state_mode="PREVIOUS_GOLD",
+        previous_scenario_id="S1",
+        cumulative_through_episode=1,
+        candidate_free=True,
+        review_status="FINAL",
+    )
+    gold = GoldSnapshotV3(
+        dataset_version="v3",
+        name="rolling active status context",
+        scenarios=[first, second],
+    ).with_fixture_hash()
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            gold,
+            mode="ROLLING",
+            components=RuntimeComponents(
+                character_extractor=extractor,
+                character_subject_resolver=_PassThroughSubjectResolver(),
+                character_comparator=_ProjectedStatusComparator(),
+                world_comparator=_AddWorldComparator(),
+            ),
+            character_schema_hints=(_status_schema_hint(),),
+            domains={"CHARACTER"},
+        )
+    )
+
+    assert extractor.status_keys_by_episode == {
+        1: [("status.오른발_부상",)],
+        2: [()],
+    }
+    assert bundle.scenarios[0].stage2[1].removed_snapshot_refs == [injury_ref]
+    assert bundle.state_application_policy == "ACCEPT_ALL_PREDICTIONS"
+
+
+def test_fixed_runtime_orders_batch_by_evidence_and_maps_q_refs() -> None:
+    scenario = ScenarioGold(
+        scenario_id="S1",
+        episode_no=1,
+        source_identifier="01화.txt",
+        source_text="비요른은 다쳤지만 곧 완전히 회복했다.",
+        target_domains={"CHARACTER"},
+        gold_version="v3",
+        start_state_mode="SEED",
+        cumulative_through_episode=0,
+        seed_state=EvaluationState(
+            known_characters=[KnownCharacter(entity_ref="character:bjorn", name="비요른")]
+        ),
+        candidate_free=True,
+        review_status="FINAL",
+    )
+    comparator = _AddThenRemoveProjectedStatusComparator()
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            GoldSnapshotV3(
+                dataset_version="v3",
+                name="fixed projected batch",
+                scenarios=[scenario],
+            ).with_fixture_hash(),
+            mode="FIXED",
+            components=RuntimeComponents(
+                character_extractor=_SameChunkStatusExtractor(),
+                character_subject_resolver=_PassThroughSubjectResolver(),
+                character_comparator=comparator,
+                world_comparator=_AddWorldComparator(),
+            ),
+            character_schema_hints=(_status_schema_hint(),),
+            domains={"CHARACTER"},
+        )
+    )
+
+    assert comparator.calls == [(["C1", "C2"], [])]
+    first, second = bundle.scenarios[0].stage2
+    injury_ref = character_state_ref("character:bjorn", "STATUS", "status.부상")
+    assert first.resolved_canonical_fact_key == "status.부상"
+    assert second.removed_snapshot_refs == [injury_ref]
+    stage1 = bundle.scenarios[0].stage1
+    assert stage1[0].display_value == "완전히 회복함"
+    assert [item.source_candidate_id for item in bundle.scenarios[0].stage2] == [
+        stage1[1].candidate_id,
+        stage1[0].candidate_id,
+    ]
+
+
+def test_character_batches_stay_scenario_local_when_evaluation_batch_matches() -> None:
+    comparator = _BatchCapturingCharacterComparator()
     first = ScenarioGold(
         scenario_id="S1",
         episode_no=1,
@@ -488,25 +798,8 @@ def test_character_comparison_reuses_same_batch_priors_and_caps_context() -> Non
         )
     )
 
-    assert comparator.prior_counts == [0, 1]
+    assert comparator.calls == [(["C1"], []), (["C1"], [])]
     assert bundle.state_application_policy == "SCENARIO_LOCAL"
-
-
-def test_character_prior_context_keeps_only_the_latest_thirty() -> None:
-    priors = [
-        WorkerCharacterPriorFactCandidate(
-            source_episode_no=episode_no,
-            attribute_name="profile.species",
-            comparison_status="COMPLETED",
-        )
-        for episode_no in range(1, 32)
-    ]
-
-    bounded = _bounded_prior_candidates(priors)
-
-    assert len(bounded) == 30
-    assert bounded[0].source_episode_no == 2
-    assert bounded[-1].source_episode_no == 31
 
 
 def test_live_runtime_keeps_raw_stage1_when_subject_resolution_fails() -> None:
@@ -601,6 +894,8 @@ def test_live_runtime_canonicalizes_schema_alias_before_comparison() -> None:
     assert prediction.raw_stage1[0].fact_key == "종족"
     assert prediction.stage1[0].fact_key == "profile.species"
     assert comparator.canonical_fact_key == "profile.species"
+    assert comparator.raw_fact_key == "종족"
+    assert comparator.canonical_key_resolution == "ALIAS"
 
 
 def test_live_runtime_uses_explicit_fact_type_for_work_specific_schema() -> None:
@@ -737,7 +1032,7 @@ def test_live_runtime_quarantines_candidate_that_does_not_match_schema() -> None
     assert prediction.failures[0].error_type == "ValueError"
 
 
-def test_character_snapshot_context_matches_spring_slot_selection() -> None:
+def test_character_batch_snapshot_context_matches_spring_slot_selection() -> None:
     profile_height = _character_state("PROFILE", "profile.height", "180")
     profile_species = _character_state("PROFILE", "profile.species", "바바리안")
     injured = _character_state(
@@ -765,25 +1060,54 @@ def test_character_snapshot_context_matches_spring_slot_selection() -> None:
         character_facts=[profile_height, profile_species, injured, poisoned, exhausted]
     )
 
-    profile_context, _ = _character_snapshots(
+    profile_context, _ = _character_batch_snapshots(
         state,
         "character:bjorn",
         "PROFILE",
-        "profile.height",
+        ["profile.height"],
     )
-    status_context, _ = _character_snapshots(
+    status_context, _ = _character_batch_snapshots(
         state,
         "character:bjorn",
         "STATUS",
-        "status.부상",
+        ["status.부상"],
     )
 
-    assert [item.fact_key for item in profile_context] == ["profile.height"]
+    assert [item.fact_key for item in profile_context] == [
+        "profile.height",
+        "profile.species",
+    ]
     assert [item.fact_key for item in status_context] == [
         "status.부상",
-        "status.피로",
         "status.중독",
+        "status.피로",
     ]
+    assert [item.snapshot_ref for item in status_context] == ["P1", "P2", "P3"]
+
+
+def test_character_batch_snapshot_context_prioritizes_exact_slots_before_cap() -> None:
+    state = EvaluationState(
+        character_facts=[
+            _character_state("PROFILE", f"profile.field_{index:02d}", str(index))
+            for index in range(31)
+        ]
+    )
+
+    context, refs = _character_batch_snapshots(
+        state,
+        "character:bjorn",
+        "PROFILE",
+        ["profile.field_30"],
+    )
+
+    assert len(context) == 30
+    assert context[0].fact_key == "profile.field_30"
+    assert "profile.field_29" not in {item.fact_key for item in context}
+    assert refs["P1"] == character_state_ref(
+        "character:bjorn",
+        "PROFILE",
+        "profile.field_30",
+    )
 
 
 def test_runtime_usage_wrapper_records_provider_token_counts() -> None:
@@ -944,6 +1268,43 @@ def test_live_runtime_reraises_provider_transport_error() -> None:
         )
 
 
+def test_runtime_reraises_token_quota_exhaustion_from_character_batch() -> None:
+    scenario = ScenarioGold(
+        scenario_id="S1",
+        episode_no=1,
+        source_identifier="01화.txt",
+        source_text="비요른은 바바리안이다.",
+        target_domains={"CHARACTER"},
+        gold_version="v3",
+        start_state_mode="SEED",
+        cumulative_through_episode=0,
+        seed_state=EvaluationState(
+            known_characters=[KnownCharacter(entity_ref="character:bjorn", name="비요른")]
+        ),
+        candidate_free=True,
+        review_status="FINAL",
+    )
+
+    with pytest.raises(AiTokenQuotaExhaustedError):
+        asyncio.run(
+            run_multi_stage_predictions(
+                GoldSnapshotV3(
+                    dataset_version="v3",
+                    name="fatal comparison quota",
+                    scenarios=[scenario],
+                ).with_fixture_hash(),
+                mode="FIXED",
+                components=RuntimeComponents(
+                    character_extractor=_LiveCharacterExtractor(),
+                    character_subject_resolver=_PassThroughSubjectResolver(),
+                    character_comparator=_QuotaFailingCharacterComparator(),
+                    world_comparator=_AddWorldComparator(),
+                ),
+                character_schema_hints=(_character_schema_hint(),),
+            )
+        )
+
+
 def test_runtime_pricing_does_not_charge_cached_tokens_at_full_input_rate() -> None:
     pricing = RuntimePricing(
         input_usd_per_million=Decimal("2"),
@@ -977,22 +1338,110 @@ def test_default_runtime_routes_subject_resolution_model_independently(monkeypat
 
 class _OracleCharacterComparator:
     snapshot_fact_keys = None
+    calls = None
 
-    async def compare(self, candidate, snapshot_entries, prior_candidates=None):
+    def batch_fits(self, *, candidates, **kwargs):
+        return bool(candidates)
+
+    async def compare_batch(self, *, candidates, snapshot_entries, **kwargs):
         self.snapshot_fact_keys = [entry.fact_key for entry in snapshot_entries]
-        decision = CharacterFactComparisonDecision(
-            operation="UPDATE",
-            target_ref="P1",
-            proposed_fact_value="180",
-            proposed_value_json={"value": 180},
-            temporal_scope="PRESENT",
-            comparison_reason="기존 키 정보를 새 수치로 바꾼다.",
+        self.calls = [candidate.candidate_ref for candidate in candidates]
+        result = CharacterFactComparisonBatchResult(
+            decisions=[
+                _batch_decision(
+                    candidate,
+                    operation="UPDATE",
+                    target_ref="P1",
+                    value="180",
+                    value_json={"value": 180},
+                )
+                for candidate in candidates
+            ]
         )
-        return decision, decision.model_dump(mode="json")
+        return result, result.model_dump(mode="json")
+
+
+class _ProjectedStatusComparator:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def batch_fits(self, *, candidates, **kwargs):
+        return bool(candidates)
+
+    async def compare_batch(self, *, candidates, snapshot_entries, **kwargs):
+        assert [candidate.canonical_key_resolution for candidate in candidates] == [
+            "PATTERN",
+            "PATTERN",
+        ]
+        self.calls.append(
+            (
+                [candidate.candidate_ref for candidate in candidates],
+                [entry.reference for entry in snapshot_entries],
+            )
+        )
+        first, second = candidates
+        result = CharacterFactComparisonBatchResult(
+            decisions=[
+                _batch_decision(
+                    first,
+                    operation="UPDATE",
+                    target_ref="P1",
+                    value="오른발 부상이 악화됨",
+                    value_json={"name": "오른발 부상", "active": True},
+                ),
+                _batch_decision(
+                    second,
+                    operation="REMOVE",
+                    removed_refs=["Q1"],
+                    resolved_key="status.회복",
+                ),
+            ]
+        )
+        return result, result.model_dump(mode="json")
+
+
+class _AddThenRemoveProjectedStatusComparator:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def batch_fits(self, *, candidates, **kwargs):
+        return bool(candidates)
+
+    async def compare_batch(self, *, candidates, snapshot_entries, **kwargs):
+        assert [candidate.canonical_key_resolution for candidate in candidates] == [
+            "PATTERN",
+            "PATTERN",
+        ]
+        self.calls.append(
+            (
+                [candidate.candidate_ref for candidate in candidates],
+                [entry.reference for entry in snapshot_entries],
+            )
+        )
+        first, second = candidates
+        result = CharacterFactComparisonBatchResult(
+            decisions=[
+                _batch_decision(
+                    first,
+                    operation="ADD",
+                    value="다리를 다침",
+                    value_json={"name": "부상", "active": True},
+                ),
+                _batch_decision(
+                    second,
+                    operation="REMOVE",
+                    removed_refs=["Q1"],
+                ),
+            ]
+        )
+        return result, result.model_dump(mode="json")
 
 
 class _HttpStatusFailingCharacterComparator:
-    async def compare(self, candidate, snapshot_entries, prior_candidates=None):
+    def batch_fits(self, *, candidates, **kwargs):
+        return bool(candidates)
+
+    async def compare_batch(self, **kwargs):
         request = httpx.Request("POST", "https://api.openai.com/v1/responses")
         response = httpx.Response(401, request=request)
         raise httpx.HTTPStatusError(
@@ -1000,6 +1449,14 @@ class _HttpStatusFailingCharacterComparator:
             request=request,
             response=response,
         )
+
+
+class _QuotaFailingCharacterComparator:
+    def batch_fits(self, *, candidates, **kwargs):
+        return bool(candidates)
+
+    async def compare_batch(self, **kwargs):
+        raise AiTokenQuotaExhaustedError()
 
 
 class _OracleWorldComparator:
@@ -1023,8 +1480,9 @@ class _OracleWorldComparator:
 
 class _LiveCharacterExtractor:
     async def extract_from_chunk(self, source_chunk_id, **kwargs):
-        candidate = ExtractedSettingCandidate(
+        candidate = ExtractedCharacterSettingCandidate(
             source_chunk_id=source_chunk_id,
+            candidate_kind="SETTING",
             entity_name="비요른",
             raw_entity_mention="비요른은",
             attribute_name="profile.species",
@@ -1041,8 +1499,9 @@ class _AliasCharacterExtractor:
     async def extract_from_chunk(self, source_chunk_id, **kwargs):
         return CharacterSettingExtractionResult(
             candidates=[
-                ExtractedSettingCandidate(
+                ExtractedCharacterSettingCandidate(
                     source_chunk_id=source_chunk_id,
+                    candidate_kind="SETTING",
                     entity_name="비요른",
                     attribute_name="종족",
                     attribute_value="바바리안",
@@ -1058,8 +1517,9 @@ class _UnknownSchemaCharacterExtractor:
     async def extract_from_chunk(self, source_chunk_id, **kwargs):
         return CharacterSettingExtractionResult(
             candidates=[
-                ExtractedSettingCandidate(
+                ExtractedCharacterSettingCandidate(
                     source_chunk_id=source_chunk_id,
+                    candidate_kind="SETTING",
                     entity_name="비요른",
                     attribute_name="unknown.fact",
                     attribute_value="알 수 없음",
@@ -1075,8 +1535,9 @@ class _CustomSchemaCharacterExtractor:
     async def extract_from_chunk(self, source_chunk_id, **kwargs):
         return CharacterSettingExtractionResult(
             candidates=[
-                ExtractedSettingCandidate(
+                ExtractedCharacterSettingCandidate(
                     source_chunk_id=source_chunk_id,
+                    candidate_kind="SETTING",
                     entity_name="비요른",
                     attribute_name="guild.rank",
                     attribute_value="철급",
@@ -1113,11 +1574,93 @@ class _FailingSubjectResolver:
 
 
 class _KnownCharacterCapturingExtractor:
-    known_character_names = None
+    def __init__(self) -> None:
+        self.requests = []
+
+    @property
+    def known_character_names(self):
+        return [character.name for character in self.requests[-1]]
 
     async def extract_from_chunk(self, **kwargs):
-        self.known_character_names = [character.name for character in kwargs["known_characters"]]
+        self.requests.append(kwargs["known_characters"])
         return CharacterSettingExtractionResult(candidates=[])
+
+
+class _RollingStatusExtractor:
+    def __init__(self) -> None:
+        self.status_keys_by_episode = {}
+
+    async def extract_from_chunk(self, source_chunk_id, **kwargs):
+        episode_no = kwargs["episode_no"]
+        self.status_keys_by_episode.setdefault(episode_no, []).append(
+            tuple(
+                status.fact_key
+                for character in kwargs["known_characters"]
+                for status in character.active_statuses
+            )
+        )
+        if episode_no != 1:
+            return CharacterSettingExtractionResult(candidates=[])
+        return CharacterSettingExtractionResult(
+            candidates=[
+                ExtractedCharacterSettingCandidate(
+                    source_chunk_id=source_chunk_id,
+                    candidate_kind="SETTING",
+                    entity_name="비요른",
+                    raw_entity_mention="비요른은",
+                    attribute_name="status.오른발_부상",
+                    attribute_value="오른발 부상이 악화됨",
+                    value_type="JSON",
+                    value_json={"name": "오른발 부상", "active": True},
+                    evidence_spans=[
+                        ExtractedEvidenceSpan(quote="부상이 악화되었지만")
+                    ],
+                    confidence=0.9,
+                ),
+                ExtractedCharacterSettingCandidate(
+                    source_chunk_id=source_chunk_id,
+                    candidate_kind="SETTING",
+                    entity_name="비요른",
+                    raw_entity_mention="비요른은",
+                    attribute_name="status.회복",
+                    attribute_value="완전히 회복함",
+                    value_type="JSON",
+                    value_json={"name": "회복", "active": False},
+                    evidence_spans=[ExtractedEvidenceSpan(quote="완전히 회복했다.")],
+                    confidence=0.9,
+                )
+            ]
+        )
+
+
+class _SameChunkStatusExtractor:
+    async def extract_from_chunk(self, source_chunk_id, **kwargs):
+        common = {
+            "source_chunk_id": source_chunk_id,
+            "candidate_kind": "SETTING",
+            "entity_name": "비요른",
+            "raw_entity_mention": "비요른은",
+            "value_type": "JSON",
+            "confidence": 0.9,
+        }
+        return CharacterSettingExtractionResult(
+            candidates=[
+                ExtractedCharacterSettingCandidate(
+                    **common,
+                    attribute_name="status.회복",
+                    attribute_value="완전히 회복함",
+                    value_json={"name": "회복", "active": False},
+                    evidence_spans=[ExtractedEvidenceSpan(quote="곧 완전히 회복했다.")],
+                ),
+                ExtractedCharacterSettingCandidate(
+                    **common,
+                    attribute_name="status.부상",
+                    attribute_value="다리를 다침",
+                    value_json={"name": "부상", "active": True},
+                    evidence_spans=[ExtractedEvidenceSpan(quote="비요른은 다쳤지만")],
+                ),
+            ]
+        )
 
 
 class _LiveWorldExtractor:
@@ -1162,34 +1705,50 @@ class _CallCountingWorldExtractor:
 
 
 class _AddCharacterComparator:
-    async def compare(self, candidate, snapshot_entries, prior_candidates=None):
-        decision = CharacterFactComparisonDecision(
-            operation="ADD",
-            proposed_fact_value="바바리안",
-            proposed_value_json={"value": "바바리안"},
-            temporal_scope="PRESENT",
-            comparison_reason="새로 확인된 종족을 반영한다.",
+    def batch_fits(self, *, candidates, **kwargs):
+        return bool(candidates)
+
+    async def compare_batch(self, *, candidates, **kwargs):
+        result = CharacterFactComparisonBatchResult(
+            decisions=[
+                _batch_decision(
+                    candidate,
+                    operation="ADD",
+                    value=candidate.attribute_value or "현재 설정",
+                    value_json=candidate.value_json,
+                )
+                for candidate in candidates
+            ]
         )
-        return decision, decision.model_dump(mode="json")
+        return result, result.model_dump(mode="json")
 
 
 class _CanonicalKeyCapturingComparator(_AddCharacterComparator):
     canonical_fact_key = None
     canonical_fact_type = None
+    raw_fact_key = None
+    canonical_key_resolution = None
 
-    async def compare(self, candidate, snapshot_entries, prior_candidates=None):
-        self.canonical_fact_key = candidate.canonical_fact_key
-        self.canonical_fact_type = candidate.canonical_fact_type
-        return await super().compare(candidate, snapshot_entries, prior_candidates)
+    async def compare_batch(self, *, candidates, canonical_fact_type, **kwargs):
+        self.canonical_fact_key = candidates[0].initial_canonical_fact_key
+        self.canonical_fact_type = canonical_fact_type
+        self.raw_fact_key = candidates[0].raw_fact_key
+        self.canonical_key_resolution = candidates[0].canonical_key_resolution
+        return await super().compare_batch(candidates=candidates, **kwargs)
 
 
-class _PriorCapturingCharacterComparator(_AddCharacterComparator):
+class _BatchCapturingCharacterComparator(_AddCharacterComparator):
     def __init__(self) -> None:
-        self.prior_counts: list[int] = []
+        self.calls: list[tuple[list[str], list[str]]] = []
 
-    async def compare(self, candidate, snapshot_entries, prior_candidates=None):
-        self.prior_counts.append(len(prior_candidates or []))
-        return await super().compare(candidate, snapshot_entries, prior_candidates)
+    async def compare_batch(self, *, candidates, snapshot_entries, **kwargs):
+        self.calls.append(
+            (
+                [candidate.candidate_ref for candidate in candidates],
+                [entry.reference for entry in snapshot_entries],
+            )
+        )
+        return await super().compare_batch(candidates=candidates, **kwargs)
 
 
 class _AddWorldComparator:
@@ -1224,6 +1783,62 @@ class _UsageValidationFailingClient:
         )
 
 
+def _character_gold(
+    gold_id: str,
+    fact_key: str,
+    value: str,
+    value_json: dict,
+    *,
+    sort_order: int,
+) -> CharacterStage1Gold:
+    return CharacterStage1Gold(
+        gold_id=gold_id,
+        scenario_id="S5",
+        episode_no=5,
+        sort_order=sort_order,
+        decision="EXTRACT",
+        importance="MUST",
+        evidence_quotes=[value],
+        review_status="FINAL",
+        domain="CHARACTER",
+        candidate_kind="SETTING",
+        entity_ref="character:bjorn",
+        entity_name="비요른",
+        fact_type="STATUS",
+        fact_key=fact_key,
+        value_type="JSON",
+        display_value=value,
+        value_json=value_json,
+        value_json_provenance="ANNOTATED",
+        structured_scorable=True,
+    )
+
+
+def _batch_decision(
+    candidate,
+    *,
+    operation: str,
+    target_ref: str | None = None,
+    removed_refs: list[str] | None = None,
+    value: str | None = None,
+    value_json: dict | None = None,
+    resolved_key: str | None = None,
+) -> CharacterFactComparisonBatchDecision:
+    return CharacterFactComparisonBatchDecision(
+        candidate_ref=candidate.candidate_ref,
+        operation=operation,
+        resolved_canonical_fact_key=(
+            resolved_key or candidate.initial_canonical_fact_key
+        ),
+        target_ref=target_ref,
+        removed_snapshot_refs=removed_refs or [],
+        proposed_fact_value=value,
+        proposed_value_json=value_json,
+        temporal_scope="PRESENT",
+        comparison_reason="현재 사실을 기준으로 설정을 반영합니다.",
+    )
+
+
 def _character_schema_hint() -> CharacterSettingSchemaHint:
     return CharacterSettingSchemaHint(
         schema_key="profile.species",
@@ -1234,23 +1849,38 @@ def _character_schema_hint() -> CharacterSettingSchemaHint:
     )
 
 
+def _status_schema_hint() -> CharacterSettingSchemaHint:
+    return CharacterSettingSchemaHint(
+        schema_key="statuses.condition",
+        display_name="상태",
+        attribute_pattern="status.*",
+        aliases=(),
+        value_type="JSON",
+        canonical_fact_type="STATUS",
+    )
+
+
 def _character_state(
     fact_type: str,
     fact_key: str,
     value: str,
     *,
+    entity_ref: str = "character:bjorn",
+    entity_name: str = "비요른",
+    value_type: str = "STRING",
+    value_json: dict | None = None,
     source_episode_no: int | None = None,
     source_sort_order: int | None = None,
 ) -> CharacterStateEntry:
     return CharacterStateEntry(
-        ref=character_state_ref("character:bjorn", fact_type, fact_key),
-        entity_ref="character:bjorn",
-        entity_name="비요른",
+        ref=character_state_ref(entity_ref, fact_type, fact_key),
+        entity_ref=entity_ref,
+        entity_name=entity_name,
         fact_type=fact_type,
         fact_key=fact_key,
-        value_type="STRING",
+        value_type=value_type,
         value=value,
-        value_json={"value": value},
+        value_json={"value": value} if value_json is None else value_json,
         source_episode_no=source_episode_no,
         source_sort_order=source_sort_order,
     )

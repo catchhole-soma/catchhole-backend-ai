@@ -221,8 +221,16 @@ held-conflict ledger에 보존하고 현재 world snapshot은 그대로 두는 *
 즉시 반영합니다. prediction/report의 `stateApplicationPolicy=ACCEPT_ALL_PREDICTIONS`로 이 가정을
 명시합니다. `FIXED`와 `ORACLE`은 `SCENARIO_LOCAL`입니다.
 
+`FIXED`의 1차에는 Gold before state, `ROLLING`의 1차에는 직전 predicted after state에서
+현재 활성인 캐릭터 `STATUS`를 가져와 `factKey`와 사람이 읽는 `factValue`만 전달합니다.
+내부 ref·구조화 JSON·이력은 보내지 않으며, 같은 회차의 모든 chunk는 동일한 회차 시작
+상태를 받습니다. `ORACLE`은 Gold 1차 후보를 직접 사용하므로 extractor를 호출하지 않고,
+이 STATUS들은 comparator의 persisted `P*` 문맥으로만 들어갑니다.
+
 캐릭터 2차 비교는 한 회차(scenario) 안의 동일 캐릭터·FactType 후보를
 원문 순서로 묶습니다.
+실제 추출에서는 LLM 배열 순서보다 검증된 evidence startOffset을 우선하고,
+offset을 확정할 수 없을 때만 안정적인 추출 순서를 사용합니다. ORACLE은 Gold의 정렬 순서를 사용합니다.
 각 판단이 만든 상태 변경은 DB가 아니라 메모리상 projected snapshot에만 먼저 적용되고, 다음
 후보는 이 상태를 비교 문맥으로 받습니다. 따라서 같은 회차에서 생긴 상태가 뒤의 종료 근거로
 쓰여도 재현할 수 있습니다. 회차 경계를 넘은 provider batch나 legacy prior candidate는
