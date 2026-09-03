@@ -111,6 +111,7 @@ MVP 안전 규칙은 다음과 같습니다.
 - STATUS 제거는 현재 시점의 상태 변화 결과가 나온 STATUS 후보에서만 허용합니다. 치료 수단만 있고 결과가 없으면 제거하지 않지만, 이후 능력·증상·행동 변화로 기존 상태가 끝났다는 해석이 자연스러우면 명시적인 완치 문구 없이도 의미상 관련된 여러 STATUS의 제거를 제안할 수 있습니다. 다만 새 결과와 무관한 독립적·잠재적 상태까지 연쇄적으로 제거하지 않습니다.
 - STATUS가 아닌 snapshot entry는 MVP에서 제거 대상으로 제안하지 않습니다.
 - 제거 참조는 batch 시작 `P*` 또는 앞선 성공 decision의 현재 활성 `Q*`에서만 고릅니다. Python은 미래·종료된 ref와 non-STATUS를 거절하고 Spring은 `contextToken`과 순차 projection으로 stale/범위 무결성을 다시 검증합니다.
+- 앞선 `REMOVE`가 비운 canonical slot에 후속 후보가 다시 `ADD`되면, 후속 판단은 그 slot을 비운 후보와 그 전이 의존성을 모두 승계합니다. 이 provenance는 batch 메모리에서만 유지하고, 초기 snapshot에 원래 없던 slot이나 `HISTORY_ONLY`/`EXCLUDE`/`REVIEW_REQUIRED`는 가짜 의존성을 만들지 않습니다.
 
 canonical `REMOVE` 완료 요청의 핵심 wire shape는 다음과 같습니다.
 

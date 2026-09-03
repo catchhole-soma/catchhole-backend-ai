@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any
+from typing import Any, Iterable
 
 from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonDecision,
@@ -47,6 +47,11 @@ class CharacterProjectionState:
     def __init__(self, entries: list[CharacterProjectionEntry]) -> None:
         self._entries_by_ref: dict[str, CharacterProjectionEntry] = {}
         self._ref_by_slot: dict[tuple[str, str], str] = {}
+        # A missing slot can itself be the result of an earlier decision. Keep that
+        # provenance request-locally so a later ADD cannot be confirmed without the
+        # REMOVE that made the slot available. Persisted initial absence has no entry
+        # here and therefore creates no artificial dependency.
+        self._absence_dependencies_by_slot: dict[tuple[str, str], tuple[str, ...]] = {}
         for entry in entries:
             if entry.reference in self._entries_by_ref:
                 raise ValueError(f"Duplicate snapshot ref: {entry.reference}")
@@ -87,14 +92,26 @@ class CharacterProjectionState:
             entries_by_ref=self._entries_by_ref,
         )
 
+        projected_slot = (fact_type, resolved_fact_key)
         dependency_candidate_refs = self._dependencies_for(
             [
                 *decision.removed_snapshot_refs,
                 *([] if decision.target_ref is None else [decision.target_ref]),
-            ]
+            ],
+            absent_slots=(
+                [projected_slot]
+                if decision.operation == CharacterFactComparisonOperation.ADD
+                else []
+            ),
+        )
+        effect_dependencies = _sorted_candidate_refs(
+            [*dependency_candidate_refs, candidate_ref]
         )
         for removed_ref in decision.removed_snapshot_refs:
-            self._remove(removed_ref)
+            self._remove(
+                removed_ref,
+                absence_dependencies=effect_dependencies,
+            )
 
         projected_entry: CharacterProjectionEntry | None = None
         if decision.operation in {
@@ -103,7 +120,10 @@ class CharacterProjectionState:
             CharacterFactComparisonOperation.MERGE,
         }:
             if decision.target_ref is not None:
-                self._remove(decision.target_ref)
+                self._remove(
+                    decision.target_ref,
+                    absence_dependencies=effect_dependencies,
+                )
             if projected_snapshot_ref in self._entries_by_ref:
                 raise ValueError(
                     f"Projected snapshot ref is already active: {projected_snapshot_ref}"
@@ -116,9 +136,7 @@ class CharacterProjectionState:
                 value_json=decision.proposed_value_json,
                 origin="PRIOR_DECISION",
                 source_candidate_ref=candidate_ref,
-                dependency_candidate_refs=tuple(
-                    [*dependency_candidate_refs, candidate_ref]
-                ),
+                dependency_candidate_refs=effect_dependencies,
             )
             self._insert(projected_entry)
 
@@ -134,21 +152,40 @@ class CharacterProjectionState:
             raise ValueError("Projected canonical snapshot slot must be unique.")
         self._entries_by_ref[entry.reference] = entry
         self._ref_by_slot[slot] = entry.reference
+        self._absence_dependencies_by_slot.pop(slot, None)
 
-    def _remove(self, reference: str) -> None:
+    def _remove(
+        self,
+        reference: str,
+        *,
+        absence_dependencies: tuple[str, ...],
+    ) -> None:
         entry = self._entries_by_ref.pop(reference)
-        self._ref_by_slot.pop((entry.fact_type, entry.fact_key), None)
+        slot = (entry.fact_type, entry.fact_key)
+        self._ref_by_slot.pop(slot, None)
+        self._absence_dependencies_by_slot[slot] = absence_dependencies
 
-    def _dependencies_for(self, references: list[str]) -> tuple[str, ...]:
+    def _dependencies_for(
+        self,
+        references: list[str],
+        *,
+        absent_slots: list[tuple[str, str]] | None = None,
+    ) -> tuple[str, ...]:
         dependencies: set[str] = set()
         for reference in references:
             entry = self._entries_by_ref[reference]
             dependencies.update(entry.dependency_candidate_refs)
             if entry.source_candidate_ref is not None:
                 dependencies.add(entry.source_candidate_ref)
+        for slot in absent_slots or []:
+            dependencies.update(self._absence_dependencies_by_slot.get(slot, ()))
         # removed refs의 반환 순서가 달라도 complete/audit/hash는 같은 chronology를
         # 가져야 한다. C10을 C2보다 앞세우는 문자열 정렬 대신 numeric ref 순서로 고정한다.
-        return tuple(sorted(dependencies, key=_candidate_ref_sort_key))
+        return _sorted_candidate_refs(dependencies)
+
+
+def _sorted_candidate_refs(references: Iterable[str]) -> tuple[str, ...]:
+    return tuple(sorted(set(references), key=_candidate_ref_sort_key))
 
 
 def _candidate_ref_sort_key(reference: str) -> tuple[int, int | str]:

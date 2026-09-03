@@ -89,6 +89,121 @@ def test_projector_chains_q_refs_and_derives_dependencies() -> None:
     assert state.entries == []
 
 
+def test_projector_makes_readded_slot_depend_on_the_remove_that_emptied_it() -> None:
+    state = CharacterProjectionState([_projection_entry("P1", "status.부상", "다리를 다침")])
+
+    remove_application = _apply_status_decision(
+        state,
+        "C1",
+        "status.부상",
+        operation="REMOVE",
+        removed_refs=["P1"],
+    )
+    add_application = _apply_status_decision(
+        state,
+        "C2",
+        "status.부상",
+        operation="ADD",
+    )
+
+    assert remove_application.dependency_candidate_refs == ()
+    assert add_application.dependency_candidate_refs == ("C1",)
+    assert add_application.projected_entry is not None
+    assert add_application.projected_entry.dependency_candidate_refs == ("C1", "C2")
+
+
+@pytest.mark.parametrize(
+    "ignored_operation",
+    ["HISTORY_ONLY", "EXCLUDE", "REVIEW_REQUIRED"],
+)
+def test_projector_keeps_transitive_absence_but_skips_non_projecting_operation(
+    ignored_operation: str,
+) -> None:
+    state = CharacterProjectionState([_projection_entry("P1", "status.부상", "다리를 다침")])
+    _apply_status_decision(
+        state,
+        "C1",
+        "status.부상",
+        operation="UPDATE",
+        target_ref="P1",
+    )
+    remove_application = _apply_status_decision(
+        state,
+        "C2",
+        "status.부상",
+        operation="REMOVE",
+        removed_refs=["Q1"],
+    )
+    ignored_application = _apply_status_decision(
+        state,
+        "C3",
+        "status.부상",
+        operation=ignored_operation,
+    )
+    add_application = _apply_status_decision(
+        state,
+        "C4",
+        "status.부상",
+        operation="ADD",
+    )
+
+    assert remove_application.dependency_candidate_refs == ("C1",)
+    assert ignored_application.dependency_candidate_refs == ()
+    assert ignored_application.projected_entry is None
+    assert add_application.dependency_candidate_refs == ("C1", "C2")
+    assert "C3" not in add_application.dependency_candidate_refs
+
+
+@pytest.mark.parametrize("upsert_operation", ["ADD", "UPDATE", "MERGE"])
+def test_projector_carries_absence_through_remove_and_upsert(
+    upsert_operation: str,
+) -> None:
+    state = CharacterProjectionState(
+        [
+            _projection_entry("P1", "status.마비독", "마비독에 중독됨"),
+            *(
+                [_projection_entry("P2", "status.회복", "회복 중")]
+                if upsert_operation != "ADD"
+                else []
+            ),
+        ]
+    )
+    upsert_application = _apply_status_decision(
+        state,
+        "C1",
+        "status.회복",
+        operation=upsert_operation,
+        target_ref="P2" if upsert_operation != "ADD" else None,
+        removed_refs=["P1"],
+    )
+    poison_application = _apply_status_decision(
+        state,
+        "C2",
+        "status.마비독",
+        operation="ADD",
+    )
+
+    assert upsert_application.dependency_candidate_refs == ()
+    assert poison_application.dependency_candidate_refs == ("C1",)
+    assert {(entry.reference, entry.fact_key) for entry in state.entries} == {
+        ("Q1", "status.회복"),
+        ("Q2", "status.마비독"),
+    }
+
+
+def test_projector_does_not_invent_dependency_for_persisted_initial_absence() -> None:
+    state = CharacterProjectionState([])
+
+    application = _apply_status_decision(
+        state,
+        "C1",
+        "status.부상",
+        operation="ADD",
+    )
+
+    assert application.dependency_candidate_refs == ()
+
+
 def test_five_status_transitions_finish_with_empty_snapshot() -> None:
     state = CharacterProjectionState(
         [
@@ -397,6 +512,62 @@ def test_batch_pipeline_falls_back_to_singletons_without_losing_projection() -> 
     summary = result.summary_metrics()
     assert summary["characterComparisonBatchFallbackCandidateCount"] == 2
     assert summary["characterComparisonMaxCandidatesPerBatch"] == 2
+
+
+def test_singleton_fallback_preserves_dependency_on_removed_slot_absence() -> None:
+    batch = _batch().model_copy(
+        update={
+            "candidates": [
+                _candidate("C1", "Q1", "부상이 회복됨").model_copy(
+                    update={"value_json": {"name": "부상", "active": False}}
+                ),
+                _candidate("C2", "Q2", "다리를 다시 다침"),
+            ]
+        }
+    )
+    context = _context(batch).model_copy(
+        update={"snapshot_entries": [_batch_snapshot("P1", "status.부상", "다리를 다침")]}
+    )
+    comparator = FakeBatchComparator(
+        [
+            ComparisonValidationError("invalid batch response"),
+            CharacterFactComparisonBatchResult(
+                decisions=[
+                    _decision(
+                        "C1",
+                        operation="REMOVE",
+                        resolved_key="status.부상",
+                        removed_refs=["P1"],
+                        value=None,
+                    )
+                ]
+            ),
+            CharacterFactComparisonBatchResult(
+                decisions=[
+                    _decision(
+                        "C2",
+                        operation="ADD",
+                        resolved_key="status.부상",
+                        value="다리를 다시 다침",
+                    )
+                ]
+            ),
+        ]
+    )
+    spring = FakeBatchSpring(batch, context)
+
+    result = asyncio.run(
+        CharacterFactComparisonPipeline(spring, comparator).process_all(
+            ANALYSIS_JOB_ID,
+            LEASE_TOKEN,
+        )
+    )
+
+    assert result.completed_count == 2
+    assert comparator.calls == [["C1", "C2"], ["C1"], ["C2"]]
+    completion = spring.completions[0]
+    assert completion.decisions[0].dependency_candidate_refs == []
+    assert completion.decisions[1].dependency_candidate_refs == ["C1"]
 
 
 def test_batch_pipeline_splits_by_limit_and_keeps_q_projection() -> None:
@@ -1035,6 +1206,34 @@ def _projection_entry(ref: str, key: str, value: str) -> CharacterProjectionEntr
         fact_key=key,
         fact_value=value,
         value_json={"active": True},
+    )
+
+
+def _apply_status_decision(
+    state: CharacterProjectionState,
+    candidate_ref: str,
+    resolved_key: str,
+    *,
+    operation: str,
+    target_ref: str | None = None,
+    removed_refs: list[str] | None = None,
+):
+    changes_snapshot = operation in {"ADD", "UPDATE", "MERGE"}
+    return state.apply(
+        candidate_ref=candidate_ref,
+        projected_snapshot_ref=f"Q{candidate_ref.removeprefix('C')}",
+        fact_type="STATUS",
+        resolved_fact_key=resolved_key,
+        value_type="JSON",
+        candidate_value_json={"active": changes_snapshot},
+        decision=_decision(
+            candidate_ref,
+            operation=operation,
+            resolved_key=resolved_key,
+            target_ref=target_ref,
+            removed_refs=removed_refs,
+            value=f"{candidate_ref} 현재값" if changes_snapshot else None,
+        ),
     )
 
 
