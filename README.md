@@ -137,6 +137,34 @@ docker run --rm -p 8000:8000 --env-file .env catchhole-ai:local \
 
 `main` 브랜치에 push되면 GitHub Actions가 GHCR에 `ghcr.io/catchhole-soma/catchhole-backend-ai:main`과 short SHA 태그를 발행합니다. 이미지 발행이 성공하면 별도의 `Deploy Worker EC2` 작업 흐름이 Worker 서버용 Amazon EC2 인스턴스만 배포합니다. 백엔드 저장소를 호출하는 토큰은 사용하지 않습니다.
 
+## 운영 로그 확인
+
+운영 Worker 컨테이너 로그는 Amazon EC2 호스트의 systemd journal에 최대 14일 또는 1GB까지 보관합니다. Worker 서버의 `/opt/catchhole`에서 설정 추출 Worker 전체 로그를 확인합니다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml logs --tail=200 ai-worker
+```
+
+실시간으로 이어서 확인합니다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml logs -f ai-worker
+```
+
+특정 Worker의 컨테이너 재생성 전 로그를 포함한 최근 로그는 journal에서 조회합니다.
+
+```bash
+sudo journalctl CONTAINER_NAME=catchhole-worker-ai-worker-1 --since '1 hour ago' --no-pager
+```
+
+시간·컨테이너 ID·이미지·메시지 같은 전체 필드는 JSON 형태로 확인할 수 있습니다.
+
+```bash
+sudo journalctl CONTAINER_NAME=catchhole-worker-ai-worker-1 -n 1 -o json-pretty
+```
+
+비교 Worker는 컨테이너 이름을 `catchhole-worker-ai-character-comparison-worker-1` 또는 `catchhole-worker-ai-world-comparison-worker-1`로 바꿔 조회합니다. 현재 journal 사용량과 상세 운영 절차는 [Worker Amazon EC2 배포 문서](deploy/WORKER_EC2_DEPLOYMENT.md)를 참고합니다.
+
 ## 환경 변수
 
 `.env.example`을 참고해 `.env`를 생성합니다.
