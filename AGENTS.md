@@ -44,6 +44,7 @@
 
 ## Async Worker Runtime
 
+- 운영 Worker 컨테이너는 Docker `journald` 로그 드라이버를 사용한다. Worker 서버의 systemd journal은 EC2 로컬 디스크에 최대 14일·1GB로 제한해 보관하며, 외부 로그 저장소와 애플리케이션 파일 로그는 별도 요구가 생기기 전까지 추가하지 않는다.
 - 장기 실행 runner는 `AI_WORKER_CONCURRENCY`개의 실행 슬롯만 유지한다. 반드시 빈 슬롯을 확보한 뒤 Job 하나를 claim해 즉시 Task로 실행하고, 슬롯 없이 Job을 미리 claim해 프로세스 내부 대기열에 쌓지 않는다.
 - 한 Job 안의 청크와 분석 stage는 순차 처리한다. `LLM_MAX_CONCURRENT_REQUESTS`는 프로세스 내부 provider 호출 상한이고, 동기 DB/S3 작업은 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에 넘긴다.
 - 회차 원문 청킹 기본값은 목표 6,000자·최대 7,000자·최소 1,000자다. 여러 회차 분석 요청도 Spring이 만든 회차별 Job에서 각각 같은 정책을 적용하며 한 Job 안에서 회차 원문을 합치지 않는다.

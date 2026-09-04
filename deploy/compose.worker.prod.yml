@@ -38,6 +38,8 @@ x-worker-environment: &worker-environment
 x-worker-service: &worker-service
   image: ${AI_IMAGE:?AI_IMAGE is required}
   restart: unless-stopped
+  logging:
+    driver: journald
   stop_grace_period: 210s
 
 services:
