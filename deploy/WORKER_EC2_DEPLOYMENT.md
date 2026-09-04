@@ -17,6 +17,52 @@ Worker 서버에는 다음 파일을 둔다.
 - `AI_IMAGE`에는 발행이 성공한 이미지의 `sha-<short-sha>` 태그를 넣는다. 자동 배포는 이 값을 배포 대상 SHA로 갱신한다.
 - AWS 액세스 키와 비밀 액세스 키는 `worker.env`에 넣지 않는다. Amazon EC2 인스턴스 역할을 사용한다.
 
+## 로컬 로그 보관
+
+운영 컨테이너는 표준 출력과 표준 오류를 Docker `journald` 로그 드라이버로 전달한다. systemd journal은 Worker 서버용 Amazon EC2 인스턴스의 로컬 디스크에 최대 14일 또는 1GB까지만 보관한다. 컨테이너 재생성과 인스턴스 재부팅 후에도 로그를 조회할 수 있지만, 인스턴스 또는 루트 Amazon EBS 볼륨을 삭제하면 로그도 삭제된다.
+
+Worker 서버에서 다음 설정을 적용한다.
+
+```bash
+sudo install -d -m 0755 /etc/systemd/journald.conf.d
+```
+
+```bash
+sudo tee /etc/systemd/journald.conf.d/catchhole.conf > /dev/null <<'EOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=1G
+MaxRetentionSec=14day
+Compress=yes
+EOF
+```
+
+```bash
+sudo install -d -m 2755 /var/log/journal
+```
+
+```bash
+sudo systemd-tmpfiles --create --prefix /var/log/journal
+```
+
+```bash
+sudo systemctl restart systemd-journald
+```
+
+```bash
+sudo journalctl --flush
+```
+
+설정과 현재 사용량을 확인한다.
+
+```bash
+sudo cat /etc/systemd/journald.conf.d/catchhole.conf
+```
+
+```bash
+sudo journalctl --disk-usage
+```
+
 ## Worker 서버 인스턴스 역할과 메타데이터 설정
 
 Worker 컨테이너는 고정 AWS 액세스 키 대신 Worker 서버용 Amazon EC2 인스턴스 역할로 Amazon S3에 접근한다. Worker 서버용 Amazon EC2 인스턴스에 필요한 Amazon S3 버킷 읽기·쓰기 권한이 있는 역할을 연결한다.
@@ -191,6 +237,25 @@ sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml p
 ```
 
 두 결과 모두 `1`이어야 한다.
+
+모든 Worker 컨테이너의 로그 드라이버가 `journald`인지 확인한다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml ps -q \
+  | xargs -r sudo docker inspect --format '{{.Name}} {{.HostConfig.LogConfig.Type}}'
+```
+
+현재 Worker 로그는 Docker Compose로 확인한다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml logs --tail=100
+```
+
+컨테이너 재생성 전 로그를 포함한 서버 보관 로그는 systemd journal에서 Docker 컨테이너 이름으로 확인한다.
+
+```bash
+sudo journalctl CONTAINER_NAME=catchhole-worker-ai-worker-1 --since '14 days ago' --no-pager
+```
 
 ## 25개 작업 슬롯으로 낮추기
 
