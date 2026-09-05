@@ -59,12 +59,13 @@ jobs:
   score:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    environment: setting-multi-stage-evaluation
+    environment: setting-extraction-evaluation
     env:
       NOTION_SCENARIO_DATA_SOURCE_ID: ${{ vars.NOTION_SCENARIO_DATA_SOURCE_ID }}
       NOTION_STAGE1_GOLD_DATA_SOURCE_ID: ${{ vars.NOTION_STAGE1_GOLD_DATA_SOURCE_ID }}
       NOTION_STAGE2_GOLD_DATA_SOURCE_ID: ${{ vars.NOTION_STAGE2_GOLD_DATA_SOURCE_ID }}
-      SETTING_MULTI_STAGE_EVAL_INPUT_S3_URI: ${{ vars.SETTING_MULTI_STAGE_EVAL_INPUT_S3_URI }}
+      # 레거시 1차 평가와 같은 private 원문·스키마 prefix를 읽습니다.
+      SETTING_MULTI_STAGE_EVAL_INPUT_S3_URI: ${{ vars.SETTING_EVAL_INPUT_S3_URI }}
       AWS_REGION: ${{ vars.AWS_REGION }}
       RUN_EPISODES: ${{ inputs.episodes }}
       RUN_MODE: ${{ inputs.mode }}

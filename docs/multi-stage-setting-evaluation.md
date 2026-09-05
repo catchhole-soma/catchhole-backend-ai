@@ -436,18 +436,20 @@ runtime이 선택한 `--domains`는 prediction의
 새 평가는 `.github/workflows/setting-multi-stage-score.yml`을 수동 실행합니다. 기존
 `setting-extraction-score.yml`은 레거시 캐릭터 1차 지표를 위해 그대로 둡니다.
 
-Actions environment `setting-multi-stage-evaluation`에는 다음 값을 설정합니다.
+기존 1차 평가와 같은 Actions environment `setting-extraction-evaluation`을 사용합니다. Notion,
+OpenAI, AWS 인증과 `AWS_REGION`, `SETTING_EVAL_INPUT_S3_URI`는 기존 값을 재사용하며, 다단계
+평가용 Notion data source ID 세 개만 같은 environment에 추가합니다.
 
 | 종류 | 이름 | 용도 |
 | --- | --- | --- |
-| secret | `NOTION_API_TOKEN` | 세 data source에 대한 read-only integration token |
+| 기존 secret | `NOTION_API_TOKEN` | 세 data source에 대한 read-only integration token. 새 표에도 integration을 공유해야 함 |
 | variable | `NOTION_SCENARIO_DATA_SOURCE_ID` | 시나리오 data source ID |
 | variable | `NOTION_STAGE1_GOLD_DATA_SOURCE_ID` | 공용 1차 Gold data source ID |
 | variable | `NOTION_STAGE2_GOLD_DATA_SOURCE_ID` | 공용 2차 Gold data source ID |
-| secret | `OPENAI_API_KEY` | extractor/comparator와 선택적 judge 호출 |
-| variable | `SETTING_MULTI_STAGE_EVAL_INPUT_S3_URI` | private 원문·스키마·외부 seed state 입력 위치 |
-| variable | `AWS_REGION` | private 입력 다운로드 region |
-| secret | `AWS_ROLE_TO_ASSUME` 또는 access key 쌍 | private 입력 read 권한 |
+| 기존 secret | `OPENAI_API_KEY` | extractor/comparator와 선택적 judge 호출 |
+| 기존 variable | `SETTING_EVAL_INPUT_S3_URI` | 두 평가가 공유하는 private 원문·스키마·외부 seed state 입력 위치 |
+| 기존 variable | `AWS_REGION` | private 입력 다운로드 region |
+| 기존 secret | `AWS_ROLE_TO_ASSUME` 또는 access key 쌍 | private 입력 read 권한 |
 
 S3 prefix 아래에는 live 평가 원문 `sources/`, 캐릭터 도메인을 평가할 때 필요한
 `character-setting-schemas.json`, 외부 `SEED`를 사용할 때 필요한 `states/`를 둡니다.
