@@ -1165,16 +1165,17 @@ def _link_projected_world_subject_adds(
             source.candidate.category.value,
             normalize_world_setting_name(source.candidate.subject_name),
         )
-        if (
-            prediction.operation == WorldSettingOperation.ADD
-            and prediction.consolidation_status != WorldSettingConsolidationStatus.CONFLICT
-        ):
+        if prediction.operation == WorldSettingOperation.ADD:
             projected_ref = projected_subject_refs.get(subject_key)
             if prediction.target_ref is None and projected_ref is not None:
                 prediction = prediction.model_copy(
                     update={"target_ref": projected_ref},
                 )
-            elif prediction.target_ref is None:
+            elif (
+                prediction.target_ref is None
+                and prediction.consolidation_status
+                != WorldSettingConsolidationStatus.CONFLICT
+            ):
                 projected_subject_refs[subject_key] = world_subject_ref(
                     source.candidate.category,
                     source.candidate.subject_name,

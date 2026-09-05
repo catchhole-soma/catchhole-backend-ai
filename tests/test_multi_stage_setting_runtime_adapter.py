@@ -400,6 +400,107 @@ def test_fixed_runtime_compares_related_world_properties_in_one_batch() -> None:
         None,
         world_subject_ref("MONSTER", "고블린"),
     ]
+    after_state = runtime_adapter_module._apply_runtime_scenario(
+        scenario,
+        EvaluationState(),
+        bundle.scenarios[0],
+    )
+    assert {fact.setting_name for fact in after_state.world_facts} == {
+        "함정 사용",
+        "매복 습성",
+    }
+
+
+def test_fixed_runtime_projects_new_world_subject_across_scope_batches() -> None:
+    scenario = ScenarioGold(
+        scenario_id="S1",
+        episode_no=1,
+        source_identifier="01화.txt",
+        source_text="고블린은 함정을 설치하고 밤에는 무리를 지어 이동한다.",
+        target_domains={"WORLD"},
+        gold_version="v3",
+        start_state_mode="EMPTY",
+        cumulative_through_episode=0,
+        candidate_free=True,
+        review_status="FINAL",
+    )
+    comparator = _BatchCapturingWorldComparator()
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            GoldSnapshotV3(
+                dataset_version="v3",
+                name="world subject projection across scopes",
+                scenarios=[scenario],
+            ).with_fixture_hash(),
+            mode="FIXED",
+            components=RuntimeComponents(
+                character_comparator=_AddCharacterComparator(),
+                world_extractor=_CrossScopeWorldPropertiesExtractor(),
+                world_comparator=comparator,
+            ),
+            domains={"WORLD"},
+        )
+    )
+
+    assert comparator.calls == [["함정 사용"], ["집단 행동"]]
+    assert [decision.target_ref for decision in bundle.scenarios[0].stage2] == [
+        None,
+        world_subject_ref("MONSTER", "고블린"),
+    ]
+    after_state = runtime_adapter_module._apply_runtime_scenario(
+        scenario,
+        EvaluationState(),
+        bundle.scenarios[0],
+    )
+    assert {fact.setting_name for fact in after_state.world_facts} == {
+        "함정 사용",
+        "집단 행동",
+    }
+
+
+def test_fixed_runtime_links_conflict_to_projected_world_subject() -> None:
+    scenario = ScenarioGold(
+        scenario_id="S1",
+        episode_no=1,
+        source_identifier="01화.txt",
+        source_text="고블린은 함정을 설치하며 체격에 관한 기록은 서로 다르다.",
+        target_domains={"WORLD"},
+        gold_version="v3",
+        start_state_mode="EMPTY",
+        cumulative_through_episode=0,
+        candidate_free=True,
+        review_status="FINAL",
+    )
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            GoldSnapshotV3(
+                dataset_version="v3",
+                name="world projected conflict",
+                scenarios=[scenario],
+            ).with_fixture_hash(),
+            mode="FIXED",
+            components=RuntimeComponents(
+                character_comparator=_AddCharacterComparator(),
+                world_extractor=_AddThenConflictWorldExtractor(),
+                world_comparator=_AddThenConflictWorldComparator(),
+            ),
+            domains={"WORLD"},
+        )
+    )
+
+    assert [decision.target_ref for decision in bundle.scenarios[0].stage2] == [
+        None,
+        world_subject_ref("MONSTER", "고블린"),
+    ]
+    after_state = runtime_adapter_module._apply_runtime_scenario(
+        scenario,
+        EvaluationState(),
+        bundle.scenarios[0],
+    )
+    assert [fact.setting_name for fact in after_state.world_facts] == ["함정 사용"]
+    assert len(after_state.held_world_conflicts) == 1
 
 
 def test_fixed_runtime_reraises_incomplete_world_batch_response() -> None:
@@ -1942,6 +2043,67 @@ class _IndependentWorldPropertiesExtractor:
         )
 
 
+class _CrossScopeWorldPropertiesExtractor:
+    async def extract_from_chunk(self, **kwargs):
+        common = {
+            "category": "MONSTER",
+            "subject_name": "고블린",
+            "confidence": 0.8,
+        }
+        return WorldSettingExtractionResult(
+            candidates=[
+                ExtractedWorldSettingCandidate(
+                    **common,
+                    scope_name="전투 특성",
+                    setting_name="함정 사용",
+                    extracted_value="함정을 설치한다.",
+                    evidence_spans=[ExtractedEvidenceSpan(quote="함정을 설치하고")],
+                ),
+                ExtractedWorldSettingCandidate(
+                    **common,
+                    scope_name="사회 특성",
+                    setting_name="집단 행동",
+                    extracted_value="밤에는 무리를 지어 이동한다.",
+                    evidence_spans=[
+                        ExtractedEvidenceSpan(quote="밤에는 무리를 지어 이동한다")
+                    ],
+                ),
+            ]
+        )
+
+
+class _AddThenConflictWorldExtractor:
+    async def extract_from_chunk(self, **kwargs):
+        common = {
+            "category": "MONSTER",
+            "subject_name": "고블린",
+            "scope_name": "신체 및 전투 특성",
+            "confidence": 0.8,
+        }
+        return WorldSettingExtractionResult(
+            candidates=[
+                ExtractedWorldSettingCandidate(
+                    **common,
+                    setting_name="함정 사용",
+                    extracted_value="함정을 설치한다.",
+                    evidence_spans=[ExtractedEvidenceSpan(quote="함정을 설치하며")],
+                ),
+                ExtractedWorldSettingCandidate(
+                    **common,
+                    setting_name="체격",
+                    extracted_value="평균 140cm다.",
+                    evidence_spans=[ExtractedEvidenceSpan(quote="기록은")],
+                ),
+                ExtractedWorldSettingCandidate(
+                    **common,
+                    setting_name="체격",
+                    extracted_value="평균 190cm다.",
+                    evidence_spans=[ExtractedEvidenceSpan(quote="서로 다르다")],
+                ),
+            ]
+        )
+
+
 class _MetadataCapturingWorldExtractor:
     episode_title = None
 
@@ -2054,13 +2216,46 @@ class _AddWorldComparator:
         return result, result.model_dump(mode="json")
 
 
-class _BatchCapturingWorldComparator(_AddWorldComparator):
+class _BatchCapturingWorldComparator:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
 
     async def compare_batch(self, category, candidates, targets):
         self.calls.append([candidate.setting_name for candidate in candidates])
-        return await super().compare_batch(category, candidates, targets)
+        result = WorldSettingComparisonBatchResult(
+            decisions=[
+                WorldSettingComparisonBatchDecision(
+                    source_candidate_refs=[candidate.candidate_ref],
+                    consolidation_status="SINGLE",
+                    operation="ADD",
+                    proposed_setting_name=candidate.setting_name,
+                    proposed_value=candidate.extracted_value,
+                    comparison_reason="원문 정보를 현재 세계관 설정으로 정리합니다.",
+                )
+                for candidate in candidates
+            ]
+        )
+        return result, result.model_dump(mode="json")
+
+
+class _AddThenConflictWorldComparator:
+    async def compare_batch(self, category, candidates, targets):
+        result = WorldSettingComparisonBatchResult(
+            decisions=[
+                WorldSettingComparisonBatchDecision(
+                    source_candidate_refs=[candidate.candidate_ref],
+                    consolidation_status=(
+                        "CONFLICT" if candidate.setting_name == "체격" else "SINGLE"
+                    ),
+                    operation="ADD",
+                    proposed_setting_name=candidate.setting_name,
+                    proposed_value=candidate.extracted_value,
+                    comparison_reason="서로 다른 원문 값을 보존합니다.",
+                )
+                for candidate in candidates
+            ]
+        )
+        return result, result.model_dump(mode="json")
 
 
 class _IncompleteWorldComparator:
