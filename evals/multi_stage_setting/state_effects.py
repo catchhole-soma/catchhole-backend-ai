@@ -32,7 +32,7 @@ from evals.multi_stage_setting.contracts import (
     character_state_ref,
     infer_character_fact_type,
     validate_world_state_properties,
-    world_path_key,
+    world_entry_subject_ref,
     world_subject_ref,
     world_state_ref,
 )
@@ -74,20 +74,18 @@ def build_gold_state_chain(snapshot: GoldSnapshotV3) -> dict[str, ScenarioStateT
         applied: list[str] = []
         held: list[str] = []
         resolved_befores: list[ResolvedDecisionBefore] = []
-        for decision in sorted(
+        scenario_decisions = sorted(
             decisions_by_scenario.get(scenario.scenario_id, []),
             key=lambda item: (item.sort_order, item.decision_id),
-        ):
+        )
+        _validate_world_root_move_plans(before_state, scenario_decisions)
+        for decision in scenario_decisions:
             sources = [stage1_by_id[source_id] for source_id in decision.source_gold_ids]
             # 캐릭터 batch는 앞선 결정이 만든 메모리상 projected snapshot을 다음
             # 후보의 비교 문맥으로 사용한다. 세계관 reducer는 기존처럼 회차 시작
             # beforeState에 대해 각 결정을 검증한다.
-            comparison_state = (
-                state if isinstance(decision, CharacterStage2Gold) else before_state
-            )
-            resolved_befores.append(
-                _resolve_decision_before(comparison_state, sources, decision)
-            )
+            comparison_state = state if isinstance(decision, CharacterStage2Gold) else before_state
+            resolved_befores.append(_resolve_decision_before(comparison_state, sources, decision))
             state, was_held = apply_gold_decision(
                 state,
                 scenario,
@@ -96,6 +94,11 @@ def build_gold_state_chain(snapshot: GoldSnapshotV3) -> dict[str, ScenarioStateT
                 comparison_state=comparison_state,
             )
             (held if was_held else applied).append(decision.decision_id)
+        _validate_generated_world_scopes(
+            state,
+            scenario_decisions,
+            stage1_by_id,
+        )
         state = _register_discovered_characters(
             state,
             [
@@ -239,9 +242,7 @@ def apply_prediction_decision(
                 decision=GoldDecision.EXTRACT,
                 importance=Importance.MUST,
                 context_tags=[],
-                evidence_quotes=[
-                    span.quote for span in source.evidence_spans
-                ]
+                evidence_quotes=[span.quote for span in source.evidence_spans]
                 or ["prediction-output"],
                 review_status="FINAL",
                 domain="CHARACTER",
@@ -249,8 +250,7 @@ def apply_prediction_decision(
                 entity_ref=(
                     matched_character.entity_ref
                     if matched_character is not None
-                    else source.entity_ref
-                    or f"prediction:{_safe_ref_part(entity_name)}"
+                    else source.entity_ref or f"prediction:{_safe_ref_part(entity_name)}"
                 ),
                 entity_name=entity_name,
                 fact_type=fact_type,
@@ -291,9 +291,7 @@ def apply_prediction_decision(
             decision, WorldStage2Prediction
         ):
             matched_world = (
-                matched_gold_source
-                if isinstance(matched_gold_source, WorldStage1Gold)
-                else None
+                matched_gold_source if isinstance(matched_gold_source, WorldStage1Gold) else None
             )
             matched_world_decision = (
                 matched_gold_decision
@@ -319,17 +317,13 @@ def apply_prediction_decision(
                 candidate_kind="WORLD_SETTING",
                 category=matched_world.category if matched_world is not None else source.category,
                 subject_name=(
-                    matched_world.subject_name
-                    if matched_world is not None
-                    else source.subject_name
+                    matched_world.subject_name if matched_world is not None else source.subject_name
                 ),
                 scope_name=(
                     matched_world.scope_name if matched_world is not None else source.scope_name
                 ),
                 setting_name=(
-                    matched_world.setting_name
-                    if matched_world is not None
-                    else source.setting_name
+                    matched_world.setting_name if matched_world is not None else source.setting_name
                 ),
                 source_values=source.source_values,
             )
@@ -375,6 +369,9 @@ def apply_prediction_decision(
                     or decision.proposed_setting_name
                 ),
                 proposed_value=decision.proposed_value,
+                existing_root_property_names_to_move=(
+                    decision.existing_root_property_names_to_move
+                ),
                 review_status="FINAL",
             )
             return _apply_world(
@@ -464,9 +461,7 @@ def _apply_character(
             )
     if decision.before_value_json is not None:
         comparison_entry = comparison_target or comparison_exact_existing
-        actual_before_json = (
-            None if comparison_entry is None else comparison_entry.value_json
-        )
+        actual_before_json = None if comparison_entry is None else comparison_entry.value_json
         if actual_before_json != decision.before_value_json:
             raise StateApplicationError(
                 f"Decision {decision.decision_id} beforeValueJson does not match comparison state."
@@ -495,10 +490,7 @@ def _apply_character(
         raise StateApplicationError(f"Unsupported character operation: {operation}")
 
     for removed_ref in decision.removed_snapshot_refs:
-        if (
-            operation != CharacterFactComparisonOperation.REMOVE
-            and removed_ref == exact_ref
-        ):
+        if operation != CharacterFactComparisonOperation.REMOVE and removed_ref == exact_ref:
             raise StateApplicationError(
                 "A snapshot upsert must not also remove the candidate's exact slot."
             )
@@ -592,19 +584,23 @@ def _apply_world(
     decision: WorldStage2Gold,
 ) -> tuple[EvaluationState, bool]:
     primary = sources[0]
-    primary_path = world_path_key(
-        primary.category,
-        primary.subject_name,
-        primary.scope_name,
-        primary.setting_name,
+    primary_group = (
+        str(primary.category),
+        normalize_world_setting_name(primary.subject_name),
+        normalize_world_setting_name(primary.scope_name or ""),
     )
     if any(
-        world_path_key(source.category, source.subject_name, source.scope_name, source.setting_name)
-        != primary_path
+        (
+            str(source.category),
+            normalize_world_setting_name(source.subject_name),
+            normalize_world_setting_name(source.scope_name or ""),
+        )
+        != primary_group
         for source in sources[1:]
     ):
         raise StateApplicationError(
-            f"World decision {decision.decision_id} sources do not share one grouping path."
+            f"World decision {decision.decision_id} sources do not share one "
+            "category, subject, and raw scope."
         )
     unique_values = []
     normalized_values: set[str] = set()
@@ -634,25 +630,14 @@ def _apply_world(
     ]
     target = facts.get(decision.target_ref or "")
     comparison_target = next(
-        (
-            item
-            for item in comparison_state.world_facts
-            if item.ref == decision.target_ref
-        ),
+        (item for item in comparison_state.world_facts if item.ref == decision.target_ref),
         None,
     )
     subject_entries = [
-        item
-        for item in facts.values()
-        if decision.target_ref
-        == world_subject_ref(item.category, item.subject_name)
+        item for item in facts.values() if decision.target_ref == world_entry_subject_ref(item)
     ]
     is_subject_target = bool(subject_entries)
-    if (
-        decision.target_ref is not None
-        and target is None
-        and not is_subject_target
-    ):
+    if decision.target_ref is not None and target is None and not is_subject_target:
         raise StateApplicationError(
             f"Decision {decision.decision_id} targets a missing world state ref."
         )
@@ -684,9 +669,7 @@ def _apply_world(
                 f"Decision {decision.decision_id} matched path differs from target state."
             )
     elif target is not None:
-        raise StateApplicationError(
-            "A property-level world target requires matchedPropertyName."
-        )
+        raise StateApplicationError("A property-level world target requires matchedPropertyName.")
     if decision.before_value is not None:
         actual_before = None if comparison_target is None else comparison_target.value
         if actual_before != decision.before_value:
@@ -695,15 +678,27 @@ def _apply_world(
             )
 
     if decision.consolidation_status == WorldSettingConsolidationStatus.CONFLICT:
+        conflict_scope = (
+            decision.proposed_scope_name
+            if decision.proposed_scope_name is not None
+            else primary.scope_name
+        )
         held = list(state.held_world_conflicts)
         held.append(
             HeldWorldConflict(
                 scenario_id=scenario.scenario_id,
                 decision_id=decision.decision_id,
-                category=primary.category,
-                subject_name=primary.subject_name,
-                scope_name=primary.scope_name,
-                setting_name=primary.setting_name,
+                subject_ref=(resolved_target.subject_ref if resolved_target is not None else None),
+                category=(
+                    resolved_target.category if resolved_target is not None else primary.category
+                ),
+                subject_name=(
+                    resolved_target.subject_name
+                    if resolved_target is not None
+                    else primary.subject_name
+                ),
+                scope_name=conflict_scope,
+                setting_name=decision.proposed_setting_name or primary.setting_name,
                 source_values=unique_values,
             )
         )
@@ -711,6 +706,8 @@ def _apply_world(
 
     if decision.operation == WorldSettingOperation.EXCLUDE:
         return state, False
+    if decision.operation == WorldSettingOperation.REVIEW_REQUIRED:
+        return state, True
     proposed_scope = (
         decision.proposed_scope_name
         if decision.proposed_scope_name is not None
@@ -722,25 +719,35 @@ def _apply_world(
         canonical_subject.category if canonical_subject is not None else primary.category
     )
     result_subject_name = (
-        canonical_subject.subject_name
-        if canonical_subject is not None
-        else primary.subject_name
+        canonical_subject.subject_name if canonical_subject is not None else primary.subject_name
     )
+    result_subject_ref = canonical_subject.subject_ref if canonical_subject is not None else None
     ref = world_state_ref(
         result_category,
         result_subject_name,
         proposed_scope,
         proposed_setting,
+        subject_ref=result_subject_ref,
     )
     if decision.operation == WorldSettingOperation.ADD:
         if ref in facts:
             raise StateApplicationError(f"World ADD {decision.decision_id} path already exists.")
+        _apply_world_root_property_moves(
+            facts,
+            decision,
+            result_category,
+            result_subject_name,
+            result_subject_ref,
+            proposed_scope,
+            proposed_setting,
+        )
     elif decision.operation in {WorldSettingOperation.UPDATE, WorldSettingOperation.MERGE}:
         if target is None:
             raise StateApplicationError(f"World {decision.operation} requires a target.")
         facts.pop(target.ref)
     facts[ref] = WorldStateEntry(
         ref=ref,
+        subject_ref=result_subject_ref,
         category=result_category,
         subject_name=result_subject_name,
         scope_name=proposed_scope,
@@ -752,6 +759,187 @@ def _apply_world(
     except ValueError as exc:
         raise StateApplicationError(str(exc)) from None
     return state.model_copy(update={"world_facts": list(facts.values())}), False
+
+
+def _apply_world_root_property_moves(
+    facts: dict[str, WorldStateEntry],
+    decision: WorldStage2Gold,
+    category: Any,
+    subject_name: str,
+    subject_ref: str | None,
+    proposed_scope: str | None,
+    proposed_setting: str,
+) -> None:
+    """Apply a scoped ADD's root-to-child plan without changing stored values."""
+
+    move_names = decision.existing_root_property_names_to_move
+    if not move_names:
+        return
+    if proposed_scope is None:
+        raise StateApplicationError(
+            "Existing root properties may move only with a scoped World ADD target."
+        )
+
+    normalized_scope = normalize_world_setting_name(proposed_scope)
+    normalized_proposal = normalize_world_setting_name(proposed_setting)
+    subject_entries = [
+        entry
+        for entry in facts.values()
+        if entry.category == category
+        and world_entry_subject_ref(entry)
+        == world_subject_ref(category, subject_name, subject_ref=subject_ref)
+    ]
+    root_by_name = {
+        normalize_world_setting_name(entry.setting_name): entry
+        for entry in subject_entries
+        if entry.scope_name is None
+    }
+    existing_paths = {
+        (
+            world_entry_subject_ref(entry),
+            normalize_world_setting_name(entry.scope_name or ""),
+            normalize_world_setting_name(entry.setting_name),
+        )
+        for entry in facts.values()
+    }
+    moves: list[tuple[WorldStateEntry, WorldStateEntry]] = []
+    for requested_name in move_names:
+        normalized_name = normalize_world_setting_name(requested_name)
+        existing = root_by_name.get(normalized_name)
+        if existing is None:
+            raise StateApplicationError(
+                f"World ADD {decision.decision_id} requests a missing root property move."
+            )
+        if normalized_name in {normalized_scope, normalized_proposal}:
+            raise StateApplicationError(
+                "A moved root property must be a distinct child of the proposed scope."
+            )
+        moved = WorldStateEntry(
+            ref=world_state_ref(
+                existing.category,
+                existing.subject_name,
+                proposed_scope,
+                existing.setting_name,
+                subject_ref=existing.subject_ref,
+            ),
+            subject_ref=existing.subject_ref,
+            category=existing.category,
+            subject_name=existing.subject_name,
+            scope_name=proposed_scope,
+            setting_name=existing.setting_name,
+            value=existing.value,
+        )
+        moved_path = (
+            world_entry_subject_ref(moved),
+            normalize_world_setting_name(moved.scope_name or ""),
+            normalize_world_setting_name(moved.setting_name),
+        )
+        if moved_path in existing_paths:
+            raise StateApplicationError(
+                f"World ADD {decision.decision_id} root move conflicts at its destination."
+            )
+        existing_paths.add(moved_path)
+        moves.append((existing, moved))
+
+    # All move targets are validated before the copied state is changed, so one bad
+    # entry cannot leave a partially relocated evaluation snapshot.
+    for existing, moved in moves:
+        facts.pop(existing.ref)
+        facts[moved.ref] = moved
+
+
+def _validate_world_root_move_plans(
+    before_state: EvaluationState,
+    decisions: list[Stage2Gold],
+) -> None:
+    """Validate root moves against the shared pre-batch world snapshot."""
+
+    moved_refs: set[str] = set()
+    for decision in decisions:
+        if not isinstance(decision, WorldStage2Gold):
+            continue
+        for requested_name in decision.existing_root_property_names_to_move:
+            requested_key = normalize_world_setting_name(requested_name)
+            matching_roots = [
+                entry
+                for entry in before_state.world_facts
+                if entry.scope_name is None
+                and decision.target_ref == world_entry_subject_ref(entry)
+                and normalize_world_setting_name(entry.setting_name) == requested_key
+            ]
+            if len(matching_roots) != 1:
+                raise StateApplicationError(
+                    f"World ADD {decision.decision_id} requests a missing root property move."
+                )
+            root_ref = matching_roots[0].ref
+            if root_ref in moved_refs:
+                raise StateApplicationError(
+                    "An existing root property may move only once per scenario batch."
+                )
+            moved_refs.add(root_ref)
+
+    if not moved_refs:
+        return
+    for decision in decisions:
+        if (
+            isinstance(decision, WorldStage2Gold)
+            and decision.operation in {WorldSettingOperation.UPDATE, WorldSettingOperation.MERGE}
+            and decision.target_ref in moved_refs
+        ):
+            raise StateApplicationError("A moved root property must not also be updated or merged.")
+
+
+def _validate_generated_world_scopes(
+    state: EvaluationState,
+    decisions: list[Stage2Gold],
+    stage1_by_id: dict[str, CharacterStage1Gold | WorldStage1Gold],
+) -> None:
+    """Validate generated scope plans after all sibling decisions were applied."""
+
+    for decision in decisions:
+        if not isinstance(decision, WorldStage2Gold):
+            continue
+        if (
+            decision.operation != WorldSettingOperation.ADD
+            or decision.consolidation_status == WorldSettingConsolidationStatus.CONFLICT
+            or decision.proposed_scope_name is None
+        ):
+            continue
+        sources = [stage1_by_id[source_id] for source_id in decision.source_gold_ids]
+        primary = sources[0]
+        assert isinstance(primary, WorldStage1Gold)
+        if normalize_world_setting_name(primary.scope_name or "") == (
+            normalize_world_setting_name(decision.proposed_scope_name)
+        ):
+            continue
+
+        subject_entry = next(
+            (
+                entry
+                for entry in state.world_facts
+                if decision.target_ref == world_entry_subject_ref(entry)
+            ),
+            None,
+        )
+        category = subject_entry.category if subject_entry is not None else primary.category
+        subject_name = (
+            subject_entry.subject_name if subject_entry is not None else primary.subject_name
+        )
+        subject_ref = subject_entry.subject_ref if subject_entry is not None else None
+        member_names = {
+            normalize_world_setting_name(entry.setting_name)
+            for entry in state.world_facts
+            if entry.category == category
+            and world_entry_subject_ref(entry)
+            == world_subject_ref(category, subject_name, subject_ref=subject_ref)
+            and normalize_world_setting_name(entry.scope_name or "")
+            == normalize_world_setting_name(decision.proposed_scope_name)
+        }
+        if len(member_names) < 2:
+            raise StateApplicationError(
+                f"World ADD {decision.decision_id} generated scope requires at least "
+                "two distinct final child properties."
+            )
 
 
 def _register_discovered_characters(

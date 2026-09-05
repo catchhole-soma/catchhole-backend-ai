@@ -36,6 +36,7 @@ from app.analysis.setting_extractor import (
     CharacterSettingSchemaHint,
 )
 from app.analysis.world_setting_comparator import (
+    WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
     WorldSettingComparator,
     WorldSettingSubjectResolver,
 )
@@ -97,6 +98,7 @@ from evals.multi_stage_setting.contracts import (
     character_state_ref,
     infer_character_fact_type,
     known_characters_for_runtime,
+    world_entry_subject_ref,
     world_path_key,
     world_subject_ref,
 )
@@ -109,6 +111,7 @@ from evals.multi_stage_setting.state_effects import (
 
 RUNTIME_UUID_NAMESPACE = UUID("1754f2f4-2b5d-5ef3-bf5c-2e245eea7a35")
 MAX_CHARACTER_CONTEXT_ENTRIES = 30
+MAX_WORLD_EXACT_SUBJECT_TARGETS = 20
 
 
 class WorldComparatorApi(Protocol):
@@ -223,6 +226,7 @@ class _CharacterRecord:
 class _CharacterBatchSource:
     source: CharacterStage1Gold | CharacterStage1Prediction
     raw_fact_key: str
+    initial_canonical_fact_key: str
     canonical_key_resolution: Literal["EXACT", "ALIAS", "PATTERN"]
 
 
@@ -420,12 +424,11 @@ async def run_multi_stage_predictions(
             "characterComparison": CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY,
             "worldExtraction": "world-setting-extraction:v2",
             "worldSubjectResolution": "world-setting-subject-resolution:v1",
-            "worldComparison": "world-setting-comparison:v7",
+            "worldComparison": WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
         },
         character_schema_hash=(
             _character_schema_hash(character_schema_hints)
-            if EvaluationDomain.CHARACTER in enabled_domains
-            and character_schema_hints
+            if EvaluationDomain.CHARACTER in enabled_domains and character_schema_hints
             else None
         ),
         max_chunks=max_chunks,
@@ -467,14 +470,16 @@ async def _run_oracle_scenario(
         if isinstance(decision, CharacterStage2Gold):
             source = cast(CharacterStage1Gold, sources[0])
             assert source.fact_key is not None
+            raw_fact_key, initial_fact_key, resolution = _oracle_character_key_handoff(
+                source,
+                schema_hints,
+            )
             character_sources.append(
                 _CharacterBatchSource(
                     source=source,
-                    raw_fact_key=source.fact_key,
-                    canonical_key_resolution=_oracle_canonical_key_resolution(
-                        source,
-                        schema_hints,
-                    ),
+                    raw_fact_key=raw_fact_key,
+                    initial_canonical_fact_key=initial_fact_key,
+                    canonical_key_resolution=resolution,
                 )
             )
         else:
@@ -720,6 +725,7 @@ async def _run_live_scenario(
             _CharacterBatchSource(
                 source=prediction,
                 raw_fact_key=raw_fact_key,
+                initial_canonical_fact_key=prediction.fact_key,
                 canonical_key_resolution=cast(
                     Literal["EXACT", "ALIAS", "PATTERN"],
                     resolution,
@@ -883,76 +889,87 @@ async def _run_character_batches(
     predictions: list[CharacterStage2Prediction] = []
     failures: list[RuntimeFailure] = []
     for (entity_ref, fact_type), group in grouped.items():
-        candidates = [
-            _worker_character_batch_candidate(scenario, item, index)
-            for index, item in enumerate(group, start=1)
-        ]
-        snapshots, stable_ref_by_request_ref = _character_batch_snapshots(
-            state,
-            entity_ref,
-            fact_type,
-            [candidate.initial_canonical_fact_key for candidate in candidates],
-        )
-        source_by_candidate_ref = {
-            candidate.candidate_ref: item
-            for candidate, item in zip(candidates, group, strict=True)
-        }
-        candidate_by_ref = {candidate.candidate_ref: candidate for candidate in candidates}
-        try:
-            execution = await execute_character_fact_comparison_batch(
-                comparator,
-                matched_character_name=_character_batch_matched_name(group[0].source),
-                canonical_fact_type=fact_type,
-                candidates=candidates,
-                snapshot_entries=snapshots,
+        batch_size = _character_batch_candidate_limit(comparator)
+        for offset in range(0, len(group), batch_size):
+            batch_group = group[offset : offset + batch_size]
+            candidates = [
+                _worker_character_batch_candidate(scenario, item, index)
+                for index, item in enumerate(batch_group, start=1)
+            ]
+            # Spring claims each bounded group as a separate comparison batch. Request
+            # refs and projected state restart at that boundary; only provider segments
+            # inside one claimed batch share projection state.
+            snapshots, stable_ref_by_request_ref = _character_batch_snapshots(
+                state,
+                entity_ref,
+                fact_type,
+                [candidate.initial_canonical_fact_key for candidate in candidates],
             )
-            group_predictions: list[CharacterStage2Prediction] = []
-            for decision in execution.decisions:
-                item = source_by_candidate_ref[decision.candidate_ref]
-                group_predictions.append(
-                    _character_batch_stage2_prediction(
+            source_by_candidate_ref = {
+                candidate.candidate_ref: item
+                for candidate, item in zip(candidates, batch_group, strict=True)
+            }
+            candidate_by_ref = {candidate.candidate_ref: candidate for candidate in candidates}
+            try:
+                execution = await execute_character_fact_comparison_batch(
+                    comparator,
+                    matched_character_name=_character_batch_matched_name(batch_group[0].source),
+                    canonical_fact_type=fact_type,
+                    candidates=candidates,
+                    snapshot_entries=snapshots,
+                )
+                group_predictions: list[CharacterStage2Prediction] = []
+                for decision in execution.decisions:
+                    item = source_by_candidate_ref[decision.candidate_ref]
+                    group_predictions.append(
+                        _character_batch_stage2_prediction(
+                            _character_batch_source_id(item.source),
+                            decision,
+                            stable_ref_by_request_ref,
+                        )
+                    )
+                    if decision.operation in {
+                        CharacterFactComparisonOperation.ADD,
+                        CharacterFactComparisonOperation.UPDATE,
+                        CharacterFactComparisonOperation.MERGE,
+                    }:
+                        projected_ref = candidate_by_ref[
+                            decision.candidate_ref
+                        ].projected_snapshot_ref
+                        stable_ref_by_request_ref[projected_ref] = character_state_ref(
+                            entity_ref,
+                            fact_type,
+                            decision.resolved_canonical_fact_key,
+                        )
+                predictions.extend(group_predictions)
+                for failure in execution.failures:
+                    item = source_by_candidate_ref[failure.candidate_ref]
+                    failures.append(
+                        RuntimeFailure(
+                            stage="CHARACTER_STAGE2",
+                            source_id=_character_batch_source_id(item.source),
+                            error_type=failure.failure_code.value,
+                            message=failure.error_message,
+                        )
+                    )
+            except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
+                raise
+            except Exception as exc:
+                failures.extend(
+                    _runtime_failure(
+                        EvaluationDomain.CHARACTER,
+                        2,
                         _character_batch_source_id(item.source),
-                        decision,
-                        stable_ref_by_request_ref,
+                        exc,
                     )
+                    for item in batch_group
                 )
-                if decision.operation in {
-                    CharacterFactComparisonOperation.ADD,
-                    CharacterFactComparisonOperation.UPDATE,
-                    CharacterFactComparisonOperation.MERGE,
-                }:
-                    projected_ref = candidate_by_ref[
-                        decision.candidate_ref
-                    ].projected_snapshot_ref
-                    stable_ref_by_request_ref[projected_ref] = character_state_ref(
-                        entity_ref,
-                        fact_type,
-                        decision.resolved_canonical_fact_key,
-                    )
-            predictions.extend(group_predictions)
-            for failure in execution.failures:
-                item = source_by_candidate_ref[failure.candidate_ref]
-                failures.append(
-                    RuntimeFailure(
-                        stage="CHARACTER_STAGE2",
-                        source_id=_character_batch_source_id(item.source),
-                        error_type=failure.failure_code.value,
-                        message=failure.error_message,
-                    )
-                )
-        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
-            raise
-        except Exception as exc:
-            failures.extend(
-                _runtime_failure(
-                    EvaluationDomain.CHARACTER,
-                    2,
-                    _character_batch_source_id(item.source),
-                    exc,
-                )
-                for item in group
-            )
     return predictions, failures
+
+
+def _character_batch_candidate_limit(comparator: CharacterFactBatchComparator) -> int:
+    configured = getattr(comparator, "batch_max_candidates", 10)
+    return min(20, max(1, int(configured)))
 
 
 def _worker_character_batch_candidate(
@@ -976,11 +993,9 @@ def _worker_character_batch_candidate(
         value_type=source.value_type,
         evidence_spans=evidence,
         raw_fact_key=item.raw_fact_key,
-        initial_canonical_fact_key=source.fact_key,
+        initial_canonical_fact_key=item.initial_canonical_fact_key,
         canonical_key_resolution=item.canonical_key_resolution,
-        confidence=(
-            None if isinstance(source, CharacterStage1Gold) else source.confidence
-        ),
+        confidence=(None if isinstance(source, CharacterStage1Gold) else source.confidence),
     )
 
 
@@ -998,9 +1013,7 @@ def _character_source_chronology_key(
     source_id = _character_batch_source_id(source)
     if isinstance(source, CharacterStage1Prediction):
         offsets = [
-            span.start_offset
-            for span in source.evidence_spans
-            if span.start_offset is not None
+            span.start_offset for span in source.evidence_spans if span.start_offset is not None
         ]
         if offsets:
             return 0, min(offsets), source.sort_order, source_id
@@ -1101,8 +1114,7 @@ async def _run_world_batches(
             for index, item in enumerate(group, start=1)
         ]
         source_by_ref = {
-            candidate.candidate_ref: item
-            for candidate, item in zip(candidates, group, strict=True)
+            candidate.candidate_ref: item for candidate, item in zip(candidates, group, strict=True)
         }
         target_set = group[0].target_set
         try:
@@ -1127,8 +1139,7 @@ async def _run_world_batches(
             raise
         except Exception as exc:
             failures.extend(
-                _runtime_failure(EvaluationDomain.WORLD, 2, item.source_id, exc)
-                for item in group
+                _runtime_failure(EvaluationDomain.WORLD, 2, item.source_id, exc) for item in group
             )
     return _link_projected_world_subject_adds(sources, predictions), failures
 
@@ -1173,8 +1184,7 @@ def _link_projected_world_subject_adds(
                 )
             elif (
                 prediction.target_ref is None
-                and prediction.consolidation_status
-                != WorldSettingConsolidationStatus.CONFLICT
+                and prediction.consolidation_status != WorldSettingConsolidationStatus.CONFLICT
             ):
                 projected_subject_refs[subject_key] = world_subject_ref(
                     source.candidate.category,
@@ -1185,9 +1195,7 @@ def _link_projected_world_subject_adds(
 
 
 def _world_batch_key(source: _WorldBatchSource) -> tuple[Any, ...]:
-    target_ids = tuple(
-        sorted(str(target.world_setting_id) for target in source.target_set.targets)
-    )
+    target_ids = tuple(sorted(str(target.world_setting_id) for target in source.target_set.targets))
     canonical_subject = (
         source.target_set.targets[0].subject_name
         if len(source.target_set.targets) == 1
@@ -1247,11 +1255,7 @@ def _world_stage2_prediction(
             ),
             None,
         )
-        stable_target = (
-            matched.ref
-            if matched is not None
-            else world_subject_ref(entries[0].category, selected.subject_name)
-        )
+        stable_target = matched.ref if matched is not None else world_entry_subject_ref(entries[0])
     return WorldStage2Prediction(
         source_candidate_id=source_id,
         domain="WORLD",
@@ -1263,6 +1267,7 @@ def _world_stage2_prediction(
         proposed_scope_name=decision.proposed_scope_name,
         proposed_setting_name=decision.proposed_setting_name,
         proposed_value=decision.proposed_value,
+        existing_root_property_names_to_move=(decision.existing_root_property_names_to_move),
         comparison_reason=decision.comparison_reason,
     )
 
@@ -1469,21 +1474,40 @@ def _character_batch_snapshots(
     )
 
 
-def _oracle_canonical_key_resolution(
+def _oracle_character_key_handoff(
     source: CharacterStage1Gold,
     schema_hints: tuple[CharacterSettingSchemaHint, ...],
-) -> Literal["EXACT", "PATTERN"]:
+) -> tuple[str, str, Literal["EXACT", "ALIAS", "PATTERN"]]:
     assert source.fact_key is not None
-    if any(hint.schema_key.strip() == source.fact_key for hint in schema_hints):
-        return "EXACT"
-    if any(
-        _character_schema_pattern_matches(hint.attribute_pattern, source.fact_key)
+    raw_fact_key = (source.input_fact_key or source.fact_key).strip()
+    exact = [hint for hint in schema_hints if hint.schema_key.strip() == raw_fact_key]
+    if exact:
+        if len(exact) != 1:
+            raise ValueError("Character setting schema is ambiguous.")
+        return raw_fact_key, exact[0].schema_key.strip(), "EXACT"
+    aliases = [hint for hint in schema_hints if _character_schema_alias_matches(hint, raw_fact_key)]
+    if aliases:
+        if len(aliases) != 1:
+            raise ValueError("Character setting schema is ambiguous.")
+        return raw_fact_key, aliases[0].schema_key.strip(), "ALIAS"
+    patterns = [
+        hint
         for hint in schema_hints
-    ):
-        return "PATTERN"
+        if _character_schema_pattern_matches(hint.attribute_pattern, raw_fact_key)
+    ]
+    if patterns:
+        if len(patterns) != 1:
+            raise ValueError("Character setting schema is ambiguous.")
+        return raw_fact_key, raw_fact_key, "PATTERN"
+    if schema_hints:
+        raise ValueError("Character setting schema is not matched.")
     # ORACLE historically requires no schema fixture. Standard dynamic STATUS keys
     # therefore retain the production pattern-key normalization capability.
-    return "PATTERN" if source.fact_type == "STATUS" else "EXACT"
+    if source.fact_type == "STATUS":
+        return raw_fact_key, raw_fact_key, "PATTERN"
+    if raw_fact_key != source.fact_key.strip():
+        return raw_fact_key, source.fact_key.strip(), "ALIAS"
+    return raw_fact_key, source.fact_key, "EXACT"
 
 
 def _sort_stage2_by_stage1(
@@ -1517,19 +1541,13 @@ def _oracle_world_targets(
         target = next((item for item in entries if item.ref == decision.target_ref), None)
         if target is None:
             subject_entries = [
-                item
-                for item in entries
-                if world_subject_ref(item.category, item.subject_name) == decision.target_ref
+                item for item in entries if world_entry_subject_ref(item) == decision.target_ref
             ]
             if not subject_entries:
                 raise ValueError(f"Oracle target does not exist: {decision.target_ref}")
             target = subject_entries[0]
-        entries = [
-            item
-            for item in entries
-            if normalize_world_setting_name(item.subject_name)
-            == normalize_world_setting_name(target.subject_name)
-        ]
+        target_subject_ref = world_entry_subject_ref(target)
+        entries = [item for item in entries if world_entry_subject_ref(item) == target_subject_ref]
     else:
         exact = [
             item
@@ -1560,17 +1578,17 @@ async def _live_world_targets(
     subject_entries = _group_world_entries(category_entries)
     subjects = [
         WorkerWorldSettingSubject(
-            world_setting_id=_world_subject_id(candidate.category, name),
-            subject_name=name,
+            world_setting_id=_world_subject_id_for_entry(entries[0]),
+            subject_name=entries[0].subject_name,
         )
-        for name in subject_entries
+        for entries in subject_entries.values()
     ]
     selected = await subject_resolver.select_subjects(candidate, subjects)
     selected_ids = {item.world_setting_id for item in selected}
     chosen = [
         entry
-        for name, entries in subject_entries.items()
-        if _world_subject_id(candidate.category, name) in selected_ids
+        for entries in subject_entries.values()
+        if _world_subject_id_for_entry(entries[0]) in selected_ids
         for entry in entries
     ]
     return _world_target_set(chosen)
@@ -1578,17 +1596,20 @@ async def _live_world_targets(
 
 def _world_target_set(entries: list[Any]) -> _WorldTargetSet:
     grouped = _group_world_entries(entries)
+    if len(grouped) > MAX_WORLD_EXACT_SUBJECT_TARGETS:
+        raise ValueError("World subject resolution found more than 20 normalized exact targets.")
     targets: list[WorkerWorldSettingComparisonTarget] = []
     entries_by_target: dict[UUID, list[Any]] = {}
-    for subject_name in sorted(grouped, key=normalize_world_setting_name):
+    for subject_identity in sorted(grouped):
         subject_entries = sorted(
-            grouped[subject_name],
+            grouped[subject_identity],
             key=lambda item: (
                 normalize_world_setting_name(item.scope_name or ""),
                 normalize_world_setting_name(item.setting_name),
             ),
         )
-        target_id = _world_subject_id(subject_entries[0].category, subject_name)
+        subject_name = subject_entries[0].subject_name
+        target_id = _world_subject_id_for_entry(subject_entries[0])
         targets.append(
             WorkerWorldSettingComparisonTarget(
                 world_setting_id=target_id,
@@ -1610,11 +1631,11 @@ def _world_target_set(entries: list[Any]) -> _WorldTargetSet:
 
 def _group_world_entries(entries: list[Any]) -> dict[str, list[Any]]:
     grouped: dict[str, list[Any]] = {}
-    normalized_to_name: dict[str, str] = {}
     for entry in entries:
-        normalized = normalize_world_setting_name(entry.subject_name)
-        canonical_name = normalized_to_name.setdefault(normalized, entry.subject_name)
-        grouped.setdefault(canonical_name, []).append(entry)
+        # Distinct Backend subjects must remain distinct even when their display names
+        # compare equal case-insensitively. Production submits all normalized exact
+        # targets (up to 20) so Spring can retain an AMBIGUOUS resolution.
+        grouped.setdefault(_world_subject_identity(entry), []).append(entry)
     return grouped
 
 
@@ -1767,11 +1788,31 @@ def _unique_values(values: Any) -> list[str]:
     return result
 
 
-def _world_subject_id(category: Any, subject_name: str) -> UUID:
+def _world_subject_identity(entry: Any) -> str:
+    # This is also the reducer's subject-target identity. In legacy states the
+    # generated ref trims/escapes the display name; explicit Backend refs keep
+    # byte-identical display names distinct.
+    return world_entry_subject_ref(entry)
+
+
+def _world_subject_id_for_entry(entry: Any) -> UUID:
+    return _world_subject_id(
+        entry.category,
+        entry.subject_name,
+        subject_ref=getattr(entry, "subject_ref", None),
+    )
+
+
+def _world_subject_id(
+    category: Any,
+    subject_name: str,
+    *,
+    subject_ref: str | None = None,
+) -> UUID:
     return _stable_uuid(
         "world-subject",
         str(category),
-        normalize_world_setting_name(subject_name),
+        world_subject_ref(category, subject_name, subject_ref=subject_ref),
     )
 
 

@@ -159,16 +159,35 @@ class CharacterHistoryEntry(StrictModel):
 
 class WorldStateEntry(StrictModel):
     ref: str = Field(min_length=1)
+    # Stable Backend subject identity. Legacy/generated fixtures may omit it and use
+    # the deterministic category+display-name subject ref instead.
+    # Omitting a missing value during serialization preserves legacy SEED state hashes.
+    subject_ref: str | None = Field(
+        default=None,
+        min_length=1,
+        exclude_if=lambda value: value is None,
+    )
     category: WorldSettingCategory
     subject_name: str = Field(min_length=1)
     scope_name: str | None = None
     setting_name: str = Field(min_length=1)
     value: str = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def validate_subject_ref(self) -> WorldStateEntry:
+        if self.subject_ref is not None and self.subject_ref != self.subject_ref.strip():
+            raise ValueError("subjectRef must not contain surrounding whitespace.")
+        return self
+
 
 class HeldWorldConflict(StrictModel):
     scenario_id: str = Field(min_length=1)
     decision_id: str = Field(min_length=1)
+    subject_ref: str | None = Field(
+        default=None,
+        min_length=1,
+        exclude_if=lambda value: value is None,
+    )
     category: WorldSettingCategory
     subject_name: str = Field(min_length=1)
     scope_name: str | None = None
@@ -206,19 +225,33 @@ class EvaluationState(StrictModel):
         )
         _require_unique(
             [
-                world_path_key(
-                    item.category,
-                    item.subject_name,
-                    item.scope_name,
-                    item.setting_name,
+                (
+                    world_entry_subject_ref(item),
+                    normalize_world_setting_name(item.scope_name or ""),
+                    normalize_world_setting_name(item.setting_name),
                 )
                 for item in self.world_facts
             ],
             "canonical world paths",
         )
+        stable_subject_identities: dict[str, tuple[str, str]] = {}
+        for item in self.world_facts:
+            if item.subject_ref is None:
+                continue
+            identity = (
+                str(item.category),
+                normalize_world_setting_name(item.subject_name),
+            )
+            previous = stable_subject_identities.setdefault(item.subject_ref, identity)
+            if previous != identity:
+                raise ValueError(
+                    "One world subjectRef must identify exactly one category and "
+                    "canonical subject display name."
+                )
         validate_world_state_properties(self.world_facts)
         for item in self.character_facts:
             validate_character_fact_slot(item.fact_type, item.fact_key)
+            _validate_typed_scalar_json(item.value_type, item.value_json)
             expected = character_state_ref(item.entity_ref, item.fact_type, item.fact_key)
             if item.ref != expected:
                 raise ValueError("Character state ref must equal its canonical slot ref.")
@@ -228,16 +261,14 @@ class EvaluationState(StrictModel):
                 item.subject_name,
                 item.scope_name,
                 item.setting_name,
+                subject_ref=item.subject_ref,
             )
             if item.ref != expected:
                 raise ValueError("World state ref must equal its canonical path ref.")
         for item in self.character_history:
             validate_character_fact_slot(item.fact_type, item.fact_key)
         _require_unique(
-            [
-                (item.scenario_id, item.decision_id)
-                for item in self.held_world_conflicts
-            ],
+            [(item.scenario_id, item.decision_id) for item in self.held_world_conflicts],
             "held world conflict decisions",
         )
         return self
@@ -268,11 +299,14 @@ class EvaluationState(StrictModel):
                 ),
                 "world_facts": sorted(
                     self.world_facts,
-                    key=lambda item: world_path_key(
-                        item.category,
-                        item.subject_name,
-                        item.scope_name,
+                    key=lambda item: (
+                        normalize_text(world_entry_subject_ref(item)),
+                        world_entry_subject_ref(item),
+                        normalize_world_setting_name(item.scope_name or ""),
+                        item.scope_name or "",
+                        normalize_world_setting_name(item.setting_name),
                         item.setting_name,
+                        item.ref,
                     ),
                 ),
                 "held_world_conflicts": sorted(
@@ -376,6 +410,9 @@ class CharacterStage1Gold(Stage1Common):
     raw_entity_mention: str | None = None
     fact_type: CharacterFactType | None = None
     fact_key: str | None = None
+    # ORACLE comparator input may differ from the reviewed final canonical key.
+    # For legacy fixtures the canonical key remains the input key as well.
+    input_fact_key: str | None = Field(default=None, max_length=150)
     accepted_fact_key_aliases: list[str] = Field(default_factory=list)
     value_type: SettingValueType | None = None
     display_value: str | None = None
@@ -395,13 +432,23 @@ class CharacterStage1Gold(Stage1Common):
         if self.candidate_kind == CandidateKind.CHARACTER_DISCOVERY:
             if any(value is not None for value in setting_fields) or self.value_json is not None:
                 raise ValueError("CHARACTER_DISCOVERY must not include setting value fields.")
+            if self.input_fact_key is not None:
+                raise ValueError("CHARACTER_DISCOVERY must not include inputFactKey.")
             if self.accepted_fact_key_aliases:
                 raise ValueError("CHARACTER_DISCOVERY must not include fact key aliases.")
             return self
-        if any(value is None or (isinstance(value, str) and not value.strip()) for value in setting_fields):
-            raise ValueError("Character SETTING requires factType, factKey, valueType, displayValue.")
+        if any(
+            value is None or (isinstance(value, str) and not value.strip())
+            for value in setting_fields
+        ):
+            raise ValueError(
+                "Character SETTING requires factType, factKey, valueType, displayValue."
+            )
         assert self.fact_type is not None and self.fact_key is not None
         validate_character_fact_slot(self.fact_type, self.fact_key)
+        if self.input_fact_key is not None:
+            validate_character_fact_slot(self.fact_type, self.input_fact_key)
+        _validate_typed_scalar_json(self.value_type, self.value_json)
         if self.structured_scorable and self.value_json is None:
             raise ValueError("structuredScorable=true requires valueJson.")
         return self
@@ -519,9 +566,7 @@ def _validate_character_stage2_operation(
         and proposed_value_json.get("active") is False
     ):
         raise ValueError("active=false facts must not use ADD, UPDATE, or MERGE.")
-    if not changes_snapshot and (
-        proposed_value is not None or proposed_value_json is not None
-    ):
+    if not changes_snapshot and (proposed_value is not None or proposed_value_json is not None):
         raise ValueError(f"{operation} must not include proposed values.")
     if temporal_scope in {
         CharacterFactTemporalScope.PAST,
@@ -580,6 +625,10 @@ class WorldStage2Gold(Stage2Common):
     matched_property_name: str | None = None
     proposed_scope_name: str | None = None
     proposed_setting_name: str | None = None
+    existing_root_property_names_to_move: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+    )
 
     @model_validator(mode="after")
     def validate_world_operation(self) -> WorldStage2Gold:
@@ -598,6 +647,30 @@ class WorldStage2Gold(Stage2Common):
         elif self.operation == WorldSettingOperation.ADD:
             if self.matched_property_name is not None:
                 raise ValueError("World ADD must not target an existing property.")
+        if any(not name.strip() for name in self.existing_root_property_names_to_move):
+            raise ValueError("existingRootPropertyNamesToMove must not contain blanks.")
+        if len(
+            {
+                normalize_world_setting_name(name)
+                for name in self.existing_root_property_names_to_move
+            }
+        ) != len(self.existing_root_property_names_to_move):
+            raise ValueError("existingRootPropertyNamesToMove must not contain duplicate names.")
+        if self.existing_root_property_names_to_move and (
+            self.operation != WorldSettingOperation.ADD
+            or self.target_ref is None
+            or self.proposed_scope_name is None
+        ):
+            raise ValueError(
+                "Existing root properties may move only with a scoped World ADD target."
+            )
+        if (
+            self.proposed_scope_name is not None
+            and self.proposed_setting_name is not None
+            and normalize_world_setting_name(self.proposed_scope_name)
+            == normalize_world_setting_name(self.proposed_setting_name)
+        ):
+            raise ValueError("A world scope name must differ from its setting name.")
         if self.matched_scope_name is not None and self.matched_property_name is None:
             raise ValueError("matchedScopeName requires matchedPropertyName.")
         # 운영 comparator DTO는 EXCLUDE/CONFLICT에서도 검토 화면용 원문 값을 보존한다.
@@ -695,11 +768,16 @@ class GoldSnapshotV3(StrictModel):
             sources = [stage1_by_id[gold_id] for gold_id in decision.source_gold_ids]
             if isinstance(decision, CharacterStage2Gold):
                 source = sources[0]
-                if (
-                    decision.removed_snapshot_refs
-                    and isinstance(source, CharacterStage1Gold)
-                    and source.fact_type != "STATUS"
-                ):
+                assert isinstance(source, CharacterStage1Gold)
+                _validate_typed_scalar_json(
+                    source.value_type,
+                    decision.proposed_value_json,
+                )
+                _validate_typed_scalar_json(
+                    source.value_type,
+                    decision.before_value_json,
+                )
+                if decision.removed_snapshot_refs and source.fact_type != "STATUS":
                     raise ValueError(
                         "Character removedSnapshotRefs require a STATUS source candidate."
                     )
@@ -718,20 +796,23 @@ class GoldSnapshotV3(StrictModel):
                     raise ValueError(
                         "removedSnapshotRefs must not remove the candidate's exact slot."
                     )
-            elif len(
-                {
-                    world_path_key(
-                        source.category,
-                        source.subject_name,
-                        source.scope_name,
-                        source.setting_name,
-                    )
-                    for source in sources
-                    if isinstance(source, WorldStage1Gold)
-                }
-            ) != 1:
+            elif (
+                len(
+                    {
+                        (
+                            str(source.category),
+                            normalize_world_setting_name(source.subject_name),
+                            normalize_world_setting_name(source.scope_name or ""),
+                        )
+                        for source in sources
+                        if isinstance(source, WorldStage1Gold)
+                    }
+                )
+                != 1
+            ):
                 raise ValueError(
-                    f"World Stage2 row {decision.decision_id} sources must share one path."
+                    f"World Stage2 row {decision.decision_id} sources must share "
+                    "one category, subject, and raw scope."
                 )
             elif isinstance(decision, WorldStage2Gold):
                 primary = sources[0]
@@ -743,24 +824,20 @@ class GoldSnapshotV3(StrictModel):
                     decision.operation == WorldSettingOperation.EXCLUDE
                     and decision.matched_property_name is not None
                 )
-                if (
-                    compares_existing_property
-                    and primary.scope_name != decision.matched_scope_name
-                ):
+                if compares_existing_property and normalize_world_setting_name(
+                    primary.scope_name or ""
+                ) != normalize_world_setting_name(decision.matched_scope_name or ""):
                     raise ValueError(
                         "World UPDATE/MERGE or matched EXCLUDE must use the "
                         "extracted scope as matchedScopeName."
                     )
-                if decision.operation in {
-                    WorldSettingOperation.ADD,
-                    WorldSettingOperation.EXCLUDE,
-                } and (
-                    decision.proposed_scope_name != primary.scope_name
-                    or decision.proposed_setting_name != primary.setting_name
+                if decision.operation == WorldSettingOperation.EXCLUDE and (
+                    normalize_world_setting_name(decision.proposed_scope_name or "")
+                    != normalize_world_setting_name(primary.scope_name or "")
+                    or normalize_world_setting_name(decision.proposed_setting_name or "")
+                    != normalize_world_setting_name(primary.setting_name)
                 ):
-                    raise ValueError(
-                        "World ADD/EXCLUDE must preserve the extracted property path."
-                    )
+                    raise ValueError("World EXCLUDE must preserve the extracted property path.")
                 source_values = {
                     normalize_world_setting_name(value)
                     for source in sources
@@ -768,8 +845,7 @@ class GoldSnapshotV3(StrictModel):
                     for value in source.source_values
                 }
                 if (
-                    decision.operation
-                    in {WorldSettingOperation.ADD, WorldSettingOperation.EXCLUDE}
+                    decision.operation in {WorldSettingOperation.ADD, WorldSettingOperation.EXCLUDE}
                     and len(source_values) == 1
                     and normalize_world_setting_name(decision.proposed_value)
                     != next(iter(source_values))
@@ -818,15 +894,12 @@ class GoldSnapshotV3(StrictModel):
         }
         missing_stage2 = sorted(expected_stage2_sources - source_use_count.keys())
         if missing_stage2:
-            raise ValueError(
-                f"EXTRACT setting rows require one Stage2 decision: {missing_stage2}"
-            )
+            raise ValueError(f"EXTRACT setting rows require one Stage2 decision: {missing_stage2}")
         for scenario in self.scenarios:
             positive_rows = [
                 row
                 for row in self.stage1
-                if row.scenario_id == scenario.scenario_id
-                and row.decision == GoldDecision.EXTRACT
+                if row.scenario_id == scenario.scenario_id and row.decision == GoldDecision.EXTRACT
             ]
             if scenario.candidate_free and positive_rows:
                 raise ValueError(
@@ -875,8 +948,21 @@ class CharacterStage1Prediction(StrictModel):
 
     @model_validator(mode="after")
     def validate_character_fact_slot(self) -> CharacterStage1Prediction:
+        setting_fields = (
+            self.fact_type,
+            self.fact_key,
+            self.value_type,
+            self.display_value,
+        )
+        if self.candidate_kind == CandidateKind.CHARACTER_DISCOVERY:
+            if any(value is not None for value in setting_fields) or self.value_json is not None:
+                raise ValueError(
+                    "CHARACTER_DISCOVERY prediction must not include setting value fields."
+                )
+            return self
         if self.fact_type is not None and self.fact_key is not None:
             validate_character_fact_slot(self.fact_type, self.fact_key)
+        _validate_typed_scalar_json(self.value_type, self.value_json)
         return self
 
 
@@ -945,7 +1031,36 @@ class WorldStage2Prediction(StrictModel):
     proposed_scope_name: str | None = None
     proposed_setting_name: str = Field(min_length=1)
     proposed_value: str = Field(min_length=1)
+    existing_root_property_names_to_move: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+    )
     comparison_reason: str | None = None
+
+    @model_validator(mode="after")
+    def validate_world_operation(self) -> WorldStage2Prediction:
+        if any(not name.strip() for name in self.existing_root_property_names_to_move):
+            raise ValueError("existingRootPropertyNamesToMove must not contain blanks.")
+        if len(
+            {
+                normalize_world_setting_name(name)
+                for name in self.existing_root_property_names_to_move
+            }
+        ) != len(self.existing_root_property_names_to_move):
+            raise ValueError("existingRootPropertyNamesToMove must not contain duplicate names.")
+        if self.existing_root_property_names_to_move and (
+            self.operation != WorldSettingOperation.ADD
+            or self.target_ref is None
+            or self.proposed_scope_name is None
+        ):
+            raise ValueError(
+                "Existing root properties may move only with a scoped World ADD target."
+            )
+        if self.proposed_scope_name is not None and normalize_world_setting_name(
+            self.proposed_scope_name
+        ) == normalize_world_setting_name(self.proposed_setting_name):
+            raise ValueError("A world scope name must differ from its setting name.")
+        return self
 
 
 Stage2Prediction = Annotated[
@@ -976,9 +1091,39 @@ class ScenarioPrediction(StrictModel):
 
     @model_validator(mode="after")
     def validate_pipeline_status(self) -> ScenarioPrediction:
+        for item in self.stage1:
+            if not isinstance(item, CharacterStage1Prediction):
+                continue
+            if item.candidate_kind != CandidateKind.SETTING:
+                continue
+            setting_fields = (
+                item.fact_type,
+                item.fact_key,
+                item.value_type,
+                item.display_value,
+            )
+            if any(
+                value is None or (isinstance(value, str) and not value.strip())
+                for value in setting_fields
+            ):
+                raise ValueError(
+                    "Character SETTING handoff requires factType, factKey, "
+                    "valueType, and displayValue."
+                )
         if self.pipeline_status == ScenarioPipelineStatus.PIPELINE_FAILED:
             if self.failed_stage is None:
                 raise ValueError("PIPELINE_FAILED scenario requires failedStage.")
+            if self.failed_stage == "CHARACTER_STAGE1" and (self.stage1 or self.stage2):
+                raise ValueError(
+                    "CHARACTER_STAGE1 failure must not include handoff or Stage2 outputs."
+                )
+            if self.failed_stage == "WORLD_STAGE1" and (
+                any(item.domain == EvaluationDomain.WORLD for item in self.stage1)
+                or any(item.domain == EvaluationDomain.WORLD for item in self.stage2)
+            ):
+                raise ValueError(
+                    "WORLD_STAGE1 failure must not include World handoff or Stage2 outputs."
+                )
         elif self.failed_stage is not None:
             raise ValueError("COMPLETED scenario must not declare failedStage.")
         return self
@@ -1011,6 +1156,18 @@ class PredictionBundleV3(StrictModel):
 
     @model_validator(mode="after")
     def require_unique_scenarios(self) -> PredictionBundleV3:
+        expected_policy = (
+            StateApplicationPolicy.ACCEPT_ALL_PREDICTIONS
+            if self.mode == EvaluationMode.ROLLING
+            else StateApplicationPolicy.SCENARIO_LOCAL
+        )
+        if self.state_application_policy is None:
+            self.state_application_policy = expected_policy
+        elif self.state_application_policy != expected_policy:
+            raise ValueError(
+                f"stateApplicationPolicy {self.state_application_policy} is inconsistent "
+                f"with evaluation mode {self.mode}."
+            )
         _require_unique([item.scenario_id for item in self.scenarios], "prediction scenario IDs")
         _require_unique(self.evaluation_scenario_ids, "prediction evaluation scenario IDs")
         for scenario in self.scenarios:
@@ -1048,6 +1205,13 @@ class PredictionBundleV3(StrictModel):
                 ):
                     raise ValueError(
                         "Character removedSnapshotRefs require a STATUS source candidate."
+                    )
+                if isinstance(decision, CharacterStage2Prediction) and isinstance(
+                    source, CharacterStage1Prediction
+                ):
+                    _validate_typed_scalar_json(
+                        source.value_type,
+                        decision.proposed_value_json,
                     )
         return self
 
@@ -1089,13 +1253,25 @@ def world_state_ref(
     subject_name: str,
     scope_name: str | None,
     setting_name: str,
+    *,
+    subject_ref: str | None = None,
 ) -> str:
-    parts = [
-        "gold",
-        "world",
-        _stable_ref_segment(str(category)),
-        _stable_ref_segment(subject_name),
-    ]
+    if subject_ref is None:
+        parts = [
+            "gold",
+            "world",
+            _stable_ref_segment(str(category)),
+            _stable_ref_segment(subject_name),
+        ]
+    else:
+        # A separate top-level namespace prevents an arbitrary legacy subject display
+        # name from colliding with an explicit Backend subject identity.
+        parts = [
+            "gold",
+            "world-by-subject-ref",
+            _stable_ref_segment(str(category)),
+            _stable_ref_segment(subject_ref),
+        ]
     if scope_name is not None and scope_name.strip():
         parts.append(_stable_ref_segment(scope_name))
     parts.append(_stable_ref_segment(setting_name))
@@ -1105,7 +1281,17 @@ def world_state_ref(
 def world_subject_ref(
     category: WorldSettingCategory | str,
     subject_name: str,
+    *,
+    subject_ref: str | None = None,
 ) -> str:
+    if subject_ref is not None:
+        return ":".join(
+            (
+                "gold",
+                "world-subject-ref",
+                _stable_ref_segment(subject_ref),
+            )
+        )
     return ":".join(
         (
             "gold",
@@ -1113,6 +1299,14 @@ def world_subject_ref(
             _stable_ref_segment(str(category)),
             _stable_ref_segment(subject_name),
         )
+    )
+
+
+def world_entry_subject_ref(entry: WorldStateEntry) -> str:
+    return world_subject_ref(
+        entry.category,
+        entry.subject_name,
+        subject_ref=entry.subject_ref,
     )
 
 
@@ -1170,8 +1364,36 @@ def validate_character_fact_slot(
     resolved_type = CharacterFactType(fact_type)
     inferred_type = infer_character_fact_type(fact_key)
     if inferred_type is not None and inferred_type != resolved_type:
+        raise ValueError(f"factType {resolved_type} does not match built-in factKey {fact_key}.")
+
+
+def _validate_typed_scalar_json(
+    value_type: SettingValueType | str | None,
+    value_json: dict[str, Any] | None,
+) -> None:
+    """Reject scalar payloads that production cannot interpret without coercion."""
+
+    if value_json is None or value_type is None:
+        return
+    resolved_type = SettingValueType(value_type)
+    if resolved_type not in {
+        SettingValueType.STRING,
+        SettingValueType.NUMBER,
+        SettingValueType.BOOLEAN,
+    }:
+        return
+    if "value" not in value_json:
+        raise ValueError(f"{resolved_type} valueJson must contain a typed value field.")
+    value = value_json["value"]
+    if resolved_type == SettingValueType.STRING:
+        valid = isinstance(value, str)
+    elif resolved_type == SettingValueType.NUMBER:
+        valid = isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
+    else:
+        valid = isinstance(value, bool)
+    if not valid:
         raise ValueError(
-            f"factType {resolved_type} does not match built-in factKey {fact_key}."
+            f"{resolved_type} valueJson.value must preserve its native JSON scalar type."
         )
 
 
@@ -1181,11 +1403,11 @@ def validate_world_state_properties(entries: list[WorldStateEntry]) -> None:
     seen_paths: set[tuple[str, str, str, str]] = set()
     top_level_shapes: dict[tuple[str, str, str], str] = {}
     for entry in entries:
-        path = world_path_key(
-            entry.category,
-            entry.subject_name,
-            entry.scope_name,
-            entry.setting_name,
+        path = (
+            str(entry.category),
+            world_entry_subject_ref(entry),
+            normalize_world_setting_name(entry.scope_name or ""),
+            normalize_world_setting_name(entry.setting_name),
         )
         if path in seen_paths:
             raise ValueError("World state contains duplicate canonical property paths.")

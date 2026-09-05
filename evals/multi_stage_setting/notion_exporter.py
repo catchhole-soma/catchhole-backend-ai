@@ -23,7 +23,6 @@ from evals.multi_stage_setting.contracts import (
     ValueJsonProvenance,
     WorldStage1Gold,
     WorldStage2Gold,
-    world_path_key,
 )
 from evals.setting_extraction.normalization import normalize_text
 from evals.setting_extraction.notion_exporter import (
@@ -89,6 +88,10 @@ STAGE1_PROPERTY_SCHEMA = {
     "검수 상태": "select",
     "검수 메모": "rich_text",
 }
+OPTIONAL_STAGE1_PROPERTY_SCHEMA = {
+    # PATTERN STATUS 평가에서 1차 raw key와 검수된 canonical key를 분리한다.
+    "inputFactKey": "rich_text",
+}
 STAGE2_PROPERTY_SCHEMA = {
     "판단 ID": "title",
     "시나리오": "relation",
@@ -113,6 +116,10 @@ STAGE2_PROPERTY_SCHEMA = {
     "검수 상태": "select",
     "검수 메모": "rich_text",
 }
+OPTIONAL_STAGE2_PROPERTY_SCHEMA = {
+    # 새 scope를 만들면서 기존 root property를 함께 옮기는 운영 batch 계약이다.
+    "existingRootPropertyNamesToMove": "rich_text",
+}
 CURRENT_OUTCOME_PROPERTY_SCHEMA = {
     "반영 결과 필수 사실": "rich_text",
     "반영 결과 금지 사실": "rich_text",
@@ -136,6 +143,12 @@ def validate_notion_v3_schemas(
     _validate_property_schema("Scenario", scenario_schema, SCENARIO_PROPERTY_SCHEMA)
     _validate_property_schema("Stage1", stage1_schema, STAGE1_PROPERTY_SCHEMA)
     _validate_property_schema("Stage2", stage2_schema, STAGE2_PROPERTY_SCHEMA)
+    _validate_optional_property_schema(
+        "Stage1 optional", stage1_schema, OPTIONAL_STAGE1_PROPERTY_SCHEMA
+    )
+    _validate_optional_property_schema(
+        "Stage2 optional", stage2_schema, OPTIONAL_STAGE2_PROPERTY_SCHEMA
+    )
 
     current_names = set(CURRENT_OUTCOME_PROPERTY_SCHEMA)
     present_current = current_names & stage2_schema.keys()
@@ -168,6 +181,20 @@ def _validate_property_schema(
             problems.append(f"missing {name}")
         elif actual_type != expected_type:
             problems.append(f"{name} expected {expected_type}, got {actual_type}")
+    if problems:
+        raise ValueError(f"Notion {label} schema mismatch: " + "; ".join(problems))
+
+
+def _validate_optional_property_schema(
+    label: str,
+    actual: dict[str, str],
+    expected: dict[str, str],
+) -> None:
+    problems = [
+        f"{name} expected {expected_type}, got {actual[name]}"
+        for name, expected_type in expected.items()
+        if name in actual and actual[name] != expected_type
+    ]
     if problems:
         raise ValueError(f"Notion {label} schema mismatch: " + "; ".join(problems))
 
@@ -510,6 +537,7 @@ def _parse_stage1(
             raw_entity_mention=_read_text(properties, "rawEntityMention") or None,
             fact_type=_read_select(properties, "factType") or None,
             fact_key=_read_text(properties, "canonical factKey") or None,
+            input_fact_key=_read_text(properties, "inputFactKey") or None,
             accepted_fact_key_aliases=_parse_json_or_line_string_array(
                 _read_text(properties, "허용 factKey 별칭"),
                 row_id,
@@ -641,6 +669,11 @@ def _parse_stage2(
             matched_property_name=matched_property_name,
             proposed_scope_name=proposed_scope_name,
             proposed_setting_name=proposed_setting_name,
+            existing_root_property_names_to_move=_parse_json_or_line_string_array(
+                _read_text(properties, "existingRootPropertyNamesToMove"),
+                row_id,
+                "existingRootPropertyNamesToMove",
+            ),
         )
     raise ValueError(f"Notion Stage2 row {row_id} has unknown 도메인.")
 
@@ -663,34 +696,45 @@ def _resolve_world_proposal(
         raise ValueError(f"Notion Stage2 row {row_id} has invalid WORLD source rows.")
     world_sources = [source for source in source_rows if isinstance(source, WorldStage1Gold)]
     primary = world_sources[0]
-    path = world_path_key(
-        primary.category,
-        primary.subject_name,
-        primary.scope_name,
-        primary.setting_name,
+    source_group = (
+        str(primary.category),
+        normalize_world_setting_name(primary.subject_name),
+        normalize_world_setting_name(primary.scope_name or ""),
     )
     if any(
-        world_path_key(
-            source.category,
-            source.subject_name,
-            source.scope_name,
-            source.setting_name,
+        (
+            str(source.category),
+            normalize_world_setting_name(source.subject_name),
+            normalize_world_setting_name(source.scope_name or ""),
         )
-        != path
+        != source_group
         for source in world_sources[1:]
     ):
-        raise ValueError(f"Notion Stage2 row {row_id} WORLD sources use different paths.")
+        raise ValueError(
+            f"Notion Stage2 row {row_id} WORLD sources use different paths "
+            "(category, subject, or raw scope)."
+        )
 
     compares_existing_property = operation in {"UPDATE", "MERGE"} or (
         operation == "EXCLUDE" and matched_property_name is not None
     )
-    if compares_existing_property and primary.scope_name != matched_scope_name:
+    if compares_existing_property and (
+        normalize_world_setting_name(primary.scope_name or "")
+        != normalize_world_setting_name(matched_scope_name or "")
+    ):
         raise ValueError(
             f"Notion Stage2 row {row_id} worldScope must equal matchedScopeName "
             f"for {operation}."
         )
 
-    if operation in {"ADD", "EXCLUDE"}:
+    if operation == "ADD":
+        expected_scope = (
+            annotated_scope_name
+            if annotated_scope_name is not None
+            else primary.scope_name
+        )
+        expected_setting = annotated_setting_name or primary.setting_name
+    elif operation in {"EXCLUDE", "REVIEW_REQUIRED"}:
         expected_scope = primary.scope_name
         expected_setting = primary.setting_name
     else:
@@ -698,13 +742,13 @@ def _resolve_world_proposal(
         expected_setting = matched_property_name
     if expected_setting is None:
         raise ValueError(f"Notion Stage2 row {row_id} cannot derive proposedSettingName.")
-    if (
+    if operation != "ADD" and (
         annotated_scope_name is not None
         and normalize_world_setting_name(annotated_scope_name)
         != normalize_world_setting_name(expected_scope or "")
     ):
         raise ValueError(f"Notion Stage2 row {row_id} proposedScopeName changes its path.")
-    if (
+    if operation != "ADD" and (
         annotated_setting_name is not None
         and normalize_world_setting_name(annotated_setting_name)
         != normalize_world_setting_name(expected_setting)

@@ -1,5 +1,6 @@
 import asyncio
 from decimal import Decimal
+from uuid import UUID
 
 import httpx
 import pytest
@@ -32,6 +33,7 @@ from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.exceptions import LlmIncompleteResponseError, LlmResponseValidationError
 from app.llm.protocols import LlmResponseSchema
 from app.llm.responses import LlmTextResponse
+from app.schemas.worker import WorkerWorldSettingCandidatePayload
 from evals.multi_stage_setting.contracts import (
     CharacterStage1Gold,
     CharacterStateEntry,
@@ -191,6 +193,202 @@ def test_oracle_runtime_maps_request_local_refs_back_to_stable_state_refs() -> N
     serialized = bundle.model_dump_json(by_alias=True)
     assert '"targetRef":"P1"' not in serialized
     assert '"targetRef":"T1"' not in serialized
+
+
+def test_oracle_runtime_preserves_raw_pattern_key_until_comparator_resolution() -> None:
+    scenario = ScenarioGold(
+        scenario_id="S5",
+        episode_no=5,
+        source_identifier="05화.txt",
+        target_domains={"CHARACTER"},
+        gold_version="v3",
+        start_state_mode="EMPTY",
+        cumulative_through_episode=0,
+        review_status="FINAL",
+    )
+    source = CharacterStage1Gold(
+        gold_id="C5",
+        scenario_id="S5",
+        episode_no=5,
+        sort_order=1,
+        decision="EXTRACT",
+        importance="MUST",
+        evidence_quotes=["오른발의 부상이 드러났다."],
+        review_status="FINAL",
+        domain="CHARACTER",
+        candidate_kind="SETTING",
+        entity_ref="character:bjorn",
+        entity_name="비요른",
+        fact_type="STATUS",
+        fact_key="status.오른발_부상",
+        input_fact_key="status.다리_부상",
+        value_type="JSON",
+        display_value="오른발을 다침",
+        value_json={"name": "오른발 부상", "active": True},
+    )
+    gold = GoldSnapshotV3(
+        dataset_version="v3",
+        name="oracle raw pattern key",
+        scenarios=[scenario],
+        stage1=[source],
+        stage2=[
+            CharacterStage2Gold(
+                decision_id="D5",
+                scenario_id="S5",
+                episode_no=5,
+                sort_order=1,
+                source_gold_ids=["C5"],
+                domain="CHARACTER",
+                operation="ADD",
+                proposed_value="오른발을 다침",
+                proposed_value_json={"name": "오른발 부상", "active": True},
+                temporal_scope="PRESENT",
+                review_status="FINAL",
+            )
+        ],
+    ).with_fixture_hash()
+    comparator = _OraclePatternKeyComparator()
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            gold,
+            mode="ORACLE",
+            components=RuntimeComponents(
+                character_comparator=comparator,
+                world_comparator=_AddWorldComparator(),
+            ),
+            character_schema_hints=(_status_schema_hint(),),
+            domains={"CHARACTER"},
+        )
+    )
+
+    assert comparator.seen_key_handoff == (
+        "status.다리_부상",
+        "status.다리_부상",
+        "PATTERN",
+    )
+    assert bundle.scenarios[0].stage2[0].resolved_canonical_fact_key == ("status.오른발_부상")
+
+
+def test_oracle_runtime_marks_non_status_input_key_change_as_alias() -> None:
+    source = CharacterStage1Gold(
+        gold_id="C1",
+        scenario_id="S1",
+        episode_no=1,
+        sort_order=1,
+        decision="EXTRACT",
+        importance="MUST",
+        evidence_quotes=["비요른은 바바리안이다."],
+        review_status="FINAL",
+        domain="CHARACTER",
+        candidate_kind="SETTING",
+        entity_ref="character:bjorn",
+        entity_name="비요른",
+        fact_type="PROFILE",
+        fact_key="profile.species",
+        input_fact_key="종족",
+        value_type="STRING",
+        display_value="바바리안",
+        value_json={"value": "바바리안"},
+    )
+
+    assert runtime_adapter_module._oracle_character_key_handoff(source, ()) == (
+        "종족",
+        "profile.species",
+        "ALIAS",
+    )
+
+
+def test_oracle_runtime_preserves_world_root_property_move_plan() -> None:
+    root_ref = world_state_ref("POWER_SYSTEM", "업적 시스템", None, "달성 조건")
+    subject_ref = world_subject_ref("POWER_SYSTEM", "업적 시스템")
+    scenario = ScenarioGold(
+        scenario_id="S5",
+        episode_no=5,
+        source_identifier="05화.txt",
+        target_domains={"WORLD"},
+        gold_version="v3",
+        start_state_mode="SEED",
+        cumulative_through_episode=4,
+        seed_state=EvaluationState(
+            world_facts=[
+                WorldStateEntry(
+                    ref=root_ref,
+                    category="POWER_SYSTEM",
+                    subject_name="업적 시스템",
+                    setting_name="달성 조건",
+                    value="생명력이 2% 이하로 하락한다.",
+                )
+            ]
+        ),
+        review_status="FINAL",
+    )
+    source = WorldStage1Gold(
+        gold_id="W5",
+        scenario_id="S5",
+        episode_no=5,
+        sort_order=1,
+        decision="EXTRACT",
+        importance="MUST",
+        evidence_quotes=["보상으로 정신이 1 상승한다."],
+        review_status="FINAL",
+        domain="WORLD",
+        candidate_kind="WORLD_SETTING",
+        category="POWER_SYSTEM",
+        subject_name="업적 시스템",
+        scope_name="생명력 2% 이하",
+        setting_name="보상",
+        source_values=["정신 수치가 영구적으로 1 상승한다."],
+    )
+    gold = GoldSnapshotV3(
+        dataset_version="v3",
+        name="oracle root property move",
+        scenarios=[scenario],
+        stage1=[source],
+        stage2=[
+            WorldStage2Gold(
+                decision_id="D5",
+                scenario_id="S5",
+                episode_no=5,
+                sort_order=1,
+                source_gold_ids=["W5"],
+                domain="WORLD",
+                operation="ADD",
+                consolidation_status="SINGLE",
+                target_ref=subject_ref,
+                proposed_scope_name="생명력 2% 이하",
+                proposed_setting_name="보상",
+                proposed_value="정신 수치가 영구적으로 1 상승한다.",
+                existing_root_property_names_to_move=["달성 조건"],
+                review_status="FINAL",
+            )
+        ],
+    ).with_fixture_hash()
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            gold,
+            mode="ORACLE",
+            components=RuntimeComponents(
+                character_comparator=_AddCharacterComparator(),
+                world_comparator=_RootMoveWorldComparator(),
+            ),
+            domains={"WORLD"},
+        )
+    )
+
+    decision = bundle.scenarios[0].stage2[0]
+    assert decision.target_ref == subject_ref
+    assert decision.existing_root_property_names_to_move == ["달성 조건"]
+    after_state = runtime_adapter_module._apply_runtime_scenario(
+        scenario,
+        scenario.seed_state,
+        bundle.scenarios[0],
+    )
+    assert {(fact.scope_name, fact.setting_name) for fact in after_state.world_facts} == {
+        ("생명력 2% 이하", "달성 조건"),
+        ("생명력 2% 이하", "보상"),
+    }
 
 
 def test_oracle_character_batch_maps_projected_q_removal_to_stable_ref() -> None:
@@ -356,10 +554,8 @@ def test_fixed_runtime_reuses_character_dedupe_and_world_consolidation() -> None
     assert bundle.comparison_model == "comparison-model"
     assert bundle.character_schema_hash is not None
     assert bundle.prompt_versions["characterExtraction"] == "setting-extraction:v10"
-    assert (
-        bundle.prompt_versions["characterComparison"]
-        == "character-fact-comparison-batch:v2"
-    )
+    assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v2"
+    assert bundle.prompt_versions["worldComparison"] == "world-setting-comparison-batch:v5"
 
 
 def test_fixed_runtime_compares_related_world_properties_in_one_batch() -> None:
@@ -409,6 +605,245 @@ def test_fixed_runtime_compares_related_world_properties_in_one_batch() -> None:
         "함정 사용",
         "매복 습성",
     }
+
+
+def test_live_world_targets_preserve_all_case_distinct_exact_subjects_up_to_cap() -> None:
+    state = EvaluationState(world_facts=_case_distinct_world_subject_entries(20))
+    candidate = WorkerWorldSettingCandidatePayload(
+        candidate_id=UUID(int=1),
+        work_id=UUID(int=2),
+        source_episode_id=UUID(int=3),
+        category="MONSTER",
+        subject_name="goblin",
+        setting_name="습성",
+        extracted_value="고블린의 습성이다.",
+        evidence_spans=[],
+    )
+
+    target_set = asyncio.run(runtime_adapter_module._live_world_targets(state, candidate, None))
+
+    assert len(target_set.targets) == 20
+    assert len({target.world_setting_id for target in target_set.targets}) == 20
+
+
+def test_world_targets_coalesce_legacy_names_with_the_same_generated_ref() -> None:
+    state = EvaluationState(
+        world_facts=[
+            WorldStateEntry(
+                ref=world_state_ref("MONSTER", "Goblin", None, "함정 사용"),
+                category="MONSTER",
+                subject_name="Goblin",
+                setting_name="함정 사용",
+                value="함정을 설치한다.",
+            ),
+            WorldStateEntry(
+                ref=world_state_ref("MONSTER", " Goblin ", None, "매복 습성"),
+                category="MONSTER",
+                subject_name=" Goblin ",
+                setting_name="매복 습성",
+                value="함정 주변에 매복한다.",
+            ),
+        ]
+    )
+
+    target_set = runtime_adapter_module._world_target_set(state.world_facts)
+
+    assert len(target_set.targets) == 1
+    assert {item.setting_name for item in target_set.targets[0].properties} == {
+        "함정 사용",
+        "매복 습성",
+    }
+
+
+def test_world_targets_keep_legacy_unicode_refs_consistent_with_reducer_identity() -> None:
+    composed = "é"
+    decomposed = "e\u0301"
+    state = EvaluationState(
+        world_facts=[
+            WorldStateEntry(
+                ref=world_state_ref("MONSTER", composed, None, "함정 사용"),
+                category="MONSTER",
+                subject_name=composed,
+                setting_name="함정 사용",
+                value="함정을 설치한다.",
+            ),
+            WorldStateEntry(
+                ref=world_state_ref("MONSTER", decomposed, None, "매복 습성"),
+                category="MONSTER",
+                subject_name=decomposed,
+                setting_name="매복 습성",
+                value="함정 주변에 매복한다.",
+            ),
+        ]
+    )
+
+    target_set = runtime_adapter_module._world_target_set(state.world_facts)
+
+    assert len(target_set.targets) == 2
+    assert len({target.world_setting_id for target in target_set.targets}) == 2
+
+
+def test_live_world_targets_preserve_byte_identical_subjects_by_stable_ref() -> None:
+    state = EvaluationState(
+        world_facts=[
+            WorldStateEntry(
+                ref=world_state_ref(
+                    "MONSTER",
+                    "고블린",
+                    None,
+                    "함정 사용",
+                    subject_ref="backend-world-subject:1",
+                ),
+                subject_ref="backend-world-subject:1",
+                category="MONSTER",
+                subject_name="고블린",
+                setting_name="함정 사용",
+                value="함정을 설치한다.",
+            ),
+            WorldStateEntry(
+                ref=world_state_ref(
+                    "MONSTER",
+                    "고블린",
+                    None,
+                    "매복 습성",
+                    subject_ref="backend-world-subject:2",
+                ),
+                subject_ref="backend-world-subject:2",
+                category="MONSTER",
+                subject_name="고블린",
+                setting_name="매복 습성",
+                value="함정 주변에 매복한다.",
+            ),
+        ]
+    )
+    candidate = WorkerWorldSettingCandidatePayload(
+        candidate_id=UUID(int=1),
+        work_id=UUID(int=2),
+        source_episode_id=UUID(int=3),
+        category="MONSTER",
+        subject_name="고블린",
+        setting_name="습성",
+        extracted_value="고블린의 습성이다.",
+        evidence_spans=[],
+    )
+
+    target_set = asyncio.run(runtime_adapter_module._live_world_targets(state, candidate, None))
+
+    assert [target.subject_name for target in target_set.targets] == ["고블린", "고블린"]
+    assert len({target.world_setting_id for target in target_set.targets}) == 2
+    assert sorted(len(entries) for entries in target_set.state_entries_by_target_id.values()) == [
+        1,
+        1,
+    ]
+
+
+def test_world_t2_maps_back_to_the_selected_byte_identical_subject_ref() -> None:
+    first_subject_ref = "backend-world-subject:1"
+    second_subject_ref = "backend-world-subject:2"
+    second_property_ref = world_state_ref(
+        "MONSTER",
+        "고블린",
+        None,
+        "매복 습성",
+        subject_ref=second_subject_ref,
+    )
+    state = EvaluationState(
+        world_facts=[
+            WorldStateEntry(
+                ref=world_state_ref(
+                    "MONSTER",
+                    "고블린",
+                    None,
+                    "함정 사용",
+                    subject_ref=first_subject_ref,
+                ),
+                subject_ref=first_subject_ref,
+                category="MONSTER",
+                subject_name="고블린",
+                setting_name="함정 사용",
+                value="함정을 설치한다.",
+            ),
+            WorldStateEntry(
+                ref=second_property_ref,
+                subject_ref=second_subject_ref,
+                category="MONSTER",
+                subject_name="고블린",
+                setting_name="매복 습성",
+                value="함정 주변에 매복한다.",
+            ),
+        ]
+    )
+    target_set = runtime_adapter_module._world_target_set(state.world_facts)
+    decision = WorldSettingComparisonBatchDecision(
+        source_candidate_refs=["C1"],
+        consolidation_status="SINGLE",
+        operation="UPDATE",
+        target_ref="T2",
+        matched_property_name="매복 습성",
+        proposed_setting_name="매복 습성",
+        proposed_value="부상당한 사냥감이 약해질 때까지 매복한다.",
+        comparison_reason="두 번째 고블린 주체의 매복 정보를 갱신합니다.",
+    )
+
+    prediction = runtime_adapter_module._world_stage2_prediction(
+        "candidate-1",
+        decision,
+        target_set,
+    )
+
+    assert prediction.target_ref == second_property_ref
+
+
+def test_live_world_targets_reject_more_than_twenty_exact_subjects() -> None:
+    state = EvaluationState(world_facts=_case_distinct_world_subject_entries(21))
+    candidate = WorkerWorldSettingCandidatePayload(
+        candidate_id=UUID(int=1),
+        work_id=UUID(int=2),
+        source_episode_id=UUID(int=3),
+        category="MONSTER",
+        subject_name="goblin",
+        setting_name="습성",
+        extracted_value="고블린의 습성이다.",
+        evidence_spans=[],
+    )
+
+    with pytest.raises(ValueError, match="more than 20 normalized exact targets"):
+        asyncio.run(runtime_adapter_module._live_world_targets(state, candidate, None))
+
+
+def test_live_world_targets_cap_counts_byte_identical_stable_subjects() -> None:
+    state = EvaluationState(
+        world_facts=[
+            WorldStateEntry(
+                ref=world_state_ref(
+                    "MONSTER",
+                    "고블린",
+                    None,
+                    f"특성 {index}",
+                    subject_ref=f"backend-world-subject:{index}",
+                ),
+                subject_ref=f"backend-world-subject:{index}",
+                category="MONSTER",
+                subject_name="고블린",
+                setting_name=f"특성 {index}",
+                value=f"특성 값 {index}",
+            )
+            for index in range(21)
+        ]
+    )
+    candidate = WorkerWorldSettingCandidatePayload(
+        candidate_id=UUID(int=1),
+        work_id=UUID(int=2),
+        source_episode_id=UUID(int=3),
+        category="MONSTER",
+        subject_name="고블린",
+        setting_name="습성",
+        extracted_value="고블린의 습성이다.",
+        evidence_spans=[],
+    )
+
+    with pytest.raises(ValueError, match="more than 20 normalized exact targets"):
+        asyncio.run(runtime_adapter_module._live_world_targets(state, candidate, None))
 
 
 def test_fixed_runtime_projects_new_world_subject_across_scope_batches() -> None:
@@ -525,11 +960,11 @@ def test_fixed_runtime_reraises_incomplete_world_batch_response() -> None:
                     name="incomplete world comparison",
                     scenarios=[scenario],
                 ).with_fixture_hash(),
-                    mode="FIXED",
-                    components=RuntimeComponents(
-                        character_comparator=_AddCharacterComparator(),
-                        world_extractor=_IndependentWorldPropertiesExtractor(),
-                        world_comparator=_IncompleteWorldComparator(),
+                mode="FIXED",
+                components=RuntimeComponents(
+                    character_comparator=_AddCharacterComparator(),
+                    world_extractor=_IndependentWorldPropertiesExtractor(),
+                    world_comparator=_IncompleteWorldComparator(),
                 ),
                 domains={"WORLD"},
             )
@@ -926,6 +1361,82 @@ def test_fixed_runtime_orders_batch_by_evidence_and_maps_q_refs() -> None:
         stage1[1].candidate_id,
         stage1[0].candidate_id,
     ]
+
+
+def test_oracle_runtime_restarts_projection_at_spring_candidate_batch_boundary() -> None:
+    scenario = ScenarioGold(
+        scenario_id="S1",
+        episode_no=1,
+        source_identifier="01화.txt",
+        target_domains={"CHARACTER"},
+        gold_version="v3",
+        start_state_mode="EMPTY",
+        cumulative_through_episode=0,
+        review_status="FINAL",
+    )
+    stage1 = [
+        CharacterStage1Gold(
+            gold_id=f"C{index}",
+            scenario_id="S1",
+            episode_no=1,
+            sort_order=index,
+            decision="EXTRACT",
+            importance="MUST",
+            evidence_quotes=[f"설정 {index}이 드러났다."],
+            review_status="FINAL",
+            domain="CHARACTER",
+            candidate_kind="SETTING",
+            entity_ref="character:bjorn",
+            entity_name="비요른",
+            fact_type="PROFILE",
+            fact_key=f"profile.custom_{index}",
+            value_type="STRING",
+            display_value=f"값 {index}",
+            value_json={"value": f"값 {index}"},
+        )
+        for index in range(1, 12)
+    ]
+    stage2 = [
+        CharacterStage2Gold(
+            decision_id=f"D{index}",
+            scenario_id="S1",
+            episode_no=1,
+            sort_order=index,
+            source_gold_ids=[f"C{index}"],
+            domain="CHARACTER",
+            operation="ADD",
+            proposed_value=f"값 {index}",
+            proposed_value_json={"value": f"값 {index}"},
+            temporal_scope="PRESENT",
+            review_status="FINAL",
+        )
+        for index in range(1, 12)
+    ]
+    comparator = _BatchCapturingCharacterComparator()
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            GoldSnapshotV3(
+                dataset_version="v3",
+                name="bounded character batches",
+                scenarios=[scenario],
+                stage1=stage1,
+                stage2=stage2,
+            ).with_fixture_hash(),
+            mode="ORACLE",
+            components=RuntimeComponents(
+                character_comparator=comparator,
+                world_comparator=_AddWorldComparator(),
+            ),
+            domains={"CHARACTER"},
+        )
+    )
+
+    assert comparator.calls == [
+        ([f"C{index}" for index in range(1, 11)], []),
+        (["C1"], []),
+    ]
+    assert len(bundle.scenarios[0].stage2) == 11
 
 
 def test_fixed_runtime_tracks_remove_before_same_slot_add_as_absence_dependency(
@@ -1453,9 +1964,7 @@ def test_character_schema_hash_is_order_independent_and_includes_fact_type() -> 
     assert _character_schema_hash((first, second)) == _character_schema_hash(
         (second, reordered_first)
     )
-    assert _character_schema_hash((first,)) != _character_schema_hash(
-        (different_fact_type,)
-    )
+    assert _character_schema_hash((first,)) != _character_schema_hash((different_fact_type,))
 
 
 def test_oracle_runtime_reraises_provider_http_status_error() -> None:
@@ -1654,6 +2163,36 @@ class _OracleCharacterComparator:
         return result, result.model_dump(mode="json")
 
 
+class _OraclePatternKeyComparator:
+    batch_max_candidates = 10
+
+    def __init__(self) -> None:
+        self.seen_key_handoff = None
+
+    def batch_fits(self, *, candidates, **kwargs):
+        return bool(candidates)
+
+    async def compare_batch(self, *, candidates, **kwargs):
+        candidate = candidates[0]
+        self.seen_key_handoff = (
+            candidate.raw_fact_key,
+            candidate.initial_canonical_fact_key,
+            candidate.canonical_key_resolution,
+        )
+        result = CharacterFactComparisonBatchResult(
+            decisions=[
+                _batch_decision(
+                    candidate,
+                    operation="ADD",
+                    value="오른발을 다침",
+                    value_json={"name": "오른발 부상", "active": True},
+                    resolved_key="status.오른발_부상",
+                )
+            ]
+        )
+        return result, result.model_dump(mode="json")
+
+
 class _ProjectedStatusComparator:
     def __init__(self) -> None:
         self.calls = []
@@ -1768,6 +2307,23 @@ class _OracleWorldComparator:
             proposed_setting_name="체격",
             proposed_value="평균 140cm이며 큰 변종은 드물게 190cm다.",
             comparison_reason="기존 평균과 변종 정보를 합친다.",
+        )
+        result = WorldSettingComparisonBatchResult(decisions=[decision])
+        return result, result.model_dump(mode="json")
+
+
+class _RootMoveWorldComparator:
+    async def compare_batch(self, category, candidates, targets):
+        decision = WorldSettingComparisonBatchDecision(
+            source_candidate_refs=[candidates[0].candidate_ref],
+            existing_root_property_names_to_move=["달성 조건"],
+            consolidation_status="SINGLE",
+            operation="ADD",
+            target_ref="T1",
+            proposed_scope_name="생명력 2% 이하",
+            proposed_setting_name="보상",
+            proposed_value="정신 수치가 영구적으로 1 상승한다.",
+            comparison_reason="기존 조건과 신규 보상을 같은 범위로 구조화합니다.",
         )
         result = WorldSettingComparisonBatchResult(decisions=[decision])
         return result, result.model_dump(mode="json")
@@ -1907,9 +2463,7 @@ class _RollingStatusExtractor:
                     attribute_value="오른발 부상이 악화됨",
                     value_type="JSON",
                     value_json={"name": "오른발 부상", "active": True},
-                    evidence_spans=[
-                        ExtractedEvidenceSpan(quote="부상이 악화되었지만")
-                    ],
+                    evidence_spans=[ExtractedEvidenceSpan(quote="부상이 악화되었지만")],
                     confidence=0.9,
                 ),
                 ExtractedCharacterSettingCandidate(
@@ -1923,7 +2477,7 @@ class _RollingStatusExtractor:
                     value_json={"name": "회복", "active": False},
                     evidence_spans=[ExtractedEvidenceSpan(quote="완전히 회복했다.")],
                     confidence=0.9,
-                )
+                ),
             ]
         )
 
@@ -1975,18 +2529,14 @@ class _RemoveThenAddSameSlotExtractor:
                     attribute_name="status.회복",
                     attribute_value="기존 부상이 회복됨",
                     value_json={"name": "회복", "active": False},
-                    evidence_spans=[
-                        ExtractedEvidenceSpan(quote="부상이 회복되었지만")
-                    ],
+                    evidence_spans=[ExtractedEvidenceSpan(quote="부상이 회복되었지만")],
                 ),
                 ExtractedCharacterSettingCandidate(
                     **common,
                     attribute_name="status.재부상",
                     attribute_value="같은 부상을 다시 입음",
                     value_json={"name": "부상", "active": True},
-                    evidence_spans=[
-                        ExtractedEvidenceSpan(quote="다시 같은 부상을 입었다.")
-                    ],
+                    evidence_spans=[ExtractedEvidenceSpan(quote="다시 같은 부상을 입었다.")],
                 ),
             ]
         )
@@ -2064,9 +2614,7 @@ class _CrossScopeWorldPropertiesExtractor:
                     scope_name="사회 특성",
                     setting_name="집단 행동",
                     extracted_value="밤에는 무리를 지어 이동한다.",
-                    evidence_spans=[
-                        ExtractedEvidenceSpan(quote="밤에는 무리를 지어 이동한다")
-                    ],
+                    evidence_spans=[ExtractedEvidenceSpan(quote="밤에는 무리를 지어 이동한다")],
                 ),
             ]
         )
@@ -2154,6 +2702,8 @@ class _CanonicalKeyCapturingComparator(_AddCharacterComparator):
 
 
 class _BatchCapturingCharacterComparator(_AddCharacterComparator):
+    batch_max_candidates = 10
+
     def __init__(self) -> None:
         self.calls: list[tuple[list[str], list[str]]] = []
 
@@ -2338,9 +2888,7 @@ def _batch_decision(
     return CharacterFactComparisonBatchDecision(
         candidate_ref=candidate.candidate_ref,
         operation=operation,
-        resolved_canonical_fact_key=(
-            resolved_key or candidate.initial_canonical_fact_key
-        ),
+        resolved_canonical_fact_key=(resolved_key or candidate.initial_canonical_fact_key),
         target_ref=target_ref,
         removed_snapshot_refs=removed_refs or [],
         proposed_fact_value=value,
@@ -2369,6 +2917,31 @@ def _status_schema_hint() -> CharacterSettingSchemaHint:
         value_type="JSON",
         canonical_fact_type="STATUS",
     )
+
+
+def _case_distinct_world_subject_entries(count: int) -> list[WorldStateEntry]:
+    entries = []
+    for index in range(count):
+        subject_name = "".join(
+            character.upper() if index & (1 << position) else character
+            for position, character in enumerate("goblin")
+        )
+        setting_name = f"특성 {index + 1}"
+        entries.append(
+            WorldStateEntry(
+                ref=world_state_ref(
+                    "MONSTER",
+                    subject_name,
+                    None,
+                    setting_name,
+                ),
+                category="MONSTER",
+                subject_name=subject_name,
+                setting_name=setting_name,
+                value=f"특성 값 {index + 1}",
+            )
+        )
+    return entries
 
 
 def _character_state(

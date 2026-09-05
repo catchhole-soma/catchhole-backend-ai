@@ -131,7 +131,7 @@ class OpenAISemanticOutcomeJudge:
             ),
             model=self.model,
             max_output_tokens=min(5000, 400 + 450 * len(cases)),
-            prompt_cache_key="multi-stage-setting-eval:semantic-outcome:v1",
+            prompt_cache_key="multi-stage-setting-eval:semantic-outcome:v2",
         )
         try:
             parsed = SemanticOutcomeResponse.model_validate(parse_json_object(response.text))

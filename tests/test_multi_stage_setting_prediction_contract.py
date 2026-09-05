@@ -108,6 +108,148 @@ def test_character_stage2_prediction_rejects_active_false_upsert() -> None:
         )
 
 
+def test_character_stage1_prediction_requires_complete_setting_fields() -> None:
+    incomplete = CharacterStage1Prediction(
+        candidate_id="p1",
+        domain="CHARACTER",
+        candidate_kind="SETTING",
+        entity_name="비요른",
+        fact_key="profile.species",
+        display_value="바바리안",
+    )
+
+    with pytest.raises(ValidationError, match="handoff requires factType, factKey"):
+        ScenarioPrediction(
+            scenario_id="S1",
+            stage1=[incomplete],
+        )
+
+
+def test_character_discovery_prediction_forbids_setting_fields() -> None:
+    with pytest.raises(ValidationError, match="must not include setting value fields"):
+        CharacterStage1Prediction(
+            candidate_id="p1",
+            domain="CHARACTER",
+            candidate_kind="CHARACTER_DISCOVERY",
+            entity_name="카락",
+            fact_type="PROFILE",
+            fact_key="profile.species",
+            value_type="STRING",
+            display_value="바바리안",
+            value_json={"value": "바바리안"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("value_type", "value_json"),
+    [
+        ("NUMBER", {"value": "180"}),
+        ("BOOLEAN", {"value": "false"}),
+        ("STRING", {"value": 180}),
+        ("NUMBER", {"label": 180}),
+    ],
+)
+def test_character_stage1_prediction_rejects_coerced_scalar_json(
+    value_type: str,
+    value_json: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="valueJson"):
+        CharacterStage1Prediction(
+            candidate_id="p1",
+            domain="CHARACTER",
+            candidate_kind="SETTING",
+            entity_name="비요른",
+            fact_type="STAT",
+            fact_key="stat.height",
+            value_type=value_type,
+            display_value="180",
+            value_json=value_json,
+        )
+
+
+def test_prediction_bundle_rejects_state_policy_inconsistent_with_mode() -> None:
+    with pytest.raises(ValidationError, match="inconsistent with evaluation mode"):
+        PredictionBundleV3(
+            fixture_hash="fixture",
+            mode="ROLLING",
+            state_application_policy="SCENARIO_LOCAL",
+        )
+
+
+def test_prediction_bundle_derives_state_policy_from_mode() -> None:
+    bundle = PredictionBundleV3(fixture_hash="fixture", mode="ROLLING")
+
+    assert bundle.state_application_policy == "ACCEPT_ALL_PREDICTIONS"
+
+
+def test_prediction_bundle_rejects_coerced_stage2_scalar_json() -> None:
+    source = CharacterStage1Prediction(
+        candidate_id="p1",
+        domain="CHARACTER",
+        candidate_kind="SETTING",
+        entity_name="비요른",
+        fact_type="STAT",
+        fact_key="stat.height",
+        value_type="NUMBER",
+        display_value="180",
+        value_json={"value": 180},
+    )
+    decision = CharacterStage2Prediction(
+        source_candidate_id="p1",
+        domain="CHARACTER",
+        operation="ADD",
+        resolved_canonical_fact_key="stat.height",
+        proposed_value="180",
+        proposed_value_json={"value": "180"},
+        temporal_scope="PRESENT",
+    )
+
+    with pytest.raises(ValidationError, match="native JSON scalar type"):
+        PredictionBundleV3(
+            fixture_hash="fixture",
+            mode="FIXED",
+            scenarios=[ScenarioPrediction(scenario_id="S1", stage1=[source], stage2=[decision])],
+        )
+
+
+def test_failed_character_stage1_forbids_handoff_and_stage2_outputs() -> None:
+    with pytest.raises(ValidationError, match="must not include handoff"):
+        ScenarioPrediction(
+            scenario_id="S1",
+            pipeline_status="PIPELINE_FAILED",
+            failed_stage="CHARACTER_STAGE1",
+            stage1=[_character_stage1("p1")],
+        )
+
+
+def test_failed_world_stage1_allows_prior_character_outputs_but_forbids_world_outputs() -> None:
+    scenario = ScenarioPrediction(
+        scenario_id="S1",
+        pipeline_status="PIPELINE_FAILED",
+        failed_stage="WORLD_STAGE1",
+        stage1=[_character_stage1("p1")],
+        stage2=[_character_stage2("p1")],
+    )
+    assert len(scenario.stage2) == 1
+
+    with pytest.raises(ValidationError, match="must not include World"):
+        ScenarioPrediction(
+            scenario_id="S1",
+            pipeline_status="PIPELINE_FAILED",
+            failed_stage="WORLD_STAGE1",
+            stage1=[
+                WorldStage1Prediction(
+                    candidate_id="w1",
+                    domain="WORLD",
+                    category="RACE",
+                    subject_name="고블린",
+                    setting_name="체격",
+                    source_values=["평균 140cm다."],
+                )
+            ],
+        )
+
+
 def test_fixed_prediction_rejects_removal_from_non_status_source() -> None:
     decision = _character_stage2("p1").model_copy(
         update={

@@ -85,6 +85,19 @@ def test_character_fact_key_aliases_accept_one_alias_per_line() -> None:
     ]
 
 
+def test_character_input_fact_key_is_read_when_optional_column_exists() -> None:
+    page = _character_stage1_page(
+        "stage1-1", "C1", "scenario-1", status="FINAL"
+    )
+    page["properties"]["factType"] = _select("STATUS")
+    page["properties"]["canonical factKey"] = _rich_text("status.오른발_부상")
+    page["properties"]["inputFactKey"] = _rich_text("status.오른발_완전_부상")
+
+    row = _parse_stage1(page, page["properties"], "S1", 1)
+
+    assert row.input_fact_key == "status.오른발_완전_부상"
+
+
 def test_world_setting_name_aliases_reuse_the_shared_alias_column() -> None:
     page = _character_stage1_page(
         "stage1-world", "W1", "scenario-1", status="FINAL"
@@ -400,6 +413,15 @@ def test_notion_v3_schema_preflight_supports_current_and_explicit_legacy_modes()
         stage2_schema=legacy_stage2,
     ) == "LEGACY"
 
+    assert validate_notion_v3_schemas(
+        scenario_schema=scenario_schema,
+        stage1_schema={**stage1_schema, "inputFactKey": "rich_text"},
+        stage2_schema={
+            **stage2_schema,
+            "existingRootPropertyNamesToMove": "rich_text",
+        },
+    ) == "CURRENT"
+
 
 def test_notion_v3_schema_preflight_rejects_partial_current_or_wrong_property_type() -> None:
     scenario_schema = dict(SCENARIO_PROPERTY_SCHEMA)
@@ -430,6 +452,13 @@ def test_notion_v3_schema_preflight_rejects_partial_current_or_wrong_property_ty
             scenario_schema=scenario_schema,
             stage1_schema=stage1_schema,
             stage2_schema=wrong_type,
+        )
+
+    with pytest.raises(ValueError, match="Stage1 optional schema mismatch"):
+        validate_notion_v3_schemas(
+            scenario_schema=scenario_schema,
+            stage1_schema={**stage1_schema, "inputFactKey": "number"},
+            stage2_schema={**STAGE2_PROPERTY_SCHEMA, **CURRENT_OUTCOME_PROPERTY_SCHEMA},
         )
 
 
@@ -472,6 +501,53 @@ def test_world_proposal_value_dedupe_uses_production_internal_whitespace_identit
     )
 
     assert proposed_value == "두 표현을 병합한다."
+
+
+def test_world_add_proposal_accepts_reviewed_canonical_path() -> None:
+    source = _world_stage1_gold("W1", "고블린", "함정을 설치한다.")
+
+    scope, setting, value = _resolve_world_proposal(
+        [source],
+        operation="ADD",
+        consolidation_status="SINGLE",
+        matched_scope_name=None,
+        matched_property_name=None,
+        annotated_scope_name="전투 특성",
+        annotated_setting_name="함정 사용",
+        annotated_value="함정을 설치한다.",
+        row_id="D-canonical-add",
+    )
+
+    assert (scope, setting, value) == (
+        "전투 특성",
+        "함정 사용",
+        "함정을 설치한다.",
+    )
+
+
+def test_world_proposal_combines_synonymous_raw_setting_names() -> None:
+    first = _world_stage1_gold("W1", "고블린", "함정을 설치한다.")
+    second = _world_stage1_gold("W2", "고블린", "덫을 활용한다.").model_copy(
+        update={"setting_name": "함정 활용", "sort_order": 2}
+    )
+
+    scope, setting, value = _resolve_world_proposal(
+        [first, second],
+        operation="ADD",
+        consolidation_status="MERGED",
+        matched_scope_name=None,
+        matched_property_name=None,
+        annotated_scope_name=None,
+        annotated_setting_name="함정 사용",
+        annotated_value="고블린은 함정과 덫을 활용한다.",
+        row_id="D-synonyms",
+    )
+
+    assert (scope, setting, value) == (
+        None,
+        "함정 사용",
+        "고블린은 함정과 덫을 활용한다.",
+    )
 
 
 def test_world_scope_mismatch_reports_the_notion_decision_row() -> None:

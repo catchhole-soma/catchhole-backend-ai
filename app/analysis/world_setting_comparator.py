@@ -43,6 +43,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "world_setting_comparison_batch.md"
 )
+WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY = "world-setting-comparison-batch:v5"
 logger = logging.getLogger(__name__)
 LOCAL_REFERENCE_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])[CST]\d+(?![A-Za-z0-9_])",
@@ -314,7 +315,7 @@ class WorldSettingComparator:
             model=self.model,
             max_output_tokens=self.batch_max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="world-setting-comparison-batch:v5",
+            prompt_cache_key=WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
             operation_name="World-setting batch comparison",
             logger=logger,
             validate_model=lambda comparison_result: _validate_batch_comparison_result(

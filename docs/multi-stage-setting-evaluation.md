@@ -92,6 +92,9 @@ snapshot에 같이 포함됩니다. 실제 평가 대상은 `evaluationScenarioI
 
 - 캐릭터 설정은 `canonical entityRef + factType + canonical factKey`를 사실의 정체성으로
   사용하고 `valueType`, 표시값, 선택적 `valueJson`, 원문 근거를 기록합니다.
+- 일반 행에서는 `canonical factKey`가 1차 입력 key이자 최종 key입니다. 다만 STATUS pattern
+  정규화 자체를 ORACLE로 평가할 때만 선택 컬럼 `inputFactKey`에 원래 1차 key를 적고,
+  `canonical factKey`에는 2차가 해소해야 할 최종 key를 적습니다.
 - 캐릭터 발견 후보는 아직 설정 slot이 없으므로 fact/value 필드를 채우지 않습니다.
 - 세계관은 `category + normalized subject + scope + setting`을 경로로 사용하고, 같은 경로의
   원문 값은 `sourceValues`로 묶습니다.
@@ -131,8 +134,9 @@ raw→handoff 개수 차이는 주체 해소나 중복 제거 경계에서 후�
 ### 2차 설정 반영 Gold
 
 2차 Gold는 **1차 후보를 기존 상태와 비교했을 때의 결정과 결정 적용 결과**를 기록합니다.
-`1차 정답` Relation으로 입력 후보를 연결하며, 캐릭터는 정확히 한 행, 세계관은 같은 경로의
-여러 행을 한 결정에 연결할 수 있습니다.
+`1차 정답` Relation으로 입력 후보를 연결하며, 캐릭터는 정확히 한 행, 세계관은 같은
+category·canonical subject·raw scope 안에서 같은 사실로 통합할 여러 행을 한 결정에 연결할 수
+있습니다. 이때 raw `worldSettingName`은 서로 다른 동의 표현일 수 있습니다.
 
 - `operation`, `targetRef`, `removedSnapshotRefs`, 시간 범위 또는 consolidation은 구조적 결정입니다.
 - 캐릭터의 `resolvedCanonicalFactKey` 기대값은 연결된 1차 Gold의 `factKey`에서 자동으로
@@ -142,6 +146,9 @@ raw→handoff 개수 차이는 주체 해소나 중복 제거 경계에서 후�
   회차의 앞선 확정 Gold를 메모리상으로 적용한 projected state, 세계관에서는 회차 시작
   before state가 기준입니다. 작성자가 직접 입력하지 않습니다.
 - `proposedValue`와 proposed path는 reducer가 적용할 최종 출력입니다.
+- 세계관 신규 scope ADD가 기존 root property까지 그 scope로 옮겨야 할 때는 선택 컬럼
+  `existingRootPropertyNamesToMove`에 property 이름을 한 줄씩 적습니다. reducer는 이름과 값을
+  보존해 proposal과 함께 원자적으로 이동합니다.
 - `반영 결과 필수 사실`은 최종 문장에 반드시 보존되어야 할 의미이고,
   `반영 결과 금지 사실`은 최종 문장에 남아서는 안 되는 의미입니다. 표현이 달라도 의미가
   같으면 semantic judge가 정답으로 인정할 수 있습니다. 이 제약은 2차 결정뿐 아니라 그
@@ -196,6 +203,13 @@ structured state, transition이 오답입니다. Gold가 지정하지 않은 추
 | `UPDATE` | target path를 proposed path/value로 교체 |
 | `MERGE` | target path를 병합 완료된 proposed path/value로 교체 |
 | `EXCLUDE` | snapshot을 변경하지 않음 |
+| `REVIEW_REQUIRED` | 범위 모호성을 자동 적용하지 않고 snapshot을 변경하지 않음 |
+
+신규 `ADD`는 원문의 유동적인 setting 이름을 canonical proposed path로 바꿀 수 있습니다. raw와
+다른 새 scope를 만들 때는 최종적으로 서로 다른 하위 property가 둘 이상이어야 하며, 같은
+회차의 다른 ADD·기존 scoped property·`existingRootPropertyNamesToMove`로 옮긴 root property를
+합쳐 판단합니다. 하나뿐인 속성을 위한 scope와 `scopeName == settingName`은 Gold 검증에서
+거절합니다.
 
 같은 회차·같은 세계관 경로에 고유 값이 하나면 `SINGLE`, 둘 이상이 서로 양립하면 `MERGED`,
 서로 충돌하면 `CONFLICT`입니다. `CONFLICT`는 임의로 하나를 선택하지 않습니다. 원시 대안을
@@ -220,6 +234,8 @@ held-conflict ledger에 보존하고 현재 world snapshot은 그대로 두는 *
 `PENDING_REVIEW`로 저장되고 사람이 확정한 뒤 snapshot이 바뀌지만, 이 모드는 모든 예측 결정을
 즉시 반영합니다. prediction/report의 `stateApplicationPolicy=ACCEPT_ALL_PREDICTIONS`로 이 가정을
 명시합니다. `FIXED`와 `ORACLE`은 `SCENARIO_LOCAL`입니다.
+prediction 입력에서 mode와 이 정책을 반대로 명시하면 실제 상태 적용과 보고서 설명이 달라지므로
+계약 오류로 거절합니다. 정책을 생략하면 mode에 맞는 값을 자동으로 기록합니다.
 
 `FIXED`의 1차에는 Gold before state, `ROLLING`의 1차에는 직전 predicted after state에서
 현재 활성인 캐릭터 `STATUS`를 가져와 `factKey`와 사람이 읽는 `factValue`만 전달합니다.
@@ -238,6 +254,9 @@ offset을 확정할 수 없을 때만 안정적인 추출 순서를 사용합니
 persisted `P*` snapshot으로만 이어집니다. STATUS를 포함한 해당 FactType의 현재 slot을
 운영과 같은 context 제한 안에서 전달합니다. `평가 Batch`는 데이터셋 출처 추적용
 메타데이터일 뿐, 서로 다른 회차의 후보를 하나의 comparator 호출로 합치는 기준이 아닙니다.
+동일 그룹이 운영 claim 상한(기본 10개)을 넘으면 별도 provider batch로 나누고, 각 batch의
+`P*`/`Q*` projected 문맥과 요청 로컬 ref를 새로 시작합니다. 앞 batch의 미확정 projection을
+다음 batch가 본 것처럼 재사용하지 않습니다.
 
 ### 1차 누락을 2차에서 다시 오답 처리하지 않는 이유
 
@@ -292,6 +311,11 @@ transition recall에서 오답으로 반영됩니다. 이 구조로 “추출기
   property 중복 `EXCLUDE`의 `targetRef`는 stable property ref입니다. 기존 subject에 새 property를
   `ADD`할 때는 `gold:world-subject:<CATEGORY>:<subject>` 형식의 stable subject ref를 사용할 수
   있고, 신규 subject `ADD`는 `targetRef=null`입니다.
+- 외부 `SEED`의 `worldFacts`는 Backend subject ID를 `subjectRef`로 함께 보존합니다. 표시명과
+  category가 완전히 같은 subject가 여러 개여도 이 ID를 기준으로 별도 비교 target을 만들며,
+  property ref는 `gold:world-by-subject-ref:...`, subject target은
+  `gold:world-subject-ref:...` namespace로 만듭니다. `subjectRef`가 없는 기존 fixture만
+  category+표시명으로 만든 legacy ref를 사용합니다.
 - 원문 본문은 snapshot 직렬화에서 제외되고 Git·Actions artifact에 올리지 않습니다.
 
 현재 Notion 새 컬럼인 `반영 결과 필수 사실`, `반영 결과 금지 사실`을 우선 사용합니다. 기존

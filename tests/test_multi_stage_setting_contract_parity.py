@@ -102,6 +102,118 @@ def test_evaluation_state_rejects_property_scope_tree_shape_collision() -> None:
         EvaluationState(world_facts=[root_property, scoped_property])
 
 
+def test_world_state_keeps_byte_identical_display_paths_for_distinct_subject_refs() -> None:
+    entries = [
+        WorldStateEntry(
+            ref=world_state_ref(
+                "RACE",
+                "고블린",
+                None,
+                "체격",
+                subject_ref=subject_ref,
+            ),
+            subject_ref=subject_ref,
+            category="RACE",
+            subject_name="고블린",
+            setting_name="체격",
+            value=value,
+        )
+        for subject_ref, value in (
+            ("backend-world-subject:1", "평균 140cm다."),
+            ("backend-world-subject:2", "평균 150cm다."),
+        )
+    ]
+
+    state = EvaluationState(world_facts=entries)
+
+    assert [entry.subject_ref for entry in state.world_facts] == [
+        "backend-world-subject:1",
+        "backend-world-subject:2",
+    ]
+    assert len({entry.ref for entry in state.world_facts}) == 2
+
+
+def test_legacy_world_state_serialization_omits_missing_subject_ref() -> None:
+    state = EvaluationState(world_facts=[_world_entry(setting="체격")])
+
+    payload = state.model_dump(mode="json", by_alias=True)
+
+    assert "subjectRef" not in payload["worldFacts"][0]
+    assert (
+        state.content_hash() == "cc6ae255213a21c1420357614fe39740f45276f4ea38e5d69799c854f01f611e"
+    )
+
+
+def test_world_state_hash_is_order_independent_for_normalization_equal_subjects() -> None:
+    entries = [
+        _world_entry(subject="Goblin", setting="체격", value="평균 140cm다."),
+        _world_entry(subject="goblin", setting="체격", value="평균 150cm다."),
+    ]
+
+    forward = EvaluationState(world_facts=entries)
+    reverse = EvaluationState(world_facts=list(reversed(entries)))
+
+    assert forward.content_hash() == reverse.content_hash()
+
+
+def test_explicit_subject_ref_property_namespace_cannot_collide_with_legacy_name() -> None:
+    explicit = world_state_ref(
+        "RACE",
+        "표시명은 ref 생성에 쓰이지 않음",
+        None,
+        "체격",
+        subject_ref="same",
+    )
+    legacy = world_state_ref("RACE", "same", None, "체격")
+
+    assert explicit != legacy
+    assert explicit.startswith("gold:world-by-subject-ref:")
+    assert legacy.startswith("gold:world:")
+    assert world_subject_ref(
+        "RACE",
+        "표시명은 ref 생성에 쓰이지 않음",
+        subject_ref="same",
+    ) != world_subject_ref("RACE", "same")
+
+
+def test_world_state_rejects_one_subject_ref_for_different_canonical_subjects() -> None:
+    entries = [
+        WorldStateEntry(
+            ref=world_state_ref(
+                category,
+                subject_name,
+                None,
+                setting_name,
+                subject_ref="backend-world-subject:1",
+            ),
+            subject_ref="backend-world-subject:1",
+            category=category,
+            subject_name=subject_name,
+            setting_name=setting_name,
+            value="값",
+        )
+        for category, subject_name, setting_name in (
+            ("RACE", "고블린", "체격"),
+            ("MONSTER", "오크", "습성"),
+        )
+    ]
+
+    with pytest.raises(ValidationError, match="exactly one category"):
+        EvaluationState(world_facts=entries)
+
+
+def test_world_state_rejects_subject_ref_with_surrounding_whitespace() -> None:
+    with pytest.raises(ValidationError, match="surrounding whitespace"):
+        WorldStateEntry(
+            ref="unused",
+            subject_ref=" backend-world-subject:1 ",
+            category="RACE",
+            subject_name="고블린",
+            setting_name="체격",
+            value="값",
+        )
+
+
 def test_world_reducer_rejects_property_scope_tree_shape_collision() -> None:
     state = EvaluationState(world_facts=[_world_entry(setting="체격")])
     source = _world_gold(scope="체격", setting="변종", values=["190cm다."])
@@ -199,6 +311,61 @@ def test_same_world_path_in_later_episode_uses_its_own_stage2_decision() -> None
     )
 
     assert [item.decision_id for item in snapshot.stage2] == ["D1", "D2"]
+
+
+def test_world_add_gold_preserves_reviewed_canonical_path() -> None:
+    source = _world_gold(scope=None, setting="함정 습성")
+    decision = _world_add(
+        source,
+        target_ref=world_subject_ref("RACE", "고블린"),
+    ).model_copy(
+        update={
+            "proposed_scope_name": "전투 특성",
+            "proposed_setting_name": "함정 사용",
+        }
+    )
+
+    gold = GoldSnapshotV3(
+        dataset_version="v3",
+        name="canonical world add",
+        scenarios=[_scenario(EvaluationState())],
+        stage1=[source],
+        stage2=[decision],
+    )
+
+    assert gold.stage2[0].proposed_scope_name == "전투 특성"
+    assert gold.stage2[0].proposed_setting_name == "함정 사용"
+
+
+def test_world_decision_may_consume_synonymous_raw_setting_names() -> None:
+    first = _world_gold(setting="함정 습성")
+    second = _world_gold(setting="함정 활용", values=["사냥에 덫을 쓴다."]).model_copy(
+        update={"gold_id": "W2", "sort_order": 2}
+    )
+    decision = WorldStage2Gold(
+        decision_id="D1",
+        scenario_id="S1",
+        episode_no=1,
+        sort_order=1,
+        source_gold_ids=["W1", "W2"],
+        domain="WORLD",
+        operation="ADD",
+        consolidation_status="MERGED",
+        target_ref=world_subject_ref("RACE", "고블린"),
+        proposed_setting_name="함정 사용",
+        proposed_value="고블린은 사냥에 함정을 사용한다.",
+        review_status="FINAL",
+    )
+
+    gold = GoldSnapshotV3(
+        dataset_version="v3",
+        name="synonymous world sources",
+        scenarios=[_scenario(EvaluationState())],
+        stage1=[first, second],
+        stage2=[decision],
+    )
+
+    assert gold.stage2[0].source_gold_ids == ["W1", "W2"]
 
 
 def test_character_fact_type_is_limited_to_java_enum() -> None:
