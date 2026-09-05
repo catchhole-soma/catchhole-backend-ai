@@ -47,12 +47,22 @@ def compact_error_message(exc: Exception | None, max_length: int = 500) -> str:
 
 
 def safe_validation_error_summary(exc: Exception | None) -> str:
-    """Provider 값 없이 검증 실패 종류만 운영 로그와 Job 오류에 남긴다."""
+    """Provider 값 없이 검증 실패 종류와 코드 위치를 로그와 저장용 오류에 남긴다."""
 
     if exc is None:
         return "unknown error"
     if not isinstance(exc, ValidationError):
-        return exc.__class__.__name__
+        origin = None
+        trace = exc.__traceback__
+        while trace is not None:
+            module = trace.tb_frame.f_globals.get("__name__", "")
+            if module.startswith("app.analysis."):
+                code = trace.tb_frame.f_code
+                origin = f"{module}.{code.co_qualname}:{trace.tb_lineno}"
+            trace = trace.tb_next
+        # ponytail: 기존 오류 컬럼을 재사용한다. 위치는 배포 이미지 SHA의 소스와 대조한다.
+        name = exc.__class__.__name__
+        return f"{name}(origin={origin})" if origin else name
     error_types = sorted(
         {
             error_type

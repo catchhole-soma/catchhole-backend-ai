@@ -6,7 +6,11 @@ import pytest
 from pydantic import BaseModel
 
 from app.analysis.exceptions import ComparisonValidationError, LlmExtractionError
-from app.analysis.json_response import request_validated_model
+from app.analysis.json_response import (
+    parse_json_object,
+    request_validated_model,
+    safe_validation_error_summary,
+)
 from app.domain.enums import AnalysisFailureCode
 from app.exceptions.failure_classification import comparison_failure_code
 from app.llm.exceptions import LlmIncompleteResponseError, LlmResponseValidationError
@@ -42,6 +46,27 @@ class ProviderValidationErrorClient:
     async def create_text_response(self, **kwargs):
         self.call_count += 1
         raise LlmResponseValidationError("SECRET_PROVIDER_VALUE")
+
+
+def test_validation_summary_preserves_project_origin_without_values_or_absolute_path() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        parse_json_object("SECRET_PROVIDER_VALUE")
+
+    summary = safe_validation_error_summary(exc_info.value)
+
+    assert summary.startswith("JSONDecodeError(origin=app.analysis.json_response.parse_json_object:")
+    assert summary.removesuffix(")").rsplit(":", 1)[1].isdigit()
+    assert "SECRET_PROVIDER_VALUE" not in summary
+    assert "/" not in summary
+
+
+def test_validation_summary_without_project_traceback_keeps_only_exception_type() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        raise ValueError("SECRET_PROVIDER_VALUE")
+
+    assert safe_validation_error_summary(exc_info.value) == "ValueError"
+    assert safe_validation_error_summary(ValueError("SECRET_PROVIDER_VALUE")) == "ValueError"
+    assert safe_validation_error_summary(None) == "unknown error"
 
 
 def test_non_truncation_incomplete_response_is_not_retried() -> None:
