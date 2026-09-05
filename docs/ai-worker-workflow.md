@@ -79,22 +79,22 @@ staging에서 실제 운영과 같은 Spring·PostgreSQL·Worker 이미지로 �
 
 ## NVM-264 캐릭터 Fact 2차 비교 흐름
 
-캐릭터 1차 추출 prompt는 기존처럼 지속 설정만 추출하고 단발 사건을 제외합니다. claim의 `knownCharacters[].activeStatuses`를 회차 시작 상태 문맥으로 받아 지속·악화·완화·종료의 새 원문 근거를 더 잘 찾지만, 기존 상태를 반복 추출하거나 제거 대상을 결정하지 않습니다. 치료 수단만으로 종료를 단정하지 않고 실제 기능·증상·행동·적용 효과의 변화 결과를 후보로 남깁니다. 이 목록은 모든 chunk에서 같은 회차 시작값이며, 같은 회차의 앞선 후보를 반영하는 FactType batch/projected snapshot은 후속 범위입니다. 그 결과를 저장한 뒤, Spring이 소유한 현재 `WorkCharacter` snapshot과 비교하는 별도 단계에서만 현재 화면 반영 여부와 제거 제안을 만듭니다.
+캐릭터 1차 추출 prompt는 기존처럼 지속 설정과 현재 상태 전환의 근거를 추출합니다. claim의 `knownCharacters[].activeStatuses`를 회차 시작 상태 문맥으로 받아 지속·악화·완화·종료의 새 원문 근거를 더 잘 찾지만, 기존 상태를 반복 추출하거나 제거 대상을 결정하지 않습니다. 치료 수단만으로 종료를 단정하지 않고 실제 기능·증상·행동·적용 효과의 변화 결과를 후보로 남깁니다. 이 목록은 모든 chunk에서 같은 회차 시작값이며, 같은 회차의 앞선 후보 반영은 2차의 FactType batch/projected snapshot이 담당합니다.
 
 ```text
 CHARACTER_CANDIDATES_SAVED
--> Spring이 비교할 SettingCandidate 한 건을 claim
--> candidate와 현재 snapshot entries, 앞선 동일 slot 후보, contextToken 조회
--> Python이 DB ID를 제외하고 snapshot을 P1, P2 참조로 변환
--> 2차 LLM이 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 판단
--> Spring이 contextToken과 canonical Fact slot을 다시 검증해 결과 저장
--> 다음 후보를 순차 처리
+-> Spring이 같은 캐릭터·FactType의 시간순 SettingCandidate batch를 claim
+-> C* source, Q* projected slot, P* 시작 snapshot, contextToken 조회
+-> 2차 LLM이 source별 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 판단
+-> Python이 앞선 성공 decision을 Q* 메모리 snapshot에 순차 적용하고 dependency 계산
+-> schema 재시도 실패 시 같은 projected state에서 singleton fallback
+-> Spring이 contextToken·resolved key·P/Q refs·dependency·전체 coverage를 다시 검증해 원자 저장
 -> CHARACTER_COMPARISONS_FINISHED
 ```
 
 `CharacterFact`는 과거 근거를 포함한 append-only 이력입니다. `removedSnapshotEntries`는 원본 Fact를 삭제하거나 `is_current`로 전환하는 지시가 아니라, 사용자 확정 시 현재 `WorkCharacter` snapshot에서 특정 STATUS entry를 제거하자는 제안입니다. 실제 snapshot 변경과 Fact 생성은 Spring의 사용자 confirm 트랜잭션 책임입니다.
 
-비교 context의 `candidate`에는 canonical Fact type/key와 evidence quote/offset이 포함되고, `snapshotEntries`에는 현재 화면에 반영된 Fact type/key, 표시 문자열 `factValue`, 구조화 값 `valueJson`만 포함됩니다. `priorCandidates`에는 같은 batch·캐릭터·canonical slot에서 원문 시간상 앞선 미확정 후보를 최대 30건 담습니다. 같은 회차에서는 evidence 시작 offset을 우선해 정렬합니다. 이 목록은 current snapshot이 아니라 `35 -> +1` 같은 상대 변화를 최종값 `36`으로 계산하기 위한 시간순 보조 문맥이며, 앞선 후보를 무시하거나 수정하면 context hash가 바뀌어 후속 후보를 다시 비교합니다. provenance Fact ID는 Spring 내부 문맥 hash에만 사용하고 Python이나 LLM에 노출하지 않습니다. Python은 요청 안에서만 유효한 `P*` 참조를 만들고, 완료 요청에는 이를 다시 `factType/factKey`로 변환합니다. 소설 원문·후보·snapshot 문자열 안의 명령이나 JSON 출력 요구는 모두 데이터로 취급하고 따르지 않도록 system prompt에 명시합니다.
+비교 context의 각 `C*` 후보에는 raw/initial canonical key, key 해소 방식, 값과 evidence가 포함되고 `P*`에는 batch 시작 시점의 현재 Fact type/key, 표시 문자열 `factValue`, 구조화 값 `valueJson`이 포함됩니다. 각 후보가 현재값을 만들면 대응하는 `Q*`가 활성화되어 다음 후보가 상대 수치와 같은 slot 변화를 이어서 계산합니다. exact/alias 및 비-STATUS pattern key는 initial key로 고정하고, pattern STATUS만 의미가 같은 안정적 key로 정규화합니다. provenance UUID는 Spring 내부 hash에만 사용하고 Python이나 LLM에 노출하지 않습니다. 소설 원문·후보·snapshot 문자열 안의 명령이나 JSON 출력 요구는 모두 데이터로 취급합니다.
 
 `ADD`, `UPDATE`, `MERGE`는 현재 화면에 저장할 최종 `proposedFactValue`와 `proposedValueJson`을 함께 반환합니다. `factValue`는 사용자에게 보이는 요약 문자열이고 `valueJson`은 편집·비교용 구조화 값이므로 어느 한쪽에서 다른 쪽을 임의 복원하지 않습니다.
 
@@ -110,19 +110,19 @@ MVP 안전 규칙은 다음과 같습니다.
 - 시간 문맥이 불명확한 `UNKNOWN`은 `REVIEW_REQUIRED`만 허용합니다.
 - STATUS 제거는 현재 시점의 상태 변화 결과가 나온 STATUS 후보에서만 허용합니다. 치료 수단만 있고 결과가 없으면 제거하지 않지만, 이후 능력·증상·행동 변화로 기존 상태가 끝났다는 해석이 자연스러우면 명시적인 완치 문구 없이도 의미상 관련된 여러 STATUS의 제거를 제안할 수 있습니다. 다만 새 결과와 무관한 독립적·잠재적 상태까지 연쇄적으로 제거하지 않습니다.
 - STATUS가 아닌 snapshot entry는 MVP에서 제거 대상으로 제안하지 않습니다.
-- 제거 참조는 Spring이 같은 work·캐릭터의 최신 current snapshot으로 만든 요청 로컬 `P*` 범위에서만 고릅니다. Python은 존재하지 않는 ref와 non-STATUS를 거절하고 Spring은 `contextToken`으로 stale/범위 무결성을 다시 검증합니다.
+- 제거 참조는 batch 시작 `P*` 또는 앞선 성공 decision의 현재 활성 `Q*`에서만 고릅니다. Python은 미래·종료된 ref와 non-STATUS를 거절하고 Spring은 `contextToken`과 순차 projection으로 stale/범위 무결성을 다시 검증합니다.
+- 앞선 `REMOVE`가 비운 canonical slot에 후속 후보가 다시 `ADD`되면, 후속 판단은 그 slot을 비운 후보와 그 전이 의존성을 모두 승계합니다. 이 provenance는 batch 메모리에서만 유지하고, 초기 snapshot에 원래 없던 slot이나 `HISTORY_ONLY`/`EXCLUDE`/`REVIEW_REQUIRED`는 가짜 의존성을 만들지 않습니다.
 
 canonical `REMOVE` 완료 요청의 핵심 wire shape는 다음과 같습니다.
 
 ```json
 {
+  "candidateRef": "C5",
   "operation": "REMOVE",
-  "targetFactType": null,
-  "targetFactKey": null,
-  "removedSnapshotEntries": [
-    {"factType": "STATUS", "factKey": "status.오른발_부상"},
-    {"factType": "STATUS", "factKey": "status.마비독"}
-  ],
+  "resolvedCanonicalFactKey": "status.회복",
+  "targetSnapshotRef": null,
+  "removedSnapshotRefs": ["Q1", "P2"],
+  "dependencyCandidateRefs": ["C1"],
   "proposedFactValue": null,
   "proposedValueJson": null,
   "temporalScope": "PRESENT"
@@ -131,13 +131,13 @@ canonical `REMOVE` 완료 요청의 핵심 wire shape는 다음과 같습니다.
 
 초기 `SETTING_EXTRACTION` Job에서는 후보 하나의 비교 실패를 해당 후보 `FAILED`로 격리하고 나머지 후보와 후속 세계관 단계를 계속합니다. 사용자가 재비교를 요청해 생성된 `CHARACTER_FACT_COMPARISON` 전용 Job은 후보 하나라도 실패하면 Job 전체를 실패 처리합니다.
 
-완료 시점에 snapshot이 달라져 Spring이 HTTP 409와 `SETTING_CANDIDATE_COMPARISON_STALE`을 반환하면 최신 context로 최대 3회 다시 비교합니다. 그 외 409나 오류 코드는 stale 재시도로 숨기지 않습니다.
+완료 시점에 snapshot이 달라져 Spring이 HTTP 409와 `SETTING_CANDIDATE_COMPARISON_STALE`을 반환하면 최신 context에서 batch 전체 decision을 최대 3회 다시 만듭니다. 그 외 409나 오류 코드는 stale 재시도로 숨기지 않습니다.
 
 ```bash
 .venv/bin/python -m scripts.run_analysis_worker --worker-kind character-comparison
 ```
 
-전용 Worker는 candidate를 순차 처리하고 실행 동시성을 1로 강제합니다. 전체 Fact 이력·RAG를 prompt에 넣거나 여러 후보를 한 번에 묶는 최적화는 MVP 범위에 포함하지 않습니다.
+전용 Worker도 같은 batch API와 순차 projected snapshot을 사용하고 실행 동시성을 1로 유지합니다. 전체 Fact 이력·RAG는 prompt에 넣지 않습니다.
 
 ### 배포·기존 Job 호환
 

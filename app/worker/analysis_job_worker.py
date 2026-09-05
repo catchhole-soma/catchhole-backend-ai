@@ -428,6 +428,7 @@ class AnalysisJobWorker:
                     character_comparison_result.completed_count
                 ),
                 "characterFactComparisonFailedCount": character_comparison_result.failed_count,
+                **character_comparison_result.summary_metrics(),
                 "worldSettingCandidateCount": world_candidate_count,
                 "worldSettingComparisonCompletedCount": comparison_result.completed_count,
                 "worldSettingComparisonFailedCount": comparison_result.failed_count,

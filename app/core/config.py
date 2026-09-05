@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     llm_world_setting_extraction_retry_max_output_tokens: int = 10000
     llm_subject_resolution_max_output_tokens: int = 2000
     llm_comparison_max_output_tokens: int = 3000
+    llm_character_fact_batch_comparison_max_output_tokens: int = 16000
+    llm_character_fact_batch_comparison_max_input_tokens: int = 64000
+    # Spring claim 기본값과 맞춘 운영 batch 크기다. Wire schema의 20개 상한은
+    # 오설정/호환성 방어선으로 별도 유지한다.
+    character_fact_comparison_batch_max_candidates: int = 10
     llm_world_setting_batch_comparison_max_output_tokens: int = 16000
     # 현재 사용 모델의 공식 최대 출력 한도보다 큰 오설정을 시작 시 차단한다.
     llm_provider_max_output_tokens: int = 128000
@@ -98,6 +103,9 @@ class Settings(BaseSettings):
         "llm_world_setting_extraction_retry_max_output_tokens",
         "llm_subject_resolution_max_output_tokens",
         "llm_comparison_max_output_tokens",
+        "llm_character_fact_batch_comparison_max_output_tokens",
+        "llm_character_fact_batch_comparison_max_input_tokens",
+        "character_fact_comparison_batch_max_candidates",
         "llm_world_setting_batch_comparison_max_output_tokens",
         "llm_provider_max_output_tokens",
         "llm_max_concurrent_requests",
@@ -109,6 +117,15 @@ class Settings(BaseSettings):
     def validate_positive_integer(cls, value: int) -> int:
         if value < 1:
             raise ValueError("Worker concurrency and attempt settings must be at least 1.")
+        return value
+
+    @field_validator("character_fact_comparison_batch_max_candidates")
+    @classmethod
+    def validate_character_fact_batch_size(cls, value: int) -> int:
+        if value > 20:
+            raise ValueError(
+                "CHARACTER_FACT_COMPARISON_BATCH_MAX_CANDIDATES must not exceed 20."
+            )
         return value
 
     @model_validator(mode="after")
@@ -134,6 +151,7 @@ class Settings(BaseSettings):
             self.llm_world_setting_extraction_retry_max_output_tokens,
             self.llm_subject_resolution_max_output_tokens,
             self.llm_comparison_max_output_tokens,
+            self.llm_character_fact_batch_comparison_max_output_tokens,
             self.llm_world_setting_batch_comparison_max_output_tokens,
         )
         if any(limit > self.llm_provider_max_output_tokens for limit in configured_limits):

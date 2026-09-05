@@ -188,6 +188,8 @@ sudo journalctl CONTAINER_NAME=catchhole-worker-ai-worker-1 -n 1 -o json-pretty
 - `LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 캐릭터 설정 추출의 최초 6,000·절단 재시도 12,000 token 상한
 - `LLM_WORLD_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_WORLD_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 세계관 추출의 최초 5,000·절단 재시도 10,000 token 상한
 - `LLM_SUBJECT_RESOLUTION_MAX_OUTPUT_TOKENS`, `LLM_COMPARISON_MAX_OUTPUT_TOKENS`: 주체 해소 2,000·비교 3,000 token 상한
+- `LLM_CHARACTER_FACT_BATCH_COMPARISON_MAX_OUTPUT_TOKENS`, `LLM_CHARACTER_FACT_BATCH_COMPARISON_MAX_INPUT_TOKENS`: 캐릭터 Fact 묶음 비교의 출력 16,000·입력 64,000 token 상한
+- `CHARACTER_FACT_COMPARISON_BATCH_MAX_CANDIDATES`: 한 캐릭터·FactType 묶음의 최대 후보 수. Spring claim 기본값과 같은 10이며 wire schema 방어 상한은 20입니다.
 - `LLM_PROVIDER_MAX_OUTPUT_TOKENS`: 목적별 상한을 검증할 provider 전체 출력 상한. 기본값은 128,000입니다.
 - `LLM_HTTP_MAX_RETRIES`: 429/5xx/timeout 같은 일시 provider 오류의 재시도 횟수. 최초 요청은 제외하며 운영 기본값은 3입니다.
 - `LLM_HTTP_RETRY_BASE_SECONDS`: provider 재시도의 지수 backoff 기준값. 운영 기본값 2초에서 2초, 4초, 8초와 jitter를 적용하고 `Retry-After`가 있으면 우선합니다.

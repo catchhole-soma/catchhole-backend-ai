@@ -31,6 +31,10 @@ from app.schemas.worker import (
     WorkerAnalysisJobPayload,
     WorkerAnalysisJobProgressRequest,
     WorkerCharacterFactComparisonClaimPayload,
+    WorkerCharacterFactComparisonBatchCompleteRequest,
+    WorkerCharacterFactComparisonBatchContextResponse,
+    WorkerCharacterFactComparisonBatchFailRequest,
+    WorkerCharacterFactComparisonBatchPayload,
     WorkerCharacterFactComparisonCompleteRequest,
     WorkerCharacterFactComparisonContextResponse,
     WorkerCharacterFactComparisonFailRequest,
@@ -230,6 +234,86 @@ class SpringWorkerClient:
             return None
         _raise_for_spring_status(response)
         return WorkerCharacterFactComparisonClaimPayload.model_validate(response.json()["data"])
+
+    async def claim_next_character_fact_comparison_batch(
+        self,
+        analysis_job_id: UUID,
+        lease_token: UUID,
+    ) -> WorkerCharacterFactComparisonBatchPayload | None:
+        response = await self._request(
+            "POST",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                "/character-fact-comparison-batches/claim-next"
+            ),
+            headers=self._headers(lease_token),
+        )
+        if response.status_code == 204:
+            return None
+        _raise_for_spring_status(response)
+        return WorkerCharacterFactComparisonBatchPayload.model_validate(
+            response.json()["data"]
+        )
+
+    async def get_character_fact_comparison_batch_context(
+        self,
+        analysis_job_id: UUID,
+        comparison_batch_id: UUID,
+        lease_token: UUID,
+    ) -> WorkerCharacterFactComparisonBatchContextResponse:
+        response = await self._request(
+            "POST",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/character-fact-comparison-batches/{comparison_batch_id}/context"
+            ),
+            headers=self._headers(lease_token),
+        )
+        _raise_for_spring_status(response)
+        return WorkerCharacterFactComparisonBatchContextResponse.model_validate(
+            response.json()["data"]
+        )
+
+    async def complete_character_fact_comparison_batch(
+        self,
+        analysis_job_id: UUID,
+        comparison_batch_id: UUID,
+        lease_token: UUID,
+        request: WorkerCharacterFactComparisonBatchCompleteRequest,
+    ) -> None:
+        response = await self._request(
+            "POST",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/character-fact-comparison-batches/{comparison_batch_id}/complete"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
+        )
+        _raise_for_spring_status(response)
+
+    async def fail_character_fact_comparison_batch(
+        self,
+        analysis_job_id: UUID,
+        comparison_batch_id: UUID,
+        lease_token: UUID,
+        error_message: str,
+        failure_code: AnalysisFailureCode = AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+    ) -> None:
+        request = WorkerCharacterFactComparisonBatchFailRequest(
+            failure_code=failure_code,
+            error_message=error_message,
+        )
+        response = await self._request(
+            "POST",
+            self._url(
+                f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
+                f"/character-fact-comparison-batches/{comparison_batch_id}/fail"
+            ),
+            headers=self._headers(lease_token),
+            json=request.model_dump(by_alias=True, mode="json"),
+        )
+        _raise_for_spring_status(response)
 
     async def get_character_fact_comparison_context(
         self,

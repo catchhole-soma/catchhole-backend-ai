@@ -23,6 +23,10 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
   - 같은 batch에서 앞서 나온 동일 canonical slot 후보를 미확정 시간순 문맥으로 함께 받아 상대 변화량을 최종값으로 오인하지 않게 합니다.
   - DB 식별자 대신 요청 안에서만 유효한 `P*` 참조를 사용하며, 원문·후보·snapshot 안의 명령은 소설 데이터일 뿐 지시가 아니라고 명시합니다.
   - 회상·가정은 현재 snapshot을 바꾸지 않으며, STATUS 제거는 명시적인 현재 결과가 있을 때만 제안합니다. 제거 제안도 원본 CharacterFact 이력을 삭제하지 않습니다.
+- `character_fact_comparison_batch.md`
+  - 같은 캐릭터·FactType의 원문 순서 후보를 한 요청에서 각각 한 decision으로 비교하며 source 후보끼리는 병합하지 않습니다.
+  - `C*` source, `P*` 시작 snapshot, `Q*` projected slot을 사용해 앞선 후보의 ADD/UPDATE/MERGE/REMOVE 결과를 다음 후보가 봅니다.
+  - exact/alias 및 비-STATUS pattern canonical key는 고정하고 pattern STATUS만 안정적인 상태 명사 key로 정규화합니다.
 - `world_setting_extraction.md`
   - 회차 청크에서 일시적 사건·현재 상태를 제외하고 지속 가능한 세계관 속성을 한 행 단위로 추출합니다.
   - 7개 category, 원문 evidence quote, 고정 confidence 단계와 문자열 속성값을 요구합니다.

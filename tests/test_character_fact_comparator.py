@@ -810,19 +810,21 @@ def test_non_snapshot_operations_discard_irrelevant_proposed_values(
     assert decision.proposed_value_json is None
 
 
-def test_present_candidate_cannot_be_stored_as_history_only() -> None:
-    with pytest.raises(ValueError, match="non-present temporal scope"):
-        CharacterFactComparisonDecision.model_validate(
-            {
-                "operation": "HISTORY_ONLY",
-                "target_ref": None,
-                "removed_snapshot_refs": [],
-                "proposed_fact_value": None,
-                "proposed_value_json": None,
-                "temporal_scope": "PRESENT",
-                "comparison_reason": "현재 사실이지만 이력으로만 둔다.",
-            }
-        )
+def test_present_non_persistent_event_can_be_stored_as_history_only() -> None:
+    decision = CharacterFactComparisonDecision.model_validate(
+        {
+            "operation": "HISTORY_ONLY",
+            "target_ref": None,
+            "removed_snapshot_refs": [],
+            "proposed_fact_value": None,
+            "proposed_value_json": None,
+            "temporal_scope": "PRESENT",
+            "comparison_reason": "포션을 사용한 사건은 이력으로만 둔다.",
+        }
+    )
+
+    assert decision.operation == "HISTORY_ONLY"
+    assert decision.temporal_scope == "PRESENT"
 
 
 def test_proposed_value_json_requires_an_object() -> None:
