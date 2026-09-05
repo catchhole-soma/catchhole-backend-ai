@@ -30,6 +30,7 @@ from app.analysis.world_setting_schemas import (
 )
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.exceptions import LlmIncompleteResponseError, LlmResponseValidationError
+from app.llm.protocols import LlmResponseSchema
 from app.llm.responses import LlmTextResponse
 from evals.multi_stage_setting.contracts import (
     CharacterStage1Gold,
@@ -43,6 +44,7 @@ from evals.multi_stage_setting.contracts import (
     WorldStage2Gold,
     WorldStateEntry,
     character_state_ref,
+    world_subject_ref,
     world_state_ref,
 )
 from evals.multi_stage_setting.runtime_adapter import (
@@ -394,6 +396,10 @@ def test_fixed_runtime_compares_related_world_properties_in_one_batch() -> None:
 
     assert comparator.calls == [["함정 사용", "매복 습성"]]
     assert len(bundle.scenarios[0].stage2) == 2
+    assert [decision.target_ref for decision in bundle.scenarios[0].stage2] == [
+        None,
+        world_subject_ref("MONSTER", "고블린"),
+    ]
 
 
 def test_fixed_runtime_reraises_incomplete_world_batch_response() -> None:
@@ -1286,6 +1292,26 @@ def test_runtime_usage_wrapper_records_provider_token_counts() -> None:
     assert usage.snapshot() == (12, 5, 3)
 
 
+def test_runtime_usage_wrapper_forwards_structured_response_schema() -> None:
+    usage = RuntimeUsageCounter()
+    client = UsageRecordingTextGenerationClient(_SchemaRequiringUsageClient(), usage)
+    response_schema = LlmResponseSchema(
+        name="setting_candidates",
+        schema={"type": "object", "additionalProperties": False},
+    )
+
+    response = asyncio.run(
+        client.create_text_response(
+            "system",
+            "user",
+            response_schema=response_schema,
+        )
+    )
+
+    assert response.text == "{}"
+    assert usage.snapshot() == (12, 5, 3)
+
+
 def test_runtime_usage_wrapper_records_token_counts_from_validation_errors() -> None:
     usage = RuntimeUsageCounter()
     client = UsageRecordingTextGenerationClient(_UsageValidationFailingClient(), usage)
@@ -2056,6 +2082,17 @@ class _UsageValidationFailingClient:
     async def create_text_response(self, **kwargs):
         raise LlmResponseValidationError(
             "invalid paid response",
+            input_token_count=12,
+            cached_input_token_count=5,
+            output_token_count=3,
+        )
+
+
+class _SchemaRequiringUsageClient:
+    async def create_text_response(self, *, response_schema, **kwargs):
+        assert response_schema.name == "setting_candidates"
+        return LlmTextResponse(
+            text="{}",
             input_token_count=12,
             cached_input_token_count=5,
             output_token_count=3,

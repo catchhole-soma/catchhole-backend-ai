@@ -41,11 +41,16 @@ from app.analysis.world_setting_comparator import (
 )
 from app.analysis.world_setting_extractor import WorldSettingExtractor
 from app.chunking.chunk_splitter import EpisodeChunkDraft, split_into_chunks
-from app.domain.enums import CharacterFactComparisonOperation, SettingCandidateKind
+from app.domain.enums import (
+    CharacterFactComparisonOperation,
+    SettingCandidateKind,
+    WorldSettingConsolidationStatus,
+    WorldSettingOperation,
+)
 from app.domain.setting_values import normalize_setting_display_value
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.exceptions import LlmIncompleteResponseError, LlmResponseValidationError
-from app.llm.protocols import TextGenerationClient
+from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.llm.responses import LlmTextResponse
 from app.mappers.world_setting_candidate_mapper import (
     WorldSettingCandidateMapper,
@@ -157,6 +162,7 @@ class UsageRecordingTextGenerationClient:
         model: str | None = None,
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
+        response_schema: LlmResponseSchema | None = None,
     ) -> LlmTextResponse:
         try:
             response = await self.client.create_text_response(
@@ -165,6 +171,7 @@ class UsageRecordingTextGenerationClient:
                 model=model,
                 max_output_tokens=max_output_tokens,
                 prompt_cache_key=prompt_cache_key,
+                response_schema=response_schema,
             )
         except LlmResponseValidationError as exc:
             self._record_usage(
@@ -1123,7 +1130,57 @@ async def _run_world_batches(
                 _runtime_failure(EvaluationDomain.WORLD, 2, item.source_id, exc)
                 for item in group
             )
-    return predictions, failures
+    return _link_projected_world_subject_adds(sources, predictions), failures
+
+
+def _link_projected_world_subject_adds(
+    sources: list[_WorldBatchSource],
+    predictions: list[WorldStage2Prediction],
+) -> list[WorldStage2Prediction]:
+    """Link later ADDs to a subject created earlier in the same scenario.
+
+    Production completes a world comparison batch atomically.  The evaluator applies
+    its decisions one by one, so after the first property creates a new subject, each
+    later property must carry that projected subject ref.  The comparator cannot emit
+    the ref because the subject did not exist in its before-state context.
+    """
+
+    source_by_id = {source.source_id: source for source in sources}
+    source_order = {source.source_id: index for index, source in enumerate(sources)}
+    ordered = sorted(
+        predictions,
+        key=lambda prediction: source_order.get(
+            prediction.source_candidate_id,
+            len(source_order),
+        ),
+    )
+    projected_subject_refs: dict[tuple[str, str], str] = {}
+    linked: list[WorldStage2Prediction] = []
+    for prediction in ordered:
+        source = source_by_id.get(prediction.source_candidate_id)
+        if source is None:
+            linked.append(prediction)
+            continue
+        subject_key = (
+            source.candidate.category.value,
+            normalize_world_setting_name(source.candidate.subject_name),
+        )
+        if (
+            prediction.operation == WorldSettingOperation.ADD
+            and prediction.consolidation_status != WorldSettingConsolidationStatus.CONFLICT
+        ):
+            projected_ref = projected_subject_refs.get(subject_key)
+            if prediction.target_ref is None and projected_ref is not None:
+                prediction = prediction.model_copy(
+                    update={"target_ref": projected_ref},
+                )
+            elif prediction.target_ref is None:
+                projected_subject_refs[subject_key] = world_subject_ref(
+                    source.candidate.category,
+                    source.candidate.subject_name,
+                )
+        linked.append(prediction)
+    return linked
 
 
 def _world_batch_key(source: _WorldBatchSource) -> tuple[Any, ...]:
