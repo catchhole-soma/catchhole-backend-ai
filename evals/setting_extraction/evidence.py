@@ -26,7 +26,20 @@ def evaluate_evidence(
     prediction: PredictionCandidate,
     source_text: str | None,
 ) -> EvidenceEvaluation:
-    predicted_quotes = [span.quote for span in prediction.evidence_spans]
+    return evaluate_evidence_quotes(
+        gold.evidence_quotes,
+        [span.quote for span in prediction.evidence_spans],
+        source_text,
+    )
+
+
+def evaluate_evidence_quotes(
+    gold_quotes: list[str],
+    predicted_quotes: list[str],
+    source_text: str | None,
+) -> EvidenceEvaluation:
+    """모델 타입과 무관한 Stage1 근거 위치·coverage 평가 primitive."""
+
     normalized_source = normalize_text(source_text)
     # LLM offset은 없거나 어긋날 수 있어 인용문이 정규화 원문에 실제 존재하는지를 우선한다.
     locatable_count = sum(
@@ -36,13 +49,13 @@ def evaluate_evidence(
     )
     covered_gold_count = sum(
         1
-        for gold_quote in gold.evidence_quotes
+        for gold_quote in gold_quotes
         if any(_quotes_cover_same_span(gold_quote, predicted) for predicted in predicted_quotes)
     )
     return EvidenceEvaluation(
         quote_count=len(predicted_quotes),
         locatable_quote_count=locatable_count,
-        gold_quote_count=len(gold.evidence_quotes),
+        gold_quote_count=len(gold_quotes),
         covered_gold_quote_count=covered_gold_count,
     )
 
