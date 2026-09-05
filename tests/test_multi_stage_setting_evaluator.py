@@ -17,6 +17,7 @@ from evals.multi_stage_setting.contracts import (
     WorldStage2Prediction,
     WorldStateEntry,
     character_state_ref,
+    world_subject_ref,
     world_state_ref,
 )
 from evals.multi_stage_setting.evaluator import evaluate_multi_stage
@@ -96,6 +97,70 @@ def test_fixed_evaluator_scores_character_and_world_stages_separately() -> None:
         "liveConditionalAccuracy"
     ] == 1
     assert report["endToEnd"]["metrics"]["afterStateF1"] == 1
+
+
+def test_world_add_does_not_double_penalize_a_projected_subject_ref() -> None:
+    gold = _basic_gold()
+    projected_subject_ref = world_subject_ref("RACE", "바바리안")
+    bundle = PredictionBundleV3(
+        fixture_hash=gold.fixture_hash,
+        mode="FIXED",
+        evaluation_domains={"WORLD"},
+        scenarios=[
+            ScenarioPrediction(
+                scenario_id="S1",
+                stage1=[
+                    WorldStage1Prediction(
+                        candidate_id="pw-extra",
+                        sort_order=1,
+                        domain="WORLD",
+                        category="RACE",
+                        subject_name="바바리안",
+                        setting_name="직역 의미",
+                        source_values=["야만인"],
+                        evidence_spans=[{"quote": "나는 바바리안이다."}],
+                    ),
+                    WorldStage1Prediction(
+                        candidate_id="pw-match",
+                        sort_order=2,
+                        domain="WORLD",
+                        category="RACE",
+                        subject_name="바바리안",
+                        setting_name="전투 특성",
+                        source_values=["근접 전투에 강하다."],
+                        evidence_spans=[{"quote": "바바리안은 근접 전투에 강하다."}],
+                    ),
+                ],
+                stage2=[
+                    WorldStage2Prediction(
+                        source_candidate_id="pw-extra",
+                        domain="WORLD",
+                        consolidation_status="SINGLE",
+                        operation="ADD",
+                        proposed_setting_name="직역 의미",
+                        proposed_value="야만인",
+                    ),
+                    WorldStage2Prediction(
+                        source_candidate_id="pw-match",
+                        domain="WORLD",
+                        consolidation_status="SINGLE",
+                        operation="ADD",
+                        target_ref=projected_subject_ref,
+                        proposed_setting_name="전투 특성",
+                        proposed_value="근접 전투에 강하다.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    report = asyncio.run(evaluate_multi_stage(gold, bundle))
+
+    assert report["stages"]["world"]["stage1"]["counts"]["extra"] == 1
+    stage2 = report["stages"]["world"]["stage2"]
+    assert stage2["metrics"]["targetAccuracy"] == 1
+    assert stage2["metrics"]["fullDecisionAccuracy"] == 1
+    assert report["endToEnd"]["counts"]["stateApplicationErrors"] == 0
 
 
 def test_upstream_missing_is_excluded_from_conditional_but_fails_end_to_end() -> None:

@@ -37,6 +37,7 @@ from evals.multi_stage_setting.contracts import (
     WorldStage2Gold,
     WorldStage2Prediction,
     character_state_ref,
+    world_subject_ref,
 )
 from evals.multi_stage_setting.matching import (
     FieldMatchStatus,
@@ -420,6 +421,7 @@ def _evaluate_stage2_cases(
             )
             continue
         expected_character_fact_key = None
+        expected_world_subject_ref = None
         if isinstance(decision, CharacterStage2Gold):
             source = next(
                 item
@@ -428,10 +430,22 @@ def _evaluate_stage2_cases(
             )
             assert isinstance(source, CharacterStage1Gold)
             expected_character_fact_key = source.fact_key
+        elif isinstance(decision, WorldStage2Gold):
+            source = next(
+                item
+                for item in gold.stage1
+                if item.gold_id == decision.source_gold_ids[0]
+            )
+            assert isinstance(source, WorldStage1Gold)
+            expected_world_subject_ref = world_subject_ref(
+                source.category,
+                source.subject_name,
+            )
         case = _score_stage2_case(
             decision,
             prediction,
             expected_character_fact_key=expected_character_fact_key,
+            expected_world_subject_ref=expected_world_subject_ref,
         )
         case.scenario_id = decision.scenario_id
         case.upstream_outcome = outcome
@@ -470,6 +484,7 @@ def _score_stage2_case(
     prediction: CharacterStage2Prediction | WorldStage2Prediction,
     *,
     expected_character_fact_key: str | None = None,
+    expected_world_subject_ref: str | None = None,
 ) -> Stage2Case:
     if isinstance(gold, CharacterStage2Gold) and isinstance(
         prediction, CharacterStage2Prediction
@@ -538,8 +553,19 @@ def _score_stage2_case(
         )
         values_absent = gold.proposed_value is None and not prediction.proposed_value
         value_matched = True if exact_value or values_absent else None
+        target_ref_matched = _same_ref(gold.target_ref, prediction.target_ref)
+        if (
+            gold.operation == WorldSettingOperation.ADD
+            and prediction.operation == WorldSettingOperation.ADD
+            and expected_world_subject_ref is not None
+        ):
+            allowed_add_refs = {"", expected_world_subject_ref}
+            target_ref_matched = (
+                (gold.target_ref or "").strip() in allowed_add_refs
+                and (prediction.target_ref or "").strip() in allowed_add_refs
+            )
         target_matched = (
-            _same_ref(gold.target_ref, prediction.target_ref)
+            target_ref_matched
             and normalize_text(gold.matched_scope_name)
             == normalize_text(prediction.matched_scope_name)
             and normalize_text(gold.matched_property_name)
