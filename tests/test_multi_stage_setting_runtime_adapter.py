@@ -24,11 +24,12 @@ from app.analysis.schemas import (
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
 from app.analysis.world_setting_schemas import (
     ExtractedWorldSettingCandidate,
-    WorldSettingComparisonDecision,
+    WorldSettingComparisonBatchDecision,
+    WorldSettingComparisonBatchResult,
     WorldSettingExtractionResult,
 )
 from app.llm.openai_client import OpenAIResponsesClient
-from app.llm.exceptions import LlmResponseValidationError
+from app.llm.exceptions import LlmIncompleteResponseError, LlmResponseValidationError
 from app.llm.responses import LlmTextResponse
 from evals.multi_stage_setting.contracts import (
     CharacterStage1Gold,
@@ -357,6 +358,75 @@ def test_fixed_runtime_reuses_character_dedupe_and_world_consolidation() -> None
         bundle.prompt_versions["characterComparison"]
         == "character-fact-comparison-batch:v2"
     )
+
+
+def test_fixed_runtime_compares_related_world_properties_in_one_batch() -> None:
+    scenario = ScenarioGold(
+        scenario_id="S1",
+        episode_no=1,
+        source_identifier="01화.txt",
+        source_text="고블린은 함정을 설치하고 주변에 매복한다.",
+        target_domains={"WORLD"},
+        gold_version="v3",
+        start_state_mode="EMPTY",
+        cumulative_through_episode=0,
+        candidate_free=True,
+        review_status="FINAL",
+    )
+    comparator = _BatchCapturingWorldComparator()
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            GoldSnapshotV3(
+                dataset_version="v3",
+                name="world comparison batch",
+                scenarios=[scenario],
+            ).with_fixture_hash(),
+            mode="FIXED",
+            components=RuntimeComponents(
+                character_comparator=_AddCharacterComparator(),
+                world_extractor=_IndependentWorldPropertiesExtractor(),
+                world_comparator=comparator,
+            ),
+            domains={"WORLD"},
+        )
+    )
+
+    assert comparator.calls == [["함정 사용", "매복 습성"]]
+    assert len(bundle.scenarios[0].stage2) == 2
+
+
+def test_fixed_runtime_reraises_incomplete_world_batch_response() -> None:
+    scenario = ScenarioGold(
+        scenario_id="S1",
+        episode_no=1,
+        source_identifier="01화.txt",
+        source_text="고블린은 함정을 설치한다.",
+        target_domains={"WORLD"},
+        gold_version="v3",
+        start_state_mode="EMPTY",
+        cumulative_through_episode=0,
+        candidate_free=True,
+        review_status="FINAL",
+    )
+
+    with pytest.raises(LlmIncompleteResponseError, match="provider incomplete"):
+        asyncio.run(
+            run_multi_stage_predictions(
+                GoldSnapshotV3(
+                    dataset_version="v3",
+                    name="incomplete world comparison",
+                    scenarios=[scenario],
+                ).with_fixture_hash(),
+                    mode="FIXED",
+                    components=RuntimeComponents(
+                        character_comparator=_AddCharacterComparator(),
+                        world_extractor=_IndependentWorldPropertiesExtractor(),
+                        world_comparator=_IncompleteWorldComparator(),
+                ),
+                domains={"WORLD"},
+            )
+        )
 
 
 def test_oracle_episode_selection_uses_gold_dependencies_without_running_them() -> None:
@@ -1558,11 +1628,12 @@ class _QuotaFailingCharacterComparator:
 class _OracleWorldComparator:
     target_property_names = None
 
-    async def compare(self, candidate, targets):
+    async def compare_batch(self, category, candidates, targets):
         self.target_property_names = [
             property.setting_name for target in targets for property in target.properties
         ]
-        decision = WorldSettingComparisonDecision(
+        decision = WorldSettingComparisonBatchDecision(
+            source_candidate_refs=[candidate.candidate_ref for candidate in candidates],
             consolidation_status="SINGLE",
             operation="MERGE",
             target_ref="T1",
@@ -1571,7 +1642,8 @@ class _OracleWorldComparator:
             proposed_value="평균 140cm이며 큰 변종은 드물게 190cm다.",
             comparison_reason="기존 평균과 변종 정보를 합친다.",
         )
-        return decision, decision.model_dump(mode="json")
+        result = WorldSettingComparisonBatchResult(decisions=[decision])
+        return result, result.model_dump(mode="json")
 
 
 class _LiveCharacterExtractor:
@@ -1818,6 +1890,32 @@ class _LiveWorldExtractor:
         )
 
 
+class _IndependentWorldPropertiesExtractor:
+    async def extract_from_chunk(self, **kwargs):
+        common = {
+            "category": "MONSTER",
+            "subject_name": "고블린",
+            "scope_name": "전투 특성",
+            "confidence": 0.8,
+        }
+        return WorldSettingExtractionResult(
+            candidates=[
+                ExtractedWorldSettingCandidate(
+                    **common,
+                    setting_name="함정 사용",
+                    extracted_value="함정을 설치한다.",
+                    evidence_spans=[ExtractedEvidenceSpan(quote="함정을 설치하고")],
+                ),
+                ExtractedWorldSettingCandidate(
+                    **common,
+                    setting_name="매복 습성",
+                    extracted_value="함정 주변에 매복한다.",
+                    evidence_spans=[ExtractedEvidenceSpan(quote="주변에 매복한다")],
+                ),
+            ]
+        )
+
+
 class _MetadataCapturingWorldExtractor:
     episode_title = None
 
@@ -1913,15 +2011,35 @@ class _RemoveThenAddSameSlotComparator:
 
 
 class _AddWorldComparator:
-    async def compare(self, candidate, targets):
-        decision = WorldSettingComparisonDecision(
-            consolidation_status="MERGED",
-            operation="ADD",
-            proposed_setting_name="체격",
-            proposed_value="평균 140cm이며 큰 변종은 드물게 190cm다.",
-            comparison_reason="두 원문 정보를 하나의 설정으로 합친다.",
+    async def compare_batch(self, category, candidates, targets):
+        result = WorldSettingComparisonBatchResult(
+            decisions=[
+                WorldSettingComparisonBatchDecision(
+                    source_candidate_refs=[candidate.candidate_ref],
+                    consolidation_status="MERGED",
+                    operation="ADD",
+                    proposed_setting_name=candidate.setting_name,
+                    proposed_value=candidate.extracted_value,
+                    comparison_reason="원문 정보를 현재 세계관 설정으로 정리합니다.",
+                )
+                for candidate in candidates
+            ]
         )
-        return decision, decision.model_dump(mode="json")
+        return result, result.model_dump(mode="json")
+
+
+class _BatchCapturingWorldComparator(_AddWorldComparator):
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def compare_batch(self, category, candidates, targets):
+        self.calls.append([candidate.setting_name for candidate in candidates])
+        return await super().compare_batch(category, candidates, targets)
+
+
+class _IncompleteWorldComparator:
+    async def compare_batch(self, category, candidates, targets):
+        raise LlmIncompleteResponseError("provider incomplete")
 
 
 class _UsageClient:

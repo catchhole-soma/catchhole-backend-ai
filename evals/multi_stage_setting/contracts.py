@@ -487,6 +487,70 @@ class Stage2Common(StrictModel):
         return self
 
 
+def _validate_character_stage2_operation(
+    *,
+    operation: CharacterFactComparisonOperation,
+    temporal_scope: CharacterFactTemporalScope,
+    target_ref: str | None,
+    removed_snapshot_refs: list[str],
+    proposed_value: str | None,
+    proposed_value_json: dict[str, Any] | None,
+) -> None:
+    if len(set(removed_snapshot_refs)) != len(removed_snapshot_refs):
+        raise ValueError("removedSnapshotRefs must not contain duplicates.")
+    target_required = operation in {
+        CharacterFactComparisonOperation.UPDATE,
+        CharacterFactComparisonOperation.MERGE,
+    }
+    if target_required != (target_ref is not None):
+        raise ValueError("UPDATE and MERGE require targetRef; other operations forbid it.")
+    if operation == CharacterFactComparisonOperation.REMOVE and not removed_snapshot_refs:
+        raise ValueError("REMOVE requires at least one removedSnapshotRef.")
+    changes_snapshot = operation in {
+        CharacterFactComparisonOperation.ADD,
+        CharacterFactComparisonOperation.UPDATE,
+        CharacterFactComparisonOperation.MERGE,
+    }
+    if changes_snapshot and (not proposed_value or not proposed_value_json):
+        raise ValueError("ADD, UPDATE, MERGE require proposedValue/proposedValueJson.")
+    if (
+        changes_snapshot
+        and proposed_value_json is not None
+        and proposed_value_json.get("active") is False
+    ):
+        raise ValueError("active=false facts must not use ADD, UPDATE, or MERGE.")
+    if not changes_snapshot and (
+        proposed_value is not None or proposed_value_json is not None
+    ):
+        raise ValueError(f"{operation} must not include proposed values.")
+    if temporal_scope in {
+        CharacterFactTemporalScope.PAST,
+        CharacterFactTemporalScope.HYPOTHETICAL,
+    } and operation not in {
+        CharacterFactComparisonOperation.HISTORY_ONLY,
+        CharacterFactComparisonOperation.REVIEW_REQUIRED,
+    }:
+        raise ValueError("PAST/HYPOTHETICAL require HISTORY_ONLY or REVIEW_REQUIRED.")
+    if (
+        temporal_scope == CharacterFactTemporalScope.UNKNOWN
+        and operation != CharacterFactComparisonOperation.REVIEW_REQUIRED
+    ):
+        raise ValueError("UNKNOWN temporalScope requires REVIEW_REQUIRED.")
+    if removed_snapshot_refs and (
+        temporal_scope != CharacterFactTemporalScope.PRESENT
+        or operation
+        not in {
+            CharacterFactComparisonOperation.ADD,
+            CharacterFactComparisonOperation.UPDATE,
+            CharacterFactComparisonOperation.MERGE,
+            CharacterFactComparisonOperation.REMOVE,
+        }
+    ):
+        raise ValueError("removedSnapshotRefs require a PRESENT STATUS transition.")
+    if target_ref is not None and target_ref in removed_snapshot_refs:
+        raise ValueError("targetRef must not also appear in removedSnapshotRefs.")
+
+
 class CharacterStage2Gold(Stage2Common):
     domain: Literal[EvaluationDomain.CHARACTER]
     operation: CharacterFactComparisonOperation
@@ -497,58 +561,14 @@ class CharacterStage2Gold(Stage2Common):
     def validate_character_operation(self) -> CharacterStage2Gold:
         if len(self.source_gold_ids) != 1:
             raise ValueError("Character Stage2 decision requires exactly one source Gold row.")
-        if len(set(self.removed_snapshot_refs)) != len(self.removed_snapshot_refs):
-            raise ValueError("removedSnapshotRefs must not contain duplicates.")
-        target_required = self.operation in {
-            CharacterFactComparisonOperation.UPDATE,
-            CharacterFactComparisonOperation.MERGE,
-        }
-        if target_required != (self.target_ref is not None):
-            raise ValueError("UPDATE and MERGE require targetRef; other operations forbid it.")
-        if (
-            self.operation == CharacterFactComparisonOperation.REMOVE
-            and not self.removed_snapshot_refs
-        ):
-            raise ValueError("REMOVE requires at least one removedSnapshotRef.")
-        changes_snapshot = self.operation in {
-            CharacterFactComparisonOperation.ADD,
-            CharacterFactComparisonOperation.UPDATE,
-            CharacterFactComparisonOperation.MERGE,
-        }
-        if changes_snapshot and (
-            not self.proposed_value or not self.proposed_value_json
-        ):
-            raise ValueError("ADD, UPDATE, MERGE require proposedValue/proposedValueJson.")
-        if not changes_snapshot and (
-            self.proposed_value is not None or self.proposed_value_json is not None
-        ):
-            raise ValueError(f"{self.operation} must not include proposed values.")
-        if self.temporal_scope in {
-            CharacterFactTemporalScope.PAST,
-            CharacterFactTemporalScope.HYPOTHETICAL,
-        } and self.operation not in {
-            CharacterFactComparisonOperation.HISTORY_ONLY,
-            CharacterFactComparisonOperation.REVIEW_REQUIRED,
-        }:
-            raise ValueError("PAST/HYPOTHETICAL require HISTORY_ONLY or REVIEW_REQUIRED.")
-        if (
-            self.temporal_scope == CharacterFactTemporalScope.UNKNOWN
-            and self.operation != CharacterFactComparisonOperation.REVIEW_REQUIRED
-        ):
-            raise ValueError("UNKNOWN temporalScope requires REVIEW_REQUIRED.")
-        if self.removed_snapshot_refs and (
-            self.temporal_scope != CharacterFactTemporalScope.PRESENT
-            or self.operation
-            not in {
-                CharacterFactComparisonOperation.ADD,
-                CharacterFactComparisonOperation.UPDATE,
-                CharacterFactComparisonOperation.MERGE,
-                CharacterFactComparisonOperation.REMOVE,
-            }
-        ):
-            raise ValueError("removedSnapshotRefs require a PRESENT STATUS transition.")
-        if self.target_ref is not None and self.target_ref in self.removed_snapshot_refs:
-            raise ValueError("targetRef must not also appear in removedSnapshotRefs.")
+        _validate_character_stage2_operation(
+            operation=self.operation,
+            temporal_scope=self.temporal_scope,
+            target_ref=self.target_ref,
+            removed_snapshot_refs=self.removed_snapshot_refs,
+            proposed_value=self.proposed_value,
+            proposed_value_json=self.proposed_value_json,
+        )
         return self
 
 
@@ -901,6 +921,18 @@ class CharacterStage2Prediction(StrictModel):
     temporal_scope: CharacterFactTemporalScope
     comparison_reason: str | None = None
 
+    @model_validator(mode="after")
+    def validate_character_operation(self) -> CharacterStage2Prediction:
+        _validate_character_stage2_operation(
+            operation=self.operation,
+            temporal_scope=self.temporal_scope,
+            target_ref=self.target_ref,
+            removed_snapshot_refs=self.removed_snapshot_refs,
+            proposed_value=self.proposed_value,
+            proposed_value_json=self.proposed_value_json,
+        )
+        return self
+
 
 class WorldStage2Prediction(StrictModel):
     source_candidate_id: str = Field(min_length=1)
@@ -1007,6 +1039,15 @@ class PredictionBundleV3(StrictModel):
                     raise ValueError(
                         f"Stage2 prediction in {scenario.scenario_id} has a different "
                         f"domain from Stage1 candidate {decision.source_candidate_id}."
+                    )
+                if (
+                    isinstance(decision, CharacterStage2Prediction)
+                    and decision.removed_snapshot_refs
+                    and isinstance(source, CharacterStage1Prediction)
+                    and source.fact_type != CharacterFactType.STATUS
+                ):
+                    raise ValueError(
+                        "Character removedSnapshotRefs require a STATUS source candidate."
                     )
         return self
 

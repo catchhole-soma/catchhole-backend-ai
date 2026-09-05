@@ -83,6 +83,56 @@ def test_character_stage2_prediction_requires_resolved_canonical_fact_key() -> N
         )
 
 
+def test_character_stage2_prediction_rejects_duplicate_removal_refs() -> None:
+    with pytest.raises(ValidationError, match="must not contain duplicates"):
+        CharacterStage2Prediction(
+            source_candidate_id="p1",
+            domain="CHARACTER",
+            operation="REMOVE",
+            resolved_canonical_fact_key="status.회복",
+            removed_snapshot_refs=["P1", "P1"],
+            temporal_scope="PRESENT",
+        )
+
+
+def test_character_stage2_prediction_rejects_active_false_upsert() -> None:
+    with pytest.raises(ValidationError, match="active=false facts"):
+        CharacterStage2Prediction(
+            source_candidate_id="p1",
+            domain="CHARACTER",
+            operation="ADD",
+            resolved_canonical_fact_key="status.회복",
+            proposed_value="회복 완료",
+            proposed_value_json={"name": "회복", "active": False},
+            temporal_scope="PRESENT",
+        )
+
+
+def test_fixed_prediction_rejects_removal_from_non_status_source() -> None:
+    decision = _character_stage2("p1").model_copy(
+        update={
+            "operation": "REMOVE",
+            "target_ref": None,
+            "removed_snapshot_refs": ["P1"],
+            "proposed_value": None,
+            "proposed_value_json": None,
+        }
+    )
+
+    with pytest.raises(ValidationError, match="require a STATUS source"):
+        PredictionBundleV3(
+            fixture_hash="fixture",
+            mode="FIXED",
+            scenarios=[
+                ScenarioPrediction(
+                    scenario_id="S1",
+                    stage1=[_character_stage1("p1")],
+                    stage2=[decision],
+                )
+            ],
+        )
+
+
 def test_oracle_evaluator_rejects_source_that_is_not_a_gold_stage2_source() -> None:
     gold = _oracle_gold()
     bundle = PredictionBundleV3(

@@ -44,7 +44,7 @@ from app.chunking.chunk_splitter import EpisodeChunkDraft, split_into_chunks
 from app.domain.enums import CharacterFactComparisonOperation, SettingCandidateKind
 from app.domain.setting_values import normalize_setting_display_value
 from app.llm.openai_client import OpenAIResponsesClient
-from app.llm.exceptions import LlmResponseValidationError
+from app.llm.exceptions import LlmIncompleteResponseError, LlmResponseValidationError
 from app.llm.protocols import TextGenerationClient
 from app.llm.responses import LlmTextResponse
 from app.mappers.world_setting_candidate_mapper import (
@@ -58,6 +58,7 @@ from app.schemas.worker import (
     WorkerCharacterFactComparisonBatchSnapshotEntry,
     WorkerEvidenceSpan,
     WorkerWorldSettingCandidatePayload,
+    WorkerWorldSettingComparisonBatchCandidate,
     WorkerWorldSettingComparisonTarget,
     WorkerWorldSettingProperty,
     WorkerWorldSettingSubject,
@@ -106,9 +107,10 @@ MAX_CHARACTER_CONTEXT_ENTRIES = 30
 
 
 class WorldComparatorApi(Protocol):
-    async def compare(
+    async def compare_batch(
         self,
-        candidate: WorkerWorldSettingCandidatePayload,
+        category: str,
+        candidates: list[WorkerWorldSettingComparisonBatchCandidate],
         targets: list[WorkerWorldSettingComparisonTarget],
     ) -> tuple[Any, dict]: ...
 
@@ -221,6 +223,13 @@ class _CharacterBatchSource:
 class _WorldTargetSet:
     targets: list[WorkerWorldSettingComparisonTarget]
     state_entries_by_target_id: dict[UUID, list[Any]]
+
+
+@dataclass(frozen=True)
+class _WorldBatchSource:
+    source_id: str
+    candidate: WorkerWorldSettingCandidatePayload
+    target_set: _WorldTargetSet
 
 
 def create_default_runtime_components(
@@ -473,23 +482,29 @@ async def _run_oracle_scenario(
     stage2.extend(character_stage2)
     failures.extend(character_failures)
 
+    world_batch_sources: list[_WorldBatchSource] = []
     for decision in world_decisions:
         try:
             sources = [stage1_by_id[source_id] for source_id in decision.source_gold_ids]
             world_sources = [cast(WorldStage1Gold, source) for source in sources]
-            stage2.append(
-                await _compare_world_gold(
+            world_batch_sources.append(
+                _oracle_world_batch_source(
                     scenario,
                     before_state,
                     world_sources,
                     decision,
-                    components.world_comparator,
                 )
             )
-        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:  # 개별 모델 출력 실패는 다음 후보와 격리한다.
             failures.append(_runtime_failure(decision.domain, 2, decision.decision_id, exc))
+    world_stage2, world_failures = await _run_world_batches(
+        world_batch_sources,
+        components.world_comparator,
+    )
+    stage2.extend(world_stage2)
+    failures.extend(world_failures)
     return ScenarioPrediction(
         scenario_id=scenario.scenario_id,
         raw_stage1=stage1,
@@ -541,7 +556,7 @@ async def _run_live_scenario(
                 schema_hints=schema_hints,
                 known_characters=tuple(known_characters),
             )
-        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:
             failures.append(
@@ -603,7 +618,7 @@ async def _run_live_scenario(
                         sort_order=sort_order,
                     )
                 )
-        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:
             failures.append(
@@ -755,7 +770,7 @@ async def _run_live_scenario(
                 world_publish_items.append(
                     WorldSettingCandidateMapper.to_publish_item(candidate, chunk)
                 )
-        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:
             failures.append(
@@ -782,6 +797,7 @@ async def _run_live_scenario(
             stage1=handoff_stage1,
             stage2=stage2,
         )
+    world_batch_sources: list[_WorldBatchSource] = []
     for consolidated_order, item in enumerate(consolidated, start=1):
         source_values = _publish_source_values(item)
         candidate_id = str(
@@ -811,21 +827,27 @@ async def _run_live_scenario(
         )
         handoff_stage1.append(prediction)
         try:
-            stage2.append(
-                await _compare_world_prediction(
+            world_batch_sources.append(
+                await _live_world_batch_source(
                     scenario,
                     before_state,
                     prediction,
-                    components.world_comparator,
                     components.world_subject_resolver,
                 )
             )
-        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:
             failures.append(
                 _runtime_failure(EvaluationDomain.WORLD, 2, prediction.candidate_id, exc)
             )
+
+    world_stage2, world_failures = await _run_world_batches(
+        world_batch_sources,
+        components.world_comparator,
+    )
+    stage2.extend(world_stage2)
+    failures.extend(world_failures)
 
     return ScenarioPrediction(
         scenario_id=scenario.scenario_id,
@@ -911,7 +933,7 @@ async def _run_character_batches(
                         message=failure.error_message,
                     )
                 )
-        except (httpx.HTTPError, AiTokenQuotaExhaustedError):
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:
             failures.extend(
@@ -992,13 +1014,12 @@ def _character_batch_matched_name(
     return source.entity_name
 
 
-async def _compare_world_gold(
+def _oracle_world_batch_source(
     scenario: ScenarioGold,
     state: EvaluationState,
     sources: list[WorldStage1Gold],
     decision: WorldStage2Gold,
-    comparator: WorldComparatorApi,
-) -> WorldStage2Prediction:
+) -> _WorldBatchSource:
     primary = sources[0]
     source_values = _unique_values(value for source in sources for value in source.source_values)
     evidence = [quote for source in sources for quote in source.evidence_quotes]
@@ -1015,21 +1036,19 @@ async def _compare_world_gold(
         evidence_spans=_worker_evidence_from_quotes(evidence),
     )
     target_set = _oracle_world_targets(state, primary, decision)
-    result, _ = await comparator.compare(runtime_candidate, target_set.targets)
-    return _world_stage2_prediction(
-        primary.gold_id,
-        result,
-        target_set,
+    return _WorldBatchSource(
+        source_id=primary.gold_id,
+        candidate=runtime_candidate,
+        target_set=target_set,
     )
 
 
-async def _compare_world_prediction(
+async def _live_world_batch_source(
     scenario: ScenarioGold,
     state: EvaluationState,
     source: WorldStage1Prediction,
-    comparator: WorldComparatorApi,
     subject_resolver: WorldSettingSubjectResolver | Any | None,
-) -> WorldStage2Prediction:
+) -> _WorldBatchSource:
     runtime_candidate = WorkerWorldSettingCandidatePayload(
         candidate_id=UUID(source.candidate_id),
         work_id=_stable_uuid("work", gold_version_key(scenario)),
@@ -1043,8 +1062,85 @@ async def _compare_world_prediction(
         extraction_confidence=source.confidence,
     )
     target_set = await _live_world_targets(state, runtime_candidate, subject_resolver)
-    result, _ = await comparator.compare(runtime_candidate, target_set.targets)
-    return _world_stage2_prediction(source.candidate_id, result, target_set)
+    return _WorldBatchSource(
+        source_id=source.candidate_id,
+        candidate=runtime_candidate,
+        target_set=target_set,
+    )
+
+
+async def _run_world_batches(
+    sources: list[_WorldBatchSource],
+    comparator: WorldComparatorApi,
+) -> tuple[list[WorldStage2Prediction], list[RuntimeFailure]]:
+    grouped: dict[tuple[Any, ...], list[_WorldBatchSource]] = {}
+    for source in sources:
+        grouped.setdefault(_world_batch_key(source), []).append(source)
+
+    predictions: list[WorldStage2Prediction] = []
+    failures: list[RuntimeFailure] = []
+    for group in grouped.values():
+        candidates = [
+            WorkerWorldSettingComparisonBatchCandidate(
+                candidate_ref=f"C{index}",
+                candidate_id=item.candidate.candidate_id,
+                subject_name=item.candidate.subject_name,
+                scope_name=item.candidate.scope_name,
+                setting_name=item.candidate.setting_name,
+                extracted_value=item.candidate.extracted_value,
+                evidence_spans=item.candidate.evidence_spans,
+                extraction_confidence=item.candidate.extraction_confidence,
+            )
+            for index, item in enumerate(group, start=1)
+        ]
+        source_by_ref = {
+            candidate.candidate_ref: item
+            for candidate, item in zip(candidates, group, strict=True)
+        }
+        target_set = group[0].target_set
+        try:
+            result, _ = await comparator.compare_batch(
+                group[0].candidate.category.value,
+                candidates,
+                target_set.targets,
+            )
+            for decision in result.decisions:
+                first_ref = min(
+                    decision.source_candidate_refs,
+                    key=lambda reference: int(reference[1:]),
+                )
+                predictions.append(
+                    _world_stage2_prediction(
+                        source_by_ref[first_ref].source_id,
+                        decision,
+                        target_set,
+                    )
+                )
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
+            raise
+        except Exception as exc:
+            failures.extend(
+                _runtime_failure(EvaluationDomain.WORLD, 2, item.source_id, exc)
+                for item in group
+            )
+    return predictions, failures
+
+
+def _world_batch_key(source: _WorldBatchSource) -> tuple[Any, ...]:
+    target_ids = tuple(
+        sorted(str(target.world_setting_id) for target in source.target_set.targets)
+    )
+    canonical_subject = (
+        source.target_set.targets[0].subject_name
+        if len(source.target_set.targets) == 1
+        else source.candidate.subject_name
+    )
+    return (
+        source.candidate.category,
+        normalize_world_setting_name(canonical_subject),
+        normalize_world_setting_name(source.candidate.scope_name or ""),
+        target_ids,
+    )
 
 
 def _character_batch_stage2_prediction(
