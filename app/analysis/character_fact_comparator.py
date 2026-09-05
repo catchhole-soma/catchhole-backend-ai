@@ -45,6 +45,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
 CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v2"
 logger = logging.getLogger(__name__)
 SNAPSHOT_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])[PQ][0-9]+(?![A-Za-z0-9])")
+CANDIDATE_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])C[0-9]+(?![A-Za-z0-9])")
 UUID_PATTERN = re.compile(
     r"(?<![A-Fa-f0-9])"
     r"[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[1-5][A-Fa-f0-9]{3}-"
@@ -253,7 +254,13 @@ class CharacterFactComparator:
                 candidates,
                 initial_entries,
             ),
-            retry_user_prompt_builder=_build_batch_retry_user_prompt,
+            retry_user_prompt_builder=lambda original, exc: _build_bounded_batch_retry_user_prompt(
+                original,
+                exc,
+                system_prompt=system_prompt,
+                model=self.model,
+                max_input_tokens=self.batch_max_input_tokens,
+            ),
         )
         normalized_result = _normalize_batch_comparison_result(
             result,
@@ -328,6 +335,20 @@ def _build_batch_retry_user_prompt(original_user_prompt: str, exc: Exception) ->
         ),
     }
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _build_bounded_batch_retry_user_prompt(
+    original_user_prompt: str,
+    exc: Exception,
+    *,
+    system_prompt: str,
+    model: str,
+    max_input_tokens: int,
+) -> str:
+    retry_prompt = _build_batch_retry_user_prompt(original_user_prompt, exc)
+    if _estimate_prompt_tokens(system_prompt, retry_prompt, model) > max_input_tokens:
+        raise ComparisonValidationError("character_batch_input_limit_exceeded")
+    return retry_prompt
 
 
 def _resolve_max_attempts(max_attempts: int | None) -> int:
@@ -405,6 +426,8 @@ def _validate_user_facing_reason_values(
     candidate_fact_key: str,
     snapshot_fact_keys: list[str],
 ) -> None:
+    if CANDIDATE_REFERENCE_PATTERN.search(comparison_reason):
+        raise ValueError("comparison_reason must not expose request-local candidate refs.")
     internal_fact_keys = {candidate_fact_key, *snapshot_fact_keys}
     normalized_reason = comparison_reason.casefold()
     leaked_fact_keys = sorted(

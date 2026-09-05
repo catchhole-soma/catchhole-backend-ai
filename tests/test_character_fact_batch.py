@@ -6,6 +6,7 @@ from uuid import UUID
 import httpx
 import pytest
 
+import app.analysis.character_fact_comparator as comparator_module
 from app.analysis.character_fact_comparison_pipeline import (
     CharacterFactComparisonPipeline,
 )
@@ -936,6 +937,92 @@ def test_batch_comparator_rejects_input_limit_before_provider_call() -> None:
         )
 
     assert client.requests == []
+
+
+def test_batch_comparator_rechecks_input_limit_before_validation_retry(monkeypatch) -> None:
+    client = SequencedTextClient([{"decisions": []}])
+
+    def estimated_tokens(_system_prompt: str, user_prompt: str, _model: str) -> int:
+        return 2 if "validation_feedback" in user_prompt else 1
+
+    monkeypatch.setattr(comparator_module, "_estimate_prompt_tokens", estimated_tokens)
+    comparator = CharacterFactComparator(
+        llm_client=client,
+        max_attempts=2,
+        batch_max_input_tokens=1,
+    )
+
+    with pytest.raises(
+        ComparisonValidationError,
+        match="character_batch_input_limit_exceeded",
+    ):
+        asyncio.run(
+            comparator.compare_batch(
+                matched_character_name="비요른 얀델",
+                canonical_fact_type="STATUS",
+                candidates=[_candidates()[0]],
+                snapshot_entries=[],
+            )
+        )
+
+    assert len(client.requests) == 1
+
+
+def test_batch_comparator_retries_reason_with_request_local_candidate_ref() -> None:
+    candidate = _candidates()[0]
+    invalid = _decision_payload(
+        "C1",
+        operation="ADD",
+        resolved_key="status.다리_상태",
+        value="부상이 심해짐",
+        reason="C1 후보를 현재 상태로 반영합니다.",
+    )
+    valid = {**invalid, "comparison_reason": "현재 다리 부상을 반영합니다."}
+    client = SequencedTextClient([
+        {"decisions": [invalid]},
+        {"decisions": [valid]},
+    ])
+
+    result, _ = asyncio.run(
+        CharacterFactComparator(
+            llm_client=client,
+            max_attempts=2,
+            batch_max_input_tokens=100_000,
+        ).compare_batch(
+            matched_character_name="비요른 얀델",
+            canonical_fact_type="STATUS",
+            candidates=[candidate],
+            snapshot_entries=[],
+        )
+    )
+
+    assert result.decisions[0].comparison_reason == "현재 다리 부상을 반영합니다."
+    assert len(client.requests) == 2
+
+
+def test_character_batch_wire_models_reject_non_boolean_status_active() -> None:
+    payload = _batch().model_dump(by_alias=True, mode="json")
+    payload["candidates"][0]["valueJson"]["active"] = "false"
+
+    with pytest.raises(ValueError, match="active must be a JSON boolean"):
+        WorkerCharacterFactComparisonBatchPayload.model_validate(payload)
+
+    context = _context(_batch()).model_dump(by_alias=True, mode="json")
+    context["snapshotEntries"] = [
+        {
+            "snapshotRef": "P1",
+            "origin": "PERSISTED",
+            "sourceCandidateRef": None,
+            "dependencyCandidateRefs": [],
+            "factType": "STATUS",
+            "factKey": "status.부상",
+            "factValue": "부상 중",
+            "valueJson": {"active": "false"},
+        }
+    ]
+
+    with pytest.raises(ValueError, match="active must be a JSON boolean"):
+        WorkerCharacterFactComparisonBatchContextResponse.model_validate(context)
 
 
 def test_character_batch_config_defaults_and_metrics_are_namespaced() -> None:

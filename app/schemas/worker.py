@@ -39,6 +39,17 @@ AiTokenUsageOutcome = Literal[
 ]
 
 
+def _validate_status_active_value(
+    fact_type: str,
+    value_json: Any | None,
+    field_name: str,
+) -> None:
+    if fact_type != "STATUS" or not isinstance(value_json, dict) or "active" not in value_json:
+        return
+    if type(value_json["active"]) is not bool:
+        raise ValueError(f"{field_name}.active must be a JSON boolean.")
+
+
 # Worker가 Spring 서버에 job claim 요청
 class WorkerAnalysisJobClaimRequest(BaseModel):
     # Python 필드명과 JSON alias를 둘 다 허용한다, 예: model_name or modelName 모두 가능
@@ -580,6 +591,12 @@ class WorkerCharacterFactComparisonBatchPayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_group_and_refs(self) -> "WorkerCharacterFactComparisonBatchPayload":
+        for index, candidate in enumerate(self.candidates):
+            _validate_status_active_value(
+                self.canonical_fact_type,
+                candidate.value_json,
+                f"candidates[{index}].valueJson",
+            )
         candidate_refs = [candidate.candidate_ref for candidate in self.candidates]
         projected_refs = [candidate.projected_snapshot_ref for candidate in self.candidates]
         if len(candidate_refs) != len(set(candidate_refs)):
@@ -640,6 +657,22 @@ class WorkerCharacterFactComparisonBatchContextResponse(BaseModel):
         max_length=30,
     )
     context_token: str = Field(alias="contextToken", min_length=64, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_status_values(self) -> "WorkerCharacterFactComparisonBatchContextResponse":
+        for index, candidate in enumerate(self.candidates):
+            _validate_status_active_value(
+                self.canonical_fact_type,
+                candidate.value_json,
+                f"candidates[{index}].valueJson",
+            )
+        for index, entry in enumerate(self.snapshot_entries):
+            _validate_status_active_value(
+                entry.fact_type,
+                entry.value_json,
+                f"snapshotEntries[{index}].valueJson",
+            )
+        return self
 
 
 class WorkerCharacterFactComparisonBatchDecision(BaseModel):
