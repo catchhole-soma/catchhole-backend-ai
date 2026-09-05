@@ -1,18 +1,26 @@
 import asyncio
+import json
+import logging
+import re
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import httpx
 import pytest
 
 from app.analysis.exceptions import ComparisonValidationError
-from app.analysis.world_setting_comparator import SubjectReference
+from app.analysis.world_setting_comparator import SubjectReference, WorldSettingComparator
 from app.analysis.world_setting_pipeline import WorldSettingComparisonPipeline
 from app.analysis.world_setting_schemas import (
     WorldSettingComparisonBatchDecision,
     WorldSettingComparisonBatchResult,
 )
 from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
+from app.clients.spring_worker_client import SpringWorkerClient
+from app.core.config import Settings
 from app.domain.enums import AnalysisFailureCode, WorldSettingConsolidationStatus
+from app.llm.responses import LlmTextResponse
 from app.schemas.worker import (
     WorkerWorldSettingComparisonBatchContextResponse,
     WorkerWorldSettingComparisonBatchPayload,
@@ -309,6 +317,86 @@ def test_batch_pipeline_fails_all_sources_when_completion_coverage_is_missing() 
     assert spring.completions == []
     assert spring.failures[0][0] == BATCH_ID
     assert "omits candidate refs" in spring.failures[0][1]
+
+
+@pytest.mark.parametrize(
+    ("invalid_fields", "validator"),
+    [
+        ({"target_ref": "SECRET_PROVIDER_VALUE"}, "_validate_batch_comparison_result"),
+        ({"proposed_scope_name": "SECRET_PROVIDER_VALUE"}, "_validate_batch_scope_plan"),
+    ],
+)
+def test_real_validation_origin_reaches_logs_and_spring_failure_payload(
+    invalid_fields, validator, caplog, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.analysis.world_setting_comparator.get_settings",
+        lambda: Settings(_env_file=None),
+    )
+    decision = _merged_decision().model_copy(update=invalid_fields)
+    response = WorldSettingComparisonBatchResult(decisions=[decision])
+    create_response = AsyncMock(return_value=LlmTextResponse(text=response.model_dump_json()))
+    comparator = WorldSettingComparator(
+        llm_client=SimpleNamespace(create_text_response=create_response), max_attempts=3
+    )
+    spring = FakeBatchSpringApi([_batch()])
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": None})
+
+    async def run_pipeline():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = SpringWorkerClient(
+                base_url="http://spring.local",
+                internal_api_key="SECRET_API_KEY",
+                http_client=http_client,
+            )
+            # claim/context는 합성 fixture, 실패 보고는 실제 HTTP 직렬화 경계를 통과한다.
+            monkeypatch.setattr(
+                spring, "fail_world_setting_comparison_batch",
+                client.fail_world_setting_comparison_batch,
+            )
+            pipeline = WorldSettingComparisonPipeline(
+                spring, FakeBatchSubjectResolver(TARGET_ID, "고블린"), comparator
+            )
+            return await pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN)
+
+    with caplog.at_level(logging.WARNING):
+        result = asyncio.run(run_pipeline())
+
+    assert create_response.await_count == 3
+    assert result.completed_count == 0
+    assert result.failed_count == 2
+    assert result.first_failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
+    assert spring.completions == []
+    assert len(requests) == 1
+    assert requests[0].method == "POST"
+    assert requests[0].url.path == (
+        f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
+        f"/world-setting-comparison-batches/{BATCH_ID}/fail"
+    )
+    payload = json.loads(requests[0].content)
+    error_message = payload["errorMessage"]
+    assert re.fullmatch(
+        r"World-setting batch comparison failed after 3 attempts: "
+        rf"ValueError\(origin=app\.analysis\.world_setting_comparator\.{validator}:\d+\)",
+        error_message,
+    )
+    assert payload == {
+        "errorMessage": error_message,
+        "failureCode": "COMPARISON_VALIDATION_FAILED",
+    }
+    retry_logs = [record.message for record in caplog.records if "retrying attempt=" in record.message]
+    assert len(retry_logs) == 2
+    assert all(f".{validator}:" in message for message in retry_logs)
+    assert error_message in caplog.text
+    assert len(error_message) < 1000
+    assert "/" not in error_message
+    for private_value in ("SECRET_PROVIDER_VALUE", "SECRET_API_KEY", "무리를 지어"):
+        assert private_value not in error_message
+        assert private_value not in caplog.text
 
 
 def test_batch_pipeline_stops_after_quota_failure_without_claiming_next_batch() -> None:

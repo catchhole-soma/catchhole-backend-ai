@@ -83,3 +83,4 @@
 - 캐릭터·세계관 추출의 출력 절단은 동일 입력으로 각각 6,000→12,000, 5,000→10,000으로 한 번만 확장한다. 두 번째 절단은 종료하고 일반 JSON 문법·schema 오류의 기존 재시도 횟수와 섞지 않는다. 확장 호출도 증가한 최대량을 먼저 예약하며 quota 예약이 거절되면 provider를 호출하지 않는다.
 - provider 사용량이 포함된 실패·출력 절단은 실제 input/cached/output을 `FAILURE`로 정산한다. 로그에는 목적·시도·출력 상한·사용량·incomplete reason만 남기고 prompt, 원고, 응답 본문, 내부 인증값은 남기지 않는다.
 - Worker가 Spring에 보고하는 실패는 `AnalysisFailureCode`를 반드시 포함한다. 분석과 비교 분류기는 토큰 부족·출력 절단·네트워크·provider·응답 파싱·비교 검증·lease 만료·예상 밖 오류를 구분하고 자유 형식 예외 문자열로 복구 정책을 결정하지 않는다.
+- 공통 검증 오류 요약은 Pydantic 오류 타입 또는 `예외종류(origin=app.analysis.모듈.함수:줄)`만 기록한다. 예외 원문·frame 지역변수·절대 경로는 포함하지 않는다. `origin`은 가장 안쪽 분석 코드 위치이며 배포 이미지 SHA의 소스와 대조한다. 이 요약은 기존 로그와 Spring 실패 API의 `errorMessage`를 통해 DB 오류 컬럼에 보존하고, Spring 전용 `sourceErrorCode/sourceReasonCode`를 Python 검증 코드로 재사용하지 않는다.
