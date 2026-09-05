@@ -119,7 +119,7 @@ jobs:
           python -m evals.multi_stage_setting.notion_cli \
             --episodes "$RUN_EPISODES" \
             --review-status FINAL \
-            --output build/eval/multi-stage/private/gold.json
+            --output build/eval/multi-stage/private/gold-export.json
 
       - name: Determine whether private fixture input is required
         id: private-input
@@ -129,7 +129,7 @@ jobs:
           required=false
           if [ "$RUN_MODE" != "ORACLE" ] || jq -e '
             any(.scenarios[]; .startStateMode == "SEED" and (.seedState == null))
-          ' build/eval/multi-stage/private/gold.json >/dev/null; then
+          ' build/eval/multi-stage/private/gold-export.json >/dev/null; then
             required=true
           fi
           echo "required=$required" >> "$GITHUB_OUTPUT"
@@ -191,6 +191,21 @@ jobs:
             "$SETTING_MULTI_STAGE_EVAL_INPUT_S3_URI" \
             build/eval/multi-stage/input \
             --only-show-errors
+
+      - name: Verify and materialize Gold state chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          state_args=(
+            --gold build/eval/multi-stage/private/gold-export.json
+            --output-dir build/eval/multi-stage/private/states
+            --updated-gold build/eval/multi-stage/private/gold.json
+            --mode verified
+          )
+          if [ -d build/eval/multi-stage/input/states ]; then
+            state_args+=(--state-root build/eval/multi-stage/input/states)
+          fi
+          python -m evals.multi_stage_setting.state_cli "${state_args[@]}"
 
       - name: Run multi-stage predictions
         shell: bash

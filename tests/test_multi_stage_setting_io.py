@@ -71,6 +71,30 @@ def test_v3_loader_rejects_versionless_payload_and_source_root_escape(tmp_path) 
         load_gold_snapshot_v3(escaping_path, source_root=source_root)
 
 
+def test_v3_loader_maps_author_local_absolute_source_to_episode_pattern(tmp_path) -> None:
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    source_text = "실제 평가 원문"
+    (source_root / "01화.txt").write_text(source_text, encoding="utf-8")
+    scenario = _gold().scenarios[0].model_copy(
+        update={"source_identifier": "/Users/author/private/01화.txt"}
+    )
+    gold = GoldSnapshotV3(
+        dataset_version="v3",
+        name="absolute-author-source",
+        scenarios=[scenario],
+    ).with_fixture_hash()
+    gold_path = tmp_path / "gold.json"
+    gold_path.write_text(
+        json.dumps(gold.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    loaded = load_gold_snapshot_v3(gold_path, source_root=source_root)
+
+    assert loaded.scenarios[0].source_text == source_text
+
+
 def test_external_seed_state_requires_a_content_hash(tmp_path) -> None:
     scenario = _gold().scenarios[0].model_copy(
         update={

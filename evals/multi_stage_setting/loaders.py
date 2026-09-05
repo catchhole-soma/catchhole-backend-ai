@@ -115,9 +115,11 @@ def _attach_seed_states(snapshot: GoldSnapshotV3, state_root: Path) -> GoldSnaps
 
 
 def _source_file_name(identifier: str, pattern: str, episode_no: int) -> str:
-    # URL/Notion ID는 파일명이 아니므로 실행 환경의 고정 pattern으로 변환한다.
+    # URL/Notion ID와 작성자 로컬의 절대경로는 실행 환경의 고정 pattern으로 변환한다.
+    # 절대경로를 그대로 신뢰하면 CI의 private source root를 벗어나며, 작성자 PC 경로가
+    # fixture의 실행 계약으로 굳어지므로 회차 기반 파일명을 사용한다.
     candidate = Path(identifier)
-    if "://" not in identifier and candidate.suffix:
+    if "://" not in identifier and not candidate.is_absolute() and candidate.suffix:
         return identifier
     return pattern.format(episode_no=episode_no, source_identifier=identifier)
 

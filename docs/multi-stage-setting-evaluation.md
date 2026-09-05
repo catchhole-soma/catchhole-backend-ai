@@ -456,7 +456,9 @@ S3 prefix 아래에는 live 평가 원문 `sources/`, 캐릭터 도메인을 평
 
 워크플로는 `FINAL`만 export하고, `confirm_run=RUN`일 때만 모델 호출을 시작합니다. 낮은 점수로
 실패시키지 않으며 인증, 입력, Notion 계약, 모델 실행 또는 평가 자체가 실패한 경우에만
-실패합니다. provider의 HTTP/인증 장애는 개별 후보 오답으로 삼키지 않고 실행 자체를 실패시키며,
+실패합니다. 모델 호출 전 reference reducer로 before/after state와 hash를 검증·생성하고,
+beforeValue가 비어 있는 2차 Gold도 같은 상태에서 자동으로 채운 뒤 갱신된 Gold를 평가합니다.
+provider의 HTTP/인증 장애는 개별 후보 오답으로 삼키지 않고 실행 자체를 실패시키며,
 형식 오류처럼 후보 단위로 복구 가능한 실패만 `runtimeFailures`에 집계합니다. 업로드 artifact에는
 `summary.md`와 집계 전용 `score.json`만 포함하고 Gold,
 prediction, 상세 report, 원문은 포함하지 않습니다.
