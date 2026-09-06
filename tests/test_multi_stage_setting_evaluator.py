@@ -25,6 +25,7 @@ from evals.multi_stage_setting.contracts import (
 )
 from evals.multi_stage_setting.evaluator import (
     StatePair,
+    _character_removal_paths,
     _project_json_value,
     _score_stage2_case,
     _state_pair_metrics,
@@ -105,6 +106,142 @@ def test_fixed_evaluator_scores_character_and_world_stages_separately() -> None:
     assert report["stages"]["character"]["stage2"]["metrics"]["liveConditionalAccuracy"] == 1
     assert report["stages"]["world"]["stage2"]["metrics"]["liveConditionalAccuracy"] == 1
     assert report["endToEnd"]["metrics"]["afterStateF1"] == 1
+    scenario = report["scenarios"][0]
+    assert scenario["stage1"]["CHARACTER"]["cases"][0]["result"] == "FULL_MATCH"
+    assert scenario["stage1"]["WORLD"]["cases"][0]["result"] == "FULL_MATCH"
+    assert {case["result"] for case in scenario["stage2"]} == {"FULL_MATCH"}
+
+
+def test_stage1_diagnostics_classify_partial_missed_and_extra_without_rescoring() -> None:
+    base = _basic_gold()
+    second = CharacterStage1Gold(
+        gold_id="C2",
+        scenario_id="S1",
+        episode_no=1,
+        sort_order=2,
+        decision="EXTRACT",
+        importance="SHOULD",
+        evidence_quotes=["아이나르는 오른팔을 다쳤다."],
+        review_status="FINAL",
+        domain="CHARACTER",
+        candidate_kind="SETTING",
+        entity_ref="character:einar",
+        entity_name="아이나르",
+        fact_type="STATUS",
+        fact_key="status.오른팔_부상",
+        value_type="STRING",
+        display_value="오른팔을 다침",
+        value_json={"value": "오른팔을 다침"},
+    )
+    second_decision = CharacterStage2Gold(
+        decision_id="DC2",
+        scenario_id="S1",
+        episode_no=1,
+        sort_order=2,
+        source_gold_ids=["C2"],
+        domain="CHARACTER",
+        operation="ADD",
+        temporal_scope="PRESENT",
+        proposed_value="오른팔을 다침",
+        proposed_value_json={"value": "오른팔을 다침"},
+        review_status="FINAL",
+    )
+    character_source = next(item for item in base.stage1 if isinstance(item, CharacterStage1Gold))
+    character_decision = next(item for item in base.stage2 if isinstance(item, CharacterStage2Gold))
+    gold = GoldSnapshotV3(
+        dataset_version="v3",
+        name="diagnostics",
+        scenarios=base.scenarios,
+        stage1=[character_source, second],
+        stage2=[character_decision, second_decision],
+    ).with_fixture_hash()
+    bundle = PredictionBundleV3(
+        fixture_hash=gold.fixture_hash,
+        mode="FIXED",
+        evaluation_domains={"CHARACTER"},
+        scenarios=[
+            ScenarioPrediction(
+                scenario_id="S1",
+                stage1=[
+                    CharacterStage1Prediction(
+                        candidate_id="P-partial",
+                        sort_order=1,
+                        domain="CHARACTER",
+                        candidate_kind="SETTING",
+                        entity_name="비요른",
+                        fact_type="PROFILE",
+                        fact_key="profile.age",
+                        value_type="STRING",
+                        display_value="바바리안",
+                    ),
+                    CharacterStage1Prediction(
+                        candidate_id="P-extra",
+                        sort_order=3,
+                        domain="CHARACTER",
+                        candidate_kind="SETTING",
+                        entity_name="엉뚱한 인물",
+                        fact_type="STATUS",
+                        fact_key="status.피곤",
+                        value_type="STRING",
+                        display_value="피곤함",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    report = asyncio.run(evaluate_multi_stage(gold, bundle))
+
+    cases = report["scenarios"][0]["stage1"]["CHARACTER"]["cases"]
+    assert [case["result"] for case in cases] == ["PARTIAL_MATCH", "MISSED", "EXTRA"]
+    assert cases[0]["fields"] == {
+        "subject": "MATCH",
+        "path": "MISMATCH",
+        "value": "MATCH",
+    }
+    assert cases[1]["goldIds"] == ["C2"]
+    assert cases[2]["predictionId"] == "P-extra"
+    counts = report["stages"]["character"]["stage1"]["counts"]
+    assert counts["matches"] == 1
+    assert counts["identityTruePositive"] == 0
+    assert counts["missed"] == 1
+    assert counts["extra"] == 1
+
+
+def test_stage1_diagnostic_keeps_unjudged_semantic_value_pending() -> None:
+    gold = _basic_gold()
+    bundle = PredictionBundleV3(
+        fixture_hash=gold.fixture_hash,
+        mode="FIXED",
+        evaluation_domains={"WORLD"},
+        scenarios=[
+            ScenarioPrediction(
+                scenario_id="S1",
+                stage1=[
+                    WorldStage1Prediction(
+                        candidate_id="P1",
+                        domain="WORLD",
+                        category="RACE",
+                        subject_name="바바리안",
+                        setting_name="전투 특성",
+                        source_values=["육박전에 능숙하다."],
+                    )
+                ],
+            )
+        ],
+    )
+
+    report = asyncio.run(evaluate_multi_stage(gold, bundle))
+
+    case = report["scenarios"][0]["stage1"]["WORLD"]["cases"][0]
+    assert case["result"] == "PARTIAL_MATCH"
+    assert case["fields"] == {
+        "subject": "MATCH",
+        "path": "MATCH",
+        "value": "PENDING",
+    }
+    assert case["upstreamOutcome"] == "REACHED"
+    assert report["stages"]["world"]["stage1"]["counts"]["semanticPending"] == 1
 
 
 def test_world_add_does_not_double_penalize_a_projected_subject_ref() -> None:
@@ -305,6 +442,9 @@ def test_world_add_preserves_an_exact_canonical_subject_target() -> None:
     metrics = report["stages"]["world"]["stage2"]["metrics"]
     assert metrics["targetAccuracy"] == 1
     assert metrics["fullDecisionAccuracy"] == 1
+    diagnostic = report["scenarios"][0]["stage2"][0]
+    assert diagnostic["expected"]["target"] == "RACE · 바바리안 (주체)"
+    assert diagnostic["actual"]["target"] == "RACE · 바바리안 (주체)"
 
 
 def test_world_stage2_path_uses_the_production_name_normalizer() -> None:
@@ -792,12 +932,33 @@ def test_character_remove_scores_the_explicit_snapshot_set_and_reports_it() -> N
     matched_stage2 = matched["stages"]["character"]["stage2"]["metrics"]
     assert matched_stage2["removedSnapshotSetAccuracy"] == 1
     assert matched_stage2["fullDecisionAccuracy"] == 1
-    assert matched["scenarios"][0]["stage2"][0]["removedSnapshotSetMatched"] is True
+    matched_diagnostic = matched["scenarios"][0]["stage2"][0]
+    assert matched_diagnostic["removedSnapshotSetMatched"] is True
+    assert matched_diagnostic["expected"]["removedPaths"] == [
+        "비요른 · STATUS › status.paralysis_poison",
+        "비요른 · STATUS › status.right_foot_injury",
+    ]
+    assert matched_diagnostic["actual"]["removedPaths"] == [
+        "비요른 · STATUS › status.paralysis_poison",
+        "비요른 · STATUS › status.right_foot_injury",
+    ]
 
     missing_stage2 = missing["stages"]["character"]["stage2"]["metrics"]
     assert missing_stage2["removedSnapshotSetAccuracy"] == 0
     assert missing_stage2["fullDecisionAccuracy"] == 0
     assert missing["scenarios"][0]["stage2"][0]["failureCause"] == "COMPARISON_ERROR"
+
+
+def test_character_removal_diagnostic_decodes_a_state_ref_absent_from_before_state() -> None:
+    projected_ref = character_state_ref(
+        "character:bjorn",
+        "STATUS",
+        "status.same_episode_condition",
+    )
+
+    assert _character_removal_paths([projected_ref], EvaluationState()) == [
+        "STATUS › status.same_episode_condition (ref에서 canonical 경로 해석)"
+    ]
 
 
 def test_semantic_merge_can_match_paraphrase_without_hiding_operation_score() -> None:

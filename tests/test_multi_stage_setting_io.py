@@ -21,6 +21,8 @@ from evals.multi_stage_setting.contracts import (
 )
 from evals.multi_stage_setting.loaders import load_gold_snapshot_v3
 from evals.multi_stage_setting.report_cli import (
+    _append_diagnostics,
+    build_public_diagnostics,
     build_source_free_summary,
     render_markdown_summary,
 )
@@ -120,18 +122,70 @@ def test_external_seed_state_requires_a_content_hash(tmp_path) -> None:
         load_gold_snapshot_v3(gold_path, state_root=state_root)
 
 
-def test_source_free_report_drops_scenario_details_and_source_derived_text() -> None:
+def test_public_report_allowlists_diagnostics_and_keeps_score_json_aggregate_only() -> None:
     report = {
         "reportVersion": "setting-eval-report/v3",
-        "run": {"mode": "FIXED", "domains": ["CHARACTER"]},
-        "dataset": {"name": "test", "version": "v3", "episodes": [1]},
+        "run": {
+            "mode": "FIXED",
+            "domains": ["CHARACTER"],
+            "analysisModel": "extractor",
+            "subjectResolutionModel": "resolver",
+            "comparisonModel": "comparator",
+            "inputTokens": 10,
+            "cachedInputTokens": 2,
+            "outputTokens": 3,
+            "runtimeFailures": {
+                "total": 2,
+                "byStage": {"CHARACTER_STAGE1": 2},
+                "byErrorType": {"INVALID_RESPONSE": 2},
+                "messages": ["SECRET_RUNTIME_FAILURE"],
+            },
+        },
+        "dataset": {
+            "name": "test",
+            "version": "v3",
+            "episodes": [1],
+            "fixtureHash": "sha256:test",
+        },
         "stages": {
             "character": {
-                "stage1": {"metrics": {"candidateF1": 1}, "counts": {"gold": 1}},
+                "stage1": {
+                    "metrics": {
+                        "candidatePrecision": 0.5,
+                        "candidateRecall": 0.5,
+                        "candidateF1": 0.5,
+                        "weightedRecall": 0.75,
+                        "entityOrSubjectAccuracy": 1,
+                        "pathOrFactAccuracy": 0.5,
+                        "valueAccuracy": 0.5,
+                        "evidenceLocatableRate": 1,
+                        "evidenceCoverageRate": 0.5,
+                    },
+                    "counts": {
+                        "gold": 3,
+                        "predictions": 3,
+                        "matches": 2,
+                        "identityTruePositive": 1,
+                        "missed": 1,
+                        "extra": 1,
+                    },
+                },
                 "stage2": {
-                    "metrics": {"fullDecisionAccuracy": 1},
-                    "counts": {"gold": 1},
-                    "matches": [{"evidence": "비밀 원문"}],
+                    "metrics": {
+                        "upstreamReachRate": 1,
+                        "fullDecisionAccuracy": 0,
+                        "operationAccuracy": 0,
+                        "targetAccuracy": 1,
+                        "proposedValueAccuracy": 1,
+                        "characterCanonicalFactKeyResolutionAccuracy": 1,
+                        "temporalAccuracy": 1,
+                    },
+                    "counts": {
+                        "gold": 1,
+                        "upstreamReached": 1,
+                        "reachedAndCompared": 1,
+                    },
+                    "matches": [{"evidence": "SECRET_STAGE_MATCH"}],
                 },
             },
             "world": {
@@ -141,22 +195,282 @@ def test_source_free_report_drops_scenario_details_and_source_derived_text() -> 
             "macroAverage": {"stage1CandidateF1": 1},
         },
         "endToEnd": {
-            "metrics": {"afterStateF1": 1},
-            "counts": {"stateApplicationErrors": 0},
-            "domains": {"CHARACTER": {"afterStateF1": 1}},
-            "scenarios": [{"actualValue": "비밀 상태"}],
+            "metrics": {
+                "afterStateF1": 0.5,
+                "transitionPrecision": 0.5,
+                "transitionRecall": 0.5,
+                "transitionF1": 0.5,
+            },
+            "counts": {
+                "stateApplicationErrors": 0,
+                "dependencyStateApplicationErrors": 0,
+                "matchedTransitions": 1,
+                "expectedTransitions": 2,
+                "predictedTransitions": 2,
+            },
+            "domains": {
+                "CHARACTER": {
+                    "afterStatePrecision": 0.5,
+                    "afterStateRecall": 0.5,
+                    "afterStateF1": 0.5,
+                    "semanticCoverage": 1,
+                    "semanticPending": 0,
+                }
+            },
+            "scenarios": [{"actualValue": "SECRET_STATE"}],
         },
-        "failureCauses": {},
-        "scenarios": [{"evidence": "비밀 원문"}],
+        "failureCauses": {"COMPARISON_ERROR": 1},
+        "scenarios": [
+            {
+                "scenarioId": "S1",
+                "episodeNo": 1,
+                "sourceText": "SECRET_SOURCE",
+                "stage1": {
+                    "CHARACTER": {
+                        "cases": [
+                            {
+                                "result": "PARTIAL_MATCH",
+                                "goldIds": ["C1"],
+                                "predictionId": "P1",
+                                "importance": "MUST",
+                                "candidateKind": "SETTING",
+                                "expected": {
+                                    "subject": "비요른",
+                                    "path": "STATUS › status.부상",
+                                    "value": "오른발 부상",
+                                    "evidenceQuotes": ["SECRET_EXPECTED_EVIDENCE"],
+                                },
+                                "actual": {
+                                    "subject": "비요른",
+                                    "path": "STATUS › status.회복",
+                                    "value": (
+                                        "허용된 값 | <script>x</script>\n</details> "
+                                        "![leak](https://example.invalid/x)"
+                                    ),
+                                    "rawAiResult": "SECRET_RAW",
+                                },
+                                "fields": {
+                                    "subject": "MATCH",
+                                    "path": "MISMATCH",
+                                    "value": "PENDING",
+                                    "evidence": "SECRET_FIELD",
+                                },
+                                "upstreamOutcome": "REACHED",
+                                "evidence": "SECRET_CASE_EVIDENCE",
+                            },
+                            {
+                                "result": "FULL_MATCH",
+                                "goldIds": ["C2"],
+                                "predictionId": "P2",
+                                "expected": {
+                                    "subject": "비요른",
+                                    "path": "PROFILE › profile.species",
+                                    "value": "바바리안",
+                                },
+                                "actual": {
+                                    "subject": "비요른",
+                                    "path": "PROFILE › profile.species",
+                                    "value": "바바리안",
+                                },
+                                "fields": {
+                                    "subject": "MATCH",
+                                    "path": "MATCH",
+                                    "value": "MATCH",
+                                },
+                                "upstreamOutcome": "REACHED",
+                            },
+                            {
+                                "result": "MISSED",
+                                "goldIds": ["C3"],
+                                "predictionId": None,
+                                "expected": {
+                                    "subject": "아이나르",
+                                    "path": "STATUS › status.부상",
+                                    "value": "오른팔 부상",
+                                },
+                                "actual": None,
+                                "fields": {
+                                    "subject": "MISSING",
+                                    "path": "MISSING",
+                                    "value": "MISSING",
+                                },
+                                "upstreamOutcome": "UPSTREAM_MISSING",
+                            },
+                            {
+                                "result": "EXTRA",
+                                "goldIds": [],
+                                "predictionId": "P3",
+                                "expected": None,
+                                "actual": {
+                                    "subject": "미상",
+                                    "path": "STATUS › status.피곤",
+                                    "value": "피곤함",
+                                },
+                                "fields": {
+                                    "subject": "UNMATCHED",
+                                    "path": "UNMATCHED",
+                                    "value": "UNMATCHED",
+                                },
+                                "upstreamOutcome": "UPSTREAM_EXTRA",
+                            },
+                        ]
+                    }
+                },
+                "stage2": [
+                    {
+                        "result": "DECISION_MISMATCH",
+                        "decisionId": "D1",
+                        "domain": "CHARACTER",
+                        "sourceGoldIds": ["C1"],
+                        "sourceCandidateId": "P1",
+                        "upstreamOutcome": "REACHED",
+                        "failureCause": "COMPARISON_ERROR",
+                        "expected": {
+                            "operation": "REMOVE",
+                            "path": "status.회복",
+                            "value": None,
+                            "temporalScope": "PRESENT",
+                            "removedCount": 2,
+                            "removedPaths": [
+                                "비요른 · STATUS › status.오른발_부상",
+                                "비요른 · STATUS › status.마비독",
+                            ],
+                            "targetRef": "SECRET_TARGET",
+                        },
+                        "actual": {
+                            "operation": "ADD",
+                            "path": "status.회복",
+                            "value": "빠르게 회복 중",
+                            "temporalScope": "PRESENT",
+                            "removedCount": 0,
+                            "comparisonReason": "SECRET_REASON",
+                        },
+                        "fields": {
+                            "operation": "MISMATCH",
+                            "canonicalPath": "MATCH",
+                            "target": "MATCH",
+                            "value": "MATCH",
+                            "raw": "SECRET_STAGE2_FIELD",
+                        },
+                        "comparisonReason": "SECRET_COMPARISON_REASON",
+                    }
+                ],
+                "stateErrors": [{"reason": "SECRET_STATE_ERROR"}],
+            }
+        ],
     }
 
     summary = build_source_free_summary(report)
     serialized = json.dumps(summary, ensure_ascii=False)
+    diagnostics = build_public_diagnostics(report)
     markdown = render_markdown_summary(report)
 
-    assert "비밀" not in serialized
     assert "scenarios" not in summary
-    assert "100.00%" in markdown
+    assert "SECRET_" not in serialized
+    assert diagnostics[0]["stage1"]["character"]["cases"][0]["actual"]["value"].startswith(
+        "허용된 값"
+    )
+    assert list(diagnostics[0]["stage1"]["character"]["cases"][0]["fields"]) == [
+        "subject",
+        "path",
+        "value",
+    ]
+    assert diagnostics[0]["stage2"][0]["expected"]["removedPaths"] == [
+        "비요른 · STATUS › status.오른발_부상",
+        "비요른 · STATUS › status.마비독",
+    ]
+    assert "허용된 값" in markdown
+    assert "가중 Recall" in markdown
+    assert "Gold 3 · 예측 3 · 연결 2 · TP 1 · 누락 1 · 과추출 1" in markdown
+    assert "결정 불일치" in markdown
+    assert "<summary>완전 일치 1건 보기</summary>" in markdown
+    assert "SECRET_" not in markdown
+    assert "<script>" not in markdown
+    assert "&lt;script&gt;x&lt;/script&gt;" in markdown
+    assert "&lt;/details&gt;" in markdown
+    assert "허용된 값 &#124;" in markdown
+    assert "![leak]" not in markdown
+    assert "&#33;&#91;leak&#93;" in markdown
+    assert "총 `2`건" in markdown
+    assert "CHARACTER_STAGE1" in markdown
+    assert "SECRET_RUNTIME_FAILURE" not in markdown
+
+
+def test_diagnostic_markdown_has_a_global_row_budget() -> None:
+    case = {
+        "result": "EXTRA",
+        "goldIds": [],
+        "predictionId": "P",
+        "expected": None,
+        "actual": {
+            "subject": "미상",
+            "path": "STATUS › status.피곤",
+            "value": "피곤함",
+        },
+        "fields": {
+            "subject": "UNMATCHED",
+            "path": "UNMATCHED",
+            "value": "UNMATCHED",
+        },
+        "upstreamOutcome": "UPSTREAM_EXTRA",
+    }
+    diagnostics = [
+        {
+            "scenarioId": f"S{scenario_no}",
+            "episodeNo": scenario_no,
+            "stage1": {
+                "character": {
+                    "cases": [case | {"predictionId": f"P{scenario_no}-{index}"} for index in range(25)]
+                }
+            },
+            "stage2": [],
+        }
+        for scenario_no in range(1, 11)
+    ]
+    lines: list[str] = []
+
+    _append_diagnostics(lines, diagnostics)
+    markdown = "\n".join(lines)
+
+    assert "전체 250건 중 200건만 표시" in markdown
+    assert len(markdown.encode("utf-8")) < 1_000_000
+
+
+def test_diagnostic_markdown_reduces_rows_to_stay_under_the_byte_budget() -> None:
+    payload = "`" * 180
+    case = {
+        "result": "PARTIAL_MATCH",
+        "goldIds": [payload],
+        "predictionId": payload,
+        "expected": {"subject": payload, "path": payload, "value": payload},
+        "actual": {"subject": payload, "path": payload, "value": payload},
+        "fields": {
+            "subject": "MISMATCH",
+            "path": "MISMATCH",
+            "value": "MISMATCH",
+        },
+        "upstreamOutcome": "REACHED",
+    }
+    diagnostics = [
+        {
+            "scenarioId": f"S{scenario_no}",
+            "episodeNo": scenario_no,
+            "stage1": {
+                "character": {
+                    "cases": [case | {"predictionId": f"P{scenario_no}-{index}"} for index in range(25)]
+                }
+            },
+            "stage2": [],
+        }
+        for scenario_no in range(1, 11)
+    ]
+    lines: list[str] = []
+
+    _append_diagnostics(lines, diagnostics)
+    markdown = "\n".join(lines)
+
+    assert "전체 250건 중 100건만 표시" in markdown
+    assert len(markdown.encode("utf-8")) <= 900_000
 
 
 def test_state_cli_generates_verified_hashes_and_updated_gold(tmp_path, monkeypatch) -> None:
