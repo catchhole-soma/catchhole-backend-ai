@@ -309,8 +309,10 @@ def test_semantic_pending_is_not_silently_scored_as_wrong() -> None:
     assert pending["endToEnd"]["metrics"]["afterStateF1"] is None
     assert pending["endToEnd"]["metrics"]["afterStateLowerBoundF1"] == 0
     assert pending["endToEnd"]["metrics"]["transitionF1"] is None
+    assert pending["scenarios"][0]["stage2"][0]["result"] == "SEMANTIC_PENDING"
     assert matched["endToEnd"]["metrics"]["afterStateF1"] == 1
     assert matched["endToEnd"]["metrics"]["transitionF1"] == 1
+    assert matched["scenarios"][0]["stage2"][0]["result"] == "FULL_MATCH"
 
 
 def test_end_to_end_semantic_case_keeps_reviewed_merge_constraints() -> None:
@@ -912,6 +914,13 @@ def test_world_rows_on_same_path_are_one_stage1_and_stage2_case() -> None:
     assert report["stages"]["world"]["stage2"]["metrics"][
         "liveConditionalAccuracy"
     ] == 1
+    diagnostic = report["scenarios"][0]["stage1"]["WORLD"]["cases"]
+    assert len(diagnostic) == 1
+    assert diagnostic[0]["result"] == "FULL_MATCH"
+    assert diagnostic[0]["goldIds"] == ["W1", "W2"]
+    assert diagnostic[0]["expected"]["value"] == (
+        "평균은 140cm다.\n큰 변종은 190cm다."
+    )
 
 
 class _AlwaysMatch:

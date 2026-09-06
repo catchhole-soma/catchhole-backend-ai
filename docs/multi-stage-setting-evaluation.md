@@ -285,6 +285,15 @@ transition recall에서 오답으로 반영됩니다. 이 구조로 “추출기
 - 재현 정보: fixture hash, 캐릭터 schema hash, 모델·프롬프트 버전, `maxChunks`, token 사용량과
   가능한 경우 비용
 
+`summary.md`는 집계 지표 아래에 회차·도메인별 완전 일치, 부분 일치, 누락 Gold, 추가 예측
+개수와 Gold/예측의 주체·경로·표시값 및 불일치 축을 표시합니다. 이는 기존 Hungarian 매칭과
+점수 결과를 설명하는 진단 표현일 뿐 매칭이나 분모·분자를 다시 계산하지 않습니다. 실패·미판정
+항목은 바로 표시하고 완전 일치 항목만 접어서 표시합니다. Candidate TP는 주체와 경로가 맞으면
+성공이지만 진단의 완전 일치는 값까지 맞아야 하므로 두 개수가 다를 수 있습니다. 축별 비율에는
+일치 건수/판정 건수를 함께 쓰며, 2차 target과 캐릭터 STATUS 제거 대상 및 세계관 root 이동 대상은
+내부 ref 대신 canonical 주체·경로·이름으로 표시합니다. 전체 상세 행에는 공개 요약 크기를 제한하는
+상한을 둡니다.
+
 의미 판정이 필요한 값에 judge를 사용하지 않으면 관련 결과는 틀림이 아니라 `pending`으로
 남습니다. pending이 하나라도 있으면 해당 주 지표(`valueAccuracy`, `fullDecisionAccuracy`,
 `afterStateF1`, `transitionF1`)는 `null`입니다. 판정이 끝난 항목만 보는 `resolved*`, pending을
@@ -393,8 +402,9 @@ python -m evals.multi_stage_setting.state_cli \
 `*.before.notion.md` 역시 원고에서 파생된 상세 정답을 포함하므로 공개 Actions artifact에는
 업로드하지 않습니다.
 
-기본인 ORACLE 예측 생성, 평가, source-free 요약은 다음 진입점을 사용합니다. ORACLE은 1차 Gold를
-직접 사용하므로 원문과 캐릭터 스키마 파일이 필요하지 않습니다.
+기본인 ORACLE 예측 생성, 평가, 원문·근거 인용과 raw 응답을 제외한 정제된 진단 요약은 다음
+진입점을 사용합니다. ORACLE은 1차 Gold를 직접 사용하므로 원문과 캐릭터 스키마 파일이 필요하지
+않습니다.
 
 ```bash
 python -m evals.multi_stage_setting.runtime_cli \
@@ -484,8 +494,11 @@ S3 prefix 아래에는 live 평가 원문 `sources/`, 캐릭터 도메인을 평
 beforeValue가 비어 있는 2차 Gold도 같은 상태에서 자동으로 채운 뒤 갱신된 Gold를 평가합니다.
 provider의 HTTP/인증 장애는 개별 후보 오답으로 삼키지 않고 실행 자체를 실패시키며,
 형식 오류처럼 후보 단위로 복구 가능한 실패만 `runtimeFailures`에 집계합니다. 업로드 artifact에는
-`summary.md`와 집계 전용 `score.json`만 포함하고 Gold,
-prediction, 상세 report, 원문은 포함하지 않습니다.
+`summary.md`와 집계 전용 `score.json`만 포함합니다. `summary.md`에는 허용 목록으로 정제한
+주체·경로·표시값 기반 항목 진단과 `runtimeFailures` 집계가 포함되지만 `score.json`은 자동 비교용
+집계 지표만 유지합니다.
+두 파일 모두 원문 본문·근거 quote/offset·raw LLM 응답·Gold/prediction 원본·상세 report·구조화
+`valueJson`을 포함하지 않습니다.
 
 일반 `ORACLE`은 private 원문을 다운로드하지 않습니다. 다만 선택 fixture에 본문으로 포함되지
 않은 `SEED` before state가 있으면 Gold를 확인한 뒤 private 입력을 내려받아 `states/`를 runtime과
