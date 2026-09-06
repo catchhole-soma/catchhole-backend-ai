@@ -43,11 +43,16 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
 - `character_fact_comparison_schemas.py`
   - 캐릭터 비교 LLM 응답과 operation별 target/proposed/removal/temporal 불변식을 검증합니다.
 - `character_fact_comparator.py`
-  - candidate와 현재 snapshot을 DB 식별자 없는 `P*` 참조로 LLM에 전달합니다.
+  - legacy 단건 candidate와 현재 snapshot을 DB 식별자 없는 `P*` 참조로 비교합니다.
+  - batch에서는 `C*` source·`P*` 시작 snapshot·`Q*` projected slot을 사용하며 source별 decision과 resolved canonical key를 검증합니다.
   - canonical slot, STATUS 제거, 시간 범위 규칙을 추가로 검증하고 내부 ref가 사용자-facing reason에 남지 않게 치환합니다.
+- `character_fact_projection.py`
+  - 같은 캐릭터·FactType batch의 성공 decision을 원문 순서대로 메모리 snapshot에만 적용합니다.
+  - target/removal `P*`·`Q*`로부터 이전 후보 dependency를 결정적으로 계산하며 사용자 확정 전 DB는 바꾸지 않습니다.
 - `character_fact_comparison_pipeline.py`
-  - Spring에서 비교 후보를 하나씩 claim하고 context 조회, 비교, 완료/실패를 순차 조율합니다.
-  - 정확한 stale error code일 때만 최신 snapshot context로 최대 3회 다시 비교하고 후보별 실패를 격리합니다.
+  - Spring에서 같은 캐릭터·FactType 후보 batch를 claim하고 context 조회, 원자 완료/실패를 조율합니다. legacy 단건 endpoint도 rollout 호환용으로 유지합니다.
+  - 공개 `execute_character_fact_comparison_batch()`가 token 분할, 순차 projection, schema 실패 후 singleton fallback을 제공해 운영과 eval이 같은 규칙을 재사용합니다.
+  - 정확한 stale error code일 때만 최신 snapshot context로 최대 3회 전체 batch를 다시 비교하고 후보별 검증 실패를 격리합니다.
 - `world_setting_extractor.py`, `world_setting_schemas.py`
   - 청크에서 여러 회차에 재사용 가능한 종족·세력·장소·몬스터·능력 체계·규칙/역사·중요 아이템의 원자 속성을 추출합니다.
   - 현재 소유 상태, 날씨, 단발성 사건은 제외하고 confidence를 `0.65`, `0.80`, `0.95` 중 하나로 제한합니다.

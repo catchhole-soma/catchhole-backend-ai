@@ -117,6 +117,7 @@ class CharacterFactComparisonWorker:
                     {
                         "characterFactComparisonCompletedCount": result.completed_count,
                         "characterFactComparisonFailedCount": result.failed_count,
+                        **result.summary_metrics(),
                     },
                     ensure_ascii=False,
                 ),

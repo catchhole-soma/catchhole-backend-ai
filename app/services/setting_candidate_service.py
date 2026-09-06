@@ -26,6 +26,15 @@ class SettingCandidateSaveItem:
     candidate: ExtractedSettingCandidate
 
 
+@dataclass(frozen=True)
+class PreparedSettingCandidate:
+    """DB 저장 직전 운영 handoff 후보와 이름 매칭 결과."""
+
+    source_index: int
+    candidate: ExtractedSettingCandidate
+    character_match: CharacterNameMatch
+
+
 class SettingCandidateService:
     def __init__(
         self,
@@ -43,53 +52,21 @@ class SettingCandidateService:
         save_items: list[SettingCandidateSaveItem],
         known_characters: list[KnownCharacter],
     ) -> list[SettingCandidate]:
-        normalized_known_characters = normalize_known_characters(known_characters)
-
-        # 기존 캐릭터 발견과 분석 내 동일 이름/동일 설정 반복은 검토 후보에서 줄이되,
-        # 값이 달라졌거나 주체가 모호한 설정은 정보 손실을 피하기 위해 유지한다.
+        prepared_candidates = prepare_setting_candidates(
+            [item.candidate for item in save_items],
+            known_characters,
+        )
         candidates: list[SettingCandidate] = []
-        seen_discovery_names: set[str] = set()
-        setting_candidate_by_key: dict[tuple[str, str, str, str], tuple[int, float]] = {}
-        for item in save_items:
-            character_match = resolve_candidate_character(
-                item.candidate,
-                normalized_known_characters,
-            )
-            if item.candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
-                if character_match.match_status != SettingCandidateMatchStatus.UNRESOLVED:
-                    continue
-                normalized_name = normalize_character_name(item.candidate.entity_name)
-                if normalized_name in seen_discovery_names:
-                    continue
-                seen_discovery_names.add(normalized_name)
-
+        for prepared in prepared_candidates:
+            item = save_items[prepared.source_index]
             mapped_candidate = SettingCandidateMapper.to_entity(
                 work_id=work_id,
                 episode_id=item.episode_id,
                 source_content_s3_key=item.source_content_s3_key,
                 analysis_job_id=analysis_job_id,
                 candidate=item.candidate,
-                character_match=character_match,
+                character_match=prepared.character_match,
             )
-            duplicate_key = _setting_duplicate_key(item.candidate, character_match)
-            if duplicate_key is not None:
-                confidence = item.candidate.confidence
-                confidence_score = confidence if confidence is not None else -1.0
-                existing = setting_candidate_by_key.get(duplicate_key)
-                if existing is not None:
-                    existing_index, existing_confidence = existing
-                    if confidence_score > existing_confidence:
-                        candidates[existing_index] = mapped_candidate
-                        setting_candidate_by_key[duplicate_key] = (
-                            existing_index,
-                            confidence_score,
-                        )
-                    continue
-                setting_candidate_by_key[duplicate_key] = (
-                    len(candidates),
-                    confidence_score,
-                )
-
             candidates.append(mapped_candidate)
 
         with self.session_factory() as session:
@@ -104,6 +81,55 @@ class SettingCandidateService:
                 raise
 
         return saved_candidates
+
+
+def prepare_setting_candidates(
+    candidates: list[ExtractedSettingCandidate],
+    known_characters: list[KnownCharacter],
+) -> list[PreparedSettingCandidate]:
+    """운영 저장 경계의 이름 매칭·발견 필터·중복 제거를 순수 함수로 실행한다."""
+
+    normalized_known_characters = normalize_known_characters(known_characters)
+    prepared: list[PreparedSettingCandidate] = []
+    seen_discovery_names: set[str] = set()
+    setting_candidate_by_key: dict[tuple[str, str, str, str], tuple[int, float]] = {}
+    for source_index, candidate in enumerate(candidates):
+        character_match = resolve_candidate_character(
+            candidate,
+            normalized_known_characters,
+        )
+        if candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
+            if character_match.match_status != SettingCandidateMatchStatus.UNRESOLVED:
+                continue
+            normalized_name = normalize_character_name(candidate.entity_name)
+            if normalized_name in seen_discovery_names:
+                continue
+            seen_discovery_names.add(normalized_name)
+
+        item = PreparedSettingCandidate(
+            source_index=source_index,
+            candidate=candidate,
+            character_match=character_match,
+        )
+        duplicate_key = _setting_duplicate_key(candidate, character_match)
+        if duplicate_key is not None:
+            confidence_score = candidate.confidence if candidate.confidence is not None else -1.0
+            existing = setting_candidate_by_key.get(duplicate_key)
+            if existing is not None:
+                existing_index, existing_confidence = existing
+                if confidence_score > existing_confidence:
+                    prepared[existing_index] = item
+                    setting_candidate_by_key[duplicate_key] = (
+                        existing_index,
+                        confidence_score,
+                    )
+                continue
+            setting_candidate_by_key[duplicate_key] = (
+                len(prepared),
+                confidence_score,
+            )
+        prepared.append(item)
+    return prepared
 
 
 def _setting_duplicate_key(

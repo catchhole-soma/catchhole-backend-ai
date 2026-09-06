@@ -345,9 +345,37 @@ def load_character_setting_schema_hints(
             attribute_pattern=schema.attribute_pattern,
             aliases=tuple(schema.aliases),
             value_type=schema.value_type,
+            canonical_fact_type=_optional_character_fact_type(raw_item),
         )
-        for schema in schemas
+        for raw_item, schema in zip(raw_items, schemas, strict=True)
     )
+
+
+def _optional_character_fact_type(raw_item: object) -> str | None:
+    """Read the eval-only DB fact type without changing the Spring claim DTO."""
+
+    if not isinstance(raw_item, dict):
+        return None
+    value = next(
+        (
+            raw_item[key]
+            for key in (
+                "canonicalFactType",
+                "factType",
+                "canonical_fact_type",
+                "fact_type",
+            )
+            if key in raw_item
+        ),
+        None,
+    )
+    if value is None:
+        return None
+    normalized = str(value).strip().upper()
+    allowed = {"PROFILE", "AGE", "LEVEL", "STAT", "SKILL", "ITEM", "STATUS", "TIME"}
+    if normalized not in allowed:
+        raise ValueError(f"Unsupported canonicalFactType: {value!r}.")
+    return normalized
 
 
 # 기존 로컬 스크립트·테스트에서 사용하던 이름도 유지한다.

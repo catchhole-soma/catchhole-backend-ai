@@ -1,5 +1,4 @@
 import logging
-import unicodedata
 from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
@@ -15,6 +14,7 @@ from app.exceptions.failure_classification import (
     comparison_failure_code,
     spring_failure_source,
 )
+from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
 from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonBatchCandidate,
@@ -353,11 +353,11 @@ class WorldSettingComparisonPipeline:
                         candidate.category,
                     )
                     subjects_by_category[candidate.category] = subjects
-                candidate_key = _normalized_name(candidate.subject_name)
+                candidate_key = normalize_world_setting_name(candidate.subject_name)
                 exact_matches = [
                     subject
                     for subject in subjects
-                    if _normalized_name(subject.subject_name) == candidate_key
+                    if normalize_world_setting_name(subject.subject_name) == candidate_key
                 ]
                 if exact_matches:
                     if len(exact_matches) > MAX_SUBJECT_RESOLUTION_TARGETS:
@@ -935,11 +935,11 @@ class WorldSettingComparisonPipeline:
         candidate: WorkerWorldSettingCandidatePayload,
         subjects: list[WorkerWorldSettingSubject],
     ) -> list[UUID]:
-        candidate_key = _normalized_name(candidate.subject_name)
+        candidate_key = normalize_world_setting_name(candidate.subject_name)
         exact_matches = [
             subject
             for subject in subjects
-            if _normalized_name(subject.subject_name) == candidate_key
+            if normalize_world_setting_name(subject.subject_name) == candidate_key
         ]
         if exact_matches:
             return [subject.world_setting_id for subject in exact_matches]
@@ -947,11 +947,6 @@ class WorldSettingComparisonPipeline:
             reference.world_setting_id
             for reference in await self.subject_resolver.select_subjects(candidate, subjects)
         ]
-
-
-def _normalized_name(value: str) -> str:
-    return unicodedata.normalize("NFC", value.strip()).casefold()
-
 
 def _component_usage_snapshot(component: object) -> TextGenerationUsageSnapshot:
     llm_client = getattr(component, "llm_client", None)

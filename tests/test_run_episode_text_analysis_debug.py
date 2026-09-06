@@ -70,6 +70,29 @@ def test_load_character_setting_schema_hints_accepts_wrapped_snapshot(tmp_path) 
     assert hints[0].value_type == "NUMBER"
 
 
+def test_load_character_setting_schema_hints_preserves_eval_fact_type(tmp_path) -> None:
+    schema_path = tmp_path / "character-setting-schemas.json"
+    schema_path.write_text(
+        json.dumps(
+            [
+                {
+                    "schemaKey": "guild.rank",
+                    "displayName": "길드 계급",
+                    "attributePattern": None,
+                    "aliases": ["계급"],
+                    "valueType": "STRING",
+                    "canonicalFactType": "PROFILE",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    hints = _load_character_setting_schema_hints(schema_path)
+
+    assert hints[0].canonical_fact_type == "PROFILE"
+
+
 def test_load_character_setting_schema_hints_rejects_empty_array(tmp_path) -> None:
     schema_path = tmp_path / "character-setting-schemas.json"
     schema_path.write_text("[]", encoding="utf-8")

@@ -45,6 +45,7 @@ class NotionDataSourceClient:
         data_source_id: str,
         *,
         episode_numbers: set[int] | None = None,
+        sorts: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         if not data_source_id.strip():
             raise ValueError("Notion data source ID must not be blank.")
@@ -55,11 +56,15 @@ class NotionDataSourceClient:
             body: dict[str, Any] = {
                 "page_size": 100,
                 "result_type": "page",
-                "sorts": [
+            }
+            resolved_sorts = sorts
+            if resolved_sorts is None:
+                resolved_sorts = [
                     {"property": "회차", "direction": "ascending"},
                     {"property": "정렬 순서", "direction": "ascending"},
-                ],
-            }
+                ]
+            if resolved_sorts:
+                body["sorts"] = resolved_sorts
             if episode_numbers is not None:
                 body["filter"] = {
                     "or": [
@@ -88,9 +93,53 @@ class NotionDataSourceClient:
             if not isinstance(cursor, str) or not cursor:
                 raise ValueError("Notion response has_more=true but no next_cursor.")
 
+    def retrieve_property_schema(self, data_source_id: str) -> dict[str, str]:
+        """data source의 property 이름과 Notion type만 안전하게 조회한다."""
+
+        if not data_source_id.strip():
+            raise ValueError("Notion data source ID must not be blank.")
+        payload = self._get_with_retry(
+            f"{NOTION_API_BASE_URL}/data_sources/{data_source_id}"
+        )
+        properties = payload.get("properties")
+        if not isinstance(properties, dict):
+            raise ValueError("Notion data source response has no properties object.")
+        schema: dict[str, str] = {}
+        for name, value in properties.items():
+            if not isinstance(name, str) or not isinstance(value, dict):
+                raise ValueError("Notion data source contains an invalid property definition.")
+            property_type = value.get("type")
+            if not isinstance(property_type, str) or not property_type:
+                raise ValueError(
+                    f"Notion data source property {name} has no type declaration."
+                )
+            schema[name] = property_type
+        return schema
+
     def _post_with_retry(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         for attempt in range(1, MAX_QUERY_ATTEMPTS + 1):
             response = self._client.post(url, headers=self._headers, json=body)
+            retryable = response.status_code == 429 or response.status_code >= 500
+            if retryable and attempt < MAX_QUERY_ATTEMPTS:
+                retry_after = response.headers.get("Retry-After", "1")
+                try:
+                    delay_seconds = max(float(retry_after), 0.0)
+                except ValueError:
+                    delay_seconds = 1.0
+                self._sleep(delay_seconds)
+                continue
+
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Notion data source response must be a JSON object.")
+            return payload
+
+        raise AssertionError("Notion retry loop exited unexpectedly.")
+
+    def _get_with_retry(self, url: str) -> dict[str, Any]:
+        for attempt in range(1, MAX_QUERY_ATTEMPTS + 1):
+            response = self._client.get(url, headers=self._headers)
             retryable = response.status_code == 429 or response.status_code >= 500
             if retryable and attempt < MAX_QUERY_ATTEMPTS:
                 retry_after = response.headers.get("Retry-After", "1")

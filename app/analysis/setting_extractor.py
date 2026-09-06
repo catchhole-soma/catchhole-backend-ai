@@ -64,6 +64,10 @@ class CharacterSettingSchemaHint:
     attribute_pattern: str | None
     aliases: tuple[str, ...]
     value_type: str
+    # Worker claim에는 아직 포함되지 않지만, 평가 fixture는 Java DB schema의
+    # 명시적인 CharacterFactType을 보존할 수 있다. Prompt 직렬화에는 넣지 않아
+    # 운영 extractor 입력과 cache key는 그대로 유지한다.
+    canonical_fact_type: str | None = None
 
 
 @dataclass(frozen=True)

@@ -678,11 +678,11 @@ class DuplicateExactSubjectPreparingSpringApi(PreparingBatchSpringApi):
             subjects=[
                 WorkerWorldSettingSubject(
                     world_setting_id=TARGET_ID,
-                    subject_name="Straße",
+                    subject_name="Goblin",
                 ),
                 WorkerWorldSettingSubject(
                     world_setting_id=SECOND_TARGET_ID,
-                    subject_name="STRASSE",
+                    subject_name="GOBLIN",
                 ),
             ],
             page=page,
@@ -703,7 +703,7 @@ class DuplicateExactSubjectPreparingSpringApi(PreparingBatchSpringApi):
                     candidate_id=candidate.candidate_id,
                     source_episode_id=batch.source_episode_id,
                     category=batch.category,
-                    subject_name="straße",
+                    subject_name="goblin",
                 )
                 for candidate in batch.candidates
             ]
@@ -738,7 +738,7 @@ class ManyExactSubjectPreparingSpringApi(DuplicateExactSubjectPreparingSpringApi
             subjects=[
                 WorkerWorldSettingSubject(
                     world_setting_id=UUID(int=index + 100),
-                    subject_name="STRASSE",
+                    subject_name="GOBLIN",
                 )
                 for index in range(self.exact_match_count)
             ],

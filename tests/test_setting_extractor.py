@@ -264,6 +264,9 @@ def test_extract_from_chunk_includes_schema_hints_and_matching_rules_in_prompts(
     assert "현재 원문에서 확인되는 시작·악화·완화·종료·전환 결과" in llm_client.system_prompt
     assert "다른 key의 제거 대상을 가리키거나" in llm_client.system_prompt
     assert "기존 key별로 복제하지 않고" in llm_client.system_prompt
+    assert "`status.생명력_위험`, 금지: `status.체력_5%_상태`" in (
+        llm_client.system_prompt
+    )
     assert "판타지 서사에서 부상·출혈·중독·저주" in llm_client.system_prompt
     assert "이전에 제한된 기능의 회복" in llm_client.system_prompt
     assert "변화의 원인과 가장 결정적인 후속 결과" in llm_client.system_prompt

@@ -1,0 +1,287 @@
+name: Multi-stage Setting Score
+
+on:
+  workflow_dispatch:
+    inputs:
+      episodes:
+        description: "평가할 회차 번호(쉼표 구분, 예: 1,2,3)"
+        required: true
+        default: "1,2,3"
+        type: string
+      mode:
+        description: "평가 모드(ORACLE은 Gold 1차/Gold 상태로 comparator만 평가)"
+        required: true
+        default: ORACLE
+        type: choice
+        options:
+          - ORACLE
+          - FIXED
+          - ROLLING
+      domains:
+        description: "평가 도메인"
+        required: true
+        default: CHARACTER,WORLD
+        type: choice
+        options:
+          - CHARACTER,WORLD
+          - CHARACTER
+          - WORLD
+      analysis_model:
+        description: "1차 추출 모델(FIXED/ROLLING에서 사용)"
+        required: true
+        default: gpt-5.6-terra
+        type: string
+      subject_resolution_model:
+        description: "1차 후보의 캐릭터·세계관 주체 해소 모델(FIXED/ROLLING에서 사용)"
+        required: true
+        default: gpt-5.6-luna
+        type: string
+      comparison_model:
+        description: "2차 비교 모델"
+        required: true
+        default: gpt-5.6-luna
+        type: string
+      semantic_judge:
+        description: "결정적 비교가 불가능한 최종 문장 의미를 LLM Judge로 판정"
+        required: true
+        default: true
+        type: boolean
+      confirm_run:
+        description: "OpenAI 비용 발생 확인을 위해 RUN 입력"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: setting-extraction-evaluation
+    env:
+      NOTION_SCENARIO_DATA_SOURCE_ID: ${{ vars.NOTION_SCENARIO_DATA_SOURCE_ID }}
+      NOTION_STAGE1_GOLD_DATA_SOURCE_ID: ${{ vars.NOTION_STAGE1_GOLD_DATA_SOURCE_ID }}
+      NOTION_STAGE2_GOLD_DATA_SOURCE_ID: ${{ vars.NOTION_STAGE2_GOLD_DATA_SOURCE_ID }}
+      # 레거시 1차 평가와 같은 private 원문·스키마 prefix를 읽습니다.
+      SETTING_MULTI_STAGE_EVAL_INPUT_S3_URI: ${{ vars.SETTING_EVAL_INPUT_S3_URI }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      RUN_EPISODES: ${{ inputs.episodes }}
+      RUN_MODE: ${{ inputs.mode }}
+      RUN_DOMAINS: ${{ inputs.domains }}
+      ANALYSIS_MODEL: ${{ inputs.analysis_model }}
+      SUBJECT_RESOLUTION_MODEL: ${{ inputs.subject_resolution_model }}
+      COMPARISON_MODEL: ${{ inputs.comparison_model }}
+      SEMANTIC_JUDGE_ENABLED: ${{ inputs.semantic_judge }}
+      CONFIRM_RUN: ${{ inputs.confirm_run }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate manual run configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM_RUN" != "RUN" ]; then
+            echo "::error::OpenAI 비용 발생 확인을 위해 confirm_run에 RUN을 입력해야 합니다."
+            exit 1
+          fi
+          for name in NOTION_SCENARIO_DATA_SOURCE_ID NOTION_STAGE1_GOLD_DATA_SOURCE_ID NOTION_STAGE2_GOLD_DATA_SOURCE_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name 설정이 필요합니다."
+              exit 1
+            fi
+          done
+          if ! [[ "$RUN_EPISODES" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+            echo "::error::episodes는 양의 회차 번호의 쉼표 목록이어야 합니다."
+            exit 1
+          fi
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Export FINAL Notion annotations
+        env:
+          NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$NOTION_API_TOKEN" ]; then
+            echo "::error::NOTION_API_TOKEN 설정이 필요합니다."
+            exit 1
+          fi
+          python -m evals.multi_stage_setting.notion_cli \
+            --episodes "$RUN_EPISODES" \
+            --review-status FINAL \
+            --output build/eval/multi-stage/private/gold-export.json
+
+      - name: Determine whether private fixture input is required
+        id: private-input
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=false
+          if [ "$RUN_MODE" != "ORACLE" ] || jq -e '
+            any(.scenarios[]; .startStateMode == "SEED" and (.seedState == null))
+          ' build/eval/multi-stage/private/gold-export.json >/dev/null; then
+            required=true
+          fi
+          echo "required=$required" >> "$GITHUB_OUTPUT"
+
+      - name: Validate private input configuration
+        if: steps.private-input.outputs.required == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SETTING_MULTI_STAGE_EVAL_INPUT_S3_URI AWS_REGION; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$RUN_MODE 실행 fixture에는 $name 설정이 필요합니다."
+              exit 1
+            fi
+          done
+
+      - name: Determine AWS authentication mode
+        id: aws-auth
+        if: steps.private-input.outputs.required == 'true'
+        shell: bash
+        env:
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        run: |
+          if [ -n "$AWS_ROLE_TO_ASSUME" ]; then
+            echo "mode=OIDC" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=STATIC" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials with OIDC
+        id: aws-oidc
+        if: steps.private-input.outputs.required == 'true' && steps.aws-auth.outputs.mode == 'OIDC'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+          output-env-credentials: false
+          output-credentials: true
+
+      - name: Configure AWS credentials with access keys
+        id: aws-static
+        if: steps.private-input.outputs.required == 'true' && steps.aws-auth.outputs.mode == 'STATIC'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.DEPLOY_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.DEPLOY_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          output-env-credentials: false
+          output-credentials: true
+
+      - name: Download private evaluation input
+        if: steps.private-input.outputs.required == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.aws-oidc.outputs.aws-access-key-id || steps.aws-static.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws-oidc.outputs.aws-secret-access-key || steps.aws-static.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.aws-oidc.outputs.aws-session-token || steps.aws-static.outputs.aws-session-token }}
+        run: |
+          aws s3 sync \
+            "$SETTING_MULTI_STAGE_EVAL_INPUT_S3_URI" \
+            build/eval/multi-stage/input \
+            --only-show-errors
+
+      - name: Verify and materialize Gold state chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          state_args=(
+            --gold build/eval/multi-stage/private/gold-export.json
+            --output-dir build/eval/multi-stage/private/states
+            --updated-gold build/eval/multi-stage/private/gold.json
+            --mode verified
+          )
+          if [ -d build/eval/multi-stage/input/states ]; then
+            state_args+=(--state-root build/eval/multi-stage/input/states)
+          fi
+          python -m evals.multi_stage_setting.state_cli "${state_args[@]}"
+
+      - name: Run multi-stage predictions
+        shell: bash
+        env:
+          LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$LLM_API_KEY" ]; then
+            echo "::error::OPENAI_API_KEY 설정이 필요합니다."
+            exit 1
+          fi
+          runtime_args=(
+            --gold build/eval/multi-stage/private/gold.json
+            --mode "$RUN_MODE"
+            --domains "$RUN_DOMAINS"
+            --episodes "$RUN_EPISODES"
+            --analysis-model "$ANALYSIS_MODEL"
+            --subject-resolution-model "$SUBJECT_RESOLUTION_MODEL"
+            --comparison-model "$COMPARISON_MODEL"
+            --output build/eval/multi-stage/private/predictions.json
+          )
+          if [ "$RUN_MODE" != "ORACLE" ]; then
+            runtime_args+=(--source-root build/eval/multi-stage/input/sources)
+            if [[ ",$RUN_DOMAINS," == *,CHARACTER,* ]]; then
+              schema_file=build/eval/multi-stage/input/character-setting-schemas.json
+              if [ ! -f "$schema_file" ]; then
+                echo "::error::$schema_file 파일이 필요합니다."
+                exit 1
+              fi
+              runtime_args+=(--character-setting-schemas "$schema_file")
+            fi
+          fi
+          if [ -d build/eval/multi-stage/input/states ]; then
+            runtime_args+=(--state-root build/eval/multi-stage/input/states)
+          fi
+          python -m evals.multi_stage_setting.runtime_cli "${runtime_args[@]}"
+
+      - name: Evaluate predictions
+        shell: bash
+        env:
+          LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ "$SEMANTIC_JUDGE_ENABLED" = "true" ] && [ -z "$LLM_API_KEY" ]; then
+            echo "::error::semantic judge 실행에는 OPENAI_API_KEY 설정이 필요합니다."
+            exit 1
+          fi
+          evaluate_args=(
+            --gold build/eval/multi-stage/private/gold.json
+            --predictions build/eval/multi-stage/private/predictions.json
+            --output build/eval/multi-stage/private/report.json
+            --quiet
+          )
+          if [ "$RUN_MODE" != "ORACLE" ]; then
+            evaluate_args+=(--source-root build/eval/multi-stage/input/sources)
+          fi
+          if [ -d build/eval/multi-stage/input/states ]; then
+            evaluate_args+=(--state-root build/eval/multi-stage/input/states)
+          fi
+          if [ "$SEMANTIC_JUDGE_ENABLED" = "true" ]; then
+            evaluate_args+=(--semantic-judge openai)
+          fi
+          python -m evals.multi_stage_setting.cli "${evaluate_args[@]}"
+
+      - name: Publish source-free score summary
+        run: |
+          python -m evals.multi_stage_setting.report_cli \
+            --report build/eval/multi-stage/private/report.json \
+            --json-output build/eval/multi-stage/public/score.json \
+            --markdown-output build/eval/multi-stage/public/summary.md
+          cat build/eval/multi-stage/public/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload source-free evaluation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: setting-multi-stage-report-${{ github.run_id }}
+          path: build/eval/multi-stage/public/
+          if-no-files-found: error
+          retention-days: 14

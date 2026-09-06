@@ -118,7 +118,7 @@ Spring claim
 -> evidence quote 위치 보정
 -> 구체적이지 않은 entity_name 후보 subject fallback 전 토큰 예약·호출 후 정산
 -> setting_candidates 교체 저장
--> 매칭된 캐릭터 후보별 현재 snapshot context 조회 및 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 제안 저장
+-> 매칭된 후보를 캐릭터·FactType별 batch로 claim하고 원문 순서 projected snapshot에서 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 제안을 원자 저장
 -> CHARACTER_COMPARISONS_FINISHED checkpoint 보고
 -> 세계관 설정 후보 추출 및 Spring 내부 API 게시
 -> 미해소 world_setting 후보의 canonical 주체를 먼저 저장
