@@ -98,7 +98,7 @@ def test_character_input_fact_key_is_read_when_optional_column_exists() -> None:
     assert row.input_fact_key == "status.오른발_완전_부상"
 
 
-def test_world_setting_name_aliases_reuse_the_shared_alias_column() -> None:
+def test_world_setting_name_aliases_use_the_dedicated_alias_column() -> None:
     page = _character_stage1_page(
         "stage1-world", "W1", "scenario-1", status="FINAL"
     )
@@ -111,7 +111,8 @@ def test_world_setting_name_aliases_reuse_the_shared_alias_column() -> None:
             "worldSubject": _rich_text("고블린"),
             "worldScope": _rich_text("전투 특성"),
             "worldSettingName": _rich_text("함정 사용"),
-            "허용 factKey 별칭": _rich_text(
+            "허용 factKey 별칭": _rich_text("status.읽으면_안됨"),
+            "허용 worldSettingName 별칭": _rich_text(
                 "함정 습성\n함정 활용\n함정 습성"
             ),
             "정답 표시값": _rich_text("고블린은 함정을 설치한다."),
@@ -459,6 +460,24 @@ def test_notion_v3_schema_preflight_rejects_partial_current_or_wrong_property_ty
             scenario_schema=scenario_schema,
             stage1_schema={**stage1_schema, "inputFactKey": "number"},
             stage2_schema={**STAGE2_PROPERTY_SCHEMA, **CURRENT_OUTCOME_PROPERTY_SCHEMA},
+        )
+
+
+def test_notion_v3_schema_preflight_requires_world_setting_name_alias_column() -> None:
+    stage1_schema = dict(STAGE1_PROPERTY_SCHEMA)
+    stage1_schema.pop("허용 worldSettingName 별칭")
+
+    with pytest.raises(
+        ValueError,
+        match="Stage1 schema mismatch: missing 허용 worldSettingName 별칭",
+    ):
+        validate_notion_v3_schemas(
+            scenario_schema=dict(SCENARIO_PROPERTY_SCHEMA),
+            stage1_schema=stage1_schema,
+            stage2_schema={
+                **STAGE2_PROPERTY_SCHEMA,
+                **CURRENT_OUTCOME_PROPERTY_SCHEMA,
+            },
         )
 
 
