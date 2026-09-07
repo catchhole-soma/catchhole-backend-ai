@@ -43,18 +43,57 @@ _FIELD_STATUSES = {
     "UNMATCHED",
 }
 _AXIS_LABELS = {
-    "subject": "주체",
-    "path": "경로",
-    "value": "값",
-    "operation": "operation",
-    "target": "대상",
-    "canonicalPath": "canonical key",
-    "temporal": "시점",
-    "removedSet": "제거 집합",
-    "structuredValue": "valueJson",
-    "consolidation": "통합 상태",
-    "proposedPath": "제안 경로",
-    "rootMoveSet": "root 이동 집합",
+    "subject": "설정 대상",
+    "path": "설정 분류·세부 항목",
+    "value": "설정값",
+    "operation": "처리 방식",
+    "target": "처리할 기존 설정",
+    "canonicalPath": "반영할 설정 분류·세부 항목",
+    "temporal": "정보의 시점",
+    "removedSet": "종료할 상태",
+    "structuredValue": "저장할 세부 값",
+    "consolidation": "여러 추출값을 합칠 수 있는지에 대한 판단",
+    "proposedPath": "반영할 범위·설정명",
+    "rootMoveSet": "새 범위로 함께 옮길 기존 설정",
+}
+_OPERATION_LABELS = {
+    "ADD": "새 설정 추가",
+    "UPDATE": "기존 설정 수정",
+    "MERGE": "기존 설정과 합쳐 반영",
+    "REMOVE": "기존 상태 종료",
+    "EXCLUDE": "이번 추출 정보를 반영하지 않음",
+    "HISTORY_ONLY": "현재 설정에 반영하지 않고 이력에만 기록",
+    "REVIEW_REQUIRED": "자동으로 반영하지 않고 검토 요청",
+}
+_FACT_TYPE_LABELS = {
+    "PROFILE": "기본 정보",
+    "STATUS": "상태",
+    "ITEM": "아이템",
+    "STAT": "능력치",
+    "LEVEL": "레벨",
+    "SKILL": "스킬",
+    "RELATIONSHIP": "관계",
+    "CHARACTER_DISCOVERY": "인물 발견",
+}
+_FACT_KEY_LABELS = {
+    "profile.species": "종족",
+    "profile.gender": "성별",
+    "profile.occupation": "직업",
+    "profile.attribute": "특성",
+    "stats.physique": "육체",
+    "stats.mental": "정신",
+    "stats.supernatural": "이능",
+    "stats.item_level": "아이템 레벨",
+    "stats.combat_power": "전투력",
+    "level": "레벨",
+}
+_WORLD_CATEGORY_LABELS = {
+    "WORLD_RULE_HISTORY": "세계의 규칙·역사",
+    "POWER_SYSTEM": "힘·능력 체계",
+    "LOCATION": "장소",
+    "RACE": "종족",
+    "MONSTER": "몬스터",
+    "IMPORTANT_ITEM": "주요 아이템",
 }
 
 
@@ -124,6 +163,7 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
     run = summary["run"]
     dataset = summary["dataset"]
     stages = summary["stages"]
+    episodes = ", ".join(str(episode) for episode in dataset.get("episodes") or [])
     lines = [
         "# 캐릭터·세계관 다단계 평가 결과",
         "",
@@ -131,7 +171,7 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
         f"`{_inline(dataset.get('version', '-'))}`",
         f"- 모드·도메인: `{_inline(run.get('mode', '-'))}` / "
         f"`{_inline(', '.join(run.get('domains', [])) or '-')}`",
-        f"- 회차: `{_inline(dataset.get('episodes', []))}`",
+        f"- 회차: {_cell(episodes + '화') if episodes else '정보 없음'}",
         f"- Fixture hash: `{_inline(dataset.get('fixtureHash', '-'))}`",
         f"- 모델: 1차 `{_inline(run.get('analysisModel', '-'))}` · 주체 해소 "
         f"`{_inline(run.get('subjectResolutionModel', '-'))}` · 2차 "
@@ -146,11 +186,36 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
         "",
         "## 1차 추출 집계",
         "",
-        "Candidate TP는 기존 점수 정의대로 `주체+경로` 일치입니다. 아래 상세의 완전 일치는 "
-        "여기에 최종 값 일치까지 요구하므로 두 개수가 다를 수 있습니다.",
+        (
+            "정답지의 설정과 모델이 추출한 설정을 한 쌍씩 묶어 비교합니다. "
+            "'비교한 설정 쌍'에는 부분 일치도 포함됩니다. '대상·설정 항목 일치'는 "
+            "설정 대상과 항목이 맞는 수이며, 추출한 내용이 맞는지는 '설정 내용 일치율'로 "
+            "따로 확인합니다. 상세 결과의 '완전 일치'는 대상·항목·내용이 모두 맞는 경우입니다."
+        ),
         "",
-        "| 도메인 | 수량 | Candidate P / R / F1 | 가중 Recall | 주체 / 경로 / 값 | "
-        "근거 위치 / 커버리지 |",
+        (
+            "P와 R의 '맞힘'도 대상·설정 항목 일치를 기준으로 합니다. 예를 들어 추출해야 할 "
+            "설정 10개 중 3개만 추출했고 그 3개가 모두 이 기준에 맞으면 P는 100%, R은 30%입니다. "
+            "가중 Recall은 정답지의 중요도에 따라 3·2·1의 가중치를 적용합니다."
+        ),
+        "",
+        (
+            "설정 대상은 누구·무엇에 관한 설정인지를 뜻하며, 세계관에서는 분류도 포함합니다. "
+            "설정 항목은 캐릭터의 설정 종류·항목 이름, 세계관의 설정명·상위 범위를 비교합니다. "
+            "내용과 근거의 일치율은 비교한 설정 쌍 중 해당 지표를 평가할 수 있는 항목을 기준으로 합니다. "
+            "'추출 금지 항목을 추출한 횟수'는 정답지에서 명시적으로 추출을 금지한 항목을 뽑은 경우입니다."
+        ),
+        "",
+        (
+            "| 도메인 | 수량 | P (모델이 추출한 설정 중 맞힌 비율)<br>"
+            "R (추출해야 할 전체 설정 중 맞힌 비율)<br>F1 (P와 R을 종합한 점수) | "
+            "가중 Recall (중요도를 반영한 정답 검출률) | "
+            "설정 대상 일치율 (누구·무엇에 관한 설정인가)<br>"
+            "설정 항목 일치율 (설정명·범위 또는 설정 종류·항목 이름이 같은가)<br>"
+            "설정 내용 일치율 (기록한 내용이 맞는가) | "
+            "인용문 원문 확인율 (인용한 문장이 원문에 있는가)<br>"
+            "정답 근거 포함률 (정답지의 근거 문장을 얼마나 찾았는가) |"
+        ),
         "| --- | --- | --- | ---: | --- | --- |",
     ]
     for domain in _DOMAINS:
@@ -168,23 +233,25 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
             result_counts["MISSED"] if sum(result_counts.values()) else _count(counts.get("missed"))
         )
         quantity = (
-            f"Gold {_count(counts.get('gold'))} · 예측 {_count(counts.get('predictions'))} · "
-            f"연결 {_count(counts.get('matches'))} · "
-            f"TP {_count(counts.get('identityTruePositive'))} · "
-            f"누락 {missed} · 과추출 {_count(counts.get('extra'))} · "
-            f"추출 금지 위반 {_count(counts.get('hardNegativeHits'))}"
+            f"정답지의 설정 {_count(counts.get('gold'))} · "
+            f"모델이 추출한 설정 {_count(counts.get('predictions'))} · "
+            f"비교한 설정 쌍 {_count(counts.get('matches'))} · "
+            f"대상·설정 항목 일치 {_count(counts.get('identityTruePositive'))} · "
+            f"추출하지 못한 설정 {missed} · "
+            f"불필요하게 추출한 설정 {_count(counts.get('extra'))} · "
+            f"추출 금지 항목을 추출한 횟수 {_count(counts.get('hardNegativeHits'))}"
         )
         lines.append(
             f"| {domain.upper()} | {_cell(quantity)} | "
-            f"{_format_ratio(metrics.get('candidatePrecision'))} / "
-            f"{_format_ratio(metrics.get('candidateRecall'))} / "
-            f"{_format_ratio(metrics.get('candidateF1'))} | "
+            f"P {_format_ratio(metrics.get('candidatePrecision'))}<br>"
+            f"R {_format_ratio(metrics.get('candidateRecall'))}<br>"
+            f"F1 {_format_ratio(metrics.get('candidateF1'))} | "
             f"{_format_ratio(metrics.get('weightedRecall'))} | "
-            f"{_format_axis_ratio(metrics.get('entityOrSubjectAccuracy'), axis_counts['subject'])} / "
-            f"{_format_axis_ratio(metrics.get('pathOrFactAccuracy'), axis_counts['path'])} / "
-            f"{_format_axis_ratio(metrics.get('valueAccuracy'), axis_counts['value'])} | "
-            f"{_format_ratio(metrics.get('evidenceLocatableRate'))} / "
-            f"{_format_ratio(metrics.get('evidenceCoverageRate'))} |"
+            f"설정 대상 {_format_axis_ratio(metrics.get('entityOrSubjectAccuracy'), axis_counts['subject'])}<br>"
+            f"설정 항목 {_format_axis_ratio(metrics.get('pathOrFactAccuracy'), axis_counts['path'])}<br>"
+            f"설정 내용 {_format_axis_ratio(metrics.get('valueAccuracy'), axis_counts['value'])} | "
+            f"원문 확인 {_format_ratio(metrics.get('evidenceLocatableRate'))}<br>"
+            f"정답 근거 포함 {_format_ratio(metrics.get('evidenceCoverageRate'))} |"
         )
         if counts.get("semanticPending", 0):
             lines.append(
@@ -194,76 +261,7 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
                 f"{_format_ratio(metrics.get('valueSemanticCoverage'))} | - |"
             )
 
-    lines.extend(
-        [
-            "",
-            "## 2차 비교 집계",
-            "",
-            "| 도메인 | 수량 | 도달률 | Full accuracy | operation / 대상 / 값 | "
-            "도메인 경로 / 규칙 | 제거 / 이동 |",
-            "| --- | --- | ---: | ---: | --- | --- | ---: |",
-        ]
-    )
-    for domain in _DOMAINS:
-        stage = stages[domain]["stage2"]
-        if not stage.get("evaluated", True):
-            lines.append(
-                f"| {domain.upper()} | 미평가 | {_cell(stage.get('reason'))} | - | - | - | - |"
-            )
-            continue
-        metrics = stage.get("metrics", {})
-        counts = stage.get("counts", {})
-        axis_counts = _stage2_field_counts(diagnostics, domain)
-        gold_count = _int_or_zero(counts.get("gold"))
-        reached_count = _int_or_zero(counts.get("upstreamReached"))
-        pending_count = _int_or_zero(counts.get("semanticPending"))
-        resolved_count = max(0, reached_count - pending_count)
-        resolved_accuracy = metrics.get("resolvedFullDecisionAccuracy")
-        if resolved_accuracy is None and pending_count == 0:
-            resolved_accuracy = metrics.get("fullDecisionAccuracy")
-        full_count = _matched_count(
-            resolved_accuracy,
-            resolved_count,
-        )
-        quantity = (
-            f"Gold {gold_count} · 도달 {reached_count} · 응답 "
-            f"{_count(counts.get('reachedAndCompared'))} · 정답 "
-            f"{full_count} · 오답 {resolved_count - full_count} · "
-            f"미판정 {pending_count} · 차단 {max(0, gold_count - reached_count)}"
-        )
-        path_metric = (
-            metrics.get("characterCanonicalFactKeyResolutionAccuracy")
-            if domain == "character"
-            else metrics.get("proposedPathAccuracy")
-        )
-        rule_metric = (
-            metrics.get("temporalAccuracy")
-            if domain == "character"
-            else metrics.get("consolidationAccuracy")
-        )
-        removal_metric = (
-            metrics.get("removedSnapshotSetAccuracy")
-            if domain == "character"
-            else metrics.get("existingRootPropertyMoveSetAccuracy")
-        )
-        lines.append(
-            f"| {domain.upper()} | {_cell(quantity)} | "
-            f"{_format_ratio(metrics.get('upstreamReachRate'))} | "
-            f"{_format_ratio(metrics.get('fullDecisionAccuracy'))} | "
-            f"{_format_axis_ratio(metrics.get('operationAccuracy'), axis_counts['operation'])} / "
-            f"{_format_axis_ratio(metrics.get('targetAccuracy'), axis_counts['target'])} / "
-            f"{_format_axis_ratio(metrics.get('proposedValueAccuracy'), axis_counts['value'])} | "
-            f"{_format_axis_ratio(path_metric, axis_counts[_stage2_path_axis(domain)])} / "
-            f"{_format_axis_ratio(rule_metric, axis_counts[_stage2_rule_axis(domain)])} | "
-            f"{_format_axis_ratio(removal_metric, axis_counts[_stage2_removal_axis(domain)])} |"
-        )
-        if counts.get("semanticPending", 0):
-            lines.append(
-                f"| ↳ {domain.upper()} 의미 판정 | resolved / lower-bound / coverage | "
-                f"- | {_format_ratio(metrics.get('resolvedFullDecisionAccuracy'))} / "
-                f"{_format_ratio(metrics.get('fullDecisionLowerBoundAccuracy'))} / "
-                f"{_format_ratio(metrics.get('semanticCoverage'))} | - | - | - |"
-            )
+    _append_stage2_summary(lines, stages)
 
     _append_end_to_end(lines, summary)
     _append_diagnostics(lines, diagnostics)
@@ -276,14 +274,145 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _append_stage2_summary(lines: list[str], stages: dict[str, Any]) -> None:
+    stage_by_domain = {domain: stages[domain]["stage2"] for domain in _DOMAINS}
+    quantities: dict[str, dict[str, int]] = {}
+    for domain, stage in stage_by_domain.items():
+        counts = stage.get("counts", {})
+        metrics = stage.get("metrics", {})
+        gold = _int_or_zero(counts.get("gold"))
+        included = _int_or_zero(counts.get("upstreamReached"))
+        pending = _int_or_zero(counts.get("semanticPending"))
+        resolved = max(0, included - pending)
+        accuracy = metrics.get("resolvedFullDecisionAccuracy")
+        if accuracy is None and pending == 0:
+            accuracy = metrics.get("fullDecisionAccuracy")
+        correct = _matched_count(accuracy, resolved)
+        quantities[domain] = {
+            "gold": gold,
+            "included": included,
+            "correct": correct,
+            "incorrect": resolved - correct,
+            "missing": max(0, included - _int_or_zero(counts.get("reachedAndCompared"))),
+            "pending": pending,
+            "excluded": max(0, gold - included),
+        }
+
+    lines.extend([
+        "",
+        "## 2차 비교 집계",
+        "",
+        "2차 모델은 추출한 설정을 기존 데이터와 비교해 추가·수정·병합·제외 등을 판단합니다.",
+        "오답에는 판단이 틀린 경우와 2차 결과가 없는 경우가 포함됩니다. 채점 제외는 해당 Gold의 채점 여부를 뜻하며 실제 2차 호출 여부를 나타내지 않습니다.",
+        "채점 미완료는 표현이 다른 답안의 의미를 추가로 비교해야 하지만, 의미 채점을 실행하지 않는 등 판정 결과가 없어 정오를 확정하지 못한 경우입니다.",
+        "",
+        "### 수량",
+        "",
+        "| 항목 | 캐릭터 | 세계관 |",
+        "| --- | ---: | ---: |",
+    ])
+    quantity_rows = (
+        ("Gold (정답지의 처리 결정)", "gold"),
+        ("2차 채점에 포함 (필요한 설정이 1차에서 올바르게 추출됨)", "included"),
+        ("정답 (처리 방식·대상·내용 등 필요한 판단 항목이 모두 맞음)", "correct"),
+        ("오답 (판단이 틀렸거나 2차 결과가 없음)", "incorrect"),
+        ("↳ 오답 중 2차 결과가 없는 경우", "missing"),
+        ("채점 미완료 (모델 답안은 있으나 정답과 의미가 같은지 확인하지 못함)", "pending"),
+        ("2차 채점에서 제외 (필요한 1차 설정이 없거나 잘못 추출됨)", "excluded"),
+    )
+    for label, key in quantity_rows:
+        cells = [
+            f"{quantities[domain][key]}개"
+            if stage_by_domain[domain].get("evaluated", True)
+            else "미평가"
+            for domain in _DOMAINS
+        ]
+        lines.append(f"| {_cell(label)} | {' | '.join(cells)} |")
+
+    lines.extend([
+        "",
+        "### 정확도",
+        "",
+        "| 항목 | 캐릭터 | 세계관 |",
+        "| --- | ---: | ---: |",
+    ])
+    metric_rows = (
+        ("2차 채점 포함률 (Gold 중 2차 채점에 포함된 비율)", "upstreamReachRate", None),
+        ("Full accuracy (채점에 포함된 항목 중 판단 전체가 맞은 비율)", "fullDecisionAccuracy", None),
+        ("operation 일치율 (추가·수정·병합·제외 등의 판단이 맞는가)", "operationAccuracy", None),
+        ("기존 설정 선택 일치율 (비교하거나 변경할 기존 설정을 올바르게 골랐는가)", "targetAccuracy", None),
+        ("반영할 내용 일치율 (최종적으로 기록할 내용이 맞는가)", "proposedValueAccuracy", None),
+        ("설정 항목 일치율 (캐릭터의 최종 설정 항목이 맞는가)", "characterCanonicalFactKeyResolutionAccuracy", "character"),
+        ("반영할 설정명·범위 일치율 (세계관 설정을 정답과 같은 이름·범위로 정리했는가)", "proposedPathAccuracy", "world"),
+        ("시점 판단 일치율 (현재·과거·가정 등을 올바르게 구분했는가)", "temporalAccuracy", "character"),
+        ("추출값 통합 판단 일치율 (값이 하나인지, 합칠 수 있는지, 서로 충돌하는지 맞혔는가)", "consolidationAccuracy", "world"),
+        ("종료할 상태 선택 일치율 (끝내야 할 부상·중독 등의 상태를 올바르게 골랐는가)", "removedSnapshotSetAccuracy", "character"),
+        ("함께 옮길 설정 선택 일치율 (새 범위로 함께 이동할 기존 설정을 올바르게 골랐는가)", "existingRootPropertyMoveSetAccuracy", "world"),
+    )
+    for label, key, applicable_domain in metric_rows:
+        cells = [
+            "해당 없음"
+            if applicable_domain is not None and domain != applicable_domain
+            else _stage2_metric_cell(stage_by_domain[domain], key)
+            for domain in _DOMAINS
+        ]
+        lines.append(f"| {_cell(label)} | {' | '.join(cells)} |")
+    for domain, stage in stage_by_domain.items():
+        if not stage.get("evaluated", True):
+            lines.extend(["", f"- {domain.upper()} 미평가: {_cell(stage.get('reason'))}"])
+            continue
+        metrics = stage.get("metrics", {})
+        if quantities[domain]["pending"]:
+            lines.extend([
+                "",
+                (
+                    f"- {domain.upper()} resolved Full accuracy (채점이 끝난 항목만 계산): "
+                    f"{_format_ratio(metrics.get('resolvedFullDecisionAccuracy'))}"
+                ),
+                (
+                    f"- {domain.upper()} lower-bound Full accuracy (채점 미완료를 오답으로 계산): "
+                    f"{_format_ratio(metrics.get('fullDecisionLowerBoundAccuracy'))}"
+                ),
+                (
+                    f"- {domain.upper()} coverage (채점에 포함된 항목 중 정오 판정을 마친 비율): "
+                    f"{_format_ratio(metrics.get('semanticCoverage'))}"
+                ),
+            ])
+
+
+def _stage2_metric_cell(stage: dict[str, Any], key: str) -> str:
+    if not stage.get("evaluated", True):
+        return "미평가"
+    metrics = stage.get("metrics", {})
+    if key not in metrics:
+        return "정보 없음"
+    if metrics[key] is not None:
+        return _format_ratio(metrics[key])
+    if key == "fullDecisionAccuracy" and stage.get("counts", {}).get("semanticPending", 0):
+        return "채점 미완료"
+    coverage = metrics.get("proposedValueSemanticCoverage")
+    if key == "proposedValueAccuracy" and coverage is not None and coverage < 1:
+        return "채점 미완료"
+    return "평가할 항목 없음"
+
+
 def _append_end_to_end(lines: list[str], summary: dict[str, Any]) -> None:
     end_to_end = summary["endToEnd"]
     lines.extend(
         [
             "",
-            "## 누적 상태·전이",
+            "## 반영 후 데이터·변경 내역 평가",
             "",
-            "| 범위 | Precision | Recall | F1 | 의미 판정 coverage / pending |",
+            "회차별로 2차 판단을 평가용 데이터에 적용한 뒤, 남은 데이터와 변경 내역을 정답지와 비교합니다.",
+            "변경 건수에는 설정값 외에 등장인물 등록·이력·구조화 데이터 등도 포함되므로 추출한 설정 개수와 다를 수 있습니다.",
+            "",
+            (
+                "| 범위 | Precision (처리 후 데이터 중 정답과 일치하는 비율) | "
+                "Recall (정답지에서 기대한 데이터 중 올바르게 반영된 비율) | "
+                "F1 (Precision과 Recall을 종합한 점수) | "
+                "coverage (전체 비교 항목 중 정오 판정이 끝난 비율)<br>"
+                "pending (데이터는 있으나 정답과 의미가 같은지 채점하지 못한 항목 수) |"
+            ),
             "| --- | ---: | ---: | ---: | --- |",
         ]
     )
@@ -293,17 +422,19 @@ def _append_end_to_end(lines: list[str], summary: dict[str, Any]) -> None:
             lines.append(f"| {domain.upper()} | 미평가 | - | - | {_cell(value.get('reason'))} |")
             continue
         lines.append(
-            f"| {domain.upper()} after-state | "
+            f"| {domain.upper()} after-state "
+            f"(회차 처리 후 {'캐릭터' if domain == 'character' else '세계관'} 데이터) | "
             f"{_format_ratio(value.get('afterStatePrecision'))} | "
             f"{_format_ratio(value.get('afterStateRecall'))} | "
             f"{_format_ratio(value.get('afterStateF1'))} | "
-            f"{_format_ratio(value.get('semanticCoverage'))} / "
-            f"{_count(value.get('semanticPending'))} |"
+            f"coverage {_format_ratio(value.get('semanticCoverage'))}<br>"
+            f"pending {_count(value.get('semanticPending'))} |"
         )
         if value.get("semanticPending", 0):
             lines.append(
-                f"| ↳ {domain.upper()} 의미 판정 | - | - | resolved "
-                f"{_format_ratio(value.get('resolvedAfterStateF1'))} / lower-bound "
+                f"| ↳ {domain.upper()} 의미 판정 | - | - | resolved (채점이 끝난 항목만 계산) "
+                f"{_format_ratio(value.get('resolvedAfterStateF1'))}<br>"
+                "lower-bound (채점 미완료를 오답으로 계산) "
                 f"{_format_ratio(value.get('afterStateLowerBoundF1'))} | "
                 f"{_format_ratio(value.get('semanticCoverage'))} / "
                 f"{_count(value.get('semanticPending'))} |"
@@ -312,13 +443,19 @@ def _append_end_to_end(lines: list[str], summary: dict[str, Any]) -> None:
     counts = end_to_end.get("counts", {})
     lines.extend(
         [
-            f"| 전체 after-state | - | - | {_format_ratio(metrics.get('afterStateF1'))} | - |",
-            f"| 상태 전이 ({_count(counts.get('matchedTransitions'))} 일치 / "
-            f"{_count(counts.get('expectedTransitions'))} Gold / "
-            f"{_count(counts.get('predictedTransitions'))} 예측) | "
-            f"{_format_ratio(metrics.get('transitionPrecision'))} | "
-            f"{_format_ratio(metrics.get('transitionRecall'))} | "
-            f"{_format_ratio(metrics.get('transitionF1'))} | - |",
+            (
+                "| 전체 after-state (캐릭터·세계관 F1의 평균) | - | - | "
+                f"{_format_ratio(metrics.get('afterStateF1'))} | - |"
+            ),
+            (
+                "| 상태 전이 (처리 전후에 추가·수정·제거된 데이터의 변경 내역)<br>"
+                f"Gold {_count(counts.get('expectedTransitions'))}건 · "
+                f"모델 판단을 적용한 변경 {_count(counts.get('predictedTransitions'))}건 · "
+                f"일치한 변경 {_count(counts.get('matchedTransitions'))}건 | "
+                f"{_format_ratio(metrics.get('transitionPrecision'))} | "
+                f"{_format_ratio(metrics.get('transitionRecall'))} | "
+                f"{_format_ratio(metrics.get('transitionF1'))} | - |"
+            ),
         ]
     )
     if any(
@@ -327,24 +464,33 @@ def _append_end_to_end(lines: list[str], summary: dict[str, Any]) -> None:
         if isinstance(value, dict)
     ):
         lines.append(
-            "| ↳ 전체 after-state 의미 판정 | - | - | resolved "
-            f"{_format_ratio(metrics.get('resolvedAfterStateF1'))} / lower-bound "
+            "| ↳ 전체 after-state 의미 판정 | - | - | resolved (채점이 끝난 항목만 계산) "
+            f"{_format_ratio(metrics.get('resolvedAfterStateF1'))}<br>"
+            "lower-bound (채점 미완료를 오답으로 계산) "
             f"{_format_ratio(metrics.get('afterStateLowerBoundF1'))} | - |"
         )
     if counts.get("semanticPendingTransitions", 0):
         lines.append(
             "| ↳ 상태 전이 의미 판정 | "
             f"{_format_ratio(metrics.get('resolvedTransitionPrecision'))} | "
-            f"{_format_ratio(metrics.get('resolvedTransitionRecall'))} | resolved "
-            f"{_format_ratio(metrics.get('resolvedTransitionF1'))} / lower-bound "
+            f"{_format_ratio(metrics.get('resolvedTransitionRecall'))} | "
+            "resolved (채점이 끝난 항목만 계산) "
+            f"{_format_ratio(metrics.get('resolvedTransitionF1'))}<br>"
+            "lower-bound (채점 미완료를 오답으로 계산) "
             f"{_format_ratio(metrics.get('transitionLowerBoundF1'))} | - |"
         )
     lines.extend(
         [
             "",
-            f"- 상태 적용 오류: `{_count(counts.get('stateApplicationErrors'))}`",
-            f"- dependency 상태 적용 오류: "
-            f"`{_count(counts.get('dependencyStateApplicationErrors'))}`",
+            (
+                "- 상태 적용 오류 (2차 판단을 평가용 데이터에 반영하지 못한 횟수): "
+                f"`{_count(counts.get('stateApplicationErrors'))}`"
+            ),
+            (
+                "- dependency 상태 적용 오류 "
+                "(평가 시작 데이터를 준비하는 앞선 회차에서 발생한 반영 오류): "
+                f"`{_count(counts.get('dependencyStateApplicationErrors'))}`"
+            ),
             "- 실패 원인:",
             "",
             "| 원인 | 건수 |",
@@ -358,8 +504,15 @@ def _append_end_to_end(lines: list[str], summary: dict[str, Any]) -> None:
         else []
     )
     if nonzero_failures:
+        failure_explanations = {
+            "COMPARISON_ERROR": "2차 판단이 틀렸거나 결과가 없음",
+            "EXTRACTION_MISS": "필요한 1차 설정을 제대로 확보하지 못해 2차 채점에서 제외됨",
+            "UPSTREAM_FALSE_POSITIVE": "불필요하게 추출한 설정",
+        }
         for cause, count in nonzero_failures:
-            lines.append(f"| {_cell(cause)} | {_count(count)} |")
+            explanation = failure_explanations.get(cause)
+            label = f"{cause} ({explanation})" if explanation else cause
+            lines.append(f"| {_cell(label)} | {_count(count)} |")
     else:
         lines.append("| 없음 | 0 |")
     _append_runtime_failures(lines, summary.get("run", {}).get("runtimeFailures"))
@@ -371,20 +524,30 @@ def _append_runtime_failures(lines: list[str], value: Any) -> None:
     lines.extend(
         [
             "",
-            "### 실행 중 복구된 후보 오류",
+            "### 실행 중 기록된 오류 (개별 설정 처리 중 발생한 오류)",
             "",
             f"총 `{_count(value.get('total'))}`건입니다. 오류 메시지와 응답 본문은 공개하지 않습니다.",
+            "같은 오류를 단계와 오류 유형으로 각각 집계한 표입니다. 두 집계의 건수를 서로 더하지 않습니다. 복구 성공 여부를 나타내는 수치는 아닙니다.",
             "",
             "| 분류 | 항목 | 건수 |",
             "| --- | --- | ---: |",
         ]
     )
+    explanations = {
+        "CHARACTER_STAGE1": "캐릭터 설정의 1차 추출 단계",
+        "CHARACTER_STAGE2": "캐릭터 설정의 2차 비교 단계",
+        "WORLD_STAGE1": "세계관 설정의 1차 추출 단계",
+        "WORLD_STAGE2": "세계관 설정의 2차 비교 단계",
+        "ComparisonValidationError": "2차 비교 결과가 정해진 형식이나 처리 규칙을 충족하지 못함",
+    }
     for group, label in (("byStage", "단계"), ("byErrorType", "오류 유형")):
         counts = value.get(group, {})
         if not isinstance(counts, dict):
             continue
         for name, count in sorted(counts.items()):
-            lines.append(f"| {label} | {_cell(name)} | {_count(count)} |")
+            explanation = explanations.get(name)
+            display_name = f"{name} ({explanation})" if explanation else name
+            lines.append(f"| {label} | {_cell(display_name)} | {_count(count)} |")
 
 
 def _append_diagnostics(
@@ -437,45 +600,55 @@ def _append_diagnostics_limited(
             if stage1_cases:
                 counts = Counter(case["result"] for case in stage1_cases)
                 lines.append(
-                    "**1차** · 완전 일치 "
+                    "**1차 추출 결과** · 완전 일치 "
                     f"{counts['FULL_MATCH']} · 부분 일치 {counts['PARTIAL_MATCH']} · "
-                    f"누락 {counts['MISSED']} · 과추출 {counts['EXTRA']}"
+                    f"추출하지 못한 설정 {counts['MISSED']} · "
+                    f"불필요하게 추출한 설정 {counts['EXTRA']}"
                 )
                 lines.append("")
                 remaining_rows = _append_case_tables(
                     lines,
                     stage1_cases,
-                    _stage1_row,
+                    lambda case, domain=domain: _stage1_row(case, domain),
                     (
                         "판정",
-                        "Gold ID",
-                        "예측 ID",
-                        "주체 (Gold → 예측)",
-                        "경로 (Gold → 예측)",
-                        "값 (Gold → 예측)",
-                        "차이·upstream",
+                        "Gold ID (답지 항목 식별번호)",
+                        "추출 ID (모델 추출 항목 식별번호)",
+                        "인물 (누구에 관한 정보인가)"
+                        if domain == "character"
+                        else "설정 대상 (분류·누구 또는 무엇에 관한 정보인가)",
+                        "설정 분류·세부 항목" if domain == "character" else "설정 범위·세부 항목",
+                        "설정값 (해당 항목의 구체적인 내용)",
+                        "판정 이유",
                     ),
                     remaining_rows,
                 )
             if stage2_cases:
                 counts = Counter(case["result"] for case in stage2_cases)
                 lines.append(
-                    "**2차** · 완전 일치 "
-                    f"{counts['FULL_MATCH']} · 결정 불일치 {counts['DECISION_MISMATCH']} · "
-                    f"comparator 누락 {counts['COMPARATOR_MISSING']} · 의미 미판정 "
-                    f"{counts['SEMANTIC_PENDING']} · upstream 차단 {counts['UPSTREAM_BLOCKED']}"
+                    "**2차 처리 판단 결과** · "
+                    + " · ".join(
+                        f"{_result_label(result)} {counts[result]}"
+                        for result in (
+                            "FULL_MATCH",
+                            "DECISION_MISMATCH",
+                            "COMPARATOR_MISSING",
+                            "SEMANTIC_PENDING",
+                            "UPSTREAM_BLOCKED",
+                        )
+                    )
                 )
                 lines.append("")
                 remaining_rows = _append_case_tables(
                     lines,
                     stage2_cases,
-                    _stage2_row,
+                    lambda case, sources=stage1_cases: _stage2_row(case, sources),
                     (
-                        "판정",
-                        "결정 / 원천",
-                        "Gold 결정",
-                        "예측 결정",
-                        "차이·차단 원인",
+                        "채점 결과",
+                        "관련 ID (2차 답지 항목·1차 답지 항목·모델 추출 항목)",
+                        "답지에서 기대한 처리",
+                        "모델이 판단한 처리",
+                        "판정 이유",
                     ),
                     remaining_rows,
                 )
@@ -557,103 +730,273 @@ def _markdown_table(
     return lines, len(shown)
 
 
-def _stage1_row(case: dict[str, Any]) -> tuple[str, ...]:
+def _stage1_row(case: dict[str, Any], domain: str = "character") -> tuple[str, ...]:
     expected = case.get("expected") or {}
     actual = case.get("actual") or {}
     return (
         _cell(_result_label(case["result"])),
         _cell(", ".join(case.get("goldIds", [])) or "-"),
         _cell(case.get("predictionId")),
-        _comparison_cell(expected.get("subject"), actual.get("subject")),
-        _comparison_cell(expected.get("path"), actual.get("path")),
+        _comparison_cell(
+            _subject_label(expected.get("subject"), domain),
+            _subject_label(actual.get("subject"), domain),
+        ),
+        _comparison_cell(
+            _path_label(expected.get("path"), domain),
+            _path_label(actual.get("path"), domain),
+        ),
         _comparison_cell(expected.get("value"), actual.get("value")),
-        _cell(_diagnostic_reason(case)),
+        _diagnostic_reason(case, domain),
     )
 
 
-def _stage2_row(case: dict[str, Any]) -> tuple[str, ...]:
+def _stage2_row(
+    case: dict[str, Any],
+    source_cases: list[dict[str, Any]] | None = None,
+) -> tuple[str, ...]:
+    domain = str(case.get("domain", "CHARACTER")).lower()
+    gold_ids = set(case.get("sourceGoldIds", []))
+    source_id = case.get("sourceCandidateId")
+    expected_subjects = dict.fromkeys(
+        (source.get("expected") or {}).get("subject")
+        for source in source_cases or []
+        if gold_ids & set(source.get("goldIds", []))
+    )
+    actual_subjects = dict.fromkeys(
+        (source.get("actual") or {}).get("subject")
+        for source in source_cases or []
+        if source_id and source.get("predictionId") == source_id
+    )
     source_ids = ", ".join(case.get("sourceGoldIds", [])) or "-"
-    identifiers = (
-        f"{case.get('decisionId') or '-'} / {source_ids} / {case.get('sourceCandidateId') or '-'}"
+    identifiers = "<br>".join(
+        _cell(item)
+        for item in (
+            f"2차 답지: {case.get('decisionId') or '-'}",
+            f"1차 답지: {source_ids}",
+            f"모델 추출: {case.get('sourceCandidateId') or '2차 답안에 연결된 추출 항목 없음'}",
+        )
     )
     return (
         _cell(_result_label(case["result"])),
-        _cell(identifiers),
-        _cell(_stage2_shape(case.get("expected") or {})),
-        _cell(_stage2_shape(case.get("actual") or {})),
-        _cell(_diagnostic_reason(case)),
+        identifiers,
+        _stage2_shape(
+            case.get("expected") or {},
+            domain,
+            ", ".join(subject for subject in expected_subjects if subject),
+        ),
+        _stage2_shape(
+            case.get("actual") or {},
+            domain,
+            ", ".join(subject for subject in actual_subjects if subject),
+        )
+        if case.get("actual")
+        else "이 답지 항목과 연결된 2차 결과 없음",
+        _diagnostic_reason(case, domain, source_cases),
     )
 
 
-def _stage2_shape(value: dict[str, Any]) -> str:
+def _stage2_shape(
+    value: dict[str, Any],
+    domain: str = "character",
+    subject: str = "",
+) -> str:
     if not value:
         return "-"
-    parts = [
-        str(item)
-        for item in (
-            value.get("operation"),
-            f"대상={value['target']}" if value.get("target") else None,
-            value.get("path"),
-            value.get("value"),
-        )
-        if item not in (None, "")
-    ]
+    parts = []
+    if subject:
+        title = "인물" if domain == "character" else "설정 대상"
+        parts.append(f"{title}: {_subject_label(subject, domain)}")
+    if value.get("operation"):
+        parts.append("처리 방식: " + _explained(value["operation"], _OPERATION_LABELS))
+    if value.get("target"):
+        parts.append("처리할 기존 설정: " + _subject_label(value["target"], domain))
+    if value.get("path"):
+        path_title = "설정 분류·세부 항목" if domain == "character" else "설정 범위·세부 항목"
+        parts.append(f"{path_title}: {_path_label(value['path'], domain)}")
+    if value.get("value") not in (None, ""):
+        parts.append(f"설정값: {value['value']}")
     if value.get("temporalScope") is not None:
-        parts.append(f"시점={value['temporalScope']}")
+        parts.append(
+            "정보의 시점: "
+            + _explained(
+                value["temporalScope"],
+                {
+                    "PRESENT": "현재의 정보",
+                    "PAST": "과거의 정보",
+                    "HYPOTHETICAL": "가정 속 정보",
+                },
+            )
+        )
     if value.get("consolidationStatus") is not None:
-        parts.append(f"통합={value['consolidationStatus']}")
+        parts.append(
+            "추출값 통합 판단: "
+            + _explained(
+                value["consolidationStatus"],
+                {
+                    "SINGLE": "추출값 하나를 사용",
+                    "MERGED": "여러 추출값을 하나로 합침",
+                    "CONFLICT": "추출값이 서로 충돌하여 하나로 확정하지 못함",
+                },
+            )
+        )
     removed_paths = value.get("removedPaths") or []
     if removed_paths:
-        parts.append(f"제거=[{', '.join(removed_paths)}]")
+        parts.extend("종료할 상태: " + _subject_label(path, domain) for path in removed_paths)
     elif value.get("removedCount"):
-        parts.append(f"제거={value['removedCount']}건")
+        parts.append(f"종료할 상태: {value['removedCount']}건")
     root_move_names = value.get("rootMoveNames") or []
     if root_move_names:
-        parts.append(f"root 이동=[{', '.join(root_move_names)}]")
+        parts.extend(f"새 범위로 함께 옮길 기존 설정: {name}" for name in root_move_names)
     elif value.get("rootMoveCount"):
-        parts.append(f"root 이동={value['rootMoveCount']}건")
-    return " · ".join(parts) or "-"
+        parts.append(f"새 범위로 함께 옮길 기존 설정: {value['rootMoveCount']}건")
+    return "<br>".join(_cell(part) for part in parts) or "-"
 
 
-def _diagnostic_reason(case: dict[str, Any]) -> str:
+def _diagnostic_reason(
+    case: dict[str, Any],
+    domain: str = "character",
+    source_cases: list[dict[str, Any]] | None = None,
+) -> str:
+    result = case["result"]
+    if result == "MISSED":
+        return "이 답지 항목에 대응하는 모델 추출 결과를 찾지 못했습니다."
+    if result == "EXTRA":
+        return "모델이 이 정보를 추출했지만 답지에서 대응하는 항목을 찾지 못했습니다."
+    if result == "COMPARATOR_MISSING":
+        return (
+            "필요한 설정은 1차에서 추출됐지만 이 항목의 2차 처리 결과가 없어 오답으로 채점했습니다."
+        )
+    if result == "UPSTREAM_BLOCKED":
+        reasons = {
+            "UPSTREAM_MISSING": "답지에서 요구한 설정과 연결된 1차 추출 결과가 없습니다.",
+            "UPSTREAM_BLOCKED_SUBJECT": (
+                "1차에서 추출한 정보의 인물이 답지와 다릅니다."
+                if domain == "character"
+                else "1차에서 추출한 정보의 분류·설정 대상이 답지와 다릅니다."
+            ),
+            "UPSTREAM_VALUE_ERROR": "1차에서 추출한 정보의 분류·항목 또는 설정값이 답지와 다릅니다.",
+            "UPSTREAM_PARTIAL": "이 처리에 필요한 1차 설정 중 일부만 답지와 연결되었습니다.",
+        }
+        parts = [
+            reasons.get(
+                case.get("upstreamOutcome"),
+                "필요한 1차 설정이 이 답지 항목의 채점 조건을 충족하지 못했습니다.",
+            )
+        ]
+        for source in source_cases or []:
+            if set(source.get("goldIds", [])) & set(case.get("sourceGoldIds", [])):
+                parts.extend(_field_difference_lines(source, domain))
+        parts.append("따라서 이 항목의 2차 판단은 채점에서 제외했습니다.")
+        return "<br>".join(_cell(part) for part in parts)
+    parts = _field_difference_lines(case, domain)
+    if result == "PARTIAL_MATCH":
+        matched = [
+            _axis_label(name, domain)
+            for name, status in case.get("fields", {}).items()
+            if status == "MATCH"
+        ]
+        if matched:
+            parts.insert(0, "답지와 일치하는 부분: " + ", ".join(matched))
+    if result == "SEMANTIC_PENDING":
+        parts.append(
+            "2차 답안은 있으나 답지와 의미가 같은지 확인하지 못해 채점을 완료하지 못했습니다."
+        )
+    return "<br>".join(_cell(part) for part in parts) or "채점한 항목이 모두 답지와 일치합니다."
+
+
+def _field_difference_lines(case: dict[str, Any], domain: str) -> list[str]:
     fields = case.get("fields", {})
-    mismatches = [
-        _AXIS_LABELS.get(name, name) for name, status in fields.items() if status == "MISMATCH"
-    ]
-    pending = [
-        _AXIS_LABELS.get(name, name) for name, status in fields.items() if status == "PENDING"
-    ]
+    keys = {
+        "canonicalPath": "path",
+        "proposedPath": "path",
+        "temporal": "temporalScope",
+        "consolidation": "consolidationStatus",
+    }
+    expected, actual = case.get("expected") or {}, case.get("actual") or {}
     parts = []
-    if mismatches:
-        parts.append("불일치=" + ", ".join(mismatches))
-    if pending:
-        parts.append("미판정=" + ", ".join(pending))
-    upstream = case.get("upstreamOutcome")
-    if upstream and upstream != "REACHED":
-        parts.append(f"upstream={upstream}")
-    if case.get("failureCause"):
-        parts.append(f"원인={case['failureCause']}")
-    if case["result"] == "MISSED":
-        parts.append("Gold에 대응하는 예측 없음")
-    elif case["result"] == "EXTRA":
-        parts.append("예측에 대응하는 Gold 없음")
-    return " · ".join(parts) or "모두 일치"
+    for name, status in fields.items():
+        label = _axis_label(name, domain)
+        if status == "PENDING":
+            parts.append(f"{label}: 답지와 의미가 같은지 확인하지 못했습니다.")
+        elif status == "MISMATCH":
+            key = keys.get(name, name)
+            if key in expected or key in actual:
+                gold_value = expected.get(key)
+                model_value = actual.get(key)
+                if name == "operation":
+                    gold_value = _explained(gold_value, _OPERATION_LABELS)
+                    model_value = _explained(model_value, _OPERATION_LABELS)
+                parts.append(
+                    f"{label} 불일치 — 답지: {gold_value or '표시된 내용 없음'} / "
+                    f"모델: {model_value or '표시된 내용 없음'}"
+                )
+            else:
+                parts.append(f"{label}: 답지와 다릅니다.")
+    return parts
+
+
+def _axis_label(name: str, domain: str) -> str:
+    if name == "subject":
+        return "인물" if domain == "character" else "분류·설정 대상"
+    if name == "path" and domain == "world":
+        return "설정 범위·세부 항목"
+    return _AXIS_LABELS.get(name, name)
+
+
+def _explained(value: Any, labels: dict[str, str]) -> str:
+    text = str(value or "")
+    return f"{text} ({labels[text]})" if text in labels else text
+
+
+def _path_label(value: Any, domain: str) -> str:
+    if not value:
+        return ""
+    if domain != "character":
+        return str(value)
+    parts = str(value).split(" › ")
+    if len(parts) == 1:
+        fact_type = {
+            "profile": "PROFILE",
+            "status": "STATUS",
+            "item": "ITEM",
+            "stats": "STAT",
+            "skill": "SKILL",
+            "level": "LEVEL",
+        }.get(parts[0].split(".")[0])
+        if fact_type:
+            parts.insert(0, fact_type)
+    return " › ".join(_explained(part, _FACT_TYPE_LABELS | _FACT_KEY_LABELS) for part in parts)
+
+
+def _subject_label(value: Any, domain: str) -> str:
+    if not value:
+        return ""
+    parts = str(value).split(" · ")
+    if domain == "world" and len(parts) > 1:
+        parts[0] = _explained(parts[0], _WORLD_CATEGORY_LABELS)
+    elif domain == "character":
+        parts = [_path_label(part, domain) if " › " in part else part for part in parts]
+    text = " · ".join(parts)
+    for suffix in (" (ref에서 canonical 경로 해석)", " (주체, ref에서 해석)"):
+        if text.endswith(suffix):
+            return text.removesuffix(suffix) + " (설정 식별번호로 확인)"
+    return text
 
 
 def _comparison_cell(expected: Any, actual: Any) -> str:
-    return f"{_cell(expected)}<br>→ {_cell(actual)}"
+    return f"답지: {_cell(expected)}<br>모델: {_cell(actual)}"
 
 
 def _result_label(value: str) -> str:
     return {
         "FULL_MATCH": "완전 일치",
         "PARTIAL_MATCH": "부분 일치",
-        "MISSED": "누락 Gold",
-        "EXTRA": "추가 예측",
-        "UPSTREAM_BLOCKED": "upstream 차단",
-        "COMPARATOR_MISSING": "comparator 누락",
-        "SEMANTIC_PENDING": "의미 미판정",
-        "DECISION_MISMATCH": "결정 불일치",
+        "MISSED": "추출하지 못한 설정",
+        "EXTRA": "불필요하게 추출한 설정",
+        "UPSTREAM_BLOCKED": "2차 채점 제외 (필요한 설정이 1차에서 추출되지 않았거나 잘못 추출됨)",
+        "COMPARATOR_MISSING": "2차 답안 없음 (필요한 설정은 1차에서 추출됐지만 2차 처리 결과가 없음)",
+        "SEMANTIC_PENDING": "채점 미완료 (2차 답안은 있으나 답지와 의미가 같은지 확인하지 못함)",
+        "DECISION_MISMATCH": "판단 불일치 (처리 방식이나 반영할 정보 등이 답지와 다름)",
     }.get(value, value)
 
 
@@ -680,19 +1023,6 @@ def _stage1_field_counts(
     return _field_counts(cases, _STAGE1_FIELD_ORDER)
 
 
-def _stage2_field_counts(
-    diagnostics: list[dict[str, Any]],
-    domain: str,
-) -> dict[str, Counter[str]]:
-    cases = [
-        case
-        for scenario in diagnostics
-        for case in scenario.get("stage2", [])
-        if case.get("domain") == domain.upper()
-    ]
-    return _field_counts(cases, _STAGE2_FIELD_ORDER)
-
-
 def _field_counts(
     cases: list[dict[str, Any]],
     field_order: tuple[str, ...],
@@ -705,18 +1035,6 @@ def _field_counts(
         )
         for name in field_order
     }
-
-
-def _stage2_path_axis(domain: str) -> str:
-    return "canonicalPath" if domain == "character" else "proposedPath"
-
-
-def _stage2_rule_axis(domain: str) -> str:
-    return "temporal" if domain == "character" else "consolidation"
-
-
-def _stage2_removal_axis(domain: str) -> str:
-    return "removedSet" if domain == "character" else "rootMoveSet"
 
 
 def _sanitize_cases(
