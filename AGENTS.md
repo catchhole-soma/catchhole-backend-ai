@@ -73,6 +73,7 @@
 
 ## LLM Runtime
 
+- 다단계 평가에서 전체 모델을 통일할 때는 추출·주체 해소·비교 모델과 함께 의미 채점 모델 `judge_model`도 지정한다. workflow는 이를 `--judge-model`로 전달하며 생략 시 기본값은 `gpt-5.6-luna`다.
 - OpenAI Responses API 요청은 웹소설 원문과 분석 결과가 provider 측에 저장되지 않도록 항상 `store=false`를 명시한다. 호출 목적이나 모델에 따라 이 값을 생략하거나 활성화하지 않는다.
 - 캐릭터 Fact·세계관 후보의 1차 추출은 `LLM_EXTRACTION_MODEL`, 캐릭터·세계관 주체 해소는 `LLM_SUBJECT_RESOLUTION_MODEL`, 후보와 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 운영 기본 라우팅은 추출 `gpt-5.6-terra`, 주체 해소·비교 `gpt-5.6-luna`이며 개별 값이 없으면 기존 `LLM_MODEL`을 fallback으로 사용한다.
 - 캐릭터·세계관 2차 비교·재비교 prompt에는 Backend가 반환한 1차 `evidenceSpans`를 읽기 전용 문맥으로 전달한다. 2차 LLM이 quote·offset을 다시 생성하거나 비교 완료 payload로 반환하지 않으며, 원고가 바뀐 경우에만 새 1차 분석 후보와 근거를 만든다.

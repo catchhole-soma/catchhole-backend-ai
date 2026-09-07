@@ -46,6 +46,11 @@ on:
         required: true
         default: true
         type: boolean
+      judge_model:
+        description: "최종 문장 의미 채점 모델(semantic_judge 활성화 시 사용)"
+        required: false
+        default: gpt-5.6-luna
+        type: string
       confirm_run:
         description: "OpenAI 비용 발생 확인을 위해 RUN 입력"
         required: true
@@ -74,6 +79,7 @@ jobs:
       SUBJECT_RESOLUTION_MODEL: ${{ inputs.subject_resolution_model }}
       COMPARISON_MODEL: ${{ inputs.comparison_model }}
       SEMANTIC_JUDGE_ENABLED: ${{ inputs.semantic_judge }}
+      JUDGE_MODEL: ${{ inputs.judge_model || 'gpt-5.6-luna' }}
       CONFIRM_RUN: ${{ inputs.confirm_run }}
 
     steps:
@@ -269,7 +275,7 @@ jobs:
             evaluate_args+=(--state-root build/eval/multi-stage/input/states)
           fi
           if [ "$SEMANTIC_JUDGE_ENABLED" = "true" ]; then
-            evaluate_args+=(--semantic-judge openai)
+            evaluate_args+=(--semantic-judge openai --judge-model "$JUDGE_MODEL")
           fi
           python -m evals.multi_stage_setting.cli "${evaluate_args[@]}"
 
