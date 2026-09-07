@@ -78,6 +78,7 @@
 - 캐릭터·세계관 2차 비교·재비교 prompt에는 Backend가 반환한 1차 `evidenceSpans`를 읽기 전용 문맥으로 전달한다. 2차 LLM이 quote·offset을 다시 생성하거나 비교 완료 payload로 반환하지 않으며, 원고가 바뀐 경우에만 새 1차 분석 후보와 근거를 만든다.
 - 세계관 후보는 Spring 게시 전에 정규화한 `category + subject_name + scope_name + setting_name`별로 하나로 통합한다. `scope_name`은 세계관에만 있는 선택적 1단계 범위이며 빈 값은 루트 property를 뜻한다. 같은 설정명이라도 범위가 다르면 통합하지 않고, 2차 비교도 반드시 범위+설정명 전체 경로를 정확히 매칭한다. 2차 비교는 추출값 하나면 `SINGLE`, 여러 값이 양립하면 `MERGED`, 동시에 참일 수 없으면 `CONFLICT`로 판정한다. `MERGED`만 자연스러운 최종 문자열 하나로 정리하고 `CONFLICT`는 모든 추출값을 그대로 보존해 사용자 판단으로 넘긴다. 각 1차 후보의 quote·offset과 raw payload는 어느 상태에서도 수정하지 않는다.
 - 종족의 서술형 전투 특징은 `RACE / 종족명 / 전투 특성 / 마법 재능·신체 능력·전투 강점`으로 구분한다. 체력·힘·신체 능력에 따른 장비 착용 설명은 `신체 능력`을 보충하되, 독립된 수치 능력치·판정 규칙은 합치지 않는다. 원문에 있는 하위 속성만 추출하며 기존 경로·raw scope 검증을 우회하지 않는다.
+- `POWER_SYSTEM`은 마법·스킬·능력 자체의 조건·자원·효과·제약을 설명할 때만 사용한다. 특정 능력과 무관한 세계·게임 공통 사망·전투·진행 규칙은 `WORLD_RULE_HISTORY`, 종족의 선천적 적성은 `RACE`로 유지한다. 분류 경계 조정만으로 enum·주체 식별·채점 기준이나 답지를 변경하지 않는다.
 - 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra·Luna의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
 - GPT-5.6 모델의 토큰 예약량은 `o200k_base` tokenizer로 계산한다. 사용하는 tiktoken 버전이 모델 별칭을 모를 수 있으므로 모델명 자동 탐지 실패를 byte 상한으로 방치하지 않는다.
 - Responses API는 HTTP 200만으로 성공을 판정하지 않고 `status=completed`를 요구한다. `status=incomplete`와 `incomplete_details.reason=max_tokens|max_output_tokens`, 또는 JSON 파싱 실패와 `outputTokens == maxOutputTokens`가 함께 나타나면 `LLM_OUTPUT_TRUNCATED`로 분류한다.
