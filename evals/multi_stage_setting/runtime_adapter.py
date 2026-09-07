@@ -40,7 +40,10 @@ from app.analysis.world_setting_comparator import (
     WorldSettingComparator,
     WorldSettingSubjectResolver,
 )
-from app.analysis.world_setting_extractor import WorldSettingExtractor
+from app.analysis.world_setting_extractor import (
+    WORLD_SETTING_EXTRACTION_CACHE_KEY,
+    WorldSettingExtractor,
+)
 from app.chunking.chunk_splitter import EpisodeChunkDraft, split_into_chunks
 from app.domain.enums import (
     CharacterFactComparisonOperation,
@@ -422,7 +425,7 @@ async def run_multi_stage_predictions(
             "characterExtraction": SETTING_EXTRACTION_CACHE_KEY_VERSION,
             "characterSubjectResolution": "subject-resolution:v1",
             "characterComparison": CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY,
-            "worldExtraction": "world-setting-extraction:v2",
+            "worldExtraction": WORLD_SETTING_EXTRACTION_CACHE_KEY,
             "worldSubjectResolution": "world-setting-subject-resolution:v1",
             "worldComparison": WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
         },
