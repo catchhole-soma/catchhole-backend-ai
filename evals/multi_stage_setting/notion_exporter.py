@@ -78,6 +78,7 @@ STAGE1_PROPERTY_SCHEMA = {
     "worldSubject": "rich_text",
     "worldScope": "rich_text",
     "worldSettingName": "rich_text",
+    "허용 worldSettingName 별칭": "rich_text",
     "정답 표시값": "rich_text",
     "정답 valueJson": "rich_text",
     "원문 근거": "rich_text",
@@ -557,12 +558,10 @@ def _parse_stage1(
             subject_name=_required_text(properties, "worldSubject", row_id),
             scope_name=_read_text(properties, "worldScope") or None,
             setting_name=_required_text(properties, "worldSettingName", row_id),
-            # 같은 원본 DB를 쓰므로 CHARACTER 행에서는 factKey 별칭,
-            # WORLD 행에서는 worldSettingName 별칭으로 해석한다.
             accepted_setting_name_aliases=_parse_json_or_line_string_array(
-                _read_text(properties, "허용 factKey 별칭"),
+                _read_text(properties, "허용 worldSettingName 별칭"),
                 row_id,
-                "허용 factKey 별칭",
+                "허용 worldSettingName 별칭",
             ),
             source_values=_split_lines(display_value or ""),
         )

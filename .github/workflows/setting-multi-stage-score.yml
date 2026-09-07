@@ -172,6 +172,9 @@ jobs:
       - name: Configure AWS credentials with access keys
         id: aws-static
         if: steps.private-input.outputs.required == 'true' && steps.aws-auth.outputs.mode == 'STATIC'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.DEPLOY_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DEPLOY_AWS_SECRET_ACCESS_KEY }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.DEPLOY_AWS_ACCESS_KEY_ID }}
@@ -270,7 +273,7 @@ jobs:
           fi
           python -m evals.multi_stage_setting.cli "${evaluate_args[@]}"
 
-      - name: Publish source-free score summary
+      - name: Publish sanitized evaluation summary
         run: |
           python -m evals.multi_stage_setting.report_cli \
             --report build/eval/multi-stage/private/report.json \
@@ -278,7 +281,7 @@ jobs:
             --markdown-output build/eval/multi-stage/public/summary.md
           cat build/eval/multi-stage/public/summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload source-free evaluation report
+      - name: Upload sanitized evaluation artifacts
         uses: actions/upload-artifact@v4
         with:
           name: setting-multi-stage-report-${{ github.run_id }}

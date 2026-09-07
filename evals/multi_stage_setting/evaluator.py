@@ -38,10 +38,12 @@ from evals.multi_stage_setting.contracts import (
     WorldStage2Gold,
     WorldStage2Prediction,
     character_state_ref,
+    world_entry_subject_ref,
     world_subject_ref,
 )
 from evals.multi_stage_setting.matching import (
     FieldMatchStatus,
+    Stage1Match,
     Stage1MatchingResult,
     match_stage1,
 )
@@ -308,6 +310,7 @@ async def evaluate_multi_stage(
             predicted_chain,
             state_application_errors,
             selected_ids,
+            semantic_decisions,
         ),
     }
 
@@ -1701,8 +1704,10 @@ def _scenario_details(
     predicted_chain: dict[str, ScenarioStateTransition],
     state_errors: list[dict[str, str]],
     selected_ids: set[str],
+    semantic_decisions: dict[str, Any],
 ) -> list[dict[str, Any]]:
     details = []
+    stage1_gold_by_id = {item.gold_id: item for item in gold.stage1}
     for scenario in gold.scenarios:
         if scenario.scenario_id not in selected_ids:
             continue
@@ -1729,6 +1734,7 @@ def _scenario_details(
                         for group_ids in result.missed_source_gold_ids
                         for gold_id in group_ids
                     },
+                    "cases": _stage1_diagnostic_cases(result, semantic_decisions),
                 }
         cases = [case for case in stage2_cases if case.scenario_id == scenario.scenario_id]
         details.append(
@@ -1751,6 +1757,12 @@ def _scenario_details(
                         "existingRootPropertyMoveSetMatched": (case.root_property_moves_matched),
                         "valueMatched": case.value_matched,
                         "fullDecisionMatched": case.full_decision_matched,
+                        **_stage2_diagnostic_fields(
+                            case,
+                            stage1_gold_by_id,
+                            gold_chain[scenario.scenario_id].before_state,
+                            predicted_chain[scenario.scenario_id].before_state,
+                        ),
                     }
                     for case in cases
                 ],
@@ -1767,6 +1779,338 @@ def _scenario_details(
             }
         )
     return details
+
+
+def _stage1_diagnostic_cases(
+    result: Stage1MatchingResult,
+    semantic_decisions: dict[str, Any],
+) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    for match in result.matches:
+        value_status = _resolved_stage1_value_status(match, semantic_decisions)
+        full_match = match.identity_matched and value_status in {
+            FieldMatchStatus.MATCH.value,
+            FieldMatchStatus.NOT_APPLICABLE.value,
+        }
+        upstream_outcome = match.upstream_outcome
+        if (
+            match.value_status == FieldMatchStatus.SEMANTIC_JUDGE_REQUIRED
+            and value_status == FieldMatchStatus.MISMATCH.value
+        ):
+            upstream_outcome = UpstreamOutcome.UPSTREAM_VALUE_ERROR
+        cases.append(
+            {
+                "result": "FULL_MATCH" if full_match else "PARTIAL_MATCH",
+                "sortOrder": match.gold.sort_order,
+                "goldIds": list(match.source_gold_ids),
+                "predictionId": match.prediction.candidate_id,
+                "expected": _stage1_diagnostic_summary(match.gold),
+                "actual": _stage1_diagnostic_summary(match.prediction),
+                "fields": {
+                    "subject": _boolean_match_status(match.entity_or_subject_matched),
+                    "path": _boolean_match_status(match.path_or_fact_matched),
+                    "value": value_status,
+                },
+                "upstreamOutcome": upstream_outcome.value,
+            }
+        )
+    for missed, source_gold_ids in zip(
+        result.missed_gold,
+        result.missed_source_gold_ids,
+        strict=True,
+    ):
+        cases.append(
+            {
+                "result": "MISSED",
+                "sortOrder": missed.sort_order,
+                "goldIds": list(source_gold_ids),
+                "predictionId": None,
+                "expected": _stage1_diagnostic_summary(missed),
+                "actual": None,
+                "fields": {
+                    "subject": "MISSING",
+                    "path": "MISSING",
+                    "value": "MISSING",
+                },
+                "upstreamOutcome": UpstreamOutcome.UPSTREAM_MISSING.value,
+            }
+        )
+    for index, prediction in enumerate(result.extra_predictions):
+        cases.append(
+            {
+                "result": "EXTRA",
+                "sortOrder": prediction.sort_order,
+                "goldIds": [],
+                "predictionId": prediction.candidate_id,
+                "expected": None,
+                "actual": _stage1_diagnostic_summary(prediction),
+                "fields": {
+                    "subject": "UNMATCHED",
+                    "path": "UNMATCHED",
+                    "value": "UNMATCHED",
+                },
+                "upstreamOutcome": UpstreamOutcome.UPSTREAM_EXTRA.value,
+                "extraOrder": index,
+            }
+        )
+    return sorted(
+        cases,
+        key=lambda item: (
+            item["sortOrder"],
+            item.get("extraOrder", -1),
+            item["result"],
+            item["predictionId"] or "",
+        ),
+    )
+
+
+def _resolved_stage1_value_status(
+    match: Stage1Match,
+    semantic_decisions: dict[str, Any],
+) -> str:
+    if match.value_status != FieldMatchStatus.SEMANTIC_JUDGE_REQUIRED:
+        return match.value_status.value
+    case_id = f"stage1:{match.gold.scenario_id}:{match.gold.gold_id}"
+    decision = semantic_decisions.get(case_id)
+    if decision is None:
+        return "PENDING"
+    return FieldMatchStatus.MATCH.value if decision.matched else FieldMatchStatus.MISMATCH.value
+
+
+def _stage1_diagnostic_summary(item: Stage1Gold | Stage1Prediction) -> dict[str, str | None]:
+    if isinstance(item, (CharacterStage1Gold, CharacterStage1Prediction)):
+        subject = (
+            item.matched_character_name or item.entity_name
+            if isinstance(item, CharacterStage1Prediction)
+            else item.entity_name
+        )
+        if item.candidate_kind == CandidateKind.CHARACTER_DISCOVERY:
+            path = CandidateKind.CHARACTER_DISCOVERY.value
+        else:
+            fact_type = item.fact_type.value if item.fact_type is not None else "-"
+            path = f"{fact_type} › {item.fact_key or '-'}"
+        return {
+            "subject": subject,
+            "path": path,
+            "value": item.display_value,
+        }
+    return {
+        "subject": f"{item.category.value} · {item.subject_name}",
+        "path": _world_diagnostic_path(item.scope_name, item.setting_name),
+        "value": item.display_value,
+    }
+
+
+def _stage2_diagnostic_fields(
+    case: Stage2Case,
+    stage1_gold_by_id: dict[str, Stage1Gold],
+    expected_before_state: EvaluationState,
+    actual_before_state: EvaluationState,
+) -> dict[str, Any]:
+    prediction = case.prediction
+    if case.upstream_outcome != UpstreamOutcome.REACHED:
+        result = "UPSTREAM_BLOCKED"
+    elif prediction is None:
+        result = "COMPARATOR_MISSING"
+    elif case.full_decision_matched is None:
+        result = "SEMANTIC_PENDING"
+    elif case.full_decision_matched:
+        result = "FULL_MATCH"
+    else:
+        result = "DECISION_MISMATCH"
+
+    source = stage1_gold_by_id.get(case.gold.source_gold_ids[0])
+    expected: dict[str, Any] = {
+        "operation": case.gold.operation.value,
+        "target": _stage2_target_label(case.gold.target_ref, expected_before_state),
+        "path": _stage2_gold_path(case.gold, source),
+        "value": case.gold.proposed_value,
+    }
+    if isinstance(case.gold, CharacterStage2Gold):
+        expected["temporalScope"] = case.gold.temporal_scope.value
+        expected["removedCount"] = len(case.gold.removed_snapshot_refs)
+        expected["removedPaths"] = _character_removal_paths(
+            case.gold.removed_snapshot_refs,
+            expected_before_state,
+        )
+    elif isinstance(case.gold, WorldStage2Gold):
+        expected["consolidationStatus"] = case.gold.consolidation_status.value
+        expected["rootMoveCount"] = len(case.gold.existing_root_property_names_to_move)
+        expected["rootMoveNames"] = sorted(
+            case.gold.existing_root_property_names_to_move,
+            key=normalize_world_setting_name,
+        )
+    actual: dict[str, Any] | None = None
+    fields: dict[str, str] = {}
+    if prediction is None and case.upstream_outcome == UpstreamOutcome.REACHED:
+        fields["operation"] = FieldMatchStatus.MISMATCH.value
+    elif prediction is not None:
+        actual = {
+            "operation": prediction.operation.value,
+            "target": _stage2_target_label(prediction.target_ref, actual_before_state),
+            "path": _stage2_prediction_path(prediction),
+            "value": prediction.proposed_value,
+        }
+        fields = {
+            "operation": _boolean_match_status(case.operation_matched),
+            "target": _boolean_match_status(case.target_matched),
+            "value": _boolean_match_status(case.value_matched, none_status="PENDING"),
+        }
+        if isinstance(case.gold, CharacterStage2Gold):
+            assert isinstance(prediction, CharacterStage2Prediction)
+            actual["temporalScope"] = prediction.temporal_scope.value
+            actual["removedCount"] = len(prediction.removed_snapshot_refs)
+            actual["removedPaths"] = _character_removal_paths(
+                prediction.removed_snapshot_refs,
+                actual_before_state,
+            )
+            fields["canonicalPath"] = _boolean_match_status(case.canonical_fact_key_matched)
+            fields["temporal"] = _boolean_match_status(case.temporal_matched)
+            if case.removed_matched is not None:
+                fields["removedSet"] = _boolean_match_status(case.removed_matched)
+            if case.structured_value_matched is not None:
+                fields["structuredValue"] = _boolean_match_status(case.structured_value_matched)
+        elif isinstance(case.gold, WorldStage2Gold):
+            assert isinstance(prediction, WorldStage2Prediction)
+            actual["consolidationStatus"] = prediction.consolidation_status.value
+            actual["rootMoveCount"] = len(prediction.existing_root_property_names_to_move)
+            actual["rootMoveNames"] = sorted(
+                prediction.existing_root_property_names_to_move,
+                key=normalize_world_setting_name,
+            )
+            fields["consolidation"] = _boolean_match_status(case.consolidation_matched)
+            fields["proposedPath"] = _boolean_match_status(case.proposed_path_matched)
+            if case.root_property_moves_matched is not None:
+                fields["rootMoveSet"] = _boolean_match_status(case.root_property_moves_matched)
+
+    return {
+        "result": result,
+        "sourceGoldIds": list(case.gold.source_gold_ids),
+        "sourceCandidateId": prediction.source_candidate_id if prediction else None,
+        "expected": expected,
+        "actual": actual,
+        "fields": fields,
+    }
+
+
+def _character_removal_paths(
+    refs: list[str],
+    state: EvaluationState,
+) -> list[str]:
+    entries = {item.ref: item for item in state.character_facts}
+    paths = []
+    unresolved = 0
+    for ref in refs:
+        entry = entries.get(ref)
+        if entry is None:
+            fallback_path = _character_path_from_state_ref(ref)
+            if fallback_path is None:
+                unresolved += 1
+            else:
+                paths.append(fallback_path)
+            continue
+        paths.append(f"{entry.entity_name} · {entry.fact_type.value} › {entry.fact_key}")
+    if unresolved:
+        paths.append(f"현재 상태에서 식별되지 않은 대상 {unresolved}건")
+    return sorted(paths, key=normalize_text)
+
+
+def _character_path_from_state_ref(ref: str) -> str | None:
+    parts = ref.split(":", 4)
+    if len(parts) != 5 or parts[:2] != ["gold", "character"]:
+        return None
+    fact_type = _decode_state_ref_segment(parts[3])
+    fact_key = _decode_state_ref_segment(parts[4])
+    if not fact_type or not fact_key:
+        return None
+    return f"{fact_type} › {fact_key} (ref에서 canonical 경로 해석)"
+
+
+def _decode_state_ref_segment(value: str) -> str:
+    return value.replace("%3A", ":").replace("%25", "%")
+
+
+def _stage2_target_label(ref: str | None, state: EvaluationState) -> str | None:
+    if ref is None:
+        return None
+    character = next((item for item in state.character_facts if item.ref == ref), None)
+    if character is not None:
+        return f"{character.entity_name} · {character.fact_type.value} › {character.fact_key}"
+    world_property = next((item for item in state.world_facts if item.ref == ref), None)
+    if world_property is not None:
+        return (
+            f"{world_property.category.value} · {world_property.subject_name} · "
+            f"{_world_diagnostic_path(world_property.scope_name, world_property.setting_name)}"
+        )
+    world_subject = next(
+        (item for item in state.world_facts if world_entry_subject_ref(item) == ref),
+        None,
+    )
+    if world_subject is not None:
+        return f"{world_subject.category.value} · {world_subject.subject_name} (주체)"
+    return _state_target_label_from_ref(ref) or "현재 상태에서 식별되지 않은 대상"
+
+
+def _state_target_label_from_ref(ref: str) -> str | None:
+    character_path = _character_path_from_state_ref(ref)
+    if character_path is not None:
+        return character_path
+    parts = ref.split(":")
+    if parts[:2] == ["gold", "world-subject"] and len(parts) == 4:
+        return (
+            f"{_decode_state_ref_segment(parts[2])} · "
+            f"{_decode_state_ref_segment(parts[3])} (주체, ref에서 해석)"
+        )
+    if parts[:2] == ["gold", "world-subject-ref"] and len(parts) == 3:
+        return "WORLD 주체 (ref에서 해석)"
+    if parts[:2] not in (["gold", "world"], ["gold", "world-by-subject-ref"]):
+        return None
+    if len(parts) not in {5, 6}:
+        return None
+    category = _decode_state_ref_segment(parts[2])
+    subject = (
+        _decode_state_ref_segment(parts[3])
+        if parts[1] == "world"
+        else "canonical 주체"
+    )
+    path_parts = parts[4:] if len(parts) == 6 else parts[-1:]
+    path = " › ".join(_decode_state_ref_segment(item) for item in path_parts)
+    return f"{category} · {subject} · {path} (ref에서 해석)"
+
+
+def _stage2_gold_path(
+    decision: Stage2Gold,
+    source: Stage1Gold | None,
+) -> str | None:
+    if isinstance(decision, CharacterStage2Gold):
+        return source.fact_key if isinstance(source, CharacterStage1Gold) else None
+    return _world_diagnostic_path(
+        decision.proposed_scope_name,
+        decision.proposed_setting_name,
+    )
+
+
+def _stage2_prediction_path(decision: Stage2Prediction) -> str:
+    if isinstance(decision, CharacterStage2Prediction):
+        return decision.resolved_canonical_fact_key
+    return _world_diagnostic_path(
+        decision.proposed_scope_name,
+        decision.proposed_setting_name,
+    )
+
+
+def _world_diagnostic_path(scope_name: str | None, setting_name: str) -> str:
+    return f"{scope_name} › {setting_name}" if scope_name else setting_name
+
+
+def _boolean_match_status(
+    value: bool | None,
+    *,
+    none_status: str = "NOT_APPLICABLE",
+) -> str:
+    if value is None:
+        return none_status
+    return FieldMatchStatus.MATCH.value if value else FieldMatchStatus.MISMATCH.value
 
 
 def _combined_upstream_outcome(outcomes: list[UpstreamOutcome]) -> UpstreamOutcome:
