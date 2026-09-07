@@ -86,6 +86,10 @@ snapshot에 같이 포함됩니다. 실제 평가 대상은 `evaluationScenarioI
 
 ### 1차 설정 추출 Gold
 
+세계관 설정명 평가 정책은 이슈 [#62](https://github.com/catchhole-soma/catchhole-backend-ai/issues/62)에
+배경과 범위를 기록하며, 결과 JSON의 `run.worldSettingNamePolicy`는
+`aliases-then-contextual/v1`로 구분합니다.
+
 1차 Gold는 **원문에서 발견해야 하는 후보**를 기록합니다. `1차 판정`은 `EXTRACT`,
 `DO_NOT_EXTRACT`, `REVIEW_REQUIRED`이고, 캐릭터와 세계관 모두 동일한 후보 검출 원칙으로
 평가합니다.
@@ -99,9 +103,9 @@ snapshot에 같이 포함됩니다. 실제 평가 대상은 `evaluationScenarioI
 - 세계관은 `category + normalized subject + scope + setting`을 경로로 사용하고, 같은 경로의
   원문 값은 `sourceValues`로 묶습니다.
 - 공용 `허용 factKey 별칭` 컬럼은 세계관 행에서는 `worldSettingName`의 사람이 검수한 별칭으로
-  해석합니다. 1차 매칭은 이 별칭을 canonical setting과 같은 사실로 인정하지만 Gold와 누적
-  상태의 경로는 항상 canonical `worldSettingName`으로 유지합니다. 2차의 proposed path는
-  canonical 이름을 반환하는 책임을 별도로 평가합니다.
+  해석합니다. 1차 매칭과 2차 출력 설정명 채점은 정규화한 이름·허용 별칭을 먼저 비교하고,
+  일치하지 않으면 같은 category·주체·scope 안에서 문맥상 같은 속성인지 판정합니다.
+  Gold의 canonical 이름은 유지하며, 이 평가 때문에 모델의 원시 출력 이름을 고쳐 쓰지 않습니다.
 - `valueJson`은 표시값과 별도 품질 지표입니다. `STRING`, 엄격한 `NUMBER`, 엄격한 `BOOLEAN`은
   exporter가 단순 scalar JSON을 만들 수 있지만, `JSON`과 `UNKNOWN` 구조는 추측하지 않습니다.
 
@@ -273,6 +277,54 @@ transition recall에서 오답으로 반영됩니다. 이 구조로 “추출기
 `UPSTREAM_BLOCKED_SUBJECT`로 분리하고, 실패 원인은 `EXTRACTION_MISS`, `RETRIEVAL_MISS`,
 `COMPARISON_ERROR`, `STATE_APPLICATION_ERROR`, `UPSTREAM_FALSE_POSITIVE`로 집계합니다.
 
+### 세계관 설정명 판정
+
+세계관의 `worldSettingName`은 같은 속성을 다른 말로 표현할 수 있으므로 다음 순서로 비교합니다.
+
+1. 정규화한 canonical 이름이 같으면 `EXACT`, Gold에 등록된 허용 별칭이면 `ALIAS`로 인정합니다.
+2. 둘 다 아니면 category·주체·scope가 같은 후보 쌍에만 문맥 LLM 판정을 적용합니다. 이름 두 개,
+   추출값, 기존값, 근거, 필수·금지 사실을 사용해 같은 속성을 가리키는지 확인합니다. 다른
+   category·주체·scope를 의미 판정으로 합치지 않습니다.
+3. 문맥이 같은 속성임을 뒷받침하면 `SEMANTIC`으로 인정합니다. 관련은 있지만 서로 다른
+   속성이거나, 문맥으로 동일성을 확인할 수 없으면 같은 속성이라고 추정하지 않습니다.
+
+1차에서는 Gold와 예측의 일대일 연결을 확정하기 **전에** 위 판정을 적용합니다. 이름이 다르다는
+이유로 올바른 후보 쌍을 먼저 누락 처리하지 않기 위함입니다. 2차의 proposed 설정명도 같은
+기준을 사용하되, 대상·scope·operation 등 나머지 결정 조건은 각각 검증합니다. 1차 이름을
+인정했다는 이유로 2차가 새로 출력한 다른 이름까지 자동 인정하지 않습니다.
+
+세계관 `UPDATE/MERGE` 예측은 `matchedScopeName/matchedPropertyName`과
+`proposedScopeName/proposedSettingName`의 정규화한 경로가 같아야 합니다. 이 경로 보존은
+이름의 의미 일치와 별도로 검사합니다. 서로 다른 이름을 같은 속성으로 판정했더라도 모델의
+원시 출력이 기존 경로를 바꾸는 계약 위반이면 해당 2차 결정을 정답으로 인정하지 않습니다.
+
+설정명 동일성과 설정값 정답 여부는 독립입니다. 같은 속성에 서로 반대인 값이 붙었으면 이름은
+맞아도 값은 틀립니다. 값이 같거나 비슷하다는 이유만으로 다른 속성을 같은 이름으로 인정하지
+않습니다. 의미 judge의 `sameSetting`은 이름을, 기존 의미 보존 필드는 값을 판정합니다.
+
+judge를 사용하지 않거나 이름 판정 결과가 없으면 `UNRESOLVED`이며, 이름 일치를 인정하거나
+후보 TP로 계산하지 않습니다. 공개 진단에는 설정명의 의미를 확인하지 못했다고 표시합니다.
+judge 응답 계약이 잘못되면 평가 오류로 거절하며 일치로 보정하지 않습니다. 값 의미 판정의
+`pending` 및 관련 지표 정책은 별도로 유지합니다.
+
+이 판정은 평가에만 적용합니다. 제품 추출·비교 프롬프트, 원시 prediction, reference reducer의
+상태, before/after state와 fixture hash를 바꾸지 않습니다. 이름 대응을 누적 상태·전이 채점에
+사용하더라도 평가용 대응으로만 처리하며, 원시 상태 해시가 다르다는 사실과 실제 상태 적용
+오류는 그대로 보존합니다.
+
+`ROLLING`에서 일부 회차만 채점하면 그 회차의 누적 상태를 만든 이전 회차의 이름 판정도
+필요할 수 있습니다. 평가 대상이 아닌 의존 회차의 세계관 이름을 추가로 판정해 상속된
+설정명의 대응을 확인하므로 judge 호출과 비용이 발생할 수 있습니다. 이 사용량은
+`semanticJudgeUsage`에 포함하지만 의존 회차의 1차·2차 항목은 점수의 분자·분모에 추가하지
+않습니다. 의존 회차의 판정은 선택 회차의 누적 상태 채점에 사용할 이름 대응만 제공합니다.
+
+의미 judge 요청은 `multi-stage-setting-eval:semantic-outcome:v3` 캐시 키를 사용합니다. v3는
+`settingContext`와 이름·값의 독립 판정을 포함하므로, 이전 v2 응답을 이름 판정 결과로
+재사용하지 않습니다. 같은 이름 쌍이라도 category·주체·scope·값·근거가 바뀌면 다른 판정
+문맥입니다. 캐시 키가 같다는 이유로 이전 정오 판정을 재사용하지 않으며, 실제 요청 문맥을
+보내 판정합니다. 이 버전은 평가 judge의 프롬프트 버전이고 `setting-eval/v3` 데이터 계약이나
+제품 프롬프트의 버전을 바꾸지 않습니다.
+
 ## 주요 지표 읽는 법
 
 - 1차: 도메인별 후보 Precision/Recall/F1, identity/path/value/valueJson/evidence, raw→handoff 수
@@ -309,6 +361,25 @@ transition recall에서 오답으로 반영됩니다. 이 구조로 “추출기
 2차 채점에서 제외된 항목에 결과가 없으면 '이 답지 항목과 연결된 2차 결과 없음'으로
 표시하며, 2차 호출 자체가 없었다고 해석하지 않습니다. 판정 이유는 내부 upstream 코드 대신
 답지와 다른 부분을 설명하고, 1차 문제로 2차에서 제외되면 연결된 1차 진단의 차이도 표시합니다.
+
+세계관 진단의 선택 필드 `settingNameMatch`는 제안 설정명, 2차의 `matchedPropertyNameMatch`는
+비교한 기존 속성명의 `status`와 `method`를 기록합니다. 두 이름을 별도로 판정하며,
+공개 보고서는 `status=MATCH/MISMATCH/PENDING`, `method=EXACT/ALIAS/SEMANTIC/UNRESOLVED`만
+허용하고 다음 고정 문구로 설명합니다. 완전 일치 항목과 1차 문제로 제외된 2차의 원인에도
+같은 설명을 사용합니다.
+
+| 이름 판정 | 공개 설명 |
+| --- | --- |
+| 허용 별칭으로 일치 | 정답지에 등록된 별칭으로 같은 설정 항목임을 인정했습니다. |
+| 문맥 판정으로 일치 | 이름은 다르지만 문맥상 같은 설정 항목으로 판단했습니다. |
+| 문맥 판정으로 불일치 | 문맥상 다른 설정 항목으로 판단했습니다. |
+| 판정 미완료 | 설정명의 의미를 확인하지 못했습니다. |
+
+`EXACT`는 별도 설명을 생략할 수 있습니다. 모델이 만든 자유 형식 `reason`·`settingReason`은
+원문을 인용할 수 있으므로 공개 allowlist에 넣지 않습니다. quote, raw 응답과 함께 공개
+산출물에서 제외하며, 공개 화면은 답지·모델의 허용된 이름과 고정 설명만 표시합니다. 표시 문자열은
+HTML·Markdown을 이스케이프하고 기존 길이 제한을 적용합니다. 집계 전용 `score.json`에는
+개별 이름 판정이나 설명을 추가하지 않습니다.
 
 1차 집계에서는 예측을 '모델이 추출한 설정', 연결을 '비교한 설정 쌍', TP를
 '대상·설정 항목 일치'로 표시합니다. P·R·F1과 가중 Recall에는 뜻을 괄호로 설명하고,
