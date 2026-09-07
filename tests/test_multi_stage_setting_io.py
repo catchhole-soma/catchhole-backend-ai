@@ -381,8 +381,27 @@ def test_public_report_allowlists_diagnostics_and_keeps_score_json_aggregate_onl
     ]
     assert "허용된 값" in markdown
     assert "가중 Recall" in markdown
-    assert "Gold 3 · 예측 3 · 연결 2 · TP 1 · 누락 1 · 과추출 1" in markdown
-    assert "결정 불일치" in markdown
+    assert (
+        "정답지의 설정 3 · 모델이 추출한 설정 3 · 비교한 설정 쌍 2 · 대상·설정 항목 일치 1 · "
+        "추출하지 못한 설정 1 · 불필요하게 추출한 설정 1"
+    ) in markdown
+    assert "| 추출하지 못한 설정 | C3 |" in markdown
+    assert "| 불필요하게 추출한 설정 | - | P3 |" in markdown
+    assert "P (모델이 추출한 설정 중 맞힌 비율)" in markdown
+    assert "R (추출해야 할 전체 설정 중 맞힌 비율)" in markdown
+    assert "설정 내용 일치율 (기록한 내용이 맞는가)" in markdown
+    assert "인용문 원문 확인율 (인용한 문장이 원문에 있는가)" in markdown
+    assert "Full accuracy (채점에 포함된 항목 중 판단 전체가 맞은 비율)" in markdown
+    assert "| ↳ 오답 중 2차 결과가 없는 경우 | 0개 | 미평가 |" in markdown
+    assert "판단 불일치 (처리 방식이나 반영할 정보 등이 답지와 다름)" in markdown
+    assert "답지: 비요른<br>모델: 비요른" in markdown
+    assert "PROFILE (기본 정보) › profile.species (종족)" in markdown
+    assert "처리 방식: REMOVE (기존 상태 종료)" in markdown
+    assert "종료할 상태: 비요른 · STATUS (상태) › status.마비독" in markdown
+    assert "2차 답지: D1<br>1차 답지: C1<br>모델 추출: P1" in markdown
+    assert "이 답지 항목에 대응하는 모델 추출 결과를 찾지 못했습니다." in markdown
+    assert "누락 Gold" not in markdown
+    assert "upstream=" not in markdown
     assert "<summary>완전 일치 1건 보기</summary>" in markdown
     assert "SECRET_" not in markdown
     assert "<script>" not in markdown
@@ -393,7 +412,59 @@ def test_public_report_allowlists_diagnostics_and_keeps_score_json_aggregate_onl
     assert "&#33;&#91;leak&#93;" in markdown
     assert "총 `2`건" in markdown
     assert "CHARACTER_STAGE1" in markdown
+    assert "CHARACTER_STAGE1 (캐릭터 설정의 1차 추출 단계)" in markdown
+    assert "실행 중 기록된 오류 (개별 설정 처리 중 발생한 오류)" in markdown
+    assert "복구 성공 여부를 나타내는 수치는 아닙니다" in markdown
+    assert "CHARACTER after-state (회차 처리 후 캐릭터 데이터)" in markdown
+    assert "전체 after-state (캐릭터·세계관 F1의 평균)" in markdown
+    assert "COMPARISON_ERROR (2차 판단이 틀렸거나 결과가 없음)" in markdown
+    assert "coverage (전체 비교 항목 중 정오 판정이 끝난 비율)" in markdown
     assert "SECRET_RUNTIME_FAILURE" not in markdown
+
+
+def test_stage2_summary_distinguishes_missing_answers_pending_and_excluded() -> None:
+    report = {
+        "stages": {
+            "character": {
+                "stage1": {"evaluated": False},
+                "stage2": {
+                    "counts": {
+                        "gold": 5,
+                        "upstreamReached": 4,
+                        "reachedAndCompared": 3,
+                        "semanticPending": 1,
+                    },
+                    "metrics": {
+                        "fullDecisionAccuracy": None,
+                        "resolvedFullDecisionAccuracy": 2 / 3,
+                        "proposedValueAccuracy": None,
+                        "proposedValueSemanticCoverage": 2 / 3,
+                        "removedSnapshotSetAccuracy": None,
+                    },
+                },
+            },
+            "world": {"stage1": {"evaluated": False}, "stage2": {"evaluated": False}},
+        },
+    }
+    before = json.dumps(report, sort_keys=True)
+
+    markdown = render_markdown_summary(report)
+
+    assert "| 정답 (처리 방식·대상·내용 등 필요한 판단 항목이 모두 맞음) | 2개 | 미평가 |" in markdown
+    assert "| 오답 (판단이 틀렸거나 2차 결과가 없음) | 1개 | 미평가 |" in markdown
+    assert "| ↳ 오답 중 2차 결과가 없는 경우 | 1개 | 미평가 |" in markdown
+    assert (
+        "| 채점 미완료 (모델 답안은 있으나 정답과 의미가 같은지 확인하지 못함) | 1개 | 미평가 |"
+    ) in markdown
+    assert (
+        "| 2차 채점에서 제외 (필요한 1차 설정이 없거나 잘못 추출됨) | 1개 | 미평가 |"
+    ) in markdown
+    assert (
+        "| Full accuracy (채점에 포함된 항목 중 판단 전체가 맞은 비율) | 채점 미완료 | 미평가 |"
+    ) in markdown
+    assert "| 반영할 내용 일치율 (최종적으로 기록할 내용이 맞는가) | 채점 미완료 | 미평가 |" in markdown
+    assert "평가할 항목 없음" in markdown
+    assert json.dumps(report, sort_keys=True) == before
 
 
 def test_diagnostic_markdown_has_a_global_row_budget() -> None:
