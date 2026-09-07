@@ -86,6 +86,7 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 ## 세계관 prompt 출력 계약
 
 - 세계관 후보 한 건은 `category + subject_name + scope_name + setting_name` 경로와 `extracted_value`로 표현되는 속성 하나입니다. scope는 선택적인 한 단계 범위이며, 비어 있으면 루트 속성입니다.
+- `POWER_SYSTEM`은 마법·스킬·능력 자체의 습득·발동 조건, 자원 소모, 효과·등급·제한으로 좁힙니다. 특정 능력의 사용과 무관한 세계·게임 공통 사망·전투·성장·진행 규칙과 기본 특성은 `WORLD_RULE_HISTORY`로 추출합니다. 여러 사용자에게 적용되는 마법 자체의 기전은 여전히 `POWER_SYSTEM`이며, 종족의 선천적 적성은 `RACE`입니다. 두 분류의 enum과 기존 경로·채점 계약은 유지합니다.
 - 종족의 서술형 전투 특징은 `RACE / 종족명 / 전투 특성` 아래 `마법 재능`, `신체 능력`, `전투 강점`으로 구분합니다. 원문에 있는 속성만 추출합니다. 체력·힘과 그에 따른 장비 착용 능력의 서술은 `신체 능력`에 모으며, 후속 회차의 양립 가능한 설명은 기존 경로에 MERGE합니다. 서로 독립된 수치 능력치·판정 규칙이나 장비 자체의 속성은 별도로 유지합니다.
 - chunk별 추출 뒤 같은 `category + subject_name + scope_name + setting_name` 후보는 게시 전에 한 건으로 통합합니다. 2차 비교 입력의 `extracted_values`는 통합 전 값 목록이며, 모델은 `SINGLE/MERGED/CONFLICT`를 판정합니다. `MERGED`는 모든 양립 가능한 정보를 보존한 자연스러운 `proposed_value` 하나를 반환하고, `CONFLICT`는 임의 절충 없이 입력값 전체를 그대로 반환합니다.
 - 통합 후보의 `evidence_spans`는 각 1차 후보의 실제 quote·offset 합집합입니다. 2차 비교는 이 근거를 수정하거나 새로 만들지 않습니다.
