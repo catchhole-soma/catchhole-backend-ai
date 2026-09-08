@@ -42,10 +42,26 @@ on:
         default: gpt-5.6-luna
         type: string
       semantic_judge:
-        description: "결정적 비교가 불가능한 최종 문장 의미를 LLM Judge로 판정"
+        description: "설정 항목·범위·값의 의미를 LLM Judge로 판정"
         required: true
         default: true
         type: boolean
+      judge_model:
+        description: "평가 전용 의미 채점 모델(제품 모델과 독립)"
+        required: true
+        default: gpt-5.6-sol
+        type: string
+      judge_reasoning_effort:
+        description: "평가 전용 의미 채점 추론 강도"
+        required: true
+        default: medium
+        type: choice
+        options:
+          - none
+          - low
+          - medium
+          - high
+          - xhigh
       confirm_run:
         description: "OpenAI 비용 발생 확인을 위해 RUN 입력"
         required: true
@@ -74,6 +90,8 @@ jobs:
       SUBJECT_RESOLUTION_MODEL: ${{ inputs.subject_resolution_model }}
       COMPARISON_MODEL: ${{ inputs.comparison_model }}
       SEMANTIC_JUDGE_ENABLED: ${{ inputs.semantic_judge }}
+      JUDGE_MODEL: ${{ inputs.judge_model }}
+      JUDGE_REASONING_EFFORT: ${{ inputs.judge_reasoning_effort }}
       CONFIRM_RUN: ${{ inputs.confirm_run }}
 
     steps:
@@ -269,7 +287,11 @@ jobs:
             evaluate_args+=(--state-root build/eval/multi-stage/input/states)
           fi
           if [ "$SEMANTIC_JUDGE_ENABLED" = "true" ]; then
-            evaluate_args+=(--semantic-judge openai)
+            evaluate_args+=(
+              --semantic-judge openai
+              --judge-model "$JUDGE_MODEL"
+              --judge-reasoning-effort "$JUDGE_REASONING_EFFORT"
+            )
           fi
           python -m evals.multi_stage_setting.cli "${evaluate_args[@]}"
 
