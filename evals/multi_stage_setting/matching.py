@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
+from evals.multi_stage_setting.character_semantics import (
+    compare_structured_semantics,
+    dynamic_status_key_pair,
+)
 from evals.multi_stage_setting.contracts import (
     CandidateKind,
     CharacterStage1Gold,
@@ -40,7 +44,7 @@ class Stage1Match:
     source_gold_ids: tuple[str, ...]
     prediction: CharacterStage1Prediction | WorldStage1Prediction
     entity_or_subject_matched: bool
-    path_or_fact_matched: bool
+    path_or_fact_matched: bool | None
     value_status: FieldMatchStatus
     value_type_matched: bool | None
     structured_value_matched: bool | None
@@ -50,7 +54,7 @@ class Stage1Match:
     setting_name_match_method: str | None = None
 
     @property
-    def identity_matched(self) -> bool:
+    def identity_matched(self) -> bool | None:
         return self.entity_or_subject_matched and self.path_or_fact_matched
 
 
@@ -105,6 +109,9 @@ def match_stage1(
     source_text: str | None,
     raw_prediction_count: int | None = None,
     world_setting_name_matches: Mapping[tuple[str, str], bool | None] | None = None,
+    world_scope_matches: Mapping[tuple[str, str], bool | None] | None = None,
+    character_setting_matches: Mapping[tuple[str, str], bool | None] | None = None,
+    semantic_scoring: bool = True,
 ) -> Stage1MatchingResult:
     domain_gold = [item for item in gold_rows if item.domain == domain]
     positives = [item for item in domain_gold if item.decision == "EXTRACT"]
@@ -120,7 +127,13 @@ def match_stage1(
 
     weights = [
         [
-            _assignment_weight(group.gold, prediction, world_setting_name_matches)
+            _assignment_weight(
+                group.gold,
+                prediction,
+                world_setting_name_matches,
+                world_scope_matches if semantic_scoring else None,
+                character_setting_matches if semantic_scoring else None,
+            )
             for prediction in grouped_predictions
         ]
         for group in positive_groups
@@ -140,6 +153,9 @@ def match_stage1(
             weight=weights[gold_index][prediction_index],
             source_gold_ids=group.source_gold_ids,
             semantic_name_matches=world_setting_name_matches,
+            semantic_scope_matches=world_scope_matches,
+            semantic_scoring=semantic_scoring,
+            character_setting_matches=character_setting_matches,
         )
         # Hungarian은 약한 값/근거 우연도 양수일 수 있다. 최소 한 identity 축이 맞아야
         # candidate reach로 인정한다.
@@ -150,9 +166,7 @@ def match_stage1(
         matches.append(match)
 
     missed_groups = tuple(
-        group
-        for index, group in enumerate(positive_groups)
-        if index not in assigned_gold
+        group for index, group in enumerate(positive_groups) if index not in assigned_gold
     )
     extras = tuple(
         prediction
@@ -168,9 +182,7 @@ def match_stage1(
     return Stage1MatchingResult(
         matches=tuple(matches),
         missed_gold=tuple(group.gold for group in missed_groups),
-        missed_source_gold_ids=tuple(
-            group.source_gold_ids for group in missed_groups
-        ),
+        missed_source_gold_ids=tuple(group.source_gold_ids for group in missed_groups),
         extra_predictions=extras,
         hard_negative_hits=hard_negative_hits,
         raw_prediction_count=(
@@ -187,10 +199,7 @@ def _group_positive_gold(
     domain: EvaluationDomain,
 ) -> list[_Stage1GoldGroup]:
     if domain != EvaluationDomain.WORLD:
-        return [
-            _Stage1GoldGroup(gold=item, source_gold_ids=(item.gold_id,))
-            for item in positives
-        ]
+        return [_Stage1GoldGroup(gold=item, source_gold_ids=(item.gold_id,)) for item in positives]
     groups: dict[tuple[str, str, str, str], list[WorldStage1Gold]] = {}
     for item in positives:
         if not isinstance(item, WorldStage1Gold):
@@ -270,7 +279,21 @@ def world_setting_name_pairs(
         if isinstance(group.gold, WorldStage1Gold)
         for prediction in grouped_predictions
         if world_setting_context_matches(group.gold, prediction)
-        and not world_setting_name_matches(group.gold, prediction.setting_name)
+        and (
+            not world_setting_name_matches(group.gold, prediction.setting_name)
+            or world_path_key(
+                group.gold.category,
+                group.gold.subject_name,
+                group.gold.scope_name,
+                group.gold.setting_name,
+            )[2]
+            != world_path_key(
+                prediction.category,
+                prediction.subject_name,
+                prediction.scope_name,
+                prediction.setting_name,
+            )[2]
+        )
     ]
 
 
@@ -292,18 +315,14 @@ def consolidate_world_predictions(
             groups[key] = prediction
             continue
         values = list(current.source_values)
-        normalized_values = {
-            normalize_world_setting_name(value) for value in values
-        }
+        normalized_values = {normalize_world_setting_name(value) for value in values}
         for value in prediction.source_values:
             normalized = normalize_world_setting_name(value)
             if normalized not in normalized_values:
                 normalized_values.add(normalized)
                 values.append(value)
         evidence = list(current.evidence_spans)
-        evidence_keys = {
-            (item.quote, item.start_offset, item.end_offset) for item in evidence
-        }
+        evidence_keys = {(item.quote, item.start_offset, item.end_offset) for item in evidence}
         for span in prediction.evidence_spans:
             key_span = (span.quote, span.start_offset, span.end_offset)
             if key_span not in evidence_keys:
@@ -331,6 +350,8 @@ def _assignment_weight(
     gold: CharacterStage1Gold | WorldStage1Gold,
     prediction: CharacterStage1Prediction | WorldStage1Prediction,
     semantic_name_matches: Mapping[tuple[str, str], bool | None] | None = None,
+    semantic_scope_matches: Mapping[tuple[str, str], bool | None] | None = None,
+    character_setting_matches: Mapping[tuple[str, str], bool | None] | None = None,
 ) -> int:
     if gold.domain != prediction.domain or gold.candidate_kind != prediction.candidate_kind:
         return 0
@@ -341,13 +362,16 @@ def _assignment_weight(
         for span in prediction.evidence_spans
         if quote and span.quote
     )
-    if isinstance(gold, CharacterStage1Gold) and isinstance(
-        prediction, CharacterStage1Prediction
-    ):
+    if isinstance(gold, CharacterStage1Gold) and isinstance(prediction, CharacterStage1Prediction):
         entity = _character_entity_matches(gold, prediction)
         if gold.candidate_kind == CandidateKind.CHARACTER_DISCOVERY:
             return 200 + 120 * entity + 30 * evidence_overlap
         fact = _character_fact_matches(gold, prediction)
+        if entity and character_setting_matches is not None:
+            fact = (
+                fact
+                or character_setting_matches.get((gold.gold_id, prediction.candidate_id)) is True
+            )
         value = normalize_text(gold.display_value) == normalize_text(prediction.display_value)
         return 200 + 100 * fact + 80 * entity + 30 * value + 20 * evidence_overlap
     if isinstance(gold, WorldStage1Gold) and isinstance(prediction, WorldStage1Prediction):
@@ -365,7 +389,10 @@ def _assignment_weight(
         )
         category = gold_path[0] == prediction_path[0]
         subject = gold_path[1] == prediction_path[1]
-        scope = gold_path[2] == prediction_path[2]
+        scope = gold_path[2] == prediction_path[2] or (
+            semantic_scope_matches is not None
+            and semantic_scope_matches.get((gold.gold_id, prediction.candidate_id)) is True
+        )
         setting = (
             _world_setting_name_match_method(gold, prediction, semantic_name_matches) is not None
         )
@@ -394,15 +421,16 @@ def _evaluate_pair(
     weight: int,
     source_gold_ids: tuple[str, ...],
     semantic_name_matches: Mapping[tuple[str, str], bool | None] | None = None,
+    semantic_scope_matches: Mapping[tuple[str, str], bool | None] | None = None,
+    semantic_scoring: bool = True,
+    character_setting_matches: Mapping[tuple[str, str], bool | None] | None = None,
 ) -> Stage1Match:
     evidence = evaluate_evidence_quotes(
         gold.evidence_quotes,
         [span.quote for span in prediction.evidence_spans],
         source_text,
     )
-    if isinstance(gold, CharacterStage1Gold) and isinstance(
-        prediction, CharacterStage1Prediction
-    ):
+    if isinstance(gold, CharacterStage1Gold) and isinstance(prediction, CharacterStage1Prediction):
         entity_matched = _character_entity_matches(gold, prediction)
         if gold.candidate_kind == CandidateKind.CHARACTER_DISCOVERY:
             return Stage1Match(
@@ -423,6 +451,14 @@ def _evaluate_pair(
                 assignment_weight=weight,
             )
         fact_matched = _character_fact_matches(gold, prediction)
+        if (
+            semantic_scoring
+            and not fact_matched
+            and character_setting_context_matches(gold, prediction)
+        ):
+            fact_matched = (character_setting_matches or {}).get(
+                (gold.gold_id, prediction.candidate_id)
+            )
         value = compare_typed_value(
             value_type=gold.value_type,
             expected_display_value=gold.display_value,
@@ -431,6 +467,14 @@ def _evaluate_pair(
             actual_value_json=prediction.value_json,
             actual_value_type=prediction.value_type,
         )
+        if prediction.value_type is None and gold.value_type is not None:
+            value = replace(
+                value,
+                status=ValueComparisonStatus.MISMATCH,
+                value_type_matched=False,
+                attribute_value_matched=False,
+                reason="prediction valueType is missing",
+            )
         value_status = _value_status(value)
         explicitly_blocked_subject = prediction.match_status in {
             "AMBIGUOUS",
@@ -439,7 +483,7 @@ def _evaluate_pair(
         }
         if explicitly_blocked_subject or not entity_matched:
             upstream = UpstreamOutcome.UPSTREAM_BLOCKED_SUBJECT
-        elif not fact_matched or value.status == ValueComparisonStatus.MISMATCH:
+        elif fact_matched is False or value.status == ValueComparisonStatus.MISMATCH:
             upstream = UpstreamOutcome.UPSTREAM_VALUE_ERROR
         else:
             upstream = UpstreamOutcome.REACHED
@@ -451,7 +495,11 @@ def _evaluate_pair(
             path_or_fact_matched=fact_matched,
             value_status=value_status,
             value_type_matched=value.value_type_matched,
-            structured_value_matched=value.structured_value_matched,
+            structured_value_matched=(
+                _character_structured_match(gold, prediction)
+                if semantic_scoring and gold.structured_scorable
+                else value.structured_value_matched
+            ),
             evidence=evidence,
             upstream_outcome=upstream,
             assignment_weight=weight,
@@ -473,11 +521,33 @@ def _evaluate_pair(
     )
     subject_matched = gold_path[:2] == prediction_path[:2]
     name_match_method = _world_setting_name_match_method(gold, prediction, semantic_name_matches)
-    path_matched = gold_path[2] == prediction_path[2] and name_match_method is not None
+    if semantic_scoring and subject_matched:
+        name_matched = (
+            True
+            if name_match_method
+            else (semantic_name_matches or {}).get((gold.gold_id, prediction.candidate_id))
+        )
+        scope_matched = (
+            True
+            if gold_path[2] == prediction_path[2]
+            else (semantic_scope_matches or {}).get((gold.gold_id, prediction.candidate_id))
+        )
+        path_matched = (
+            False
+            if name_matched is False or scope_matched is False
+            else True
+            if name_matched is True and scope_matched is True
+            else None
+        )
+    else:
+        path_matched = gold_path[2] == prediction_path[2] and name_match_method is not None
     expected_values = {normalize_text(value) for value in gold.source_values}
     actual_values = {normalize_text(value) for value in prediction.source_values}
     if expected_values == actual_values:
         status = FieldMatchStatus.MATCH
+        upstream = UpstreamOutcome.REACHED
+    elif semantic_scoring:
+        status = FieldMatchStatus.SEMANTIC_JUDGE_REQUIRED
         upstream = UpstreamOutcome.REACHED
     elif actual_values and actual_values < expected_values:
         status = FieldMatchStatus.MISMATCH
@@ -489,7 +559,7 @@ def _evaluate_pair(
     else:
         status = FieldMatchStatus.MISMATCH
         upstream = UpstreamOutcome.UPSTREAM_VALUE_ERROR
-    if not subject_matched or not path_matched:
+    if not subject_matched or path_matched is False:
         upstream = UpstreamOutcome.UPSTREAM_VALUE_ERROR
     return Stage1Match(
         gold=gold,
@@ -529,19 +599,47 @@ def _character_fact_matches(
     accepted = {normalize_fact_key(key) for key in gold.accepted_fact_keys}
     return normalize_fact_key(prediction.fact_key) in accepted and (
         gold.fact_type is None
-        or prediction.fact_type is None
         or normalize_text(gold.fact_type) == normalize_text(prediction.fact_type)
     )
+
+
+def character_setting_context_matches(
+    gold: CharacterStage1Gold, prediction: CharacterStage1Prediction
+) -> bool:
+    return (
+        gold.candidate_kind == prediction.candidate_kind == CandidateKind.SETTING
+        and _character_entity_matches(gold, prediction)
+        and gold.fact_type == prediction.fact_type
+        and dynamic_status_key_pair(gold.fact_type, gold.fact_key, prediction.fact_key)
+    )
+
+
+def character_setting_name_pairs(gold_rows: list[Stage1Gold], predictions: list[Stage1Prediction]):
+    return [
+        (gold, prediction)
+        for gold in gold_rows
+        if isinstance(gold, CharacterStage1Gold) and gold.decision == "EXTRACT"
+        for prediction in predictions
+        if isinstance(prediction, CharacterStage1Prediction)
+        and character_setting_context_matches(gold, prediction)
+        and not _character_fact_matches(gold, prediction)
+    ]
+
+
+def _character_structured_match(
+    gold: CharacterStage1Gold, prediction: CharacterStage1Prediction
+) -> bool | None:
+    comparison = compare_structured_semantics(gold.value_json, prediction.value_json)
+    if not comparison.structural_matched:
+        return False
+    return None if comparison.text_pairs else True
 
 
 def world_setting_name_matches(
     gold: WorldStage1Gold,
     prediction_setting_name: str,
 ) -> bool:
-    accepted = {
-        normalize_world_setting_name(name)
-        for name in gold.accepted_setting_names
-    }
+    accepted = {normalize_world_setting_name(name) for name in gold.accepted_setting_names}
     return normalize_world_setting_name(prediction_setting_name) in accepted
 
 
@@ -549,14 +647,15 @@ def world_setting_context_matches(
     gold: WorldStage1Gold,
     prediction: WorldStage1Prediction,
 ) -> bool:
-    return world_path_key(
-        gold.category, gold.subject_name, gold.scope_name, gold.setting_name
-    )[:3] == world_path_key(
-        prediction.category,
-        prediction.subject_name,
-        prediction.scope_name,
-        prediction.setting_name,
-    )[:3]
+    return (
+        world_path_key(gold.category, gold.subject_name, gold.scope_name, gold.setting_name)[:2]
+        == world_path_key(
+            prediction.category,
+            prediction.subject_name,
+            prediction.scope_name,
+            prediction.setting_name,
+        )[:2]
+    )
 
 
 def _world_setting_name_match_method(
@@ -586,9 +685,7 @@ def _hard_negative_matches(
 ) -> bool:
     if gold.domain != prediction.domain or gold.candidate_kind != prediction.candidate_kind:
         return False
-    if isinstance(gold, CharacterStage1Gold) and isinstance(
-        prediction, CharacterStage1Prediction
-    ):
+    if isinstance(gold, CharacterStage1Gold) and isinstance(prediction, CharacterStage1Prediction):
         return _character_entity_matches(gold, prediction) and (
             gold.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
             or _character_fact_matches(gold, prediction)
@@ -606,9 +703,8 @@ def _hard_negative_matches(
             prediction.scope_name,
             prediction.setting_name,
         )
-        return (
-            gold_path[:3] == prediction_path[:3]
-            and world_setting_name_matches(gold, prediction.setting_name)
+        return gold_path[:3] == prediction_path[:3] and world_setting_name_matches(
+            gold, prediction.setting_name
         )
     return False
 
@@ -617,7 +713,5 @@ def _value_status(value: ValueComparison) -> FieldMatchStatus:
     return {
         ValueComparisonStatus.MATCH: FieldMatchStatus.MATCH,
         ValueComparisonStatus.MISMATCH: FieldMatchStatus.MISMATCH,
-        ValueComparisonStatus.SEMANTIC_JUDGE_REQUIRED: (
-            FieldMatchStatus.SEMANTIC_JUDGE_REQUIRED
-        ),
+        ValueComparisonStatus.SEMANTIC_JUDGE_REQUIRED: (FieldMatchStatus.SEMANTIC_JUDGE_REQUIRED),
     }[value.status]

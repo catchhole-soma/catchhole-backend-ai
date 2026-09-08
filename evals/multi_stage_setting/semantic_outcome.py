@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Protocol
 
 from pydantic import BaseModel, Field
 
 from app.analysis.json_response import parse_json_object
+from app.core.config import get_settings
 from app.llm.openai_client import OpenAIResponsesClient
+from app.llm.protocols import LlmResponseSchema
 
 DEFAULT_PROMPT_PATH = Path(__file__).parent / "prompts" / "semantic_outcome_judge.md"
-DEFAULT_MODEL = "gpt-5.6-luna"
+DEFAULT_MODEL = "gpt-5.6-sol"
+DEFAULT_REASONING_EFFORT = "medium"
+REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh")
+PROMPT_CACHE_KEY = "multi-stage-setting-eval:semantic-outcome:v4"
 
 
 @dataclass(frozen=True)
@@ -21,6 +27,18 @@ class WorldSettingNameContext:
     scope_name: str | None
     expected_setting_name: str
     actual_setting_name: str
+    actual_scope_name: str | None = None
+    related_paths: tuple[dict[str, object], ...] = ()
+    operation: str | None = None
+
+
+@dataclass(frozen=True)
+class CharacterSettingContext:
+    entity_id: str
+    fact_type: str
+    expected_fact_key: str
+    actual_fact_key: str
+    schema_pattern: str
 
 
 @dataclass(frozen=True)
@@ -34,21 +52,27 @@ class SemanticOutcomeCase:
     forbidden_facts: tuple[str, ...] = ()
     evidence_quotes: tuple[str, ...] = ()
     setting_context: WorldSettingNameContext | None = None
+    character_context: CharacterSettingContext | None = None
 
 
 class SemanticOutcomeDecision(BaseModel):
     case_id: str = Field(alias="caseId")
-    core_meaning_covered: bool = Field(alias="coreMeaningCovered")
-    required_facts_covered: bool = Field(alias="requiredFactsCovered")
-    forbidden_facts_absent: bool = Field(alias="forbiddenFactsAbsent")
-    contradiction: bool
-    unsupported_detail: bool = Field(alias="unsupportedDetail")
+    core_meaning_covered: bool = Field(alias="coreMeaningCovered", strict=True)
+    required_facts_covered: bool = Field(alias="requiredFactsCovered", strict=True)
+    forbidden_facts_absent: bool = Field(alias="forbiddenFactsAbsent", strict=True)
+    contradiction: bool = Field(strict=True)
+    unsupported_detail: bool = Field(alias="unsupportedDetail", strict=True)
     reason: str
     same_setting: bool | None = Field(default=None, alias="sameSetting", strict=True)
     setting_reason: str | None = Field(default=None, alias="settingReason")
+    scope_equivalent: bool | None = Field(default=None, alias="scopeEquivalent", strict=True)
+    scope_reason: str | None = Field(default=None, alias="scopeReason")
+    value_resolved: bool = Field(default=True, alias="valueResolved", strict=True)
 
     @property
-    def matched(self) -> bool:
+    def matched(self) -> bool | None:
+        if not self.value_resolved:
+            return None
         return (
             self.core_meaning_covered
             and self.required_facts_covered
@@ -60,6 +84,26 @@ class SemanticOutcomeDecision(BaseModel):
 
 class SemanticOutcomeResponse(BaseModel):
     results: list[SemanticOutcomeDecision]
+
+
+def _response_schema() -> LlmResponseSchema:
+    schema = SemanticOutcomeResponse.model_json_schema(by_alias=True)
+
+    def require_fields(node: dict) -> None:
+        node.pop("default", None)
+        if node.get("type") == "object":
+            node["additionalProperties"] = False
+            node["required"] = list(node.get("properties", {}))
+        for value in node.values():
+            if isinstance(value, dict):
+                require_fields(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        require_fields(item)
+
+    require_fields(schema)
+    return LlmResponseSchema(name="setting_semantic_outcomes_v4", schema=schema)
 
 
 @dataclass(frozen=True)
@@ -83,13 +127,36 @@ class OpenAISemanticOutcomeJudge:
         client: OpenAIResponsesClient | None = None,
         *,
         model: str = DEFAULT_MODEL,
+        reasoning_effort: str = DEFAULT_REASONING_EFFORT,
         prompt_path: Path = DEFAULT_PROMPT_PATH,
         batch_size: int = 8,
     ) -> None:
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1.")
-        self.client = client or OpenAIResponsesClient.from_settings()
+        if reasoning_effort not in REASONING_EFFORTS:
+            raise ValueError("Unsupported semantic judge reasoning effort.")
+        if not model.strip():
+            raise ValueError("Semantic judge model must not be empty.")
+        if client is None:
+            settings = get_settings()
+            client = OpenAIResponsesClient(
+                api_key=settings.llm_api_key,
+                model=model,
+                responses_api_url=settings.openai_responses_api_url,
+                reasoning_effort=reasoning_effort,
+            )
+        elif isinstance(client, OpenAIResponsesClient):
+            # Share the injected transport, not mutable product model/effort settings.
+            client = OpenAIResponsesClient(
+                api_key=client.api_key,
+                model=model,
+                responses_api_url=client.responses_api_url,
+                reasoning_effort=reasoning_effort,
+                http_client=client.http_client,
+            )
+        self.client = client
         self.model = model
+        self.reasoning_effort = reasoning_effort
         self.prompt_path = prompt_path
         self.batch_size = batch_size
 
@@ -139,15 +206,31 @@ class OpenAISemanticOutcomeJudge:
                                         "category": case.setting_context.category,
                                         "subjectName": case.setting_context.subject_name,
                                         "scopeName": case.setting_context.scope_name,
+                                        "actualScopeName": case.setting_context.actual_scope_name,
                                         "expectedSettingName": (
                                             case.setting_context.expected_setting_name
                                         ),
                                         "actualSettingName": (
                                             case.setting_context.actual_setting_name
                                         ),
+                                        "relatedPaths": list(case.setting_context.related_paths),
+                                        "operation": case.setting_context.operation,
                                     }
                                 }
                                 if case.setting_context is not None
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "characterContext": {
+                                        "entityId": case.character_context.entity_id,
+                                        "factType": case.character_context.fact_type,
+                                        "expectedFactKey": case.character_context.expected_fact_key,
+                                        "actualFactKey": case.character_context.actual_fact_key,
+                                        "schemaPattern": case.character_context.schema_pattern,
+                                    }
+                                }
+                                if case.character_context is not None
                                 else {}
                             ),
                         }
@@ -158,8 +241,9 @@ class OpenAISemanticOutcomeJudge:
                 sort_keys=True,
             ),
             model=self.model,
-            max_output_tokens=min(5000, 400 + 450 * len(cases)),
-            prompt_cache_key="multi-stage-setting-eval:semantic-outcome:v3",
+            max_output_tokens=min(24000, 4000 + 1500 * len(cases)),
+            prompt_cache_key=PROMPT_CACHE_KEY,
+            response_schema=_response_schema(),
         )
         try:
             parsed = SemanticOutcomeResponse.model_validate(parse_json_object(response.text))
@@ -175,12 +259,26 @@ class OpenAISemanticOutcomeJudge:
             raise ValueError("Semantic outcome judge caseIds do not match the request.")
         for case in cases:
             decision = decision_by_id[case.case_id]
-            if case.setting_context is not None and (
-                decision.same_setting is None
-                or not decision.setting_reason
-                or not decision.setting_reason.strip()
+            if "value_resolved" not in decision.model_fields_set or not decision.reason.strip():
+                raise ValueError("Semantic outcome judge value decision is invalid.")
+            required_verdicts = []
+            if case.setting_context is not None or case.character_context is not None:
+                required_verdicts.append(("same_setting", "setting_reason"))
+            if case.setting_context is not None:
+                required_verdicts.append(("scope_equivalent", "scope_reason"))
+            if case.character_context is not None and (
+                decision.scope_equivalent is not None or decision.scope_reason is not None
             ):
-                raise ValueError("Semantic outcome judge setting-name decision is invalid.")
+                raise ValueError("Semantic outcome judge character scope decision must be null.")
+            for verdict, reason in required_verdicts:
+                explanation = getattr(decision, reason)
+                if (
+                    verdict not in decision.model_fields_set
+                    or reason not in decision.model_fields_set
+                    or not explanation
+                    or not explanation.strip()
+                ):
+                    raise ValueError("Semantic outcome judge setting-path decision is invalid.")
         return SemanticOutcomeBatchResult(
             decisions=tuple(decision_by_id[case_id] for case_id in expected_ids),
             input_tokens=response.input_token_count or 0,

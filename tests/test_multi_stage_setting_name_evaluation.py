@@ -116,9 +116,9 @@ def test_equal_values_do_not_override_judged_different_setting_names() -> None:
 
 @pytest.mark.parametrize(
     "context_change",
-    [{"category": "POWER_SYSTEM"}, {"subject_name": "다른 게임"}, {"scope_name": "전투"}],
+    [{"category": "POWER_SYSTEM"}, {"subject_name": "다른 게임"}],
 )
-def test_name_judge_cannot_rescue_wrong_stage1_category_subject_or_scope(
+def test_name_judge_cannot_rescue_wrong_stage1_category_or_subject(
     context_change: dict[str, str],
 ) -> None:
     gold, bundle = _fixture()
@@ -134,20 +134,31 @@ def test_name_judge_cannot_rescue_wrong_stage1_category_subject_or_scope(
     assert not any(case.case_id.startswith("stage1-name:") for case in judge.cases)
 
 
-def test_name_judge_does_not_accept_a_different_final_scope() -> None:
+@pytest.mark.parametrize("scope_equivalent, accuracy", [(None, None), (False, 0)])
+def test_name_approval_does_not_override_unknown_or_rejected_final_scope(
+    scope_equivalent: bool | None, accuracy: int | None,
+) -> None:
     gold, bundle = _fixture(extraction_name=CANONICAL_NAME)
     bundle.scenarios[0].stage2[0] = (
         bundle.scenarios[0].stage2[0].model_copy(update={"proposed_scope_name": "게임 규칙"})
     )
-    judge = _Judge()
+    judge = _Judge(scope_equivalent=scope_equivalent)
 
     report = asyncio.run(evaluate_multi_stage(gold, bundle, semantic_judge=judge))
 
     stage2 = report["stages"]["world"]["stage2"]
     assert report["stages"]["world"]["stage1"]["counts"]["identityTruePositive"] == 1
-    assert stage2["metrics"]["fullDecisionAccuracy"] == 0
-    assert stage2["metrics"]["proposedPathAccuracy"] == 0
-    assert not any(case.setting_context is not None for case in judge.cases)
+    assert stage2["metrics"]["fullDecisionAccuracy"] == accuracy
+    assert stage2["metrics"]["proposedPathAccuracy"] == accuracy
+    contextual = [case for case in judge.cases if case.setting_context is not None]
+    assert len(contextual) == 1
+    assert contextual[0].setting_context.scope_name is None
+    assert contextual[0].setting_context.actual_scope_name == "게임 규칙"
+    case = report["scenarios"][0]["stage2"][0]
+    assert case["settingNameMatch"] == {"status": "MATCH", "method": "SEMANTIC"}
+    assert case["fields"]["proposedPath"] == (
+        "PENDING" if scope_equivalent is None else "MISMATCH"
+    )
 
 
 def test_missing_name_judge_stays_pending_without_granting_a_true_positive() -> None:
@@ -158,8 +169,12 @@ def test_missing_name_judge_stays_pending_without_granting_a_true_positive() -> 
     stage1 = report["stages"]["world"]["stage1"]
     case = report["scenarios"][0]["stage1"]["WORLD"]["cases"][0]
     assert stage1["counts"]["identityTruePositive"] == 0
+    assert stage1["metrics"]["candidateF1"] is None
     assert case["settingNameMatch"] == {"status": "PENDING", "method": "UNRESOLVED"}
-    assert report["stages"]["world"]["stage2"]["counts"]["upstreamReached"] == 0
+    assert report["stages"]["world"]["stage2"]["counts"]["upstreamReached"] == 1
+    assert report["stages"]["world"]["stage2"]["metrics"]["fullDecisionAccuracy"] is None
+    assert report["scenarios"][0]["stage2"][0]["result"] == "SEMANTIC_PENDING"
+    assert report["failureCauses"].get("EXTRACTION_MISS", 0) == 0
 
 
 def test_synonymous_duplicate_predictions_are_still_counted_separately() -> None:
@@ -394,8 +409,11 @@ def _assert_full_world_result(report) -> None:
 
 
 class _Judge:
-    def __init__(self, *, same_setting: bool = True) -> None:
+    def __init__(
+        self, *, same_setting: bool | None = True, scope_equivalent: bool | None = True,
+    ) -> None:
         self.same_setting = same_setting
+        self.scope_equivalent = scope_equivalent
         self.cases = []
 
     async def judge_many(self, cases):
@@ -414,6 +432,8 @@ class _Judge:
                     settingReason="same property checked in context"
                     if case.setting_context
                     else None,
+                    scopeEquivalent=self.scope_equivalent if case.setting_context else None,
+                    scopeReason="scope checked independently" if case.setting_context else None,
                 )
                 for case in cases
             )

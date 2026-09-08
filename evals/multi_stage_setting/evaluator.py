@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any
 
@@ -12,6 +12,11 @@ from app.domain.enums import (
     WorldSettingOperation,
 )
 from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
+from evals.multi_stage_setting.character_semantics import (
+    character_setting_ref_mapping,
+    compare_structured_semantics,
+    dynamic_status_key_pair,
+)
 from evals.multi_stage_setting.contracts import (
     CandidateKind,
     CharacterStage1Gold,
@@ -47,11 +52,13 @@ from evals.multi_stage_setting.matching import (
     FieldMatchStatus,
     Stage1Match,
     Stage1MatchingResult,
+    character_setting_name_pairs,
     match_stage1,
     world_setting_context_matches,
     world_setting_name_pairs,
 )
 from evals.multi_stage_setting.semantic_outcome import (
+    CharacterSettingContext,
     SemanticOutcomeCase,
     SemanticOutcomeJudge,
     WorldSettingNameContext,
@@ -98,6 +105,12 @@ class Stage2Case:
     world_proposed_scope_matched: bool | None = None
     world_path_preserved_matched: bool | None = None
     world_application_matched: bool | None = None
+    proposed_scope_semantic_case_id: str | None = None
+    upstream_semantic_pending: bool = False
+    related_world_paths: tuple[dict[str, object], ...] = ()
+    character_context: CharacterSettingContext | None = None
+    character_setting_semantic_case_id: str | None = None
+    structured_semantic_case_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -111,12 +124,16 @@ class StatePair:
     actual_present: bool
     matched: bool | None
     semantic_case_id: str | None = None
+    structured_semantic_case_ids: tuple[str, ...] = ()
+    identity_matched: bool | None = True
 
 
 @dataclass(frozen=True)
-class WorldStateRefMaps:
+class ScoringRefMaps:
     before: dict[str, str]
     after: dict[str, str]
+    pending_before: frozenset[str] = frozenset()
+    pending_after: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -170,17 +187,18 @@ async def evaluate_multi_stage(
     name_cases: list[SemanticOutcomeCase] = []
     name_pairs_by_scenario = {}
     active_ids = _state_dependency_ids(gold, predictions.mode, selected_ids)
-    if predictions.mode != EvaluationMode.ORACLE and EvaluationDomain.WORLD in enabled_domains:
+    if predictions.mode != EvaluationMode.ORACLE:
         for scenario in gold.scenarios:
             scenario_prediction = prediction_by_scenario.get(scenario.scenario_id)
-            if (
-                scenario.scenario_id not in active_ids
-                or EvaluationDomain.WORLD not in scenario.target_domains
-                or scenario_prediction is None
-            ):
+            if scenario.scenario_id not in active_ids or scenario_prediction is None:
                 continue
             rows = [item for item in gold.stage1 if item.scenario_id == scenario.scenario_id]
-            pairs = world_setting_name_pairs(rows, scenario_prediction.stage1)
+            domains = enabled_domains & scenario.target_domains
+            pairs = []
+            if EvaluationDomain.WORLD in domains:
+                pairs.extend(world_setting_name_pairs(rows, scenario_prediction.stage1))
+            if EvaluationDomain.CHARACTER in domains:
+                pairs.extend(character_setting_name_pairs(rows, scenario_prediction.stage1))
             name_pairs_by_scenario[scenario.scenario_id] = pairs
             for expected, actual in pairs:
                 name_cases.append(
@@ -196,7 +214,22 @@ async def evaluate_multi_stage(
                             scope_name=expected.scope_name,
                             expected_setting_name=expected.setting_name,
                             actual_setting_name=actual.setting_name,
-                        ),
+                            actual_scope_name=actual.scope_name,
+                            related_paths=_world_extraction_paths(
+                                expected, rows, scenario_prediction.stage1
+                            ),
+                        )
+                        if isinstance(expected, WorldStage1Gold)
+                        else None,
+                        character_context=CharacterSettingContext(
+                            entity_id=expected.entity_ref,
+                            fact_type=expected.fact_type.value,
+                            expected_fact_key=expected.fact_key,
+                            actual_fact_key=actual.fact_key,
+                            schema_pattern="status.*",
+                        )
+                        if isinstance(expected, CharacterStage1Gold)
+                        else None,
                     )
                 )
     await judge_cases(name_cases)
@@ -225,24 +258,51 @@ async def evaluate_multi_stage(
                         )
                         for expected, actual in name_pairs_by_scenario.get(scenario.scenario_id, [])
                     },
+                    world_scope_matches={
+                        (expected.gold_id, actual.candidate_id): getattr(
+                            semantic_decisions.get(_stage1_name_case_id(expected, actual)),
+                            "scope_equivalent",
+                            None,
+                        )
+                        for expected, actual in name_pairs_by_scenario.get(scenario.scenario_id, [])
+                    },
+                    character_setting_matches={
+                        (expected.gold_id, actual.candidate_id): getattr(
+                            semantic_decisions.get(_stage1_name_case_id(expected, actual)),
+                            "same_setting",
+                            None,
+                        )
+                        for expected, actual in name_pairs_by_scenario.get(scenario.scenario_id, [])
+                        if isinstance(expected, CharacterStage1Gold)
+                    },
                 )
                 stage1_results[(scenario.scenario_id, domain)] = result
                 # Judge output must not change reducer inputs, application order, or raw hashes.
-                state_stage1_results[(scenario.scenario_id, domain)] = (
-                    match_stage1(
-                        rows,
-                        scenario_prediction.stage1,
-                        domain=domain,
-                        source_text=scenario.source_text,
-                        raw_prediction_count=sum(item.domain == domain for item in raw_source),
-                    )
-                    if domain == EvaluationDomain.WORLD
-                    and name_pairs_by_scenario.get(scenario.scenario_id)
-                    else result
+                state_stage1_results[(scenario.scenario_id, domain)] = match_stage1(
+                    rows,
+                    scenario_prediction.stage1,
+                    domain=domain,
+                    source_text=scenario.source_text,
+                    raw_prediction_count=sum(item.domain == domain for item in raw_source),
+                    semantic_scoring=False,
                 )
                 for match in result.matches:
                     if (
-                        scenario.scenario_id in selected_ids
+                        scenario.scenario_id in active_ids
+                        and isinstance(match.gold, CharacterStage1Gold)
+                        and match.gold.structured_scorable
+                    ):
+                        semantic_cases.extend(
+                            _structured_semantic_cases(
+                                f"stage1-json:{scenario.scenario_id}:{match.gold.gold_id}",
+                                match.gold.value_json,
+                                match.prediction.value_json,
+                                source_values=tuple(_stage1_source_values(match.gold)),
+                                evidence_quotes=tuple(match.gold.evidence_quotes),
+                            )
+                        )
+                    if (
+                        scenario.scenario_id in active_ids
                         and match.value_status == FieldMatchStatus.SEMANTIC_JUDGE_REQUIRED
                     ):
                         case_id = f"stage1:{scenario.scenario_id}:{match.gold.gold_id}"
@@ -280,9 +340,11 @@ async def evaluate_multi_stage(
         semantic_cases,
         enabled_domains,
         state_application_errors,
+        gold_chain,
+        predicted_chain,
     )
     dependency_cases: list[Stage2Case] = []
-    if active_ids - selected_ids and EvaluationDomain.WORLD in enabled_domains:
+    if active_ids - selected_ids:
         dependency_semantics: list[SemanticOutcomeCase] = []
         dependency_cases = _evaluate_stage2_cases(
             gold,
@@ -291,15 +353,29 @@ async def evaluate_multi_stage(
             prediction_by_scenario,
             active_ids - selected_ids,
             dependency_semantics,
-            {EvaluationDomain.WORLD},
+            enabled_domains,
             state_application_errors,
+            gold_chain,
+            predicted_chain,
         )
         # Dependency decisions establish inherited names, not an extra stage score.
-        semantic_cases.extend(case for case in dependency_semantics if case.setting_context)
+        semantic_cases.extend(dependency_semantics)
     await judge_cases(semantic_cases)
+    _apply_stage1_structured_results(stage1_results, semantic_decisions)
     _apply_semantic_results(stage2_cases + dependency_cases, [], semantic_decisions)
-    world_ref_maps = _world_scoring_ref_maps(
+    _reclassify_semantic_upstream(
+        stage2_cases + dependency_cases, stage1_results, semantic_decisions, predictions.mode
+    )
+    scoring_ref_maps = _world_scoring_ref_maps(
         gold, stage2_cases + dependency_cases, gold_chain, predicted_chain, selected_ids
+    )
+    _add_character_scoring_ref_maps(
+        scoring_ref_maps,
+        gold,
+        stage2_cases + dependency_cases,
+        gold_chain,
+        predicted_chain,
+        selected_ids,
     )
     state_semantic_cases: list[SemanticOutcomeCase] = []
     state_pairs = _build_state_pairs(
@@ -309,7 +385,7 @@ async def evaluate_multi_stage(
         selected_ids,
         state_semantic_cases,
         enabled_domains,
-        world_ref_maps,
+        scoring_ref_maps,
     )
     await judge_cases(state_semantic_cases)
     _apply_semantic_results([], state_pairs, semantic_decisions)
@@ -344,7 +420,7 @@ async def evaluate_multi_stage(
         state_application_errors,
         selected_ids,
         enabled_domains,
-        world_ref_maps,
+        scoring_ref_maps,
     )
     failure_causes = Counter(
         case.failure_cause.value for case in stage2_cases if case.failure_cause is not None
@@ -393,7 +469,7 @@ async def evaluate_multi_stage(
             "maxChunks": predictions.max_chunks,
             "runtimeFailures": _runtime_failure_summary(predictions),
             "semanticJudgeEnabled": semantic_judge is not None,
-            "worldSettingNamePolicy": "aliases-then-contextual/v1",
+            "worldSettingNamePolicy": "item-scope-value-contextual/v2",
             "semanticJudgeUsage": judge_usage,
             **_prediction_usage(predictions),
         },
@@ -441,6 +517,26 @@ def _stage1_name_case_id(expected: Stage1Gold, actual: Stage1Prediction) -> str:
     )
 
 
+def _world_extraction_paths(
+    source: WorldStage1Gold, expected_rows: list[Stage1Gold], actual_rows: list[Stage1Prediction]
+) -> tuple[dict[str, object], ...]:
+    return tuple(
+        {
+            "side": side,
+            "kind": "EXTRACTED",
+            "scopeName": row.scope_name,
+            "settingName": row.setting_name,
+            "values": list(row.source_values),
+        }
+        for side, rows in (("expected", expected_rows), ("actual", actual_rows))
+        for row in rows
+        if isinstance(row, (WorldStage1Gold, WorldStage1Prediction))
+        and (not isinstance(row, WorldStage1Gold) or row.scenario_id == source.scenario_id)
+        and row.category == source.category
+        and _same_world_name(row.subject_name, source.subject_name)
+    )
+
+
 def _stage1_setting_name_diagnostic(
     match: Stage1Match, decisions: dict[str, Any]
 ) -> dict[str, Any]:
@@ -468,8 +564,8 @@ def _world_scoring_ref_maps(
     gold_chain: dict[str, ScenarioStateTransition],
     predicted_chain: dict[str, ScenarioStateTransition],
     selected_ids: set[str],
-) -> dict[str, WorldStateRefMaps]:
-    """Apply approved property identities only to scoring keys, never to stored state."""
+) -> dict[str, ScoringRefMaps]:
+    """Align WORLD scoring keys; pending pairs retain uncertainty without changing stored state."""
     source_by_id = {item.gold_id: item for item in gold.stage1}
     scenario_by_id = {item.scenario_id: item for item in gold.scenarios}
     result = {}
@@ -489,6 +585,7 @@ def _world_scoring_ref_maps(
             actual_transition.before_state.world_facts + actual_transition.after_state.world_facts
         )
         approved_pairs = []
+        pending_pairs = []
         for case in cases:
             if (
                 case.scenario_id not in ancestors
@@ -515,23 +612,27 @@ def _world_scoring_ref_maps(
                     else case.gold.target_ref
                 )
             names = []
-            if case.proposed_path_matched is True:
+            if case.proposed_path_matched is not False:
                 names.append(
                     (
                         case.gold.proposed_scope_name,
+                        case.prediction.proposed_scope_name,
                         case.gold.proposed_setting_name,
                         case.prediction.proposed_setting_name,
+                        case.proposed_path_matched is None or case.upstream_semantic_pending,
                     )
                 )
             if (getattr(case, "matched_property_name_match", None) or {}).get("status") == "MATCH":
                 names.append(
                     (
                         case.gold.matched_scope_name,
+                        case.prediction.matched_scope_name,
                         case.gold.matched_property_name,
                         case.prediction.matched_property_name,
+                        case.upstream_semantic_pending,
                     )
                 )
-            for scope, expected_name, actual_name in names:
+            for expected_scope, actual_scope, expected_name, actual_name, pending in names:
                 if not expected_name or not actual_name:
                     continue
                 for expected in expected_entries:
@@ -539,7 +640,7 @@ def _world_scoring_ref_maps(
                         expected.category != source.category
                         or world_entry_subject_ref(expected) != target_subject
                         or not _same_world_name(expected.subject_name, source.subject_name)
-                        or not _same_world_name(expected.scope_name, scope)
+                        or not _same_world_name(expected.scope_name, expected_scope)
                         or not _same_world_name(expected.setting_name, expected_name)
                     ):
                         continue
@@ -554,23 +655,135 @@ def _world_scoring_ref_maps(
                                     and _same_world_name(actual.subject_name, expected.subject_name)
                                 )
                             )
-                            and _same_world_name(actual.scope_name, scope)
+                            and _same_world_name(actual.scope_name, actual_scope)
                             and _same_world_name(actual.setting_name, actual_name)
                         ):
-                            approved_pairs.append((f"fact:{expected.ref}", f"fact:{actual.ref}"))
-        result[scenario_id] = WorldStateRefMaps(
-            before=world_setting_ref_mapping(
-                {f"fact:{item.ref}" for item in expected_transition.before_state.world_facts},
-                {f"fact:{item.ref}" for item in actual_transition.before_state.world_facts},
-                approved_pairs,
+                            (pending_pairs if pending else approved_pairs).append(
+                                (f"fact:{expected.ref}", f"fact:{actual.ref}")
+                            )
+        before_refs = {f"fact:{item.ref}" for item in expected_transition.before_state.world_facts}
+        after_refs = {f"fact:{item.ref}" for item in expected_transition.after_state.world_facts}
+        actual_before_refs = {
+            f"fact:{item.ref}" for item in actual_transition.before_state.world_facts
+        }
+        actual_after_refs = {
+            f"fact:{item.ref}" for item in actual_transition.after_state.world_facts
+        }
+        before_map = world_setting_ref_mapping(
+            before_refs, actual_before_refs, approved_pairs + pending_pairs
+        )
+        after_map = world_setting_ref_mapping(
+            after_refs, actual_after_refs, approved_pairs + pending_pairs
+        )
+        result[scenario_id] = ScoringRefMaps(
+            before=before_map,
+            after=after_map,
+            pending_before=_pending_refs(
+                pending_pairs, before_refs, actual_before_refs, before_map
             ),
-            after=world_setting_ref_mapping(
-                {f"fact:{item.ref}" for item in expected_transition.after_state.world_facts},
-                {f"fact:{item.ref}" for item in actual_transition.after_state.world_facts},
-                approved_pairs,
-            ),
+            pending_after=_pending_refs(pending_pairs, after_refs, actual_after_refs, after_map),
         )
     return result
+
+
+def _pending_refs(
+    pending_pairs: list[tuple[str, str]],
+    expected_refs: set[str],
+    actual_refs: set[str],
+    ref_map: dict[str, str],
+) -> frozenset[str]:
+    return frozenset(
+        ref
+        for expected, actual in pending_pairs
+        if expected in expected_refs
+        and actual in actual_refs
+        and (expected == actual or (expected not in actual_refs and actual not in expected_refs))
+        for ref in (expected, ref_map.get(actual, actual))
+    )
+
+
+def _add_character_scoring_ref_maps(
+    maps: dict[str, ScoringRefMaps],
+    gold: GoldSnapshotV3,
+    cases: list[Stage2Case],
+    gold_chain: dict[str, ScenarioStateTransition],
+    predicted_chain: dict[str, ScenarioStateTransition],
+    selected_ids: set[str],
+) -> None:
+    sources = {row.gold_id: row for row in gold.stage1}
+    scenarios = {row.scenario_id: row for row in gold.scenarios}
+    for scenario_id in selected_ids:
+        ancestors = {scenario_id}
+        previous = scenarios[scenario_id].previous_scenario_id
+        while previous is not None:
+            ancestors.add(previous)
+            previous = scenarios[previous].previous_scenario_id
+        expected = gold_chain[scenario_id]
+        actual = predicted_chain[scenario_id]
+        expected_before = set(
+            _evaluation_state_values(expected.before_state, EvaluationDomain.CHARACTER)
+        )
+        expected_after = set(
+            _evaluation_state_values(expected.after_state, EvaluationDomain.CHARACTER)
+        )
+        actual_before = set(
+            _evaluation_state_values(actual.before_state, EvaluationDomain.CHARACTER)
+        )
+        actual_after = set(_evaluation_state_values(actual.after_state, EvaluationDomain.CHARACTER))
+        approved, pending = [], []
+        history_sources = set()
+        for case in cases:
+            if (
+                case.scenario_id not in ancestors
+                or not isinstance(case.gold, CharacterStage2Gold)
+                or not isinstance(case.prediction, CharacterStage2Prediction)
+                or case.canonical_fact_key_matched is False
+                or case.target_matched is not True
+            ):
+                continue
+            source = sources[case.gold.source_gold_ids[0]]
+            expected_ref = character_state_ref(source.entity_ref, source.fact_type, source.fact_key)
+            actual_ref = character_state_ref(
+                source.entity_ref, source.fact_type, case.prediction.resolved_canonical_fact_key
+            )
+            pairs = [
+                (f"{prefix}:{expected_ref}", f"{prefix}:{actual_ref}")
+                for prefix in ("fact", "fact-json")
+            ]
+            for ref in expected_before | expected_after:
+                kind, _, tail = ref.partition(":")
+                if kind not in {"history", "history-json"}:
+                    continue
+                identity = json.loads(tail)
+                if identity[2:5] == [source.entity_ref, source.fact_type, source.fact_key]:
+                    identity[4] = case.prediction.resolved_canonical_fact_key
+                    pairs.append((ref, _effect_ref(kind, tuple(identity))))
+                    identity[1] = f"prediction:{case.prediction.source_candidate_id}"
+                    history_sources.add((identity[0], source.gold_id, identity[1]))
+                    pairs.append((ref, _effect_ref(kind, tuple(identity))))
+            (
+                pending
+                if case.canonical_fact_key_matched is None or case.upstream_semantic_pending
+                else approved
+            ).extend(pairs)
+        before_map = character_setting_ref_mapping(
+            expected_before,
+            actual_before,
+            approved + pending,
+            history_source_matches=history_sources,
+        )
+        after_map = character_setting_ref_mapping(
+            expected_after, actual_after, approved + pending, history_source_matches=history_sources
+        )
+        world = maps[scenario_id]
+        maps[scenario_id] = ScoringRefMaps(
+            before=world.before | before_map,
+            after=world.after | after_map,
+            pending_before=world.pending_before
+            | _pending_refs(pending, expected_before, actual_before, before_map),
+            pending_after=world.pending_after
+            | _pending_refs(pending, expected_after, actual_after, after_map),
+        )
 
 
 def _validate_oracle_stage2_sources(
@@ -718,6 +931,8 @@ def _evaluate_stage2_cases(
     semantic_cases: list[SemanticOutcomeCase],
     enabled_domains: set[EvaluationDomain],
     state_application_errors: list[dict[str, str]],
+    gold_chain: dict[str, ScenarioStateTransition],
+    predicted_chain: dict[str, ScenarioStateTransition],
 ) -> list[Stage2Case]:
     cases: list[Stage2Case] = []
     gold_world_projections = _gold_world_projections_before_decision(gold)
@@ -782,6 +997,7 @@ def _evaluate_stage2_cases(
             )
             continue
         expected_character_fact_key = None
+        expected_character_source = None
         expected_world_subject_ref = None
         expected_world_source = None
         source_rows = [item for item in gold.stage1 if item.gold_id in decision.source_gold_ids]
@@ -791,6 +1007,7 @@ def _evaluate_stage2_cases(
             )
             assert isinstance(source, CharacterStage1Gold)
             expected_character_fact_key = source.fact_key
+            expected_character_source = source
         elif isinstance(decision, WorldStage2Gold):
             source = next(
                 item for item in gold.stage1 if item.gold_id == decision.source_gold_ids[0]
@@ -805,6 +1022,7 @@ def _evaluate_stage2_cases(
             decision,
             prediction,
             expected_character_fact_key=expected_character_fact_key,
+            expected_character_source=expected_character_source,
             expected_world_subject_ref=expected_world_subject_ref,
             expected_world_source=expected_world_source,
             allow_projected_world_target_equivalence=(
@@ -825,6 +1043,13 @@ def _evaluate_stage2_cases(
         case.scenario_id = decision.scenario_id
         case.upstream_outcome = outcome
         if isinstance(decision, WorldStage2Gold):
+            case.related_world_paths = _world_decision_paths(
+                expected_world_source,
+                gold,
+                scenario_prediction,
+                gold_chain[decision.scenario_id].before_state,
+                predicted_chain[decision.scenario_id].before_state,
+            )
             case.world_application_matched = not any(
                 error.get("scenarioId") == decision.scenario_id
                 and error.get("sourceCandidateId") == prediction.source_candidate_id
@@ -840,11 +1065,71 @@ def _evaluate_stage2_cases(
     return cases
 
 
+def _world_decision_paths(
+    source: WorldStage1Gold | None,
+    gold: GoldSnapshotV3,
+    prediction: ScenarioPrediction,
+    expected_before: EvaluationState,
+    actual_before: EvaluationState,
+) -> tuple[dict[str, object], ...]:
+    if source is None:
+        return ()
+    paths = list(_world_extraction_paths(source, gold.stage1, prediction.stage1))
+    gold_sources = {row.gold_id: row for row in gold.stage1}
+    actual_sources = {row.candidate_id: row for row in prediction.stage1}
+    for side, decisions, sources, before in (
+        ("expected", gold.stage2, gold_sources, expected_before),
+        ("actual", prediction.stage2, actual_sources, actual_before),
+    ):
+        for entry in before.world_facts:
+            if entry.category == source.category and _same_world_name(
+                entry.subject_name, source.subject_name
+            ):
+                paths.append(
+                    {
+                        "side": side,
+                        "kind": "EXISTING",
+                        "scopeName": entry.scope_name,
+                        "settingName": entry.setting_name,
+                        "value": entry.value,
+                    }
+                )
+        for decision in decisions:
+            if not isinstance(decision, (WorldStage2Gold, WorldStage2Prediction)):
+                continue
+            if isinstance(decision, WorldStage2Gold):
+                if decision.scenario_id != source.scenario_id:
+                    continue
+                row = sources.get(decision.source_gold_ids[0])
+            else:
+                row = sources.get(decision.source_candidate_id) or gold_sources.get(
+                    decision.source_candidate_id
+                )
+            if (
+                not isinstance(row, (WorldStage1Gold, WorldStage1Prediction))
+                or row.category != source.category
+                or not _same_world_name(row.subject_name, source.subject_name)
+            ):
+                continue
+            paths.append(
+                {
+                    "side": side,
+                    "kind": "PROPOSED",
+                    "operation": decision.operation.value,
+                    "scopeName": decision.proposed_scope_name,
+                    "settingName": decision.proposed_setting_name,
+                    "value": decision.proposed_value,
+                }
+            )
+    return tuple(paths)
+
+
 def _score_stage2_case(
     gold: CharacterStage2Gold | WorldStage2Gold,
     prediction: CharacterStage2Prediction | WorldStage2Prediction,
     *,
     expected_character_fact_key: str | None = None,
+    expected_character_source: CharacterStage1Gold | None = None,
     expected_world_subject_ref: str | None = None,
     expected_world_source: WorldStage1Gold | None = None,
     allow_projected_world_target_equivalence: bool = False,
@@ -858,10 +1143,7 @@ def _score_stage2_case(
             actual_value_json=prediction.proposed_value_json,
         )
         structured_value_matched = (
-            _json_contains_native(
-                gold.proposed_value_json,
-                prediction.proposed_value_json,
-            )
+            _structured_semantic_result(gold.proposed_value_json, prediction.proposed_value_json)
             if gold.proposed_value_json is not None
             else None
         )
@@ -877,6 +1159,24 @@ def _score_stage2_case(
         canonical_fact_key_matched = (
             prediction.resolved_canonical_fact_key == expected_character_fact_key
         )
+        character_context = None
+        if (
+            not canonical_fact_key_matched
+            and expected_character_source is not None
+            and dynamic_status_key_pair(
+                expected_character_source.fact_type,
+                expected_character_fact_key,
+                prediction.resolved_canonical_fact_key,
+            )
+        ):
+            canonical_fact_key_matched = None
+            character_context = CharacterSettingContext(
+                entity_id=expected_character_source.entity_ref,
+                fact_type=expected_character_source.fact_type.value,
+                expected_fact_key=expected_character_fact_key,
+                actual_fact_key=prediction.resolved_canonical_fact_key,
+                schema_pattern="status.*",
+            )
         operation_matched = gold.operation == prediction.operation
         target_matched = _same_ref(gold.target_ref, prediction.target_ref)
         removed_matched = (
@@ -911,8 +1211,21 @@ def _score_stage2_case(
             structured_value_matched=structured_value_matched,
             full_decision_matched=_all_or_pending(fields),
             semantic_case_id=(
-                f"stage2:{gold.scenario_id}:{gold.decision_id}" if value_matched is None else None
+                f"stage2:{gold.scenario_id}:{gold.decision_id}"
+                if value_matched is None or canonical_fact_key_matched is None
+                else None
             ),
+            character_context=character_context,
+            character_setting_semantic_case_id=(
+                f"stage2:{gold.scenario_id}:{gold.decision_id}" if character_context else None
+            ),
+            structured_semantic_case_ids=_structured_case_ids(
+                f"stage2-json:{gold.scenario_id}:{gold.decision_id}",
+                gold.proposed_value_json,
+                prediction.proposed_value_json,
+            )
+            if gold.proposed_value_json is not None
+            else (),
         )
     if isinstance(gold, WorldStage2Gold) and isinstance(prediction, WorldStage2Prediction):
         exact_value = normalize_text(gold.proposed_value) == normalize_text(
@@ -935,7 +1248,16 @@ def _score_stage2_case(
         target_context_matched = target_ref_matched and _same_world_name(
             gold.matched_scope_name, prediction.matched_scope_name
         )
-        scope_matched = _same_world_name(gold.proposed_scope_name, prediction.proposed_scope_name)
+        scope_matched: bool | None = _same_world_name(
+            gold.proposed_scope_name, prediction.proposed_scope_name
+        )
+        if (
+            not scope_matched
+            and gold.operation == WorldSettingOperation.ADD
+            and prediction.operation == WorldSettingOperation.ADD
+            and expected_world_source is not None
+        ):
+            scope_matched = None
         aliases_allowed = expected_world_source is not None and (
             _same_world_name(expected_world_source.scope_name, gold.proposed_scope_name)
             and _same_world_name(expected_world_source.setting_name, gold.proposed_setting_name)
@@ -952,7 +1274,7 @@ def _score_stage2_case(
             gold.proposed_setting_name,
             prediction.proposed_setting_name,
             expected_scope=gold.proposed_scope_name,
-            context_matched=scope_matched,
+            context_matched=expected_world_source is not None,
             source=expected_world_source,
             aliases_allowed=aliases_allowed,
         )
@@ -999,13 +1321,16 @@ def _score_stage2_case(
             full_decision_matched=_all_or_pending(fields),
             semantic_case_id=(
                 f"stage2:{gold.scenario_id}:{gold.decision_id}"
-                if value_matched is None or setting_matched is None
+                if value_matched is None or setting_matched is None or scope_matched is None
                 else None
             ),
             setting_name_match=setting_match,
             matched_property_name_match=property_match,
             proposed_setting_semantic_case_id=(
                 f"stage2:{gold.scenario_id}:{gold.decision_id}" if setting_matched is None else None
+            ),
+            proposed_scope_semantic_case_id=(
+                f"stage2:{gold.scenario_id}:{gold.decision_id}" if scope_matched is None else None
             ),
             matched_property_semantic_case_id=(
                 f"stage2-property:{gold.scenario_id}:{gold.decision_id}"
@@ -1093,7 +1418,10 @@ def _stage2_semantic_cases(
     result: list[SemanticOutcomeCase] = []
     if case.semantic_case_id is not None:
         setting_context = None
-        if case.proposed_setting_semantic_case_id is not None:
+        if (
+            case.proposed_setting_semantic_case_id is not None
+            or case.proposed_scope_semantic_case_id is not None
+        ):
             assert source is not None
             assert isinstance(case.gold, WorldStage2Gold)
             assert isinstance(case.prediction, WorldStage2Prediction)
@@ -1104,10 +1432,16 @@ def _stage2_semantic_cases(
                 scope_name=case.gold.proposed_scope_name,
                 expected_setting_name=case.gold.proposed_setting_name,
                 actual_setting_name=case.prediction.proposed_setting_name,
+                actual_scope_name=case.prediction.proposed_scope_name,
+                related_paths=case.related_world_paths,
+                operation=case.prediction.operation.value,
             )
         result.append(
             SemanticOutcomeCase(
-                case_id=case.semantic_case_id, setting_context=setting_context, **common
+                case_id=case.semantic_case_id,
+                setting_context=setting_context,
+                character_context=case.character_context,
+                **common,
             )
         )
     if case.matched_property_semantic_case_id is not None:
@@ -1125,8 +1459,24 @@ def _stage2_semantic_cases(
                     scope_name=case.gold.matched_scope_name,
                     expected_setting_name=case.gold.matched_property_name,
                     actual_setting_name=case.prediction.matched_property_name,
+                    actual_scope_name=case.prediction.matched_scope_name,
+                    related_paths=case.related_world_paths,
+                    operation=case.prediction.operation.value,
                 ),
                 **common,
+            )
+        )
+    if isinstance(case.gold, CharacterStage2Gold) and case.gold.proposed_value_json is not None:
+        result.extend(
+            _structured_semantic_cases(
+                f"stage2-json:{case.gold.scenario_id}:{case.gold.decision_id}",
+                case.gold.proposed_value_json,
+                case.prediction.proposed_value_json,
+                **{
+                    key: value
+                    for key, value in common.items()
+                    if key not in {"expected_value", "actual_value"}
+                },
             )
         )
     return result
@@ -1326,7 +1676,7 @@ def _build_state_pairs(
     selected_ids: set[str],
     semantic_cases: list[SemanticOutcomeCase],
     enabled_domains: set[EvaluationDomain],
-    world_ref_maps: dict[str, WorldStateRefMaps] | None = None,
+    scoring_ref_maps: dict[str, ScoringRefMaps] | None = None,
 ) -> list[StatePair]:
     pairs: list[StatePair] = []
     scenario_by_id = {scenario.scenario_id: scenario for scenario in gold.scenarios}
@@ -1346,16 +1696,21 @@ def _build_state_pairs(
                 continue
             expected_items = _evaluation_state_values(expected, domain)
             actual_items = _evaluation_state_values(actual, domain)
-            if domain == EvaluationDomain.WORLD:
-                maps = (world_ref_maps or {}).get(scenario_id)
-                ref_map = maps.after if maps else {}
-                actual_items = {ref_map.get(ref, ref): value for ref, value in actual_items.items()}
+            pending_refs = frozenset()
+            maps = (scoring_ref_maps or {}).get(scenario_id)
+            ref_map = maps.after if maps else {}
+            actual_items = {ref_map.get(ref, ref): value for ref, value in actual_items.items()}
+            pending_refs = maps.pending_after if maps else frozenset()
+            actual_ref_by_scoring_ref = {
+                ref_map.get(ref, ref): ref for ref in _evaluation_state_values(actual, domain)
+            }
             for ref in sorted(set(expected_items) | set(actual_items)):
                 expected_value = expected_items.get(ref)
                 actual_value = actual_items.get(ref)
                 if _is_structured_state_ref(ref) and ref not in expected_items:
                     # Gold가 구조화 값을 지정하지 않은 effect는 별도 품질 축에서 제외한다.
                     continue
+                identity_matched = None if ref in pending_refs else True
                 if ref not in expected_items or ref not in actual_items:
                     pairs.append(
                         StatePair(
@@ -1366,11 +1721,21 @@ def _build_state_pairs(
                             actual_value=actual_value,
                             expected_present=ref in expected_items,
                             actual_present=ref in actual_items,
-                            matched=False,
+                            matched=False if identity_matched else None,
+                            identity_matched=identity_matched,
                         )
                     )
                     continue
-                if normalize_text(expected_value) == normalize_text(actual_value):
+                typed_match = (
+                    _character_state_value_match(
+                        gold, expected, actual, ref, actual_ref_by_scoring_ref.get(ref, ref)
+                    )
+                    if domain == EvaluationDomain.CHARACTER
+                    else None
+                )
+                if typed_match is not None or normalize_text(expected_value) == normalize_text(
+                    actual_value
+                ):
                     pairs.append(
                         StatePair(
                             scenario_id=scenario_id,
@@ -1380,11 +1745,31 @@ def _build_state_pairs(
                             actual_value=actual_value,
                             expected_present=True,
                             actual_present=True,
-                            matched=True,
+                            matched=_all_or_pending(
+                                [identity_matched, typed_match if typed_match is not None else True]
+                            ),
+                            identity_matched=identity_matched,
                         )
                     )
                     continue
                 if _is_structured_state_ref(ref):
+                    prefix = f"state-json:{scenario_id}:{len(pairs)}"
+                    expected_json, actual_json = (
+                        json.loads(expected_value),
+                        json.loads(actual_value),
+                    )
+                    semantic_cases.extend(
+                        _structured_semantic_cases(
+                            prefix,
+                            expected_json,
+                            actual_json,
+                            **_semantic_context_kwargs(
+                                semantic_contexts.get(
+                                    (scenario_id, domain, _structured_base_ref(ref))
+                                )
+                            ),
+                        )
+                    )
                     pairs.append(
                         StatePair(
                             scenario_id=scenario_id,
@@ -1394,9 +1779,15 @@ def _build_state_pairs(
                             actual_value=actual_value,
                             expected_present=True,
                             actual_present=True,
-                            matched=_structured_state_matches(
-                                expected_value,
-                                actual_value,
+                            matched=_all_or_pending(
+                                [
+                                    identity_matched,
+                                    _structured_semantic_result(expected_json, actual_json),
+                                ]
+                            ),
+                            identity_matched=identity_matched,
+                            structured_semantic_case_ids=_structured_case_ids(
+                                prefix, expected_json, actual_json
                             ),
                         )
                     )
@@ -1412,6 +1803,7 @@ def _build_state_pairs(
                         expected_present=True,
                         actual_present=True,
                         matched=None,
+                        identity_matched=identity_matched,
                         semantic_case_id=case_id,
                     )
                 )
@@ -1426,6 +1818,83 @@ def _build_state_pairs(
                     )
                 )
     return pairs
+
+
+def _character_state_value_match(
+    gold: GoldSnapshotV3,
+    expected: EvaluationState,
+    actual: EvaluationState,
+    expected_ref: str,
+    actual_ref: str,
+) -> bool | None:
+    if expected_ref.startswith("fact:"):
+        left = next(
+            (entry for entry in expected.character_facts if f"fact:{entry.ref}" == expected_ref),
+            None,
+        )
+        right = next(
+            (entry for entry in actual.character_facts if f"fact:{entry.ref}" == actual_ref), None
+        )
+        if left is None or right is None:
+            return None
+        value_type = left.value_type
+        if value_type is not None and value_type != right.value_type:
+            return False
+        expected_value, actual_value = left.value, right.value
+    elif expected_ref.startswith("history:"):
+        left_id, right_id = (
+            json.loads(expected_ref.partition(":")[2]),
+            json.loads(actual_ref.partition(":")[2]),
+        )
+        left = next(
+            (
+                entry
+                for entry in expected.character_history
+                if [
+                    entry.scenario_id,
+                    entry.source_gold_id,
+                    entry.entity_ref,
+                    entry.fact_type,
+                    entry.fact_key,
+                    entry.operation,
+                ]
+                == left_id
+            ),
+            None,
+        )
+        right = next(
+            (
+                entry
+                for entry in actual.character_history
+                if [
+                    entry.scenario_id,
+                    entry.source_gold_id,
+                    entry.entity_ref,
+                    entry.fact_type,
+                    entry.fact_key,
+                    entry.operation,
+                ]
+                == right_id
+            ),
+            None,
+        )
+        if left is None or right is None:
+            return None
+        if left.temporal_scope != right.temporal_scope:
+            return False
+        source = next((row for row in gold.stage1 if row.gold_id == left.source_gold_id), None)
+        value_type = source.value_type if isinstance(source, CharacterStage1Gold) else None
+        expected_value, actual_value = left.value, right.value
+    else:
+        return None
+    if value_type not in {"NUMBER", "BOOLEAN"}:
+        return None
+    comparison = compare_typed_value(
+        value_type=value_type,
+        expected_display_value=expected_value,
+        actual_display_value=actual_value,
+    )
+    return comparison.status == ValueComparisonStatus.MATCH
 
 
 def _build_state_semantic_contexts(
@@ -1499,12 +1968,10 @@ def _build_state_semantic_contexts(
                 key = (decision.domain, ref)
                 if ref not in after_values:
                     contexts.pop(key, None)
-                elif context.required_facts or context.forbidden_facts:
-                    contexts[key] = context
                 else:
-                    # A later decision owns the value even when it has no semantic
-                    # annotations; do not inherit stale claims from an older value.
-                    contexts.pop(key, None)
+                    # Keep source/evidence even without extra annotation constraints;
+                    # the new decision replaces any older required/forbidden claims.
+                    contexts[key] = context
 
         contexts_after[scenario.scenario_id] = contexts
         result.update(
@@ -1564,6 +2031,65 @@ def _semantic_context_kwargs(
     }
 
 
+def _structured_case_ids(prefix: str, expected: Any, actual: Any) -> tuple[str, ...]:
+    comparison = compare_structured_semantics(expected, actual)
+    if not comparison.structural_matched:
+        return ()
+    return tuple(f"{prefix}#{pair.path}" for pair in comparison.text_pairs)
+
+
+def _structured_semantic_cases(
+    prefix: str, expected: Any, actual: Any, **context: Any
+) -> list[SemanticOutcomeCase]:
+    comparison = compare_structured_semantics(expected, actual)
+    if not comparison.structural_matched:
+        return []
+    # Required facts constrain the complete outcome, not every individual JSON leaf.
+    # Each leaf is compared to its own Gold text, with the source/evidence as context.
+    context.pop("required_facts", None)
+    context.pop("forbidden_facts", None)
+    return [
+        SemanticOutcomeCase(
+            case_id=f"{prefix}#{pair.path}",
+            expected_value=pair.expected,
+            actual_value=pair.actual,
+            **context,
+        )
+        for pair in comparison.text_pairs
+    ]
+
+
+def _structured_semantic_result(expected: Any, actual: Any) -> bool | None:
+    comparison = compare_structured_semantics(expected, actual)
+    if not comparison.structural_matched:
+        return False
+    return None if comparison.text_pairs else True
+
+
+def _semantic_results(case_ids: tuple[str, ...], decisions: dict[str, Any]) -> bool | None:
+    return _all_or_pending(
+        [getattr(decisions.get(case_id), "matched", None) for case_id in case_ids]
+    )
+
+
+def _apply_stage1_structured_results(results: dict, decisions: dict[str, Any]) -> None:
+    for key, result in results.items():
+        matches = []
+        for match in result.matches:
+            if isinstance(match.gold, CharacterStage1Gold) and match.gold.structured_scorable:
+                case_ids = _structured_case_ids(
+                    f"stage1-json:{match.gold.scenario_id}:{match.gold.gold_id}",
+                    match.gold.value_json,
+                    match.prediction.value_json,
+                )
+                if case_ids:
+                    match = replace(
+                        match, structured_value_matched=_semantic_results(case_ids, decisions)
+                    )
+            matches.append(match)
+        results[key] = replace(result, matches=tuple(matches))
+
+
 def _apply_semantic_results(
     stage2_cases: list[Stage2Case],
     state_pairs: list[StatePair],
@@ -1575,11 +2101,27 @@ def _apply_semantic_results(
         decision = decisions.get(case.semantic_case_id) if case.semantic_case_id else None
         if decision is not None and case.value_matched is None:
             case.value_matched = decision.matched
+        if case.character_setting_semantic_case_id is not None:
+            case.canonical_fact_key_matched = getattr(
+                decisions.get(case.character_setting_semantic_case_id), "same_setting", None
+            )
+        if case.structured_semantic_case_ids:
+            case.structured_value_matched = _semantic_results(
+                case.structured_semantic_case_ids, decisions
+            )
+        if case.proposed_scope_semantic_case_id is not None:
+            scope_decision = decisions.get(case.proposed_scope_semantic_case_id)
+            case.world_proposed_scope_matched = getattr(scope_decision, "scope_equivalent", None)
         if case.proposed_setting_semantic_case_id is not None:
             name_matched = _stage2_semantic_name_result(
                 case.setting_name_match,
                 decisions.get(case.proposed_setting_semantic_case_id),
             )
+        else:
+            name_matched = {"MATCH": True, "MISMATCH": False}.get(
+                (case.setting_name_match or {}).get("status")
+            )
+        if isinstance(case.gold, WorldStage2Gold):
             case.proposed_path_matched = _all_or_pending(
                 [case.world_proposed_scope_matched, name_matched]
             )
@@ -1602,11 +2144,18 @@ def _apply_semantic_results(
         else:
             case.failure_cause = None
     for pair in state_pairs:
+        if pair.structured_semantic_case_ids:
+            pair.matched = _all_or_pending(
+                [
+                    pair.identity_matched,
+                    _semantic_results(pair.structured_semantic_case_ids, decisions),
+                ]
+            )
         if pair.semantic_case_id is None:
             continue
         decision = decisions.get(pair.semantic_case_id)
         if decision is not None:
-            pair.matched = decision.matched
+            pair.matched = _all_or_pending([pair.identity_matched, decision.matched])
 
 
 def _stage2_semantic_name_result(match: dict[str, str | None] | None, decision: Any) -> bool | None:
@@ -1645,12 +2194,23 @@ def _reclassify_semantic_upstream(
                 )
             )
             is not None
-            and not decision.matched
+            and decision.matched is False
             for match in matching.matches
         )
         if failed_semantic_source:
             case.upstream_outcome = UpstreamOutcome.UPSTREAM_VALUE_ERROR
             case.failure_cause = FailureCause.EXTRACTION_MISS
+        else:
+            case.upstream_semantic_pending = any(
+                bool(set(match.source_gold_ids) & source_ids)
+                and (
+                    match.identity_matched is None
+                    or _resolved_stage1_value_status(match, semantic_decisions) == "PENDING"
+                )
+                for match in matching.matches
+            )
+            if case.upstream_semantic_pending and case.full_decision_matched is True:
+                case.full_decision_matched = None
 
 
 def _build_stage1_report(
@@ -1678,8 +2238,11 @@ def _build_stage1_report(
         matches = [match for result in domain_results for match in result.matches]
         gold_positive = sum(result.gold_group_count for result in domain_results)
         prediction_count = sum(result.grouped_prediction_count for result in domain_results)
-        true_positive = sum(match.identity_matched for match in matches)
+        true_positive = sum(match.identity_matched is True for match in matches)
         precision, recall, f1 = _prf(true_positive, prediction_count, gold_positive)
+        identity_pending = any(match.identity_matched is None for match in matches)
+        if identity_pending:
+            precision = recall = f1 = None
         value_results: list[bool] = []
         pending = 0
         for match in matches:
@@ -1692,7 +2255,7 @@ def _build_stage1_report(
             else:
                 case_id = f"stage1:{match.gold.scenario_id}:{match.gold.gold_id}"
                 semantic = semantic_decisions.get(case_id)
-                if semantic is None:
+                if semantic is None or semantic.matched is None:
                     pending += 1
                 else:
                     value_results.append(semantic.matched)
@@ -1716,11 +2279,13 @@ def _build_stage1_report(
                 "candidatePrecision": precision,
                 "candidateRecall": recall,
                 "candidateF1": f1,
-                "weightedRecall": _ratio(weighted_hit, weighted_gold),
+                "weightedRecall": None if identity_pending else _ratio(weighted_hit, weighted_gold),
                 "entityOrSubjectAccuracy": _accuracy(
                     [match.entity_or_subject_matched for match in matches]
                 ),
-                "pathOrFactAccuracy": _accuracy([match.path_or_fact_matched for match in matches]),
+                "pathOrFactAccuracy": None
+                if identity_pending
+                else _accuracy([match.path_or_fact_matched for match in matches]),
                 "valueAccuracy": None if pending else resolved_value_accuracy,
                 "resolvedValueAccuracy": resolved_value_accuracy,
                 "valueLowerBoundAccuracy": _ratio(
@@ -1738,7 +2303,14 @@ def _build_stage1_report(
                         if match.value_type_matched is not None
                     ]
                 ),
-                "structuredValueAccuracy": _accuracy(
+                "structuredValueAccuracy": None
+                if any(
+                    isinstance(match.gold, CharacterStage1Gold)
+                    and match.gold.structured_scorable
+                    and match.structured_value_matched is None
+                    for match in matches
+                )
+                else _accuracy(
                     [
                         match.structured_value_matched
                         for match in matches
@@ -1764,7 +2336,16 @@ def _build_stage1_report(
                 "hardNegativeHits": sum(
                     len(result.hard_negative_hits) for result in domain_results
                 ),
-                "semanticPending": pending,
+                "semanticPending": sum(
+                    match.identity_matched is None
+                    or _resolved_stage1_value_status(match, semantic_decisions) == "PENDING"
+                    or (
+                        isinstance(match.gold, CharacterStage1Gold)
+                        and match.gold.structured_scorable
+                        and match.structured_value_matched is None
+                    )
+                    for match in matches
+                ),
                 "rawPredictions": sum(result.raw_prediction_count for result in domain_results),
                 "handoffPredictions": sum(
                     result.handoff_prediction_count for result in domain_results
@@ -1840,14 +2421,22 @@ def _build_stage2_report(
         metrics = {
             "upstreamReachRate": _ratio(len(upstream_reached), len(domain_cases)),
             "operationAccuracy": _accuracy(operation_values),
-            "characterCanonicalFactKeyResolutionAccuracy": _accuracy(
+            "characterCanonicalFactKeyResolutionAccuracy": None
+            if any(
+                isinstance(case.gold, CharacterStage2Gold)
+                and case.canonical_fact_key_matched is None
+                for case in reached
+            )
+            else _accuracy(
                 [
                     case.canonical_fact_key_matched
                     for case in reached
                     if case.canonical_fact_key_matched is not None
                 ]
             ),
-            "targetAccuracy": _accuracy(
+            "targetAccuracy": None
+            if any(case.target_matched is None for case in reached)
+            else _accuracy(
                 [case.target_matched for case in reached if case.target_matched is not None]
             ),
             "removedSnapshotSetAccuracy": _accuracy(
@@ -1863,7 +2452,12 @@ def _build_stage2_report(
                     if case.consolidation_matched is not None
                 ]
             ),
-            "proposedPathAccuracy": _accuracy(
+            "proposedPathAccuracy": None
+            if any(
+                isinstance(case.gold, WorldStage2Gold) and case.proposed_path_matched is None
+                for case in reached
+            )
+            else _accuracy(
                 [
                     case.proposed_path_matched
                     for case in reached
@@ -1889,7 +2483,14 @@ def _build_stage2_report(
                 len(proposed_value_values),
                 len(proposed_value_values) + proposed_value_pending,
             ),
-            "proposedValueJsonAccuracy": _accuracy(
+            "proposedValueJsonAccuracy": None
+            if any(
+                isinstance(case.gold, CharacterStage2Gold)
+                and case.gold.proposed_value_json is not None
+                and case.structured_value_matched is None
+                for case in reached
+            )
+            else _accuracy(
                 [
                     case.structured_value_matched
                     for case in reached
@@ -1954,7 +2555,7 @@ def _build_end_to_end_report(
     state_application_errors: list[dict[str, str]],
     selected_ids: set[str],
     enabled_domains: set[EvaluationDomain],
-    world_ref_maps: dict[str, WorldStateRefMaps] | None = None,
+    scoring_ref_maps: dict[str, ScoringRefMaps] | None = None,
 ) -> dict[str, Any]:
     domain_reports = {}
     for domain in EvaluationDomain:
@@ -1992,7 +2593,7 @@ def _build_end_to_end_report(
             predicted_transition.after_state,
             structured_reference_before=gold_transition.before_state,
             structured_reference_after=gold_transition.after_state,
-            world_ref_maps=(world_ref_maps or {}).get(scenario.scenario_id),
+            scoring_ref_maps=(scoring_ref_maps or {}).get(scenario.scenario_id),
         )
         scenario_domains = enabled_domains & scenario.target_domains
         expected_delta = {
@@ -2024,18 +2625,31 @@ def _build_end_to_end_report(
         transition_counts["predicted"] += len(actual_delta)
         scenario_pairs = [pair for pair in state_pairs if pair.scenario_id == scenario.scenario_id]
         pair_by_ref = {(pair.domain.value, pair.ref): pair for pair in scenario_pairs}
-        for key in set(expected_delta) & set(actual_delta):
+        pending_expected = pending_actual = 0
+        maps = (scoring_ref_maps or {}).get(scenario.scenario_id)
+        for key in set(expected_delta) | set(actual_delta):
+            pair = pair_by_ref.get((key[0], key[2]))
+            identity_pending = (
+                key[1] == "REMOVE" and maps is not None and key[2] in maps.pending_before
+            )
+            if (pair is not None and pair.matched is None) or identity_pending:
+                pending_expected += key in expected_delta
+                pending_actual += key in actual_delta
+                continue
+            if key not in expected_delta or key not in actual_delta:
+                continue
             expected_value = expected_delta[key]
             actual_value = actual_delta[key]
+            if key[1] in {"ADD", "UPDATE"} and pair is not None and pair.matched is False:
+                continue
             if normalize_text(expected_value) == normalize_text(actual_value):
                 transition_counts["matched"] += 1
                 continue
-            pair = pair_by_ref.get((key[0], key[2]))
-            if key[1] in {"ADD", "UPDATE"} and pair is not None:
-                if pair.matched is True:
-                    transition_counts["matched"] += 1
-                elif pair.matched is None:
-                    transition_counts["semanticPending"] += 1
+            if key[1] in {"ADD", "UPDATE"} and pair is not None and pair.matched is True:
+                transition_counts["matched"] += 1
+        transition_counts["semanticPending"] += max(pending_expected, pending_actual)
+        transition_counts["pendingExpected"] += pending_expected
+        transition_counts["pendingActual"] += pending_actual
         scenario_state_metrics = _state_pair_metrics(scenario_pairs)
         scenario_f1 = scenario_state_metrics["f1"]
         scenario_rows.append(
@@ -2058,8 +2672,8 @@ def _build_end_to_end_report(
     pending_transitions = transition_counts["semanticPending"]
     resolved_transition = _prf(
         transition_counts["matched"],
-        max(0, transition_counts["predicted"] - pending_transitions),
-        max(0, transition_counts["expected"] - pending_transitions),
+        transition_counts["predicted"] - transition_counts["pendingActual"],
+        transition_counts["expected"] - transition_counts["pendingExpected"],
     )
     transition_precision, transition_recall, transition_f1 = (
         (None, None, None) if pending_transitions else lower_transition
@@ -2116,8 +2730,8 @@ def _state_pair_metrics(pairs: list[StatePair]) -> dict[str, float | int | None]
     lower_precision, lower_recall, lower_f1 = _prf(correct, predicted, expected)
     resolved_precision, resolved_recall, resolved_f1 = _prf(
         correct,
-        max(0, predicted - pending),
-        max(0, expected - pending),
+        predicted - sum(pair.actual_present and pair.matched is None for pair in pairs),
+        expected - sum(pair.expected_present and pair.matched is None for pair in pairs),
     )
     precision, recall, f1 = (
         (None, None, None) if pending else (lower_precision, lower_recall, lower_f1)
@@ -2247,7 +2861,9 @@ def _stage1_diagnostic_cases(
                 "actual": _stage1_diagnostic_summary(match.prediction),
                 "fields": {
                     "subject": _boolean_match_status(match.entity_or_subject_matched),
-                    "path": _boolean_match_status(match.path_or_fact_matched),
+                    "path": _boolean_match_status(
+                        match.path_or_fact_matched, none_status="PENDING"
+                    ),
                     "value": value_status,
                 },
                 "upstreamOutcome": upstream_outcome.value,
@@ -2328,7 +2944,7 @@ def _resolved_stage1_value_status(
         return match.value_status.value
     case_id = f"stage1:{match.gold.scenario_id}:{match.gold.gold_id}"
     decision = semantic_decisions.get(case_id)
-    if decision is None:
+    if decision is None or decision.matched is None:
         return "PENDING"
     return FieldMatchStatus.MATCH.value if decision.matched else FieldMatchStatus.MISMATCH.value
 
@@ -2409,7 +3025,7 @@ def _stage2_diagnostic_fields(
         }
         fields = {
             "operation": _boolean_match_status(case.operation_matched),
-            "target": _boolean_match_status(case.target_matched),
+            "target": _boolean_match_status(case.target_matched, none_status="PENDING"),
             "value": _boolean_match_status(case.value_matched, none_status="PENDING"),
         }
         if isinstance(case.gold, CharacterStage2Gold):
@@ -2420,12 +3036,16 @@ def _stage2_diagnostic_fields(
                 prediction.removed_snapshot_refs,
                 actual_before_state,
             )
-            fields["canonicalPath"] = _boolean_match_status(case.canonical_fact_key_matched)
+            fields["canonicalPath"] = _boolean_match_status(
+                case.canonical_fact_key_matched, none_status="PENDING"
+            )
             fields["temporal"] = _boolean_match_status(case.temporal_matched)
             if case.removed_matched is not None:
                 fields["removedSet"] = _boolean_match_status(case.removed_matched)
-            if case.structured_value_matched is not None:
-                fields["structuredValue"] = _boolean_match_status(case.structured_value_matched)
+            if case.gold.proposed_value_json is not None:
+                fields["structuredValue"] = _boolean_match_status(
+                    case.structured_value_matched, none_status="PENDING"
+                )
         elif isinstance(case.gold, WorldStage2Gold):
             assert isinstance(prediction, WorldStage2Prediction)
             actual["consolidationStatus"] = prediction.consolidation_status.value
@@ -2435,7 +3055,9 @@ def _stage2_diagnostic_fields(
                 key=normalize_world_setting_name,
             )
             fields["consolidation"] = _boolean_match_status(case.consolidation_matched)
-            fields["proposedPath"] = _boolean_match_status(case.proposed_path_matched)
+            fields["proposedPath"] = _boolean_match_status(
+                case.proposed_path_matched, none_status="PENDING"
+            )
             if case.world_path_preserved_matched is not None:
                 fields["pathPreservation"] = _boolean_match_status(
                     case.world_path_preserved_matched
@@ -2898,7 +3520,7 @@ def _canonical_json(value: dict[str, Any]) -> str:
 
 
 def _is_structured_state_ref(ref: str) -> bool:
-    return ref.startswith("fact-json:") or ref.startswith("history-json:")
+    return ref.startswith(("fact-json:", "history-json:"))
 
 
 def _structured_state_matches(
@@ -2955,19 +3577,14 @@ def _state_delta(
     *,
     structured_reference_before: EvaluationState,
     structured_reference_after: EvaluationState,
-    world_ref_maps: WorldStateRefMaps | None = None,
+    scoring_ref_maps: ScoringRefMaps | None = None,
 ) -> dict[tuple[str, str, str], str | None]:
     result: dict[tuple[str, str, str], str | None] = {}
     for domain in EvaluationDomain:
         before_items = _evaluation_state_values(before, domain)
         after_items = _evaluation_state_values(after, domain)
-        if domain == EvaluationDomain.WORLD and world_ref_maps is not None:
-            before_items = {
-                world_ref_maps.before.get(ref, ref): value for ref, value in before_items.items()
-            }
-            after_items = {
-                world_ref_maps.after.get(ref, ref): value for ref, value in after_items.items()
-            }
+        before_map = scoring_ref_maps.before if scoring_ref_maps else {}
+        after_map = scoring_ref_maps.after if scoring_ref_maps else {}
         reference_before_items = _evaluation_state_values(
             structured_reference_before,
             domain,
@@ -2985,19 +3602,21 @@ def _state_delta(
             before_items,
             reference_before_items,
             scorable_structured_refs,
+            before_map,
         )
         after_items = _project_structured_state_items(
             after_items,
             reference_after_items,
             scorable_structured_refs,
+            after_map,
         )
         for ref in set(before_items) | set(after_items):
             if ref not in before_items:
-                result[(domain.value, "ADD", ref)] = after_items[ref]
+                result[(domain.value, "ADD", after_map.get(ref, ref))] = after_items[ref]
             elif ref not in after_items:
-                result[(domain.value, "REMOVE", ref)] = before_items[ref]
+                result[(domain.value, "REMOVE", before_map.get(ref, ref))] = before_items[ref]
             elif normalize_text(before_items[ref]) != normalize_text(after_items[ref]):
-                result[(domain.value, "UPDATE", ref)] = after_items[ref]
+                result[(domain.value, "UPDATE", after_map.get(ref, ref))] = after_items[ref]
     return result
 
 
@@ -3005,12 +3624,14 @@ def _project_structured_state_items(
     actual_items: dict[str, str | None],
     reference_items: dict[str, str | None],
     scorable_refs: set[str],
+    scoring_ref_map: dict[str, str] | None = None,
 ) -> dict[str, str | None]:
     projected = {
         ref: value for ref, value in actual_items.items() if not _is_structured_state_ref(ref)
     }
-    for ref in scorable_refs:
-        if ref not in actual_items:
+    for raw_ref, actual in actual_items.items():
+        ref = (scoring_ref_map or {}).get(raw_ref, raw_ref)
+        if ref not in scorable_refs:
             continue
         if ref not in reference_items:
             # JSON이 단순 미기재된 상태라면 그 경계에서는 평가하지 않는다. 반면
@@ -3018,12 +3639,11 @@ def _project_structured_state_items(
             # presence marker로 ADD/REMOVE 실패를 보존한다.
             if _structured_base_ref(ref) in reference_items:
                 continue
-            projected[ref] = '{"$present":true}'
+            projected[raw_ref] = '{"$present":true}'
             continue
         expected = reference_items[ref]
-        actual = actual_items[ref]
         if expected is None or actual is None:
-            projected[ref] = actual
+            projected[raw_ref] = actual
             continue
         try:
             projected_value = _project_json_value(
@@ -3031,9 +3651,9 @@ def _project_structured_state_items(
                 json.loads(actual),
             )
         except (TypeError, ValueError):  # pragma: no cover - generated internally
-            projected[ref] = actual
+            projected[raw_ref] = actual
         else:
-            projected[ref] = json.dumps(
+            projected[raw_ref] = json.dumps(
                 projected_value,
                 ensure_ascii=False,
                 sort_keys=True,
@@ -3126,7 +3746,7 @@ def _prediction_usage(predictions: PredictionBundleV3) -> dict[str, Any]:
         "inputTokens": input_tokens,
         "cachedInputTokens": cached_tokens,
         "outputTokens": output_tokens,
-        "estimatedCostUsd": (str(sum(costs, Decimal("0"))) if costs else None),
+        "estimatedCostUsd": (str(sum(costs, Decimal(0))) if costs else None),
     }
 
 
