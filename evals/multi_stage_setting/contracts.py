@@ -62,6 +62,11 @@ class CandidateKind(StrEnum):
     WORLD_SETTING = "WORLD_SETTING"
 
 
+class Stage2Policy(StrEnum):
+    REQUIRED = "REQUIRED"
+    WAIT_FOR_CHARACTER_MATCH = "WAIT_FOR_CHARACTER_MATCH"
+
+
 class ReviewStatus(StrEnum):
     DRAFT = "DRAFT"
     IN_REVIEW = "IN_REVIEW"
@@ -405,6 +410,11 @@ class Stage1Common(StrictModel):
 class CharacterStage1Gold(Stage1Common):
     domain: Literal[EvaluationDomain.CHARACTER]
     candidate_kind: Literal[CandidateKind.SETTING, CandidateKind.CHARACTER_DISCOVERY]
+    # Explicit annotation only; omit the legacy default to preserve fixture hashes.
+    stage2_policy: Stage2Policy = Field(
+        default=Stage2Policy.REQUIRED,
+        exclude_if=lambda value: value == Stage2Policy.REQUIRED,
+    )
     entity_ref: str = Field(min_length=1)
     entity_name: str = Field(min_length=1)
     raw_entity_mention: str | None = None
@@ -423,6 +433,13 @@ class CharacterStage1Gold(Stage1Common):
     @model_validator(mode="after")
     def validate_character_candidate(self) -> CharacterStage1Gold:
         self.validate_extract_fields()
+        if self.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH and (
+            self.decision != GoldDecision.EXTRACT
+            or self.candidate_kind != CandidateKind.SETTING
+        ):
+            raise ValueError(
+                "WAIT_FOR_CHARACTER_MATCH requires an EXTRACT Character SETTING row."
+            )
         setting_fields = (
             self.fact_type,
             self.fact_key,
@@ -763,6 +780,13 @@ class GoldSnapshotV3(StrictModel):
                     and source.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
                 ):
                     raise ValueError("CHARACTER_DISCOVERY does not feed setting comparison.")
+                if (
+                    isinstance(source, CharacterStage1Gold)
+                    and source.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH
+                ):
+                    raise ValueError(
+                        "WAIT_FOR_CHARACTER_MATCH rows must not feed Stage2 decisions."
+                    )
                 source_use_count[gold_id] = source_use_count.get(gold_id, 0) + 1
                 decision_by_source[gold_id] = decision
             sources = [stage1_by_id[gold_id] for gold_id in decision.source_gold_ids]
@@ -889,7 +913,10 @@ class GoldSnapshotV3(StrictModel):
             if row.decision == GoldDecision.EXTRACT
             and not (
                 isinstance(row, CharacterStage1Gold)
-                and row.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
+                and (
+                    row.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
+                    or row.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH
+                )
             )
         }
         missing_stage2 = sorted(expected_stage2_sources - source_use_count.keys())

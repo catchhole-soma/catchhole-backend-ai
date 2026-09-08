@@ -1,6 +1,6 @@
 import pytest
 
-from evals.multi_stage_setting.contracts import ReviewStatus, WorldStage1Gold
+from evals.multi_stage_setting.contracts import ReviewStatus, Stage2Policy, WorldStage1Gold
 from evals.multi_stage_setting.notion_exporter import (
     CURRENT_OUTCOME_PROPERTY_SCHEMA,
     LEGACY_OUTCOME_PROPERTY_SCHEMA,
@@ -96,6 +96,73 @@ def test_character_input_fact_key_is_read_when_optional_column_exists() -> None:
     row = _parse_stage1(page, page["properties"], "S1", 1)
 
     assert row.input_fact_key == "status.오른발_완전_부상"
+
+
+@pytest.mark.parametrize("policy", [None, "", "REQUIRED"])
+def test_character_stage2_policy_defaults_to_required(policy: str | None) -> None:
+    page = _character_stage1_page("stage1-1", "C1", "scenario-1", status="FINAL")
+    if policy is not None:
+        page["properties"]["2차 처리 기준"] = (
+            _select(policy) if policy else {"type": "select", "select": None}
+        )
+
+    row = _parse_stage1(page, page["properties"], "S1", 1)
+
+    assert row.stage2_policy == Stage2Policy.REQUIRED
+    assert "stage2Policy" not in row.model_dump(mode="json", by_alias=True)
+
+
+def test_notion_wait_policy_exports_extract_without_stage2_and_preserves_identity() -> None:
+    scenario = _scenario_page("scenario-1", "S1", 1, status="FINAL")
+    page = _character_stage1_page("stage1-1", "C1", "scenario-1", status="FINAL")
+    page["properties"].update({
+        "2차 처리 기준": _select("WAIT_FOR_CHARACTER_MATCH"),
+        "canonical entityRef": _rich_text("character:unknown"),
+        "canonical entityName": _rich_text("미상"),
+    })
+
+    snapshot = build_gold_snapshot_v3([scenario], [page], [], dataset_name="wait policy")
+
+    row = snapshot.stage1[0]
+    assert row.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH
+    assert row.decision == "EXTRACT"
+    assert row.entity_ref == "character:unknown"
+    assert row.entity_name == "미상"
+    assert row.fact_key == "profile.species"
+    assert row.display_value == "바바리안"
+    assert snapshot.stage2 == []
+    assert snapshot.scorable is True
+
+
+def test_notion_wait_policy_rejects_a_remaining_stage2_relation() -> None:
+    scenario = _scenario_page("scenario-1", "S1", 1, status="FINAL")
+    page = _character_stage1_page("stage1-1", "C1", "scenario-1", status="FINAL")
+    page["properties"]["2차 처리 기준"] = _select("WAIT_FOR_CHARACTER_MATCH")
+    stage2 = _character_stage2_page(
+        "stage2-1", "D1", "scenario-1", "stage1-1", status="FINAL"
+    )
+
+    with pytest.raises(ValueError, match="Invalid v3 Notion snapshot"):
+        build_gold_snapshot_v3([scenario], [page], [stage2], dataset_name="invalid wait")
+
+
+@pytest.mark.parametrize("domain", ["CHARACTER", "WORLD"])
+def test_notion_rejects_unknown_stage2_policy(domain: str) -> None:
+    page = _character_stage1_page("stage1-1", "C1", "scenario-1", status="FINAL")
+    page["properties"]["도메인"] = _select(domain)
+    page["properties"]["2차 처리 기준"] = _select("IGNORE")
+
+    with pytest.raises(ValueError, match="Stage2Policy"):
+        _parse_stage1(page, page["properties"], "S1", 1)
+
+
+def test_notion_world_rejects_wait_for_character_match() -> None:
+    page = _character_stage1_page("stage1-1", "W1", "scenario-1", status="FINAL")
+    page["properties"]["도메인"] = _select("WORLD")
+    page["properties"]["2차 처리 기준"] = _select("WAIT_FOR_CHARACTER_MATCH")
+
+    with pytest.raises(ValueError, match="WAIT_FOR_CHARACTER_MATCH is CHARACTER-only"):
+        _parse_stage1(page, page["properties"], "S1", 1)
 
 
 def test_world_setting_name_aliases_use_the_dedicated_alias_column() -> None:
@@ -416,7 +483,11 @@ def test_notion_v3_schema_preflight_supports_current_and_explicit_legacy_modes()
 
     assert validate_notion_v3_schemas(
         scenario_schema=scenario_schema,
-        stage1_schema={**stage1_schema, "inputFactKey": "rich_text"},
+        stage1_schema={
+            **stage1_schema,
+            "inputFactKey": "rich_text",
+            "2차 처리 기준": "select",
+        },
         stage2_schema={
             **stage2_schema,
             "existingRootPropertyNamesToMove": "rich_text",
@@ -459,6 +530,15 @@ def test_notion_v3_schema_preflight_rejects_partial_current_or_wrong_property_ty
         validate_notion_v3_schemas(
             scenario_schema=scenario_schema,
             stage1_schema={**stage1_schema, "inputFactKey": "number"},
+            stage2_schema={**STAGE2_PROPERTY_SCHEMA, **CURRENT_OUTCOME_PROPERTY_SCHEMA},
+        )
+
+
+def test_notion_stage2_policy_column_must_be_a_select_when_present() -> None:
+    with pytest.raises(ValueError, match="2차 처리 기준 expected select, got rich_text"):
+        validate_notion_v3_schemas(
+            scenario_schema=dict(SCENARIO_PROPERTY_SCHEMA),
+            stage1_schema={**STAGE1_PROPERTY_SCHEMA, "2차 처리 기준": "rich_text"},
             stage2_schema={**STAGE2_PROPERTY_SCHEMA, **CURRENT_OUTCOME_PROPERTY_SCHEMA},
         )
 

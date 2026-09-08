@@ -22,6 +22,7 @@ from evals.multi_stage_setting.contracts import (
     EvaluationMode,
     EvaluationState,
     FailureCause,
+    GoldDecision,
     GoldSnapshotV3,
     PredictionBundleV3,
     PredictionEvidence,
@@ -30,6 +31,7 @@ from evals.multi_stage_setting.contracts import (
     Stage1Gold,
     Stage1Prediction,
     Stage2Gold,
+    Stage2Policy,
     Stage2Prediction,
     StartStateMode,
     UpstreamOutcome,
@@ -354,6 +356,18 @@ async def evaluate_multi_stage(
         if scenario_id not in selected_ids:
             continue
         failure_causes[FailureCause.UPSTREAM_FALSE_POSITIVE] += len(result.extra_predictions)
+        waiting_failures = sum(_is_waiting_character_gold(row) for row in result.missed_gold)
+        waiting_failures += sum(
+            _is_waiting_character_gold(match.gold)
+            and (
+                not match.identity_matched
+                or _resolved_stage1_value_status(match, semantic_decisions)
+                == FieldMatchStatus.MISMATCH.value
+            )
+            for match in result.matches
+        )
+        if waiting_failures:
+            failure_causes[FailureCause.EXTRACTION_MISS] += waiting_failures
 
     selected_scenarios = [
         scenario for scenario in gold.scenarios if scenario.scenario_id in selected_ids
@@ -1913,6 +1927,12 @@ def _build_stage2_report(
             "metrics": metrics,
             "counts": {
                 "gold": len(domain_cases),
+                "waitingForCharacterMatch": sum(
+                    _is_waiting_character_gold(row)
+                    and row.scenario_id in selected_ids
+                    and row.domain == domain
+                    for row in gold.stage1
+                ),
                 "upstreamReached": len(upstream_reached),
                 "reachedAndCompared": len(reached),
                 "semanticPending": semantic_pending,
@@ -2231,6 +2251,7 @@ def _stage1_diagnostic_cases(
                     "value": value_status,
                 },
                 "upstreamOutcome": upstream_outcome.value,
+                **_stage1_stage2_policy_diagnostic(match.gold),
                 **_stage1_setting_name_diagnostic(match, semantic_decisions),
             }
         )
@@ -2253,6 +2274,7 @@ def _stage1_diagnostic_cases(
                     "value": "MISSING",
                 },
                 "upstreamOutcome": UpstreamOutcome.UPSTREAM_MISSING.value,
+                **_stage1_stage2_policy_diagnostic(missed),
             }
         )
     for index, prediction in enumerate(result.extra_predictions):
@@ -2282,6 +2304,20 @@ def _stage1_diagnostic_cases(
             item["predictionId"] or "",
         ),
     )
+
+
+def _is_waiting_character_gold(gold: Stage1Gold) -> bool:
+    return (
+        isinstance(gold, CharacterStage1Gold)
+        and gold.decision == GoldDecision.EXTRACT
+        and gold.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH
+    )
+
+
+def _stage1_stage2_policy_diagnostic(gold: Stage1Gold) -> dict[str, str]:
+    if _is_waiting_character_gold(gold):
+        return {"stage2Policy": gold.stage2_policy.value}
+    return {}
 
 
 def _resolved_stage1_value_status(

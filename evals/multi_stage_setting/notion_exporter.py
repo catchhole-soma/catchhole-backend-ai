@@ -18,6 +18,7 @@ from evals.multi_stage_setting.contracts import (
     GoldSnapshotV3,
     ReviewStatus,
     ScenarioGold,
+    Stage2Policy,
     StartStateMode,
     StateGenerationStatus,
     ValueJsonProvenance,
@@ -92,6 +93,7 @@ STAGE1_PROPERTY_SCHEMA = {
 OPTIONAL_STAGE1_PROPERTY_SCHEMA = {
     # PATTERN STATUS 평가에서 1차 raw key와 검수된 canonical key를 분리한다.
     "inputFactKey": "rich_text",
+    "2차 처리 기준": "select",
 }
 STAGE2_PROPERTY_SCHEMA = {
     "판단 ID": "title",
@@ -517,6 +519,9 @@ def _parse_stage1(
         "review_note": _read_text(properties, "검수 메모") or None,
     }
     display_value = _read_text(properties, "정답 표시값") or None
+    stage2_policy = Stage2Policy(
+        _read_select(properties, "2차 처리 기준") or Stage2Policy.REQUIRED
+    )
     if domain == EvaluationDomain.CHARACTER:
         value_type = _read_select(properties, "valueType") or None
         explicit_json = _parse_json_object(
@@ -533,6 +538,7 @@ def _parse_stage1(
         return CharacterStage1Gold(
             **common,
             domain=EvaluationDomain.CHARACTER,
+            stage2_policy=stage2_policy,
             entity_ref=_required_text(properties, "canonical entityRef", row_id),
             entity_name=_required_text(properties, "canonical entityName", row_id),
             raw_entity_mention=_read_text(properties, "rawEntityMention") or None,
@@ -551,6 +557,10 @@ def _parse_stage1(
             structured_scorable=scorable,
         )
     if domain == EvaluationDomain.WORLD:
+        if stage2_policy != Stage2Policy.REQUIRED:
+            raise ValueError(
+                f"Notion Stage1 row {row_id}: WAIT_FOR_CHARACTER_MATCH is CHARACTER-only."
+            )
         return WorldStage1Gold(
             **common,
             domain=EvaluationDomain.WORLD,
