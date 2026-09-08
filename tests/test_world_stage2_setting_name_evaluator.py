@@ -24,6 +24,7 @@ from evals.multi_stage_setting.evaluator import (
     _stage2_semantic_cases,
     evaluate_multi_stage,
 )
+from evals.multi_stage_setting.state_effects import build_gold_state_chain
 
 VALUE = "게임 진행에 NPC 동료가 필수다."
 NAME = "동료 요구 조건"
@@ -189,7 +190,7 @@ def test_stage2_name_and_value_mismatches_are_independent(
     assert case.failure_cause == FailureCause.COMPARISON_ERROR
 
 
-def test_stage2_scope_mismatch_never_gets_name_semantics_or_inherits_alias() -> None:
+def test_stage2_scope_difference_keeps_alias_and_requires_scope_semantics() -> None:
     source = _source(accepted_setting_name_aliases=[ALIAS])
     case = _score_stage2_case(
         _gold(),
@@ -197,11 +198,13 @@ def test_stage2_scope_mismatch_never_gets_name_semantics_or_inherits_alias() -> 
         expected_world_source=source,
     )
 
-    assert case.proposed_path_matched is False
+    assert case.proposed_path_matched is None
+    assert case.setting_name_match == {"status": "MATCH", "method": "ALIAS"}
     assert case.proposed_setting_semantic_case_id is None
-    assert _stage2_semantic_cases(case, [source]) == []
+    assert case.proposed_scope_semantic_case_id is not None
+    assert _stage2_semantic_cases(case, [source])[0].setting_context.actual_scope_name == "입장"
     _apply_semantic_results([case], [], {"unexpected": _semantic()})
-    assert case.full_decision_matched is False
+    assert case.full_decision_matched is None
 
 
 def _update_gold(**changes) -> WorldStage2Gold:
@@ -376,6 +379,7 @@ def _oracle_cases(
         scenarios=[scenario_prediction],
     )
     semantic_cases = []
+    gold_chain = build_gold_state_chain(snapshot)
 
     cases = _evaluate_stage2_cases(
         snapshot,
@@ -386,6 +390,8 @@ def _oracle_cases(
         semantic_cases,
         {EvaluationDomain.WORLD},
         state_errors or [],
+        gold_chain,
+        gold_chain,  # ORACLE uses the same Gold state before the decision.
     )
 
     return cases, semantic_cases

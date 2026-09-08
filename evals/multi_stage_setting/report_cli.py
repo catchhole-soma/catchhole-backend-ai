@@ -7,6 +7,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 
+from evals.setting_extraction.normalization import normalize_fact_key
+
 _DOMAINS = ("character", "world")
 _MAX_ROWS_PER_SECTION = 25
 _MAX_DIAGNOSTIC_ROWS = 200
@@ -922,6 +924,8 @@ def _diagnostic_reason(
         ]
         if matched:
             parts.insert(0, "답지와 일치하는 부분: " + ", ".join(matched))
+        if "PENDING" in case.get("fields", {}).values():
+            parts.append("의미 판정이 끝나지 않은 항목이 있어 채점을 완료하지 못했습니다.")
     if result == "SEMANTIC_PENDING":
         parts.append(
             "2차 답안은 있으나 답지와 의미가 같은지 확인하지 못해 채점을 완료하지 못했습니다."
@@ -939,6 +943,8 @@ def _field_difference_lines(case: dict[str, Any], domain: str) -> list[str]:
     }
     expected, actual = case.get("expected") or {}, case.get("actual") or {}
     parts = []
+    if domain == "character" and (name_reason := _character_setting_name_reason(case)):
+        parts.append(name_reason)
     if domain == "world" and (name_reason := _setting_name_match_reason(case)):
         parts.append(name_reason)
     if domain == "world" and (
@@ -947,6 +953,11 @@ def _field_difference_lines(case: dict[str, Any], domain: str) -> list[str]:
         parts.append(f"비교 대상인 기존 설정명: {property_reason}")
     for name, status in fields.items():
         label = _axis_label(name, domain)
+        if domain == "world" and name in {"path", "proposedPath"}:
+            scope_reason = _world_scope_match_reason(case, status)
+            if scope_reason:
+                parts.append(scope_reason)
+                continue
         if status == "PENDING":
             parts.append(f"{label}: 답지와 의미가 같은지 확인하지 못했습니다.")
         elif status == "MISMATCH":
@@ -972,6 +983,47 @@ def _field_difference_lines(case: dict[str, Any], domain: str) -> list[str]:
             else:
                 parts.append(f"{label}: 답지와 다릅니다.")
     return parts
+
+
+def _character_setting_name_reason(case: dict[str, Any]) -> str | None:
+    fields = case.get("fields", {})
+    if fields.get("canonicalPath", fields.get("path")) != "MATCH":
+        return None
+    expected, actual = case.get("expected") or {}, case.get("actual") or {}
+    paths = (expected.get("path"), actual.get("path"))
+    if not all(isinstance(path, str) for path in paths):
+        return None
+    keys = [normalize_fact_key(path.rsplit(" › ", 1)[-1]) for path in paths]
+    if keys[0] == keys[1] or not all(
+        key.startswith("status.") and key.removeprefix("status.") and "*" not in key
+        for key in keys
+    ):
+        return None
+    return "이름은 다르지만 문맥상 같은 상태 항목으로 판단했습니다."
+
+
+def _world_scope_match_reason(case: dict[str, Any], status: str) -> str | None:
+    name_match = _sanitize_setting_name_match(case.get("settingNameMatch"))
+    if name_match is None or name_match["status"] != "MATCH":
+        return None
+    expected, actual = case.get("expected") or {}, case.get("actual") or {}
+    expected_path, actual_path = expected.get("path"), actual.get("path")
+    if not isinstance(expected_path, str) or not isinstance(actual_path, str):
+        return None
+    expected_scope = expected_path.rpartition(" › ")[0]
+    actual_scope = actual_path.rpartition(" › ")[0]
+    if expected_scope == actual_scope:
+        return None
+    comparison = (
+        f"답지: {expected_scope or '상위 범위 없음'} / 모델: {actual_scope or '상위 범위 없음'}"
+    )
+    if status == "MATCH":
+        return "상위 범위 표현은 다르지만 같은 설정을 묶는 범위로 인정했습니다. " + comparison
+    if status == "PENDING":
+        return "상위 범위: 답지와 의미가 같은지 확인하지 못했습니다. " + comparison
+    if status == "MISMATCH":
+        return "상위 범위 불일치 — " + comparison
+    return None
 
 
 def _setting_name_match_reason(

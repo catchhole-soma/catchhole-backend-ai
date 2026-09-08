@@ -82,6 +82,120 @@ def test_public_partial_match_explains_accepted_name_and_actual_value_error() ->
     assert "설정 범위·세부 항목 불일치" not in markdown
 
 
+@pytest.mark.parametrize("stage", ["stage1", "stage2"])
+@pytest.mark.parametrize(
+    ("status", "explanation"),
+    [
+        ("MATCH", "상위 범위 표현은 다르지만 같은 설정을 묶는 범위로 인정했습니다."),
+        ("PENDING", "상위 범위: 답지와 의미가 같은지 확인하지 못했습니다."),
+        ("MISMATCH", "상위 범위 불일치"),
+    ],
+)
+def test_accepted_item_and_scope_judgment_have_separate_public_explanations(
+    stage: str,
+    status: str,
+    explanation: str,
+) -> None:
+    case = _case(stage, "MATCH", "SEMANTIC")
+    case["expected"]["path"] = "전투 위험성"
+    case["actual"]["path"] = "게임 규칙 › 전투 난이도 규칙"
+    field = "path" if stage == "stage1" else "proposedPath"
+    case["fields"][field] = status
+    if status != "MATCH":
+        case["result"] = (
+            "PARTIAL_MATCH"
+            if stage == "stage1"
+            else ("SEMANTIC_PENDING" if status == "PENDING" else "DECISION_MISMATCH")
+        )
+    case["scopeReason"] = "SECRET_SCOPE_REASON"
+    report = _report(stage, case)
+    public_before = build_public_diagnostics(report)
+
+    markdown = render_markdown_summary(report)
+
+    assert "이름은 다르지만 문맥상 같은 설정 항목으로 판단했습니다." in markdown
+    assert explanation in markdown
+    assert "답지: 상위 범위 없음 / 모델: 게임 규칙" in markdown
+    assert "반영할 범위·설정명 불일치" not in markdown
+    assert "설정 범위·세부 항목 불일치" not in markdown
+    assert "SECRET_" not in markdown
+    assert build_public_diagnostics(report) == public_before
+    assert "scopeReason" not in json.dumps(public_before)
+
+
+@pytest.mark.parametrize("domain", ["WORLD", "CHARACTER"])
+def test_partial_match_with_pending_value_explains_unfinished_scoring(domain: str) -> None:
+    case = _case("stage1", "MATCH", "EXACT")
+    case["result"] = "PARTIAL_MATCH"
+    case["fields"]["value"] = "PENDING"
+    case["actual"]["path"] = case["expected"]["path"]
+    report = _report("stage1", case)
+    report["scenarios"][0]["stage1"] = {domain: {"cases": [case]}}
+
+    markdown = render_markdown_summary(report)
+
+    assert "의미 판정이 끝나지 않은 항목이 있어 채점을 완료하지 못했습니다." in markdown
+    assert "설정값: 답지와 의미가 같은지 확인하지 못했습니다." in markdown
+    assert "설정값 불일치" not in markdown
+
+
+@pytest.mark.parametrize("stage", ["stage1", "stage2"])
+def test_character_dynamic_status_names_explain_contextual_match_without_new_metadata(
+    stage: str,
+) -> None:
+    report = _character_status_report(stage, "status.injured_right_arm")
+    public_before = build_public_diagnostics(report)
+
+    markdown = render_markdown_summary(report)
+
+    assert "이름은 다르지만 문맥상 같은 상태 항목으로 판단했습니다." in markdown
+    assert "SECRET_" not in markdown
+    assert "settingNameMatch" not in json.dumps(public_before)
+    assert build_public_diagnostics(report) == public_before
+
+
+@pytest.mark.parametrize("stage", ["stage1", "stage2"])
+@pytest.mark.parametrize("actual_key", [
+    "status.right_arm_injury", " STATUS . right_arm_injury ",
+    "status.right arm injury", "profile.right_arm_injury", "status.*",
+])
+def test_character_status_explanation_requires_different_normalized_status_keys(
+    stage: str, actual_key: str,
+) -> None:
+    markdown = render_markdown_summary(_character_status_report(stage, actual_key))
+
+    assert "문맥상 같은 상태 항목" not in markdown
+
+
+@pytest.mark.parametrize("status", ["PENDING", "MISMATCH"])
+def test_character_status_explanation_does_not_claim_an_unaccepted_name(status: str) -> None:
+    report = _character_status_report("stage2", "status.injured_right_arm")
+    case = report["scenarios"][0]["stage2"][0]
+    case["fields"]["canonicalPath"] = status
+    case["result"] = "SEMANTIC_PENDING" if status == "PENDING" else "DECISION_MISMATCH"
+
+    markdown = render_markdown_summary(report)
+
+    assert "문맥상 같은 상태 항목" not in markdown
+
+
+def _character_status_report(stage: str, actual_key: str) -> dict:
+    case = _case(stage, "MATCH", "EXACT")
+    case.pop("settingNameMatch")
+    prefix = "STATUS › " if stage == "stage1" else ""
+    case["expected"]["path"] = prefix + "status.right_arm_injury"
+    case["actual"]["path"] = prefix + actual_key
+    case["expected"]["subject"] = case["actual"]["subject"] = "비요른"
+    case["reason"] = "SECRET_PRIVATE_REASON"
+    if stage == "stage1":
+        report = _report(stage, case)
+        report["scenarios"][0]["stage1"] = {"CHARACTER": {"cases": [case]}}
+        return report
+    case["domain"] = "CHARACTER"
+    case["fields"]["canonicalPath"] = case["fields"].pop("proposedPath")
+    return _report(stage, case)
+
+
 def test_existing_property_name_judgment_is_explained_without_private_reason() -> None:
     case = _case("stage2", "MATCH", "EXACT")
     case["matchedPropertyNameMatch"] = {

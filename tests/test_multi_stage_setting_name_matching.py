@@ -31,8 +31,8 @@ def test_semantic_setting_name_match_is_used_for_identity_and_reach() -> None:
         (
             ["체력이 가득해도 사망한다.", "부활할 수 없다."],
             ["체력이 가득해도 사망한다."],
-            "MISMATCH",
-            "UPSTREAM_PARTIAL",
+            "SEMANTIC_JUDGE_REQUIRED",
+            "REACHED",
         ),
         (
             ["체력이 가득해도 사망한다."],
@@ -68,9 +68,11 @@ def test_equal_values_do_not_override_negative_or_pending_name_judgment(
 
     match = result.matches[0]
     assert match.value_status == "MATCH"
-    assert not match.identity_matched
+    assert match.identity_matched is name_decision
     assert match.setting_name_match_method is None
-    assert match.upstream_outcome == "UPSTREAM_VALUE_ERROR"
+    assert match.upstream_outcome == (
+        "REACHED" if name_decision is None else "UPSTREAM_VALUE_ERROR"
+    )
 
 
 @pytest.mark.parametrize("name_decision", [False, None])
@@ -98,10 +100,9 @@ def test_reviewed_names_keep_precedence_over_semantic_judgment(
     [
         {"category": "POWER_SYSTEM"},
         {"subject_name": "다른 게임"},
-        {"scope_name": "전투"},
     ],
 )
-def test_semantic_name_match_cannot_cross_category_subject_or_scope(
+def test_semantic_name_match_cannot_cross_category_or_subject(
     changed_context: dict[str, str],
 ) -> None:
     gold = _gold()
@@ -113,6 +114,27 @@ def test_semantic_name_match_cannot_cross_category_subject_or_scope(
     assert world_setting_name_pairs([gold], [prediction]) == []
     assert not any(match.identity_matched for match in result.matches)
     assert not any(match.setting_name_match_method for match in result.matches)
+
+
+@pytest.mark.parametrize("scope_match", [True, False, None])
+def test_scope_judgment_is_independent_of_approved_setting_name(scope_match: bool | None) -> None:
+    gold = _gold()
+    prediction = _prediction().model_copy(update={"scope_name": "게임 규칙"})
+
+    result = match_stage1(
+        [gold], [prediction], domain="WORLD", source_text=None,
+        world_setting_name_matches={("W1", "P1"): True},
+        world_scope_matches={("W1", "P1"): scope_match},
+    )
+
+    assert world_setting_context_matches(gold, prediction)
+    assert world_setting_name_pairs([gold], [prediction]) == [(gold, prediction)]
+    assert result.matches[0].setting_name_match_method == "SEMANTIC"
+    assert result.matches[0].identity_matched is scope_match
+    assert result.matches[0].value_status == "MATCH"
+    assert result.matches[0].upstream_outcome == (
+        "UPSTREAM_VALUE_ERROR" if scope_match is False else "REACHED"
+    )
 
 
 def test_name_pair_context_uses_production_normalization() -> None:

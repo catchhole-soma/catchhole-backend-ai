@@ -73,13 +73,15 @@
 
 ## LLM Runtime
 
-- 다단계 평가에서 전체 모델을 통일할 때는 추출·주체 해소·비교 모델과 함께 의미 채점 모델 `judge_model`도 지정한다. workflow는 이를 `--judge-model`로 전달하며 생략 시 기본값은 `gpt-5.6-luna`다.
 - 다단계 평가에서 인물 연결 전 2차 비교를 요구하지 않는 캐릭터 `EXTRACT / SETTING` Gold는 `stage2Policy=WAIT_FOR_CHARACTER_MATCH`로 명시하고 연결된 2차 Gold를 두지 않는다. 1차 추출은 계속 채점하며 정상 대기를 추출 실패로 세지 않는다. 정책은 해당 회차의 Gold 행에만 적용하고 canonical 인물 ID와 이후 회차의 이름 해소·매칭은 유지한다.
-- 다단계 평가기의 세계관 설정명은 정규화·검수된 별칭을 우선 인정하고, 나머지는 동일한 분류·주체·범위 안에서만 LLM 문맥 판정을 사용한다. 같은 설정 항목인지와 값이 맞는지는 독립 채점하며 이 기준을 1차 연결과 2차 채점에 함께 적용한다. 승인된 이름 대응은 상태·전이의 평가용 키에만 일대일로 반영하고 원시 예측·reducer·상태 해시는 변경하지 않는다. 채점 프롬프트 계약 변경 시 semantic outcome 캐시 버전과 `docs/multi-stage-setting-evaluation.md`를 함께 갱신한다.
+- 다단계 평가기의 세계관 의미 판정은 같은 분류·주체 안에서 설정 항목·상위 범위·설정값을 독립 채점한다. 정규화·검수된 별칭은 해당 축만 우선 인정하며, 다른 범위도 신규 ADD의 의미를 바꾸지 않는 묶음이면 문맥 판정으로 동등성을 인정할 수 있다. 1차 연결·2차·E2E에 같은 기준을 적용하되 기존 target·matched 경로·수정/병합의 경로 보존·root 이동 대상과 reducer 검증은 엄격히 유지한다.
+- 캐릭터 평가는 서술형 값과 JSON 서술형 문자열, 같은 인물·factType의 동적 STATUS pattern 이름을 의미 판정한다. 인물 ID·factType·고정 key·숫자·불리언·target 및 제거 reference는 결정적으로 검증한다. 항목·범위·값을 판단할 수 없으면 해당 축을 PENDING으로 유지하며 승인된 대응은 일대일 평가용 키에만 사용한다. 원시 예측·reducer·상태 해시·실제 상태 적용 오류를 보정하지 않는다.
+- 의미 채점기는 제품 모델과 독립적으로 `gpt-5.6-sol`·`medium`을 기본 사용하며 `--judge-model`·`--judge-reasoning-effort`로 주입한다. 채점 프롬프트 계약 변경 시 semantic outcome 캐시 버전과 `docs/multi-stage-setting-evaluation.md`를 함께 갱신한다. 공개 JSON 구조와 표·컬럼·지표명은 유지하고 판정 이유는 허용된 필드와 고정 문구만 사용한다. 모델의 자유 형식 reason은 공개하지 않는다.
+
 - OpenAI Responses API 요청은 웹소설 원문과 분석 결과가 provider 측에 저장되지 않도록 항상 `store=false`를 명시한다. 호출 목적이나 모델에 따라 이 값을 생략하거나 활성화하지 않는다.
 - 캐릭터 Fact·세계관 후보의 1차 추출은 `LLM_EXTRACTION_MODEL`, 캐릭터·세계관 주체 해소는 `LLM_SUBJECT_RESOLUTION_MODEL`, 후보와 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 운영 기본 라우팅은 추출 `gpt-5.6-terra`, 주체 해소·비교 `gpt-5.6-luna`이며 개별 값이 없으면 기존 `LLM_MODEL`을 fallback으로 사용한다.
 - 캐릭터·세계관 2차 비교·재비교 prompt에는 Backend가 반환한 1차 `evidenceSpans`를 읽기 전용 문맥으로 전달한다. 2차 LLM이 quote·offset을 다시 생성하거나 비교 완료 payload로 반환하지 않으며, 원고가 바뀐 경우에만 새 1차 분석 후보와 근거를 만든다.
-- 세계관 후보는 Spring 게시 전에 정규화한 `category + subject_name + scope_name + setting_name`별로 하나로 통합한다. `scope_name`은 세계관에만 있는 선택적 1단계 범위이며 빈 값은 루트 property를 뜻한다. 같은 설정명이라도 범위가 다르면 통합하지 않고, 2차 비교도 반드시 범위+설정명 전체 경로를 정확히 매칭한다. 2차 비교는 추출값 하나면 `SINGLE`, 여러 값이 양립하면 `MERGED`, 동시에 참일 수 없으면 `CONFLICT`로 판정한다. `MERGED`만 자연스러운 최종 문자열 하나로 정리하고 `CONFLICT`는 모든 추출값을 그대로 보존해 사용자 판단으로 넘긴다. 각 1차 후보의 quote·offset과 raw payload는 어느 상태에서도 수정하지 않는다.
+- 운영 세계관 후보는 Spring 게시 전에 정규화한 `category + subject_name + scope_name + setting_name`별로 하나로 통합한다. `scope_name`은 세계관에만 있는 선택적 1단계 범위이며 빈 값은 루트 property를 뜻한다. 같은 설정명이라도 범위가 다르면 통합하지 않고, 운영 2차 비교의 기존 속성 선택은 반드시 범위+설정명 전체 경로를 정확히 매칭한다. 2차 비교는 추출값 하나면 `SINGLE`, 여러 값이 양립하면 `MERGED`, 동시에 참일 수 없으면 `CONFLICT`로 판정한다. `MERGED`만 자연스러운 최종 문자열 하나로 정리하고 `CONFLICT`는 모든 추출값을 그대로 보존해 사용자 판단으로 넘긴다. 각 1차 후보의 quote·offset과 raw payload는 어느 상태에서도 수정하지 않는다.
 - 종족의 서술형 전투 특징은 `RACE / 종족명 / 전투 특성 / 마법 재능·신체 능력·전투 강점`으로 구분한다. 체력·힘·신체 능력에 따른 장비 착용 설명은 `신체 능력`을 보충하되, 독립된 수치 능력치·판정 규칙은 합치지 않는다. 원문에 있는 하위 속성만 추출하며 기존 경로·raw scope 검증을 우회하지 않는다.
 - `POWER_SYSTEM`은 마법·스킬·능력 자체의 조건·자원·효과·제약을 설명할 때만 사용한다. 특정 능력과 무관한 세계·게임 공통 사망·전투·진행 규칙은 `WORLD_RULE_HISTORY`, 종족의 선천적 적성은 `RACE`로 유지한다. 분류 경계 조정만으로 enum·주체 식별·채점 기준이나 답지를 변경하지 않는다.
 - 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra·Luna의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
