@@ -189,6 +189,51 @@ def test_world_extra_without_record_is_not_hidden_or_marked_as_wrong():
     assert "오답으로 채점" not in row
 
 
+@pytest.mark.parametrize("with_gold", [False, True])
+@pytest.mark.parametrize("operation", ["EXCLUDE", "REVIEW_REQUIRED"])
+def test_suppression_counts_every_secondary_batch_source(with_gold, operation):
+    gold = _world_gold() if with_gold else _empty_gold("WORLD")
+    sources = [_world_source("P1"), _world_source("P2")]
+    sources[1] = sources[1].model_copy(update={"setting_name": "튜토리얼 종료 조건"})
+    decision = _world_decision("P1", operation).model_copy(
+        update={"source_candidate_ids": ["P1", "P2"]}
+    )
+
+    report = asyncio.run(evaluate_multi_stage(gold, _bundle(gold, sources, [decision])))
+
+    stage2 = report["stages"]["world"]["stage2"]
+    assert stage2["counts"]["extraStage1Predictions"] == (1 if with_gold else 2)
+    assert stage2["counts"]["suppressedExtraPredictions"] == (1 if with_gold else 2)
+    assert stage2["metrics"]["falsePositiveSuppressionRate"] == 1
+    cases = build_public_diagnostics(report)[0]["stage2"]
+    assert {case["sourceCandidateId"] for case in cases} == {"P1", "P2"}
+    assert all(case["actual"]["operation"] == operation for case in cases)
+
+
+def test_gold_matched_secondary_source_keeps_its_own_public_diagnostic_id():
+    gold = _world_gold()
+    sources = [_world_source("P1"), _world_source("P2")]
+    sources[0] = sources[0].model_copy(update={"setting_name": "튜토리얼 종료 조건"})
+    decision = _world_decision("P1").model_copy(
+        update={"source_candidate_ids": ["P1", "P2"]}
+    )
+    bundle = _bundle(gold, sources, [decision])
+    original = bundle.model_dump(mode="json")
+
+    report = asyncio.run(evaluate_multi_stage(gold, bundle))
+
+    cases = build_public_diagnostics(report)[0]["stage2"]
+    assert [(case["sourceCandidateId"], case["result"]) for case in cases] == [
+        ("P2", "FULL_MATCH"), ("P1", "EXTRA_PROCESSED"),
+    ]
+    assert cases[0]["actual"] == cases[1]["actual"]
+    assert "sourceCandidateIds" not in json.dumps(cases)
+    assert "처리 방식: ADD" in _stage2_row(render_markdown_summary(report), "P2")
+    assert bundle.model_dump(mode="json") == original
+    assert report["endToEnd"]["counts"]["predictedTransitions"] == 1
+    assert report["stages"]["world"]["stage2"]["metrics"]["fullDecisionAccuracy"] == 1
+
+
 def test_oracle_world_batch_provenance_rejects_an_unknown_secondary_gold_source():
     gold = _world_gold()
     decision = _world_decision("W1").model_copy(update={"source_candidate_ids": ["W1", "missing"]})

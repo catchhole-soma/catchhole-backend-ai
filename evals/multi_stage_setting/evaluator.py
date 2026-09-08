@@ -114,6 +114,7 @@ class Stage2Case:
     character_context: CharacterSettingContext | None = None
     character_setting_semantic_case_id: str | None = None
     structured_semantic_case_ids: tuple[str, ...] = ()
+    diagnostic_source_candidate_id: str | None = None
 
 
 @dataclass
@@ -987,7 +988,8 @@ def _evaluate_stage2_cases(
             (
                 item
                 for item in scenario_prediction.stage2
-                if item.domain == decision.domain and item.source_candidate_id in candidate_ids
+                if item.domain == decision.domain
+                and candidate_ids.intersection(stage2_source_candidate_ids(item))
             ),
             None,
         )
@@ -1050,6 +1052,11 @@ def _evaluate_stage2_cases(
         )
         case.scenario_id = decision.scenario_id
         case.upstream_outcome = outcome
+        case.diagnostic_source_candidate_id = next(
+            source_id
+            for source_id in stage2_source_candidate_ids(prediction)
+            if source_id in candidate_ids
+        )
         if isinstance(decision, WorldStage2Gold):
             case.related_world_paths = _world_decision_paths(
                 expected_world_source,
@@ -3114,7 +3121,10 @@ def _stage2_diagnostic_fields(
     return {
         "result": result,
         "sourceGoldIds": list(case.gold.source_gold_ids),
-        "sourceCandidateId": prediction.source_candidate_id if prediction else None,
+        "sourceCandidateId": (
+            case.diagnostic_source_candidate_id or prediction.source_candidate_id
+            if prediction else None
+        ),
         "expected": expected,
         "actual": actual,
         "fields": fields,
@@ -3432,7 +3442,10 @@ def _extra_suppression_counts(
         if scenario is None:
             continue
         decision = next(
-            (item for item in scenario.stage2 if item.source_candidate_id == candidate_id),
+            (
+                item for item in scenario.stage2
+                if item.domain == domain and candidate_id in stage2_source_candidate_ids(item)
+            ),
             None,
         )
         if isinstance(decision, CharacterStage2Prediction):
