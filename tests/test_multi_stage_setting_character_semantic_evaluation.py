@@ -196,6 +196,7 @@ def test_dynamic_status_and_narrative_json_match_across_all_evaluated_stages(mod
         for case in judge.cases
     )
     assert all(case.setting_context is None for case in judge.cases)
+    assert all(case.scenario_id == "S1" for case in judge.cases)
 
 
 def test_dynamic_stage1_key_with_exact_stage2_key_keeps_history_scoring_aligned():

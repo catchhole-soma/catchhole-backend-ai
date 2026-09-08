@@ -72,6 +72,7 @@ def test_contextual_names_match_both_stages_and_state_without_rewriting_data(
 
     _assert_full_world_result(report)
     name_cases = [case for case in judge.cases if case.setting_context is not None]
+    assert all(case.scenario_id == "S1" for case in judge.cases)
     assert len(name_cases) == 2
     assert all(case.setting_context.expected_setting_name == expected_name for case in name_cases)
     assert all(case.setting_context.actual_setting_name == actual_name for case in name_cases)

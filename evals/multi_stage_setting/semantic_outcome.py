@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,14 +11,19 @@ from pydantic import BaseModel, Field
 
 from app.analysis.json_response import parse_json_object
 from app.core.config import get_settings
+from app.llm.exceptions import LlmOutputTruncatedError
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema
+from app.usage.metering import _estimate_text_token_upper_bound
 
 DEFAULT_PROMPT_PATH = Path(__file__).parent / "prompts" / "semantic_outcome_judge.md"
 DEFAULT_MODEL = "gpt-5.6-sol"
 DEFAULT_REASONING_EFFORT = "medium"
+DEFAULT_MAX_INPUT_TOKENS = 64000
+DEFAULT_MAX_OUTPUT_TOKENS = 32000
 REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh")
 PROMPT_CACHE_KEY = "multi-stage-setting-eval:semantic-outcome:v4"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,7 @@ class SemanticOutcomeCase:
     evidence_quotes: tuple[str, ...] = ()
     setting_context: WorldSettingNameContext | None = None
     character_context: CharacterSettingContext | None = None
+    scenario_id: str | None = None
 
 
 class SemanticOutcomeDecision(BaseModel):
@@ -129,10 +136,13 @@ class OpenAISemanticOutcomeJudge:
         model: str = DEFAULT_MODEL,
         reasoning_effort: str = DEFAULT_REASONING_EFFORT,
         prompt_path: Path = DEFAULT_PROMPT_PATH,
-        batch_size: int = 8,
+        max_input_tokens: int = DEFAULT_MAX_INPUT_TOKENS,
+        max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     ) -> None:
-        if batch_size < 1:
-            raise ValueError("batch_size must be at least 1.")
+        if max_input_tokens < 1:
+            raise ValueError("max_input_tokens must be at least 1.")
+        if not 1 <= max_output_tokens <= 128000:
+            raise ValueError("max_output_tokens must be between 1 and 128000.")
         if reasoning_effort not in REASONING_EFFORTS:
             raise ValueError("Unsupported semantic judge reasoning effort.")
         if not model.strip():
@@ -158,7 +168,8 @@ class OpenAISemanticOutcomeJudge:
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.prompt_path = prompt_path
-        self.batch_size = batch_size
+        self.max_input_tokens = max_input_tokens
+        self.max_output_tokens = max_output_tokens
 
     async def judge_many(
         self,
@@ -166,11 +177,13 @@ class OpenAISemanticOutcomeJudge:
     ) -> SemanticOutcomeBatchResult:
         if not cases:
             return SemanticOutcomeBatchResult(decisions=())
+        system_prompt = self.prompt_path.read_text(encoding="utf-8")
+        response_schema = _response_schema()
+        chunks = self._batch_cases(cases, system_prompt, response_schema)
         decisions: list[SemanticOutcomeDecision] = []
         input_tokens = cached_input_tokens = output_tokens = 0
-        for start in range(0, len(cases), self.batch_size):
-            chunk = cases[start : start + self.batch_size]
-            result = await self._judge_chunk(chunk)
+        for chunk in chunks:
+            result = await self._judge_chunk(chunk, system_prompt, response_schema)
             decisions.extend(result.decisions)
             input_tokens += result.input_tokens
             cached_input_tokens += result.cached_input_tokens
@@ -182,69 +195,78 @@ class OpenAISemanticOutcomeJudge:
             output_tokens=output_tokens,
         )
 
+    def _batch_cases(
+        self,
+        cases: Sequence[SemanticOutcomeCase],
+        system_prompt: str,
+        response_schema: LlmResponseSchema,
+    ) -> list[list[SemanticOutcomeCase]]:
+        def input_tokens(items: Sequence[SemanticOutcomeCase]) -> int:
+            # Use the same tokenizer, schema accounting, and framing margin as runtime metering.
+            return _estimate_text_token_upper_bound(
+                system_prompt, _user_prompt(items), self.model, 0, response_schema
+            )
+
+        chunks: list[list[SemanticOutcomeCase]] = []
+        chunk: list[SemanticOutcomeCase] = []
+        for index, case in enumerate(cases):
+            if chunk and case.scenario_id != chunk[-1].scenario_id:
+                chunks.append(chunk)
+                chunk = []
+            proposed = [*chunk, case]
+            if input_tokens(proposed) <= self.max_input_tokens:
+                chunk = proposed
+                continue
+            # Validate every singleton before any paid request; never truncate or drop a case.
+            if not chunk or input_tokens([case]) > self.max_input_tokens:
+                raise ValueError(
+                    f"Semantic judge case at index {index} exceeds max_input_tokens "
+                    f"({self.max_input_tokens}); no cases were sent."
+                )
+            chunks.append(chunk)
+            chunk = [case]
+        if chunk:
+            chunks.append(chunk)
+        return chunks
+
     async def _judge_chunk(
         self,
         cases: Sequence[SemanticOutcomeCase],
+        system_prompt: str,
+        response_schema: LlmResponseSchema,
     ) -> SemanticOutcomeBatchResult:
-        response = await self.client.create_text_response(
-            system_prompt=self.prompt_path.read_text(encoding="utf-8"),
-            user_prompt=json.dumps(
-                {
-                    "cases": [
-                        {
-                            "caseId": case.case_id,
-                            "beforeValue": case.before_value,
-                            "sourceValues": list(case.source_values),
-                            "expectedValue": case.expected_value,
-                            "actualValue": case.actual_value,
-                            "requiredFacts": list(case.required_facts),
-                            "forbiddenFacts": list(case.forbidden_facts),
-                            "evidenceQuotes": list(case.evidence_quotes),
-                            **(
-                                {
-                                    "settingContext": {
-                                        "category": case.setting_context.category,
-                                        "subjectName": case.setting_context.subject_name,
-                                        "scopeName": case.setting_context.scope_name,
-                                        "actualScopeName": case.setting_context.actual_scope_name,
-                                        "expectedSettingName": (
-                                            case.setting_context.expected_setting_name
-                                        ),
-                                        "actualSettingName": (
-                                            case.setting_context.actual_setting_name
-                                        ),
-                                        "relatedPaths": list(case.setting_context.related_paths),
-                                        "operation": case.setting_context.operation,
-                                    }
-                                }
-                                if case.setting_context is not None
-                                else {}
-                            ),
-                            **(
-                                {
-                                    "characterContext": {
-                                        "entityId": case.character_context.entity_id,
-                                        "factType": case.character_context.fact_type,
-                                        "expectedFactKey": case.character_context.expected_fact_key,
-                                        "actualFactKey": case.character_context.actual_fact_key,
-                                        "schemaPattern": case.character_context.schema_pattern,
-                                    }
-                                }
-                                if case.character_context is not None
-                                else {}
-                            ),
-                        }
-                        for case in cases
-                    ]
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-            model=self.model,
-            max_output_tokens=min(24000, 4000 + 1500 * len(cases)),
-            prompt_cache_key=PROMPT_CACHE_KEY,
-            response_schema=_response_schema(),
-        )
+        try:
+            response = await self.client.create_text_response(
+                system_prompt=system_prompt,
+                user_prompt=_user_prompt(cases),
+                model=self.model,
+                max_output_tokens=self.max_output_tokens,
+                prompt_cache_key=PROMPT_CACHE_KEY,
+                response_schema=response_schema,
+            )
+        except LlmOutputTruncatedError as exc:
+            if len(cases) == 1:
+                raise
+            logger.warning(
+                "Semantic judge output truncated; splitting case_count=%s max_output_tokens=%s",
+                len(cases),
+                self.max_output_tokens,
+            )
+            midpoint = len(cases) // 2
+            left = await self._judge_chunk(cases[:midpoint], system_prompt, response_schema)
+            right = await self._judge_chunk(cases[midpoint:], system_prompt, response_schema)
+            return SemanticOutcomeBatchResult(
+                decisions=left.decisions + right.decisions,
+                input_tokens=(exc.input_token_count or 0) + left.input_tokens + right.input_tokens,
+                cached_input_tokens=(
+                    (exc.cached_input_token_count or 0)
+                    + left.cached_input_tokens
+                    + right.cached_input_tokens
+                ),
+                output_tokens=(exc.output_token_count or 0)
+                + left.output_tokens
+                + right.output_tokens,
+            )
         try:
             parsed = SemanticOutcomeResponse.model_validate(parse_json_object(response.text))
         except ValueError:
@@ -285,3 +307,54 @@ class OpenAISemanticOutcomeJudge:
             cached_input_tokens=response.cached_input_token_count or 0,
             output_tokens=response.output_token_count or 0,
         )
+
+
+def _user_prompt(cases: Sequence[SemanticOutcomeCase]) -> str:
+    return json.dumps(
+        {
+            "cases": [
+                {
+                    "caseId": case.case_id,
+                    "beforeValue": case.before_value,
+                    "sourceValues": list(case.source_values),
+                    "expectedValue": case.expected_value,
+                    "actualValue": case.actual_value,
+                    "requiredFacts": list(case.required_facts),
+                    "forbiddenFacts": list(case.forbidden_facts),
+                    "evidenceQuotes": list(case.evidence_quotes),
+                    **(
+                        {
+                            "settingContext": {
+                                "category": case.setting_context.category,
+                                "subjectName": case.setting_context.subject_name,
+                                "scopeName": case.setting_context.scope_name,
+                                "actualScopeName": case.setting_context.actual_scope_name,
+                                "expectedSettingName": case.setting_context.expected_setting_name,
+                                "actualSettingName": case.setting_context.actual_setting_name,
+                                "relatedPaths": list(case.setting_context.related_paths),
+                                "operation": case.setting_context.operation,
+                            }
+                        }
+                        if case.setting_context is not None
+                        else {}
+                    ),
+                    **(
+                        {
+                            "characterContext": {
+                                "entityId": case.character_context.entity_id,
+                                "factType": case.character_context.fact_type,
+                                "expectedFactKey": case.character_context.expected_fact_key,
+                                "actualFactKey": case.character_context.actual_fact_key,
+                                "schemaPattern": case.character_context.schema_pattern,
+                            }
+                        }
+                        if case.character_context is not None
+                        else {}
+                    ),
+                }
+                for case in cases
+            ]
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
