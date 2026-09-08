@@ -346,6 +346,7 @@ def test_end_to_end_semantic_case_keeps_reviewed_merge_constraints() -> None:
     asyncio.run(evaluate_multi_stage(gold, bundle, semantic_judge=judge))
 
     state_case = next(case for case in judge.cases if case.case_id.startswith("state:"))
+    assert state_case.scenario_id == "S1"
     assert state_case.required_facts == ("평균 키 140cm", "희귀 변종 190cm")
     assert state_case.forbidden_facts == ("모든 고블린 190cm",)
     assert state_case.before_value == "평균은 140cm다."
@@ -422,8 +423,10 @@ def test_character_stage2_json_mismatch_fails_decision_and_end_to_end_state() ->
         ],
     )
 
-    report = asyncio.run(evaluate_multi_stage(gold, bundle))
+    pending = asyncio.run(evaluate_multi_stage(gold, bundle))
+    report = asyncio.run(evaluate_multi_stage(gold, bundle, semantic_judge=_AlwaysMismatch()))
 
+    assert pending["stages"]["character"]["stage2"]["metrics"]["proposedValueJsonAccuracy"] is None
     stage2 = report["stages"]["character"]["stage2"]["metrics"]
     assert stage2["proposedValueAccuracy"] == 1
     assert stage2["proposedValueJsonAccuracy"] == 0
@@ -948,6 +951,24 @@ class _CaptureMatch(_AlwaysMatch):
     async def judge_many(self, cases):
         self.cases = tuple(cases)
         return await super().judge_many(cases)
+
+
+class _AlwaysMismatch:
+    async def judge_many(self, cases):
+        return SemanticOutcomeBatchResult(
+            decisions=tuple(
+                SemanticOutcomeDecision(
+                    caseId=case.case_id,
+                    coreMeaningCovered=False,
+                    requiredFactsCovered=True,
+                    forbiddenFactsAbsent=True,
+                    contradiction=True,
+                    unsupportedDetail=False,
+                    reason="different meaning",
+                )
+                for case in cases
+            )
+        )
 
 
 def _scenario(target_domains, **updates) -> ScenarioGold:

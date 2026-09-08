@@ -314,6 +314,11 @@ def validate_character_fact_decision(
         raise ValueError("Snapshot removal requires a PRESENT STATUS transition.")
 
     if applies_to_snapshot:
+        if candidate_value_type == SettingValueType.STRING and (
+            not isinstance(decision.proposed_value_json, dict)
+            or not isinstance(decision.proposed_value_json.get("value"), str)
+        ):
+            raise ValueError("STRING proposed_value_json.value must be a JSON string.")
         normalize_setting_display_value(
             candidate_value_type,
             decision.proposed_value_json,

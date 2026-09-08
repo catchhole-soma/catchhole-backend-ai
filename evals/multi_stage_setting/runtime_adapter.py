@@ -105,6 +105,7 @@ from evals.multi_stage_setting.contracts import (
 from evals.multi_stage_setting.state_effects import (
     StateApplicationError,
     apply_prediction_decision,
+    apply_registered_characters_after_episode,
     build_gold_state_chain,
 )
 
@@ -1124,15 +1125,17 @@ async def _run_world_batches(
                 target_set.targets,
             )
             for decision in result.decisions:
-                first_ref = min(
+                source_refs = sorted(
                     decision.source_candidate_refs,
                     key=lambda reference: int(reference[1:]),
                 )
+                source_ids = [source_by_ref[ref].source_id for ref in source_refs]
                 predictions.append(
                     _world_stage2_prediction(
-                        source_by_ref[first_ref].source_id,
+                        source_ids[0],
                         decision,
                         target_set,
+                        source_ids=source_ids if len(source_ids) > 1 else None,
                     )
                 )
         except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
@@ -1238,6 +1241,8 @@ def _world_stage2_prediction(
     source_id: str,
     decision: Any,
     target_set: _WorldTargetSet,
+    *,
+    source_ids: list[str] | None = None,
 ) -> WorldStage2Prediction:
     stable_target = None
     if decision.target_ref is not None:
@@ -1258,6 +1263,7 @@ def _world_stage2_prediction(
         stable_target = matched.ref if matched is not None else world_entry_subject_ref(entries[0])
     return WorldStage2Prediction(
         source_candidate_id=source_id,
+        source_candidate_ids=source_ids or [],
         domain="WORLD",
         consolidation_status=decision.consolidation_status,
         operation=decision.operation,
@@ -1683,7 +1689,8 @@ def _apply_runtime_scenario(
                 ),
             ),
         )
-    return state.model_copy(update={"known_characters": list(known_by_ref.values())}).canonical()
+    state = state.model_copy(update={"known_characters": list(known_by_ref.values())})
+    return apply_registered_characters_after_episode(state, scenario).canonical()
 
 
 def _runtime_known_characters(

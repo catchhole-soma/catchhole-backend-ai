@@ -460,7 +460,7 @@ def test_batch_comparator_projects_in_order_and_hides_transport_ids() -> None:
     assert "`matched_character_name`" in request["system_prompt"]
     assert str(WORK_ID) not in serialized
     assert str(EPISODE_ID) not in serialized
-    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v2"
+    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v3"
 
 
 def test_batch_pipeline_falls_back_to_singletons_without_losing_projection() -> None:

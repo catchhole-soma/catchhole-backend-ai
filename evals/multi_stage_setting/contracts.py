@@ -62,6 +62,11 @@ class CandidateKind(StrEnum):
     WORLD_SETTING = "WORLD_SETTING"
 
 
+class Stage2Policy(StrEnum):
+    REQUIRED = "REQUIRED"
+    WAIT_FOR_CHARACTER_MATCH = "WAIT_FOR_CHARACTER_MATCH"
+
+
 class ReviewStatus(StrEnum):
     DRAFT = "DRAFT"
     IN_REVIEW = "IN_REVIEW"
@@ -340,6 +345,10 @@ class ScenarioGold(StrictModel):
     cumulative_through_episode: int = Field(ge=0)
     provided_context: str = ""
     known_character_names: list[str] = Field(default_factory=list)
+    registered_characters_after_episode: list[KnownCharacter] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
     state_generation_status: StateGenerationStatus = StateGenerationStatus.PENDING
     before_state_uri: str | None = None
     before_state_hash: str | None = None
@@ -374,6 +383,15 @@ class ScenarioGold(StrictModel):
             raise ValueError("SEED scenario requires seedState or beforeStateUri.")
         if any(not name.strip() for name in self.known_character_names):
             raise ValueError("knownCharacterNames must not contain blank values.")
+        _require_unique(
+            [item.entity_ref for item in self.registered_characters_after_episode],
+            "registeredCharactersAfterEpisode character refs",
+        )
+        for character in self.registered_characters_after_episode:
+            if not character.entity_ref.strip() or not character.name.strip():
+                raise ValueError("registeredCharactersAfterEpisode refs and names must not be blank.")
+            if not character.active:
+                raise ValueError("registeredCharactersAfterEpisode only supports active registration.")
         return self
 
 
@@ -405,6 +423,11 @@ class Stage1Common(StrictModel):
 class CharacterStage1Gold(Stage1Common):
     domain: Literal[EvaluationDomain.CHARACTER]
     candidate_kind: Literal[CandidateKind.SETTING, CandidateKind.CHARACTER_DISCOVERY]
+    # Explicit annotation only; omit the legacy default to preserve fixture hashes.
+    stage2_policy: Stage2Policy = Field(
+        default=Stage2Policy.REQUIRED,
+        exclude_if=lambda value: value == Stage2Policy.REQUIRED,
+    )
     entity_ref: str = Field(min_length=1)
     entity_name: str = Field(min_length=1)
     raw_entity_mention: str | None = None
@@ -423,6 +446,13 @@ class CharacterStage1Gold(Stage1Common):
     @model_validator(mode="after")
     def validate_character_candidate(self) -> CharacterStage1Gold:
         self.validate_extract_fields()
+        if self.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH and (
+            self.decision != GoldDecision.EXTRACT
+            or self.candidate_kind != CandidateKind.SETTING
+        ):
+            raise ValueError(
+                "WAIT_FOR_CHARACTER_MATCH requires an EXTRACT Character SETTING row."
+            )
         setting_fields = (
             self.fact_type,
             self.fact_key,
@@ -763,6 +793,13 @@ class GoldSnapshotV3(StrictModel):
                     and source.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
                 ):
                     raise ValueError("CHARACTER_DISCOVERY does not feed setting comparison.")
+                if (
+                    isinstance(source, CharacterStage1Gold)
+                    and source.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH
+                ):
+                    raise ValueError(
+                        "WAIT_FOR_CHARACTER_MATCH rows must not feed Stage2 decisions."
+                    )
                 source_use_count[gold_id] = source_use_count.get(gold_id, 0) + 1
                 decision_by_source[gold_id] = decision
             sources = [stage1_by_id[gold_id] for gold_id in decision.source_gold_ids]
@@ -889,7 +926,10 @@ class GoldSnapshotV3(StrictModel):
             if row.decision == GoldDecision.EXTRACT
             and not (
                 isinstance(row, CharacterStage1Gold)
-                and row.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
+                and (
+                    row.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
+                    or row.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH
+                )
             )
         }
         missing_stage2 = sorted(expected_stage2_sources - source_use_count.keys())
@@ -1022,6 +1062,11 @@ class CharacterStage2Prediction(StrictModel):
 
 class WorldStage2Prediction(StrictModel):
     source_candidate_id: str = Field(min_length=1)
+    # Preserve batch provenance without changing the primary source used for scoring/state.
+    source_candidate_ids: list[str] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
     domain: Literal[EvaluationDomain.WORLD]
     consolidation_status: WorldSettingConsolidationStatus
     operation: WorldSettingOperation
@@ -1039,6 +1084,12 @@ class WorldStage2Prediction(StrictModel):
 
     @model_validator(mode="after")
     def validate_world_operation(self) -> WorldStage2Prediction:
+        if self.source_candidate_ids:
+            if any(not source_id.strip() for source_id in self.source_candidate_ids):
+                raise ValueError("sourceCandidateIds must not contain blanks.")
+            _require_unique(self.source_candidate_ids, "sourceCandidateIds")
+            if self.source_candidate_id not in self.source_candidate_ids:
+                raise ValueError("sourceCandidateIds must include sourceCandidateId.")
         if any(not name.strip() for name in self.existing_root_property_names_to_move):
             raise ValueError("existingRootPropertyNamesToMove must not contain blanks.")
         if len(
@@ -1067,6 +1118,12 @@ Stage2Prediction = Annotated[
     CharacterStage2Prediction | WorldStage2Prediction,
     Field(discriminator="domain"),
 ]
+
+
+def stage2_source_candidate_ids(prediction: Stage2Prediction) -> list[str]:
+    if isinstance(prediction, WorldStage2Prediction) and prediction.source_candidate_ids:
+        return prediction.source_candidate_ids
+    return [prediction.source_candidate_id]
 
 
 class RuntimeFailure(StrictModel):
@@ -1177,7 +1234,11 @@ class PredictionBundleV3(StrictModel):
                 f"prediction candidate IDs in {scenario.scenario_id}",
             )
             _require_unique(
-                [item.source_candidate_id for item in scenario.stage2],
+                [
+                    source_id
+                    for item in scenario.stage2
+                    for source_id in stage2_source_candidate_ids(item)
+                ],
                 f"Stage2 source candidate IDs in {scenario.scenario_id}",
             )
             if self.mode == EvaluationMode.ORACLE:
@@ -1186,17 +1247,19 @@ class PredictionBundleV3(StrictModel):
                 # cross-fixture relation once Gold is present.
                 continue
             for decision in scenario.stage2:
+                for source_id in stage2_source_candidate_ids(decision):
+                    source = stage1_by_id.get(source_id)
+                    if source is None:
+                        raise ValueError(
+                            f"Stage2 prediction in {scenario.scenario_id} references unknown "
+                            f"Stage1 candidate {source_id}."
+                        )
+                    if source.domain != decision.domain:
+                        raise ValueError(
+                            f"Stage2 prediction in {scenario.scenario_id} has a different "
+                            f"domain from Stage1 candidate {source_id}."
+                        )
                 source = stage1_by_id.get(decision.source_candidate_id)
-                if source is None:
-                    raise ValueError(
-                        f"Stage2 prediction in {scenario.scenario_id} references unknown "
-                        f"Stage1 candidate {decision.source_candidate_id}."
-                    )
-                if source.domain != decision.domain:
-                    raise ValueError(
-                        f"Stage2 prediction in {scenario.scenario_id} has a different "
-                        f"domain from Stage1 candidate {decision.source_candidate_id}."
-                    )
                 if (
                     isinstance(decision, CharacterStage2Prediction)
                     and decision.removed_snapshot_refs
