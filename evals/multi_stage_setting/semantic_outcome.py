@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
 
@@ -10,9 +10,17 @@ from pydantic import BaseModel, Field
 from app.analysis.json_response import parse_json_object
 from app.llm.openai_client import OpenAIResponsesClient
 
-
 DEFAULT_PROMPT_PATH = Path(__file__).parent / "prompts" / "semantic_outcome_judge.md"
 DEFAULT_MODEL = "gpt-5.6-luna"
+
+
+@dataclass(frozen=True)
+class WorldSettingNameContext:
+    category: str
+    subject_name: str
+    scope_name: str | None
+    expected_setting_name: str
+    actual_setting_name: str
 
 
 @dataclass(frozen=True)
@@ -25,6 +33,7 @@ class SemanticOutcomeCase:
     required_facts: tuple[str, ...] = ()
     forbidden_facts: tuple[str, ...] = ()
     evidence_quotes: tuple[str, ...] = ()
+    setting_context: WorldSettingNameContext | None = None
 
 
 class SemanticOutcomeDecision(BaseModel):
@@ -35,6 +44,8 @@ class SemanticOutcomeDecision(BaseModel):
     contradiction: bool
     unsupported_detail: bool = Field(alias="unsupportedDetail")
     reason: str
+    same_setting: bool | None = Field(default=None, alias="sameSetting", strict=True)
+    setting_reason: str | None = Field(default=None, alias="settingReason")
 
     @property
     def matched(self) -> bool:
@@ -122,6 +133,23 @@ class OpenAISemanticOutcomeJudge:
                             "requiredFacts": list(case.required_facts),
                             "forbiddenFacts": list(case.forbidden_facts),
                             "evidenceQuotes": list(case.evidence_quotes),
+                            **(
+                                {
+                                    "settingContext": {
+                                        "category": case.setting_context.category,
+                                        "subjectName": case.setting_context.subject_name,
+                                        "scopeName": case.setting_context.scope_name,
+                                        "expectedSettingName": (
+                                            case.setting_context.expected_setting_name
+                                        ),
+                                        "actualSettingName": (
+                                            case.setting_context.actual_setting_name
+                                        ),
+                                    }
+                                }
+                                if case.setting_context is not None
+                                else {}
+                            ),
                         }
                         for case in cases
                     ]
@@ -131,7 +159,7 @@ class OpenAISemanticOutcomeJudge:
             ),
             model=self.model,
             max_output_tokens=min(5000, 400 + 450 * len(cases)),
-            prompt_cache_key="multi-stage-setting-eval:semantic-outcome:v2",
+            prompt_cache_key="multi-stage-setting-eval:semantic-outcome:v3",
         )
         try:
             parsed = SemanticOutcomeResponse.model_validate(parse_json_object(response.text))
@@ -145,6 +173,14 @@ class OpenAISemanticOutcomeJudge:
             decision_by_id[decision.case_id] = decision
         if set(decision_by_id) != set(expected_ids):
             raise ValueError("Semantic outcome judge caseIds do not match the request.")
+        for case in cases:
+            decision = decision_by_id[case.case_id]
+            if case.setting_context is not None and (
+                decision.same_setting is None
+                or not decision.setting_reason
+                or not decision.setting_reason.strip()
+            ):
+                raise ValueError("Semantic outcome judge setting-name decision is invalid.")
         return SemanticOutcomeBatchResult(
             decisions=tuple(decision_by_id[case_id] for case_id in expected_ids),
             input_tokens=response.input_token_count or 0,

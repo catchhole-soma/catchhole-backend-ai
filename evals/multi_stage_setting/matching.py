@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
+from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
 from evals.multi_stage_setting.contracts import (
     CandidateKind,
     CharacterStage1Gold,
@@ -15,7 +17,6 @@ from evals.multi_stage_setting.contracts import (
     WorldStage1Prediction,
     world_path_key,
 )
-from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
 from evals.setting_extraction.assignment import maximum_weight_assignment
 from evals.setting_extraction.evidence import EvidenceEvaluation, evaluate_evidence_quotes
 from evals.setting_extraction.normalization import normalize_fact_key, normalize_text
@@ -46,6 +47,7 @@ class Stage1Match:
     evidence: EvidenceEvaluation
     upstream_outcome: UpstreamOutcome
     assignment_weight: int
+    setting_name_match_method: str | None = None
 
     @property
     def identity_matched(self) -> bool:
@@ -102,6 +104,7 @@ def match_stage1(
     domain: EvaluationDomain,
     source_text: str | None,
     raw_prediction_count: int | None = None,
+    world_setting_name_matches: Mapping[tuple[str, str], bool | None] | None = None,
 ) -> Stage1MatchingResult:
     domain_gold = [item for item in gold_rows if item.domain == domain]
     positives = [item for item in domain_gold if item.decision == "EXTRACT"]
@@ -117,7 +120,7 @@ def match_stage1(
 
     weights = [
         [
-            _assignment_weight(group.gold, prediction)
+            _assignment_weight(group.gold, prediction, world_setting_name_matches)
             for prediction in grouped_predictions
         ]
         for group in positive_groups
@@ -136,6 +139,7 @@ def match_stage1(
             source_text=source_text,
             weight=weights[gold_index][prediction_index],
             source_gold_ids=group.source_gold_ids,
+            semantic_name_matches=world_setting_name_matches,
         )
         # Hungarian은 약한 값/근거 우연도 양수일 수 있다. 최소 한 identity 축이 맞아야
         # candidate reach로 인정한다.
@@ -247,6 +251,29 @@ def _group_positive_gold(
     return result
 
 
+def world_setting_name_pairs(
+    gold_rows: list[Stage1Gold],
+    predictions: list[Stage1Prediction],
+) -> list[tuple[WorldStage1Gold, WorldStage1Prediction]]:
+    """Return contextual name comparisons before the one-to-one assignment."""
+
+    positives = [
+        item
+        for item in gold_rows
+        if isinstance(item, WorldStage1Gold) and item.decision == "EXTRACT"
+    ]
+    groups = _group_positive_gold(positives, EvaluationDomain.WORLD)
+    grouped_predictions = consolidate_world_predictions(predictions)
+    return [
+        (group.gold, prediction)
+        for group in groups
+        if isinstance(group.gold, WorldStage1Gold)
+        for prediction in grouped_predictions
+        if world_setting_context_matches(group.gold, prediction)
+        and not world_setting_name_matches(group.gold, prediction.setting_name)
+    ]
+
+
 def consolidate_world_predictions(
     predictions: list[Stage1Prediction],
 ) -> list[WorldStage1Prediction]:
@@ -303,6 +330,7 @@ def consolidate_world_predictions(
 def _assignment_weight(
     gold: CharacterStage1Gold | WorldStage1Gold,
     prediction: CharacterStage1Prediction | WorldStage1Prediction,
+    semantic_name_matches: Mapping[tuple[str, str], bool | None] | None = None,
 ) -> int:
     if gold.domain != prediction.domain or gold.candidate_kind != prediction.candidate_kind:
         return 0
@@ -338,7 +366,9 @@ def _assignment_weight(
         category = gold_path[0] == prediction_path[0]
         subject = gold_path[1] == prediction_path[1]
         scope = gold_path[2] == prediction_path[2]
-        setting = _world_setting_name_matches(gold, prediction.setting_name)
+        setting = (
+            _world_setting_name_match_method(gold, prediction, semantic_name_matches) is not None
+        )
         value = any(
             normalize_text(expected) == normalize_text(actual)
             for expected in gold.source_values
@@ -363,6 +393,7 @@ def _evaluate_pair(
     source_text: str | None,
     weight: int,
     source_gold_ids: tuple[str, ...],
+    semantic_name_matches: Mapping[tuple[str, str], bool | None] | None = None,
 ) -> Stage1Match:
     evidence = evaluate_evidence_quotes(
         gold.evidence_quotes,
@@ -441,10 +472,8 @@ def _evaluate_pair(
         prediction.setting_name,
     )
     subject_matched = gold_path[:2] == prediction_path[:2]
-    path_matched = (
-        gold_path[2] == prediction_path[2]
-        and _world_setting_name_matches(gold, prediction.setting_name)
-    )
+    name_match_method = _world_setting_name_match_method(gold, prediction, semantic_name_matches)
+    path_matched = gold_path[2] == prediction_path[2] and name_match_method is not None
     expected_values = {normalize_text(value) for value in gold.source_values}
     actual_values = {normalize_text(value) for value in prediction.source_values}
     if expected_values == actual_values:
@@ -474,6 +503,7 @@ def _evaluate_pair(
         evidence=evidence,
         upstream_outcome=upstream,
         assignment_weight=weight,
+        setting_name_match_method=name_match_method,
     )
 
 
@@ -504,7 +534,7 @@ def _character_fact_matches(
     )
 
 
-def _world_setting_name_matches(
+def world_setting_name_matches(
     gold: WorldStage1Gold,
     prediction_setting_name: str,
 ) -> bool:
@@ -513,6 +543,41 @@ def _world_setting_name_matches(
         for name in gold.accepted_setting_names
     }
     return normalize_world_setting_name(prediction_setting_name) in accepted
+
+
+def world_setting_context_matches(
+    gold: WorldStage1Gold,
+    prediction: WorldStage1Prediction,
+) -> bool:
+    return world_path_key(
+        gold.category, gold.subject_name, gold.scope_name, gold.setting_name
+    )[:3] == world_path_key(
+        prediction.category,
+        prediction.subject_name,
+        prediction.scope_name,
+        prediction.setting_name,
+    )[:3]
+
+
+def _world_setting_name_match_method(
+    gold: WorldStage1Gold,
+    prediction: WorldStage1Prediction,
+    semantic_name_matches: Mapping[tuple[str, str], bool | None] | None,
+) -> str | None:
+    if world_setting_name_matches(gold, prediction.setting_name):
+        return (
+            "EXACT"
+            if normalize_world_setting_name(gold.setting_name)
+            == normalize_world_setting_name(prediction.setting_name)
+            else "ALIAS"
+        )
+    if (
+        semantic_name_matches is not None
+        and world_setting_context_matches(gold, prediction)
+        and semantic_name_matches.get((gold.gold_id, prediction.candidate_id)) is True
+    ):
+        return "SEMANTIC"
+    return None
 
 
 def _hard_negative_matches(
@@ -543,7 +608,7 @@ def _hard_negative_matches(
         )
         return (
             gold_path[:3] == prediction_path[:3]
-            and _world_setting_name_matches(gold, prediction.setting_name)
+            and world_setting_name_matches(gold, prediction.setting_name)
         )
     return False
 
