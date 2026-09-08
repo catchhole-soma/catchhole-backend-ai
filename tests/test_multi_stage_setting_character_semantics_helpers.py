@@ -7,6 +7,7 @@ import pytest
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
 from evals.multi_stage_setting.character_semantics import (
     StructuredTextPair,
+    character_fact_key_spelling_matches,
     character_setting_ref_mapping,
     compare_structured_semantics,
     dynamic_status_key_pair,
@@ -23,6 +24,39 @@ def _schema(key="statuses.dynamic", pattern="status.*", *, aliases=(), fact_type
         value_type="JSON",
         canonical_fact_type=fact_type,
     )
+
+
+@pytest.mark.parametrize("actual", [
+    "profile.가족_관계", "profile.가족 관계", "profile.가족__관계", "profile.가족\t관계",
+])
+def test_korean_key_word_separators_are_spelling_variants(actual):
+    assert character_fact_key_spelling_matches("profile.가족관계", actual)
+    assert character_fact_key_spelling_matches(actual, "profile.가족관계")
+
+
+@pytest.mark.parametrize(("expected", "actual"), [
+    ("profile.가족관계", "profile.가족구성"),
+    ("profile.가족관계", "status.가족_관계"),
+    ("프로필.가족관계", "프로_필.가족_관계"),
+    ("profile.가족관계", "profile.가족.관계"),
+    ("profile.username", "profile.user_name"),
+    ("skill.레벨10", "skill.레벨_10"),
+    ("status.오른팔부상", "status.왼팔_부상"),
+    (None, "profile.가족_관계"),
+])
+def test_key_spelling_does_not_equate_different_words_namespaces_or_identifiers(expected, actual):
+    assert not character_fact_key_spelling_matches(expected, actual)
+
+
+def test_spelling_mapping_rejects_multiple_predictions_for_one_expected_key():
+    expected = "fact:" + character_state_ref("character:bjorn", "PROFILE", "profile.가족관계")
+    actual = {
+        "fact:" + character_state_ref("character:bjorn", "PROFILE", key)
+        for key in ("profile.가족_관계", "profile.가_족관계")
+    }
+    assert character_setting_ref_mapping(
+        {expected}, actual, [(expected, ref) for ref in actual]
+    ) == {}
 
 
 def test_dynamic_status_keys_use_the_same_unique_schema_pattern() -> None:

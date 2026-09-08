@@ -18,6 +18,7 @@ from evals.multi_stage_setting.contracts import (
     character_state_ref,
 )
 from evals.multi_stage_setting.evaluator import evaluate_multi_stage
+from evals.multi_stage_setting.matching import match_stage1
 from evals.multi_stage_setting.semantic_outcome import (
     SemanticOutcomeBatchResult,
     SemanticOutcomeDecision,
@@ -169,6 +170,67 @@ def _fixture(
 
 def _evaluate(gold, bundle, judge):
     return asyncio.run(evaluate_multi_stage(gold, bundle, semantic_judge=judge))
+
+
+@pytest.mark.parametrize("mode", ["FIXED", "ORACLE"])
+@pytest.mark.parametrize("actual_key", ["profile.가족_관계", "profile.가족 관계"])
+def test_family_relation_spelling_matches_all_stages_without_llm_or_raw_key_changes(mode, actual_key):
+    gold, bundle = _fixture(
+        mode=mode,
+        fact_type="PROFILE",
+        expected_key="profile.가족관계",
+        actual_key=actual_key,
+        expected_value="얀델의 아들",
+        actual_value="얀델의 아들",
+        expected_json={"value": "얀델의 아들"},
+        actual_json={"value": "얀델의 아들"},
+    )
+    before = bundle.model_dump(mode="json")
+    judge = _Judge()
+
+    report = _evaluate(gold, bundle, judge)
+
+    if mode == "FIXED":
+        stage1 = report["stages"]["character"]["stage1"]
+        assert stage1["metrics"]["candidateF1"] == 1
+        assert stage1["metrics"]["valueAccuracy"] == 1
+        raw_matching = match_stage1(
+            gold.stage1, bundle.scenarios[0].stage1,
+            domain="CHARACTER", source_text=gold.scenarios[0].source_text,
+            semantic_scoring=False,
+        )
+        assert raw_matching.matches[0].path_or_fact_matched is False
+    assert report["stages"]["character"]["stage2"]["metrics"]["fullDecisionAccuracy"] == 1
+    assert report["endToEnd"]["domains"]["CHARACTER"]["afterStateF1"] == 1
+    assert report["endToEnd"]["metrics"]["transitionF1"] == 1
+    assert report["endToEnd"]["scenarios"][0]["predictedStateHash"] != (
+        report["endToEnd"]["scenarios"][0]["expectedStateHash"]
+    )
+    assert judge.cases == []
+    assert bundle.model_dump(mode="json") == before
+
+
+def test_matching_key_spelling_does_not_override_wrong_stage_two_value():
+    gold, bundle = _fixture(
+        fact_type="PROFILE",
+        expected_key="profile.가족관계",
+        actual_key="profile.가족_관계",
+        expected_value="얀델의 아들",
+        actual_value="얀델의 아들",
+        expected_json={"value": "얀델의 아들"},
+        actual_json={"value": "얀델의 아들"},
+    )
+    bundle.scenarios[0].stage2[0] = bundle.scenarios[0].stage2[0].model_copy(update={
+        "proposed_value": "얀델의 형",
+        "proposed_value_json": {"value": "얀델의 형"},
+    })
+
+    report = _evaluate(gold, bundle, _Judge(values=False))
+
+    metrics = report["stages"]["character"]["stage2"]["metrics"]
+    assert metrics["characterCanonicalFactKeyResolutionAccuracy"] == 1
+    assert metrics["fullDecisionAccuracy"] == 0
+    assert report["endToEnd"]["domains"]["CHARACTER"]["afterStateF1"] < 1
 
 
 @pytest.mark.parametrize("mode", ["FIXED", "ORACLE"])
