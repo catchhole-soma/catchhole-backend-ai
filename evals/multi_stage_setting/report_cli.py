@@ -45,6 +45,7 @@ _FIELD_STATUSES = {
 }
 _SETTING_NAME_MATCH_STATUSES = {"MATCH", "MISMATCH", "PENDING"}
 _SETTING_NAME_MATCH_METHODS = {"EXACT", "ALIAS", "SEMANTIC", "UNRESOLVED"}
+_STAGE2_POLICIES = {"REQUIRED", "WAIT_FOR_CHARACTER_MATCH"}
 _AXIS_LABELS = {
     "subject": "설정 대상",
     "path": "설정 분류·세부 항목",
@@ -295,6 +296,7 @@ def _append_stage2_summary(lines: list[str], stages: dict[str, Any]) -> None:
         correct = _matched_count(accuracy, resolved)
         quantities[domain] = {
             "gold": gold,
+            "waiting": _int_or_zero(counts.get("waitingForCharacterMatch")),
             "included": included,
             "correct": correct,
             "incorrect": resolved - correct,
@@ -318,6 +320,7 @@ def _append_stage2_summary(lines: list[str], stages: dict[str, Any]) -> None:
     ])
     quantity_rows = (
         ("Gold (정답지의 처리 결정)", "gold"),
+        ("인물 연결 대기 (정답지가 2차 진행을 보류한 1차 항목)", "waiting"),
         ("2차 채점에 포함 (필요한 설정이 1차에서 올바르게 추출됨)", "included"),
         ("정답 (처리 방식·대상·내용 등 필요한 판단 항목이 모두 맞음)", "correct"),
         ("오답 (판단이 틀렸거나 2차 결과가 없음)", "incorrect"),
@@ -333,6 +336,14 @@ def _append_stage2_summary(lines: list[str], stages: dict[str, Any]) -> None:
             for domain in _DOMAINS
         ]
         lines.append(f"| {_cell(label)} | {' | '.join(cells)} |")
+    if any(quantity["waiting"] for quantity in quantities.values()):
+        lines.extend([
+            "",
+            (
+                "인물 연결 대기는 정답지가 정한 정책 수이며, 2차 Gold나 채점 제외 수에 포함되지 않습니다. "
+                "실제 추출 성공·누락 여부는 1차 표에서 확인하세요."
+            ),
+        ])
 
     lines.extend([
         "",
@@ -893,6 +904,15 @@ def _diagnostic_reason(
                 parts.extend(_field_difference_lines(source, domain))
         parts.append("따라서 이 항목의 2차 판단은 채점에서 제외했습니다.")
         return "<br>".join(_cell(part) for part in parts)
+    if (
+        result == "FULL_MATCH"
+        and domain == "character"
+        and case.get("stage2Policy") == "WAIT_FOR_CHARACTER_MATCH"
+    ):
+        return (
+            "채점한 1차 항목이 모두 답지와 일치합니다.<br>"
+            "인물 연결 대기 (답지는 인물 연결 전 2차 비교를 요구하지 않음)"
+        )
     parts = _field_difference_lines(case, domain)
     if result == "PARTIAL_MATCH":
         matched = [
@@ -1101,6 +1121,8 @@ def _sanitize_stage1_case(value: dict[str, Any]) -> dict[str, Any] | None:
     }
     if (name_match := _sanitize_setting_name_match(value.get("settingNameMatch"))) is not None:
         sanitized["settingNameMatch"] = name_match
+    if (policy := _choice(value.get("stage2Policy"), _STAGE2_POLICIES)) is not None:
+        sanitized["stage2Policy"] = policy
     return sanitized
 
 
