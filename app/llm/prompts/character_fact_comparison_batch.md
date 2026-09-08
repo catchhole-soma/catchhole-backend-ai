@@ -62,6 +62,10 @@ CharacterFact는 삭제하지 않는 사건 이력이고 snapshot은 현재 상�
 
 UPDATE/MERGE만 `target_ref`를 쓰고, 동일 resolved slot의 활성 ref가 반드시 있어야 한다.
 ADD/UPDATE/MERGE는 `proposed_fact_value`와 `proposed_value_json`을 모두 반환한다.
+각 proposal은 해당 candidate의 `value_type`을 유지한다. STRING이면 `proposed_value_json`은
+`{"value": "바바리안"}`처럼 `value`에 JSON 문자열을 담은 객체여야 한다.
+`value`에 배열·객체·숫자·boolean·null을 넣거나 `value` 키를 생략하지 않는다.
+숫자처럼 보이는 내용도 STRING 후보라면 `{"value": "36"}`처럼 문자열로 반환한다.
 NUMBER는 `proposed_value_json.value`를 JSON 숫자로, 표시값을 같은 숫자 문자열로 둔다.
 BOOLEAN은 JSON boolean과 같은 소문자 표시값을 쓴다. STATUS의 `active`는 JSON boolean이며
 false 후보·제안은 현재 snapshot에 ADD/UPDATE/MERGE하지 않는다.
