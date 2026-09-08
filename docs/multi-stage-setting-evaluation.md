@@ -88,7 +88,7 @@ snapshot에 같이 포함됩니다. 실제 평가 대상은 `evaluationScenarioI
 
 세계관 설정명 평가 정책은 이슈 [#62](https://github.com/catchhole-soma/catchhole-backend-ai/issues/62)에
 배경과 범위를 기록하며, 결과 JSON의 `run.worldSettingNamePolicy`는
-`aliases-then-contextual/v1`로 구분합니다.
+`item-scope-value-contextual/v2`로 구분합니다.
 
 1차 Gold는 **원문에서 발견해야 하는 후보**를 기록합니다. `1차 판정`은 `EXTRACT`,
 `DO_NOT_EXTRACT`, `REVIEW_REQUIRED`이고, 캐릭터와 세계관 모두 동일한 후보 검출 원칙으로
@@ -104,7 +104,8 @@ snapshot에 같이 포함됩니다. 실제 평가 대상은 `evaluationScenarioI
   원문 값은 `sourceValues`로 묶습니다.
 - 공용 `허용 factKey 별칭` 컬럼은 세계관 행에서는 `worldSettingName`의 사람이 검수한 별칭으로
   해석합니다. 1차 매칭과 2차 출력 설정명 채점은 정규화한 이름·허용 별칭을 먼저 비교하고,
-  일치하지 않으면 같은 category·주체·scope 안에서 문맥상 같은 속성인지 판정합니다.
+  일치하지 않으면 같은 category·주체 안에서 문맥상 같은 속성인지 판정합니다. 상위 scope가
+  다르면 범위의 의미가 같은지도 별도로 판정하며, 이름 일치만으로 범위나 값까지 인정하지 않습니다.
   Gold의 canonical 이름은 유지하며, 이 평가 때문에 모델의 원시 출력 이름을 고쳐 쓰지 않습니다.
 - `valueJson`은 표시값과 별도 품질 지표입니다. `STRING`, 엄격한 `NUMBER`, 엄격한 `BOOLEAN`은
   exporter가 단순 scalar JSON을 만들 수 있지만, `JSON`과 `UNKNOWN` 구조는 추측하지 않습니다.
@@ -195,9 +196,11 @@ key를 함께 종료할 수도 있습니다. 후보 자체도 현재 상태로 �
 분모에 넣습니다. 제거가 없는 일반 판단 수가 늘어도 상태 해소 정확도가 부풀지 않습니다.
 
 캐릭터의 `proposedValueJson`은 참고용 문자열이 아니라 실제 저장 결과의 일부입니다. Gold에
-구조화 JSON이 있으면 표시 문장이 맞아도 JSON subset이 다를 때 `fullDecisionAccuracy`, E2E
-structured state, transition이 오답입니다. Gold가 지정하지 않은 추가 JSON 필드는 세 지표 모두
-허용하며, transition도 Gold before/after subset에 투영한 값만 비교합니다.
+구조화 JSON이 있으면 표시 문장이 맞아도 Gold가 지정한 JSON subset을 만족해야
+`fullDecisionAccuracy`, E2E structured state, transition에서 정답입니다. 서술형 문자열의
+표현 차이는 의미 판정으로 확인하되, 숫자·불리언·식별자는 결정적으로 비교합니다. Gold가 지정하지
+않은 추가 JSON 필드는 세 지표 모두 허용하며, transition도 Gold before/after subset에 투영한
+값만 비교합니다.
 
 ### 세계관
 
@@ -303,53 +306,74 @@ Notion 변경 시 1차 대기 정책 지정과 연결된 2차 정답 제거를 �
 남기면 계약 검증 오류입니다. 변경 후 누적 상태를 다시 생성해 이후 회차의 동일 인물 연결도
 검증합니다.
 
-### 세계관 설정명 판정
+### 세계관 설정 항목·범위·값 판정
 
-세계관의 `worldSettingName`은 같은 속성을 다른 말로 표현할 수 있으므로 다음 순서로 비교합니다.
+세계관 의미 판정은 같은 category·주체인 후보 쌍에만 적용합니다. `worldSettingName`이 가리키는
+설정 항목, `worldScope`의 적용 범위, 설정값의 내용은 서로 독립된 세 축입니다.
 
-1. 정규화한 canonical 이름이 같으면 `EXACT`, Gold에 등록된 허용 별칭이면 `ALIAS`로 인정합니다.
-2. 둘 다 아니면 category·주체·scope가 같은 후보 쌍에만 문맥 LLM 판정을 적용합니다. 이름 두 개,
-   추출값, 기존값, 근거, 필수·금지 사실을 사용해 같은 속성을 가리키는지 확인합니다. 다른
-   category·주체·scope를 의미 판정으로 합치지 않습니다.
-3. 문맥이 같은 속성임을 뒷받침하면 `SEMANTIC`으로 인정합니다. 관련은 있지만 서로 다른
-   속성이거나, 문맥으로 동일성을 확인할 수 없으면 같은 속성이라고 추정하지 않습니다.
+1. 정규화한 이름이 같으면 `EXACT`, Gold에 등록된 허용 별칭이면 `ALIAS`로 항목을 인정합니다.
+   범위와 값도 각각 정규화 일치로 먼저 확인합니다. 한 축이 일치해도 나머지 축의 판정을 생략하지
+   않습니다.
+2. 결정적으로 일치하지 않는 축은 이름·양쪽 범위·추출값·기존값·근거·필수/금지 사실과 관련
+   경로를 함께 제공해 LLM이 판정합니다. `sameSetting`은 같은 설정 항목인지,
+   `scopeEquivalent`는 범위가 의미상 동등한지, 의미 보존 필드는 내용이 맞는지를 나타냅니다.
+3. 빈 scope는 root property입니다. 빈 범위를 모든 범위와 자동으로 일치시키지 않습니다.
+   신규 `ADD`에서 독립 속성들을 `게임 규칙` 같은 상위 범위로 묶었더라도 적용 대상이나 조건이
+   바뀌지 않았다면 의미상 동등할 수 있습니다. 특정 지역·인물·시기 등으로 범위를 넓히거나
+   좁힌 경우에는 같은 값이 적혀 있어도 범위가 같다고 인정하지 않습니다.
 
-1차에서는 Gold와 예측의 일대일 연결을 확정하기 **전에** 위 판정을 적용합니다. 이름이 다르다는
-이유로 올바른 후보 쌍을 먼저 누락 처리하지 않기 위함입니다. 2차의 proposed 설정명도 같은
-기준을 사용하되, 대상·scope·operation 등 나머지 결정 조건은 각각 검증합니다. 1차 이름을
-인정했다는 이유로 2차가 새로 출력한 다른 이름까지 자동 인정하지 않습니다.
+예를 들어 root의 `캐릭터 사망 규칙`과 `게임 규칙 › 사망 규칙`은 같은 항목인지, 새 상위 범위가
+의미를 바꾸지 않는 묶음인지, 사망 후 재육성해야 한다는 내용이 보존됐는지를 각각 확인합니다.
+이름이 비슷하거나 내용이 같다는 이유만으로 세 판정을 한꺼번에 통과시키지 않습니다.
 
-세계관 `UPDATE/MERGE` 예측은 `matchedScopeName/matchedPropertyName`과
-`proposedScopeName/proposedSettingName`의 정규화한 경로가 같아야 합니다. 이 경로 보존은
-이름의 의미 일치와 별도로 검사합니다. 서로 다른 이름을 같은 속성으로 판정했더라도 모델의
-원시 출력이 기존 경로를 바꾸는 계약 위반이면 해당 2차 결정을 정답으로 인정하지 않습니다.
+이 기준은 1차 일대일 후보 연결, 2차 proposed path/value, E2E 누적 상태와 전이에 적용합니다.
+1차에서 인정한 표현이 있어도 2차가 새로 출력한 경로와 값은 다시 확인합니다. 후보 하나로 서로
+다른 Gold 여러 개를 충족시키거나, 여러 예측을 평가용 키 하나에 덮어써 중복을 숨기지 않습니다.
 
-설정명 동일성과 설정값 정답 여부는 독립입니다. 같은 속성에 서로 반대인 값이 붙었으면 이름은
-맞아도 값은 틀립니다. 값이 같거나 비슷하다는 이유만으로 다른 속성을 같은 이름으로 인정하지
-않습니다. 의미 judge의 `sameSetting`은 이름을, 기존 의미 보존 필드는 값을 판정합니다.
+기존 target reference와 실제 `matchedScopeName/matchedPropertyName`, operation, consolidation,
+기존 root property 이동 대상은 계속 Gold와 실제 상태를 기준으로 엄격히 검증합니다.
+`UPDATE/MERGE`의 matched 경로와 proposed 경로도 같아야 합니다. 의미상 비슷하다는 이유로
+다른 기존 속성을 수정하거나 경로를 바꾸는 계약 위반을 정답으로 보정하지 않습니다. 신규 scope의
+실제 하위 속성이 둘 이상이어야 한다는 reducer 규칙도 그대로 적용합니다.
 
-judge를 사용하지 않거나 이름 판정 결과가 없으면 `UNRESOLVED`이며, 이름 일치를 인정하거나
-후보 TP로 계산하지 않습니다. 공개 진단에는 설정명의 의미를 확인하지 못했다고 표시합니다.
-judge 응답 계약이 잘못되면 평가 오류로 거절하며 일치로 보정하지 않습니다. 값 의미 판정의
-`pending` 및 관련 지표 정책은 별도로 유지합니다.
+### 캐릭터 의미 판정
+
+캐릭터의 서술형 값은 표현이 달라도 필수 사실 보존·금지 사실·모순·근거 없는 추가 정보를 기준으로
+판정합니다. 같은 인물·factType 안에서 동적으로 정하는 STATUS pattern 이름과 JSON 안의
+서술형 문자열에도 의미 판정을 적용합니다. 현재 평가 bundle에는 스키마 원본이 없으므로
+동적 이름 판정은 기본 `status.*` namespace로 제한하며, 다른 namespace의 자유 이름을
+임의로 승인하지 않습니다. 인물 ID, factType, 고정 canonical key,
+숫자·불리언, target 및 제거 대상 reference는 계속 결정적으로 비교합니다. STATUS 이름 대응을
+인정해도 실제로 종료할 상태나 수정할 대상의 선택까지 바꾸지는 않습니다.
+
+### 의미 판정의 미확정 결과와 실행 설정
+
+judge가 항목·범위의 동등성을 결정할 수 없으면 nullable 판정으로, 값은 `valueResolved=false`로
+응답할 수 있습니다. judge를 사용하지 않거나 유효한 판정이 없는 경우도 해당 축을 `PENDING`으로
+남깁니다. 미확정을 정답·오답으로 추정하거나 후보 TP로 계산하지 않으며, 이 상태를 1차·2차·E2E에
+전파합니다. 다른 의미 축이나 구조 필드가 명시적으로 틀린 경우 그 오류는 그대로 유지합니다. caseId
+누락·중복, 잘못된 타입처럼 응답 계약이 깨진 경우는 미확정과 구분해 평가 오류로 거절합니다.
 
 이 판정은 평가에만 적용합니다. 제품 추출·비교 프롬프트, 원시 prediction, reference reducer의
-상태, before/after state와 fixture hash를 바꾸지 않습니다. 이름 대응을 누적 상태·전이 채점에
-사용하더라도 평가용 대응으로만 처리하며, 원시 상태 해시가 다르다는 사실과 실제 상태 적용
-오류는 그대로 보존합니다.
+상태, before/after state와 fixture hash를 바꾸지 않습니다. 승인된 대응은 상태·전이 채점의
+일대일 평가용 키에만 사용하며, 원시 상태 해시 차이와 실제 상태 적용 오류는 보존합니다.
+캐릭터 이력의 후보 ID와 Gold ID 대응도 승인된 일대일 연결을 채점할 때만 사용합니다.
+전이는 먼저 원시 상태에서 계산한 뒤 평가용 대응을 적용하므로, 대응 방식의 변화만으로
+실제로 없던 ADD/UPDATE를 만들지 않습니다.
 
-`ROLLING`에서 일부 회차만 채점하면 그 회차의 누적 상태를 만든 이전 회차의 이름 판정도
-필요할 수 있습니다. 평가 대상이 아닌 의존 회차의 세계관 이름을 추가로 판정해 상속된
-설정명의 대응을 확인하므로 judge 호출과 비용이 발생할 수 있습니다. 이 사용량은
-`semanticJudgeUsage`에 포함하지만 의존 회차의 1차·2차 항목은 점수의 분자·분모에 추가하지
-않습니다. 의존 회차의 판정은 선택 회차의 누적 상태 채점에 사용할 이름 대응만 제공합니다.
+`ROLLING`에서 일부 회차만 채점하면 누적 상태를 만든 이전 회차의 의미 판정도 필요할 수 있습니다.
+의존 회차의 추가 judge 사용량은 `semanticJudgeUsage`에 포함하지만, 그 회차의 1차·2차 항목을
+점수의 분자·분모에 추가하지 않습니다. 의존 회차의 판정은 선택 회차의 상태 대응에만 사용합니다.
 
-의미 judge 요청은 `multi-stage-setting-eval:semantic-outcome:v3` 캐시 키를 사용합니다. v3는
-`settingContext`와 이름·값의 독립 판정을 포함하므로, 이전 v2 응답을 이름 판정 결과로
-재사용하지 않습니다. 같은 이름 쌍이라도 category·주체·scope·값·근거가 바뀌면 다른 판정
-문맥입니다. 캐시 키가 같다는 이유로 이전 정오 판정을 재사용하지 않으며, 실제 요청 문맥을
-보내 판정합니다. 이 버전은 평가 judge의 프롬프트 버전이고 `setting-eval/v3` 데이터 계약이나
-제품 프롬프트의 버전을 바꾸지 않습니다.
+평가 judge 기본값은 `gpt-5.6-sol`, reasoning effort는 `medium`입니다. 각각 `--judge-model`과
+`--judge-reasoning-effort`로 지정하며 제품의 추출·주체 해소·비교 모델 및 공통 추론 강도와
+독립적으로 주입합니다. 평가만 실행해도 제품 모델 설정을 바꾸지 않습니다.
+
+의미 judge 요청은 `multi-stage-setting-eval:semantic-outcome:v4` 캐시 키를 사용합니다. v4는
+항목·범위·값의 독립 판정과 미확정 응답 계약을 포함하므로 이전 v3 응답을 재사용하지 않습니다.
+같은 이름 쌍이라도 분류·주체·양쪽 범위·값·근거·관련 경로가 바뀌면 다른 판정 문맥입니다.
+실제 문맥을 요청에 보내 판정하며, 캐시 키를 정오 판정의 근거로 쓰지 않습니다. 이 버전은
+평가 judge 프롬프트 버전이며 `setting-eval/v3` 데이터 계약이나 제품 프롬프트 버전은 유지합니다.
 
 ## 주요 지표 읽는 법
 
@@ -401,7 +425,11 @@ judge 응답 계약이 잘못되면 평가 오류로 거절하며 일치로 보�
 | 문맥 판정으로 불일치 | 문맥상 다른 설정 항목으로 판단했습니다. |
 | 판정 미완료 | 설정명의 의미를 확인하지 못했습니다. |
 
-`EXACT`는 별도 설명을 생략할 수 있습니다. 모델이 만든 자유 형식 `reason`·`settingReason`은
+설정명이 일치로 인정됐는데 양쪽 경로의 상위 범위가 다르면, 같은 기존 판정 이유 셀에서 범위의
+인정·불일치·미확정을 별도로 설명합니다. `PARTIAL_MATCH`에 `PENDING` 필드가 있으면 의미 판정이
+끝나지 않았음을 명시합니다. 공개 JSON 구조, 표·컬럼·지표명은 추가하거나 바꾸지 않습니다.
+
+`EXACT`는 별도 설명을 생략할 수 있습니다. 모델이 만든 자유 형식 `reason`·`settingReason`·`scopeReason`은
 원문을 인용할 수 있으므로 공개 allowlist에 넣지 않습니다. quote, raw 응답과 함께 공개
 산출물에서 제외하며, 공개 화면은 답지·모델의 허용된 이름과 고정 설명만 표시합니다. 표시 문자열은
 HTML·Markdown을 이스케이프하고 기존 길이 제한을 적용합니다. 집계 전용 `score.json`에는
@@ -426,7 +454,7 @@ coverage·pending 및 오류 코드에는 한국어 괄호 설명을 붙입니�
 검증하지 않으므로 '실행 중 기록된 오류'로 표시하고, 단계별·유형별 집계가 같은 오류를
 다른 기준으로 분류한 수임을 명시합니다.
 
-의미 판정이 필요한 값에 judge를 사용하지 않으면 관련 결과는 틀림이 아니라 `pending`으로
+의미 판정이 필요한 항목·범위·값에 judge를 사용하지 않거나 판단할 수 없으면 해당 축은 `pending`으로
 남습니다. pending이 하나라도 있으면 해당 주 지표(`valueAccuracy`, `fullDecisionAccuracy`,
 `afterStateF1`, `transitionF1`)는 `null`입니다. 판정이 끝난 항목만 보는 `resolved*`, pending을
 오답으로 보는 보수적인 `*LowerBound*`, `semanticCoverage`를 함께 제공합니다. 보고서에서 대상
@@ -553,6 +581,8 @@ python -m evals.multi_stage_setting.cli \
   --gold build/eval/multi-stage/gold.json \
   --predictions build/eval/multi-stage/predictions.json \
   --semantic-judge openai \
+  --judge-model gpt-5.6-sol \
+  --judge-reasoning-effort medium \
   --output build/eval/multi-stage/report.json
 
 python -m evals.multi_stage_setting.report_cli \
