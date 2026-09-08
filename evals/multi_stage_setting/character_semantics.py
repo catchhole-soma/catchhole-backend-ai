@@ -16,6 +16,19 @@ if TYPE_CHECKING:
     from app.analysis.setting_extractor import CharacterSettingSchemaHint
 
 
+def character_fact_key_spelling_matches(expected: str | None, actual: str | None) -> bool:
+    """Ignore Korean word separators for scoring without changing stored keys or namespaces."""
+    if not expected or not actual:
+        return False
+
+    def spelling(key: str) -> str:
+        normalized = normalize_fact_key(normalize_text(key))
+        namespace, separator, leaf = normalized.rpartition(".")
+        return namespace + separator + re.sub(r"(?<=[가-힣])_+(?=[가-힣])", "", leaf)
+
+    return spelling(expected) == spelling(actual)
+
+
 def dynamic_status_key_pair(
     fact_type: str,
     expected_key: str | None,
@@ -34,7 +47,7 @@ def dynamic_status_key_pair(
     if fact_type != "STATUS" or not expected_key or not actual_key:
         return False
     expected_key, actual_key = expected_key.strip(), actual_key.strip()
-    if normalize_fact_key(expected_key) == normalize_fact_key(actual_key):
+    if character_fact_key_spelling_matches(expected_key, actual_key):
         return False
     if not schema_hints:
         return all(_pattern_matches("status.*", key) for key in (expected_key, actual_key))
@@ -118,7 +131,7 @@ def character_setting_ref_mapping(
             or actual_ref in exact
             or not _same_ref_identity(left[0], right[0], history_source_matches)
             or not (
-                normalize_fact_key(left[2]) == normalize_fact_key(right[2])
+                character_fact_key_spelling_matches(left[2], right[2])
                 or dynamic_status_key_pair(left[1], left[2], right[2], schema_hints=schema_hints)
             )
         ):

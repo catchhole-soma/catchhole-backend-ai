@@ -13,6 +13,7 @@ from app.domain.enums import (
 )
 from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
 from evals.multi_stage_setting.character_semantics import (
+    character_fact_key_spelling_matches,
     character_setting_ref_mapping,
     compare_structured_semantics,
     dynamic_status_key_pair,
@@ -1163,8 +1164,8 @@ def _score_stage2_case(
         else:
             value_matched = None
         assert expected_character_fact_key is not None
-        canonical_fact_key_matched = (
-            prediction.resolved_canonical_fact_key == expected_character_fact_key
+        canonical_fact_key_matched = character_fact_key_spelling_matches(
+            expected_character_fact_key, prediction.resolved_canonical_fact_key
         )
         character_context = None
         if (

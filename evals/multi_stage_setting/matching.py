@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
 from evals.multi_stage_setting.character_semantics import (
+    character_fact_key_spelling_matches,
     compare_structured_semantics,
     dynamic_status_key_pair,
 )
@@ -133,6 +134,7 @@ def match_stage1(
                 world_setting_name_matches,
                 world_scope_matches if semantic_scoring else None,
                 character_setting_matches if semantic_scoring else None,
+                semantic_scoring=semantic_scoring,
             )
             for prediction in grouped_predictions
         ]
@@ -177,7 +179,7 @@ def match_stage1(
         (negative.gold_id, prediction.candidate_id)
         for negative in hard_negatives
         for prediction in grouped_predictions
-        if _hard_negative_matches(negative, prediction)
+        if _hard_negative_matches(negative, prediction, semantic_scoring=semantic_scoring)
     )
     return Stage1MatchingResult(
         matches=tuple(matches),
@@ -352,6 +354,8 @@ def _assignment_weight(
     semantic_name_matches: Mapping[tuple[str, str], bool | None] | None = None,
     semantic_scope_matches: Mapping[tuple[str, str], bool | None] | None = None,
     character_setting_matches: Mapping[tuple[str, str], bool | None] | None = None,
+    *,
+    semantic_scoring: bool = True,
 ) -> int:
     if gold.domain != prediction.domain or gold.candidate_kind != prediction.candidate_kind:
         return 0
@@ -366,7 +370,7 @@ def _assignment_weight(
         entity = _character_entity_matches(gold, prediction)
         if gold.candidate_kind == CandidateKind.CHARACTER_DISCOVERY:
             return 200 + 120 * entity + 30 * evidence_overlap
-        fact = _character_fact_matches(gold, prediction)
+        fact = _character_fact_matches(gold, prediction, spelling_variants=semantic_scoring)
         if entity and character_setting_matches is not None:
             fact = (
                 fact
@@ -450,7 +454,7 @@ def _evaluate_pair(
                 ),
                 assignment_weight=weight,
             )
-        fact_matched = _character_fact_matches(gold, prediction)
+        fact_matched = _character_fact_matches(gold, prediction, spelling_variants=semantic_scoring)
         if (
             semantic_scoring
             and not fact_matched
@@ -593,11 +597,19 @@ def _character_entity_matches(
 def _character_fact_matches(
     gold: CharacterStage1Gold,
     prediction: CharacterStage1Prediction,
+    *,
+    spelling_variants: bool = True,
 ) -> bool:
     if prediction.fact_key is None:
         return False
     accepted = {normalize_fact_key(key) for key in gold.accepted_fact_keys}
-    return normalize_fact_key(prediction.fact_key) in accepted and (
+    key_matched = normalize_fact_key(prediction.fact_key) in accepted or (
+        spelling_variants and any(
+            character_fact_key_spelling_matches(key, prediction.fact_key)
+            for key in gold.accepted_fact_keys
+        )
+    )
+    return key_matched and (
         gold.fact_type is None
         or normalize_text(gold.fact_type) == normalize_text(prediction.fact_type)
     )
@@ -682,13 +694,15 @@ def _world_setting_name_match_method(
 def _hard_negative_matches(
     gold: CharacterStage1Gold | WorldStage1Gold,
     prediction: CharacterStage1Prediction | WorldStage1Prediction,
+    *,
+    semantic_scoring: bool = True,
 ) -> bool:
     if gold.domain != prediction.domain or gold.candidate_kind != prediction.candidate_kind:
         return False
     if isinstance(gold, CharacterStage1Gold) and isinstance(prediction, CharacterStage1Prediction):
         return _character_entity_matches(gold, prediction) and (
             gold.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
-            or _character_fact_matches(gold, prediction)
+            or _character_fact_matches(gold, prediction, spelling_variants=semantic_scoring)
         )
     if isinstance(gold, WorldStage1Gold) and isinstance(prediction, WorldStage1Prediction):
         gold_path = world_path_key(
