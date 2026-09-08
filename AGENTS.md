@@ -73,6 +73,7 @@
 
 ## LLM Runtime
 
+- 다단계 평가에서 인물 연결 전 2차 비교를 요구하지 않는 캐릭터 `EXTRACT / SETTING` Gold는 `stage2Policy=WAIT_FOR_CHARACTER_MATCH`로 명시하고 연결된 2차 Gold를 두지 않는다. 1차 추출은 계속 채점하며 정상 대기를 추출 실패로 세지 않는다. 정책은 해당 회차의 Gold 행에만 적용하고 canonical 인물 ID와 이후 회차의 이름 해소·매칭은 유지한다.
 - 다단계 평가기의 세계관 설정명은 정규화·검수된 별칭을 우선 인정하고, 나머지는 동일한 분류·주체·범위 안에서만 LLM 문맥 판정을 사용한다. 같은 설정 항목인지와 값이 맞는지는 독립 채점하며 이 기준을 1차 연결과 2차 채점에 함께 적용한다. 승인된 이름 대응은 상태·전이의 평가용 키에만 일대일로 반영하고 원시 예측·reducer·상태 해시는 변경하지 않는다. 채점 프롬프트 계약 변경 시 semantic outcome 캐시 버전과 `docs/multi-stage-setting-evaluation.md`를 함께 갱신한다.
 
 - OpenAI Responses API 요청은 웹소설 원문과 분석 결과가 provider 측에 저장되지 않도록 항상 `store=false`를 명시한다. 호출 목적이나 모델에 따라 이 값을 생략하거나 활성화하지 않는다.
