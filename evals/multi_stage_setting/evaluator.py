@@ -442,7 +442,7 @@ async def evaluate_multi_stage(
         waiting_failures += sum(
             _is_waiting_character_gold(match.gold)
             and (
-                not match.identity_matched
+                match.identity_matched is False
                 or _resolved_stage1_value_status(match, semantic_decisions)
                 == FieldMatchStatus.MISMATCH.value
             )

@@ -171,6 +171,34 @@ def test_wait_policy_does_not_hide_a_missing_extraction() -> None:
     assert WAIT_EXPLANATION not in markdown
 
 
+def test_waiting_status_with_unresolved_identity_is_not_an_extraction_failure() -> None:
+    gold = _fixture()
+    gold.stage1[0] = CharacterStage1Gold.model_validate(
+        gold.stage1[0].model_dump() | {
+            "fact_type": "STATUS", "fact_key": "status.피로", "value_type": "JSON",
+            "display_value": "피로가 쌓였다.", "value_json": {"name": "피로"},
+        }
+    )
+    gold = gold.with_fixture_hash()
+    prediction = CharacterStage1Prediction(
+        candidate_id="P1", domain="CHARACTER", candidate_kind="SETTING",
+        entity_name="미상", match_status="AMBIGUOUS", fact_type="STATUS",
+        fact_key="status.누적_피로", value_type="JSON", display_value="피로가 쌓였다.",
+        value_json={"name": "피로"},
+    )
+    bundle = PredictionBundleV3(
+        fixture_hash=gold.fixture_hash, mode="FIXED", evaluation_domains={"CHARACTER"},
+        scenarios=[ScenarioPrediction(scenario_id="S1", stage1=[prediction])],
+    )
+
+    report = asyncio.run(evaluate_multi_stage(gold, bundle))
+
+    stage1 = report["stages"]["character"]["stage1"]
+    assert stage1["counts"]["semanticPending"] == 1
+    assert stage1["metrics"]["candidateF1"] is None
+    assert report["failureCauses"].get("EXTRACTION_MISS", 0) == 0
+
+
 def test_wait_policy_does_not_hide_a_wrong_fact_path() -> None:
     report = _report(fact_key="profile.gender")
 
