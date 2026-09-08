@@ -61,6 +61,7 @@
 
 ## Python Packaging
 
+- 평가 fixture의 기본값 필드 제외는 Pydantic `exclude_if`를 사용하므로 `pydantic>=2.12.0`을 직접 의존성으로 유지한다. 기본 `stage2Policy`가 직렬화되어 기존 fixture hash가 바뀌지 않아야 한다.
 - setuptools package discovery는 `app*`로 제한해 루트의 `samples`, `docs`, `scripts`를 배포 패키지에서 제외한다. `pyproject.toml`이나 루트 디렉터리를 변경하면 `python -m pip install -e ".[dev]"`로 editable install을 검증한다.
 
 ## Runtime Timezone

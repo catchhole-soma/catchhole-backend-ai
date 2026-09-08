@@ -100,6 +100,63 @@ def test_same_setting_judgment_does_not_make_opposite_values_correct() -> None:
     assert report["endToEnd"]["domains"]["WORLD"]["afterStateF1"] == 0
 
 
+@pytest.mark.parametrize("reviewed_alias", [False, True])
+@pytest.mark.parametrize("correct_final_value", [False, True])
+def test_partial_extraction_still_judges_applied_path_and_value_independently(
+    reviewed_alias: bool, correct_final_value: bool,
+) -> None:
+    second_value = "HP만으로 전투 결과를 결정하지 않는다."
+    final_value = VALUE + " " + second_value
+    gold, bundle = _fixture(
+        expected_value=final_value,
+        prediction_value=final_value if correct_final_value else OPPOSITE_VALUE,
+        aliases=[ALTERNATE_NAME] if reviewed_alias else [],
+    )
+    gold.stage1[0].source_values = [VALUE, second_value]
+    gold.stage2[0] = WorldStage2Gold.model_validate(
+        gold.stage2[0].model_dump() | {"consolidation_status": "MERGED"}
+    )
+    gold = gold.with_fixture_hash()
+    bundle.fixture_hash = gold.fixture_hash
+    bundle.scenarios[0].stage1[0].source_values = [VALUE]
+    original = bundle.model_dump(mode="json")
+
+    class PartialExtractionJudge(_Judge):
+        async def judge_many(self, cases):
+            result = await super().judge_many(cases)
+            return SemanticOutcomeBatchResult(
+                decisions=tuple(
+                    decision.model_copy(update={
+                        "core_meaning_covered": False,
+                        "required_facts_covered": False,
+                    }) if decision.case_id.startswith("stage1") else decision
+                    for decision in result.decisions
+                ),
+            )
+
+    judge = PartialExtractionJudge()
+    report = asyncio.run(evaluate_multi_stage(gold, bundle, semantic_judge=judge))
+
+    stage2 = report["stages"]["world"]["stage2"]
+    assert stage2["counts"]["upstreamOutcomes"] == {"UPSTREAM_VALUE_ERROR": 1}
+    assert stage2["metrics"]["fullDecisionAccuracy"] is None
+    assert report["failureCauses"].get("EXTRACTION_MISS") == 1
+    assert report["endToEnd"]["counts"]["stateApplicationErrors"] == 0
+    assert report["endToEnd"]["domains"]["WORLD"]["afterStateF1"] == int(correct_final_value)
+    case = report["scenarios"][0]["stage2"][0]
+    assert case["result"] == "UPSTREAM_BLOCKED"
+    assert case["sourceCandidateId"] == "P1"
+    assert case["actual"]["operation"] == "ADD"
+    assert case["settingNameMatch"]["status"] == "MATCH"
+    if not correct_final_value:
+        assert any(
+            case.case_id.startswith("state:")
+            and case.expected_value == final_value and case.actual_value == OPPOSITE_VALUE
+            for case in judge.cases
+        )
+    assert bundle.model_dump(mode="json") == original
+
+
 def test_equal_values_do_not_override_judged_different_setting_names() -> None:
     gold, bundle = _fixture()
 
