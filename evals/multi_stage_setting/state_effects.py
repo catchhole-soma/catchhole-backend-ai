@@ -110,7 +110,7 @@ def build_gold_state_chain(snapshot: GoldSnapshotV3) -> dict[str, ScenarioStateT
                 and row.decision == "EXTRACT"
             ],
         )
-        after_state = state.canonical()
+        after_state = apply_registered_characters_after_episode(state, scenario).canonical()
         _verify_declared_state_hashes(scenario, before_state, after_state)
         transitions[scenario.scenario_id] = ScenarioStateTransition(
             scenario_id=scenario.scenario_id,
@@ -121,6 +121,39 @@ def build_gold_state_chain(snapshot: GoldSnapshotV3) -> dict[str, ScenarioStateT
             resolved_decision_befores=tuple(resolved_befores),
         )
     return transitions
+
+
+def apply_registered_characters_after_episode(
+    state: EvaluationState,
+    scenario: ScenarioGold,
+) -> EvaluationState:
+    """Apply explicit user registrations after model processing, without changing facts."""
+
+    if not scenario.registered_characters_after_episode:
+        return state
+    known = {item.entity_ref: item for item in state.known_characters}
+    next_order = max(
+        [scenario.episode_no * 1_000_000]
+        + [item.creation_order for item in known.values() if item.creation_order is not None]
+        + [
+            _creation_order(item.source_episode_no, item.source_sort_order)
+            for item in state.character_facts
+            if item.source_episode_no is not None and item.source_sort_order is not None
+        ]
+    )
+    for character in scenario.registered_characters_after_episode:
+        existing = known.get(character.entity_ref)
+        if existing is not None:
+            if existing.name != character.name or not existing.active:
+                raise StateApplicationError(
+                    "Episode-end registration conflicts with an existing character ref."
+                )
+            continue
+        next_order += 1
+        # Creation order belongs to this event, not a supplied timestamp. Different
+        # entity refs remain distinct even when their display names are identical.
+        known[character.entity_ref] = character.model_copy(update={"creation_order": next_order})
+    return state.model_copy(update={"known_characters": list(known.values())})
 
 
 def _resolve_decision_before(

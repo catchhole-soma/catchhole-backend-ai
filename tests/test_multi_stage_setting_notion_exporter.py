@@ -56,6 +56,32 @@ def test_notion_v3_export_resolves_relations_dependency_chain_and_new_outcome_fa
     assert snapshot.fixture_hash == snapshot.computed_fixture_hash()
 
 
+def test_scenario_exports_explicit_after_episode_character_registration() -> None:
+    scenario = _scenario_page("scenario-1", "S1", 1, status="FINAL", candidate_free=True)
+    scenario["properties"]["1차 제공 컨텍스트"] = _rich_text("knownCharacters=[]")
+    scenario["properties"]["회차 종료 캐릭터 등록"] = _rich_text(
+        '[{"entityRef":"character:bjorn-yandel","name":"비요른 얀델"}]'
+    )
+
+    snapshot = build_gold_snapshot_v3([scenario], [], [], dataset_name="registration")
+
+    registration = snapshot.scenarios[0].registered_characters_after_episode[0]
+    assert registration.entity_ref == "character:bjorn-yandel"
+    assert registration.name == "비요른 얀델"
+    assert snapshot.scenarios[0].known_character_names == []
+    assert snapshot.stage1 == []
+    assert snapshot.stage2 == []
+
+
+@pytest.mark.parametrize("value", ['["비요른 얀델"]', '{}', 'invalid', '[{"name":"비요른 얀델"}]'])
+def test_scenario_rejects_registration_without_explicit_character_identity(value: str) -> None:
+    scenario = _scenario_page("scenario-1", "S1", 1, status="FINAL", candidate_free=True)
+    scenario["properties"]["회차 종료 캐릭터 등록"] = _rich_text(value)
+
+    with pytest.raises(ValueError, match="회차 종료 캐릭터 등록"):
+        build_gold_snapshot_v3([scenario], [], [], dataset_name="registration")
+
+
 def test_character_fact_key_aliases_accept_one_alias_per_line() -> None:
     scenario = _scenario_page("scenario-1", "S1", 1, status="FINAL")
     stage1 = _character_stage1_page(

@@ -345,6 +345,10 @@ class ScenarioGold(StrictModel):
     cumulative_through_episode: int = Field(ge=0)
     provided_context: str = ""
     known_character_names: list[str] = Field(default_factory=list)
+    registered_characters_after_episode: list[KnownCharacter] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
     state_generation_status: StateGenerationStatus = StateGenerationStatus.PENDING
     before_state_uri: str | None = None
     before_state_hash: str | None = None
@@ -379,6 +383,15 @@ class ScenarioGold(StrictModel):
             raise ValueError("SEED scenario requires seedState or beforeStateUri.")
         if any(not name.strip() for name in self.known_character_names):
             raise ValueError("knownCharacterNames must not contain blank values.")
+        _require_unique(
+            [item.entity_ref for item in self.registered_characters_after_episode],
+            "registeredCharactersAfterEpisode character refs",
+        )
+        for character in self.registered_characters_after_episode:
+            if not character.entity_ref.strip() or not character.name.strip():
+                raise ValueError("registeredCharactersAfterEpisode refs and names must not be blank.")
+            if not character.active:
+                raise ValueError("registeredCharactersAfterEpisode only supports active registration.")
         return self
 
 

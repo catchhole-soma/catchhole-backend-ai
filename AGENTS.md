@@ -74,6 +74,7 @@
 ## LLM Runtime
 
 - 다단계 평가에서 인물 연결 전 2차 비교를 요구하지 않는 캐릭터 `EXTRACT / SETTING` Gold는 `stage2Policy=WAIT_FOR_CHARACTER_MATCH`로 명시하고 연결된 2차 Gold를 두지 않는다. 1차 추출은 계속 채점하며 정상 대기를 추출 실패로 세지 않는다. 정책은 해당 회차의 Gold 행에만 적용하고 canonical 인물 ID와 이후 회차의 이름 해소·매칭은 유지한다.
+- 회차 종료 후 사용자 캐릭터 등록은 Scenario의 선택적 `registeredCharactersAfterEpisode`로 표현한다. 원문에 없는 이름을 CHARACTER_DISCOVERY Gold로 만들거나 `1차 제공 컨텍스트` 미리보기만 고쳐 입력을 바꾸지 않는다. 명시한 인물 ID·이름을 Gold·예측의 회차 종료 상태에 함께 반영하고 등록 자체는 모델 성과로 채점하지 않는다.
 - 다단계 평가기의 세계관 의미 판정은 같은 분류·주체 안에서 설정 항목·상위 범위·설정값을 독립 채점한다. 정규화·검수된 별칭은 해당 축만 우선 인정하며, 다른 범위도 신규 ADD의 의미를 바꾸지 않는 묶음이면 문맥 판정으로 동등성을 인정할 수 있다. 1차 연결·2차·E2E에 같은 기준을 적용하되 기존 target·matched 경로·수정/병합의 경로 보존·root 이동 대상과 reducer 검증은 엄격히 유지한다.
 - 캐릭터 평가는 서술형 값과 JSON 서술형 문자열, 같은 인물·factType의 동적 STATUS pattern 이름을 의미 판정한다. 인물 ID·factType·고정 key·숫자·불리언·target 및 제거 reference는 결정적으로 검증한다. 항목·범위·값을 판단할 수 없으면 해당 축을 PENDING으로 유지하며 승인된 대응은 일대일 평가용 키에만 사용한다. 원시 예측·reducer·상태 해시·실제 상태 적용 오류를 보정하지 않는다.
 - 의미 채점기는 제품 모델과 독립적으로 `gpt-5.6-sol`·`medium`을 기본 사용하며 `--judge-model`·`--judge-reasoning-effort`로 주입한다. 채점 프롬프트 계약 변경 시 semantic outcome 캐시 버전과 `docs/multi-stage-setting-evaluation.md`를 함께 갱신한다. 공개 JSON 구조와 표·컬럼·지표명은 유지하고 판정 이유는 허용된 필드와 고정 문구만 사용한다. 모델의 자유 형식 reason은 공개하지 않는다.
