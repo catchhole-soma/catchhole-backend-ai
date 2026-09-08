@@ -87,7 +87,7 @@ def test_default_judge_http_model_and_effort_do_not_inherit_product_settings(mon
     assert request["text"]["format"]["type"] == "json_schema"
     assert request["text"]["format"]["strict"] is True
     assert request["prompt_cache_key"] == "multi-stage-setting-eval:semantic-outcome:v4"
-    assert request["max_output_tokens"] >= 5000
+    assert request["max_output_tokens"] == 32000
 
 
 def test_judge_http_overrides_leave_injected_product_client_unchanged() -> None:

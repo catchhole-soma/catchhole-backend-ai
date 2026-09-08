@@ -809,6 +809,7 @@ def test_rolling_dependency_meaning_is_judged_without_recounting_stage_scores() 
     report = asyncio.run(evaluate_multi_stage(gold, bundle, semantic_judge=judge))
 
     assert [case.case_id for case in judge.cases] == ["stage1:S1:C1"]
+    assert [case.scenario_id for case in judge.cases] == ["S1"]
     assert report["run"]["semanticJudgeUsage"]["inputTokens"] == 10
     assert report["stages"]["character"]["stage1"]["counts"]["gold"] == 0
     assert report["stages"]["character"]["stage2"]["counts"]["gold"] == 0

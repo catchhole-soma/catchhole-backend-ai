@@ -346,6 +346,7 @@ def test_end_to_end_semantic_case_keeps_reviewed_merge_constraints() -> None:
     asyncio.run(evaluate_multi_stage(gold, bundle, semantic_judge=judge))
 
     state_case = next(case for case in judge.cases if case.case_id.startswith("state:"))
+    assert state_case.scenario_id == "S1"
     assert state_case.required_facts == ("평균 키 140cm", "희귀 변종 190cm")
     assert state_case.forbidden_facts == ("모든 고블린 190cm",)
     assert state_case.before_value == "평균은 140cm다."

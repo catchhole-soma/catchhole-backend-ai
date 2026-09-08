@@ -206,6 +206,7 @@ async def evaluate_multi_stage(
                 name_cases.append(
                     SemanticOutcomeCase(
                         case_id=_stage1_name_case_id(expected, actual),
+                        scenario_id=scenario.scenario_id,
                         expected_value=_stage1_display_value(expected),
                         actual_value=_stage1_display_value(actual),
                         source_values=tuple(_stage1_source_values(expected)),
@@ -299,6 +300,7 @@ async def evaluate_multi_stage(
                                 f"stage1-json:{scenario.scenario_id}:{match.gold.gold_id}",
                                 match.gold.value_json,
                                 match.prediction.value_json,
+                                scenario_id=scenario.scenario_id,
                                 source_values=tuple(_stage1_source_values(match.gold)),
                                 evidence_quotes=tuple(match.gold.evidence_quotes),
                             )
@@ -317,6 +319,7 @@ async def evaluate_multi_stage(
                         semantic_cases.append(
                             SemanticOutcomeCase(
                                 case_id=case_id,
+                                scenario_id=scenario.scenario_id,
                                 expected_value=_stage1_display_value(match.gold),
                                 actual_value=_stage1_display_value(match.prediction),
                                 source_values=tuple(_stage1_source_values(match.gold)),
@@ -1409,6 +1412,7 @@ def _stage2_semantic_cases(
         return []
     source = next((row for row in source_rows if isinstance(row, WorldStage1Gold)), None)
     common = {
+        "scenario_id": case.gold.scenario_id,
         "before_value": case.gold.before_value,
         "source_values": tuple(
             value for row in source_rows for value in _stage1_source_values(row)
@@ -1769,6 +1773,7 @@ def _build_state_pairs(
                             prefix,
                             expected_json,
                             actual_json,
+                            scenario_id=scenario_id,
                             **_semantic_context_kwargs(
                                 semantic_contexts.get(
                                     (scenario_id, domain, _structured_base_ref(ref))
@@ -1816,6 +1821,7 @@ def _build_state_pairs(
                 semantic_cases.append(
                     SemanticOutcomeCase(
                         case_id=case_id,
+                        scenario_id=scenario_id,
                         expected_value=expected_value,
                         actual_value=actual_value,
                         **_semantic_context_kwargs(
