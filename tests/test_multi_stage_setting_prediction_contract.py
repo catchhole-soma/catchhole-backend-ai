@@ -14,6 +14,7 @@ from evals.multi_stage_setting.contracts import (
     ScenarioGold,
     ScenarioPrediction,
     WorldStage1Prediction,
+    WorldStage2Prediction,
 )
 from evals.multi_stage_setting.evaluator import evaluate_multi_stage
 
@@ -69,6 +70,60 @@ def test_prediction_rejects_multiple_stage2_decisions_for_one_source() -> None:
                 )
             ],
         )
+
+
+@pytest.mark.parametrize("source_ids", [["p1", "p1"], ["p2"], ["p1", " "]])
+def test_world_batch_provenance_rejects_invalid_source_ids(source_ids):
+    with pytest.raises(ValidationError, match="sourceCandidateIds"):
+        _world_stage2("p1", source_ids)
+
+
+def test_legacy_world_prediction_serialization_omits_optional_batch_provenance():
+    decision = _world_stage2("p1")
+
+    assert "sourceCandidateIds" not in decision.model_dump(mode="json", by_alias=True)
+    assert WorldStage2Prediction.model_validate_json(decision.model_dump_json()) == decision
+
+
+@pytest.mark.parametrize("secondary", ["missing", "character", "overlap"])
+def test_world_batch_provenance_validates_every_source(secondary):
+    source = WorldStage1Prediction(
+        candidate_id="p1",
+        domain="WORLD",
+        category="RACE",
+        subject_name="고블린",
+        setting_name="체격",
+        source_values=["평균 140cm다."],
+    )
+    sources = [source]
+    decisions = [_world_stage2("p1", ["p1", "p2"])]
+    if secondary == "character":
+        sources.append(_character_stage1("p2"))
+        message = "different domain from Stage1 candidate p2"
+    elif secondary == "overlap":
+        sources.append(source.model_copy(update={"candidate_id": "p2"}))
+        decisions.append(_world_stage2("p2"))
+        message = "Stage2 source candidate IDs"
+    else:
+        message = "references unknown Stage1 candidate p2"
+    with pytest.raises(ValidationError, match=message):
+        PredictionBundleV3(
+            fixture_hash="fixture",
+            mode="FIXED",
+            scenarios=[ScenarioPrediction(scenario_id="S1", stage1=sources, stage2=decisions)],
+        )
+
+
+def _world_stage2(source_id, source_ids=None):
+    return WorldStage2Prediction(
+        source_candidate_id=source_id,
+        source_candidate_ids=source_ids or [],
+        domain="WORLD",
+        consolidation_status="SINGLE",
+        operation="ADD",
+        proposed_setting_name="체격",
+        proposed_value="평균 140cm다.",
+    )
 
 
 def test_character_stage2_prediction_requires_resolved_canonical_fact_key() -> None:

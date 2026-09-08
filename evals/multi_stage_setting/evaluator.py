@@ -45,6 +45,7 @@ from evals.multi_stage_setting.contracts import (
     WorldStage2Gold,
     WorldStage2Prediction,
     character_state_ref,
+    stage2_source_candidate_ids,
     world_entry_subject_ref,
     world_subject_ref,
 )
@@ -501,6 +502,7 @@ async def evaluate_multi_stage(
             gold,
             stage1_results,
             stage2_cases,
+            prediction_by_scenario,
             gold_chain,
             predicted_chain,
             state_application_errors,
@@ -800,23 +802,24 @@ def _validate_oracle_stage2_sources(
     }
     for scenario in predictions.scenarios:
         for decision in scenario.stage2:
-            relation = gold_source_relations.get(decision.source_candidate_id)
-            if relation is None:
-                raise ValueError(
-                    f"ORACLE Stage2 prediction in {scenario.scenario_id} references "
-                    f"unknown Gold Stage2 source {decision.source_candidate_id}."
-                )
-            source_scenario_id, source_domain = relation
-            if source_scenario_id != scenario.scenario_id:
-                raise ValueError(
-                    f"ORACLE Stage2 prediction in {scenario.scenario_id} references Gold "
-                    f"source {decision.source_candidate_id} from {source_scenario_id}."
-                )
-            if source_domain != decision.domain:
-                raise ValueError(
-                    f"ORACLE Stage2 prediction in {scenario.scenario_id} has a different "
-                    f"domain from Gold source {decision.source_candidate_id}."
-                )
+            for source_id in stage2_source_candidate_ids(decision):
+                relation = gold_source_relations.get(source_id)
+                if relation is None:
+                    raise ValueError(
+                        f"ORACLE Stage2 prediction in {scenario.scenario_id} references "
+                        f"unknown Gold Stage2 source {source_id}."
+                    )
+                source_scenario_id, source_domain = relation
+                if source_scenario_id != scenario.scenario_id:
+                    raise ValueError(
+                        f"ORACLE Stage2 prediction in {scenario.scenario_id} references Gold "
+                        f"source {source_id} from {source_scenario_id}."
+                    )
+                if source_domain != decision.domain:
+                    raise ValueError(
+                        f"ORACLE Stage2 prediction in {scenario.scenario_id} has a different "
+                        f"domain from Gold source {source_id}."
+                    )
 
 
 def _gold_world_projections_before_decision(
@@ -2757,6 +2760,7 @@ def _scenario_details(
     gold: GoldSnapshotV3,
     stage1_results: dict[tuple[str, EvaluationDomain], Stage1MatchingResult],
     stage2_cases: list[Stage2Case],
+    prediction_by_scenario: dict[str, ScenarioPrediction],
     gold_chain: dict[str, ScenarioStateTransition],
     predicted_chain: dict[str, ScenarioStateTransition],
     state_errors: list[dict[str, str]],
@@ -2794,6 +2798,12 @@ def _scenario_details(
                     "cases": _stage1_diagnostic_cases(result, semantic_decisions),
                 }
         cases = [case for case in stage2_cases if case.scenario_id == scenario.scenario_id]
+        extra_cases = _extra_stage2_diagnostic_cases(
+            scenario.scenario_id,
+            stage1_results,
+            prediction_by_scenario.get(scenario.scenario_id),
+            predicted_chain[scenario.scenario_id].before_state,
+        )
         details.append(
             {
                 "scenarioId": scenario.scenario_id,
@@ -2822,7 +2832,8 @@ def _scenario_details(
                         ),
                     }
                     for case in cases
-                ],
+                ]
+                + extra_cases,
                 "beforeStateHash": gold_chain[scenario.scenario_id].before_state.content_hash(),
                 "expectedAfterStateHash": gold_chain[
                     scenario.scenario_id
@@ -2836,6 +2847,45 @@ def _scenario_details(
             }
         )
     return details
+
+
+def _extra_stage2_diagnostic_cases(
+    scenario_id: str,
+    stage1_results: dict[tuple[str, EvaluationDomain], Stage1MatchingResult],
+    prediction: ScenarioPrediction | None,
+    before_state: EvaluationState,
+) -> list[dict[str, Any]]:
+    """Trace unmatched candidates without adding them to Gold-based Stage2 scores."""
+
+    decisions = {
+        source_id: decision
+        for decision in (prediction.stage2 if prediction else [])
+        for source_id in stage2_source_candidate_ids(decision)
+    }
+    cases = []
+    for domain in EvaluationDomain:
+        matching = stage1_results.get((scenario_id, domain))
+        if matching is None:
+            continue
+        for source in matching.extra_predictions:
+            decision = decisions.get(source.candidate_id)
+            cases.append(
+                {
+                    "result": "EXTRA_PROCESSED" if decision else "EXTRA_NO_DECISION",
+                    "decisionId": None,
+                    "domain": domain.value,
+                    "sourceGoldIds": [],
+                    "sourceCandidateId": source.candidate_id,
+                    "upstreamOutcome": UpstreamOutcome.UPSTREAM_EXTRA.value,
+                    "failureCause": None,
+                    "expected": None,
+                    "actual": (
+                        _stage2_prediction_summary(decision, before_state) if decision else None
+                    ),
+                    "fields": {},
+                }
+            )
+    return cases
 
 
 def _stage1_diagnostic_cases(
@@ -3021,12 +3071,7 @@ def _stage2_diagnostic_fields(
     if prediction is None and case.upstream_outcome == UpstreamOutcome.REACHED:
         fields["operation"] = FieldMatchStatus.MISMATCH.value
     elif prediction is not None:
-        actual = {
-            "operation": prediction.operation.value,
-            "target": _stage2_target_label(prediction.target_ref, actual_before_state),
-            "path": _stage2_prediction_path(prediction),
-            "value": prediction.proposed_value,
-        }
+        actual = _stage2_prediction_summary(prediction, actual_before_state)
         fields = {
             "operation": _boolean_match_status(case.operation_matched),
             "target": _boolean_match_status(case.target_matched, none_status="PENDING"),
@@ -3034,12 +3079,6 @@ def _stage2_diagnostic_fields(
         }
         if isinstance(case.gold, CharacterStage2Gold):
             assert isinstance(prediction, CharacterStage2Prediction)
-            actual["temporalScope"] = prediction.temporal_scope.value
-            actual["removedCount"] = len(prediction.removed_snapshot_refs)
-            actual["removedPaths"] = _character_removal_paths(
-                prediction.removed_snapshot_refs,
-                actual_before_state,
-            )
             fields["canonicalPath"] = _boolean_match_status(
                 case.canonical_fact_key_matched, none_status="PENDING"
             )
@@ -3052,12 +3091,6 @@ def _stage2_diagnostic_fields(
                 )
         elif isinstance(case.gold, WorldStage2Gold):
             assert isinstance(prediction, WorldStage2Prediction)
-            actual["consolidationStatus"] = prediction.consolidation_status.value
-            actual["rootMoveCount"] = len(prediction.existing_root_property_names_to_move)
-            actual["rootMoveNames"] = sorted(
-                prediction.existing_root_property_names_to_move,
-                key=normalize_world_setting_name,
-            )
             fields["consolidation"] = _boolean_match_status(case.consolidation_matched)
             fields["proposedPath"] = _boolean_match_status(
                 case.proposed_path_matched, none_status="PENDING"
@@ -3085,6 +3118,32 @@ def _stage2_diagnostic_fields(
             else {}
         ),
     }
+
+
+def _stage2_prediction_summary(
+    prediction: Stage2Prediction,
+    before_state: EvaluationState,
+) -> dict[str, Any]:
+    actual: dict[str, Any] = {
+        "operation": prediction.operation.value,
+        "target": _stage2_target_label(prediction.target_ref, before_state),
+        "path": _stage2_prediction_path(prediction),
+        "value": prediction.proposed_value,
+    }
+    if isinstance(prediction, CharacterStage2Prediction):
+        actual["temporalScope"] = prediction.temporal_scope.value
+        actual["removedCount"] = len(prediction.removed_snapshot_refs)
+        actual["removedPaths"] = _character_removal_paths(
+            prediction.removed_snapshot_refs, before_state
+        )
+    else:
+        actual["consolidationStatus"] = prediction.consolidation_status.value
+        actual["rootMoveCount"] = len(prediction.existing_root_property_names_to_move)
+        actual["rootMoveNames"] = sorted(
+            prediction.existing_root_property_names_to_move,
+            key=normalize_world_setting_name,
+        )
+    return actual
 
 
 def _character_removal_paths(

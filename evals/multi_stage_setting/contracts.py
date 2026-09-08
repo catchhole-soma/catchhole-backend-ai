@@ -1062,6 +1062,11 @@ class CharacterStage2Prediction(StrictModel):
 
 class WorldStage2Prediction(StrictModel):
     source_candidate_id: str = Field(min_length=1)
+    # Preserve batch provenance without changing the primary source used for scoring/state.
+    source_candidate_ids: list[str] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
     domain: Literal[EvaluationDomain.WORLD]
     consolidation_status: WorldSettingConsolidationStatus
     operation: WorldSettingOperation
@@ -1079,6 +1084,12 @@ class WorldStage2Prediction(StrictModel):
 
     @model_validator(mode="after")
     def validate_world_operation(self) -> WorldStage2Prediction:
+        if self.source_candidate_ids:
+            if any(not source_id.strip() for source_id in self.source_candidate_ids):
+                raise ValueError("sourceCandidateIds must not contain blanks.")
+            _require_unique(self.source_candidate_ids, "sourceCandidateIds")
+            if self.source_candidate_id not in self.source_candidate_ids:
+                raise ValueError("sourceCandidateIds must include sourceCandidateId.")
         if any(not name.strip() for name in self.existing_root_property_names_to_move):
             raise ValueError("existingRootPropertyNamesToMove must not contain blanks.")
         if len(
@@ -1107,6 +1118,12 @@ Stage2Prediction = Annotated[
     CharacterStage2Prediction | WorldStage2Prediction,
     Field(discriminator="domain"),
 ]
+
+
+def stage2_source_candidate_ids(prediction: Stage2Prediction) -> list[str]:
+    if isinstance(prediction, WorldStage2Prediction) and prediction.source_candidate_ids:
+        return prediction.source_candidate_ids
+    return [prediction.source_candidate_id]
 
 
 class RuntimeFailure(StrictModel):
@@ -1217,7 +1234,11 @@ class PredictionBundleV3(StrictModel):
                 f"prediction candidate IDs in {scenario.scenario_id}",
             )
             _require_unique(
-                [item.source_candidate_id for item in scenario.stage2],
+                [
+                    source_id
+                    for item in scenario.stage2
+                    for source_id in stage2_source_candidate_ids(item)
+                ],
                 f"Stage2 source candidate IDs in {scenario.scenario_id}",
             )
             if self.mode == EvaluationMode.ORACLE:
@@ -1226,17 +1247,19 @@ class PredictionBundleV3(StrictModel):
                 # cross-fixture relation once Gold is present.
                 continue
             for decision in scenario.stage2:
+                for source_id in stage2_source_candidate_ids(decision):
+                    source = stage1_by_id.get(source_id)
+                    if source is None:
+                        raise ValueError(
+                            f"Stage2 prediction in {scenario.scenario_id} references unknown "
+                            f"Stage1 candidate {source_id}."
+                        )
+                    if source.domain != decision.domain:
+                        raise ValueError(
+                            f"Stage2 prediction in {scenario.scenario_id} has a different "
+                            f"domain from Stage1 candidate {source_id}."
+                        )
                 source = stage1_by_id.get(decision.source_candidate_id)
-                if source is None:
-                    raise ValueError(
-                        f"Stage2 prediction in {scenario.scenario_id} references unknown "
-                        f"Stage1 candidate {decision.source_candidate_id}."
-                    )
-                if source.domain != decision.domain:
-                    raise ValueError(
-                        f"Stage2 prediction in {scenario.scenario_id} has a different "
-                        f"domain from Stage1 candidate {decision.source_candidate_id}."
-                    )
                 if (
                     isinstance(decision, CharacterStage2Prediction)
                     and decision.removed_snapshot_refs
