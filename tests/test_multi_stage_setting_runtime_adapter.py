@@ -607,6 +607,76 @@ def test_fixed_runtime_compares_related_world_properties_in_one_batch() -> None:
     }
 
 
+def test_fixed_runtime_preserves_all_sources_for_a_merged_world_decision() -> None:
+    from evals.multi_stage_setting.evaluator import evaluate_multi_stage
+    from evals.multi_stage_setting.report_cli import build_public_diagnostics
+
+    class MergingComparator:
+        async def compare_batch(self, category, candidates, targets):
+            result = WorldSettingComparisonBatchResult(
+                decisions=[
+                    WorldSettingComparisonBatchDecision(
+                        source_candidate_refs=[item.candidate_ref for item in reversed(candidates)],
+                        consolidation_status="SINGLE",
+                        operation="ADD",
+                        proposed_setting_name="사냥 방식",
+                        proposed_value="함정을 설치하고 주변에 매복한다.",
+                        comparison_reason="함정과 매복을 한 항목으로 정리했습니다.",
+                    )
+                ]
+            )
+            return result, result.model_dump(mode="json")
+
+    gold = GoldSnapshotV3(
+        dataset_version="v3",
+        name="merged world source trace",
+        scenarios=[
+            ScenarioGold(
+                scenario_id="S1",
+                episode_no=1,
+                source_identifier="01화.txt",
+                source_text="고블린은 함정을 설치하고 주변에 매복한다.",
+                target_domains={"WORLD"},
+                gold_version="v3",
+                start_state_mode="EMPTY",
+                cumulative_through_episode=0,
+                candidate_free=True,
+                review_status="FINAL",
+            )
+        ],
+    ).with_fixture_hash()
+
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            gold,
+            mode="FIXED",
+            domains={"WORLD"},
+            components=RuntimeComponents(
+                world_extractor=_IndependentWorldPropertiesExtractor(),
+                world_comparator=MergingComparator(),
+                character_comparator=_AddCharacterComparator(),
+            ),
+        )
+    )
+
+    scenario = bundle.scenarios[0]
+    assert len(scenario.stage1) == 2
+    assert len(scenario.stage2) == 1
+    decision = scenario.stage2[0]
+    assert decision.source_candidate_ids == [source.candidate_id for source in scenario.stage1]
+    assert decision.source_candidate_id == scenario.stage1[0].candidate_id
+    assert decision.proposed_setting_name == "사냥 방식"
+    report = asyncio.run(evaluate_multi_stage(gold, bundle))
+    cases = build_public_diagnostics(report)[0]["stage2"]
+    assert [case["result"] for case in cases] == ["EXTRA_PROCESSED", "EXTRA_PROCESSED"]
+    assert cases[0]["actual"] == cases[1]["actual"]
+    after = runtime_adapter_module._apply_runtime_scenario(
+        gold.scenarios[0], EvaluationState(), scenario
+    )
+    assert len(after.world_facts) == 1
+    assert after.world_facts[0].setting_name == "사냥 방식"
+
+
 def test_live_world_targets_preserve_all_case_distinct_exact_subjects_up_to_cap() -> None:
     state = EvaluationState(world_facts=_case_distinct_world_subject_entries(20))
     candidate = WorkerWorldSettingCandidatePayload(

@@ -36,6 +36,8 @@ _STAGE2_RESULTS = {
     "COMPARATOR_MISSING",
     "SEMANTIC_PENDING",
     "DECISION_MISMATCH",
+    "EXTRA_PROCESSED",
+    "EXTRA_NO_DECISION",
 }
 _FIELD_STATUSES = {
     "MATCH",
@@ -654,6 +656,11 @@ def _append_diagnostics_limited(
                             "SEMANTIC_PENDING",
                             "UPSTREAM_BLOCKED",
                         )
+                        + tuple(
+                            result
+                            for result in ("EXTRA_PROCESSED", "EXTRA_NO_DECISION")
+                            if counts[result]
+                        )
                     )
                 )
                 lines.append("")
@@ -801,14 +808,20 @@ def _stage2_row(
             case.get("expected") or {},
             domain,
             ", ".join(subject for subject in expected_subjects if subject),
-        ),
+        )
+        if case.get("expected")
+        else "대응하는 2차 답지 없음",
         _stage2_shape(
             case.get("actual") or {},
             domain,
             ", ".join(subject for subject in actual_subjects if subject),
         )
         if case.get("actual")
-        else "이 답지 항목과 연결된 2차 결과 없음",
+        else (
+            "이 추출 항목에 연결된 2차 결과 없음"
+            if case["result"] == "EXTRA_NO_DECISION"
+            else "이 답지 항목과 연결된 2차 결과 없음"
+        ),
         _diagnostic_reason(case, domain, source_cases),
     )
 
@@ -880,6 +893,13 @@ def _diagnostic_reason(
         return "이 답지 항목에 대응하는 모델 추출 결과를 찾지 못했습니다."
     if result == "EXTRA":
         return "모델이 이 정보를 추출했지만 답지에서 대응하는 항목을 찾지 못했습니다."
+    if result in {"EXTRA_PROCESSED", "EXTRA_NO_DECISION"}:
+        detail = (
+            "1차에서 답지와 연결되지 않은 추출 항목의 실제 2차 처리 판단입니다."
+            if result == "EXTRA_PROCESSED"
+            else "1차에서 답지와 연결되지 않은 추출 항목이며, 연결된 2차 결과가 기록되지 않았습니다."
+        )
+        return detail + "<br>대응하는 2차 답지가 없어 정답·오답은 판정하지 않습니다."
     if result == "COMPARATOR_MISSING":
         return (
             "필요한 설정은 1차에서 추출됐지만 이 항목의 2차 처리 결과가 없어 오답으로 채점했습니다."
@@ -1105,6 +1125,8 @@ def _result_label(value: str) -> str:
         "COMPARATOR_MISSING": "2차 답안 없음 (필요한 설정은 1차에서 추출됐지만 2차 처리 결과가 없음)",
         "SEMANTIC_PENDING": "채점 미완료 (2차 답안은 있으나 답지와 의미가 같은지 확인하지 못함)",
         "DECISION_MISMATCH": "판단 불일치 (처리 방식이나 반영할 정보 등이 답지와 다름)",
+        "EXTRA_PROCESSED": "과추출 항목의 2차 처리",
+        "EXTRA_NO_DECISION": "과추출 항목의 2차 결과 없음",
     }.get(value, value)
 
 
