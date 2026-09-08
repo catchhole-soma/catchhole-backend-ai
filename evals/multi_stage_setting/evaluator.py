@@ -68,6 +68,7 @@ from evals.multi_stage_setting.state_effects import (
     StateApplicationError,
     apply_gold_decision,
     apply_prediction_decision,
+    apply_registered_characters_after_episode,
     build_gold_state_chain,
 )
 from evals.multi_stage_setting.world_name_state import world_setting_ref_mapping
@@ -1639,8 +1640,7 @@ def _build_predicted_state_chain(
                 ],
                 stage1_results,
             ).canonical()
-        else:
-            state = state.canonical()
+        state = apply_registered_characters_after_episode(state, scenario).canonical()
         result[scenario.scenario_id] = ScenarioStateTransition(
             scenario_id=scenario.scenario_id,
             before_state=before.canonical(),
@@ -1689,6 +1689,7 @@ def _build_state_pairs(
         ),
     ):
         scenario = scenario_by_id[scenario_id]
+        registered_refs = _registered_character_state_refs(scenario)
         expected = gold_chain[scenario_id].after_state
         actual = predicted_chain[scenario_id].after_state
         for domain in EvaluationDomain:
@@ -1705,6 +1706,8 @@ def _build_state_pairs(
                 ref_map.get(ref, ref): ref for ref in _evaluation_state_values(actual, domain)
             }
             for ref in sorted(set(expected_items) | set(actual_items)):
+                if ref in registered_refs:
+                    continue
                 expected_value = expected_items.get(ref)
                 actual_value = actual_items.get(ref)
                 if _is_structured_state_ref(ref) and ref not in expected_items:
@@ -2596,15 +2599,16 @@ def _build_end_to_end_report(
             scoring_ref_maps=(scoring_ref_maps or {}).get(scenario.scenario_id),
         )
         scenario_domains = enabled_domains & scenario.target_domains
+        registered_refs = _registered_character_state_refs(scenario)
         expected_delta = {
             key: value
             for key, value in expected_delta.items()
-            if EvaluationDomain(key[0]) in scenario_domains
+            if EvaluationDomain(key[0]) in scenario_domains and key[2] not in registered_refs
         }
         actual_delta = {
             key: value
             for key, value in actual_delta.items()
-            if EvaluationDomain(key[0]) in scenario_domains
+            if EvaluationDomain(key[0]) in scenario_domains and key[2] not in registered_refs
         }
         scorable_state_refs = {
             (pair.domain.value, pair.ref)
@@ -3416,6 +3420,9 @@ def _register_prediction_discoveries(
     from evals.multi_stage_setting.contracts import KnownCharacter
 
     known = {item.entity_ref: item for item in state.known_characters}
+    # Episode-end registration is ordered after runtime-created characters. Keep
+    # legacy metadata unchanged when the scenario has no explicit registration.
+    has_episode_end_registration = bool(scenario.registered_characters_after_episode)
     matching = matching_results.get((scenario.scenario_id, EvaluationDomain.CHARACTER))
     gold_by_prediction = (
         {
@@ -3440,12 +3447,30 @@ def _register_prediction_discoveries(
         )
         known.setdefault(
             entity_ref,
-            KnownCharacter(entity_ref=entity_ref, name=prediction.entity_name),
+            KnownCharacter(
+                entity_ref=entity_ref,
+                name=prediction.entity_name,
+                creation_order=(
+                    scenario.episode_no * 1_000_000 + prediction.sort_order
+                    if has_episode_end_registration
+                    else None
+                ),
+            ),
         )
     for fact in state.character_facts:
         known.setdefault(
             fact.entity_ref,
-            KnownCharacter(entity_ref=fact.entity_ref, name=fact.entity_name),
+            KnownCharacter(
+                entity_ref=fact.entity_ref,
+                name=fact.entity_name,
+                creation_order=(
+                    fact.source_episode_no * 1_000_000 + fact.source_sort_order
+                    if has_episode_end_registration
+                    and fact.source_episode_no is not None
+                    and fact.source_sort_order is not None
+                    else None
+                ),
+            ),
         )
     return state.model_copy(update={"known_characters": list(known.values())})
 
@@ -3458,6 +3483,14 @@ def _prediction_decision_order(
 ) -> int:
     gold = gold_by_source.get(prediction.source_candidate_id)
     return default if gold is None else gold.sort_order
+
+
+def _registered_character_state_refs(scenario: ScenarioGold) -> set[str]:
+    # External registration is supplied context, not a model-generated state effect.
+    return {
+        f"known-character:{item.entity_ref}"
+        for item in scenario.registered_characters_after_episode
+    }
 
 
 def _evaluation_state_values(

@@ -108,6 +108,7 @@ from evals.multi_stage_setting.contracts import (
 from evals.multi_stage_setting.state_effects import (
     StateApplicationError,
     apply_prediction_decision,
+    apply_registered_characters_after_episode,
     build_gold_state_chain,
 )
 
@@ -1686,7 +1687,8 @@ def _apply_runtime_scenario(
                 ),
             ),
         )
-    return state.model_copy(update={"known_characters": list(known_by_ref.values())}).canonical()
+    state = state.model_copy(update={"known_characters": list(known_by_ref.values())})
+    return apply_registered_characters_after_episode(state, scenario).canonical()
 
 
 def _runtime_known_characters(
