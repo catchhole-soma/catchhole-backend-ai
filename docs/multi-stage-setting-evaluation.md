@@ -673,7 +673,11 @@ S3 prefix 아래에는 live 평가 원문 `sources/`, 캐릭터 도메인을 평
 실패합니다. 모델 호출 전 reference reducer로 before/after state와 hash를 검증·생성하고,
 beforeValue가 비어 있는 2차 Gold도 같은 상태에서 자동으로 채운 뒤 갱신된 Gold를 평가합니다.
 provider의 HTTP/인증 장애는 개별 후보 오답으로 삼키지 않고 실행 자체를 실패시키며,
-형식 오류처럼 후보 단위로 복구 가능한 실패만 `runtimeFailures`에 집계합니다. 업로드 artifact에는
+형식 오류처럼 후보 단위로 복구 가능한 실패만 `runtimeFailures`에 집계합니다.
+캐릭터 2차의 `STRING` proposal은 `valueJson.value`가 JSON 문자열인지 모델 응답을 받는 즉시
+검증하고, 타입이 다르면 수정 지시와 함께 재시도합니다. 재시도 후에도 잘못된 후보는
+`COMPARISON_VALIDATION_FAILED`로 기록하며 정상 후보의 결과와 보고서 생성은 계속합니다.
+숫자·배열·객체를 임의로 문자열로 변환해 통과시키지 않습니다. 업로드 artifact에는
 `summary.md`와 집계 전용 `score.json`만 포함합니다. `summary.md`에는 허용 목록으로 정제한
 주체·경로·표시값 기반 항목 진단과 `runtimeFailures` 집계가 포함되지만 `score.json`은 자동 비교용
 집계 지표만 유지합니다.

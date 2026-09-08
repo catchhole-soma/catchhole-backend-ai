@@ -42,6 +42,7 @@
 - `SettingCandidate.value_json`은 `JSONB(none_as_null=True)`로 매핑한다. `CHARACTER_DISCOVERY`의 Python `None`은 JSON literal `null`이 아니라 DB check constraint가 요구하는 SQL `NULL`로 저장해야 한다.
 - 캐릭터 비교의 canonical `REMOVE`는 `target_ref=null`, `removed_snapshot_refs` 1개 이상, proposal 없음으로 출력한다. candidate와 같은 key 또는 다른 key의 의미상 관련된 현재 STATUS를 요청 로컬 `P*` 참조로 하나 이상 끝낼 수 있지만 non-STATUS·unknown ref·비현재 후보는 거절한다. 기존 `REMOVE + targetRef` 하위 호환 정규화는 먼저 배포되는 Spring이 담당하며 Python은 신규 형식만 생성한다.
 - `NUMBER`/`BOOLEAN` 후보는 Pydantic 경계에서 `value_json.value`의 JSON 타입을 검증하고 Mapper가 저장 `attribute_value`를 그 값의 canonical 표현(NUMBER 숫자 문자열, BOOLEAN 소문자 `true`/`false`)으로 만든다. LLM이 보낸 원래 표시 문구는 Mapper 변환 전 payload로 `raw_ai_result_json`에 보존하고, 비교 proposal도 Spring에 보내기 전 같은 canonical 규칙을 적용한다. 표시값과 snapshot 대표값이 다른 상태를 새로 저장하지 않기 위함이다.
+- 캐릭터 단건·batch 비교의 `STRING` proposal은 `proposed_value_json.value`가 JSON 문자열인지 응답 재시도 경계에서 검증한다. 잘못된 값을 임의로 문자열로 바꾸지 않으며, 재시도 소진 시 기존 후보별 typed failure로 처리해 평가 최종 결과 생성까지 오류를 넘기지 않는다.
 
 ## Async Worker Runtime
 
