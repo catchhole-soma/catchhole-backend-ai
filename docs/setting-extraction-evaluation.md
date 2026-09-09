@@ -5,8 +5,8 @@
 스냅샷으로 내보내 private 원고를 다시 분석하고 GitHub Actions Summary에서 점수를 확인할 수
 있습니다. 기준 브랜치와 변경 브랜치를 한 실행에서 비교하는 A/B 자동화는 후속 작업으로 둡니다.
 
-실행 결과는 [AI 로직 버전 기록](ai-logic-versions/README.md)에 코드·채점기 커밋, 입력과
-모델·judge 조건, 점수 또는 미측정 사유를 함께 남깁니다. 레거시 1차 평가 결과임을 명시하고
+실행 결과는 [AI 로직 버전 기록](ai-logic-versions/README.md)의 사람용 요약에 점수·상태로,
+커밋·입력·모델·judge 조건은 연결된 상세 기록에 남깁니다. 레거시 1차 평가임을 명시하고
 다단계 평가 점수와 직접 비교하지 않습니다.
 현재 운영 모델 조합과 FIXED 모드의 기본 품질 비교는
 [다단계 평가](multi-stage-setting-evaluation.md)를 사용합니다.

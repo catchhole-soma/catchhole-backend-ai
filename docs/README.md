@@ -8,7 +8,7 @@ Python AI Worker의 문서 위치와 작성 기준을 정리합니다.
 
 | 문서 | 내용 |
 | --- | --- |
-| [AI Logic Versions](ai-logic-versions/README.md) | AI 로직의 버전별 변경·복원 커밋, 평가 조건·점수 기록 규칙과 이력 |
+| [AI Logic Versions](ai-logic-versions/README.md) | AI 로직의 사람용 변경·점수 요약과 AI용 상세 실행 기록 |
 | [AI Worker Workflow](ai-worker-workflow.md) | Spring claim 이후 lease/checkpoint, 캐릭터·세계관 추출, 세계관 비교, 후보 저장과 완료/실패 보고 흐름 |
 | [AI Token Cache Validation](ai-token-cache-validation.md) | 실제 분석 호출의 토큰 예약량, Prompt Cache 적중률과 재검증 기준 |
 | [Setting Extraction Evaluation](setting-extraction-evaluation.md) | 설정 추출 정답 데이터, 예측 결과, 규칙·LLM 채점과 평가 지표를 연결하는 로컬 평가 흐름 |
