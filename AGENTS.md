@@ -7,6 +7,14 @@
 - `main` 대상 PR은 `.github/workflows/test.yml`에서 전체 pytest를 실행한다. DB를 사용하지 않는 단위 테스트는 로컬 `.env`나 CI의 `DATABASE_URL`에 의존하지 않고 경계 의존성을 주입·mock한다.
 - 운영 이미지 발행과 Worker 배포는 `main` push에서 시작된 `Publish AI Image` 성공 흐름으로만 실행한다. Worker 배포는 해당 publish run의 commit SHA가 현재 `main`일 때만 진행하고, 그 SHA로 Compose와 이미지 태그를 함께 고정하며, Backend `main` 최신 커밋의 API 배포 성공과 Spring health를 확인한 뒤 시작한다.
 
+## AI Logic Version Records
+
+- 결과에 영향을 주는 추출·주체 해소·비교·후처리·프롬프트·제품 모델/실행 설정 변경 PR마다 `docs/ai-logic-versions/`에 다음 `vNNNN.md`를 추가하고 목록을 갱신한다. 규칙과 양식은 해당 디렉터리의 `README.md`와 `TEMPLATE.md`를 따른다.
+- 기록에는 이전 버전, 변경 이유와 전후 동작, 복원 기준 전체 Git SHA, 구현 PR, 프롬프트 버전과 실행 설정을 남긴다. 머지 전 최신 main의 버전 번호와 코드 기준을 확인하고, squash/rebase로 SHA가 바뀌면 최종 복원 SHA를 문서로 보완한다.
+- 평가 실행별로 실제 코드·채점기 SHA, 고정 입력 식별값, 모델·judge·실행 조건, 핵심 집계 점수와 미판정·실패 수를 기록한다. `null`을 0으로 바꾸거나 조건이 다른 점수를 개선폭으로 표시하지 않는다.
+- 미측정·실패·부분 완료는 사유와 담당자·재평가 계획을 기록하면 머지를 허용한다. 이 상태를 성능 개선 검증으로 표시하지 않으며 원문·정답·개별 예측 보고서를 버전 MD에 복사하지 않는다.
+- 문서·테스트만의 변경은 버전을 올리지 않는다. 채점기·Gold·judge만 바뀌면 같은 로직 버전에 새 평가 기록을 추가한다. 예전 로직 복원도 최신 main에서 새 PR과 다음 버전으로 남기고 기존 배포 흐름을 따른다.
+
 ## Spring Worker API
 
 - 분석 runner는 claim의 `allowedJobTypes`를 명시한다. 기본 `analysis` 프로세스는 `SETTING_EXTRACTION`, 별도 `character-comparison`/`world-comparison` 프로세스는 각각 사용자 재비교용 `CHARACTER_FACT_COMPARISON`/`WORLD_SETTING_COMPARISON`만 claim해 서로의 작업을 가져가지 않는다.
