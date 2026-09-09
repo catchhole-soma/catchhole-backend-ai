@@ -9,13 +9,13 @@ on:
         default: "1,2,3"
         type: string
       mode:
-        description: "평가 모드(ORACLE은 Gold 1차/Gold 상태로 comparator만 평가)"
+        description: "평가 모드(기본 FIXED; ORACLE은 Gold 1차/Gold 상태로 comparator만 평가)"
         required: true
-        default: ORACLE
+        default: FIXED
         type: choice
         options:
-          - ORACLE
           - FIXED
+          - ORACLE
           - ROLLING
       domains:
         description: "평가 도메인"
@@ -29,18 +29,29 @@ on:
       analysis_model:
         description: "1차 추출 모델(FIXED/ROLLING에서 사용)"
         required: true
-        default: gpt-5.6-terra
+        default: gpt-5.6-sol
         type: string
       subject_resolution_model:
         description: "1차 후보의 캐릭터·세계관 주체 해소 모델(FIXED/ROLLING에서 사용)"
         required: true
-        default: gpt-5.6-luna
+        default: gpt-5.6-terra
         type: string
       comparison_model:
         description: "2차 비교 모델"
         required: true
-        default: gpt-5.6-luna
+        default: gpt-5.6-sol
         type: string
+      reasoning_effort:
+        description: "제품 추출·주체 해소·비교의 공통 추론 강도"
+        required: true
+        default: medium
+        type: choice
+        options:
+          - none
+          - low
+          - medium
+          - high
+          - xhigh
       semantic_judge:
         description: "설정 항목·범위·값의 의미를 LLM Judge로 판정"
         required: true
@@ -89,6 +100,8 @@ jobs:
       ANALYSIS_MODEL: ${{ inputs.analysis_model }}
       SUBJECT_RESOLUTION_MODEL: ${{ inputs.subject_resolution_model }}
       COMPARISON_MODEL: ${{ inputs.comparison_model }}
+      LLM_MODEL: gpt-5.6-terra
+      LLM_REASONING_EFFORT: ${{ inputs.reasoning_effort }}
       SEMANTIC_JUDGE_ENABLED: ${{ inputs.semantic_judge }}
       JUDGE_MODEL: ${{ inputs.judge_model }}
       JUDGE_REASONING_EFFORT: ${{ inputs.judge_reasoning_effort }}

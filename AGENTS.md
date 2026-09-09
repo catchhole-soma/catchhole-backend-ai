@@ -10,6 +10,7 @@
 ## AI Logic Version Records
 
 - 결과에 영향을 주는 추출·주체 해소·비교·후처리·프롬프트·제품 모델/실행 설정 변경 PR마다 `docs/ai-logic-versions/`에 다음 `vNNNN.md`를 추가하고 목록을 갱신한다. 규칙과 양식은 해당 디렉터리의 `README.md`와 `TEMPLATE.md`를 따른다.
+- 기본 품질 평가는 다단계 `FIXED` 모드에서 추출 `gpt-5.6-sol`·주체 해소 `gpt-5.6-terra`·비교 `gpt-5.6-sol`, 제품 `LLM_REASONING_EFFORT=medium`으로 실행한다. `LLM_MODEL` fallback은 `gpt-5.6-terra`다. 로컬 CLI에도 이 값들을 명시하며 다른 모드·모델의 실험은 실제 사용값으로 별도 기록한다. 로직 버전 번호와 평가 모드를 혼동하지 않는다.
 - 기록에는 이전 버전, 변경 이유와 전후 동작, 복원 기준 전체 Git SHA, 구현 PR, 프롬프트 버전과 실행 설정을 남긴다. 머지 전 최신 main의 버전 번호와 코드 기준을 확인하고, squash/rebase로 SHA가 바뀌면 최종 복원 SHA를 문서로 보완한다.
 - 평가 실행별로 실제 코드·채점기 SHA, 고정 입력 식별값, 모델·judge·실행 조건, 핵심 집계 점수와 미판정·실패 수를 기록한다. `null`을 0으로 바꾸거나 조건이 다른 점수를 개선폭으로 표시하지 않는다.
 - 미측정·실패·부분 완료는 사유와 담당자·재평가 계획을 기록하면 머지를 허용한다. 이 상태를 성능 개선 검증으로 표시하지 않으며 원문·정답·개별 예측 보고서를 버전 MD에 복사하지 않는다.
@@ -93,10 +94,10 @@
 - 의미 채점 요청은 회차 경계를 유지하고, 같은 회차 안에서 지시문·비교 데이터·응답 schema와 여유분을 포함한 입력 추정량 64,000토큰으로 묶는다. 8쌍 같은 고정 개수 제한은 두지 않으며 출력 상한은 추론을 포함해 요청당 32,000토큰이다. 출력 절단만 해당 묶음을 반으로 나눠 재시도하고 실패 호출의 사용량도 합산한다. 단일 비교가 입력 상한을 넘으면 호출 전에 거절하며 내용을 자르거나 후보를 누락하지 않는다.
 
 - OpenAI Responses API 요청은 웹소설 원문과 분석 결과가 provider 측에 저장되지 않도록 항상 `store=false`를 명시한다. 호출 목적이나 모델에 따라 이 값을 생략하거나 활성화하지 않는다.
-- 캐릭터 Fact·세계관 후보의 1차 추출은 `LLM_EXTRACTION_MODEL`, 캐릭터·세계관 주체 해소는 `LLM_SUBJECT_RESOLUTION_MODEL`, 후보와 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 운영 기본 라우팅은 추출 `gpt-5.6-terra`, 주체 해소·비교 `gpt-5.6-luna`이며 개별 값이 없으면 기존 `LLM_MODEL`을 fallback으로 사용한다.
+- 캐릭터 Fact·세계관 후보의 1차 추출은 `LLM_EXTRACTION_MODEL`, 캐릭터·세계관 주체 해소는 `LLM_SUBJECT_RESOLUTION_MODEL`, 후보와 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 2026-09-09 사용자가 확인한 운영 라우팅은 추출·비교 `gpt-5.6-sol`, 주체 해소 `gpt-5.6-terra`다. 개별 값이 없으면 기존 `LLM_MODEL`(기본 `gpt-5.6-terra`)을 fallback으로 사용한다.
 - 캐릭터·세계관 2차 비교·재비교 prompt에는 Backend가 반환한 1차 `evidenceSpans`를 읽기 전용 문맥으로 전달한다. 2차 LLM이 quote·offset을 다시 생성하거나 비교 완료 payload로 반환하지 않으며, 원고가 바뀐 경우에만 새 1차 분석 후보와 근거를 만든다.
 - 운영 세계관 후보는 Spring 게시 전에 정규화한 `category + subject_name + scope_name + setting_name`별로 하나로 통합한다. `scope_name`은 세계관에만 있는 선택적 1단계 범위이며 빈 값은 루트 property를 뜻한다. 같은 설정명이라도 범위가 다르면 통합하지 않고, 운영 2차 비교의 기존 속성 선택은 반드시 범위+설정명 전체 경로를 정확히 매칭한다. 2차 비교는 추출값 하나면 `SINGLE`, 여러 값이 양립하면 `MERGED`, 동시에 참일 수 없으면 `CONFLICT`로 판정한다. `MERGED`만 자연스러운 최종 문자열 하나로 정리하고 `CONFLICT`는 모든 추출값을 그대로 보존해 사용자 판단으로 넘긴다. 각 1차 후보의 quote·offset과 raw payload는 어느 상태에서도 수정하지 않는다.
-- 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra·Luna의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
+- 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. 현재 운영·품질 평가 기준은 `medium`이며 환경변수를 생략한 앱 설정의 기본값 `none`에 의존하지 않고 명시적으로 지정한다.
 - GPT-5.6 모델의 토큰 예약량은 `o200k_base` tokenizer로 계산한다. 사용하는 tiktoken 버전이 모델 별칭을 모를 수 있으므로 모델명 자동 탐지 실패를 byte 상한으로 방치하지 않는다.
 - Responses API는 HTTP 200만으로 성공을 판정하지 않고 `status=completed`를 요구한다. `status=incomplete`와 `incomplete_details.reason=max_tokens|max_output_tokens`, 또는 JSON 파싱 실패와 `outputTokens == maxOutputTokens`가 함께 나타나면 `LLM_OUTPUT_TRUNCATED`로 분류한다.
 - 출력 상한은 목적별 환경변수로 주입하고 모두 양수이며 provider 최대 상한 이하인지 기동 시 검증한다. 기본값은 캐릭터 추출 6,000·절단 재시도 12,000, 세계관 추출 5,000·절단 재시도 10,000, 주체 해소 2,000, 단건 비교 3,000, 캐릭터·세계관 batch 비교 각 16,000, provider 상한 128,000이다. 캐릭터 batch는 Spring과 같은 기본 10개(요청 schema 방어 상한 20개), tokenizer 입력 상한 64,000을 사용하고 단일 후보도 넘으면 provider/fallback 없이 `COMPARISON_VALIDATION_FAILED` typed failure로 원자 완료한다. 세계관 batch의 contract-complete 최소 출력 예상치가 16,000을 넘으면 provider를 호출하지 않고 `BATCH_LIMIT_EXCEEDED` 검토로 전환한다.
