@@ -42,7 +42,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "character_fact_comparison_batch.md"
 )
-CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v2"
+CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v3"
 logger = logging.getLogger(__name__)
 SNAPSHOT_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])[PQ][0-9]+(?![A-Za-z0-9])")
 CANDIDATE_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])C[0-9]+(?![A-Za-z0-9])")
@@ -189,7 +189,7 @@ class CharacterFactComparator:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="character-fact-comparison:v9",
+            prompt_cache_key="character-fact-comparison:v10",
             operation_name="Character-fact comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -313,6 +313,9 @@ def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
             "ADD/UPDATE/MERGE와 removed_snapshot_refs를 함께 사용하세요. candidate 또는 "
             "proposed STATUS의 value_json.active가 boolean false이면 ADD/UPDATE/MERGE를 "
             "선택하지 마세요. active가 있으면 문자열이 아닌 JSON boolean이어야 합니다. "
+            "proposal은 candidate.value_type을 유지하세요. STRING이면 "
+            "proposed_value_json.value에 JSON 문자열을 넣으세요. NUMBER는 JSON 숫자, "
+            "BOOLEAN은 JSON boolean을 사용하세요. "
             "판단 이유에는 "
             "내부 key·enum·UUID를 쓰지 말고 사용자가 이해할 수 있는 한국어만 쓰세요."
         ),
@@ -331,7 +334,10 @@ def _build_batch_retry_user_prompt(original_user_prompt: str, exc: Exception) ->
             "EXACT/ALIAS와 비-STATUS PATTERN key는 initial_canonical_fact_key 그대로 반환하고, "
             "STATUS pattern key만 의미가 같은 안정적인 status.* 이름으로 정규화하세요. UPDATE/MERGE는 "
             "현재 활성인 동일 resolved key만 target으로 삼고, REMOVE는 현재 후보를 snapshot에 "
-            "남기지 않으면서 관련 STATUS를 한 개 이상 종료할 때만 선택하세요."
+            "남기지 않으면서 관련 STATUS를 한 개 이상 종료할 때만 선택하세요. "
+            "각 proposal은 해당 candidate.value_type을 유지하세요. STRING이면 "
+            "proposed_value_json.value에 JSON 문자열을 넣으세요. NUMBER는 JSON 숫자, "
+            "BOOLEAN은 JSON boolean을 사용하세요."
         ),
     }
     return json.dumps(payload, ensure_ascii=False)

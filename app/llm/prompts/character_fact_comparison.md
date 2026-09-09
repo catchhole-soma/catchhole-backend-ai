@@ -56,6 +56,10 @@ CharacterFact는 삭제하지 않는 시간순 기록이며, snapshot은 사용�
 `ADD`, `UPDATE`, `MERGE`는 최종 snapshot을 그대로 저장할 수 있도록
 `proposed_fact_value`와 `proposed_value_json`을 모두 반드시 반환한다.
 `proposed_fact_value`는 기존 값과 신규 정보를 반영한 사용자 표시 문자열이다.
+proposal은 candidate의 `value_type`을 유지한다. `STRING`이면 `proposed_value_json`은
+`{"value": "바바리안"}`처럼 `value`에 JSON 문자열을 담은 객체여야 한다.
+`value`에 배열·객체·숫자·boolean·null을 넣거나 `value` 키를 생략하지 않는다.
+숫자처럼 보이는 내용도 `STRING` 후보라면 `{"value": "36"}`처럼 문자열로 반환한다.
 candidate의 `value_type`이 `NUMBER`이면 설명이나 단위를 넣지 않고
 `proposed_value_json.value`와 같은 숫자 문자열만 반환한다. `BOOLEAN`이면 소문자
 `true` 또는 `false`만 반환하고 `proposed_value_json.value`도 같은 JSON boolean으로 둔다.

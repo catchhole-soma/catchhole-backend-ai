@@ -7,6 +7,15 @@
 - `main` 대상 PR은 `.github/workflows/test.yml`에서 전체 pytest를 실행한다. DB를 사용하지 않는 단위 테스트는 로컬 `.env`나 CI의 `DATABASE_URL`에 의존하지 않고 경계 의존성을 주입·mock한다.
 - 운영 이미지 발행과 Worker 배포는 `main` push에서 시작된 `Publish AI Image` 성공 흐름으로만 실행한다. Worker 배포는 해당 publish run의 commit SHA가 현재 `main`일 때만 진행하고, 그 SHA로 Compose와 이미지 태그를 함께 고정하며, Backend `main` 최신 커밋의 API 배포 성공과 Spring health를 확인한 뒤 시작한다.
 
+## AI Logic Version Records
+
+- 결과에 영향을 주는 추출·주체 해소·비교·후처리·프롬프트·제품 모델/실행 설정 변경 PR마다 `docs/ai-logic-versions/`에 다음 `vNNNN.md`를 추가하고 목록을 갱신한다. 규칙과 양식은 해당 디렉터리의 `README.md`와 `TEMPLATE.md`를 따른다.
+- 기본 품질 평가는 다단계 `FIXED` 모드에서 추출 `gpt-5.6-sol`·주체 해소 `gpt-5.6-terra`·비교 `gpt-5.6-sol`, 제품 `LLM_REASONING_EFFORT=medium`으로 실행한다. `LLM_MODEL` fallback은 `gpt-5.6-terra`다. 로컬 CLI에도 이 값들을 명시하며 다른 모드·모델의 실험은 실제 사용값으로 별도 기록한다. 로직 버전 번호와 평가 모드를 혼동하지 않는다.
+- 기록에는 이전 버전, 변경 이유와 전후 동작, 복원 기준 전체 Git SHA, 구현 PR, 프롬프트 버전과 실행 설정을 남긴다. 머지 전 최신 main의 버전 번호와 코드 기준을 확인하고, squash/rebase로 SHA가 바뀌면 최종 복원 SHA를 문서로 보완한다.
+- 평가 실행별로 실제 코드·채점기 SHA, 고정 입력 식별값, 모델·judge·실행 조건, 핵심 집계 점수와 미판정·실패 수를 기록한다. `null`을 0으로 바꾸거나 조건이 다른 점수를 개선폭으로 표시하지 않는다.
+- 미측정·실패·부분 완료는 사유와 담당자·재평가 계획을 기록하면 머지를 허용한다. 이 상태를 성능 개선 검증으로 표시하지 않으며 원문·정답·개별 예측 보고서를 버전 MD에 복사하지 않는다.
+- 문서·테스트만의 변경은 버전을 올리지 않는다. 채점기·Gold·judge만 바뀌면 같은 로직 버전에 새 평가 기록을 추가한다. 예전 로직 복원도 최신 main에서 새 PR과 다음 버전으로 남기고 기존 배포 흐름을 따른다.
+
 ## Spring Worker API
 
 - 분석 runner는 claim의 `allowedJobTypes`를 명시한다. 기본 `analysis` 프로세스는 `SETTING_EXTRACTION`, 별도 `character-comparison`/`world-comparison` 프로세스는 각각 사용자 재비교용 `CHARACTER_FACT_COMPARISON`/`WORLD_SETTING_COMPARISON`만 claim해 서로의 작업을 가져가지 않는다.
@@ -42,6 +51,7 @@
 - `SettingCandidate.value_json`은 `JSONB(none_as_null=True)`로 매핑한다. `CHARACTER_DISCOVERY`의 Python `None`은 JSON literal `null`이 아니라 DB check constraint가 요구하는 SQL `NULL`로 저장해야 한다.
 - 캐릭터 비교의 canonical `REMOVE`는 `target_ref=null`, `removed_snapshot_refs` 1개 이상, proposal 없음으로 출력한다. candidate와 같은 key 또는 다른 key의 의미상 관련된 현재 STATUS를 요청 로컬 `P*` 참조로 하나 이상 끝낼 수 있지만 non-STATUS·unknown ref·비현재 후보는 거절한다. 기존 `REMOVE + targetRef` 하위 호환 정규화는 먼저 배포되는 Spring이 담당하며 Python은 신규 형식만 생성한다.
 - `NUMBER`/`BOOLEAN` 후보는 Pydantic 경계에서 `value_json.value`의 JSON 타입을 검증하고 Mapper가 저장 `attribute_value`를 그 값의 canonical 표현(NUMBER 숫자 문자열, BOOLEAN 소문자 `true`/`false`)으로 만든다. LLM이 보낸 원래 표시 문구는 Mapper 변환 전 payload로 `raw_ai_result_json`에 보존하고, 비교 proposal도 Spring에 보내기 전 같은 canonical 규칙을 적용한다. 표시값과 snapshot 대표값이 다른 상태를 새로 저장하지 않기 위함이다.
+- 캐릭터 단건·batch 비교의 `STRING` proposal은 `proposed_value_json.value`가 JSON 문자열인지 응답 재시도 경계에서 검증한다. 잘못된 값을 임의로 문자열로 바꾸지 않으며, 재시도 소진 시 기존 후보별 typed failure로 처리해 평가 최종 결과 생성까지 오류를 넘기지 않는다.
 
 ## Async Worker Runtime
 
@@ -60,6 +70,7 @@
 
 ## Python Packaging
 
+- 평가 fixture의 기본값 필드 제외는 Pydantic `exclude_if`를 사용하므로 `pydantic>=2.12.0`을 직접 의존성으로 유지한다. 기본 `stage2Policy`가 직렬화되어 기존 fixture hash가 바뀌지 않아야 한다.
 - setuptools package discovery는 `app*`로 제한해 루트의 `samples`, `docs`, `scripts`를 배포 패키지에서 제외한다. `pyproject.toml`이나 루트 디렉터리를 변경하면 `python -m pip install -e ".[dev]"`로 editable install을 검증한다.
 
 ## Runtime Timezone
@@ -73,14 +84,22 @@
 
 ## LLM Runtime
 
-- 다단계 평가에서 전체 모델을 통일할 때는 추출·주체 해소·비교 모델과 함께 의미 채점 모델 `judge_model`도 지정한다. workflow는 이를 `--judge-model`로 전달하며 생략 시 기본값은 `gpt-5.6-luna`다.
+- 다단계 평가의 2차 상세에는 1차 과추출 후보도 실제 처리 결과 또는 결과 기록 없음으로 표시한다. 답지가 없는 진단 행을 Gold 기준 정확도에 넣지 않으며, 세계관 batch가 여러 후보를 한 decision으로 처리하면 전체 source 연결을 예측에 보존해 각 후보의 처리 결과를 추적한다.
+- 다단계 평가에서 인물 연결 전 2차 비교를 요구하지 않는 캐릭터 `EXTRACT / SETTING` Gold는 `stage2Policy=WAIT_FOR_CHARACTER_MATCH`로 명시하고 연결된 2차 Gold를 두지 않는다. 1차 추출은 계속 채점하며 정상 대기를 추출 실패로 세지 않는다. 정책은 해당 회차의 Gold 행에만 적용하고 canonical 인물 ID와 이후 회차의 이름 해소·매칭은 유지한다.
+- 회차 종료 후 사용자 캐릭터 등록은 Scenario의 선택적 `registeredCharactersAfterEpisode`로 표현한다. 원문에 없는 이름을 CHARACTER_DISCOVERY Gold로 만들거나 `1차 제공 컨텍스트` 미리보기만 고쳐 입력을 바꾸지 않는다. 명시한 인물 ID·이름을 Gold·예측의 회차 종료 상태에 함께 반영하고 등록 자체는 모델 성과로 채점하지 않는다.
+- 다단계 평가기의 세계관 의미 판정은 같은 분류·주체 안에서 설정 항목·상위 범위·설정값을 독립 채점한다. 정규화·검수된 별칭은 해당 축만 우선 인정하며, 다른 범위도 신규 ADD의 의미를 바꾸지 않는 묶음이면 문맥 판정으로 동등성을 인정할 수 있다. 1차 연결·2차·E2E에 같은 기준을 적용하되 기존 target·matched 경로·수정/병합의 경로 보존·root 이동 대상과 reducer 검증은 엄격히 유지한다.
+- 캐릭터 평가는 서술형 값과 JSON 서술형 문자열, 같은 인물·factType의 동적 STATUS pattern 이름을 의미 판정한다. 인물 ID·factType·고정 key·숫자·불리언·target 및 제거 reference는 결정적으로 검증한다. 항목·범위·값을 판단할 수 없으면 해당 축을 PENDING으로 유지하며 승인된 대응은 일대일 평가용 키에만 사용한다. 원시 예측·reducer·상태 해시·실제 상태 적용 오류를 보정하지 않는다.
+- 캐릭터 factKey의 마지막 한글 항목명에서 한글 사이 공백·밑줄만 다른 경우는 1차·2차·최종 상태 채점에서 같은 표기로 인정한다. namespace, 점으로 구분된 경로, 실제 단어·인물·factType과 영문·숫자 식별자는 합치지 않는다. 정규화는 평가용 대응에만 사용하고 원시 키·reducer 입력·상태 해시 및 중복 항목은 보존한다.
+- 의미 채점기는 제품 모델과 독립적으로 `gpt-5.6-sol`·`medium`을 기본 사용하며 `--judge-model`·`--judge-reasoning-effort`로 주입한다. 채점 프롬프트 계약 변경 시 semantic outcome 캐시 버전과 `docs/multi-stage-setting-evaluation.md`를 함께 갱신한다. 공개 JSON 구조와 표·컬럼·지표명은 유지하고 판정 이유는 허용된 필드와 고정 문구만 사용한다. 모델의 자유 형식 reason은 공개하지 않는다.
+- 의미 채점 요청은 회차 경계를 유지하고, 같은 회차 안에서 지시문·비교 데이터·응답 schema와 여유분을 포함한 입력 추정량 64,000토큰으로 묶는다. 8쌍 같은 고정 개수 제한은 두지 않으며 출력 상한은 추론을 포함해 요청당 32,000토큰이다. 출력 절단만 해당 묶음을 반으로 나눠 재시도하고 실패 호출의 사용량도 합산한다. 단일 비교가 입력 상한을 넘으면 호출 전에 거절하며 내용을 자르거나 후보를 누락하지 않는다.
+
 - OpenAI Responses API 요청은 웹소설 원문과 분석 결과가 provider 측에 저장되지 않도록 항상 `store=false`를 명시한다. 호출 목적이나 모델에 따라 이 값을 생략하거나 활성화하지 않는다.
-- 캐릭터 Fact·세계관 후보의 1차 추출은 `LLM_EXTRACTION_MODEL`, 캐릭터·세계관 주체 해소는 `LLM_SUBJECT_RESOLUTION_MODEL`, 후보와 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 운영 기본 라우팅은 추출 `gpt-5.6-terra`, 주체 해소·비교 `gpt-5.6-luna`이며 개별 값이 없으면 기존 `LLM_MODEL`을 fallback으로 사용한다.
+- 캐릭터 Fact·세계관 후보의 1차 추출은 `LLM_EXTRACTION_MODEL`, 캐릭터·세계관 주체 해소는 `LLM_SUBJECT_RESOLUTION_MODEL`, 후보와 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 2026-09-09 사용자가 확인한 운영 라우팅은 추출·비교 `gpt-5.6-sol`, 주체 해소 `gpt-5.6-terra`다. 개별 값이 없으면 기존 `LLM_MODEL`(기본 `gpt-5.6-terra`)을 fallback으로 사용한다.
 - 캐릭터·세계관 2차 비교·재비교 prompt에는 Backend가 반환한 1차 `evidenceSpans`를 읽기 전용 문맥으로 전달한다. 2차 LLM이 quote·offset을 다시 생성하거나 비교 완료 payload로 반환하지 않으며, 원고가 바뀐 경우에만 새 1차 분석 후보와 근거를 만든다.
-- 세계관 후보는 Spring 게시 전에 정규화한 `category + subject_name + scope_name + setting_name`별로 하나로 통합한다. `scope_name`은 세계관에만 있는 선택적 1단계 범위이며 빈 값은 루트 property를 뜻한다. 같은 설정명이라도 범위가 다르면 통합하지 않고, 2차 비교도 반드시 범위+설정명 전체 경로를 정확히 매칭한다. 2차 비교는 추출값 하나면 `SINGLE`, 여러 값이 양립하면 `MERGED`, 동시에 참일 수 없으면 `CONFLICT`로 판정한다. `MERGED`만 자연스러운 최종 문자열 하나로 정리하고 `CONFLICT`는 모든 추출값을 그대로 보존해 사용자 판단으로 넘긴다. 각 1차 후보의 quote·offset과 raw payload는 어느 상태에서도 수정하지 않는다.
+- 운영 세계관 후보는 Spring 게시 전에 정규화한 `category + subject_name + scope_name + setting_name`별로 하나로 통합한다. `scope_name`은 세계관에만 있는 선택적 1단계 범위이며 빈 값은 루트 property를 뜻한다. 같은 설정명이라도 범위가 다르면 통합하지 않고, 운영 2차 비교의 기존 속성 선택은 반드시 범위+설정명 전체 경로를 정확히 매칭한다. 2차 비교는 추출값 하나면 `SINGLE`, 여러 값이 양립하면 `MERGED`, 동시에 참일 수 없으면 `CONFLICT`로 판정한다. `MERGED`만 자연스러운 최종 문자열 하나로 정리하고 `CONFLICT`는 모든 추출값을 그대로 보존해 사용자 판단으로 넘긴다. 각 1차 후보의 quote·offset과 raw payload는 어느 상태에서도 수정하지 않는다.
 - 종족의 서술형 전투 특징은 `RACE / 종족명 / 전투 특성 / 마법 재능·신체 능력·전투 강점`으로 구분한다. 체력·힘·신체 능력에 따른 장비 착용 설명은 `신체 능력`을 보충하되, 독립된 수치 능력치·판정 규칙은 합치지 않는다. 원문에 있는 하위 속성만 추출하며 기존 경로·raw scope 검증을 우회하지 않는다.
 - `POWER_SYSTEM`은 마법·스킬·능력 자체의 조건·자원·효과·제약을 설명할 때만 사용한다. 특정 능력과 무관한 세계·게임 공통 사망·전투·진행 규칙은 `WORLD_RULE_HISTORY`, 종족의 선천적 적성은 `RACE`로 유지한다. 분류 경계 조정만으로 enum·주체 식별·채점 기준이나 답지를 변경하지 않는다.
-- 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. GPT-5.6 Terra·Luna의 MVP 기준 추론 강도는 `none`이며, 모델 평가 없이 provider 기본값에 의존하지 않는다.
+- 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. 현재 운영·품질 평가 기준은 `medium`이며 환경변수를 생략한 앱 설정의 기본값 `none`에 의존하지 않고 명시적으로 지정한다.
 - GPT-5.6 모델의 토큰 예약량은 `o200k_base` tokenizer로 계산한다. 사용하는 tiktoken 버전이 모델 별칭을 모를 수 있으므로 모델명 자동 탐지 실패를 byte 상한으로 방치하지 않는다.
 - Responses API는 HTTP 200만으로 성공을 판정하지 않고 `status=completed`를 요구한다. `status=incomplete`와 `incomplete_details.reason=max_tokens|max_output_tokens`, 또는 JSON 파싱 실패와 `outputTokens == maxOutputTokens`가 함께 나타나면 `LLM_OUTPUT_TRUNCATED`로 분류한다.
 - 출력 상한은 목적별 환경변수로 주입하고 모두 양수이며 provider 최대 상한 이하인지 기동 시 검증한다. 기본값은 캐릭터 추출 6,000·절단 재시도 12,000, 세계관 추출 5,000·절단 재시도 10,000, 주체 해소 2,000, 단건 비교 3,000, 캐릭터·세계관 batch 비교 각 16,000, provider 상한 128,000이다. 캐릭터 batch는 Spring과 같은 기본 10개(요청 schema 방어 상한 20개), tokenizer 입력 상한 64,000을 사용하고 단일 후보도 넘으면 provider/fallback 없이 `COMPARISON_VALIDATION_FAILED` typed failure로 원자 완료한다. 세계관 batch의 contract-complete 최소 출력 예상치가 16,000을 넘으면 provider를 호출하지 않고 `BATCH_LIMIT_EXCEEDED` 검토로 전환한다.

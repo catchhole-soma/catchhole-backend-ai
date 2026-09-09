@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import html
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 
+from evals.setting_extraction.normalization import normalize_fact_key
 
 _DOMAINS = ("character", "world")
 _MAX_ROWS_PER_SECTION = 25
@@ -25,6 +26,8 @@ _STAGE2_FIELD_ORDER = (
     "consolidation",
     "proposedPath",
     "rootMoveSet",
+    "pathPreservation",
+    "stateApplication",
 )
 _STAGE1_RESULTS = {"FULL_MATCH", "PARTIAL_MATCH", "MISSED", "EXTRA"}
 _STAGE2_RESULTS = {
@@ -33,6 +36,8 @@ _STAGE2_RESULTS = {
     "COMPARATOR_MISSING",
     "SEMANTIC_PENDING",
     "DECISION_MISMATCH",
+    "EXTRA_PROCESSED",
+    "EXTRA_NO_DECISION",
 }
 _FIELD_STATUSES = {
     "MATCH",
@@ -42,6 +47,9 @@ _FIELD_STATUSES = {
     "MISSING",
     "UNMATCHED",
 }
+_SETTING_NAME_MATCH_STATUSES = {"MATCH", "MISMATCH", "PENDING"}
+_SETTING_NAME_MATCH_METHODS = {"EXACT", "ALIAS", "SEMANTIC", "UNRESOLVED"}
+_STAGE2_POLICIES = {"REQUIRED", "WAIT_FOR_CHARACTER_MATCH"}
 _AXIS_LABELS = {
     "subject": "설정 대상",
     "path": "설정 분류·세부 항목",
@@ -55,6 +63,8 @@ _AXIS_LABELS = {
     "consolidation": "여러 추출값을 합칠 수 있는지에 대한 판단",
     "proposedPath": "반영할 범위·설정명",
     "rootMoveSet": "새 범위로 함께 옮길 기존 설정",
+    "pathPreservation": "수정·병합할 기존 설정 경로 유지",
+    "stateApplication": "실제 반영 규칙 준수",
 }
 _OPERATION_LABELS = {
     "ADD": "새 설정 추가",
@@ -290,6 +300,7 @@ def _append_stage2_summary(lines: list[str], stages: dict[str, Any]) -> None:
         correct = _matched_count(accuracy, resolved)
         quantities[domain] = {
             "gold": gold,
+            "waiting": _int_or_zero(counts.get("waitingForCharacterMatch")),
             "included": included,
             "correct": correct,
             "incorrect": resolved - correct,
@@ -313,6 +324,7 @@ def _append_stage2_summary(lines: list[str], stages: dict[str, Any]) -> None:
     ])
     quantity_rows = (
         ("Gold (정답지의 처리 결정)", "gold"),
+        ("인물 연결 대기 (정답지가 2차 진행을 보류한 1차 항목)", "waiting"),
         ("2차 채점에 포함 (필요한 설정이 1차에서 올바르게 추출됨)", "included"),
         ("정답 (처리 방식·대상·내용 등 필요한 판단 항목이 모두 맞음)", "correct"),
         ("오답 (판단이 틀렸거나 2차 결과가 없음)", "incorrect"),
@@ -328,6 +340,14 @@ def _append_stage2_summary(lines: list[str], stages: dict[str, Any]) -> None:
             for domain in _DOMAINS
         ]
         lines.append(f"| {_cell(label)} | {' | '.join(cells)} |")
+    if any(quantity["waiting"] for quantity in quantities.values()):
+        lines.extend([
+            "",
+            (
+                "인물 연결 대기는 정답지가 정한 정책 수이며, 2차 Gold나 채점 제외 수에 포함되지 않습니다. "
+                "실제 추출 성공·누락 여부는 1차 표에서 확인하세요."
+            ),
+        ])
 
     lines.extend([
         "",
@@ -636,6 +656,11 @@ def _append_diagnostics_limited(
                             "SEMANTIC_PENDING",
                             "UPSTREAM_BLOCKED",
                         )
+                        + tuple(
+                            result
+                            for result in ("EXTRA_PROCESSED", "EXTRA_NO_DECISION")
+                            if counts[result]
+                        )
                     )
                 )
                 lines.append("")
@@ -783,14 +808,20 @@ def _stage2_row(
             case.get("expected") or {},
             domain,
             ", ".join(subject for subject in expected_subjects if subject),
-        ),
+        )
+        if case.get("expected")
+        else "대응하는 2차 답지 없음",
         _stage2_shape(
             case.get("actual") or {},
             domain,
             ", ".join(subject for subject in actual_subjects if subject),
         )
         if case.get("actual")
-        else "이 답지 항목과 연결된 2차 결과 없음",
+        else (
+            "이 추출 항목에 연결된 2차 결과 없음"
+            if case["result"] == "EXTRA_NO_DECISION"
+            else "이 답지 항목과 연결된 2차 결과 없음"
+        ),
         _diagnostic_reason(case, domain, source_cases),
     )
 
@@ -862,6 +893,13 @@ def _diagnostic_reason(
         return "이 답지 항목에 대응하는 모델 추출 결과를 찾지 못했습니다."
     if result == "EXTRA":
         return "모델이 이 정보를 추출했지만 답지에서 대응하는 항목을 찾지 못했습니다."
+    if result in {"EXTRA_PROCESSED", "EXTRA_NO_DECISION"}:
+        detail = (
+            "1차에서 답지와 연결되지 않은 추출 항목의 실제 2차 처리 판단입니다."
+            if result == "EXTRA_PROCESSED"
+            else "1차에서 답지와 연결되지 않은 추출 항목이며, 연결된 2차 결과가 기록되지 않았습니다."
+        )
+        return detail + "<br>대응하는 2차 답지가 없어 정답·오답은 판정하지 않습니다."
     if result == "COMPARATOR_MISSING":
         return (
             "필요한 설정은 1차에서 추출됐지만 이 항목의 2차 처리 결과가 없어 오답으로 채점했습니다."
@@ -888,6 +926,15 @@ def _diagnostic_reason(
                 parts.extend(_field_difference_lines(source, domain))
         parts.append("따라서 이 항목의 2차 판단은 채점에서 제외했습니다.")
         return "<br>".join(_cell(part) for part in parts)
+    if (
+        result == "FULL_MATCH"
+        and domain == "character"
+        and case.get("stage2Policy") == "WAIT_FOR_CHARACTER_MATCH"
+    ):
+        return (
+            "채점한 1차 항목이 모두 답지와 일치합니다.<br>"
+            "인물 연결 대기 (답지는 인물 연결 전 2차 비교를 요구하지 않음)"
+        )
     parts = _field_difference_lines(case, domain)
     if result == "PARTIAL_MATCH":
         matched = [
@@ -897,6 +944,8 @@ def _diagnostic_reason(
         ]
         if matched:
             parts.insert(0, "답지와 일치하는 부분: " + ", ".join(matched))
+        if "PENDING" in case.get("fields", {}).values():
+            parts.append("의미 판정이 끝나지 않은 항목이 있어 채점을 완료하지 못했습니다.")
     if result == "SEMANTIC_PENDING":
         parts.append(
             "2차 답안은 있으나 답지와 의미가 같은지 확인하지 못해 채점을 완료하지 못했습니다."
@@ -914,11 +963,32 @@ def _field_difference_lines(case: dict[str, Any], domain: str) -> list[str]:
     }
     expected, actual = case.get("expected") or {}, case.get("actual") or {}
     parts = []
+    if domain == "character" and (name_reason := _character_setting_name_reason(case)):
+        parts.append(name_reason)
+    if domain == "world" and (name_reason := _setting_name_match_reason(case)):
+        parts.append(name_reason)
+    if domain == "world" and (
+        property_reason := _setting_name_match_reason(case, key="matchedPropertyNameMatch")
+    ):
+        parts.append(f"비교 대상인 기존 설정명: {property_reason}")
     for name, status in fields.items():
         label = _axis_label(name, domain)
+        if domain == "world" and name in {"path", "proposedPath"}:
+            scope_reason = _world_scope_match_reason(case, status)
+            if scope_reason:
+                parts.append(scope_reason)
+                continue
         if status == "PENDING":
             parts.append(f"{label}: 답지와 의미가 같은지 확인하지 못했습니다.")
         elif status == "MISMATCH":
+            if name == "stateApplication":
+                parts.append("모델의 2차 결과가 상태 반영 규칙을 위반해 실제 반영에 실패했습니다.")
+                continue
+            if name == "pathPreservation":
+                parts.append(
+                    "기존 설정을 수정·병합할 때는 비교 대상으로 지정한 범위·설정명을 유지해야 합니다."
+                )
+                continue
             key = keys.get(name, name)
             if key in expected or key in actual:
                 gold_value = expected.get(key)
@@ -933,6 +1003,64 @@ def _field_difference_lines(case: dict[str, Any], domain: str) -> list[str]:
             else:
                 parts.append(f"{label}: 답지와 다릅니다.")
     return parts
+
+
+def _character_setting_name_reason(case: dict[str, Any]) -> str | None:
+    fields = case.get("fields", {})
+    if fields.get("canonicalPath", fields.get("path")) != "MATCH":
+        return None
+    expected, actual = case.get("expected") or {}, case.get("actual") or {}
+    paths = (expected.get("path"), actual.get("path"))
+    if not all(isinstance(path, str) for path in paths):
+        return None
+    keys = [normalize_fact_key(path.rsplit(" › ", 1)[-1]) for path in paths]
+    if keys[0] == keys[1] or not all(
+        key.startswith("status.") and key.removeprefix("status.") and "*" not in key
+        for key in keys
+    ):
+        return None
+    return "이름은 다르지만 문맥상 같은 상태 항목으로 판단했습니다."
+
+
+def _world_scope_match_reason(case: dict[str, Any], status: str) -> str | None:
+    name_match = _sanitize_setting_name_match(case.get("settingNameMatch"))
+    if name_match is None or name_match["status"] != "MATCH":
+        return None
+    expected, actual = case.get("expected") or {}, case.get("actual") or {}
+    expected_path, actual_path = expected.get("path"), actual.get("path")
+    if not isinstance(expected_path, str) or not isinstance(actual_path, str):
+        return None
+    expected_scope = expected_path.rpartition(" › ")[0]
+    actual_scope = actual_path.rpartition(" › ")[0]
+    if expected_scope == actual_scope:
+        return None
+    comparison = (
+        f"답지: {expected_scope or '상위 범위 없음'} / 모델: {actual_scope or '상위 범위 없음'}"
+    )
+    if status == "MATCH":
+        return "상위 범위 표현은 다르지만 같은 설정을 묶는 범위로 인정했습니다. " + comparison
+    if status == "PENDING":
+        return "상위 범위: 답지와 의미가 같은지 확인하지 못했습니다. " + comparison
+    if status == "MISMATCH":
+        return "상위 범위 불일치 — " + comparison
+    return None
+
+
+def _setting_name_match_reason(
+    case: dict[str, Any], *, key: str = "settingNameMatch"
+) -> str | None:
+    match = _sanitize_setting_name_match(case.get(key))
+    if match is None:
+        return None
+    if match["status"] == "PENDING":
+        return "설정명의 의미를 확인하지 못했습니다."
+    if match["method"] == "ALIAS" and match["status"] == "MATCH":
+        return "정답지에 등록된 별칭으로 같은 설정 항목임을 인정했습니다."
+    if match["method"] == "SEMANTIC":
+        if match["status"] == "MATCH":
+            return "이름은 다르지만 문맥상 같은 설정 항목으로 판단했습니다."
+        return "문맥상 다른 설정 항목으로 판단했습니다."
+    return None
 
 
 def _axis_label(name: str, domain: str) -> str:
@@ -997,6 +1125,8 @@ def _result_label(value: str) -> str:
         "COMPARATOR_MISSING": "2차 답안 없음 (필요한 설정은 1차에서 추출됐지만 2차 처리 결과가 없음)",
         "SEMANTIC_PENDING": "채점 미완료 (2차 답안은 있으나 답지와 의미가 같은지 확인하지 못함)",
         "DECISION_MISMATCH": "판단 불일치 (처리 방식이나 반영할 정보 등이 답지와 다름)",
+        "EXTRA_PROCESSED": "과추출 항목의 2차 처리",
+        "EXTRA_NO_DECISION": "과추출 항목의 2차 결과 없음",
     }.get(value, value)
 
 
@@ -1054,7 +1184,7 @@ def _sanitize_stage1_case(value: dict[str, Any]) -> dict[str, Any] | None:
     result = _choice(value.get("result"), _STAGE1_RESULTS)
     if result is None:
         return None
-    return {
+    sanitized = {
         "result": result,
         "goldIds": _text_list(value.get("goldIds")),
         "predictionId": _text(value.get("predictionId")),
@@ -1063,6 +1193,11 @@ def _sanitize_stage1_case(value: dict[str, Any]) -> dict[str, Any] | None:
         "fields": _sanitize_fields(value.get("fields"), _STAGE1_FIELD_ORDER),
         "upstreamOutcome": _text(value.get("upstreamOutcome")),
     }
+    if (name_match := _sanitize_setting_name_match(value.get("settingNameMatch"))) is not None:
+        sanitized["settingNameMatch"] = name_match
+    if (policy := _choice(value.get("stage2Policy"), _STAGE2_POLICIES)) is not None:
+        sanitized["stage2Policy"] = policy
+    return sanitized
 
 
 def _sanitize_stage2_case(value: dict[str, Any]) -> dict[str, Any] | None:
@@ -1070,7 +1205,7 @@ def _sanitize_stage2_case(value: dict[str, Any]) -> dict[str, Any] | None:
     domain = _choice(value.get("domain"), {item.upper() for item in _DOMAINS})
     if result is None or domain is None:
         return None
-    return {
+    sanitized = {
         "result": result,
         "decisionId": _text(value.get("decisionId")),
         "domain": domain,
@@ -1082,6 +1217,24 @@ def _sanitize_stage2_case(value: dict[str, Any]) -> dict[str, Any] | None:
         "actual": _sanitize_stage2_summary(value.get("actual")),
         "fields": _sanitize_fields(value.get("fields"), _STAGE2_FIELD_ORDER),
     }
+    if (name_match := _sanitize_setting_name_match(value.get("settingNameMatch"))) is not None:
+        sanitized["settingNameMatch"] = name_match
+    if (
+        property_match := _sanitize_setting_name_match(value.get("matchedPropertyNameMatch"))
+    ) is not None:
+        sanitized["matchedPropertyNameMatch"] = property_match
+    return sanitized
+
+
+def _sanitize_setting_name_match(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    status = _choice(value.get("status"), _SETTING_NAME_MATCH_STATUSES)
+    method = _choice(value.get("method"), _SETTING_NAME_MATCH_METHODS)
+    if status is None or method is None:
+        return None
+    # Model reasons may quote private evidence; public explanations are fixed copy.
+    return {"status": status, "method": method}
 
 
 def _sanitize_fact_summary(value: Any) -> dict[str, str | None] | None:

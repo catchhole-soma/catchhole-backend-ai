@@ -9,13 +9,13 @@ on:
         default: "1,2,3"
         type: string
       mode:
-        description: "평가 모드(ORACLE은 Gold 1차/Gold 상태로 comparator만 평가)"
+        description: "평가 모드(기본 FIXED; ORACLE은 Gold 1차/Gold 상태로 comparator만 평가)"
         required: true
-        default: ORACLE
+        default: FIXED
         type: choice
         options:
-          - ORACLE
           - FIXED
+          - ORACLE
           - ROLLING
       domains:
         description: "평가 도메인"
@@ -29,28 +29,50 @@ on:
       analysis_model:
         description: "1차 추출 모델(FIXED/ROLLING에서 사용)"
         required: true
-        default: gpt-5.6-terra
+        default: gpt-5.6-sol
         type: string
       subject_resolution_model:
         description: "1차 후보의 캐릭터·세계관 주체 해소 모델(FIXED/ROLLING에서 사용)"
         required: true
-        default: gpt-5.6-luna
+        default: gpt-5.6-terra
         type: string
       comparison_model:
         description: "2차 비교 모델"
         required: true
-        default: gpt-5.6-luna
+        default: gpt-5.6-sol
         type: string
+      reasoning_effort:
+        description: "제품 추출·주체 해소·비교의 공통 추론 강도"
+        required: true
+        default: medium
+        type: choice
+        options:
+          - none
+          - low
+          - medium
+          - high
+          - xhigh
       semantic_judge:
-        description: "결정적 비교가 불가능한 최종 문장 의미를 LLM Judge로 판정"
+        description: "설정 항목·범위·값의 의미를 LLM Judge로 판정"
         required: true
         default: true
         type: boolean
       judge_model:
-        description: "최종 문장 의미 채점 모델(semantic_judge 활성화 시 사용)"
-        required: false
-        default: gpt-5.6-luna
+        description: "평가 전용 의미 채점 모델(제품 모델과 독립)"
+        required: true
+        default: gpt-5.6-sol
         type: string
+      judge_reasoning_effort:
+        description: "평가 전용 의미 채점 추론 강도"
+        required: true
+        default: medium
+        type: choice
+        options:
+          - none
+          - low
+          - medium
+          - high
+          - xhigh
       confirm_run:
         description: "OpenAI 비용 발생 확인을 위해 RUN 입력"
         required: true
@@ -78,8 +100,11 @@ jobs:
       ANALYSIS_MODEL: ${{ inputs.analysis_model }}
       SUBJECT_RESOLUTION_MODEL: ${{ inputs.subject_resolution_model }}
       COMPARISON_MODEL: ${{ inputs.comparison_model }}
+      LLM_MODEL: gpt-5.6-terra
+      LLM_REASONING_EFFORT: ${{ inputs.reasoning_effort }}
       SEMANTIC_JUDGE_ENABLED: ${{ inputs.semantic_judge }}
-      JUDGE_MODEL: ${{ inputs.judge_model || 'gpt-5.6-luna' }}
+      JUDGE_MODEL: ${{ inputs.judge_model }}
+      JUDGE_REASONING_EFFORT: ${{ inputs.judge_reasoning_effort }}
       CONFIRM_RUN: ${{ inputs.confirm_run }}
 
     steps:
@@ -275,7 +300,11 @@ jobs:
             evaluate_args+=(--state-root build/eval/multi-stage/input/states)
           fi
           if [ "$SEMANTIC_JUDGE_ENABLED" = "true" ]; then
-            evaluate_args+=(--semantic-judge openai --judge-model "$JUDGE_MODEL")
+            evaluate_args+=(
+              --semantic-judge openai
+              --judge-model "$JUDGE_MODEL"
+              --judge-reasoning-effort "$JUDGE_REASONING_EFFORT"
+            )
           fi
           python -m evals.multi_stage_setting.cli "${evaluate_args[@]}"
 
