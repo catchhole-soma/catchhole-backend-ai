@@ -8,6 +8,8 @@
 실행 결과는 [AI 로직 버전 기록](ai-logic-versions/README.md)에 코드·채점기 커밋, 입력과
 모델·judge 조건, 점수 또는 미측정 사유를 함께 남깁니다. 레거시 1차 평가 결과임을 명시하고
 다단계 평가 점수와 직접 비교하지 않습니다.
+현재 운영 모델 조합과 FIXED 모드의 기본 품질 비교는
+[다단계 평가](multi-stage-setting-evaluation.md)를 사용합니다.
 
 ## 평가 원칙
 

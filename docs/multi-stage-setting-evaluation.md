@@ -605,24 +605,34 @@ python -m evals.multi_stage_setting.state_cli \
 `*.before.notion.md` 역시 원고에서 파생된 상세 정답을 포함하므로 공개 Actions artifact에는
 업로드하지 않습니다.
 
-기본인 ORACLE 예측 생성, 평가, 원문·근거 인용과 raw 응답을 제외한 정제된 진단 요약은 다음
-진입점을 사용합니다. ORACLE은 1차 Gold를 직접 사용하므로 원문과 캐릭터 스키마 파일이 필요하지
-않습니다.
+기본 품질 평가는 **FIXED**로 실행합니다. 회차별 시작 상태를 Gold 기준으로 고정하고
+1차 추출부터 평가합니다. Actions 기본값과 로컬 실행 기준은 현재 운영 설정에 맞춰
+추출 `gpt-5.6-sol`, 주체 해소 `gpt-5.6-terra`, 비교 `gpt-5.6-sol`,
+제품 추론 강도 `medium`으로 둡니다. `LLM_MODEL` fallback은 `gpt-5.6-terra`입니다.
+다른 조건의 실험은 선택값을 바꾸고 실제 실행 조건을 버전 MD에 따로 기록합니다.
+`v0001` 같은 로직 버전 번호와 `FIXED` 같은 평가 모드는 별개입니다.
+
+예측 생성·채점·정제된 진단 요약은 다음 진입점을 사용합니다. 로컬 CLI는 `--mode`를
+명시해야 하며, 모델과 추론 강도도 아래처럼 지정해 앱 설정의 fallback에 의존하지 않습니다.
 
 ```bash
+LLM_MODEL=gpt-5.6-terra LLM_REASONING_EFFORT=medium \
 python -m evals.multi_stage_setting.runtime_cli \
   --gold build/eval/multi-stage/gold.json \
-  --mode ORACLE \
+  --mode FIXED \
   --domains CHARACTER,WORLD \
   --episodes 1,2,3 \
-  --analysis-model gpt-5.6-terra \
-  --subject-resolution-model gpt-5.6-luna \
-  --comparison-model gpt-5.6-luna \
+  --analysis-model gpt-5.6-sol \
+  --subject-resolution-model gpt-5.6-terra \
+  --comparison-model gpt-5.6-sol \
+  --source-root private/eval/sources \
+  --character-setting-schemas private/eval/character-setting-schemas.json \
   --output build/eval/multi-stage/predictions.json
 
 python -m evals.multi_stage_setting.cli \
   --gold build/eval/multi-stage/gold.json \
   --predictions build/eval/multi-stage/predictions.json \
+  --source-root private/eval/sources \
   --semantic-judge openai \
   --judge-model gpt-5.6-sol \
   --judge-reasoning-effort medium \
@@ -640,7 +650,8 @@ python -m evals.multi_stage_setting.report_cli \
 `CHARACTER`를 평가할 때는
 `--character-setting-schemas private/eval/character-setting-schemas.json`도 추가합니다. 평가
 명령에도 같은 `--source-root`를 전달합니다. `SEED` 시나리오가 외부 상태 URI를 사용하면 runtime과
-평가 명령에 `--state-root`도 전달합니다. semantic judge를 끄려면
+평가 명령에 `--state-root`도 전달합니다. comparator만 격리하는 `ORACLE`은 1차 Gold를
+직접 사용하므로 원문과 캐릭터 스키마 파일을 생략할 수 있습니다. semantic judge를 끄려면
 `--semantic-judge none`을 사용하거나 옵션을 생략합니다.
 
 캐릭터 schema fixture는 Spring claim의 필드에 평가 전용 `canonicalFactType`을 선택적으로

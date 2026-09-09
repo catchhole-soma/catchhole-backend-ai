@@ -179,11 +179,11 @@ sudo journalctl CONTAINER_NAME=catchhole-worker-ai-worker-1 -n 1 -o json-pretty
 - `AWS_SESSION_TOKEN`: STS 등 임시 자격 증명을 사용할 때 access key, secret key와 함께 전달하는 선택 세션 토큰입니다.
 - `AWS_SQS_QUEUE_URL`: 분석 잡 큐를 붙일 경우 사용할 SQS URL
 - `LLM_API_KEY`: 설정 추출/검증에 사용할 LLM API 키
-- `LLM_EXTRACTION_MODEL`: 회차 원문에서 캐릭터 Fact·세계관 설정 후보를 추출하는 모델명. 현재 기본값은 `gpt-5.6-terra`입니다.
-- `LLM_SUBJECT_RESOLUTION_MODEL`: 캐릭터 Fact와 세계관 후보의 주체를 기존 캐릭터·세계관 대상에 연결하는 모델명. 현재 기본값은 `gpt-5.6-luna`입니다.
-- `LLM_COMPARISON_MODEL`: 캐릭터 Fact·세계관 후보와 현재 확정 데이터를 비교해 반영 방식을 제안하는 모델명. 현재 기본값은 `gpt-5.6-luna`입니다.
-- `LLM_MODEL`: 단계별 모델 변수가 없을 때 사용하는 하위 호환 기본 모델명
-- `LLM_REASONING_EFFORT`: GPT-5.6 추론 강도. MVP 기본값은 `none`이며 품질 평가 후 상향합니다.
+- `LLM_EXTRACTION_MODEL`: 회차 원문에서 캐릭터 Fact·세계관 설정 후보를 추출하는 모델명. 2026-09-09 확인한 운영값과 다단계 평가 기본값은 `gpt-5.6-sol`입니다.
+- `LLM_SUBJECT_RESOLUTION_MODEL`: 캐릭터 Fact와 세계관 후보의 주체를 기존 캐릭터·세계관 대상에 연결하는 모델명. 운영값과 다단계 평가 기본값은 `gpt-5.6-terra`입니다.
+- `LLM_COMPARISON_MODEL`: 캐릭터 Fact·세계관 후보와 현재 확정 데이터를 비교해 반영 방식을 제안하는 모델명. 운영값과 다단계 평가 기본값은 `gpt-5.6-sol`입니다.
+- `LLM_MODEL`: 단계별 모델 변수가 없을 때 사용하는 하위 호환 모델명. 기본값은 `gpt-5.6-terra`입니다.
+- `LLM_REASONING_EFFORT`: GPT-5.6 추론 강도. 운영값과 다단계 평가 기본값은 `medium`으로 명시합니다. 환경변수를 생략한 앱 설정 기본값은 `none`입니다.
 - `OPENAI_RESPONSES_API_URL`: OpenAI Responses API endpoint
 - `LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 캐릭터 설정 추출의 최초 6,000·절단 재시도 12,000 token 상한
 - `LLM_WORLD_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_WORLD_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 세계관 추출의 최초 5,000·절단 재시도 10,000 token 상한
