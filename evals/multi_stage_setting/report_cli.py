@@ -779,7 +779,7 @@ def _append_diagnostics_limited(
         for scenario in diagnostics
         for cases in scenario.get("stage1", {}).values()
     ) + sum(
-        len(scenario.get("stage2", [])) + len(scenario.get("processing", []))
+        len(scenario.get("stage2", []))
         for scenario in diagnostics
     )
     remaining_rows = row_limit
@@ -824,13 +824,7 @@ def _append_diagnostics_limited(
             stage2_cases = [
                 case for case in scenario.get("stage2", []) if case.get("domain") == domain.upper()
             ]
-            if (
-                not stage1_cases
-                and not stage2_cases
-                and not any(
-                    item.get("domain") == domain.upper() for item in scenario.get("processing", [])
-                )
-            ):
+            if not stage1_cases and not stage2_cases:
                 continue
             lines.extend([f"#### {domain.upper()}", ""])
             if stage1_cases:
@@ -859,24 +853,6 @@ def _append_diagnostics_limited(
                     ),
                     remaining_rows,
                 )
-            processing_rows = [
-                item
-                for item in scenario.get("processing", [])
-                if item.get("domain") == domain.upper()
-            ]
-            if processing_rows:
-                lines.extend(["**후보별 실제 처리** · 답지 대응과 별개로 기록한 실행 결과", ""])
-                for offset in range(0, len(processing_rows), _MAX_ROWS_PER_SECTION):
-                    table, rendered = _markdown_table(
-                        ("추출 ID", "대상·추출 항목", "답지 대응", "실제 처리", "처리 사유"),
-                        processing_rows[offset : offset + _MAX_ROWS_PER_SECTION],
-                        _processing_row,
-                        remaining_rows,
-                    )
-                    lines.extend([*table, ""])
-                    remaining_rows -= rendered
-                    if remaining_rows <= 0:
-                        break
             if stage2_cases:
                 counts = Counter(case["result"] for case in stage2_cases)
                 lines.append(
@@ -1484,24 +1460,6 @@ def _processing_reason(record: dict[str, Any]) -> str:
     if record.get("recordOrigin") == "LEGACY_CONFIRMED":
         parts.append("기존 기록에서 확인된 사실만 복원")
     return "<br>".join(_cell(part) for part in parts)
-
-
-def _processing_row(record: dict[str, Any]) -> tuple[str, ...]:
-    domain = str(record.get("domain", "CHARACTER")).lower()
-    source = record.get("source") or {}
-    return (
-        _cell(record.get("candidateId")),
-        _cell(_subject_label(source.get("subject"), domain))
-        + "<br>"
-        + _cell(_path_label(source.get("path"), domain)),
-        _cell(
-            "미채점"
-            if record.get("goldCorrespondence") == "NOT_EVALUATED"
-            else (", ".join(record.get("goldIds", [])) or "없음")
-        ),
-        _processing_text(record),
-        _processing_reason(record),
-    )
 
 
 def _sanitize_cases(

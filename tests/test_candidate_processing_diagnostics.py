@@ -106,6 +106,8 @@ def test_explicit_skip_status_in_both_tables(kind, match, status, reason, label)
     assert public[0]["processing"][0]["comparisonForwarded"] is False
     assert public[0]["stage2"][0]["processing"]["status"] == status
     markdown = render_markdown_summary(report)
+    assert "후보별 실제 처리" not in markdown
+    assert "2차 전달: 아니오" in markdown
     assert label in markdown
     assert "파눈" in next(line for line in markdown.splitlines() if "모델 추출: C1" in line)
 
@@ -307,7 +309,7 @@ def test_public_report_rejects_new_missing_processing():
         build_public_diagnostics(report)
 
 
-def test_interrupted_cli_writes_same_safe_records_as_markdown(tmp_path, monkeypatch, capsys):
+def test_interrupted_cli_keeps_records_in_json_and_failure_reason_in_markdown(tmp_path, monkeypatch, capsys):
     from evals.multi_stage_setting import report_cli
 
     source = _character()
@@ -327,7 +329,10 @@ def test_interrupted_cli_writes_same_safe_records_as_markdown(tmp_path, monkeypa
     public = json.loads((tmp_path / "diagnostics.json").read_text())
     assert public["scenarios"][0]["processing"][0]["status"] == "COMPARISON_FAILED"
     rendered = markdown.read_text()
-    assert "비교 실행 실패" in rendered and "미채점" in rendered
+    assert "CHARACTER_STAGE2" in rendered and "LLM_NETWORK_ERROR" in rendered
+    assert "ConnectError" in rendered and "점수는 채점하지 않았습니다" in rendered
+    assert "후보별 실제 처리" not in rendered
+    assert "공개 요약 크기 제한" not in rendered
     assert "SECRET" not in rendered and "SECRET" not in json.dumps(public)
     assert "1차 추출 집계" not in rendered
     capsys.readouterr()
