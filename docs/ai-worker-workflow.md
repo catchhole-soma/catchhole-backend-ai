@@ -209,8 +209,8 @@ batch 비교 경로다. 기존 root 설정은 새 source 후보로 복제하거�
 
 ```mermaid
 flowchart TD
-    A["기존 확정본<br/>바바리안 › 생명력"] --> B["새 회차 1차 후보<br/>바바리안 › 근력 기댓값"]
-    B --> C["canonical 주체 해소<br/>기존 바바리안 target ID 고정"]
+    A["기존 확정본<br/>황동 길드 › 연락 수단"] --> B["새 회차 1차 후보<br/>황동 길드 › 의사 결정 방식"]
+    B --> C["canonical 주체 해소<br/>기존 황동 길드 target ID 고정"]
     C --> D["batch context 조회<br/>target properties + version"]
     D --> E["2차 LLM batch 비교<br/>독립 SINGLE ADD 유지"]
     E --> F{"raw와 다른<br/>새 scope 제안?"}
@@ -227,8 +227,8 @@ flowchart TD
     M --> N["후보 COMPLETED<br/>사용자 확정 전 WorldSetting은 변경하지 않음"]
 ```
 
-예를 들어 기존 root `생명력`과 새 `근력 기댓값`을 `신체 능력` 아래에 정리할 때 Worker는 새 후보의
-`sourceCandidateRefs`만 유지하고 `existingRootPropertyNamesToMove=["생명력"]`를 보낸다. AI는 이동할 기존값을
+예를 들어 기존 root `연락 수단`과 새 `의사 결정 방식`을 `조직 운영` 아래에 정리할 때 Worker는 새 후보의
+`sourceCandidateRefs`만 유지하고 `existingRootPropertyNamesToMove=["연락 수단"]`를 보낸다. AI는 이동할 기존값을
 완료 payload에 복사하지 않으며, Backend가 최신 확정본에서 실제 값을 읽어 snapshot을 만든다. context가 stale이면
 이동 계획 일부만 재사용하지 않고 최신 properties로 batch 전체 비교를 다시 수행한다.
 
