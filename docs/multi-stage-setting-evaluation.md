@@ -790,3 +790,24 @@ provider의 HTTP/인증 장애는 개별 후보 오답으로 삼키지 않고 �
 일반 `ORACLE`은 private 원문을 다운로드하지 않습니다. 다만 선택 fixture에 본문으로 포함되지
 않은 `SEED` before state가 있으면 Gold를 확인한 뒤 private 입력을 내려받아 `states/`를 runtime과
 scorer에 전달합니다. `FIXED`와 `ROLLING`은 항상 private 입력을 내려받습니다.
+
+### 후보 생성 전 API 중단 진단
+
+`LLM_PROVIDER_ERROR`는 HTTP 오류와 HTTP 200 미완료 응답을 포함하는 분류이므로 이 코드만으로
+요청 오류·인증·호출 제한·서버 오류를 구분할 수 없습니다. 새 실행은 회차 단위
+`executionFailure`를 보존하며, 해당 회차의 후보가 0개여도 Actions 로그와 `summary.md`,
+`diagnostics.json`에 중단 원인을 표시합니다.
+
+- 실패 회차·처리 단계·실제 요청 모델·호출 용도(추출/주체 해소/비교).
+- HTTP 상태와 제공자 오류 코드·유형, 문제 매개변수, `x-request-id`.
+- HTTP 200 미완료 응답은 response status와 incomplete reason도 보존합니다.
+- 네트워크 오류처럼 응답이 없으면 HTTP 상태와 요청 ID를 만들어내지 않습니다.
+
+`provider_diagnostics.py`의 허용 목록과 형식 검사를 수집 및 공개 경계에서 모두 적용합니다.
+자유 형식 error.message, 원고, 요청/응답 본문, 인증 헤더는 포함하지 않습니다. 허용 목록에
+없는 오류 코드·매개변수는 `UNRECOGNIZED`이며, 잘못된 모델·요청 ID는 제외합니다.
+후보별 processing 기록과 점수는 이 회차 단위 진단 때문에 바꾸지 않습니다.
+
+과거 실행에서 버린 provider 상세는 복원할 수 없습니다. 이 변경을 테스트하려면
+`feat/candidate-processing-diagnostics`의 새 커밋으로 **Run workflow**를 실행합니다.
+기존 실행의 **Re-run jobs**는 그 실행의 이전 커밋을 다시 사용하므로 새 진단 코드가 적용되지 않습니다.
