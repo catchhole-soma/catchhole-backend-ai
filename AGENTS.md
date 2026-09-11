@@ -84,6 +84,7 @@
 
 ## LLM Runtime
 
+- 다단계 평가의 새 예측은 `processingVersion=1`로 표시하고 후처리 최종 후보마다 처리 기록을 정확히 하나 남긴다. 답지 대응과 실행 상태를 분리하며 누락·중복·decision 모순은 검증 오류로 처리한다. `diagnostics.json`과 Markdown은 같은 허용 필드만 사용하고, 구형 기록에서 확인할 수 없는 사유는 재실행 필요로 표시한다.
 - 다단계 평가의 2차 상세에는 1차 과추출 후보도 실제 처리 결과 또는 결과 기록 없음으로 표시한다. 답지가 없는 진단 행을 Gold 기준 정확도에 넣지 않으며, 세계관 batch가 여러 후보를 한 decision으로 처리하면 전체 source 연결을 예측에 보존해 각 후보의 처리 결과를 추적한다.
 - 다단계 평가에서 인물 연결 전 2차 비교를 요구하지 않는 캐릭터 `EXTRACT / SETTING` Gold는 `stage2Policy=WAIT_FOR_CHARACTER_MATCH`로 명시하고 연결된 2차 Gold를 두지 않는다. 1차 추출은 계속 채점하며 정상 대기를 추출 실패로 세지 않는다. 정책은 해당 회차의 Gold 행에만 적용하고 canonical 인물 ID와 이후 회차의 이름 해소·매칭은 유지한다.
 - 회차 종료 후 사용자 캐릭터 등록은 Scenario의 선택적 `registeredCharactersAfterEpisode`로 표현한다. 원문에 없는 이름을 CHARACTER_DISCOVERY Gold로 만들거나 `1차 제공 컨텍스트` 미리보기만 고쳐 입력을 바꾸지 않는다. 명시한 인물 ID·이름을 Gold·예측의 회차 종료 상태에 함께 반영하고 등록 자체는 모델 성과로 채점하지 않는다.

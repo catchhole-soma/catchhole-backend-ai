@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from decimal import Decimal
-from enum import StrEnum
 import hashlib
 import json
+from decimal import Decimal
+from enum import StrEnum
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from app.domain.enums import (
+    AnalysisFailureCode,
     CharacterFactComparisonOperation,
     CharacterFactTemporalScope,
     SettingValueType,
@@ -18,6 +19,8 @@ from app.domain.enums import (
 )
 from app.mappers.world_setting_candidate_mapper import (
     normalize_world_setting_name,
+)
+from app.mappers.world_setting_candidate_mapper import (
     world_setting_path_key as production_world_setting_path_key,
 )
 from evals.multi_stage_setting import SCHEMA_VERSION
@@ -107,6 +110,7 @@ class StateApplicationPolicy(StrEnum):
 class ScenarioPipelineStatus(StrEnum):
     COMPLETED = "COMPLETED"
     PIPELINE_FAILED = "PIPELINE_FAILED"
+    EXECUTION_ABORTED = "EXECUTION_ABORTED"
 
 
 class UpstreamOutcome(StrEnum):
@@ -389,9 +393,13 @@ class ScenarioGold(StrictModel):
         )
         for character in self.registered_characters_after_episode:
             if not character.entity_ref.strip() or not character.name.strip():
-                raise ValueError("registeredCharactersAfterEpisode refs and names must not be blank.")
+                raise ValueError(
+                    "registeredCharactersAfterEpisode refs and names must not be blank."
+                )
             if not character.active:
-                raise ValueError("registeredCharactersAfterEpisode only supports active registration.")
+                raise ValueError(
+                    "registeredCharactersAfterEpisode only supports active registration."
+                )
         return self
 
 
@@ -447,12 +455,9 @@ class CharacterStage1Gold(Stage1Common):
     def validate_character_candidate(self) -> CharacterStage1Gold:
         self.validate_extract_fields()
         if self.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH and (
-            self.decision != GoldDecision.EXTRACT
-            or self.candidate_kind != CandidateKind.SETTING
+            self.decision != GoldDecision.EXTRACT or self.candidate_kind != CandidateKind.SETTING
         ):
-            raise ValueError(
-                "WAIT_FOR_CHARACTER_MATCH requires an EXTRACT Character SETTING row."
-            )
+            raise ValueError("WAIT_FOR_CHARACTER_MATCH requires an EXTRACT Character SETTING row.")
         setting_fields = (
             self.fact_type,
             self.fact_key,
@@ -1133,10 +1138,92 @@ class RuntimeFailure(StrictModel):
     message: str = Field(min_length=1, max_length=500)
 
 
+class CandidateProcessingStatus(StrEnum):
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    WAITING_FOR_CHARACTER = "WAITING_FOR_CHARACTER"
+    AMBIGUOUS_CHARACTER = "AMBIGUOUS_CHARACTER"
+    COMPARED = "COMPARED"
+    PREPARATION_FAILED = "PREPARATION_FAILED"
+    COMPARISON_FAILED = "COMPARISON_FAILED"
+    EXECUTION_ABORTED = "EXECUTION_ABORTED"
+
+
+class CandidateProcessingReason(StrEnum):
+    CHARACTER_DISCOVERY = "CHARACTER_DISCOVERY"
+    CHARACTER_UNRESOLVED = "CHARACTER_UNRESOLVED"
+    CHARACTER_AMBIGUOUS = "CHARACTER_AMBIGUOUS"
+    DECISION_RECORDED = "DECISION_RECORDED"
+    INPUT_PREPARATION_FAILED = "INPUT_PREPARATION_FAILED"
+    COMPARISON_FAILED = "COMPARISON_FAILED"
+    EXECUTION_INTERRUPTED = "EXECUTION_INTERRUPTED"
+
+
+ProcessingStage = Literal[
+    "CHARACTER_STAGE1",
+    "WORLD_STAGE1",
+    "CHARACTER_HANDOFF",
+    "WORLD_HANDOFF",
+    "CHARACTER_PREPARATION",
+    "WORLD_PREPARATION",
+    "CHARACTER_STAGE2",
+    "WORLD_STAGE2",
+]
+
+
+class CandidateProcessingRecord(StrictModel):
+    candidate_id: str = Field(min_length=1)
+    domain: EvaluationDomain
+    comparison_forwarded: bool
+    status: CandidateProcessingStatus
+    reason_code: CandidateProcessingReason
+    stage: ProcessingStage
+    # Only production's closed error vocabulary is allowed; never exception text.
+    failure_code: AnalysisFailureCode | None = None
+    decision_source_candidate_id: str | None = None
+    operation: CharacterFactComparisonOperation | WorldSettingOperation | None = None
+
+    @model_validator(mode="after")
+    def validate_processing_outcome(self) -> CandidateProcessingRecord:
+        reason_by_status = dict(
+            zip(CandidateProcessingStatus, CandidateProcessingReason, strict=True)
+        )
+        if self.reason_code != reason_by_status[self.status]:
+            raise ValueError("Processing status and reason disagree.")
+        completed = self.status == CandidateProcessingStatus.COMPARED
+        if completed != (
+            self.decision_source_candidate_id is not None and self.operation is not None
+        ):
+            raise ValueError("Only completed processing requires a decision and operation.")
+        if not completed and (
+            self.decision_source_candidate_id is not None or self.operation is not None
+        ):
+            raise ValueError("Uncompared processing must not reference a decision.")
+        forwarded = self.status in {
+            CandidateProcessingStatus.COMPARED,
+            CandidateProcessingStatus.COMPARISON_FAILED,
+        }
+        if self.comparison_forwarded != forwarded:
+            raise ValueError("Processing status and comparison forwarding disagree.")
+        failed = self.status in {
+            CandidateProcessingStatus.PREPARATION_FAILED,
+            CandidateProcessingStatus.COMPARISON_FAILED,
+            CandidateProcessingStatus.EXECUTION_ABORTED,
+        }
+        if failed != (self.failure_code is not None):
+            raise ValueError("Failed or interrupted processing requires a safe failure code.")
+        return self
+
+
 class ScenarioPrediction(StrictModel):
     scenario_id: str = Field(min_length=1)
+    processing_version: Literal[1] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    processing: list[CandidateProcessingRecord] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
     pipeline_status: ScenarioPipelineStatus = ScenarioPipelineStatus.COMPLETED
-    failed_stage: Literal["CHARACTER_STAGE1", "WORLD_STAGE1"] | None = None
+    failed_stage: ProcessingStage | None = None
     raw_stage1: list[Stage1Prediction] = Field(default_factory=list)
     stage1: list[Stage1Prediction] = Field(default_factory=list)
     stage2: list[Stage2Prediction] = Field(default_factory=list)
@@ -1181,9 +1268,67 @@ class ScenarioPrediction(StrictModel):
                 raise ValueError(
                     "WORLD_STAGE1 failure must not include World handoff or Stage2 outputs."
                 )
+        elif self.pipeline_status == ScenarioPipelineStatus.EXECUTION_ABORTED:
+            if self.failed_stage is None:
+                raise ValueError("Aborted scenario requires failedStage.")
         elif self.failed_stage is not None:
             raise ValueError("COMPLETED scenario must not declare failedStage.")
+        self.validate_processing_coverage()
         return self
+
+    def validate_processing_coverage(self) -> None:
+        if self.processing_version is None:
+            if self.processing:
+                raise ValueError("Processing records require processingVersion.")
+            return  # Legacy snapshots explicitly lack the new contract.
+        candidates = {item.candidate_id: item for item in self.stage1}
+        _require_unique([item.candidate_id for item in self.stage1], "processing candidate IDs")
+        _require_unique([item.candidate_id for item in self.processing], "processing records")
+        if set(candidates) != {item.candidate_id for item in self.processing}:
+            raise ValueError("Processing records must cover every handoff candidate exactly once.")
+        decisions = {}
+        for decision in self.stage2:
+            for source_id in stage2_source_candidate_ids(decision):
+                if source_id in decisions or source_id not in candidates:
+                    raise ValueError("Processing decision has duplicate or unknown source.")
+                decisions[source_id] = decision
+        for record in self.processing:
+            source = candidates[record.candidate_id]
+            if source.domain != record.domain:
+                raise ValueError("Processing record domain differs from its candidate.")
+            decision = decisions.get(record.candidate_id)
+            if (decision is not None) != (record.status == CandidateProcessingStatus.COMPARED):
+                raise ValueError("Processing record contradicts comparison result.")
+            if decision is not None and (
+                record.operation != decision.operation
+                or record.decision_source_candidate_id != decision.source_candidate_id
+                or record.domain != decision.domain
+            ):
+                raise ValueError("Processing record references a different decision.")
+            if source.candidate_kind == CandidateKind.CHARACTER_DISCOVERY:
+                if record.status not in {
+                    CandidateProcessingStatus.NOT_APPLICABLE,
+                    CandidateProcessingStatus.EXECUTION_ABORTED,
+                }:
+                    raise ValueError("Discovery cannot be compared as a setting.")
+            elif record.status == CandidateProcessingStatus.NOT_APPLICABLE:
+                raise ValueError("Only discovery is outside setting comparison.")
+            if record.status in {
+                CandidateProcessingStatus.WAITING_FOR_CHARACTER,
+                CandidateProcessingStatus.AMBIGUOUS_CHARACTER,
+            }:
+                if not isinstance(source, CharacterStage1Prediction):
+                    raise ValueError("Only character candidates can wait for character matching.")
+                if (
+                    record.status == CandidateProcessingStatus.AMBIGUOUS_CHARACTER
+                    and source.match_status != "AMBIGUOUS"
+                ):
+                    raise ValueError("Ambiguous processing requires ambiguous character matching.")
+                if (
+                    record.status == CandidateProcessingStatus.WAITING_FOR_CHARACTER
+                    and source.match_status not in {None, "UNRESOLVED"}
+                ):
+                    raise ValueError("Waiting processing contradicts character matching.")
 
 
 class PredictionBundleV3(StrictModel):

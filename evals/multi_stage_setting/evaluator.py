@@ -59,6 +59,7 @@ from evals.multi_stage_setting.matching import (
     world_setting_context_matches,
     world_setting_name_pairs,
 )
+from evals.multi_stage_setting.processing import processing_outcomes
 from evals.multi_stage_setting.semantic_outcome import (
     CharacterSettingContext,
     SemanticOutcomeCase,
@@ -2860,6 +2861,36 @@ def _scenario_details(
                 ],
             }
         )
+        detail = details[-1]
+        scenario_prediction = prediction_by_scenario.get(scenario.scenario_id)
+        if scenario_prediction is not None:
+            outcomes = processing_outcomes(scenario_prediction)
+            source_by_id = {source.candidate_id: source for source in scenario_prediction.stage1}
+            gold_ids_by_candidate = {}
+            for domain_detail in domain_stage1.values():
+                for row in domain_detail["cases"]:
+                    candidate_id = row.get("predictionId")
+                    gold_ids_by_candidate[candidate_id] = row.get("goldIds", [])
+                    if candidate_id in outcomes:
+                        row["processing"] = outcomes[candidate_id]
+            detail["processingVersion"] = scenario_prediction.processing_version
+            detail["processing"] = [
+                {
+                    **outcomes[source.candidate_id],
+                    "goldIds": gold_ids_by_candidate.get(source.candidate_id, []),
+                    "source": {
+                        key: value
+                        for key, value in _stage1_diagnostic_summary(source).items()
+                        if key != "value"
+                    },
+                }
+                for source in scenario_prediction.stage1
+            ]
+            for row in detail["stage2"]:
+                candidate_id = row.get("sourceCandidateId")
+                if candidate_id in outcomes:
+                    row["processing"] = outcomes[candidate_id]
+                    row["source"] = _stage1_diagnostic_summary(source_by_id[candidate_id])
     return details
 
 
@@ -3123,7 +3154,8 @@ def _stage2_diagnostic_fields(
         "sourceGoldIds": list(case.gold.source_gold_ids),
         "sourceCandidateId": (
             case.diagnostic_source_candidate_id or prediction.source_candidate_id
-            if prediction else None
+            if prediction
+            else None
         ),
         "expected": expected,
         "actual": actual,
@@ -3443,7 +3475,8 @@ def _extra_suppression_counts(
             continue
         decision = next(
             (
-                item for item in scenario.stage2
+                item
+                for item in scenario.stage2
                 if item.domain == domain and candidate_id in stage2_source_candidate_ids(item)
             ),
             None,
