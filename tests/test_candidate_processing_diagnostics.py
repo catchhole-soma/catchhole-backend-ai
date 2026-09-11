@@ -350,3 +350,38 @@ def test_gold_matched_candidate_without_decision_keeps_subject_and_reason():
     assert row["source"]["path"]
     assert row["processing"]["status"] == "PREPARATION_FAILED"
     assert "비교 준비 실패" in render_markdown_summary(report)
+
+
+def test_oracle_merged_gold_sources_each_receive_the_runtime_decision():
+    from tests.test_multi_stage_setting_runtime_adapter import _BatchCapturingWorldComparator
+
+    gold = _world_gold()
+    gold.stage1.append(gold.stage1[0].model_copy(update={"gold_id": "W2", "sort_order": 2}))
+    gold.stage2[0] = gold.stage2[0].model_copy(update={"source_gold_ids": ["W1", "W2"]})
+    gold = gold.with_fixture_hash()
+    bundle = asyncio.run(
+        run_multi_stage_predictions(
+            gold,
+            mode="ORACLE",
+            domains={"WORLD"},
+            components=RuntimeComponents(
+                character_comparator=_AddCharacterComparator(),
+                world_comparator=_BatchCapturingWorldComparator(),
+            ),
+        )
+    )
+    scenario = bundle.scenarios[0]
+    assert scenario.stage2[0].source_candidate_ids == ["W1", "W2"]
+    assert {row.candidate_id for row in scenario.processing} == {"W1", "W2"}
+    assert all(
+        row.status == "COMPARED" and row.decision_source_candidate_id == "W1"
+        for row in scenario.processing
+    )
+    ScenarioPrediction.model_validate_json(scenario.model_dump_json())
+
+
+def test_aggregate_only_legacy_report_explicitly_requires_rerun():
+    gold = _empty_gold("CHARACTER")
+    report = asyncio.run(evaluate_multi_stage(gold, _bundle(gold, [_character()], [])))
+    aggregate = build_source_free_summary(report)
+    assert "후보별 처리 기록이 없어" in render_markdown_summary(aggregate)

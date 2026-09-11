@@ -380,6 +380,17 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
     _append_stage2_summary(lines, stages)
 
     _append_end_to_end(lines, summary)
+    if not diagnostics and any(
+        _int_or_zero(stages[domain]["stage1"].get("counts", {}).get("predictions")) > 0
+        for domain in _DOMAINS
+    ):
+        lines.extend(
+            [
+                "",
+                "> 기존 집계 산출물에는 후보별 처리 기록이 없어 사유 확인을 위해 재실행이 필요합니다.",
+                "",
+            ]
+        )
     _append_diagnostics(lines, diagnostics)
     lines.extend(
         [
