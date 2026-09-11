@@ -24,6 +24,8 @@ class OpenAIResponsesClient:
         responses_api_url: str,  # OpenAI Responses API 주소
         reasoning_effort: str | None = None,  # GPT-5.6 추론 강도
         http_client: httpx.AsyncClient | None = None,  # 실제 HTTP 요청 도구
+        *,
+        store_responses: bool = False,
     ) -> None:
         self.api_key = api_key
         # 기본 모델명, 호출할 때 model을 따로 넘기면 그 값이 우선
@@ -31,18 +33,25 @@ class OpenAIResponsesClient:
         # 기본값은 https://api.openai.com/v1/responses, 테스트에서는 fake URL을 넣을 수 있음
         self.responses_api_url = responses_api_url
         self.reasoning_effort = reasoning_effort
+        self.store_responses = store_responses
         # 실제 HTTP 요청을 보내는 도구, 테스트에서는 MockTransport가 들어간 client를 주입
-        self.http_client = http_client or httpx.AsyncClient(timeout=120)
+        # 긴 생성 응답을 기다리는 read만 5분으로 늘리고 연결/전송/풀 제한은 유지한다.
+        self.http_client = http_client or httpx.AsyncClient(
+            timeout=httpx.Timeout(120, read=300),
+        )
 
     # .env에서 읽은 설정값으로 client를 만드는 생성 보조 함수
     @classmethod
-    def from_settings(cls, settings: Settings | None = None) -> "OpenAIResponsesClient":
+    def from_settings(
+        cls, settings: Settings | None = None, *, store_responses: bool = False,
+    ) -> "OpenAIResponsesClient":
         settings = settings or get_settings()
         return cls(
             api_key=settings.llm_api_key,
             model=settings.llm_model,
             responses_api_url=settings.openai_responses_api_url,
             reasoning_effort=settings.llm_reasoning_effort,
+            store_responses=store_responses,
         )
 
     async def create_text_response(
@@ -63,8 +72,8 @@ class OpenAIResponsesClient:
         request_body = {
             # 호출별 model이 있으면 그걸 쓰고, 없으면 Settings의 기본 모델을 쓴다.
             "model": effective_model,
-            # 웹소설 원문과 분석 결과가 provider 측에 저장되지 않도록 호출마다 강제한다.
-            "store": False,
+            # 기본은 비저장. 사용자 승인 평가 진단에서만 명시적으로 활성화한다.
+            "store": self.store_responses,
             "input": [
                 {
                     "role": "system",
@@ -158,6 +167,7 @@ class OpenAIResponsesClient:
                 )
             raise LlmIncompleteResponseError(
                 "OpenAI response did not reach completed status.",
+                response=response,
                 incomplete_reason=(
                     incomplete_reason if isinstance(incomplete_reason, str) else None
                 ),

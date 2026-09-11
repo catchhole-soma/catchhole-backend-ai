@@ -259,6 +259,35 @@ prediction 입력에서 mode와 이 정책을 반대로 명시하면 실제 상�
 상태를 받습니다. `ORACLE`은 Gold 1차 후보를 직접 사용하므로 extractor를 호출하지 않고,
 이 STATUS들은 comparator의 persisted `P*` 문맥으로만 들어갑니다.
 
+### 신규 인물도 실행하는 품질 평가
+
+`FIXED`와 `ROLLING`은 등록된 캐릭터 ID가 없어도 주체 해소 결과가 구체적인 신규 이름이면
+2차 비교를 실행합니다. 운영의 사용자 등록 대기를 재현하는 대신, 실제로 추출한 설정을
+비교 모델이 얼마나 정확하게 처리하는지 평가하기 위한 경계입니다.
+
+1. 운영과 같은 주체 해소·스키마 정규화·중복 제거를 거친 실제 1차 후보를 사용합니다.
+2. 기존 인물은 회차 시작 상태의 ID와 설정을 사용합니다. 신규 이름은 모델 출력만으로
+   `prediction-character:<정규화한 이름>`을 부여하고 빈 snapshot으로 시작합니다.
+3. 발견 후보와 같은 이름의 설정 후보는 같은 식별자를 사용하지만, 발견 후보 자체는
+   2차 대상이 아닙니다. 발견 후보가 없더라도 구체 이름을 가진 설정은 2차로 전달합니다.
+4. 과추출과 잘못된 값도 실제 입력 그대로 전달합니다. 해당 회차 Gold나 1차 채점 결과는
+   실행 여부를 결정하거나 누락 내용을 보충하는 데 사용하지 않습니다.
+5. 1차 인물·설정·값과 실제 2차 판단을 채점합니다. 임시 식별자의 문자열 차이를 인물 오답으로
+   세지 않고 정규화한 이름으로 대응합니다. 기존 인물의 잘못된 연결은 계속 오답입니다.
+
+신규 설정을 비교 전에 기존 snapshot에 넣지 않습니다. 같은 batch 안에서 앞선 2차 판단이 만든
+projection만 다음 후보의 문맥으로 사용할 수 있습니다. 다음 회차의 시작 상태는 기존처럼
+FIXED는 Gold, ROLLING은 실제 예측 누적 상태를 사용합니다. 채점과 상태 집계에서는 확인된
+인물 대응에 따라 target/removal 참조의 인물 부분만 맞추며, 설정 경로·값·다른 인물 참조나
+원시 예측을 수정하지 않습니다.
+
+신규 설정의 handoff `matchStatus=EVALUATION_NEW_CHARACTER`는 평가용 연결을 뜻하며 정답
+판정이 아닙니다. 비교가 끝난 설정은 기존 처리 기록에 `COMPARED`와
+`comparisonForwarded=true`로 남습니다. 구체 이름을 얻지 못했거나 여러 기존 인물과 충돌하면
+`CHARACTER_HANDOFF / AMBIGUOUS_CHARACTER`를 후보 ID와 함께 남깁니다. 비교 필수 필드가
+없으면 `CHARACTER_PREPARATION / PREPARATION_FAILED`, 스키마 정규화 오류는 기존처럼
+1차 실패로 기록합니다. 이 경우 비교 LLM을 호출하지 않으며 과거 실행의 대기 기록은 보존합니다.
+
 캐릭터 2차 비교는 한 회차(scenario) 안의 동일 캐릭터·FactType 후보를
 원문 순서로 묶습니다.
 실제 추출에서는 LLM 배열 순서보다 검증된 evidence startOffset을 우선하고,
@@ -291,8 +320,11 @@ transition recall에서 오답으로 반영됩니다. 이 구조로 “추출기
 
 ### 인물 연결을 기다리는 1차 정답
 
-원문에서 설정을 추출했더라도 어느 캐릭터에게 연결할지 확정되지 않으면 운영 pipeline은
-2차 LLM을 호출하지 않습니다. 이 동작을 기대하는 캐릭터 `EXTRACT / SETTING` 정답에는
+구체 이름이 있는 신규 인물은 등록 ID가 없다는 이유로 대기 정답으로 바꾸지 않습니다.
+위의 평가용 연결로 같은 회차에서 2차 비교하므로 기본 `REQUIRED`와 연결된 2차 정답을 유지합니다.
+
+주체 해소 뒤에도 미상·지칭어·동명이인 충돌 등으로 어느 인물인지 정할 수 없어
+비교를 기대하지 않는 캐릭터 `EXTRACT / SETTING` 정답에는
 `stage2Policy=WAIT_FOR_CHARACTER_MATCH`를 명시합니다. Notion의 선택형 **2차 처리 기준**
 컬럼에 같은 값을 기록하며, 이 행에 연결된 2차 정답은 두지 않습니다.
 
@@ -454,6 +486,42 @@ ID를 표시하므로 답지와 연결된 후보와 과추출 후보를 각각 �
 대표 후보를 기준으로 한 번만 수행합니다. 목록이 없는 기존 예측은 단일 source 연결로 읽으며,
 기록되지 않은 통합 관계를 이름·값으로 추정하지 않습니다.
 모델의 자유 형식 비교 이유는 공개하지 않고 기존 허용 필드와 고정 안내 문구만 사용합니다.
+
+### 후보별 실제 처리 기록
+
+목표는 보고서만으로 각 최종 후보의 2차 전달 여부, 실제 판단, 미전달 사유를 확인하는 것입니다.
+`FIXED`, `ROLLING`, `ORACLE`의 새 prediction은 `processingVersion=1`과 `processing`을 기록합니다.
+원시 추출 중 후처리를 통과한 `stage1` 후보마다 정확히 하나의 최종 기록이 필요합니다.
+후보 ID·도메인·전달 여부·상태·사유 코드·단계를 보존하고, 완료 시 decision의 대표 source ID와
+operation을 연결합니다. 세계관 묶음 비교는 포함된 모든 source에 같은 판단을 연결합니다.
+
+| 상태 | 표시와 의미 |
+| --- | --- |
+| `NOT_APPLICABLE` | 비교 대상 아님 — 인물 발견 후보 |
+| `WAITING_FOR_CHARACTER` | 인물 연결 대기 — 기존 캐릭터와 미연결 |
+| `AMBIGUOUS_CHARACTER` | 인물 선택 필요 — 복수 인물 매칭 |
+| `COMPARED` | 비교 완료 — ADD·UPDATE·EXCLUDE 등 실제 판단 |
+| `PREPARATION_FAILED` | 비교 준비 실패 — 전달 전 실패 단계와 안전한 오류 코드 |
+| `COMPARISON_FAILED` | 비교 실행 실패 — 전달 후 실패 단계와 안전한 오류 코드 |
+| `EXECUTION_ABORTED` | 실행 중단 — 해당 후보를 처리하기 전 중단된 단계와 안전한 오류 코드 |
+
+`EXCLUDE`도 비교 완료입니다. 런타임이 각 분기에서 상태를 기록하고 보고서는 결과 부재로
+사유를 추측하지 않습니다. 누락·중복·알 수 없는 후보·판단 결과와의 모순은 검증 실패입니다.
+기존 prediction은 저장된 decision, discovery kind, 명시된 matchStatus만 복원합니다.
+구형 report만 있는 경우는 저장된 decision과 discovery만 확인하며, 나머지는
+`RECORD_UNAVAILABLE`(처리 기록 부족 — 재실행 필요)로 표시합니다. Gold의 대기 정책을
+실제 실행 사유로 대입하지 않습니다. 집계만 있는 `score.json`으로 개별 사유를 복원할 수 없습니다.
+
+`summary.md`는 각 답지 항목의 처리·사유 칸에 전달 여부와 사유를 표시하며,
+같은 후보를 나열하는 별도의 실제 처리 표는 표시하지 않습니다. `diagnostics.json`은 전체
+처리 기록을 행 제한 없이 보존합니다. 실행이 중단되어 답지별 채점 결과가 없는 경우에도
+요약에는 실패 단계와 원인 진단을 남깁니다. 이 진단은 채점 점수·분모·상태 적용을 변경하지 않습니다.
+원문·근거·비밀값·raw 응답·예외 원문은 공개하지 않고 실패는 닫힌 `AnalysisFailureCode`만 씁니다.
+
+네트워크·할당량·응답 중단으로 실행기가 중단되면 기존 완료 결과와 진행 중/미처리 후보의
+기록을 private prediction으로 남기고 실패 종료합니다. CI는 `report.json`이 없으면
+`report_cli --predictions ... --markdown-output ...`으로 미채점 진단을 생성합니다.
+이 산출물은 정상 점수 보고서가 아니며 workflow 실패 상태를 성공으로 바꾸지 않습니다.
 
 세계관 진단의 선택 필드 `settingNameMatch`는 제안 설정명, 2차의 `matchedPropertyNameMatch`는
 비교한 기존 속성명의 `status`와 `method`를 기록합니다. 두 이름을 별도로 판정하며,
@@ -714,12 +782,63 @@ provider의 HTTP/인증 장애는 개별 후보 오답으로 삼키지 않고 �
 검증하고, 타입이 다르면 수정 지시와 함께 재시도합니다. 재시도 후에도 잘못된 후보는
 `COMPARISON_VALIDATION_FAILED`로 기록하며 정상 후보의 결과와 보고서 생성은 계속합니다.
 숫자·배열·객체를 임의로 문자열로 변환해 통과시키지 않습니다. 업로드 artifact에는
-`summary.md`와 집계 전용 `score.json`만 포함합니다. `summary.md`에는 허용 목록으로 정제한
+`summary.md`, 집계 전용 `score.json`, 항목별 `diagnostics.json`을 포함합니다. `summary.md`에는 허용 목록으로 정제한
 주체·경로·표시값 기반 항목 진단과 `runtimeFailures` 집계가 포함되지만 `score.json`은 자동 비교용
 집계 지표만 유지합니다.
-두 파일 모두 원문 본문·근거 quote/offset·raw LLM 응답·Gold/prediction 원본·상세 report·구조화
+세 파일 모두 원문 본문·근거 quote/offset·raw LLM 응답·Gold/prediction 원본·상세 report·구조화
 `valueJson`을 포함하지 않습니다.
 
 일반 `ORACLE`은 private 원문을 다운로드하지 않습니다. 다만 선택 fixture에 본문으로 포함되지
 않은 `SEED` before state가 있으면 Gold를 확인한 뒤 private 입력을 내려받아 `states/`를 runtime과
 scorer에 전달합니다. `FIXED`와 `ROLLING`은 항상 private 입력을 내려받습니다.
+
+### 후보 생성 전 API 중단 진단
+
+`LLM_PROVIDER_ERROR`는 HTTP 오류와 HTTP 200 미완료 응답을 포함하는 분류이므로 이 코드만으로
+요청 오류·인증·호출 제한·서버 오류를 구분할 수 없습니다. 새 실행은 회차 단위
+`executionFailure`를 보존하며, 해당 회차의 후보가 0개여도 Actions 로그와 `summary.md`,
+`diagnostics.json`에 중단 원인을 표시합니다.
+
+- 실패 회차·처리 단계·실제 요청 모델·호출 용도(추출/주체 해소/비교).
+- HTTP 상태와 제공자 오류 코드·유형, 문제 매개변수, `x-request-id`.
+- HTTP 200 미완료 응답은 response status와 incomplete reason도 보존합니다.
+- 네트워크 오류처럼 응답이 없으면 HTTP 상태와 요청 ID를 만들어내지 않습니다.
+- `ReadTimeout`·`ConnectTimeout`·`ConnectError` 등 실제 네트워크 예외 종류와 호출 경과 시간(ms)을 보존합니다.
+- 호출 시작/완료 로그에는 모델·용도·출력 상한·프롬프트 문자/UTF-8 바이트 수·스키마 바이트 수·입력 SHA-256을 표시합니다. 바이트 수는 토큰 수가 아니며 HTTP 헤더 등을 포함한 전송 전체 크기도 아닙니다.
+- 오류 메시지에서 과부하·요청 속도 제한·타임아웃 등 알려진 문구를 고정된 요약으로 변환합니다. 미지의 문구는 `Unrecognized provider message (withheld).`로 표시하며 원문이나 인증값이 섞인 자유 메시지를 출력하지 않습니다.
+
+`provider_diagnostics.py`의 허용 목록과 형식 검사를 수집 및 공개 경계에서 모두 적용합니다.
+자유 형식 error.message, 원고, 요청/응답 본문, 인증 헤더는 포함하지 않습니다. 허용 목록에
+없는 오류 코드·매개변수는 `UNRECOGNIZED`이며, 잘못된 모델·요청 ID는 제외합니다.
+후보별 processing 기록과 점수는 이 회차 단위 진단 때문에 바꾸지 않습니다.
+
+별도 의미 채점 API도 `purpose=SEMANTIC_JUDGE`로 같은 허용 목록의 시작·완료·실패 로그를 남깁니다.
+실패 시 Actions의 `Evaluate predictions` 단계에서 `LLM call failed`를 찾아 HTTP 상태뿐 아니라
+제공자 오류 코드·고정 원인 요약·요청 ID·경과 시간을 확인합니다. 채점 실패는 예측의
+`executionFailure`로 기록되지 않으며, 보고서 생성 전에 중단되면 최종 점수는 미확정입니다.
+이 진단 추가는 재시도·모델·출력 상한·채점 판정과 출력 절단 시 분할 정책을 변경하지 않습니다.
+
+과거 실행에서 버린 provider 상세는 복원할 수 없습니다. 이 변경을 테스트하려면
+`feat/candidate-processing-diagnostics`의 새 커밋으로 **Run workflow**를 실행합니다.
+기존 실행의 **Re-run jobs**는 그 실행의 이전 커밋을 다시 사용하므로 새 진단 코드가 적용되지 않습니다.
+
+같은 회차에서 반복 실패하면 먼저 `episodes=2`, `mode=FIXED`, `domains=CHARACTER`처럼 회차만 분리합니다.
+FIXED는 전체 Gold 체인으로 해당 회차의 시작 상태를 계산하므로 앞 회차의 API 호출은 반복할 필요가 없습니다.
+동일 모델 재현 후 추출 모델만 바꾼 대조 실행의 입력 SHA-256과 출력 상한을 비교합니다.
+입력 해시는 system/user prompt와 정렬한 응답 schema 기준이며 모델·시각·출력 상한을 포함하지 않습니다.
+이 대조는 장애 재현 실험이며 모델 품질 개선의 증거로 해석하지 않습니다.
+
+### 사용자 승인 실행의 OpenAI 저장 로그
+
+일반 평가와 운영은 `store=false`다. 사용자가 원문과 응답의 OpenAI 저장을 명시적으로 승인한
+진단 실행에만 Actions의 `store_responses=true` 또는 runtime CLI의 `--store-responses`를 지정한다.
+옵션은 실행별로 기본 false이며 환경변수나 운영 설정으로 상시 활성화하지 않는다.
+이 옵션은 예측 단계의 추출·주체 해소·비교에 적용되고 별도 semantic judge는 기본 비저장을 유지한다.
+요청 로그의 `store_responses`로 실제 적용 여부를 확인하고 성공 응답의 `response_id`로 OpenAI Logs에서 찾는다.
+503 등 응답 생성 전 실패는 저장 옵션을 켜도 개별 로그가 없을 수 있다. 저장 옵션은 오류 복구 수단이 아니며
+다른 모델/입력/출력 상한은 고정한 상태에서 진단한다. 원문과 전체 응답은 GitHub 공개 artifact에 포함하지 않는다.
+
+OpenAI 기본 client의 응답 read timeout은 300초이며 connect/write/pool은 각각 120초다.
+Actions `extraction_max_output_tokens`는 캐릭터 1차 상한만 기본 6,000 또는 진단 9,000으로 선택한다.
+절단 재시도 상한은 12,000이고 운영·주체 해소·비교·judge의 출력 상한에는 영향을 주지 않는다.
+읽기 제한과 출력 상한을 동시에 바꾼 실행은 두 조건을 모두 기록한다.

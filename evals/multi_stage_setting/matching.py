@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
+from app.analysis.character_name_resolver import normalize_character_name
 from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
 from evals.multi_stage_setting.character_semantics import (
     character_fact_key_spelling_matches,
@@ -588,10 +589,11 @@ def _character_entity_matches(
     if (
         gold.candidate_kind != CandidateKind.CHARACTER_DISCOVERY
         and prediction.entity_ref is not None
+        and not prediction.entity_ref.startswith("prediction-character:")
     ):
         return normalize_text(gold.entity_ref) == normalize_text(prediction.entity_ref)
     prediction_name = prediction.matched_character_name or prediction.entity_name
-    return normalize_text(gold.entity_name) == normalize_text(prediction_name)
+    return normalize_character_name(gold.entity_name) == normalize_character_name(prediction_name)
 
 
 def _character_fact_matches(

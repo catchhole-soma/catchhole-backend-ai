@@ -72,6 +72,8 @@ def test_waiting_character_compares_after_known_name_is_provided() -> None:
     assert comparator.names == [REVEALED_NAME]
     assert extractor.known_names == {1: (), 2: (REVEALED_NAME,)}
     assert not first.failures and not second.failures
+    assert first.processing[0].status == "AMBIGUOUS_CHARACTER"
+    assert first.processing[0].comparison_forwarded is False
 
     report = asyncio.run(evaluate_multi_stage(gold, bundle))
     assert report["scenarios"][0]["stage1"]["CHARACTER"]["cases"][0]["result"] == "FULL_MATCH"
@@ -154,7 +156,7 @@ def test_oracle_skips_waiting_row_but_still_compares_required_row_with_same_cano
 
 
 @pytest.mark.parametrize("mode", ["FIXED", "ROLLING"])
-def test_display_name_metadata_alone_does_not_invent_a_known_character_id(mode: str) -> None:
+def test_model_name_compares_without_registered_context_or_metadata_injection(mode: str) -> None:
     gold = _gold(second_has_known_context=False)
     extractor = _Extractor()
     comparator = _Comparator()
@@ -167,10 +169,14 @@ def test_display_name_metadata_alone_does_not_invent_a_known_character_id(mode: 
     assert chain["S2"].before_state.known_characters == []
     assert extractor.known_names == {1: (), 2: ()}
     assert bundle.scenarios[1].stage1[0].entity_name == REVEALED_NAME
-    assert bundle.scenarios[1].stage1[0].entity_ref is None
-    assert bundle.scenarios[1].stage1[0].match_status != "MATCHED"
-    assert all(not scenario.stage2 for scenario in bundle.scenarios)
-    assert comparator.names == []
+    assert bundle.scenarios[1].stage1[0].entity_ref == f"prediction-character:{REVEALED_NAME}"
+    assert bundle.scenarios[1].stage1[0].match_status == "EVALUATION_NEW_CHARACTER"
+    assert bundle.scenarios[0].stage2 == []
+    assert len(bundle.scenarios[1].stage2) == 1
+    assert comparator.names == [REVEALED_NAME]
+    report = asyncio.run(evaluate_multi_stage(gold, bundle))
+    assert report["stages"]["character"]["stage2"]["counts"]["reachedAndCompared"] == 1
+    assert report["stages"]["character"]["stage2"]["metrics"]["fullDecisionAccuracy"] == 1
 
 
 def _run(gold, mode, extractor, comparator):
