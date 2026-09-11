@@ -455,6 +455,41 @@ ID를 표시하므로 답지와 연결된 후보와 과추출 후보를 각각 �
 기록되지 않은 통합 관계를 이름·값으로 추정하지 않습니다.
 모델의 자유 형식 비교 이유는 공개하지 않고 기존 허용 필드와 고정 안내 문구만 사용합니다.
 
+### 후보별 실제 처리 기록
+
+목표는 보고서만으로 각 최종 후보의 2차 전달 여부, 실제 판단, 미전달 사유를 확인하는 것입니다.
+`FIXED`, `ROLLING`, `ORACLE`의 새 prediction은 `processingVersion=1`과 `processing`을 기록합니다.
+원시 추출 중 후처리를 통과한 `stage1` 후보마다 정확히 하나의 최종 기록이 필요합니다.
+후보 ID·도메인·전달 여부·상태·사유 코드·단계를 보존하고, 완료 시 decision의 대표 source ID와
+operation을 연결합니다. 세계관 묶음 비교는 포함된 모든 source에 같은 판단을 연결합니다.
+
+| 상태 | 표시와 의미 |
+| --- | --- |
+| `NOT_APPLICABLE` | 비교 대상 아님 — 인물 발견 후보 |
+| `WAITING_FOR_CHARACTER` | 인물 연결 대기 — 기존 캐릭터와 미연결 |
+| `AMBIGUOUS_CHARACTER` | 인물 선택 필요 — 복수 인물 매칭 |
+| `COMPARED` | 비교 완료 — ADD·UPDATE·EXCLUDE 등 실제 판단 |
+| `PREPARATION_FAILED` | 비교 준비 실패 — 전달 전 실패 단계와 안전한 오류 코드 |
+| `COMPARISON_FAILED` | 비교 실행 실패 — 전달 후 실패 단계와 안전한 오류 코드 |
+| `EXECUTION_ABORTED` | 실행 중단 — 해당 후보를 처리하기 전 중단된 단계와 안전한 오류 코드 |
+
+`EXCLUDE`도 비교 완료입니다. 런타임이 각 분기에서 상태를 기록하고 보고서는 결과 부재로
+사유를 추측하지 않습니다. 누락·중복·알 수 없는 후보·판단 결과와의 모순은 검증 실패입니다.
+기존 prediction은 저장된 decision, discovery kind, 명시된 matchStatus만 복원합니다.
+구형 report만 있는 경우는 저장된 decision과 discovery만 확인하며, 나머지는
+`RECORD_UNAVAILABLE`(처리 기록 부족 — 재실행 필요)로 표시합니다. Gold의 대기 정책을
+실제 실행 사유로 대입하지 않습니다. 집계만 있는 `score.json`으로 개별 사유를 복원할 수 없습니다.
+
+`summary.md`의 기존 처리·사유 칸과 별도의 후보별 실제 처리 표에 주체·항목, 답지 대응,
+전달 여부와 사유를 함께 표시합니다. `diagnostics.json`은 같은 정제 데이터를 행 제한 없이
+보존합니다. 이 진단은 채점 점수·분모·상태 적용을 변경하지 않습니다.
+원문·근거·비밀값·raw 응답·예외 원문은 공개하지 않고 실패는 닫힌 `AnalysisFailureCode`만 씁니다.
+
+네트워크·할당량·응답 중단으로 실행기가 중단되면 기존 완료 결과와 진행 중/미처리 후보의
+기록을 private prediction으로 남기고 실패 종료합니다. CI는 `report.json`이 없으면
+`report_cli --predictions ... --markdown-output ...`으로 미채점 진단을 생성합니다.
+이 산출물은 정상 점수 보고서가 아니며 workflow 실패 상태를 성공으로 바꾸지 않습니다.
+
 세계관 진단의 선택 필드 `settingNameMatch`는 제안 설정명, 2차의 `matchedPropertyNameMatch`는
 비교한 기존 속성명의 `status`와 `method`를 기록합니다. 두 이름을 별도로 판정하며,
 공개 보고서는 `status=MATCH/MISMATCH/PENDING`, `method=EXACT/ALIAS/SEMANTIC/UNRESOLVED`만
@@ -714,10 +749,10 @@ provider의 HTTP/인증 장애는 개별 후보 오답으로 삼키지 않고 �
 검증하고, 타입이 다르면 수정 지시와 함께 재시도합니다. 재시도 후에도 잘못된 후보는
 `COMPARISON_VALIDATION_FAILED`로 기록하며 정상 후보의 결과와 보고서 생성은 계속합니다.
 숫자·배열·객체를 임의로 문자열로 변환해 통과시키지 않습니다. 업로드 artifact에는
-`summary.md`와 집계 전용 `score.json`만 포함합니다. `summary.md`에는 허용 목록으로 정제한
+`summary.md`, 집계 전용 `score.json`, 항목별 `diagnostics.json`을 포함합니다. `summary.md`에는 허용 목록으로 정제한
 주체·경로·표시값 기반 항목 진단과 `runtimeFailures` 집계가 포함되지만 `score.json`은 자동 비교용
 집계 지표만 유지합니다.
-두 파일 모두 원문 본문·근거 quote/offset·raw LLM 응답·Gold/prediction 원본·상세 report·구조화
+세 파일 모두 원문 본문·근거 quote/offset·raw LLM 응답·Gold/prediction 원본·상세 report·구조화
 `valueJson`을 포함하지 않습니다.
 
 일반 `ORACLE`은 private 원문을 다운로드하지 않습니다. 다만 선택 fixture에 본문으로 포함되지
