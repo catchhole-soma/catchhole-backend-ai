@@ -77,6 +77,11 @@ on:
         description: "OpenAI 비용 발생 확인을 위해 RUN 입력"
         required: true
         type: string
+      store_responses:
+        description: "진단 전용: 예측 요청의 원문과 응답을 OpenAI에 저장(명시적 승인 시만 사용)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -106,6 +111,7 @@ jobs:
       JUDGE_MODEL: ${{ inputs.judge_model }}
       JUDGE_REASONING_EFFORT: ${{ inputs.judge_reasoning_effort }}
       CONFIRM_RUN: ${{ inputs.confirm_run }}
+      STORE_RESPONSES: ${{ inputs.store_responses }}
 
     steps:
       - name: Checkout
@@ -261,6 +267,9 @@ jobs:
             --comparison-model "$COMPARISON_MODEL"
             --output build/eval/multi-stage/private/predictions.json
           )
+          if [ "$STORE_RESPONSES" = "true" ]; then
+            runtime_args+=(--store-responses)
+          fi
           if [ "$RUN_MODE" != "ORACLE" ]; then
             runtime_args+=(--source-root build/eval/multi-stage/input/sources)
             if [[ ",$RUN_DOMAINS," == *,CHARACTER,* ]]; then
