@@ -189,6 +189,7 @@ class UsageRecordingTextGenerationClient:
             "purpose": PURPOSES.get((prompt_cache_key or "").partition(":")[0]),
         }))
         request_details["max_output_tokens"] = max_output_tokens
+        request_details["store_responses"] = getattr(self.client, "store_responses", False)
         print("LLM call started " + json.dumps(sanitize_provider_details(request_details)),
               file=sys.stderr, flush=True)
         started = time.monotonic()
@@ -215,6 +216,7 @@ class UsageRecordingTextGenerationClient:
             raise
         print("LLM call completed " + json.dumps({
             **sanitize_provider_details(request_details),
+            **sanitize_provider_details({"response_id": response.raw_response.get("id")}),
             "elapsed_ms": int((time.monotonic() - started) * 1000),
         }), file=sys.stderr, flush=True)
         self._record_usage(
@@ -283,12 +285,14 @@ def create_default_runtime_components(
     analysis_model: str | None = None,
     subject_resolution_model: str | None = None,
     comparison_model: str | None = None,
+    store_responses: bool = False,
 ) -> RuntimeComponents:
     """운영 extractor/comparator 구현으로 평가 runtime을 구성한다."""
 
     usage = RuntimeUsageCounter()
     client = UsageRecordingTextGenerationClient(
-        OpenAIResponsesClient.from_settings(),
+        (OpenAIResponsesClient.from_settings(store_responses=True)
+         if store_responses else OpenAIResponsesClient.from_settings()),
         usage,
     )
     return RuntimeComponents(

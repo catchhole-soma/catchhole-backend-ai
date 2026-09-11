@@ -69,6 +69,29 @@ def test_create_text_response_calls_openai_responses_api() -> None:
     assert response.output_token_count == 5
 
 
+def test_storage_opt_in_changes_only_store_and_does_not_affect_next_client():
+    bodies = []
+
+    async def run():
+        for store in (False, True, False):
+            requests = []
+            async with httpx.AsyncClient(transport=httpx.MockTransport(
+                lambda request, captured=requests: _response(request, captured)
+            )) as http_client:
+                kwargs = {"store_responses": True} if store else {}
+                client = OpenAIResponsesClient(
+                    api_key="test-key", model="gpt-5.6-sol",
+                    responses_api_url="https://api.openai.test/v1/responses",
+                    http_client=http_client, **kwargs,
+                )
+                await client.create_text_response("instructions", "manuscript", max_output_tokens=6000)
+                bodies.append(json.loads(requests[0].content))
+
+    asyncio.run(run())
+    assert [body.pop("store") for body in bodies] == [False, True, False]
+    assert bodies[0] == bodies[1] == bodies[2]
+
+
 def test_create_text_response_sends_cache_key_and_logs_cache_usage(caplog) -> None:
     requests: list[httpx.Request] = []
 

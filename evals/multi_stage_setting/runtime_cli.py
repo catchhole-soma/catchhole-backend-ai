@@ -42,6 +42,7 @@ def main() -> None:
                     analysis_model=args.analysis_model,
                     subject_resolution_model=args.subject_resolution_model,
                     comparison_model=args.comparison_model,
+                    store_responses=args.store_responses,
                 ),
                 character_schema_hints=schema_hints,
                 max_chunks=args.max_chunks,
@@ -100,6 +101,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--analysis-model", default=None)
     parser.add_argument("--subject-resolution-model", default=None)
     parser.add_argument("--comparison-model", default=None)
+    parser.add_argument(
+        "--store-responses", action="store_true",
+        help="Explicit diagnostic opt-in: store prediction prompts and responses at OpenAI.",
+    )
     parser.add_argument("--max-chunks", type=int, default=None)
     parser.add_argument("--input-usd-per-million", type=Decimal, default=None)
     parser.add_argument("--cached-input-usd-per-million", type=Decimal, default=None)

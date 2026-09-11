@@ -117,13 +117,18 @@ def sanitize_provider_details(value: Any) -> dict[str, Any]:
         "prompt_bytes",
         "schema_bytes",
         "input_fingerprint",
+        "store_responses",
+        "response_id",
     ):
         parts = key.split("_")
         alias = parts[0] + "".join(part.title() for part in parts[1:])
         item = value.get(key, value.get(alias))
         if item is None:
             continue
-        if key in COUNT_FIELDS:
+        if key == "store_responses":
+            if type(item) is bool:
+                result[key] = item
+        elif key in COUNT_FIELDS:
             if type(item) is int and 0 <= item <= 10**12:
                 result[key] = item
         elif key == "http_status":
@@ -147,6 +152,8 @@ def sanitize_provider_details(value: Any) -> dict[str, Any]:
         elif key == "request_id":
             if re.fullmatch(r"req_[a-zA-Z0-9_-]{1,128}|[0-9a-fA-F-]{36}", item):
                 result[key] = item
+        elif key == "response_id" and re.fullmatch(r"resp_[a-zA-Z0-9_-]{1,128}", item):
+            result[key] = item
         elif key in {"provider_error_code", "provider_error_type"}:
             result[key] = item if item in ERROR_CODES else "UNRECOGNIZED"
         elif key == "parameter":

@@ -1188,6 +1188,8 @@ class ProviderFailureDetails(StrictModel):
     prompt_bytes: int | None = Field(default=None, ge=0)
     schema_bytes: int | None = Field(default=None, ge=0)
     input_fingerprint: str | None = None
+    store_responses: bool | None = None
+    response_id: str | None = None
 
 
 class ExecutionFailure(StrictModel):

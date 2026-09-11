@@ -365,3 +365,27 @@ def test_request_metrics_keep_actual_payload_and_hash_identical_across_models(ca
     assert calls[0]["response_schema"] is schema
     assert usage.input_tokens == 24
     assert request_size_details("SECRET 한글", "changed", schema.schema)["input_fingerprint"] != starts[0]["input_fingerprint"]
+
+
+def test_diagnostic_storage_cli_is_explicit_opt_in(monkeypatch):
+    args = ["runtime_cli", "--gold", "gold.json", "--mode", "FIXED", "--output", "out.json"]
+    monkeypatch.setattr("sys.argv", args)
+    assert runtime_cli._parse_args().store_responses is False
+    monkeypatch.setattr("sys.argv", [*args, "--store-responses"])
+    assert runtime_cli._parse_args().store_responses is True
+
+
+def test_stored_response_logs_safe_id_and_storage_flag(capsys):
+    class Client:
+        store_responses = True
+
+        async def create_text_response(self, **kwargs):
+            return LlmTextResponse("SECRET", raw_response={"id": "resp_test123", "secret": "SECRET"})
+
+    client = UsageRecordingTextGenerationClient(Client(), RuntimeUsageCounter())
+    asyncio.run(client.create_text_response("SECRET", "SECRET"))
+    logs = capsys.readouterr().err
+    assert '"store_responses": true' in logs
+    assert '"response_id": "resp_test123"' in logs
+    assert "SECRET" not in logs
+    assert sanitize_provider_details({"storeResponses": "true", "responseId": "sk-SECRET"}) == {}
