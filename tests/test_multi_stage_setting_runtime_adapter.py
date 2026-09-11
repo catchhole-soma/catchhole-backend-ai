@@ -9,7 +9,6 @@ import pytest
 
 import evals.multi_stage_setting.runtime_adapter as runtime_adapter_module
 from app.analysis.character_fact_comparator import CharacterFactComparator
-from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonBatchDecision,
     CharacterFactComparisonBatchResult,
@@ -22,8 +21,8 @@ from app.analysis.character_name_resolver import ActiveCharacterStatus
 from app.analysis.character_subject_resolver import SubjectResolutionResult
 from app.analysis.schemas import (
     CharacterSettingExtractionResult,
-    ExtractedEvidenceSpan,
     ExtractedCharacterSettingCandidate,
+    ExtractedEvidenceSpan,
 )
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
 from app.analysis.world_setting_schemas import (
@@ -32,15 +31,16 @@ from app.analysis.world_setting_schemas import (
     WorldSettingComparisonBatchResult,
     WorldSettingExtractionResult,
 )
-from app.llm.openai_client import OpenAIResponsesClient
+from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.llm.exceptions import LlmIncompleteResponseError, LlmResponseValidationError
+from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema
 from app.llm.responses import LlmTextResponse
 from app.schemas.worker import WorkerWorldSettingCandidatePayload
 from evals.multi_stage_setting.contracts import (
     CharacterStage1Gold,
-    CharacterStateEntry,
     CharacterStage2Gold,
+    CharacterStateEntry,
     EvaluationState,
     GoldSnapshotV3,
     KnownCharacter,
@@ -49,8 +49,8 @@ from evals.multi_stage_setting.contracts import (
     WorldStage2Gold,
     WorldStateEntry,
     character_state_ref,
-    world_subject_ref,
     world_state_ref,
+    world_subject_ref,
 )
 from evals.multi_stage_setting.runtime_adapter import (
     RuntimeComponents,
@@ -557,7 +557,7 @@ def test_fixed_runtime_reuses_character_dedupe_and_world_consolidation() -> None
     assert bundle.comparison_model == "comparison-model"
     assert bundle.character_schema_hash is not None
     assert bundle.prompt_versions["characterExtraction"] == "setting-extraction:v10"
-    assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v3"
+    assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v4"
     assert bundle.prompt_versions["worldComparison"] == "world-setting-comparison-batch:v5"
 
 
@@ -1732,7 +1732,9 @@ def test_character_batches_stay_scenario_local_when_evaluation_batch_matches() -
         )
     )
 
-    assert comparator.calls == [(["C1"], []), (["C1"], [])]
+    # S2's repeated candidate has unresolved evidence offsets because the fixture
+    # quote is absent from S2. Ambiguous evidence is intentionally not deduplicated.
+    assert comparator.calls == [(["C1"], []), (["C1", "C2"], [])]
     assert bundle.state_application_policy == "SCENARIO_LOCAL"
 
 
@@ -2259,9 +2261,9 @@ def test_runtime_reraises_token_quota_exhaustion_from_character_batch() -> None:
 
 def test_runtime_pricing_does_not_charge_cached_tokens_at_full_input_rate() -> None:
     pricing = RuntimePricing(
-        input_usd_per_million=Decimal("2"),
+        input_usd_per_million=Decimal(2),
         cached_input_usd_per_million=Decimal("0.5"),
-        output_usd_per_million=Decimal("8"),
+        output_usd_per_million=Decimal(8),
     )
 
     assert pricing.estimate((1_000_000, 400_000, 100_000)) == Decimal("2.2")

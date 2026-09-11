@@ -21,6 +21,7 @@ class AnalysisJob(TimestampMixin, Base):
     job_type: Mapped[AnalysisJobType] = mapped_column(String(40))
     status: Mapped[AnalysisJobStatus] = mapped_column(String(20))
     current_step: Mapped[str | None] = mapped_column(String(100))
+    character_comparison_input_hash: Mapped[str | None] = mapped_column(String(64))
     model_name: Mapped[str | None] = mapped_column(String(100))
     input_token_count: Mapped[int | None] = mapped_column(Integer)
     output_token_count: Mapped[int | None] = mapped_column(Integer)

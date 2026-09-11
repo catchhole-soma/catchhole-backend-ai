@@ -1,6 +1,6 @@
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
-import json
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ class SettingCandidateSaveItem:
     episode_id: UUID | None
     source_content_s3_key: str | None
     candidate: ExtractedSettingCandidate
+    source_content_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,13 @@ class SettingCandidateService:
         prepared_candidates = prepare_setting_candidates(
             [item.candidate for item in save_items],
             known_characters,
+            source_identities=[
+                (
+                    item.episode_id,
+                    item.source_content_version or item.source_content_s3_key,
+                )
+                for item in save_items
+            ],
         )
         candidates: list[SettingCandidate] = []
         for prepared in prepared_candidates:
@@ -86,13 +94,16 @@ class SettingCandidateService:
 def prepare_setting_candidates(
     candidates: list[ExtractedSettingCandidate],
     known_characters: list[KnownCharacter],
+    source_identities: list[tuple[UUID | None, str | None]] | None = None,
 ) -> list[PreparedSettingCandidate]:
     """운영 저장 경계의 이름 매칭·발견 필터·중복 제거를 순수 함수로 실행한다."""
 
     normalized_known_characters = normalize_known_characters(known_characters)
     prepared: list[PreparedSettingCandidate] = []
     seen_discovery_names: set[str] = set()
-    setting_candidate_by_key: dict[tuple[str, str, str, str], tuple[int, float]] = {}
+    if source_identities is not None and len(source_identities) != len(candidates):
+        raise ValueError("source_identities must align with candidates.")
+    setting_candidate_by_key: dict[tuple[object, ...], tuple[int, float]] = {}
     for source_index, candidate in enumerate(candidates):
         character_match = resolve_candidate_character(
             candidate,
@@ -111,7 +122,11 @@ def prepare_setting_candidates(
             candidate=candidate,
             character_match=character_match,
         )
-        duplicate_key = _setting_duplicate_key(candidate, character_match)
+        duplicate_key = _setting_duplicate_key(
+            candidate,
+            character_match,
+            None if source_identities is None else source_identities[source_index],
+        )
         if duplicate_key is not None:
             confidence_score = candidate.confidence if candidate.confidence is not None else -1.0
             existing = setting_candidate_by_key.get(duplicate_key)
@@ -135,14 +150,22 @@ def prepare_setting_candidates(
 def _setting_duplicate_key(
     candidate: ExtractedSettingCandidate,
     character_match: CharacterNameMatch,
-) -> tuple[str, str, str, str] | None:
+    source_identity: tuple[UUID | None, str | None] | None,
+) -> tuple[object, ...] | None:
     if (
         candidate.candidate_kind != SettingCandidateKind.SETTING
         or character_match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
         or candidate.attribute_name is None
         or candidate.value_type is None
         or candidate.value_json is None
+        or source_identity is None
+        or source_identity[0] is None
+        or not source_identity[1]
     ):
+        return None
+
+    evidence_fingerprint = _evidence_fingerprint(candidate)
+    if evidence_fingerprint is None:
         return None
 
     if character_match.matched_character_id is not None:
@@ -160,8 +183,28 @@ def _setting_duplicate_key(
         separators=(",", ":"),
     )
     return (
+        source_identity[0],
+        source_identity[1],
         subject_key,
         candidate.attribute_name,
         candidate.value_type,
         canonical_value_json,
+        evidence_fingerprint,
     )
+
+
+def _evidence_fingerprint(
+    candidate: ExtractedSettingCandidate,
+) -> tuple[tuple[int, int, str], ...] | None:
+    evidence: set[tuple[int, int, str]] = set()
+    for span in candidate.evidence_spans:
+        quote = " ".join(span.quote.split())
+        if (
+            span.start_offset is None
+            or span.end_offset is None
+            or span.end_offset <= span.start_offset
+            or not quote
+        ):
+            return None
+        evidence.add((span.start_offset, span.end_offset, quote))
+    return tuple(sorted(evidence)) if evidence else None

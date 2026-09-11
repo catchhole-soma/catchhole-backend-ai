@@ -807,17 +807,18 @@ def test_worker_continues_setting_extraction_when_embedding_provider_temporarily
     }
 
 
-def test_initial_analysis_isolates_character_comparison_failure() -> None:
-    # 한 후보의 2차 비교 실패는 후보 FAILED로 남지만 같은 회차의 세계관 단계와 Job 완료는 계속된다.
+def test_initial_analysis_hands_character_comparison_off_without_running_it() -> None:
+    # 원 분석 Worker는 회차 후보를 게시한 뒤 그룹 숨김 Job에 인계한다.
     spring_client = FakeSpringWorkerClient(payload=_payload())
+    comparison_pipeline = FakeCharacterFactComparisonPipeline(
+        CharacterFactComparisonRunResult(completed_count=0, failed_count=1)
+    )
     worker = AnalysisJobWorker(
         spring_client=spring_client,
         chunking_service=FakeEpisodeChunkingService(chunks=[_chunk(0, "비요른은 전사다.")]),
         setting_extractor=FakeSettingExtractor(candidate_groups=[[]]),
         subject_resolver=FakeSubjectResolver(result=SubjectResolutionResult(candidates=[])),
-        character_fact_comparison_pipeline=FakeCharacterFactComparisonPipeline(
-            CharacterFactComparisonRunResult(completed_count=0, failed_count=1)
-        ),
+        character_fact_comparison_pipeline=comparison_pipeline,
         world_setting_extractor=FakeWorldSettingExtractor(),
         setting_candidate_service=FakeSettingCandidateService(),
     )
@@ -828,7 +829,11 @@ def test_initial_analysis_isolates_character_comparison_failure() -> None:
     assert spring_client.fail_calls == []
     summary = json.loads(spring_client.complete_calls[0][1])
     assert summary["characterFactComparisonCompletedCount"] == 0
-    assert summary["characterFactComparisonFailedCount"] == 1
+    assert summary["characterFactComparisonFailedCount"] == 0
+    assert comparison_pipeline.calls == 0
+    assert AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_HANDED_OFF in (
+        spring_client.checkpoint_calls
+    )
     assert summary["worldSettingCandidateCount"] == 0
     assert spring_client.fail_calls == []
 
@@ -906,6 +911,7 @@ class FakeSpringWorkerClient:
         self.claim_called = False
         self.claim_model_name: str | None = None
         self.progress_calls: list[tuple[UUID, str, EpisodeProcessingStatus]] = []
+        self.checkpoint_calls: list[AnalysisJobCheckpointStage | None] = []
         self.complete_calls: list[tuple[UUID, str | None, int | None, int | None]] = []
         self.fail_calls: list[tuple[UUID, str, str]] = []
 
@@ -928,6 +934,7 @@ class FakeSpringWorkerClient:
         checkpoint_stage=None,
     ) -> None:
         self.progress_calls.append((analysis_job_id, current_step, episode_status))
+        self.checkpoint_calls.append(checkpoint_stage)
 
     async def complete(
         self,
@@ -1055,8 +1062,10 @@ class FakeWorldSettingExtractor:
 class FakeCharacterFactComparisonPipeline:
     def __init__(self, result: CharacterFactComparisonRunResult) -> None:
         self.result = result
+        self.calls = 0
 
     async def process_all(self, analysis_job_id, lease_token):
+        self.calls += 1
         return self.result
 
 
