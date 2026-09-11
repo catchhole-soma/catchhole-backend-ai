@@ -65,6 +65,7 @@ COUNT_FIELDS = {
     "elapsed_ms", "max_output_tokens", "prompt_chars", "prompt_bytes", "schema_bytes",
 }
 PURPOSES = {
+    "multi-stage-setting-eval": "SEMANTIC_JUDGE",
     "setting-extraction": "CHARACTER_EXTRACTION",
     "subject-resolution": "CHARACTER_SUBJECT_RESOLUTION",
     "character-fact-comparison": "CHARACTER_COMPARISON",

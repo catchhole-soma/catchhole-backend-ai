@@ -2,19 +2,28 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+import httpx
 from pydantic import BaseModel, Field
 
 from app.analysis.json_response import parse_json_object
 from app.core.config import get_settings
-from app.llm.exceptions import LlmOutputTruncatedError
+from app.llm.exceptions import LlmOutputTruncatedError, LlmResponseValidationError
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema
+from app.llm.responses import LlmTextResponse
 from app.usage.metering import _estimate_text_token_upper_bound
+from evals.multi_stage_setting.provider_diagnostics import (
+    provider_failure_details,
+    request_size_details,
+    sanitize_provider_details,
+)
 
 DEFAULT_PROMPT_PATH = Path(__file__).parent / "prompts" / "semantic_outcome_judge.md"
 DEFAULT_MODEL = "gpt-5.6-sol"
@@ -229,6 +238,48 @@ class OpenAISemanticOutcomeJudge:
             chunks.append(chunk)
         return chunks
 
+    async def _request_judgment(
+        self,
+        cases: Sequence[SemanticOutcomeCase],
+        system_prompt: str,
+        response_schema: LlmResponseSchema,
+    ) -> LlmTextResponse:
+        user_prompt = _user_prompt(cases)
+        details = sanitize_provider_details({
+            **request_size_details(system_prompt, user_prompt, response_schema.schema),
+            "model": self.model,
+            "purpose": "SEMANTIC_JUDGE",
+            "max_output_tokens": self.max_output_tokens,
+            "store_responses": getattr(self.client, "store_responses", False),
+        })
+        print("LLM call started " + json.dumps(details), file=sys.stderr, flush=True)
+        started = time.monotonic()
+        try:
+            response = await self.client.create_text_response(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                model=self.model,
+                max_output_tokens=self.max_output_tokens,
+                prompt_cache_key=PROMPT_CACHE_KEY,
+                response_schema=response_schema,
+            )
+        except (httpx.HTTPError, LlmResponseValidationError) as exc:
+            failure = sanitize_provider_details({
+                **details,
+                **provider_failure_details(exc, model=self.model, prompt_cache_key=PROMPT_CACHE_KEY),
+                "elapsed_ms": int((time.monotonic() - started) * 1000),
+            })
+            exc.evaluation_provider_details = failure
+            print("LLM call failed " + json.dumps(failure), file=sys.stderr, flush=True)
+            raise
+        completed = sanitize_provider_details({
+            **details,
+            "response_id": response.raw_response.get("id"),
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+        })
+        print("LLM call completed " + json.dumps(completed), file=sys.stderr, flush=True)
+        return response
+
     async def _judge_chunk(
         self,
         cases: Sequence[SemanticOutcomeCase],
@@ -236,14 +287,7 @@ class OpenAISemanticOutcomeJudge:
         response_schema: LlmResponseSchema,
     ) -> SemanticOutcomeBatchResult:
         try:
-            response = await self.client.create_text_response(
-                system_prompt=system_prompt,
-                user_prompt=_user_prompt(cases),
-                model=self.model,
-                max_output_tokens=self.max_output_tokens,
-                prompt_cache_key=PROMPT_CACHE_KEY,
-                response_schema=response_schema,
-            )
+            response = await self._request_judgment(cases, system_prompt, response_schema)
         except LlmOutputTruncatedError as exc:
             if len(cases) == 1:
                 raise
