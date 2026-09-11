@@ -830,3 +830,8 @@ FIXED는 전체 Gold 체인으로 해당 회차의 시작 상태를 계산하므
 요청 로그의 `store_responses`로 실제 적용 여부를 확인하고 성공 응답의 `response_id`로 OpenAI Logs에서 찾는다.
 503 등 응답 생성 전 실패는 저장 옵션을 켜도 개별 로그가 없을 수 있다. 저장 옵션은 오류 복구 수단이 아니며
 다른 모델/입력/출력 상한은 고정한 상태에서 진단한다. 원문과 전체 응답은 GitHub 공개 artifact에 포함하지 않는다.
+
+OpenAI 기본 client의 응답 read timeout은 300초이며 connect/write/pool은 각각 120초다.
+Actions `extraction_max_output_tokens`는 캐릭터 1차 상한만 기본 6,000 또는 진단 9,000으로 선택한다.
+절단 재시도 상한은 12,000이고 운영·주체 해소·비교·judge의 출력 상한에는 영향을 주지 않는다.
+읽기 제한과 출력 상한을 동시에 바꾼 실행은 두 조건을 모두 기록한다.
