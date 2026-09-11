@@ -802,6 +802,9 @@ scorer에 전달합니다. `FIXED`와 `ROLLING`은 항상 private 입력을 내�
 - HTTP 상태와 제공자 오류 코드·유형, 문제 매개변수, `x-request-id`.
 - HTTP 200 미완료 응답은 response status와 incomplete reason도 보존합니다.
 - 네트워크 오류처럼 응답이 없으면 HTTP 상태와 요청 ID를 만들어내지 않습니다.
+- `ReadTimeout`·`ConnectTimeout`·`ConnectError` 등 실제 네트워크 예외 종류와 호출 경과 시간(ms)을 보존합니다.
+- 호출 시작/완료 로그에는 모델·용도·출력 상한·프롬프트 문자/UTF-8 바이트 수·스키마 바이트 수·입력 SHA-256을 표시합니다. 바이트 수는 토큰 수가 아니며 HTTP 헤더 등을 포함한 전송 전체 크기도 아닙니다.
+- 오류 메시지에서 과부하·요청 속도 제한·타임아웃 등 알려진 문구를 고정된 요약으로 변환합니다. 미지의 문구는 `Unrecognized provider message (withheld).`로 표시하며 원문이나 인증값이 섞인 자유 메시지를 출력하지 않습니다.
 
 `provider_diagnostics.py`의 허용 목록과 형식 검사를 수집 및 공개 경계에서 모두 적용합니다.
 자유 형식 error.message, 원고, 요청/응답 본문, 인증 헤더는 포함하지 않습니다. 허용 목록에
@@ -811,3 +814,9 @@ scorer에 전달합니다. `FIXED`와 `ROLLING`은 항상 private 입력을 내�
 과거 실행에서 버린 provider 상세는 복원할 수 없습니다. 이 변경을 테스트하려면
 `feat/candidate-processing-diagnostics`의 새 커밋으로 **Run workflow**를 실행합니다.
 기존 실행의 **Re-run jobs**는 그 실행의 이전 커밋을 다시 사용하므로 새 진단 코드가 적용되지 않습니다.
+
+같은 회차에서 반복 실패하면 먼저 `episodes=2`, `mode=FIXED`, `domains=CHARACTER`처럼 회차만 분리합니다.
+FIXED는 전체 Gold 체인으로 해당 회차의 시작 상태를 계산하므로 앞 회차의 API 호출은 반복할 필요가 없습니다.
+동일 모델 재현 후 추출 모델만 바꾼 대조 실행의 입력 SHA-256과 출력 상한을 비교합니다.
+입력 해시는 system/user prompt와 정렬한 응답 schema 기준이며 모델·시각·출력 상한을 포함하지 않습니다.
+이 대조는 장애 재현 실험이며 모델 품질 개선의 증거로 해석하지 않습니다.
