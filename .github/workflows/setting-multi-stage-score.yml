@@ -309,14 +309,20 @@ jobs:
           python -m evals.multi_stage_setting.cli "${evaluate_args[@]}"
 
       - name: Publish sanitized evaluation summary
+        if: ${{ always() && (hashFiles('build/eval/multi-stage/private/report.json') != '' || hashFiles('build/eval/multi-stage/private/predictions.json') != '') }}
         run: |
-          python -m evals.multi_stage_setting.report_cli \
-            --report build/eval/multi-stage/private/report.json \
+          if [ -f build/eval/multi-stage/private/report.json ]; then
+            report_args=(--report build/eval/multi-stage/private/report.json)
+          else
+            report_args=(--predictions build/eval/multi-stage/private/predictions.json)
+          fi
+          python -m evals.multi_stage_setting.report_cli "${report_args[@]}" \
             --json-output build/eval/multi-stage/public/score.json \
             --markdown-output build/eval/multi-stage/public/summary.md
           cat build/eval/multi-stage/public/summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload sanitized evaluation artifacts
+        if: ${{ always() && hashFiles('build/eval/multi-stage/public/diagnostics.json') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: setting-multi-stage-report-${{ github.run_id }}
