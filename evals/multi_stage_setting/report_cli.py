@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.domain.enums import AnalysisFailureCode
+from evals.multi_stage_setting.contracts import ExecutionFailure, ProcessingStage
+from evals.multi_stage_setting.provider_diagnostics import sanitize_provider_details
 from evals.setting_extraction.normalization import normalize_fact_key
 
 _PROCESSING_LABELS = {
@@ -207,6 +209,7 @@ def build_public_diagnostics(report: dict[str, Any]) -> list[dict[str, Any]]:
                 raise ValueError("처리 기록 오류 — 후보 처리 기록 누락·중복 또는 잘못된 상태")
         elif "processing" not in raw_scenario:
             processing = _recover_legacy_report_processing(stage1, stage2)
+        execution_failure = _sanitize_execution_failure(raw_scenario.get("executionFailure"))
         diagnostics.append(
             {
                 "scenarioId": _text(raw_scenario.get("scenarioId")),
@@ -214,9 +217,28 @@ def build_public_diagnostics(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "stage1": stage1,
                 "stage2": stage2,
                 "processing": processing,
+                **({"executionFailure": execution_failure} if execution_failure else {}),
             }
         )
     return diagnostics
+
+
+def _sanitize_execution_failure(value: Any) -> dict[str, Any] | None:
+    from typing import get_args
+
+    if not isinstance(value, dict):
+        return None
+    stage = _choice(value.get("stage"), set(get_args(ProcessingStage)))
+    code = _choice(value.get("failureCode"), {item.value for item in AnalysisFailureCode})
+    if stage is None or code is None:
+        return None
+    episode = value.get("episodeNo")
+    failure = ExecutionFailure(
+        stage=stage, failure_code=code,
+        episode_no=episode if type(episode) is int and episode >= 1 else None,
+        provider=sanitize_provider_details(value.get("provider")),
+    )
+    return failure.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
 def _recover_legacy_report_processing(stage1, stage2):
@@ -746,7 +768,10 @@ def _append_diagnostics_limited(
     row_limit: int,
 ) -> None:
     lines.extend(["", "## 항목별 진단", ""])
-    if not any(item["stage1"] or item["stage2"] or item.get("processing") for item in diagnostics):
+    if not any(
+        item["stage1"] or item["stage2"] or item.get("processing") or item.get("executionFailure")
+        for item in diagnostics
+    ):
         lines.extend(["진단 가능한 항목이 없습니다.", ""])
         return
     total_cases = sum(
@@ -761,12 +786,32 @@ def _append_diagnostics_limited(
     for scenario in diagnostics:
         if remaining_rows <= 0:
             break
-        if not scenario["stage1"] and not scenario["stage2"] and not scenario.get("processing"):
+        if (
+            not scenario["stage1"] and not scenario["stage2"] and not scenario.get("processing")
+            and not scenario.get("executionFailure")
+        ):
             continue
         title = (
             f"{scenario.get('episodeNo') or '-'}화 · `{_inline(scenario.get('scenarioId') or '-')}`"
         )
         lines.extend([f"### {title}", ""])
+        failure = scenario.get("executionFailure")
+        if failure:
+            lines.append("**실행 중단** · " + _cell(failure["stage"]) + " · "
+                         + _cell(failure["failureCode"]))
+            lines.append("")
+            provider = failure.get("provider", {})
+            labels = {
+                "model": "모델", "purpose": "호출 용도", "httpStatus": "HTTP 상태",
+                "providerErrorCode": "제공자 오류 코드", "providerErrorType": "제공자 오류 유형",
+                "parameter": "문제 매개변수", "requestId": "요청 ID",
+                "responseStatus": "응답 상태", "incompleteReason": "미완료 사유",
+            }
+            lines.extend(
+                f"- {label}: {_cell(str(provider[key]))}"
+                for key, label in labels.items() if key in provider
+            )
+            lines.append("")
         for domain in _DOMAINS:
             if remaining_rows <= 0:
                 break
@@ -1715,6 +1760,15 @@ def main() -> None:
             report["scenarios"].append(
                 {
                     "scenarioId": scenario.scenario_id,
+                    "episodeNo": (
+                        scenario.execution_failure.episode_no if scenario.execution_failure else None
+                    ),
+                    **(
+                        {"executionFailure": scenario.execution_failure.model_dump(
+                            mode="json", by_alias=True, exclude_none=True,
+                        )}
+                        if scenario.execution_failure else {}
+                    ),
                     "stage1": {},
                     "stage2": [],
                     "processing": records,

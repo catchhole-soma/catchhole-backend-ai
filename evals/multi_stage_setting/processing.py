@@ -9,18 +9,21 @@ from evals.multi_stage_setting.contracts import (
     CandidateProcessingRecord,
     CandidateProcessingStatus,
     EvaluationDomain,
+    ExecutionFailure,
     ProcessingStage,
     ScenarioPrediction,
     Stage1Prediction,
     Stage2Prediction,
     stage2_source_candidate_ids,
 )
+from evals.multi_stage_setting.provider_diagnostics import provider_failure_details
 
 _REASON = dict(zip(CandidateProcessingStatus, CandidateProcessingReason, strict=True))
 
 
 @dataclass
 class ProcessingTrace:
+    episode_no: int | None = None
     candidates: list[Stage1Prediction] = field(default_factory=list)
     raw: list[Stage1Prediction] = field(default_factory=list)
     records: list[CandidateProcessingRecord] = field(default_factory=list)
@@ -89,6 +92,12 @@ class ProcessingTrace:
                 )
         return ScenarioPrediction(
             scenario_id=scenario_id,
+            execution_failure=ExecutionFailure(
+                episode_no=self.episode_no,
+                stage=self.stage,
+                failure_code=code,
+                provider=provider_failure_details(exc),
+            ),
             pipeline_status="EXECUTION_ABORTED",
             failed_stage=self.stage,
             raw_stage1=self.raw,

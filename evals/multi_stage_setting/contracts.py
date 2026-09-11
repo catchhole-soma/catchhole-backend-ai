@@ -1170,6 +1170,25 @@ ProcessingStage = Literal[
 ]
 
 
+class ProviderFailureDetails(StrictModel):
+    model: str | None = None
+    purpose: str | None = None
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    provider_error_code: str | None = None
+    provider_error_type: str | None = None
+    parameter: str | None = None
+    request_id: str | None = None
+    response_status: str | None = None
+    incomplete_reason: str | None = None
+
+
+class ExecutionFailure(StrictModel):
+    episode_no: int | None = Field(default=None, ge=1)
+    stage: ProcessingStage
+    failure_code: AnalysisFailureCode
+    provider: ProviderFailureDetails = Field(default_factory=ProviderFailureDetails)
+
+
 class CandidateProcessingRecord(StrictModel):
     candidate_id: str = Field(min_length=1)
     domain: EvaluationDomain
@@ -1216,6 +1235,9 @@ class CandidateProcessingRecord(StrictModel):
 
 class ScenarioPrediction(StrictModel):
     scenario_id: str = Field(min_length=1)
+    execution_failure: ExecutionFailure | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     processing_version: Literal[1] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )

@@ -60,8 +60,16 @@ def main() -> None:
             args.output.write_text(
                 partial.model_dump_json(by_alias=True, indent=2), encoding="utf-8"
             )
+            failure = partial.scenarios[-1].execution_failure
+            details = (
+                " " + json.dumps(
+                    failure.model_dump(mode="json", by_alias=True, exclude_none=True),
+                    ensure_ascii=False,
+                )
+                if failure is not None else ""
+            )
             raise SystemExit(
-                "Evaluation interrupted: " + analysis_failure_code(exc).value
+                "Evaluation interrupted: " + analysis_failure_code(exc).value + details
             ) from None
         raise
     args.output.parent.mkdir(parents=True, exist_ok=True)

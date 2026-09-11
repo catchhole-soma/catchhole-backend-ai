@@ -158,6 +158,7 @@ class OpenAIResponsesClient:
                 )
             raise LlmIncompleteResponseError(
                 "OpenAI response did not reach completed status.",
+                response=response,
                 incomplete_reason=(
                     incomplete_reason if isinstance(incomplete_reason, str) else None
                 ),

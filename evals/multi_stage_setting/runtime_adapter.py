@@ -107,6 +107,7 @@ from evals.multi_stage_setting.contracts import (
     world_subject_ref,
 )
 from evals.multi_stage_setting.processing import ProcessingTrace
+from evals.multi_stage_setting.provider_diagnostics import provider_failure_details
 from evals.multi_stage_setting.state_effects import (
     StateApplicationError,
     apply_prediction_decision,
@@ -181,12 +182,15 @@ class UsageRecordingTextGenerationClient:
                 prompt_cache_key=prompt_cache_key,
                 response_schema=response_schema,
             )
-        except LlmResponseValidationError as exc:
-            self._record_usage(
-                exc.input_token_count,
-                exc.cached_input_token_count,
-                exc.output_token_count,
+        except (httpx.HTTPError, LlmResponseValidationError) as exc:
+            exc.evaluation_provider_details = provider_failure_details(
+                exc, model=model or getattr(self.client, "model", None),
+                prompt_cache_key=prompt_cache_key,
             )
+            if isinstance(exc, LlmResponseValidationError):
+                self._record_usage(
+                    exc.input_token_count, exc.cached_input_token_count, exc.output_token_count,
+                )
             raise
         self._record_usage(
             response.input_token_count,
@@ -369,7 +373,7 @@ async def run_multi_stage_predictions(
             runtime_before = gold_chain[scenario.scenario_id].before_state.model_copy(deep=True)
 
         usage_before = components.usage.snapshot() if components.usage is not None else (0, 0, 0)
-        trace = ProcessingTrace()
+        trace = ProcessingTrace(episode_no=scenario.episode_no)
         try:
             if mode == EvaluationMode.ORACLE:
                 prediction = await _run_oracle_scenario(
