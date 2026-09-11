@@ -274,7 +274,7 @@ class OpenAISemanticOutcomeJudge:
             raise
         completed = sanitize_provider_details({
             **details,
-            "response_id": response.raw_response.get("id"),
+            "response_id": getattr(response, "raw_response", {}).get("id"),
             "elapsed_ms": int((time.monotonic() - started) * 1000),
         })
         print("LLM call completed " + json.dumps(completed), file=sys.stderr, flush=True)
