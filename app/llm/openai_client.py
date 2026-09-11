@@ -35,7 +35,10 @@ class OpenAIResponsesClient:
         self.reasoning_effort = reasoning_effort
         self.store_responses = store_responses
         # 실제 HTTP 요청을 보내는 도구, 테스트에서는 MockTransport가 들어간 client를 주입
-        self.http_client = http_client or httpx.AsyncClient(timeout=120)
+        # 긴 생성 응답을 기다리는 read만 5분으로 늘리고 연결/전송/풀 제한은 유지한다.
+        self.http_client = http_client or httpx.AsyncClient(
+            timeout=httpx.Timeout(120, read=300),
+        )
 
     # .env에서 읽은 설정값으로 client를 만드는 생성 보조 함수
     @classmethod

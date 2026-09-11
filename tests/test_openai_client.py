@@ -14,7 +14,7 @@ from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema
 
 
-def test_default_http_client_uses_120_second_read_timeout() -> None:
+def test_default_http_client_extends_only_read_timeout_to_300_seconds() -> None:
     client = OpenAIResponsesClient(
         api_key="test-key",
         model="gpt-4.1-mini",
@@ -22,7 +22,23 @@ def test_default_http_client_uses_120_second_read_timeout() -> None:
     )
 
     try:
-        assert client.http_client.timeout.read == 120
+        assert client.http_client.timeout.read == 300
+        assert client.http_client.timeout.connect == 120
+        assert client.http_client.timeout.write == 120
+        assert client.http_client.timeout.pool == 120
+    finally:
+        asyncio.run(client.aclose())
+
+
+def test_injected_http_client_keeps_its_own_timeout() -> None:
+    http_client = httpx.AsyncClient(timeout=7)
+    client = OpenAIResponsesClient(
+        api_key="test-key", model="gpt-5.6-sol",
+        responses_api_url="https://api.openai.test/v1/responses", http_client=http_client,
+    )
+    try:
+        assert client.http_client is http_client
+        assert client.http_client.timeout.read == 7
     finally:
         asyncio.run(client.aclose())
 
