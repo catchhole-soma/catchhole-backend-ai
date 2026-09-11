@@ -133,7 +133,7 @@ def test_resolve_candidate_evidence_offsets_orders_spans_by_source_position() ->
     ]
 
 
-def test_resolve_candidate_evidence_offsets_deduplicates_repeated_quote() -> None:
+def test_resolve_candidate_evidence_offsets_keeps_repeated_quote_without_position() -> None:
     quote = "상처가 나았다."
     chunk_text = f"{quote} 잠시 쉬었다. {quote}"
     candidate = _candidate_with_spans(
@@ -147,11 +147,29 @@ def test_resolve_candidate_evidence_offsets_deduplicates_repeated_quote() -> Non
         chunk_start_offset=50,
     )[0]
 
-    assert len(resolved_candidate.evidence_spans) == 1
-    assert resolved_candidate.evidence_spans[0].quote == quote
-    assert resolved_candidate.evidence_spans[0].start_offset == 50
-    assert resolved_candidate.evidence_spans[0].end_offset == 50 + len(quote)
+    assert len(resolved_candidate.evidence_spans) == 2
+    assert all(span.quote == quote for span in resolved_candidate.evidence_spans)
+    assert all(span.start_offset is None for span in resolved_candidate.evidence_spans)
+    assert all(span.end_offset is None for span in resolved_candidate.evidence_spans)
     assert len(candidate.evidence_spans) == 2
+
+
+def test_resolve_candidate_evidence_offsets_deduplicates_same_unique_span() -> None:
+    quote = "상처가 나았다."
+    candidate = _candidate_with_spans(
+        ExtractedEvidenceSpan(quote=quote),
+        ExtractedEvidenceSpan(quote=quote),
+    )
+
+    resolved_candidate = resolve_candidate_evidence_offsets(
+        [candidate],
+        chunk_text=f"전투가 끝났다. {quote}",
+        chunk_start_offset=50,
+    )[0]
+
+    assert len(resolved_candidate.evidence_spans) == 1
+    assert resolved_candidate.evidence_spans[0].start_offset == 59
+    assert resolved_candidate.evidence_spans[0].end_offset == 59 + len(quote)
 
 
 def test_resolve_candidate_evidence_offsets_keeps_unmatched_spans_in_input_order() -> None:

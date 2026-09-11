@@ -103,6 +103,7 @@ class SpringWorkerApi(
         allowed_job_types: list[AnalysisJobType],
         model_name: str | None = None,
         current_step: str | None = None,
+        supports_character_comparison_groups: bool | None = None,
     ) -> WorkerAnalysisJobPayload | None: ...
 
     # claim 직후 현재 Worker가 어떤 단계에 진입했는지 Spring에 보고한다.
@@ -575,6 +576,7 @@ class AnalysisJobWorker:
                     episode_id=episode.episode_id,
                     source_content_s3_key=episode.content_s3_key,
                     candidate=candidate,
+                    source_content_version=episode.content_s3_version,
                 )
                 for candidate in resolution.candidates
             )
@@ -612,23 +614,20 @@ class AnalysisJobWorker:
     ) -> CharacterFactComparisonRunResult:
         if _checkpoint_reached(
             checkpoint,
-            AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED,
+            AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_HANDED_OFF,
         ):
             return CharacterFactComparisonRunResult(0, 0)
 
-        result = await self._get_character_fact_comparison_pipeline(
-            payload.analysis_job_id,
-            payload.lease_token,
-        ).process_all(payload.analysis_job_id, payload.lease_token)
-        # 개별 후보의 실패는 fail endpoint에 기록됐으므로 세계관 단계는 계속 수행한다.
+        # 회차별 원 Job은 후보 게시만 내구적으로 인계한다. 여러 회차의 입력이
+        # 닫힌 뒤 Spring이 그룹 숨김 Job을 예약하므로 원 Worker slot을 점유하지 않는다.
         await self.spring_client.report_progress(
             payload.analysis_job_id,
             payload.lease_token,
             AnalysisStep.WORLD_SETTING_EXTRACTION,
             EpisodeProcessingStatus.ANALYZING,
-            AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED,
+            AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_HANDED_OFF,
         )
-        return result
+        return CharacterFactComparisonRunResult(0, 0)
 
     async def _run_world_extraction_stage(
         self,

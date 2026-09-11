@@ -75,6 +75,7 @@ class CharacterFactComparisonWorker:
             allowed_job_types=[AnalysisJobType.CHARACTER_FACT_COMPARISON],
             model_name=self.comparison_model_name,
             current_step=AnalysisStep.CHARACTER_FACT_COMPARISON.value,
+            supports_character_comparison_groups=True,
         )
 
     async def run_once(self) -> WorkerRunResult:

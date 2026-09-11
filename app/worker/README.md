@@ -83,7 +83,7 @@ POST  /api/internal/v1/analysis-jobs/{analysisJobId}/setting-candidates/{candida
 }
 ```
 
-checkpoint는 `CHUNKS_READY`, `CHARACTER_CANDIDATES_SAVED`, `CHARACTER_COMPARISONS_FINISHED`, `WORLD_CANDIDATES_PUBLISHED`, `WORLD_COMPARISONS_FINISHED` 순서로만 증가합니다. lease가 만료되어 Job이 다시 claim되면 마지막 checkpoint 이후 stage부터 재개합니다.
+checkpoint는 `CHUNKS_READY`, `CHARACTER_CANDIDATES_SAVED`, `CHARACTER_COMPARISONS_HANDED_OFF`, legacy `CHARACTER_COMPARISONS_FINISHED`, `WORLD_CANDIDATES_PUBLISHED`, `WORLD_COMPARISONS_FINISHED` 순서로만 증가합니다. 새 원 분석 Job은 후보 게시 뒤 그룹 비교를 숨김 Job에 인계했다는 `CHARACTER_COMPARISONS_HANDED_OFF`를 기록합니다. legacy finished를 예약 완료 의미로 재해석하지 않습니다. lease가 만료되어 Job이 다시 claim되면 마지막 checkpoint 이후 stage부터 재개합니다.
 
 ## 실행 슬롯과 동시성
 
@@ -118,8 +118,9 @@ Spring claim
 -> evidence quote 위치 보정
 -> 구체적이지 않은 entity_name 후보 subject fallback 전 토큰 예약·호출 후 정산
 -> setting_candidates 교체 저장
--> 매칭된 후보를 캐릭터·FactType별 batch로 claim하고 원문 순서 projected snapshot에서 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 제안을 원자 저장
--> CHARACTER_COMPARISONS_FINISHED checkpoint 보고
+-> 캐릭터 후보 게시 완료를 CHARACTER_COMPARISONS_HANDED_OFF로 보고
+-> Spring이 batch의 모든 원 Job 게시가 닫히면 이름/기존 캐릭터별 숨김 그룹 Job 예약
+-> character-comparison Worker가 빈 신규 또는 기존 snapshot에서 원문 순서 projected 비교 결과를 원자 저장
 -> 세계관 설정 후보 추출 및 Spring 내부 API 게시
 -> 미해소 world_setting 후보의 canonical 주체를 먼저 저장
 -> Backend가 canonical 주체와 raw scope별로 만든 비교 batch claim
@@ -134,9 +135,9 @@ Spring claim
 
 ```text
 run_analysis_worker.py --worker-kind character-comparison
--> CHARACTER_FACT_COMPARISON만 claim
--> 연결된 PENDING 후보 한 건 비교
--> 후보 COMPLETED/FAILED 저장
+-> CHARACTER_FACT_COMPARISON만 `supportsCharacterComparisonGroups=true`로 claim
+-> 고정 input hash의 같은 논리 그룹 PENDING 후보를 bounded batch로 비교
+-> 그룹 후보 COMPLETED/FAILED 저장
 -> Job complete/fail 보고
 
 run_analysis_worker.py --worker-kind world-comparison

@@ -83,13 +83,14 @@ staging에서 실제 운영과 같은 Spring·PostgreSQL·Worker 이미지로 �
 
 ```text
 CHARACTER_CANDIDATES_SAVED
--> Spring이 같은 캐릭터·FactType의 시간순 SettingCandidate batch를 claim
+-> CHARACTER_COMPARISONS_HANDED_OFF
+-> 모든 원 Job의 후보 게시가 닫히면 Spring이 같은 논리 그룹·FactType의 시간순 SettingCandidate 숨김 Job/batch를 예약
 -> C* source, Q* projected slot, P* 시작 snapshot, contextToken 조회
 -> 2차 LLM이 source별 ADD/UPDATE/MERGE/REMOVE/HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED 판단
 -> Python이 앞선 성공 decision을 Q* 메모리 snapshot에 순차 적용하고 dependency 계산
 -> schema 재시도 실패 시 같은 projected state에서 singleton fallback
 -> Spring이 contextToken·resolved key·P/Q refs·dependency·전체 coverage를 다시 검증해 원자 저장
--> CHARACTER_COMPARISONS_FINISHED
+-> 전용 Worker의 숨김 그룹 Job 완료
 ```
 
 `CharacterFact`는 과거 근거를 포함한 append-only 이력입니다. `removedSnapshotEntries`는 원본 Fact를 삭제하거나 `is_current`로 전환하는 지시가 아니라, 사용자 확정 시 현재 `WorkCharacter` snapshot에서 특정 STATUS entry를 제거하자는 제안입니다. 실제 snapshot 변경과 Fact 생성은 Spring의 사용자 confirm 트랜잭션 책임입니다.
@@ -145,7 +146,7 @@ Spring Flyway의 비교 컬럼과 내부 API/checkpoint를 먼저 배포한 뒤 
 
 새 AI가 canonical multi-`REMOVE`를 저장하기 시작한 뒤에는 구 Java가 그 PENDING 후보를 적용할 수 없으므로 Java만 단순 rollback하지 않습니다. 장애 시 신규 AI를 먼저 중단하거나 구 AI로 되돌린 뒤에도 Java의 신규 읽기 호환은 유지하고, 이미 저장된 canonical 후보를 drain·재비교하거나 forward-fix합니다. 별도 DB migration은 없지만 저장된 write shape의 forward compatibility 제약은 남습니다.
 
-새 checkpoint는 기존 세계관 checkpoint보다 앞에 삽입됩니다. 배포 전에 이미 `WORLD_CANDIDATES_PUBLISHED` 또는 `WORLD_COMPARISONS_FINISHED`까지 간 Job은 enum 순서상 `CHARACTER_COMPARISONS_FINISHED`도 지난 것으로 판단하므로 캐릭터 2차 비교를 소급 실행하지 않습니다. 해당 회차에도 비교 제안이 필요하면 배포 후 회차 재분석 Job을 새로 생성합니다.
+새 checkpoint는 기존 세계관 checkpoint보다 앞에 삽입됩니다. `CHARACTER_COMPARISONS_HANDED_OFF`는 후보 게시 책임을 숨김 그룹 Job으로 넘겼다는 뜻이며 비교 완료가 아닙니다. 배포 전에 legacy `CHARACTER_COMPARISONS_FINISHED`나 세계관 checkpoint까지 간 Job은 구 완료 경로로 유지합니다. PENDING_REVIEW 구후보의 새 비교는 Spring의 멱등 복구 경로를 사용합니다.
 
 ## NVM-260 세계관 확장 흐름
 
@@ -154,8 +155,9 @@ Spring Flyway의 비교 컬럼과 내부 API/checkpoint를 먼저 배포한 뒤 
 ```text
 CHUNKS_READY
 -> CHARACTER_CANDIDATES_SAVED
--> 캐릭터 Fact 2차 비교
--> CHARACTER_COMPARISONS_FINISHED
+-> CHARACTER_COMPARISONS_HANDED_OFF
+-> 모든 원 Job의 후보 게시가 닫히면 Spring이 그룹 CHARACTER_FACT_COMPARISON Job 예약
+-> 전용 Worker가 신규 빈 snapshot 또는 기존 snapshot에서 캐릭터 Fact 2차 비교
 -> chunk별 세계관 속성 추출 및 동일 분류·대상·설정명 후보 통합
 -> 2차 LLM이 단일값·안전한 통합·서로 다른 내용(SINGLE/MERGED/CONFLICT) 판정
 -> Backend 내부 API로 후보 전체 게시

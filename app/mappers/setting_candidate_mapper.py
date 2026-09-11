@@ -92,8 +92,12 @@ def _initial_comparison_status(
         in {
             SettingCandidateMatchStatus.MATCHED,
             SettingCandidateMatchStatus.AUTO_MATCHED_BY_NAME,
+            SettingCandidateMatchStatus.UNRESOLVED,
         }
-        and character_match.matched_character_id is not None
+        and (
+            character_match.matched_character_id is not None
+            or character_match.match_status == SettingCandidateMatchStatus.UNRESOLVED
+        )
     ):
         return CharacterFactComparisonStatus.PENDING
     return CharacterFactComparisonStatus.WAITING_FOR_CHARACTER_MATCH

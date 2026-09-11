@@ -46,6 +46,7 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
             allowed_job_types=["SETTING_EXTRACTION"],
             model_name="gpt-4.1-mini",
             current_step="원문 청킹",
+            supports_character_comparison_groups=True,
         )
     )
 
@@ -79,6 +80,7 @@ def test_claim_returns_payload_when_spring_returns_job() -> None:
         "modelName": "gpt-4.1-mini",
         "currentStep": "원문 청킹",
         "allowedJobTypes": ["SETTING_EXTRACTION"],
+        "supportsCharacterComparisonGroups": True,
     }
 
 

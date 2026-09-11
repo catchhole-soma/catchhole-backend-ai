@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 import app.analysis.character_fact_comparator as comparator_module
+from app.analysis.character_fact_comparator import CharacterFactComparator
 from app.analysis.character_fact_comparison_pipeline import (
     CharacterFactComparisonPipeline,
 )
@@ -14,7 +15,6 @@ from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonBatchDecision,
     CharacterFactComparisonBatchResult,
 )
-from app.analysis.character_fact_comparator import CharacterFactComparator
 from app.analysis.character_fact_projection import (
     CharacterProjectionEntry,
     CharacterProjectionState,
@@ -460,7 +460,7 @@ def test_batch_comparator_projects_in_order_and_hides_transport_ids() -> None:
     assert "`matched_character_name`" in request["system_prompt"]
     assert str(WORK_ID) not in serialized
     assert str(EPISODE_ID) not in serialized
-    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v3"
+    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v4"
 
 
 def test_batch_pipeline_falls_back_to_singletons_without_losing_projection() -> None:

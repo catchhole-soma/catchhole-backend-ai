@@ -63,6 +63,10 @@ class WorkerAnalysisJobClaimRequest(BaseModel):
         alias="allowedJobTypes",
         min_length=1,
     )
+    supports_character_comparison_groups: bool | None = Field(
+        default=None,
+        alias="supportsCharacterComparisonGroups",
+    )
 
 
 # Worker가 분석 진행 상황을 Spring에 보고할 때 쓰는 DTO

@@ -274,6 +274,95 @@ def test_replace_candidates_keeps_same_setting_when_structured_value_changes() -
     ]
 
 
+def test_replace_candidates_keeps_same_value_at_different_source_positions() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_candidate(source_chunk_id=CHUNK_ID, evidence_start=10),
+            ),
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_candidate(source_chunk_id=OTHER_CHUNK_ID, evidence_start=100),
+            ),
+        ],
+        known_characters=[],
+    )
+
+    assert len(saved_candidates) == 2
+
+
+def test_replace_candidates_keeps_same_value_when_evidence_position_is_unknown() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_candidate(source_chunk_id=CHUNK_ID, evidence_start=None),
+            ),
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                candidate=_candidate(source_chunk_id=OTHER_CHUNK_ID, evidence_start=None),
+            ),
+        ],
+        known_characters=[],
+    )
+
+    assert len(saved_candidates) == 2
+
+
+def test_replace_candidates_keeps_same_position_from_different_source_versions() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session,
+        repository_factory=lambda session: repository,
+    )
+
+    saved_candidates = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID,
+        analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                source_content_version="v1",
+                candidate=_candidate(source_chunk_id=CHUNK_ID),
+            ),
+            SettingCandidateSaveItem(
+                episode_id=EPISODE_ID,
+                source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+                source_content_version="v2",
+                candidate=_candidate(source_chunk_id=OTHER_CHUNK_ID),
+            ),
+        ],
+        known_characters=[],
+    )
+
+    assert len(saved_candidates) == 2
+
+
 def test_replace_candidates_does_not_deduplicate_ambiguous_setting_subjects() -> None:
     session = FakeSession()
     repository = FakeSettingCandidateRepository(session)
@@ -322,7 +411,9 @@ def _candidate(
     level: int = 1,
     attribute_value: str | None = None,
     confidence: float = 0.9,
+    evidence_start: int | None = 10,
 ) -> ExtractedSettingCandidate:
+    quote = f"비요른은 {level}레벨 바바리안이다."
     return ExtractedSettingCandidate(
         source_chunk_id=source_chunk_id,
         entity_type="CHARACTER",
@@ -334,9 +425,9 @@ def _candidate(
         value_json={"value": level},
         evidence_spans=[
             ExtractedEvidenceSpan(
-                quote=f"비요른은 {level}레벨 바바리안이다.",
-                start_offset=None,
-                end_offset=None,
+                quote=quote,
+                start_offset=evidence_start,
+                end_offset=None if evidence_start is None else evidence_start + len(quote),
             )
         ],
         confidence=confidence,
