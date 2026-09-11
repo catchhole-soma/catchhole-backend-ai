@@ -2888,6 +2888,17 @@ def _scenario_details(
             ]
             for row in detail["stage2"]:
                 candidate_id = row.get("sourceCandidateId")
+                if candidate_id is None:
+                    # A matched Stage1 source remains identifiable even without a Stage2 decision.
+                    source_gold_ids = set(row.get("sourceGoldIds", []))
+                    matched_ids = [
+                        source_id
+                        for source_id, gold_ids in gold_ids_by_candidate.items()
+                        if source_id is not None and source_gold_ids.intersection(gold_ids)
+                    ]
+                    if len(matched_ids) == 1:
+                        candidate_id = matched_ids[0]
+                        row["sourceCandidateId"] = candidate_id
                 if candidate_id in outcomes:
                     row["processing"] = outcomes[candidate_id]
                     row["source"] = _stage1_diagnostic_summary(source_by_id[candidate_id])

@@ -331,3 +331,22 @@ def test_interrupted_cli_writes_same_safe_records_as_markdown(tmp_path, monkeypa
     assert "SECRET" not in rendered and "SECRET" not in json.dumps(public)
     assert "1차 추출 집계" not in rendered
     capsys.readouterr()
+
+
+def test_gold_matched_candidate_without_decision_keeps_subject_and_reason():
+    gold = _world_gold()
+    source = _world_source("P1")
+    trace = ProcessingTrace(candidates=[source])
+    trace.start([source.candidate_id], "WORLD_PREPARATION")
+    trace.fail([source.candidate_id], "WORLD", ValueError("SECRET"))
+    bundle = _bundle(gold, [source], [])
+    bundle.scenarios[0] = ScenarioPrediction(
+        scenario_id="S1", stage1=[source], processing_version=1, processing=trace.records
+    )
+    report = asyncio.run(evaluate_multi_stage(gold, bundle))
+    row = build_public_diagnostics(report)[0]["stage2"][0]
+    assert row["sourceCandidateId"] == "P1"
+    assert row["source"]["subject"]
+    assert row["source"]["path"]
+    assert row["processing"]["status"] == "PREPARATION_FAILED"
+    assert "비교 준비 실패" in render_markdown_summary(report)
