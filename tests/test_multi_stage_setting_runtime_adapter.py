@@ -556,8 +556,8 @@ def test_fixed_runtime_reuses_character_dedupe_and_world_consolidation() -> None
     assert bundle.subject_resolution_model == "subject-model"
     assert bundle.comparison_model == "comparison-model"
     assert bundle.character_schema_hash is not None
-    assert bundle.prompt_versions["characterExtraction"] == "setting-extraction:v10"
-    assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v3"
+    assert bundle.prompt_versions["characterExtraction"] == "setting-extraction:v11"
+    assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v5"
     assert bundle.prompt_versions["worldComparison"] == "world-setting-comparison-batch:v5"
 
 
@@ -2288,7 +2288,12 @@ def test_default_runtime_routes_subject_resolution_model_independently(monkeypat
     assert components.world_comparator.model == "comparison-model"
 
 
-class _OracleCharacterComparator:
+class _PassThroughLifecycle:
+    async def reconcile_status_lifecycle(self, *, decisions, **kwargs):
+        return decisions
+
+
+class _OracleCharacterComparator(_PassThroughLifecycle):
     snapshot_fact_keys = None
     calls = None
 
@@ -2313,7 +2318,7 @@ class _OracleCharacterComparator:
         return result, result.model_dump(mode="json")
 
 
-class _OraclePatternKeyComparator:
+class _OraclePatternKeyComparator(_PassThroughLifecycle):
     batch_max_candidates = 10
 
     def __init__(self) -> None:
@@ -2343,7 +2348,7 @@ class _OraclePatternKeyComparator:
         return result, result.model_dump(mode="json")
 
 
-class _ProjectedStatusComparator:
+class _ProjectedStatusComparator(_PassThroughLifecycle):
     def __init__(self) -> None:
         self.calls = []
 
@@ -2382,7 +2387,7 @@ class _ProjectedStatusComparator:
         return result, result.model_dump(mode="json")
 
 
-class _AddThenRemoveProjectedStatusComparator:
+class _AddThenRemoveProjectedStatusComparator(_PassThroughLifecycle):
     def __init__(self) -> None:
         self.calls = []
 
@@ -2565,6 +2570,9 @@ class _TransportFailingCharacterExtractor:
 
 
 class _PassThroughSubjectResolver:
+    async def reconcile_episode_names(self, *, candidates, **kwargs):
+        return SubjectResolutionResult(candidates=candidates)
+
     async def resolve_candidates(self, *, candidates, **kwargs):
         return SubjectResolutionResult(candidates=candidates)
 
@@ -2818,7 +2826,7 @@ class _CallCountingWorldExtractor:
         return WorldSettingExtractionResult(candidates=[])
 
 
-class _AddCharacterComparator:
+class _AddCharacterComparator(_PassThroughLifecycle):
     def batch_fits(self, *, candidates, **kwargs):
         return bool(candidates)
 
@@ -2867,7 +2875,7 @@ class _BatchCapturingCharacterComparator(_AddCharacterComparator):
         return await super().compare_batch(candidates=candidates, **kwargs)
 
 
-class _RemoveThenAddSameSlotComparator:
+class _RemoveThenAddSameSlotComparator(_PassThroughLifecycle):
     def __init__(self) -> None:
         self.result = None
 

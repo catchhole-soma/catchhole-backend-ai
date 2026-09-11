@@ -4,7 +4,7 @@ import hashlib
 import json
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Literal, Protocol, cast
@@ -23,6 +23,7 @@ from app.analysis.character_fact_comparison_pipeline import (
 from app.analysis.character_fact_projection import is_explicit_inactive_status
 from app.analysis.character_name_resolver import (
     ActiveCharacterStatus,
+    is_usable_subject_resolution_name,
     normalize_character_name,
 )
 from app.analysis.character_name_resolver import (
@@ -388,6 +389,7 @@ async def run_multi_stage_predictions(
         )
 
     gold_chain = build_gold_state_chain(gold)
+    source_by_scenario = {item.scenario_id: item.source_text for item in gold.scenarios}
     predicted_after: dict[str, EvaluationState] = {}
     scenario_predictions: list[ScenarioPrediction] = []
     for scenario in sorted(gold.scenarios, key=lambda item: (item.episode_no, item.scenario_id)):
@@ -424,6 +426,7 @@ async def run_multi_stage_predictions(
                     max_chunks,
                     enabled_domains,
                     trace=trace,
+                    previous_episode_text=source_by_scenario.get(scenario.previous_scenario_id),
                 )
         except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError) as exc:
             partial = trace.aborted(scenario.scenario_id, exc)
@@ -620,6 +623,7 @@ async def _run_live_scenario(
     enabled_domains: set[EvaluationDomain],
     *,
     trace: ProcessingTrace,
+    previous_episode_text: str | None = None,
 ) -> ScenarioPrediction:
     if scenario.source_text is None:
         raise ValueError(
@@ -639,6 +643,8 @@ async def _run_live_scenario(
     trace.candidates = handoff_stage1
     trace.raw = raw_stage1
     character_records: list[_CharacterRecord] = []
+    prior_status_observations: list[ExtractedSettingCandidate] = []
+    previous_episode_text = previous_episode_text[-14_000:] if previous_episode_text else None
     character_drafts = (
         drafts
         if EvaluationDomain.CHARACTER in scenario.target_domains
@@ -647,6 +653,10 @@ async def _run_live_scenario(
     )
     for chunk_position, draft in enumerate(character_drafts):
         chunk_id = _stable_uuid(scenario.scenario_id, "character-chunk", str(draft.chunk_index))
+        context = replace(
+            _subject_context(character_drafts, chunk_position),
+            previous_episode_text=previous_episode_text,
+        )
         try:
             extraction = await components.character_extractor.extract_from_chunk(
                 source_chunk_id=chunk_id,
@@ -655,6 +665,12 @@ async def _run_live_scenario(
                 episode_title=scenario.episode_title,
                 schema_hints=schema_hints,
                 known_characters=tuple(known_characters),
+                prior_status_observations=tuple(prior_status_observations),
+                narrative_context={
+                    "previous_episode": previous_episode_text,
+                    "previous_chunk": context.previous_chunk_text,
+                    "next_chunk": context.next_chunk_text,
+                },
             )
         except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
@@ -700,11 +716,17 @@ async def _run_live_scenario(
                 raw_candidates,
                 draft.chunk_text,
                 draft.start_offset,
+                preserve_status_offsets=True,
             )
             subject_result = await components.character_subject_resolver.resolve_candidates(
-                context=_subject_context(character_drafts, chunk_position),
+                context=context,
                 candidates=resolved_offsets,
                 known_characters=known_characters,
+            )
+            prior_status_observations.extend(
+                candidate for candidate in subject_result.candidates
+                if (candidate.attribute_name or "").startswith("status.")
+                and is_usable_subject_resolution_name(candidate.entity_name)
             )
             for candidate_id, resolved, sort_order in zip(
                 candidate_ids,
@@ -731,6 +753,31 @@ async def _run_live_scenario(
                 failures,
                 failed_stage="CHARACTER_STAGE1",
                 trace=trace,
+            )
+
+    if character_drafts:
+        try:
+            identity = await components.character_subject_resolver.reconcile_episode_names(
+                context=SubjectResolutionChunkContext(
+                    previous_chunk_text=None,
+                    current_chunk_text="\n\n".join(draft.chunk_text for draft in character_drafts),
+                    next_chunk_text=None,
+                    previous_episode_text=previous_episode_text,
+                ),
+                candidates=[record.candidate for record in character_records],
+                known_characters=known_characters,
+            )
+            character_records = [
+                replace(record, candidate=candidate)
+                for record, candidate in zip(character_records, identity.candidates, strict=True)
+            ]
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
+            raise
+        except Exception as exc:  # noqa: BLE001 - 검수 실패를 평가 파이프라인 실패로 보존한다.
+            failures.append(_runtime_failure(EvaluationDomain.CHARACTER, 1, "identity", exc))
+            return _pipeline_failed_prediction(
+                scenario.scenario_id, raw_stage1, failures,
+                failed_stage="CHARACTER_STAGE1", trace=trace,
             )
 
     canonical_character_records: list[_CharacterRecord] = []

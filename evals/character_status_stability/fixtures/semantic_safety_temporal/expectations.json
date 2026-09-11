@@ -1,0 +1,126 @@
+{
+  "episodes": [
+    {
+      "episodeNo": 1,
+      "characters": [
+        {
+          "name": "카엘",
+          "expectedActive": [
+            "오른발의 심한 부상",
+            "왼팔의 깊은 베인 상처",
+            "밤마다 몸을 떨게 하는 저주"
+          ],
+          "expectedInactive": [
+            "오른발 상처의 감염"
+          ]
+        },
+        {
+          "name": "미라",
+          "expectedActive": [
+            "덫에 물려 생긴 오른발 부상"
+          ],
+          "expectedInactive": [
+            "오른발 상처의 감염"
+          ]
+        }
+      ]
+    },
+    {
+      "episodeNo": 2,
+      "characters": [
+        {
+          "name": "카엘",
+          "expectedActive": [
+            "오른발의 심한 부상",
+            "왼팔의 깊은 베인 상처",
+            "밤마다 몸을 떨게 하는 저주"
+          ],
+          "expectedInactive": [
+            "오른발 상처의 감염"
+          ]
+        },
+        {
+          "name": "미라",
+          "expectedActive": [
+            "덫에 물려 생긴 오른발 부상"
+          ],
+          "expectedInactive": [
+            "오른발 상처의 감염"
+          ]
+        }
+      ]
+    },
+    {
+      "episodeNo": 3,
+      "characters": [
+        {
+          "name": "카엘",
+          "expectedActive": [
+            "오른발의 심한 부상",
+            "왼팔의 깊은 베인 상처",
+            "밤마다 몸을 떨게 하는 저주"
+          ],
+          "expectedInactive": [
+            "오른발 상처의 감염"
+          ]
+        },
+        {
+          "name": "미라",
+          "expectedActive": [
+            "덫에 물려 생긴 오른발 부상",
+            "오른발 상처의 감염"
+          ],
+          "expectedInactive": []
+        }
+      ]
+    },
+    {
+      "episodeNo": 4,
+      "characters": [
+        {
+          "name": "카엘",
+          "expectedActive": [
+            "왼팔의 깊은 베인 상처",
+            "밤마다 몸을 떨게 하는 저주"
+          ],
+          "expectedInactive": [
+            "오른발의 심한 부상",
+            "오른발 상처의 감염"
+          ]
+        },
+        {
+          "name": "미라",
+          "expectedActive": [
+            "덫에 물려 생긴 오른발 부상",
+            "오른발 상처의 감염"
+          ],
+          "expectedInactive": []
+        }
+      ]
+    },
+    {
+      "episodeNo": 5,
+      "characters": [
+        {
+          "name": "카엘",
+          "expectedActive": [
+            "왼팔의 깊은 베인 상처",
+            "밤마다 몸을 떨게 하는 저주"
+          ],
+          "expectedInactive": [
+            "오른발의 심한 부상",
+            "오른발 상처의 감염"
+          ]
+        },
+        {
+          "name": "미라",
+          "expectedActive": [
+            "덫에 물려 생긴 오른발 부상",
+            "오른발 상처의 감염"
+          ],
+          "expectedInactive": []
+        }
+      ]
+    }
+  ]
+}

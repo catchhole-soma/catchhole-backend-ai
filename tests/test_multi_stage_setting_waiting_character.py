@@ -230,6 +230,9 @@ class _Extractor:
 
 
 class _SubjectResolver:
+    async def reconcile_episode_names(self, *, candidates, **kwargs):
+        return SubjectResolutionResult(candidates=candidates)
+
     async def resolve_candidates(self, *, candidates, **kwargs):
         return SubjectResolutionResult(candidates=candidates)
 

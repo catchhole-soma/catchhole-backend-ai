@@ -172,6 +172,40 @@ class _Resolver:
     async def resolve_candidates(self, *, candidates, **kwargs):
         return SubjectResolutionResult(candidates=candidates, fallback_call_count=0)
 
+    async def reconcile_episode_names(self, *, candidates, **kwargs):
+        return SubjectResolutionResult(candidates=candidates, fallback_call_count=0)
+
+
+def test_live_evaluation_forwards_previous_source_and_uses_episode_identity(monkeypatch):
+    contexts, identity_contexts = [], []
+    original_extract = _Extractor.extract_from_chunk
+
+    async def capture_extract(self, **kwargs):
+        contexts.append(kwargs["narrative_context"])
+        assert kwargs["prior_status_observations"] == ()
+        return await original_extract(self, **kwargs)
+
+    async def reconcile(self, *, context, candidates, **kwargs):
+        identity_contexts.append(context)
+        return SubjectResolutionResult(candidates=[
+            candidate.model_copy(update={"entity_name": "카락 본명"})
+            for candidate in candidates
+        ])
+
+    monkeypatch.setattr(_Extractor, "extract_from_chunk", capture_extract)
+    monkeypatch.setattr(_Resolver, "reconcile_episode_names", reconcile)
+    gold = _gold(episodes=2)
+    bundle, comparator, _ = _run(gold)
+
+    assert len(bundle.scenarios) == 2
+    assert all(not item.failures for item in bundle.scenarios)
+    assert contexts[0]["previous_episode"] is None
+    assert contexts[1]["previous_episode"] == gold.scenarios[0].source_text
+    assert identity_contexts[1].previous_episode_text == gold.scenarios[0].source_text
+    # 첫 화는 동일인 검수 이름을 쓰고, FIXED 두 번째 화는 Gold 시작 상태의 저장 이름을 쓴다.
+    assert [call[0] for call in comparator.calls] == ["카락 본명", "카락"]
+    assert bundle.scenarios[0].stage1[0].entity_name == "카락 본명"
+
 
 class _Comparator:
     def __init__(self):
@@ -179,6 +213,9 @@ class _Comparator:
 
     def batch_fits(self, *, candidates, **kwargs):
         return bool(candidates)
+
+    async def reconcile_status_lifecycle(self, *, decisions, **kwargs):
+        return decisions
 
     async def compare_batch(
         self, *, candidates, snapshot_entries, matched_character_name, **kwargs
