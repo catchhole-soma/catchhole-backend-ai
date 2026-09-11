@@ -5,24 +5,27 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
 
+from app.analysis.character_identity_resolver import reconcile_episode_names
 from app.analysis.character_name_resolver import (
     UNKNOWN_ENTITY_NAME,
     KnownCharacter,
     is_concrete_character_name,
     is_usable_subject_resolution_name,
+    normalize_known_characters,
+    resolve_candidate_character,
 )
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.json_response import parse_json_object, safe_validation_error_summary
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.core.config import get_settings
-from app.domain.enums import SettingCandidateKind
+from app.domain.enums import SettingCandidateKind, SettingCandidateMatchStatus
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 
 DEFAULT_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "llm" / "prompts" / "character_subject_resolution.md"
 )
-SUBJECT_RESOLUTION_CACHE_KEY = "subject-resolution:v1"
+SUBJECT_RESOLUTION_CACHE_KEY = "subject-resolution:v5"
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,7 @@ class SubjectResolutionChunkContext:
     previous_chunk_text: str | None
     current_chunk_text: str
     next_chunk_text: str | None
+    previous_episode_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,8 +61,8 @@ class SubjectResolutionResponse(BaseModel):
 
 
 class CharacterSubjectResolver:
-    # "나", "그녀", "미상"처럼 현재 chunk만으로 주체가 풀리지 않은 후보만
-    # LLM에 다시 보내고, 설정 후보 자체를 재추출하지는 않는다.
+    # 원문 주체가 지칭어/미상인 후보는 초안 이름이 구체적이어도 한 번 재검증한다.
+    # 설정 후보 자체를 재추출하지는 않는다.
     def __init__(
         self,
         llm_client: TextGenerationClient | None = None,
@@ -77,14 +81,36 @@ class CharacterSubjectResolver:
             else max_output_tokens
         )
 
+    async def reconcile_episode_names(
+        self,
+        context: SubjectResolutionChunkContext,
+        candidates: list[ExtractedSettingCandidate],
+        known_characters: list[KnownCharacter],
+    ) -> SubjectResolutionResult:
+        result = await reconcile_episode_names(
+            llm_client=self.llm_client,
+            model=self.model,
+            max_output_tokens=self.max_output_tokens,
+            context_episode_text=context.current_chunk_text,
+            previous_episode_text=context.previous_episode_text,
+            candidates=candidates,
+            known_characters=known_characters,
+        )
+        return SubjectResolutionResult(
+            candidates=result.candidates,
+            fallback_call_count=result.call_count,
+            fallback_resolved_count=result.renamed_candidate_count,
+            fallback_unresolved_count=result.unresolved_candidate_count,
+        )
+
     async def resolve_candidates(
         self,
         context: SubjectResolutionChunkContext,
         candidates: list[ExtractedSettingCandidate],
         known_characters: list[KnownCharacter],
     ) -> SubjectResolutionResult:
-        # 명확한 캐릭터명 후보는 기존 name resolver로 충분하므로 fallback 대상에서 제외한다.
-        # 미상/지칭어 후보는 raw 표현이 예상 형식이 아니거나 없어도 청크 문맥으로 다시 판단한다.
+        # 알려진 인물에 유일하게 연결된 구체 이름만 기존 name resolver로 처리한다.
+        # 미등록 이름 모양의 호칭도 실제로 새 인물인지는 청크 문맥으로 판단한다.
         fallback_targets = _build_fallback_targets(candidates, known_characters)
         if not fallback_targets:
             return SubjectResolutionResult(candidates=candidates)
@@ -224,9 +250,15 @@ def _is_fallback_target(
 ) -> bool:
     if candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
         return False
-    # raw 표현은 LLM이 예상과 다른 서술형 문구로 반환할 수 있으므로 진입 조건으로 믿지 않는다.
-    # 구체 entity_name을 얻지 못한 모든 후보를 청크 문맥 기반 fallback 대상으로 삼는다.
-    return not is_concrete_character_name(candidate.entity_name, known_characters)
+    # 원문이 지칭어인데 초안 entity_name만 구체적인 경우에도 독립적으로 재검증한다.
+    # 구체 이름을 얻지 못한 후보는 기존처럼 raw 형태와 무관하게 검증한다.
+    if not is_concrete_character_name(
+        candidate.entity_name, known_characters
+    ) or not is_concrete_character_name(candidate.raw_entity_mention, known_characters):
+        return True
+    return resolve_candidate_character(
+        candidate, normalize_known_characters(known_characters)
+    ).match_status != SettingCandidateMatchStatus.MATCHED
 
 
 def _usable_resolved_entity_name(
@@ -263,14 +295,9 @@ def _build_user_prompt(
 ) -> str:
     # LLM이 후보를 새로 만들지 못하도록, 해소 대상 candidate_id와 필요한 문맥만 전달한다.
     payload = {
-        "known_characters": [
-            {
-                "character_id": str(character.character_id),
-                "name": character.name,
-            }
-            for character in known_characters
-        ],
+        "known_characters": [character.name for character in known_characters],
         "context": {
+            "previous_episode": context.previous_episode_text,
             "previous_chunk": context.previous_chunk_text,
             "current_chunk": context.current_chunk_text,
             "next_chunk": context.next_chunk_text,
@@ -279,7 +306,7 @@ def _build_user_prompt(
             {
                 "candidate_id": target.candidate_id,
                 "raw_entity_mention": target.candidate.raw_entity_mention,
-                "entity_name": target.candidate.entity_name,
+                "draft_entity_name": target.candidate.entity_name,
                 "attribute_name": target.candidate.attribute_name,
                 "attribute_value": target.candidate.attribute_value,
                 "evidence_quotes": [evidence.quote for evidence in target.candidate.evidence_spans],

@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 from uuid import UUID
 
@@ -10,7 +10,11 @@ from app.analysis.character_fact_comparison_pipeline import (
     CharacterFactComparisonRunResult,
     CharacterFactComparisonSpringApi,
 )
-from app.analysis.character_name_resolver import ActiveCharacterStatus, KnownCharacter
+from app.analysis.character_name_resolver import (
+    ActiveCharacterStatus,
+    KnownCharacter,
+    is_usable_subject_resolution_name,
+)
 from app.analysis.character_subject_resolver import (
     CharacterSubjectResolver,
     SubjectResolutionChunkContext,
@@ -26,6 +30,7 @@ from app.analysis.world_setting_pipeline import (
     WorldSettingComparisonSpringApi,
 )
 from app.analysis.world_setting_schemas import WorldSettingExtractionResult
+from app.chunking.chunk_splitter import DEFAULT_MAX_CHARS
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import get_settings
 from app.db.session import get_session_maker
@@ -144,6 +149,8 @@ class SpringWorkerApi(
 
 # 회차 원문을 읽고 청킹 결과를 교체하는 최소 계약.
 class EpisodeChunkingApi(Protocol):
+    def read_source_text(self, content_s3_key: str) -> str: ...
+
     def replace_chunks_from_s3_content(
         self,
         episode_id: UUID,
@@ -172,12 +179,21 @@ class SettingExtractorApi(Protocol):
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
         known_characters: tuple[KnownCharacter, ...] = (),
+        narrative_context: dict[str, str | None] | None = None,
+        prior_status_observations: tuple[ExtractedSettingCandidate, ...] = (),
     ) -> CharacterSettingExtractionResult: ...
 
 
 class SubjectResolverApi(Protocol):
     # 구체 entity_name을 얻지 못한 후보를 앞뒤 chunk 문맥으로 해소해 반환한다.
     async def resolve_candidates(
+        self,
+        context: SubjectResolutionChunkContext,
+        candidates: list[ExtractedSettingCandidate],
+        known_characters: list[KnownCharacter],
+    ) -> SubjectResolutionResult: ...
+
+    async def reconcile_episode_names(
         self,
         context: SubjectResolutionChunkContext,
         candidates: list[ExtractedSettingCandidate],
@@ -532,12 +548,16 @@ class AnalysisJobWorker:
             payload.lease_token,
         )
         save_items: list[SettingCandidateSaveItem] = []
+        prior_status_observations: list[ExtractedSettingCandidate] = []
         fallback_calls = 0
         fallback_resolved = 0
         fallback_unresolved = 0
         status_inactive_candidate_count = 0
         episode = payload.episode
+        previous_episode_text = await self._read_previous_episode_context(payload)
         for index, chunk in enumerate(chunks):
+            previous_chunk = chunks[index - 1].chunk_text if index > 0 else None
+            next_chunk = chunks[index + 1].chunk_text if index + 1 < len(chunks) else None
             extraction_result = await setting_extractor.extract_from_chunk(
                 source_chunk_id=chunk.id,
                 chunk_text=chunk.chunk_text,
@@ -546,24 +566,37 @@ class AnalysisJobWorker:
                 episode_title=episode.title,
                 schema_hints=schema_hints,
                 known_characters=tuple(known_characters),
+                prior_status_observations=tuple(prior_status_observations),
+                narrative_context={
+                    "previous_episode": previous_episode_text,
+                    "previous_chunk": previous_chunk,
+                    "next_chunk": next_chunk,
+                },
             )
             resolved_candidates = resolve_candidate_evidence_offsets(
                 candidates=extraction_result.candidates,
                 chunk_text=chunk.chunk_text,
                 chunk_start_offset=chunk.start_offset,
+                preserve_status_offsets=True,
             )
             resolution = await subject_resolver.resolve_candidates(
                 context=SubjectResolutionChunkContext(
-                    previous_chunk_text=chunks[index - 1].chunk_text if index > 0 else None,
+                    previous_chunk_text=previous_chunk,
                     current_chunk_text=chunk.chunk_text,
-                    next_chunk_text=(
-                        chunks[index + 1].chunk_text if index + 1 < len(chunks) else None
-                    ),
+                    next_chunk_text=next_chunk,
+                    previous_episode_text=previous_episode_text,
                 ),
                 candidates=resolved_candidates,
                 known_characters=known_characters,
             )
             fallback_calls += resolution.fallback_call_count
+            # 같은 Job의 앞 청크 관찰만 다음 청크 검수에 제공한다. 저장 대상은
+            # 그대로 보존하되, 미상 주체끼리 같은 상태로 연결하지 않는다.
+            prior_status_observations.extend(
+                candidate for candidate in resolution.candidates
+                if (candidate.attribute_name or "").startswith("status.")
+                and is_usable_subject_resolution_name(candidate.entity_name)
+            )
             fallback_resolved += resolution.fallback_resolved_count
             fallback_unresolved += resolution.fallback_unresolved_count
             status_inactive_candidate_count += sum(
@@ -579,6 +612,23 @@ class AnalysisJobWorker:
                 for candidate in resolution.candidates
             )
 
+        identity_result = await subject_resolver.reconcile_episode_names(
+            context=SubjectResolutionChunkContext(
+                previous_chunk_text=None,
+                current_chunk_text="\n\n".join(chunk.chunk_text for chunk in chunks),
+                next_chunk_text=None,
+                previous_episode_text=previous_episode_text,
+            ),
+            candidates=[item.candidate for item in save_items],
+            known_characters=known_characters,
+        )
+        save_items = [
+            replace(item, candidate=candidate)
+            for item, candidate in zip(save_items, identity_result.candidates, strict=True)
+        ]
+        fallback_calls += identity_result.fallback_call_count
+        fallback_resolved += identity_result.fallback_resolved_count
+        fallback_unresolved += identity_result.fallback_unresolved_count
         saved_candidates = await self._blocking_io_executor.run(
             self._get_setting_candidate_service().replace_candidates_for_analysis_job,
             work_id=payload.work_id,
@@ -688,6 +738,24 @@ class AnalysisJobWorker:
             AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED,
         )
         return result
+
+    async def _read_previous_episode_context(self, payload: WorkerAnalysisJobPayload) -> str | None:
+        previous = payload.previous_episode
+        if previous is None:
+            return None
+        if (
+            payload.episode is None
+            or previous.episode_no != payload.episode.episode_no - 1
+            or previous.episode_id == payload.episode.episode_id
+        ):
+            raise ValueError("Narrative context must be the immediately preceding episode.")
+        text = await self._blocking_io_executor.run(
+            self._get_chunking_service().read_source_text,
+            previous.content_s3_key,
+        )
+        # Bound the read-only reference window to two maximum-size chunks. This is
+        # an excerpt, never a complete identity ledger; unresolved references stay in review.
+        return text[-2 * DEFAULT_MAX_CHARS:] or None
 
     def _error_message(self, exc: Exception) -> str:
         message = str(exc) or exc.__class__.__name__

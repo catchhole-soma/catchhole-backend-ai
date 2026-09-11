@@ -24,6 +24,9 @@ CharacterFact는 삭제하지 않는 사건 이력이고 snapshot은 현재 상�
 
 - `canonical_key_resolution=EXACT|ALIAS` 또는 비-STATUS `PATTERN`이면
   `resolved_canonical_fact_key`를 `initial_canonical_fact_key`와 정확히 같게 둔다.
+  EXCLUDE/HISTORY_ONLY/REVIEW_REQUIRED에서도 이 key는 source 후보의 고정 메타데이터이며,
+  의미상 중복인 기존 snapshot의 key를 선택하는 필드가 아니다. 다른 key에 같은 사실이 이미
+  있어 EXCLUDE한다면 원래 source key를 유지한다. 이 세 연산의 고정 key는 코드가 입력값에 묶는다.
 - `PATTERN+STATUS`만 표현이 다른 같은 상태를 동일하고 안정적인 `status.*` 이름으로
   정규화한다. 의미가 다른 상태를 같은 key로 합치지 않는다.
 - UPDATE/MERGE는 현재 활성인 동일 Fact 유형·동일 resolved key만 대상으로 삼는다.
@@ -61,6 +64,8 @@ CharacterFact는 삭제하지 않는 사건 이력이고 snapshot은 현재 상�
 - `REVIEW_REQUIRED`: 시점·대상·충돌·종료를 안전하게 판단할 수 없다.
 
 UPDATE/MERGE만 `target_ref`를 쓰고, 동일 resolved slot의 활성 ref가 반드시 있어야 한다.
+기존 STATUS slot을 선택하면 `resolved_canonical_fact_key`는 공백을 포함해 그 slot의 key를 그대로
+재사용한다. 신규 STATUS key의 공백은 `_`로 표기하되 기존 key를 자동 변경하지 않는다.
 ADD/UPDATE/MERGE는 `proposed_fact_value`와 `proposed_value_json`을 모두 반환한다.
 각 proposal은 해당 candidate의 `value_type`을 유지한다. STRING이면 `proposed_value_json`은
 `{"value": "바바리안"}`처럼 `value`에 JSON 문자열을 담은 객체여야 한다.
@@ -77,6 +82,10 @@ HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED는 target, 제거 refs, proposal을 모두 
 # STATUS 종료
 
 - 모든 활성 STATUS와 후보의 의미 관계를 먼저 검토한 뒤 operation을 고른다.
+- 한 번의 치료와 그 결과를 서술한 회복 관찰은 별도의 지속 버프라는 근거 없이 현재 STATUS로
+  추가하지 않는다. 기존 장애가 해소된 관찰이면 REMOVE, 제거할 상태가 이미 없으면 HISTORY_ONLY다.
+  지속 효과가 독립적으로 남는다는 근거가 있는 경우에만 현재 상태 추가와 관련 상태 제거를 함께 한다.
+- 회차 시작 P 상태뿐 아니라 앞선 후보가 만든 Q 상태도 같은 종료 기준으로 검토한다.
 - 회복·해제·사망처럼 종료가 직접 서술되면 관련 STATUS를 제거한다.
 - 직접 선언이 없어도 치료 뒤 증상 소멸, 능력 회복, 행동 범위 확대가 이어져 자연스럽게
   종료로 읽히면 제거할 수 있다. 절대적인 논리 모순까지 요구하지 않는다.
@@ -87,7 +96,10 @@ HISTORY_ONLY/EXCLUDE/REVIEW_REQUIRED는 target, 제거 refs, proposal을 모두 
 
 # 시간·표시 계약
 
-- 현재는 PRESENT이며 현재의 비지속 사건은 PRESENT+HISTORY_ONLY일 수 있다. 회상·끝난 과거는 PAST, 가정·꿈·예언은 HYPOTHETICAL이다.
+- 현재는 PRESENT이며 현재의 비지속 사건은 PRESENT+HISTORY_ONLY일 수 있다. 회상·끝난 과거는 PAST,
+  가정·조건부 결과·미래 예상·가능성·꿈·예언은 HYPOTHETICAL이다. 앞으로 겪을 수도 있는 위험을
+  현재 노출이나 실제 발생으로 바꾸지 않는다. 발생을 부정하는 근거도 보존해 판단한다.
+  active 같은 후보 속성보다 조건·양태를 포함한 원문 근거가 우선한다.
   PAST/HYPOTHETICAL은 HISTORY_ONLY 또는 REVIEW_REQUIRED만 허용한다.
   불명확하면 UNKNOWN+REVIEW_REQUIRED다.
 - 상대 변화는 직전 projected 현재값까지 반영해 최종값을 계산한다. 기준이 없으면

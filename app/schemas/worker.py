@@ -217,6 +217,10 @@ class WorkerAnalysisJobPayload(BaseModel):
         alias="knownCharacters",
     )
     episode: WorkerAnalysisEpisodePayload | None = None
+    # Same-work immediately preceding episode, used only to resolve narrative references.
+    previous_episode: WorkerAnalysisEpisodePayload | None = Field(
+        default=None, alias="previousEpisode",
+    )
 
 
 class WorkerEvidenceSpan(BaseModel):

@@ -8,6 +8,11 @@ from app.analysis.character_fact_comparator import CharacterFactComparator
 from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonDecision,
 )
+from app.analysis.character_fact_projection import (
+    CharacterFactProposalValueError,
+    validate_character_fact_decision,
+)
+from app.analysis.exceptions import ComparisonValidationError
 from app.domain.enums import SettingValueType
 from app.llm.responses import LlmTextResponse
 from app.schemas.worker import (
@@ -900,6 +905,116 @@ def test_proposed_value_json_requires_an_object() -> None:
                 "rawComparisonJson": decision_payload,
             }
         )
+
+
+@pytest.mark.parametrize("operation", ["ADD", "UPDATE", "MERGE"])
+def test_string_proposal_retries_with_typed_feedback_without_coercing_array(operation) -> None:
+    invalid = {
+        "operation": operation,
+        "target_ref": None if operation == "ADD" else "P1",
+        "removed_snapshot_refs": [],
+        "proposed_fact_value": "기사이며 은빛 기사단의 단장",
+        "proposed_value_json": {"value": ["PRIVATE_REJECTED_SENTINEL", "단장"]},
+        "temporal_scope": "PRESENT",
+        "comparison_reason": "서로 양립하는 신원 정보를 보존한다.",
+    }
+    valid_json = {"value": "기사이며 은빛 기사단의 단장"}
+    client = FakeTextClient([invalid, {**invalid, "proposed_value_json": valid_json}])
+    candidate = _candidate().model_copy(update={
+        "canonical_fact_type": "PROFILE", "canonical_fact_key": "profile.attribute",
+        "value_type": SettingValueType.STRING, "value_json": {"value": "단장"},
+    })
+    entries = [] if operation == "ADD" else [
+        _snapshot_entry("PROFILE", "profile.attribute", {"value": "기사"}),
+    ]
+
+    decision, raw = asyncio.run(CharacterFactComparator(
+        llm_client=client, max_attempts=2,
+    ).compare(candidate, entries))
+
+    assert decision.operation == operation
+    assert decision.proposed_value_json == valid_json
+    assert raw["proposed_value_json"] == valid_json
+    assert len(client.requests) == 2
+    feedback = json.loads(client.requests[1]["user_prompt"])["validation_feedback"]
+    assert feedback["reason_code"] == "PROPOSED_VALUE_JSON_INVALID"
+    assert feedback["field"] == "proposed_value_json.value"
+    assert feedback["expected_type"] == "a JSON string for STRING"
+    assert "STRING의 value를 배열이나 객체로 바꾸지" in feedback["value_correction"]
+    assert "PRIVATE_REJECTED_SENTINEL" not in client.requests[1]["user_prompt"]
+
+
+@pytest.mark.parametrize(("value_type", "value_json"), [
+    ("STRING", {}), ("STRING", {"value": None}), ("STRING", {"value": 1}),
+    ("STRING", {"value": True}), ("STRING", {"value": ["검사", "단장"]}),
+    ("STRING", {"value": {"name": "검사"}}),
+    ("NUMBER", {"value": "3"}), ("NUMBER", {"value": True}),
+    ("NUMBER", {"value": float("inf")}), ("NUMBER", {"value": float("nan")}),
+    ("BOOLEAN", {"value": "true"}), ("BOOLEAN", {"value": 1}),
+    ("UNKNOWN", {}),
+])
+def test_proposal_scalar_contract_rejects_values_java_cannot_store(value_type, value_json) -> None:
+    decision = _proposal_decision(value_json)
+    with pytest.raises(CharacterFactProposalValueError):
+        _validate_proposal(decision, value_type=value_type)
+
+
+@pytest.mark.parametrize(("value_type", "value_json"), [
+    ("STRING", {"value": "검사이자 단장"}),
+    ("STRING", {"value": "", "설명": "빈 표시값도 JSON 문자열이다"}),
+    ("NUMBER", {"value": 0}), ("NUMBER", {"value": 1.25}),
+    ("BOOLEAN", {"value": False}), ("UNKNOWN", {"value": None}),
+    ("UNKNOWN", {"value": ["검사", "단장"]}),
+    ("JSON", {"roles": ["검사", "단장"], "active": True}),
+    ("JSON", {"value": ["검사", "단장"]}), ("JSON", {}),
+])
+def test_proposal_scalar_contract_accepts_java_envelopes_without_rewriting(value_type, value_json):
+    decision = _proposal_decision(value_json)
+    _validate_proposal(decision, value_type=value_type)
+    assert decision.proposed_value_json == value_json
+
+
+@pytest.mark.parametrize("value", [-1, 0.5, 2_147_483_648])
+def test_core_proposal_rejects_out_of_range_or_fractional_java_integer(value):
+    with pytest.raises(CharacterFactProposalValueError, match="32-bit integer"):
+        _validate_proposal(_proposal_decision({"value": value}), value_type="NUMBER", fact_type="LEVEL")
+
+
+@pytest.mark.parametrize("value_json", [
+    {" name": "검사"}, {"": "검사"}, {"name": " 검사"}, {"name": ""},
+    {"x" * 101: "검사"}, {"😀" * 51: "검사"},
+])
+def test_proposal_rejects_invalid_java_structured_properties(value_json):
+    with pytest.raises(CharacterFactProposalValueError, match="property keys"):
+        _validate_proposal(_proposal_decision(value_json), value_type="JSON")
+
+
+def test_singleton_invalid_string_proposal_exhaustion_returns_typed_failure():
+    invalid = _proposal_decision({"value": ["검사", "단장"]}).model_dump(mode="json")
+    client = FakeTextClient([invalid, invalid])
+    candidate = _candidate().model_copy(update={
+        "canonical_fact_type": "PROFILE", "canonical_fact_key": "profile.attribute",
+        "value_type": SettingValueType.STRING, "value_json": {"value": "단장"},
+    })
+    with pytest.raises(ComparisonValidationError, match="CharacterFactProposalValueError"):
+        asyncio.run(CharacterFactComparator(llm_client=client, max_attempts=2).compare(candidate, []))
+    assert len(client.requests) == 2
+
+
+def _proposal_decision(value_json):
+    return CharacterFactComparisonDecision.model_validate({
+        "operation": "ADD", "proposed_fact_value": "제안 표시값",
+        "proposed_value_json": value_json, "temporal_scope": "PRESENT",
+        "comparison_reason": "현재 값을 반영한다.",
+    })
+
+
+def _validate_proposal(decision, *, value_type, fact_type="PROFILE"):
+    validate_character_fact_decision(
+        decision, candidate_fact_type=fact_type, resolved_fact_key="profile.attribute",
+        candidate_value_type=value_type, candidate_value_json={"value": "원래 값"},
+        entries_by_ref={},
+    )
 
 
 class FakeTextClient:

@@ -7,6 +7,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     StrictBool,
     StrictFloat,
     StrictInt,
@@ -37,6 +38,11 @@ class ExtractedEvidenceSpan(BaseModel):
 # discriminator 모델을 사용하고, 직접 생성하는 기존 테스트/서비스 계약은 유지한다.
 class ExtractedSettingCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    _status_observation_kind: Literal[
+        "START", "CONTINUE", "CHANGE", "END", "PAST", "HYPOTHETICAL"
+    ] | None = PrivateAttr(default=None)
+    _status_observation_group: tuple[UUID, int] | None = PrivateAttr(default=None)
 
     source_chunk_id: UUID
     candidate_kind: CandidateKind = "SETTING"

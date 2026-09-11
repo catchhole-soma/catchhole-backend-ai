@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any
 
 from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonDecision,
@@ -13,6 +15,15 @@ from app.domain.enums import (
     SettingValueType,
 )
 from app.domain.setting_values import normalize_setting_display_value
+
+
+class CharacterFactProposalValueError(ValueError):
+    """Safe, typed correction metadata; never include the rejected provider value."""
+
+    def __init__(self, field_name: str, expected_type: str) -> None:
+        self.field_name = field_name
+        self.expected_type = expected_type
+        super().__init__(f"{field_name} must be {expected_type}.")
 
 
 @dataclass(frozen=True)
@@ -201,6 +212,7 @@ def validate_resolved_canonical_fact_key(
     resolved_fact_key: str,
     canonical_key_resolution: str,
     fact_type: str,
+    existing_status_keys: set[str] | None = None,
 ) -> None:
     """Keep exact/alias keys fixed; only a pattern STATUS key may normalize."""
 
@@ -215,6 +227,14 @@ def validate_resolved_canonical_fact_key(
         return
     if not mutable_pattern_status:
         raise ValueError("Only a pattern STATUS key may be semantically normalized.")
+    # Persisted legacy slots may contain spaces. Preserve their identity when a
+    # decision reuses a currently active slot; never use this to create a new key.
+    if (
+        existing_status_keys is not None
+        and resolved_fact_key in existing_status_keys
+        and len(resolved_fact_key) <= 150
+    ):
+        return
     suffix = (
         resolved_fact_key.removeprefix("status.")
         if resolved_fact_key.startswith("status.")
@@ -314,16 +334,90 @@ def validate_character_fact_decision(
         raise ValueError("Snapshot removal requires a PRESENT STATUS transition.")
 
     if applies_to_snapshot:
-        if candidate_value_type == SettingValueType.STRING and (
-            not isinstance(decision.proposed_value_json, dict)
-            or not isinstance(decision.proposed_value_json.get("value"), str)
-        ):
-            raise ValueError("STRING proposed_value_json.value must be a JSON string.")
+        _validate_proposed_value_json(
+            candidate_fact_type,
+            candidate_value_type,
+            decision.proposed_value_json,
+        )
         normalize_setting_display_value(
             candidate_value_type,
             decision.proposed_value_json,
             decision.proposed_fact_value,
         )
+
+
+def _validate_proposed_value_json(
+    fact_type: str,
+    value_type: SettingValueType | None,
+    value_json: Any | None,
+) -> None:
+    """Mirror Java CharacterSettingValueValidator's proposal storage contract.
+
+    Scalar display normalization stays separate. A MERGE does not change the
+    schema type and must not turn a STRING envelope into an array of strings.
+    """
+
+    if not isinstance(value_json, dict):
+        raise CharacterFactProposalValueError("proposed_value_json", "a JSON object")
+    value = value_json.get("value")
+    if value_type != SettingValueType.JSON:
+        expected = {
+            SettingValueType.STRING: "a JSON string for STRING",
+            SettingValueType.NUMBER: "a finite JSON number for NUMBER",
+            SettingValueType.BOOLEAN: "a JSON boolean for BOOLEAN",
+            SettingValueType.UNKNOWN: "present for UNKNOWN (null is allowed)",
+        }.get(value_type)
+        if expected is None:
+            raise CharacterFactProposalValueError("candidate.value_type", "a known schema value type")
+        valid_scalar = (
+            value_type == SettingValueType.UNKNOWN
+            or value_type == SettingValueType.STRING and isinstance(value, str)
+            or value_type == SettingValueType.NUMBER
+            and type(value) in {int, float}
+            and (not isinstance(value, float) or math.isfinite(value))
+            or value_type == SettingValueType.BOOLEAN and type(value) is bool
+        )
+        if "value" not in value_json or not valid_scalar:
+            raise CharacterFactProposalValueError("proposed_value_json.value", expected)
+
+    # Java stores AGE/LEVEL in signed integer snapshot fields, even with a
+    # permissive JSON schema. bool is not a JSON number in that contract.
+    if fact_type in {"AGE", "LEVEL"} and (
+        type(value) not in {int, float}
+        or isinstance(value, float) and (not math.isfinite(value) or not value.is_integer())
+        or not 0 <= value <= 2_147_483_647
+    ):
+        raise CharacterFactProposalValueError(
+            "proposed_value_json.value", "a non-negative 32-bit integer for AGE/LEVEL",
+        )
+
+    if fact_type not in {"PROFILE", "STAT", "SKILL", "ITEM", "STATUS"}:
+        return
+    for key, property_value in value_json.items():
+        if key == "value":
+            continue
+        # String.trim() and length() on the Java side use ASCII control/space
+        # trimming and UTF-16 code units, respectively. Do not rewrite the key.
+        java_blank = key.isspace() and not any(
+            character in "\u0085\u00a0\u2007\u202f" for character in key
+        )
+        invalid_key = (
+            not key or java_blank or key != _java_trim(key)
+            or len(key.encode("utf-16-le", errors="surrogatepass")) // 2 > 100
+        )
+        invalid_text = isinstance(property_value, str) and (
+            not property_value or property_value != _java_trim(property_value)
+        )
+        if invalid_key or invalid_text:
+            raise CharacterFactProposalValueError(
+                "proposed_value_json",
+                "an object with nonblank unpadded property keys (at most 100 UTF-16 units) "
+                "and nonempty unpadded string properties",
+            )
+
+
+def _java_trim(value: str) -> str:
+    return value.strip("".join(chr(codepoint) for codepoint in range(33)))
 
 
 def is_explicit_inactive_status(fact_type: str, value_json: Any | None) -> bool:

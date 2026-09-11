@@ -1,5 +1,7 @@
 from uuid import UUID
 
+import pytest
+
 from app.analysis.evidence_span_resolver import (
     resolve_candidate_evidence_offsets,
     resolve_evidence_span_offsets,
@@ -172,6 +174,115 @@ def test_resolve_candidate_evidence_offsets_keeps_unmatched_spans_in_input_order
     ]
     assert all(span.start_offset is None for span in resolved_candidate.evidence_spans)
     assert all(span.end_offset is None for span in resolved_candidate.evidence_spans)
+
+
+def test_preserve_status_offsets_keeps_distinct_occurrences_and_source_order() -> None:
+    quote = "상처가 나았다."
+    chunk_text = f"{quote}\n\n다시 다쳤다.\n\n{quote}"
+    second_start = chunk_text.rindex(quote)
+    first = ExtractedEvidenceSpan(quote=quote, start_offset=0, end_offset=len(quote))
+    second = ExtractedEvidenceSpan(
+        quote=quote, start_offset=second_start, end_offset=second_start + len(quote),
+    )
+    candidate = _candidate_with_spans(second, first, second.model_copy())
+    original = candidate.model_dump()
+
+    resolved = resolve_candidate_evidence_offsets(
+        [candidate], chunk_text, 150, preserve_status_offsets=True,
+    )[0]
+
+    assert [(span.quote, span.start_offset, span.end_offset) for span in resolved.evidence_spans] == [
+        (quote, 150, 150 + len(quote)),
+        (quote, 150 + second_start, 150 + second_start + len(quote)),
+    ]
+    assert candidate.model_dump() == original
+    assert resolved.model_dump(exclude={"evidence_spans"}) == candidate.model_dump(
+        exclude={"evidence_spans"},
+    )
+
+
+@pytest.mark.parametrize("attribute_name,preserve", [("status.회복", False), ("item.회복", True)])
+def test_default_and_non_status_paths_still_relocate_repeated_quotes(attribute_name, preserve):
+    quote = "같은 문구"
+    chunk_text = f"{quote} / {quote}"
+    second_start = chunk_text.rindex(quote)
+    candidate = _candidate_with_spans(
+        ExtractedEvidenceSpan(
+            quote=quote, start_offset=second_start, end_offset=second_start + len(quote),
+        ),
+        ExtractedEvidenceSpan(quote=quote, start_offset=0, end_offset=len(quote)),
+    ).model_copy(update={"attribute_name": attribute_name})
+
+    resolved = resolve_candidate_evidence_offsets(
+        [candidate], chunk_text, 20, preserve_status_offsets=preserve,
+    )[0]
+
+    assert len(resolved.evidence_spans) == 1
+    assert resolved.evidence_spans[0].start_offset == 20
+    assert resolved.evidence_spans[0].end_offset == 20 + len(quote)
+
+
+@pytest.mark.parametrize("offsets", [
+    (None, None), (999, 1000), (-1, 3), (7, 2), (2, 2), (1, 4),
+    (True, 4), (0.0, 3.0), ("0", "3"),
+])
+def test_preserve_exact_offsets_falls_back_when_supplied_range_is_invalid(offsets):
+    span = ExtractedEvidenceSpan(quote="상처가").model_copy(update={
+        "start_offset": offsets[0], "end_offset": offsets[1],
+    })
+
+    resolved = resolve_evidence_span_offsets(
+        span, "상처가 나았다. 상처가 재발했다.", 40, preserve_exact_offsets=True,
+    )
+
+    assert resolved.start_offset == 40
+    assert resolved.end_offset == 43
+
+
+def test_preserve_status_offsets_deduplicates_fallback_at_same_occurrence_only() -> None:
+    quote = "다쳤다."
+    chunk_text = f"{quote} 나았다. {quote}"
+    second_start = chunk_text.rindex(quote)
+    candidate = _candidate_with_spans(
+        ExtractedEvidenceSpan(quote=quote),
+        ExtractedEvidenceSpan(quote=quote, start_offset=0, end_offset=len(quote)),
+        ExtractedEvidenceSpan(quote=quote, start_offset=500, end_offset=600),
+        ExtractedEvidenceSpan(
+            quote=quote, start_offset=second_start, end_offset=second_start + len(quote),
+        ),
+    )
+
+    resolved = resolve_candidate_evidence_offsets(
+        [candidate], chunk_text, 30, preserve_status_offsets=True,
+    )[0]
+
+    assert [span.start_offset for span in resolved.evidence_spans] == [30, 30 + second_start]
+
+
+def test_preserve_exact_offsets_requires_exact_slice_before_whitespace_fallback() -> None:
+    chunk_text = "상처가\n나았다. / 상처가\n나았다."
+    second_start = chunk_text.rindex("상처가")
+    span = ExtractedEvidenceSpan(
+        quote="상처가 나았다.", start_offset=second_start, end_offset=len(chunk_text),
+    )
+
+    resolved = resolve_evidence_span_offsets(
+        span, chunk_text, 70, preserve_exact_offsets=True,
+    )
+
+    assert resolved.start_offset == 70
+    assert resolved.end_offset == 70 + len("상처가\n나았다.")
+
+
+def test_preserve_exact_offsets_does_not_keep_unmatched_supplied_range() -> None:
+    span = ExtractedEvidenceSpan(quote="원문에 없는 문장", start_offset=0, end_offset=3)
+
+    resolved = resolve_evidence_span_offsets(
+        span, "상처가 나았다.", 90, preserve_exact_offsets=True,
+    )
+
+    assert resolved.start_offset is None
+    assert resolved.end_offset is None
 
 
 def _candidate_with_spans(

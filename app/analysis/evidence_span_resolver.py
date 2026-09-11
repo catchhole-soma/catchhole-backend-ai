@@ -19,18 +19,25 @@ def resolve_candidate_evidence_offsets(
     candidates: list[ExtractedSettingCandidate],
     chunk_text: str,
     chunk_start_offset: int,
+    *,
+    preserve_status_offsets: bool = False,
 ) -> list[ExtractedSettingCandidate]:
     # 여러 setting candidate의 evidence_spans를 한 번에 보정한다.
     # candidate 자체를 직접 수정하지 않고, model_copy로 새 candidate를 만든다.
     return [
         candidate.model_copy(
             update={
-                # 동일 인용문은 후보 안에서 한 번만 보존하고, 찾은 위치 순서로 정렬한다.
+                # 검증된 STATUS 위치는 반복 문구의 서로 다른 발생을 구분한다.
+                # 나머지는 기존처럼 동일 인용문을 한 번만 보존한다.
                 # 위치를 찾지 못한 span은 null offset으로 유지한 채 뒤에 안정적으로 둔다.
                 "evidence_spans": _resolve_candidate_evidence_spans(
                     candidate.evidence_spans,
                     chunk_text=chunk_text,
                     chunk_start_offset=chunk_start_offset,
+                    preserve_exact_offsets=(
+                        preserve_status_offsets
+                        and (candidate.attribute_name or "").startswith("status.")
+                    ),
                 )
             }
         )
@@ -42,28 +49,26 @@ def _resolve_candidate_evidence_spans(
     spans: list[ExtractedEvidenceSpan],
     chunk_text: str,
     chunk_start_offset: int,
+    preserve_exact_offsets: bool = False,
 ) -> list[ExtractedEvidenceSpan]:
-    # 같은 quote를 여러 번 반환한 경우 각 span을 독립적으로 str.find()하면 모두 원문의
-    # 첫 위치를 가리킨다. 후보 단위로 첫 quote만 남겨 잘못된 중복 하이라이트를 막는다.
-    unique_spans: list[tuple[int, ExtractedEvidenceSpan]] = []
+    resolved_spans: list[tuple[int, ExtractedEvidenceSpan]] = []
     seen_quotes: set[str] = set()
+    seen_occurrences: set[tuple[str, int | None, int | None]] = set()
     for original_index, span in enumerate(spans):
-        if span.quote in seen_quotes:
+        if not preserve_exact_offsets and span.quote in seen_quotes:
             continue
         seen_quotes.add(span.quote)
-        unique_spans.append((original_index, span))
-
-    resolved_spans = [
-        (
-            original_index,
-            resolve_evidence_span_offsets(
-                span,
-                chunk_text=chunk_text,
-                chunk_start_offset=chunk_start_offset,
-            ),
+        resolved = resolve_evidence_span_offsets(
+            span,
+            chunk_text=chunk_text,
+            chunk_start_offset=chunk_start_offset,
+            preserve_exact_offsets=preserve_exact_offsets,
         )
-        for original_index, span in unique_spans
-    ]
+        occurrence = (resolved.quote, resolved.start_offset, resolved.end_offset)
+        if preserve_exact_offsets and occurrence in seen_occurrences:
+            continue
+        seen_occurrences.add(occurrence)
+        resolved_spans.append((original_index, resolved))
 
     # LLM이 복수 근거를 역순으로 반환해도 화면과 저장 결과는 원문 순서를 따른다.
     # 원문에서 찾지 못한 span 사이에는 위치 정보가 없으므로 기존 입력 순서를 유지한다.
@@ -81,9 +86,20 @@ def resolve_evidence_span_offsets(
     span: ExtractedEvidenceSpan,
     chunk_text: str,
     chunk_start_offset: int,
+    *,
+    preserve_exact_offsets: bool = False,
 ) -> ExtractedEvidenceSpan:
-    # LLM이 준 start_offset/end_offset은 틀릴 수 있으므로 믿지 않는다.
-    # span.quote를 실제 chunk_text 안에서 다시 찾아 정확한 offset을 계산한다.
+    # 코드가 선택한 원문 위치도 실제 청크 slice와 정확히 같을 때만 보존한다.
+    # 잘못된 위치와 기본 경로는 기존 quote 검색으로 보정한다.
+    start, end = span.start_offset, span.end_offset
+    if (
+        preserve_exact_offsets
+        and type(start) is int
+        and type(end) is int
+        and 0 <= start < end <= len(chunk_text)
+        and chunk_text[start:end] == span.quote
+    ):
+        return _with_offsets(span, chunk_start_offset, (start, end))
 
     # 1차: quote가 chunk_text에 완전히 똑같이 들어있는지 찾는다.
     exact_range = _find_exact_range(chunk_text, span.quote)

@@ -1,13 +1,14 @@
 import logging
+from asyncio import sleep
 from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
+from app.analysis.character_fact_comparator import CharacterFactComparator
 from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonBatchDecision,
     CharacterFactComparisonBatchResult,
 )
-from app.analysis.character_fact_comparator import CharacterFactComparator
 from app.analysis.character_fact_projection import (
     CharacterProjectionEntry,
     CharacterProjectionState,
@@ -18,14 +19,14 @@ from app.domain.enums import AnalysisFailureCode, CharacterFactComparisonOperati
 from app.domain.setting_values import normalize_setting_display_value
 from app.exceptions.failure_classification import comparison_failure_code
 from app.schemas.worker import (
-    WorkerCharacterFactComparisonClaimPayload,
-    WorkerCharacterFactComparisonBatchCompleteRequest,
     WorkerCharacterFactComparisonBatchCandidate,
+    WorkerCharacterFactComparisonBatchCompleteRequest,
     WorkerCharacterFactComparisonBatchContextResponse,
     WorkerCharacterFactComparisonBatchDecision,
     WorkerCharacterFactComparisonBatchFailure,
     WorkerCharacterFactComparisonBatchPayload,
     WorkerCharacterFactComparisonBatchSnapshotEntry,
+    WorkerCharacterFactComparisonClaimPayload,
     WorkerCharacterFactComparisonCompleteRequest,
     WorkerCharacterFactComparisonContextResponse,
     WorkerRemovedSnapshotEntry,
@@ -128,6 +129,15 @@ class CharacterFactBatchComparator(Protocol):
         snapshot_entries: list[CharacterProjectionEntry],
     ) -> tuple[CharacterFactComparisonBatchResult, dict]: ...
 
+    async def reconcile_status_lifecycle(
+        self,
+        *,
+        matched_character_name: str,
+        candidates: list[WorkerCharacterFactComparisonBatchCandidate],
+        snapshot_entries: list[CharacterProjectionEntry],
+        decisions: list[CharacterFactComparisonBatchDecision],
+    ) -> list[CharacterFactComparisonBatchDecision]: ...
+
 
 @dataclass(frozen=True)
 class CharacterFactComparisonRunResult:
@@ -222,10 +232,10 @@ async def execute_character_fact_comparison_batch(
     projection behavior without constructing transport UUIDs or writing state.
     """
 
-    state = CharacterProjectionState(
-        [_to_projection_entry(entry) for entry in snapshot_entries]
-    )
+    initial_entries = [_to_projection_entry(entry) for entry in snapshot_entries]
+    state = CharacterProjectionState(initial_entries)
     decisions: list[WorkerCharacterFactComparisonBatchDecision] = []
+    provider_decisions: list[CharacterFactComparisonBatchDecision] = []
     failures: list[WorkerCharacterFactComparisonBatchFailure] = []
     provider_segment_count = 0
     singleton_fallback_count = 0
@@ -285,6 +295,7 @@ async def execute_character_fact_comparison_batch(
                             singleton_result.decisions[0],
                         )
                     )
+                    provider_decisions.append(singleton_result.decisions[0])
                 except AiTokenQuotaExhaustedError:
                     # Quota exhaustion is job-scoped. Continuing with later singletons would
                     # only create more rejected reservations and violate the no-fallback rule.
@@ -309,7 +320,26 @@ async def execute_character_fact_comparison_batch(
                     by_ref[candidate.candidate_ref],
                 )
             )
+            provider_decisions.append(by_ref[candidate.candidate_ref])
         cursor += len(segment)
+    if canonical_fact_type == "STATUS" and not failures:
+        # Reconcile once after all segments/fallbacks. A reconciliation failure
+        # propagates to the atomic batch boundary; singleton fallback cannot skip it.
+        reviewed = await comparator.reconcile_status_lifecycle(
+            matched_character_name=matched_character_name,
+            candidates=candidates,
+            snapshot_entries=initial_entries,
+            decisions=provider_decisions,
+        )
+        if [decision.candidate_ref for decision in reviewed] != [
+            candidate.candidate_ref for candidate in candidates
+        ]:
+            raise ComparisonValidationError("Status lifecycle decisions must preserve coverage.")
+        state = CharacterProjectionState(initial_entries)
+        decisions = [
+            _apply_and_map_decision(state, canonical_fact_type, candidate, decision)
+            for candidate, decision in zip(candidates, reviewed, strict=True)
+        ]
     return CharacterFactBatchExecutionResult(
         decisions=decisions,
         failures=failures,
@@ -391,10 +421,20 @@ class CharacterFactComparisonPipeline:
         stale_batch_retry_count = 0
         usage_before = _component_usage_snapshot(self.comparator)
         while True:
-            batch = await self.spring_client.claim_next_character_fact_comparison_batch(
-                analysis_job_id,
-                lease_token,
-            )
+            try:
+                batch = await self.spring_client.claim_next_character_fact_comparison_batch(
+                    analysis_job_id,
+                    lease_token,
+                )
+            except SpringWorkerHttpError as exc:
+                if (exc.status_code != 409
+                        or exc.spring_error_code != "CHARACTER_FACT_COMPARISON_BATCH_BUSY"):
+                    raise
+                # Another hidden Job owns an earlier segment. Keep this Job's
+                # existing heartbeat/cancellation scope while waiting; an empty
+                # claim would falsely finish its still-pending representative.
+                await sleep(1.0)
+                continue
             if batch is None:
                 return CharacterFactComparisonRunResult(
                     completed_count=completed_count,

@@ -1,6 +1,9 @@
+from typing import Self
 from uuid import UUID
 
-from app.analysis.character_name_resolver import KnownCharacter
+import pytest
+
+from app.analysis.character_name_resolver import CharacterNameMatch, KnownCharacter
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.domain.enums import SettingCandidateKind, SettingCandidateMatchStatus
 from app.models.setting_candidate import SettingCandidate
@@ -89,6 +92,95 @@ def test_replace_candidates_saves_unknown_subject_as_ambiguous() -> None:
     assert saved_candidates[0].match_status == SettingCandidateMatchStatus.AMBIGUOUS
     assert session.committed is True
     assert session.rolled_back is False
+
+
+def test_matched_aliases_save_one_representative_name_without_rewriting_source_candidates() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session, repository_factory=lambda session: repository,
+    )
+    character_id = UUID("00000000-0000-0000-0000-000000000005")
+    originals = []
+    for index, (name, raw, active) in enumerate([
+        ("리안", "리안", True),
+        ("리안 플로", "그", False),
+        ("리안", "리안", True),
+    ]):
+        originals.append(_candidate(entity_name=name, raw_entity_mention=raw).model_copy(update={
+            "attribute_name": "status.발열", "attribute_value": "발열 관찰",
+            "value_type": "JSON", "value_json": {"name": "발열", "active": active},
+            "evidence_spans": [ExtractedEvidenceSpan(
+                quote="리안의 상태를 확인했다.", start_offset=index * 30,
+                end_offset=index * 30 + len("리안의 상태를 확인했다."),
+            )],
+        }))
+    before = [candidate.model_dump(mode="json") for candidate in originals]
+    saved = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID, analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[SettingCandidateSaveItem(
+            episode_id=EPISODE_ID, source_content_s3_key=SOURCE_CONTENT_S3_KEY, candidate=candidate,
+        ) for candidate in originals],
+        known_characters=[KnownCharacter(character_id=character_id, name="리안 플로")],
+    )
+
+    assert len(saved) == 3
+    assert len({candidate.id for candidate in saved}) == 3
+    assert [candidate.entity_name for candidate in saved] == ["리안 플로"] * 3
+    assert [candidate.model_dump(mode="json") for candidate in originals] == before
+    for row, source in zip(saved, before, strict=True):
+        assert row.matched_character_id == character_id
+        assert row.match_status == SettingCandidateMatchStatus.MATCHED
+        assert row.work_id == WORK_ID and row.episode_id == EPISODE_ID
+        assert row.analysis_job_id == ANALYSIS_JOB_ID and row.source_chunk_id == CHUNK_ID
+        assert row.source_content_s3_key == SOURCE_CONTENT_S3_KEY
+        assert row.raw_entity_mention == source["raw_entity_mention"]
+        assert row.evidence_spans == source["evidence_spans"]
+        assert row.value_json == source["value_json"]
+        assert row.attribute_name == source["attribute_name"]
+        assert row.attribute_value == source["attribute_value"]
+        assert row.raw_ai_result_json == source
+
+
+@pytest.mark.parametrize(("status", "matched_id", "known_name"), [
+    (SettingCandidateMatchStatus.AMBIGUOUS, 5, "리안 플로"),
+    (SettingCandidateMatchStatus.UNRESOLVED, 5, "리안 플로"),
+    (SettingCandidateMatchStatus.AUTO_MATCHED_BY_NAME, 5, "리안 플로"),
+    (SettingCandidateMatchStatus.MATCHED, 7, "리안 플로"),
+    (SettingCandidateMatchStatus.MATCHED, None, "리안 플로"),
+    (SettingCandidateMatchStatus.MATCHED, 5, " \t "),
+])
+def test_representative_name_requires_matched_known_id_and_nonblank_name(
+    monkeypatch: pytest.MonkeyPatch,
+    status: SettingCandidateMatchStatus,
+    matched_id: int | None,
+    known_name: str,
+) -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session, repository_factory=lambda session: repository,
+    )
+    match = CharacterNameMatch(
+        matched_character_id=UUID(int=matched_id) if matched_id is not None else None,
+        match_status=status,
+    )
+    monkeypatch.setattr(
+        "app.services.setting_candidate_service.resolve_candidate_character", lambda *args: match,
+    )
+    original = _candidate(entity_name="리안", raw_entity_mention="리안")
+    saved = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID, analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[SettingCandidateSaveItem(
+            episode_id=EPISODE_ID, source_content_s3_key=SOURCE_CONTENT_S3_KEY, candidate=original,
+        )],
+        known_characters=[KnownCharacter(character_id=UUID(int=5), name=known_name)],
+    )
+
+    assert saved[0].entity_name == "리안"
+    assert saved[0].matched_character_id == match.matched_character_id
+    assert saved[0].match_status == status
+    assert saved[0].raw_ai_result_json == original.model_dump(mode="json")
 
 
 def test_replace_candidates_skips_discovery_for_known_character() -> None:
@@ -195,6 +287,65 @@ def test_replace_candidates_deduplicates_new_character_discoveries_by_name() -> 
     assert saved_candidates[0].match_status == SettingCandidateMatchStatus.UNRESOLVED
 
 
+def test_identity_unresolved_discoveries_are_preserved_without_unknown_name_dedup() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session, repository_factory=lambda session: repository,
+    )
+    originals = [_discovery_candidate("미상", name) for name in ("리안", "리안 플로")]
+    saved = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID, analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[SettingCandidateSaveItem(
+            episode_id=EPISODE_ID, source_content_s3_key=SOURCE_CONTENT_S3_KEY, candidate=row,
+        ) for row in originals],
+        known_characters=[],
+    )
+    assert len(saved) == 2
+    assert [row.raw_entity_mention for row in saved] == ["리안", "리안 플로"]
+    assert all(row.entity_name == "미상" for row in saved)
+    assert all(row.match_status == SettingCandidateMatchStatus.AMBIGUOUS for row in saved)
+    assert all(row.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY for row in saved)
+    assert all(row.source_chunk_id == CHUNK_ID and row.episode_id == EPISODE_ID for row in saved)
+    assert all(row.matched_character_id is None for row in saved)
+
+
+def test_status_recurrence_keeps_each_event_but_deduplicates_the_same_observation() -> None:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session, repository_factory=lambda session: repository,
+    )
+    observations = []
+    for active, quote, offset in (
+        (False, "카엘의 열이 가라앉았다.", 0),
+        (True, "카엘은 다시 열이 올랐다.", 30),
+        (False, "밤이 되자 카엘의 열이 내렸다.", 60),
+    ):
+        observations.append(_candidate().model_copy(update={
+            "entity_name": "카엘", "raw_entity_mention": "카엘",
+            "attribute_name": "status.발열", "value_type": "JSON",
+            "value_json": {"name": "발열", "active": active},
+            "evidence_spans": [ExtractedEvidenceSpan(
+                quote=quote, start_offset=offset, end_offset=offset + len(quote),
+            )],
+            "confidence": 0.8,
+        }))
+    duplicate = observations[-1].model_copy(update={"confidence": 0.95})
+    saved = service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID, analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[SettingCandidateSaveItem(
+            episode_id=EPISODE_ID, source_content_s3_key=SOURCE_CONTENT_S3_KEY,
+            candidate=candidate,
+        ) for candidate in [*observations, duplicate]],
+        known_characters=[],
+    )
+
+    assert [candidate.value_json["active"] for candidate in saved] == [False, True, False]
+    assert str(saved[-1].confidence) == "0.95"
+    assert [candidate.evidence_spans[0]["start_offset"] for candidate in saved] == [0, 30, 60]
+
+
 def test_replace_candidates_deduplicates_identical_settings_and_keeps_clearer_evidence() -> None:
     session = FakeSession()
     repository = FakeSettingCandidateRepository(session)
@@ -212,6 +363,7 @@ def test_replace_candidates_deduplicates_identical_settings_and_keeps_clearer_ev
                 source_content_s3_key=SOURCE_CONTENT_S3_KEY,
                 candidate=_candidate(
                     source_chunk_id=CHUNK_ID,
+                    entity_name="비요른 얀델",
                     raw_entity_mention="그",
                     confidence=0.7,
                 ),
@@ -237,6 +389,7 @@ def test_replace_candidates_deduplicates_identical_settings_and_keeps_clearer_ev
 
     assert len(saved_candidates) == 1
     assert saved_candidates[0].source_chunk_id == OTHER_CHUNK_ID
+    assert saved_candidates[0].entity_name == "비요른"
     assert saved_candidates[0].raw_entity_mention == "비요른"
     assert str(saved_candidates[0].confidence) == "0.95"
 
@@ -315,6 +468,99 @@ def test_replace_candidates_does_not_deduplicate_ambiguous_setting_subjects() ->
     )
 
 
+def _save_dedup_candidates(candidates: list[ExtractedSettingCandidate]) -> list[SettingCandidate]:
+    session = FakeSession()
+    repository = FakeSettingCandidateRepository(session)
+    service = SettingCandidateService(
+        session_factory=lambda: session, repository_factory=lambda session: repository,
+    )
+    return service.replace_candidates_for_analysis_job(
+        work_id=WORK_ID, analysis_job_id=ANALYSIS_JOB_ID,
+        save_items=[SettingCandidateSaveItem(
+            episode_id=EPISODE_ID, source_content_s3_key=SOURCE_CONTENT_S3_KEY, candidate=candidate,
+        ) for candidate in candidates], known_characters=[],
+    )
+
+
+def _status_phase_candidate(kind: str | None, *, active: bool | None = True) -> ExtractedSettingCandidate:
+    quote = "리안은 다쳤고 상처가 더 심해졌다."
+    value = {"name": "부상"}
+    if active is not None:
+        value["active"] = active
+    candidate = _candidate().model_copy(update={
+        "entity_name": "리안", "raw_entity_mention": "리안", "attribute_name": "status.부상",
+        "attribute_value": "원문의 상태 관찰", "value_type": "JSON", "value_json": value,
+        "evidence_spans": [ExtractedEvidenceSpan(quote=quote, start_offset=0, end_offset=len(quote))],
+    })
+    candidate._status_observation_kind = kind
+    candidate._status_observation_group = (CHUNK_ID, 0)
+    return candidate
+
+
+@pytest.mark.parametrize("first_kind,second_kind,active", [
+    ("START", "CHANGE", True), ("START", "CONTINUE", True), ("PAST", "HYPOTHETICAL", None),
+])
+def test_status_phases_with_identical_source_and_value_preserve_both_observations(
+    first_kind, second_kind, active,
+):
+    candidates = [_status_phase_candidate(first_kind, active=active),
+                  _status_phase_candidate(second_kind, active=active)]
+    candidates[0].attribute_value = "첫 번째 원형 설명"
+    candidates[1].attribute_value = "두 번째 원형 설명"
+    before = [candidate.model_dump(mode="json") for candidate in candidates]
+
+    saved = _save_dedup_candidates(candidates)
+
+    assert len(saved) == 2
+    assert len({row.id for row in saved}) == 2
+    assert [row.raw_ai_result_json for row in saved] == before
+    assert [row.attribute_value for row in saved] == [candidate.attribute_value for candidate in candidates]
+    assert [row.value_json for row in saved] == [candidate.value_json for candidate in candidates]
+    assert [candidate.model_dump(mode="json") for candidate in candidates] == before
+    assert all("_status_observation_kind" not in row.raw_ai_result_json
+               and "_status_observation_group" not in row.raw_ai_result_json for row in saved)
+
+
+@pytest.mark.parametrize("legacy_first", [False, True])
+def test_legacy_inactive_and_explicit_end_still_deduplicate_exact_same_observation(legacy_first):
+    legacy = _status_phase_candidate(None, active=False).model_copy(update={"confidence": 0.95})
+    legacy._status_observation_group = None
+    explicit = _status_phase_candidate("END", active=False).model_copy(update={"confidence": 0.5})
+    candidates = [legacy, explicit] if legacy_first else [explicit, legacy]
+
+    saved = _save_dedup_candidates(candidates)
+
+    assert len(saved) == 1
+    assert saved[0].raw_ai_result_json == legacy.model_dump(mode="json")
+    assert str(saved[0].confidence) == "0.95"
+
+
+def test_producer_group_index_does_not_make_same_phase_observation_distinct():
+    first = _status_phase_candidate("START").model_copy(update={"confidence": 0.5})
+    second = first.model_copy(update={"confidence": 0.95})
+    second._status_observation_group = (CHUNK_ID, 7)
+
+    saved = _save_dedup_candidates([first, second])
+
+    assert len(saved) == 1
+    assert saved[0].raw_ai_result_json == second.model_dump(mode="json")
+
+
+def test_nonstatus_duplicate_key_ignores_status_private_metadata():
+    first = _candidate(confidence=0.5)
+    first._status_observation_kind = "START"
+    first._status_observation_group = (CHUNK_ID, 0)
+    second = _candidate(source_chunk_id=OTHER_CHUNK_ID, confidence=0.95)
+    second._status_observation_kind = "CHANGE"
+    second._status_observation_group = (OTHER_CHUNK_ID, 1)
+
+    saved = _save_dedup_candidates([first, second])
+
+    assert len(saved) == 1
+    assert saved[0].source_chunk_id == OTHER_CHUNK_ID
+    assert saved[0].raw_ai_result_json == second.model_dump(mode="json")
+
+
 def _candidate(
     entity_name: str = "비요른",
     raw_entity_mention: str | None = "비요른",
@@ -374,7 +620,7 @@ class FakeSession:
         self.committed = False
         self.rolled_back = False
 
-    def __enter__(self) -> "FakeSession":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

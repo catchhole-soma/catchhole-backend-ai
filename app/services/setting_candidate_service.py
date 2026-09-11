@@ -1,11 +1,12 @@
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
-import json
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.analysis.character_name_resolver import (
+    UNKNOWN_ENTITY_NAME,
     CharacterNameMatch,
     KnownCharacter,
     normalize_character_name,
@@ -56,6 +57,10 @@ class SettingCandidateService:
             [item.candidate for item in save_items],
             known_characters,
         )
+        known_character_names = {
+            character.character_id: character.name.strip()
+            for character in normalize_known_characters(known_characters)
+        }
         candidates: list[SettingCandidate] = []
         for prepared in prepared_candidates:
             item = save_items[prepared.source_index]
@@ -67,6 +72,10 @@ class SettingCandidateService:
                 candidate=item.candidate,
                 character_match=prepared.character_match,
             )
+            if prepared.character_match.match_status == SettingCandidateMatchStatus.MATCHED:
+                canonical_name = known_character_names.get(prepared.character_match.matched_character_id)
+                if canonical_name:
+                    mapped_candidate.entity_name = canonical_name
             candidates.append(mapped_candidate)
 
         with self.session_factory() as session:
@@ -92,19 +101,24 @@ def prepare_setting_candidates(
     normalized_known_characters = normalize_known_characters(known_characters)
     prepared: list[PreparedSettingCandidate] = []
     seen_discovery_names: set[str] = set()
-    setting_candidate_by_key: dict[tuple[str, str, str, str], tuple[int, float]] = {}
+    setting_candidate_by_key: dict[tuple[str, ...], tuple[int, float]] = {}
     for source_index, candidate in enumerate(candidates):
         character_match = resolve_candidate_character(
             candidate,
             normalized_known_characters,
         )
         if candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
-            if character_match.match_status != SettingCandidateMatchStatus.UNRESOLVED:
+            identity_pending = (
+                character_match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
+                and candidate.entity_name == UNKNOWN_ENTITY_NAME
+            )
+            if not identity_pending and character_match.match_status != SettingCandidateMatchStatus.UNRESOLVED:
                 continue
             normalized_name = normalize_character_name(candidate.entity_name)
-            if normalized_name in seen_discovery_names:
+            if not identity_pending and normalized_name in seen_discovery_names:
                 continue
-            seen_discovery_names.add(normalized_name)
+            if not identity_pending:
+                seen_discovery_names.add(normalized_name)
 
         item = PreparedSettingCandidate(
             source_index=source_index,
@@ -135,7 +149,7 @@ def prepare_setting_candidates(
 def _setting_duplicate_key(
     candidate: ExtractedSettingCandidate,
     character_match: CharacterNameMatch,
-) -> tuple[str, str, str, str] | None:
+) -> tuple[str, ...] | None:
     if (
         candidate.candidate_kind != SettingCandidateKind.SETTING
         or character_match.match_status == SettingCandidateMatchStatus.AMBIGUOUS
@@ -159,9 +173,23 @@ def _setting_duplicate_key(
         sort_keys=True,
         separators=(",", ":"),
     )
-    return (
+    key = (
         subject_key,
         candidate.attribute_name,
         candidate.value_type,
         canonical_value_json,
     )
+    if candidate.attribute_name.startswith("status."):
+        # A → B → A are three observations, even when the first and last values
+        # are identical. Only deduplicate STATUS when the source event also matches.
+        event = json.dumps(
+            [span.model_dump(mode="json") for span in candidate.evidence_spans],
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        # START and CHANGE can share evidence and the compact STATUS value. Keep
+        # their phases distinct, while a legacy inactive row is still an END.
+        phase = candidate._status_observation_kind
+        if phase is None and candidate.value_json.get("active") is False:
+            phase = "END"
+        return (*key, str(candidate.source_chunk_id), event, phase or "")
+    return key

@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from uuid import UUID
 
 from app.analysis.schemas import ExtractedSettingCandidate
@@ -98,6 +98,7 @@ UNKNOWN_ENTITY_NAME = "미상"
 
 PLACEHOLDER_ENTITY_NAMES = {
     UNKNOWN_ENTITY_NAME,
+    "없음",
     "불명",
     "불명확",
     "알 수 없음",
@@ -344,6 +345,7 @@ def is_usable_subject_resolution_name(value: str | None) -> bool:
         not normalized_name
         or normalized_name in PLACEHOLDER_ENTITY_NAMES
         or normalized_name in AMBIGUOUS_MENTIONS
+        or re.fullmatch(r"(?:그|이|저) \S+", normalized_name)
     ):
         return False
 
@@ -368,7 +370,10 @@ def _is_concrete_normalized_character_name(normalized_name: str) -> bool:
 
 
 def _is_ambiguous_mention(normalized_mention: str) -> bool:
-    if normalized_mention in AMBIGUOUS_MENTIONS:
+    # "그 병사", "저 소녀는"은 지칭어지만 "그 병사 리안"은 이름을 포함한다.
+    if normalized_mention in AMBIGUOUS_MENTIONS or re.fullmatch(
+        r"(?:그|이|저) \S+", normalized_mention
+    ):
         return True
 
     # 조사 두 개가 결합된 "주인공에게는" 같은 표현도 단계적으로 제거해 확인한다.

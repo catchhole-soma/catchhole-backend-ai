@@ -15,6 +15,10 @@ class EpisodeS3ChunkingService:
         self.storage = storage
         self.chunk_service = chunk_service
 
+    def read_source_text(self, content_s3_key: str) -> str:
+        """Read claim-authorized context without rechunking or mutating that episode."""
+        return self.storage.get_text(content_s3_key)
+
     def replace_chunks_from_s3_content(self, episode_id: UUID, content_s3_key: str):
         # 1. Spring claim payload에 포함된 content_s3_key를 사용한다.
         # Worker가 같은 episode를 다시 DB에서 조회하면 claim 시점 payload와 다른 값을 볼 수 있다.

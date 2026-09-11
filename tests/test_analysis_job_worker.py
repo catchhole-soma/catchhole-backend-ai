@@ -6,7 +6,10 @@ import pytest
 
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonRunResult
 from app.analysis.character_name_resolver import ActiveCharacterStatus, KnownCharacter
-from app.analysis.character_subject_resolver import SubjectResolutionResult
+from app.analysis.character_subject_resolver import (
+    CharacterSubjectResolver,
+    SubjectResolutionResult,
+)
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
 from app.analysis.world_setting_schemas import WorldSettingExtractionResult
@@ -17,6 +20,7 @@ from app.embeddings.exceptions import (
     RecoverableEmbeddingProviderError,
 )
 from app.embeddings.services.episode_chunk_embedding import EpisodeChunkEmbeddingResult
+from app.llm.responses import LlmTextResponse
 from app.models.episode_chunk import EpisodeChunk
 from app.schemas.worker import WorkerAnalysisEpisodePayload, WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import (
@@ -365,8 +369,8 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
     spring_client = FakeSpringWorkerClient(payload=_payload())
     chunking_service = FakeEpisodeChunkingService(chunks=[_chunk(0, chunk_text, start_offset=100)])
     extracted_candidates = [
-        _candidate(chunking_service.chunks[0].id, attribute_name="level"),
-        _candidate(chunking_service.chunks[0].id, attribute_name="class"),
+        _candidate(chunking_service.chunks[0].id, attribute_name="level", raw_entity_mention="비요른"),
+        _candidate(chunking_service.chunks[0].id, attribute_name="class", raw_entity_mention="비요른"),
     ]
     setting_extractor = FakeSettingExtractor(candidate_groups=[extracted_candidates])
     episode_chunk_embedding_service = FakeEpisodeChunkEmbeddingService()
@@ -399,6 +403,10 @@ def test_worker_chunks_episode_content_and_extracts_candidates() -> None:
             "episode_no": 1,
             "episode_title": "첫 번째 회차",
             "schema_hints": SCHEMA_HINTS,
+            "prior_status_observations": (),
+            "narrative_context": {
+                "previous_episode": None, "previous_chunk": None, "next_chunk": None,
+            },
             "known_characters": (
                 KnownCharacter(
                     character_id=UUID("00000000-0000-0000-0000-000000000005"),
@@ -630,6 +638,7 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
             "previous_chunk_text": "비요른 얀델은 낡은 도끼를 들고 있었다.",
             "current_chunk_text": current_chunk_text,
             "next_chunk_text": "주변에는 다른 인물이 없었다.",
+            "previous_episode_text": None,
             "candidate_count": 1,
             "known_character_names": ["비요른 얀델"],
         }
@@ -658,6 +667,175 @@ def test_worker_applies_subject_resolution_before_saving_candidates() -> None:
         "worldSettingComparisonFailedCount": 0,
         **ZERO_WORLD_COMPARISON_METRICS,
     }
+
+
+def test_worker_reconciles_names_after_all_chunks_and_preserves_candidate_source_metadata() -> None:
+    first_text = "세나는 검을 들었다."
+    alias_text = "레이의 딸 세나는 세나라고 불리며 마을을 지켰다."
+    chunks = [
+        _chunk(0, first_text, start_offset=100),
+        _chunk(1, alias_text, start_offset=300),
+        _chunk(2, "그날 저녁 마을은 조용했다.", start_offset=500),
+    ]
+    originals = [
+        _candidate(chunks[0].id, "level", entity_name="세나", raw_entity_mention="세나", quote=first_text),
+        _candidate(chunks[1].id, "status.발_부상", entity_name="레이의 딸 세나",
+                   raw_entity_mention="레이의 딸 세나", quote=alias_text).model_copy(update={
+                       "attribute_value": "발 부상이 회복됨", "value_type": "JSON",
+                       "value_json": {"name": "발 부상", "active": False},
+                   }),
+        ExtractedSettingCandidate(
+            source_chunk_id=chunks[1].id, candidate_kind="CHARACTER_DISCOVERY",
+            entity_name="레이의 딸 세나", raw_entity_mention="레이의 딸 세나",
+            evidence_spans=[ExtractedEvidenceSpan(quote=alias_text)], confidence=0.8,
+        ),
+    ]
+    original_dumps = [candidate.model_dump() for candidate in originals]
+    events = []
+    identity_inputs = []
+
+    class RecordingExtractor(FakeSettingExtractor):
+        async def extract_from_chunk(self, **kwargs):
+            events.append(("extract", kwargs["source_chunk_id"]))
+            return await super().extract_from_chunk(**kwargs)
+
+    class IdentityClient:
+        def __init__(self):
+            self.requests = []
+
+        async def create_text_response(self, **kwargs):
+            self.requests.append(kwargs)
+            if kwargs.get("prompt_cache_key") == "subject-resolution:v5":
+                subject_input = json.loads(kwargs["user_prompt"].split("\n\n", 1)[1])
+                return LlmTextResponse(text=json.dumps({"resolutions": [
+                    {"candidate_id": item["candidate_id"],
+                     "resolved_entity_name": item["draft_entity_name"],
+                     "reason": "현재 청크의 명시된 신규 이름을 확인했다."}
+                    for item in subject_input["candidates"]
+                ]}, ensure_ascii=False))
+            return LlmTextResponse(text=json.dumps({"decisions": [
+                {"pair_ref": "R1", "relation": "SAME_PERSON",
+                 "evidence": [{"source": "current_episode", "quote": alias_text}]},
+            ]}, ensure_ascii=False))
+
+    class RecordingSubjectResolver(CharacterSubjectResolver):
+        async def resolve_candidates(self, context, candidates, known_characters):
+            events.append(("subject", context.current_chunk_text))
+            return await super().resolve_candidates(context, candidates, known_characters)
+
+        async def reconcile_episode_names(self, context, candidates, known_characters):
+            events.append(("identity", len(candidates)))
+            identity_inputs.append((context, [candidate.model_dump() for candidate in candidates]))
+            return await super().reconcile_episode_names(context, candidates, known_characters)
+
+    class RecordingCandidateService(FakeSettingCandidateService):
+        def replace_candidates_for_analysis_job(self, **kwargs):
+            events.append(("save", len(kwargs["save_items"])))
+            self.save_items = kwargs["save_items"]
+            return super().replace_candidates_for_analysis_job(**kwargs)
+
+    payload = _payload().model_copy(update={"known_characters": []})
+    payload.previous_episode = payload.episode.model_copy(update={
+        "episode_id": UUID(int=99), "content_s3_key": "previous-source.txt",
+    })
+    payload.episode = payload.episode.model_copy(update={"episode_no": 2})
+    storage = FakeEpisodeChunkingService(chunks)
+    storage.context_text = "레이는 세나의 아버지였다."
+    client = IdentityClient()
+    saved = RecordingCandidateService()
+    spring = FakeSpringWorkerClient(payload)
+    worker = AnalysisJobWorker(
+        spring_client=spring, chunking_service=storage,
+        setting_extractor=RecordingExtractor([[originals[0]], originals[1:], []]),
+        subject_resolver=RecordingSubjectResolver(llm_client=client, model="gpt-5.6-luna"),
+        setting_candidate_service=saved, world_setting_extractor=FakeWorldSettingExtractor(),
+    )
+
+    result = _run_once(worker)
+
+    assert result.claimed is True
+    assert spring.fail_calls == []
+    assert events == [
+        ("extract", chunks[0].id), ("subject", first_text),
+        ("extract", chunks[1].id), ("subject", alias_text),
+        ("extract", chunks[2].id), ("subject", chunks[2].chunk_text),
+        ("identity", 3), ("save", 3),
+    ]
+    assert len(client.requests) == 3
+    context, candidates_before_identity = identity_inputs[0]
+    assert context.current_chunk_text == "\n\n".join(chunk.chunk_text for chunk in chunks)
+    assert context.previous_episode_text == storage.context_text
+    assert context.previous_chunk_text is context.next_chunk_text is None
+    assert storage.context_keys == ["previous-source.txt"]
+    assert [candidate.entity_name for candidate in saved.saved_candidates] == ["세나", "세나", "세나"]
+    for before, after in zip(candidates_before_identity, saved.saved_candidates, strict=True):
+        assert after.model_dump(exclude={"entity_name"}) == {
+            key: value for key, value in before.items() if key != "entity_name"
+        }
+    assert [item.candidate.source_chunk_id for item in saved.save_items] == [
+        chunks[0].id, chunks[1].id, chunks[1].id,
+    ]
+    assert all(item.episode_id == EPISODE_ID for item in saved.save_items)
+    assert all(item.source_content_s3_key == payload.episode.content_s3_key for item in saved.save_items)
+    assert [candidate.evidence_spans[0].start_offset for candidate in saved.saved_candidates] == [100, 300, 300]
+    assert [candidate.evidence_spans[0].end_offset for candidate in saved.saved_candidates] == [
+        100 + len(first_text), 300 + len(alias_text), 300 + len(alias_text),
+    ]
+    assert [candidate.model_dump() for candidate in originals] == original_dumps
+    summary = json.loads(spring.complete_calls[0][1])
+    assert summary["candidateCount"] == 3
+    assert summary["subjectFallbackCallCount"] == 3
+    assert summary["subjectFallbackResolvedCount"] == 4
+    assert summary["statusInactiveCandidateCount"] == 1
+
+
+def test_previous_episode_is_read_once_without_rechunking_and_used_only_as_context() -> None:
+    payload = _payload()
+    payload.previous_episode = payload.episode.model_copy()
+    payload.episode = payload.episode.model_copy(update={
+        "episode_no": 2, "episode_id": UUID(int=999),
+        "content_s3_key": "current-source.txt",
+    })
+    chunk = _chunk(0, "나는 검을 들었다.")
+    storage = FakeEpisodeChunkingService([chunk])
+    storage.context_text = "폐기할 앞부분" * 3000 + "카엘, 가자. 나는 대답했다."
+    extractor = FakeSettingExtractor([[_candidate(
+        chunk.id, attribute_name="level", entity_name="미상",
+        raw_entity_mention="나는", quote=chunk.chunk_text,
+    )]])
+    resolver = FakeSubjectResolver(SubjectResolutionResult(candidates=[]))
+    spring = FakeSpringWorkerClient(payload)
+    worker = AnalysisJobWorker(
+        spring_client=spring, chunking_service=storage,
+        setting_extractor=extractor, subject_resolver=resolver,
+        setting_candidate_service=FakeSettingCandidateService(),
+        world_setting_extractor=FakeWorldSettingExtractor(),
+    )
+
+    _run_once(worker)
+
+    assert spring.fail_calls == []
+    assert storage.context_keys == [payload.previous_episode.content_s3_key]
+    assert storage.requested_episode_ids == [payload.episode.episode_id]
+    reference = storage.context_text[-14000:]
+    assert extractor.requests[0]["narrative_context"]["previous_episode"] == reference
+    assert resolver.requests[0]["previous_episode_text"] == reference
+    assert extractor.requests[0]["chunk_text"] == chunk.chunk_text
+    assert len(reference) == 14000
+
+
+@pytest.mark.parametrize("reference_no", [1, 3, 4])
+def test_previous_episode_context_rejects_nonadjacent_or_future_source(reference_no) -> None:
+    payload = _payload()
+    payload.episode = payload.episode.model_copy(update={"episode_no": 3})
+    payload.previous_episode = payload.episode.model_copy(update={
+        "episode_no": reference_no, "episode_id": UUID(int=999),
+    })
+    storage = FakeEpisodeChunkingService([])
+    worker = AnalysisJobWorker(spring_client=FakeSpringWorkerClient(payload), chunking_service=storage)
+    with pytest.raises(ValueError, match="immediately preceding"):
+        asyncio.run(worker._read_previous_episode_context(payload))
+    assert storage.context_keys == []
 
 
 def test_worker_preserves_subject_fallback_unresolved_candidate() -> None:
@@ -983,6 +1161,12 @@ class FakeEpisodeChunkingService:
         self.requested_episode_ids: list[UUID] = []
         self.requested_content_s3_keys: list[str] = []
         self.loaded_episode_ids: list[UUID] = []
+        self.context_text = ""
+        self.context_keys: list[str] = []
+
+    def read_source_text(self, content_s3_key: str) -> str:
+        self.context_keys.append(content_s3_key)
+        return self.context_text
 
     def replace_chunks_from_s3_content(
         self,
@@ -1026,6 +1210,8 @@ class FakeSettingExtractor:
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
         known_characters: tuple[KnownCharacter, ...] = (),
+        narrative_context: dict[str, str | None] | None = None,
+        prior_status_observations: tuple[ExtractedSettingCandidate, ...] = (),
     ):
         self.requests.append(
             {
@@ -1036,6 +1222,8 @@ class FakeSettingExtractor:
                 "episode_title": episode_title,
                 "schema_hints": schema_hints,
                 "known_characters": known_characters,
+                "narrative_context": narrative_context,
+                "prior_status_observations": prior_status_observations,
             }
         )
         candidates = self.candidate_groups.pop(0)
@@ -1089,6 +1277,9 @@ class FakeSubjectResolver:
         self.result = result
         self.requests = []
 
+    async def reconcile_episode_names(self, context, candidates, known_characters):
+        return SubjectResolutionResult(candidates=candidates)
+
     async def resolve_candidates(
         self,
         context,
@@ -1103,6 +1294,7 @@ class FakeSubjectResolver:
                 "previous_chunk_text": context.previous_chunk_text,
                 "current_chunk_text": context.current_chunk_text,
                 "next_chunk_text": context.next_chunk_text,
+                "previous_episode_text": context.previous_episode_text,
                 "candidate_count": len(candidates),
                 "known_character_names": [character.name for character in known_characters],
             }
@@ -1207,3 +1399,56 @@ def _chunk(chunk_index: int, chunk_text: str, start_offset: int = 0) -> EpisodeC
         created_at=None,
         updated_at=None,
     )
+
+
+def test_prior_status_observations_use_resolved_job_local_history_without_unknown_subjects():
+    text = "리안은 목소리를 낼 수 없었다. 이름 모를 사람도 말을 못 했다."
+    chunks = [_chunk(0, text, start_offset=100), _chunk(1, "리안이 또렷하게 대답했다.", start_offset=200)]
+    status = _candidate(chunks[0].id, "status.발성_장애", entity_name="그는",
+                        quote="리안은 목소리를 낼 수 없었다.").model_copy(update={
+        "attribute_value": "발성 불능", "value_type": "JSON",
+        "value_json": {"name": "발성 장애", "active": True},
+    })
+    unknown = status.model_copy(update={"entity_name": "미상"})
+    level = _candidate(chunks[0].id, "level", quote="리안은 목소리를 낼 수 없었다.")
+    extractor = FakeSettingExtractor(candidate_groups=[[status, unknown, level], [], [], []])
+
+    class EchoResolver(FakeSubjectResolver):
+        async def resolve_candidates(self, context, candidates, known_characters):
+            return SubjectResolutionResult(candidates=[
+                item.model_copy(update={"entity_name": "리안"}) if item.entity_name == "그는" else item
+                for item in candidates
+            ])
+
+    spring = FakeSpringWorkerClient(payload=_payload())
+    candidate_service = FakeSettingCandidateService()
+    worker = AnalysisJobWorker(
+        spring_client=spring,
+        chunking_service=FakeEpisodeChunkingService(chunks=chunks),
+        setting_extractor=extractor,
+        subject_resolver=EchoResolver(SubjectResolutionResult(candidates=[])),
+        world_setting_extractor=FakeWorldSettingExtractor(),
+        setting_candidate_service=candidate_service,
+    )
+
+    async def scenario():
+        try:
+            first = await worker.run_once()
+            first_saved = list(candidate_service.saved_candidates)
+            spring.payload = _payload().model_copy(update={"analysis_job_id": UUID(int=900)})
+            second = await worker.run_once()
+            return first, second, first_saved
+        finally:
+            await worker.aclose()
+
+    first, second, first_saved = asyncio.run(scenario())
+    assert first.claimed and second.claimed
+    prior = [request["prior_status_observations"] for request in extractor.requests]
+    assert prior[0] == prior[2] == prior[3] == ()
+    assert len(prior[1]) == 1
+    assert prior[1][0].entity_name == "리안"
+    assert prior[1][0].source_chunk_id == chunks[0].id
+    assert prior[1][0].evidence_spans[0].start_offset == 100
+    assert prior[1][0].value_json == {"name": "발성 장애", "active": True}
+    assert any(item.entity_name == "미상" for item in first_saved)
+    assert any(item.attribute_name == "level" for item in first_saved)

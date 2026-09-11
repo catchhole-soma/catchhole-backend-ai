@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 import app.analysis.character_fact_comparator as comparator_module
+from app.analysis.character_fact_comparator import CharacterFactComparator
 from app.analysis.character_fact_comparison_pipeline import (
     CharacterFactComparisonPipeline,
 )
@@ -14,7 +15,6 @@ from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonBatchDecision,
     CharacterFactComparisonBatchResult,
 )
-from app.analysis.character_fact_comparator import CharacterFactComparator
 from app.analysis.character_fact_projection import (
     CharacterProjectionEntry,
     CharacterProjectionState,
@@ -384,6 +384,108 @@ def test_only_pattern_status_key_can_be_semantically_changed() -> None:
         )
 
 
+@pytest.mark.parametrize("operation", ["UPDATE", "MERGE"])
+def test_batch_reuses_legacy_status_key_through_p_and_q_without_renaming(
+    operation: str,
+) -> None:
+    legacy_key = "status.오른발 부상"
+    candidates = [
+        _candidate("C1", "Q1", "부상이 지속됨"),
+        _candidate("C2", "Q2", "통증이 줄어듦"),
+        _candidate("C3", "Q3", "부상이 완전히 회복됨").model_copy(
+            update={"value_json": {"active": False}}
+        ),
+    ]
+    decisions = [
+        _decision_payload("C1", operation=operation, resolved_key=legacy_key,
+                          target_ref="P1", value="부상이 지속됨"),
+        _decision_payload("C2", operation="UPDATE", resolved_key=legacy_key,
+                          target_ref="Q1", value="통증이 줄어듦"),
+        _decision_payload("C3", operation="REMOVE", resolved_key=legacy_key,
+                          removed_refs=["Q2"], value=None),
+    ]
+    # The first real rejected provider response already had this valid JSON shape.
+    decisions[0]["proposed_value_json"] = {"name": "오른발 부상", "active": True}
+    client = SequencedTextClient([
+        {"decisions": decisions},
+        {"checks": [{
+            "snapshot_ref": "P2", "verdict": "KEEP", "carrier_candidate_ref": None,
+            "reason": "무관한 저주는 해소된 근거가 없어 유지합니다.",
+        }]},
+    ])
+    comparator = CharacterFactComparator(
+        llm_client=client, max_attempts=1, batch_max_input_tokens=100_000
+    )
+    batch = _batch().model_copy(update={"candidates": candidates})
+    spring = FakeBatchSpring(batch, _context(batch).model_copy(update={
+        "snapshot_entries": [
+            _batch_snapshot("P1", legacy_key, "기존 부상"),
+            _batch_snapshot("P2", "status.저주", "무관한 상태"),
+        ]
+    }))
+
+    result = asyncio.run(CharacterFactComparisonPipeline(spring, comparator).process_all(
+        ANALYSIS_JOB_ID, LEASE_TOKEN
+    ))
+
+    assert result.completed_count == 3
+    assert result.failed_count == 0
+    assert len(client.requests) == 2
+    completion = spring.completions[0]
+    assert [decision.resolved_canonical_fact_key for decision in completion.decisions] == [
+        legacy_key, legacy_key, legacy_key
+    ]
+    assert completion.decisions[0].proposed_value_json == {"name": "오른발 부상", "active": True}
+    assert completion.decisions[1].dependency_candidate_refs == ["C1"]
+    assert completion.decisions[2].dependency_candidate_refs == ["C1", "C2"]
+    assert completion.decisions[2].removed_snapshot_refs == ["Q2"]
+
+
+@pytest.mark.parametrize("existing_fact_type", [None, "PROFILE"])
+def test_batch_does_not_allow_a_new_legacy_shaped_status_key(
+    existing_fact_type: str | None,
+) -> None:
+    legacy_key = "status.오른발 부상"
+    candidate = _candidate("C1", "Q1", "새 부상").model_copy(update={
+        "raw_fact_key": legacy_key, "initial_canonical_fact_key": legacy_key,
+    })
+    snapshots = [] if existing_fact_type is None else [
+        _batch_snapshot("P1", legacy_key, "다른 유형").model_copy(
+            update={"fact_type": existing_fact_type}
+        )
+    ]
+    client = FakeTextClient({"decisions": [
+        _decision_payload("C1", operation="ADD", resolved_key=legacy_key, value="새 부상")
+    ]})
+
+    with pytest.raises(ComparisonValidationError):
+        asyncio.run(CharacterFactComparator(
+            llm_client=client, max_attempts=1, batch_max_input_tokens=100_000,
+        ).compare_batch(
+            matched_character_name="주인공", canonical_fact_type="STATUS",
+            candidates=[candidate], snapshot_entries=snapshots,
+        ))
+    assert len(client.requests) == 1
+
+
+def test_batch_cannot_recreate_a_removed_legacy_status_key() -> None:
+    legacy_key = "status.오른발 부상"
+    client = FakeTextClient({"decisions": [
+        _decision_payload("C1", operation="REMOVE", resolved_key=legacy_key,
+                          removed_refs=["P1"], value=None),
+        _decision_payload("C2", operation="ADD", resolved_key=legacy_key, value="다시 다침"),
+    ]})
+
+    with pytest.raises(ComparisonValidationError):
+        asyncio.run(CharacterFactComparator(
+            llm_client=client, max_attempts=1, batch_max_input_tokens=100_000,
+        ).compare_batch(
+            matched_character_name="주인공", canonical_fact_type="STATUS",
+            candidates=[_candidate("C1", "Q1", "회복됨"), _candidate("C2", "Q2", "다시 다침")],
+            snapshot_entries=[_batch_snapshot("P1", legacy_key, "기존 부상")],
+        ))
+
+
 def test_present_non_persistent_event_does_not_enter_projected_snapshot() -> None:
     state = CharacterProjectionState([])
     decision = _decision(
@@ -460,7 +562,7 @@ def test_batch_comparator_projects_in_order_and_hides_transport_ids() -> None:
     assert "`matched_character_name`" in request["system_prompt"]
     assert str(WORK_ID) not in serialized
     assert str(EPISODE_ID) not in serialized
-    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v3"
+    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v5"
 
 
 def test_batch_pipeline_falls_back_to_singletons_without_losing_projection() -> None:
@@ -824,6 +926,87 @@ def test_batch_comparator_retries_fixed_key_change() -> None:
     assert "fixed canonical Fact key" in feedback["reason"]
 
 
+@pytest.mark.parametrize("operation", ["EXCLUDE", "HISTORY_ONLY", "REVIEW_REQUIRED"])
+@pytest.mark.parametrize("resolution", ["EXACT", "ALIAS", "PATTERN"])
+def test_nonprojecting_fixed_key_is_bound_to_source_without_repeating_semantic_decision(
+    operation, resolution,
+):
+    # Reproduces 539729 trial-04 ep-03: the first response correctly excluded
+    # duplicate family information, but copied the existing slot's different key.
+    source_key = "profile.가족_관계"
+    candidate = _candidate("C1", "Q1", "레이의 두 번째 딸").model_copy(update={
+        "raw_fact_key": source_key, "initial_canonical_fact_key": source_key,
+        "canonical_key_resolution": resolution, "value_type": "STRING",
+        "value_json": {"value": "레이의 두 번째 딸"},
+    })
+    snapshot = CharacterProjectionEntry(
+        reference="P1", fact_type="PROFILE", fact_key="profile.attribute",
+        fact_value="레이의 두 번째 딸", value_json={"value": "레이의 두 번째 딸"},
+    )
+    response = _decision_payload(
+        "C1", operation=operation, resolved_key="profile.attribute", value=None,
+        reason="기존 현재 프로필에 이미 같은 가족 관계가 기록되어 있습니다.",
+    )
+    client = FakeTextClient({"decisions": [response]})
+    result, raw = asyncio.run(CharacterFactComparator(llm_client=client, max_attempts=1).compare_batch(
+        matched_character_name="세나", canonical_fact_type="PROFILE",
+        candidates=[candidate], snapshot_entries=[snapshot],
+    ))
+    expected = {**response, "resolved_canonical_fact_key": source_key}
+    assert result.decisions[0].model_dump(mode="json") == expected
+    assert raw["decisions"] == [expected]
+    assert client.response["decisions"][0] == response
+    assert len(client.requests) == 1
+    assert snapshot.fact_key == "profile.attribute"
+    assert snapshot.value_json == {"value": "레이의 두 번째 딸"}
+
+
+@pytest.mark.parametrize("invalid_fields", [
+    {"target_ref": "P1"},
+    {"removed_snapshot_refs": ["P1"]},
+    {"temporal_scope": "PAST"},
+])
+def test_nonprojecting_fixed_key_binding_does_not_relax_other_decision_constraints(invalid_fields):
+    candidate = _candidate("C1", "Q1", "검사").model_copy(update={
+        "initial_canonical_fact_key": "profile.occupation", "canonical_key_resolution": "EXACT",
+        "value_type": "STRING", "value_json": {"value": "검사"},
+    })
+    response = {
+        **_decision_payload("C1", operation="EXCLUDE", resolved_key="profile.attribute", value=None),
+        **invalid_fields,
+    }
+    client = FakeTextClient({"decisions": [response]})
+    with pytest.raises(ComparisonValidationError):
+        asyncio.run(CharacterFactComparator(llm_client=client, max_attempts=1).compare_batch(
+            matched_character_name="세나", canonical_fact_type="PROFILE",
+            candidates=[candidate], snapshot_entries=[],
+        ))
+
+
+def test_nonprojecting_status_pattern_key_still_requires_valid_status_canonical_form():
+    response = _decision_payload(
+        "C1", operation="EXCLUDE", resolved_key="profile.attribute", value=None,
+    )
+    client = FakeTextClient({"decisions": [response]})
+    with pytest.raises(ComparisonValidationError):
+        asyncio.run(CharacterFactComparator(llm_client=client, max_attempts=1).compare_batch(
+            matched_character_name="세나", canonical_fact_type="STATUS",
+            candidates=[_candidate("C1", "Q1", "부상")], snapshot_entries=[],
+        ))
+
+
+def test_nonprojecting_status_pattern_can_keep_its_valid_semantic_key():
+    response = _decision_payload(
+        "C1", operation="EXCLUDE", resolved_key="status.기존_부상", value=None,
+    )
+    client = FakeTextClient({"decisions": [response]})
+    result, _ = asyncio.run(CharacterFactComparator(llm_client=client, max_attempts=1).compare_batch(
+        matched_character_name="세나", canonical_fact_type="STATUS",
+        candidates=[_candidate("C1", "Q1", "부상")], snapshot_entries=[],
+    ))
+    assert result.decisions[0].resolved_canonical_fact_key == "status.기존_부상"
+
+
 def test_batch_comparator_retries_add_after_projected_slot_exists() -> None:
     candidates = [
         _candidate("C1", "Q1", "부상이 시작됨"),
@@ -1139,6 +1322,71 @@ def test_spring_client_batch_calls_match_java_contract() -> None:
     assert complete_payload["failures"][0]["candidateRef"] == "C1"
 
 
+@pytest.mark.parametrize("repaired", [True, False])
+def test_batch_string_merge_retries_before_completion_without_coercing_array(repaired):
+    candidate = _candidate("C1", "Q1", "은빛 기사단의 단장").model_copy(update={
+        "raw_fact_key": "profile.attribute",
+        "initial_canonical_fact_key": "profile.attribute",
+        "canonical_key_resolution": "EXACT", "value_type": "STRING",
+        "value_json": {"value": "은빛 기사단의 단장"},
+    })
+    initial = CharacterProjectionEntry(
+        reference="P1", fact_type="PROFILE", fact_key="profile.attribute",
+        fact_value="기사", value_json={"value": "기사"},
+    )
+    invalid = {
+        **_decision_payload(
+            "C1", operation="MERGE", target_ref="P1", resolved_key="profile.attribute",
+            value="기사이며 은빛 기사단의 단장",
+        ),
+        "proposed_value_json": {"value": ["PRIVATE_REJECTED_SENTINEL", "단장"]},
+    }
+    valid = {**invalid, "proposed_value_json": {"value": "기사이며 은빛 기사단의 단장"}}
+    client = SequencedTextClient([
+        {"decisions": [invalid]}, {"decisions": [valid if repaired else invalid]},
+    ])
+    comparator = CharacterFactComparator(llm_client=client, max_attempts=2)
+    pending = comparator.compare_batch(
+        matched_character_name="리안", canonical_fact_type="PROFILE",
+        candidates=[candidate], snapshot_entries=[initial],
+    )
+    if repaired:
+        result, raw = asyncio.run(pending)
+        assert result.decisions[0].operation == "MERGE"
+        assert result.decisions[0].proposed_value_json == valid["proposed_value_json"]
+        assert raw["decisions"][0]["proposed_value_json"] == valid["proposed_value_json"]
+    else:
+        with pytest.raises(ComparisonValidationError, match="CharacterFactProposalValueError"):
+            asyncio.run(pending)
+    assert len(client.requests) == 2
+    feedback = json.loads(client.requests[1]["user_prompt"])["validation_feedback"]
+    assert feedback["reason_code"] == "PROPOSED_VALUE_JSON_INVALID"
+    assert feedback["field"] == "proposed_value_json.value"
+    assert feedback["expected_type"] == "a JSON string for STRING"
+    assert "PRIVATE_REJECTED_SENTINEL" not in client.requests[1]["user_prompt"]
+    assert initial.value_json == {"value": "기사"}
+
+
+def test_projector_rejects_invalid_scalar_before_mutating_active_snapshot():
+    initial = CharacterProjectionEntry(
+        reference="P1", fact_type="PROFILE", fact_key="profile.attribute",
+        fact_value="기사", value_json={"value": "기사"},
+    )
+    state = CharacterProjectionState([initial])
+    invalid = _decision_payload(
+        "C1", operation="UPDATE", target_ref="P1", resolved_key="profile.attribute", value="단장",
+    )
+    invalid["proposed_value_json"] = {"value": ["기사", "단장"]}
+    with pytest.raises(ValueError, match="JSON string for STRING"):
+        state.apply(
+            candidate_ref="C1", projected_snapshot_ref="Q1", fact_type="PROFILE",
+            resolved_fact_key="profile.attribute", value_type="STRING",
+            candidate_value_json={"value": "단장"},
+            decision=CharacterFactComparisonBatchDecision.model_validate(invalid),
+        )
+    assert state.entries == [initial]
+
+
 class FakeTextClient:
     def __init__(self, response: dict) -> None:
         self.response = response
@@ -1169,6 +1417,7 @@ class FakeBatchComparator:
     ) -> None:
         self.outcomes = deque(outcomes)
         self.calls: list[list[str]] = []
+        self.lifecycle_calls: list[list[str]] = []
         self.max_candidates_per_call = max_candidates_per_call
 
     def batch_fits(self, *, candidates, **kwargs) -> bool:
@@ -1180,6 +1429,10 @@ class FakeBatchComparator:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome, outcome.model_dump(mode="json")
+
+    async def reconcile_status_lifecycle(self, *, candidates, decisions, **kwargs):
+        self.lifecycle_calls.append([candidate.candidate_ref for candidate in candidates])
+        return decisions
 
 
 class FakeBatchSpring:

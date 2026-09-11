@@ -12,6 +12,7 @@ from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonDecision,
 )
 from app.analysis.character_fact_projection import (
+    CharacterFactProposalValueError,
     CharacterProjectionEntry,
     CharacterProjectionState,
     is_explicit_inactive_status,
@@ -19,16 +20,18 @@ from app.analysis.character_fact_projection import (
     validate_resolved_canonical_fact_key,
     validate_status_active_value,
 )
+from app.analysis.character_status_lifecycle import reconcile_status_lifecycle
 from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.json_response import compact_error_message, request_validated_model
 from app.core.config import get_settings
+from app.domain.enums import CharacterFactComparisonOperation
 from app.domain.setting_values import normalize_setting_display_value
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.schemas.worker import (
-    WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterFactComparisonBatchCandidate,
     WorkerCharacterFactComparisonBatchSnapshotEntry,
+    WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterPriorFactCandidate,
     WorkerCharacterSnapshotEntry,
 )
@@ -42,7 +45,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "character_fact_comparison_batch.md"
 )
-CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v3"
+CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v5"
 logger = logging.getLogger(__name__)
 SNAPSHOT_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])[PQ][0-9]+(?![A-Za-z0-9])")
 CANDIDATE_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])C[0-9]+(?![A-Za-z0-9])")
@@ -272,6 +275,30 @@ class CharacterFactComparator:
         raw["estimated_input_tokens"] = estimated_input_tokens
         return normalized_result, raw
 
+    async def reconcile_status_lifecycle(
+        self,
+        *,
+        matched_character_name: str,
+        candidates: list[WorkerCharacterFactComparisonBatchCandidate],
+        snapshot_entries: list[CharacterProjectionEntry],
+        decisions: list[CharacterFactComparisonBatchDecision],
+    ) -> list[CharacterFactComparisonBatchDecision]:
+        reviewed = await reconcile_status_lifecycle(
+            llm_client=self.llm_client,
+            model=self.model,
+            max_output_tokens=self.batch_max_output_tokens,
+            max_attempts=self.max_attempts,
+            max_input_tokens=self.batch_max_input_tokens,
+            matched_character_name=matched_character_name,
+            candidates=candidates,
+            initial_entries=snapshot_entries,
+            decisions=decisions,
+        )
+        # A Spring batch may span several bounded provider segments. Validate the
+        # whole ordered result without applying one segment's response size limit.
+        _validate_ordered_comparison_decisions(reviewed, "STATUS", candidates, snapshot_entries)
+        return reviewed
+
     def batch_fits(
         self,
         *,
@@ -319,6 +346,7 @@ def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
             "판단 이유에는 "
             "내부 key·enum·UUID를 쓰지 말고 사용자가 이해할 수 있는 한국어만 쓰세요."
         ),
+        **_proposal_value_retry_feedback(exc),
     }
     return json.dumps(payload, ensure_ascii=False)
 
@@ -339,8 +367,27 @@ def _build_batch_retry_user_prompt(original_user_prompt: str, exc: Exception) ->
             "proposed_value_json.value에 JSON 문자열을 넣으세요. NUMBER는 JSON 숫자, "
             "BOOLEAN은 JSON boolean을 사용하세요."
         ),
+        **_proposal_value_retry_feedback(exc),
     }
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _proposal_value_retry_feedback(exc: Exception) -> dict:
+    if not isinstance(exc, CharacterFactProposalValueError):
+        return {}
+    return {
+        "reason_code": "PROPOSED_VALUE_JSON_INVALID",
+        "field": exc.field_name,
+        "expected_type": exc.expected_type,
+        "value_correction": (
+            "ADD/UPDATE/MERGE 모두 입력 candidate.value_type을 유지하세요. proposed_value_json은 "
+            "객체이며 STRING의 value는 문자열, NUMBER는 유한한 숫자, BOOLEAN은 JSON boolean, "
+            "UNKNOWN은 value 필드가 필요합니다. JSON 타입은 객체 속성을 그대로 사용할 수 있습니다. "
+            "여러 사실을 MERGE하더라도 STRING의 value를 배열이나 객체로 바꾸지 마세요. 원문 의미를 "
+            "보존하는 해당 타입의 제안값을 다시 작성하고, 형식만 맞추려고 사실을 삭제하거나 "
+            "반영 연산을 바꾸지 마세요."
+        ),
+    }
 
 
 def _build_bounded_batch_retry_user_prompt(
@@ -576,22 +623,37 @@ def _validate_batch_comparison_result(
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
     initial_entries: list[CharacterProjectionEntry],
 ) -> None:
+    _validate_ordered_comparison_decisions(
+        result.decisions, canonical_fact_type, candidates, initial_entries
+    )
+
+
+def _validate_ordered_comparison_decisions(
+    decisions: list[CharacterFactComparisonBatchDecision],
+    canonical_fact_type: str,
+    candidates: list[WorkerCharacterFactComparisonBatchCandidate],
+    initial_entries: list[CharacterProjectionEntry],
+) -> None:
     expected_refs = [candidate.candidate_ref for candidate in candidates]
-    actual_refs = [decision.candidate_ref for decision in result.decisions]
+    actual_refs = [decision.candidate_ref for decision in decisions]
     if actual_refs != expected_refs:
         raise ValueError(
             "Batch decisions must cover every candidate exactly once in input order."
         )
 
     state = CharacterProjectionState(initial_entries)
-    for candidate, decision in zip(candidates, result.decisions, strict=True):
+    for candidate, decision in zip(candidates, decisions, strict=True):
+        decision = _bind_nonprojecting_fixed_key(decision, candidate, canonical_fact_type)
+        active_entries = state.entries
         validate_resolved_canonical_fact_key(
             initial_fact_key=candidate.initial_canonical_fact_key,
             resolved_fact_key=decision.resolved_canonical_fact_key,
             canonical_key_resolution=candidate.canonical_key_resolution,
             fact_type=canonical_fact_type,
+            existing_status_keys={
+                entry.fact_key for entry in active_entries if entry.fact_type == "STATUS"
+            },
         )
-        active_entries = state.entries
         active_refs = {entry.reference for entry in active_entries}
         reason_refs = set(SNAPSHOT_REFERENCE_PATTERN.findall(decision.comparison_reason))
         unknown_reason_refs = reason_refs - active_refs
@@ -625,6 +687,7 @@ def _normalize_batch_comparison_result(
     state = CharacterProjectionState(initial_entries)
     normalized_decisions: list[CharacterFactComparisonBatchDecision] = []
     for candidate, decision in zip(candidates, result.decisions, strict=True):
+        decision = _bind_nonprojecting_fixed_key(decision, candidate, canonical_fact_type)
         active_entries = state.entries
         normalized = _normalize_scalar_proposal(decision, candidate)
         normalized = _replace_projection_references(normalized, active_entries)
@@ -639,6 +702,32 @@ def _normalize_batch_comparison_result(
         )
         normalized_decisions.append(normalized)
     return CharacterFactComparisonBatchResult(decisions=normalized_decisions)
+
+
+def _bind_nonprojecting_fixed_key(
+    decision: CharacterFactComparisonBatchDecision,
+    candidate: WorkerCharacterFactComparisonBatchCandidate,
+    canonical_fact_type: str,
+) -> CharacterFactComparisonBatchDecision:
+    # These decisions do not address a snapshot slot. Their fixed source schema
+    # key is metadata, not a provider choice of the semantically duplicate slot.
+    # Keep all operation/target/removal/value/temporal validation unchanged.
+    fixed_key = candidate.canonical_key_resolution in {"EXACT", "ALIAS"} or (
+        candidate.canonical_key_resolution == "PATTERN" and canonical_fact_type != "STATUS"
+    )
+    if (
+        fixed_key
+        and decision.operation in {
+            CharacterFactComparisonOperation.EXCLUDE,
+            CharacterFactComparisonOperation.HISTORY_ONLY,
+            CharacterFactComparisonOperation.REVIEW_REQUIRED,
+        }
+        and decision.resolved_canonical_fact_key != candidate.initial_canonical_fact_key
+    ):
+        return decision.model_copy(update={
+            "resolved_canonical_fact_key": candidate.initial_canonical_fact_key,
+        })
+    return decision
 
 
 def _replace_projection_references(
