@@ -1180,6 +1180,14 @@ class ProviderFailureDetails(StrictModel):
     request_id: str | None = None
     response_status: str | None = None
     incomplete_reason: str | None = None
+    network_exception: str | None = None
+    message_summary: str | None = None
+    elapsed_ms: int | None = Field(default=None, ge=0)
+    max_output_tokens: int | None = Field(default=None, ge=0)
+    prompt_chars: int | None = Field(default=None, ge=0)
+    prompt_bytes: int | None = Field(default=None, ge=0)
+    schema_bytes: int | None = Field(default=None, ge=0)
+    input_fingerprint: str | None = None
 
 
 class ExecutionFailure(StrictModel):

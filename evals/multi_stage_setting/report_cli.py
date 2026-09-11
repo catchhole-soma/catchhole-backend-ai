@@ -806,6 +806,10 @@ def _append_diagnostics_limited(
                 "providerErrorCode": "제공자 오류 코드", "providerErrorType": "제공자 오류 유형",
                 "parameter": "문제 매개변수", "requestId": "요청 ID",
                 "responseStatus": "응답 상태", "incompleteReason": "미완료 사유",
+                "networkException": "네트워크 예외", "messageSummary": "오류 메시지 요약",
+                "elapsedMs": "호출 경과 시간(ms)", "maxOutputTokens": "출력 토큰 상한",
+                "promptChars": "프롬프트 문자 수", "promptBytes": "프롬프트 UTF-8 바이트",
+                "schemaBytes": "스키마 UTF-8 바이트", "inputFingerprint": "입력 SHA-256",
             }
             lines.extend(
                 f"- {label}: {_cell(str(provider[key]))}"

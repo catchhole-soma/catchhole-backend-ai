@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from types import SimpleNamespace
@@ -107,7 +109,12 @@ from evals.multi_stage_setting.contracts import (
     world_subject_ref,
 )
 from evals.multi_stage_setting.processing import ProcessingTrace
-from evals.multi_stage_setting.provider_diagnostics import provider_failure_details
+from evals.multi_stage_setting.provider_diagnostics import (
+    PURPOSES,
+    provider_failure_details,
+    request_size_details,
+    sanitize_provider_details,
+)
 from evals.multi_stage_setting.state_effects import (
     StateApplicationError,
     apply_prediction_decision,
@@ -173,6 +180,18 @@ class UsageRecordingTextGenerationClient:
         prompt_cache_key: str | None = None,
         response_schema: LlmResponseSchema | None = None,
     ) -> LlmTextResponse:
+        request_details = request_size_details(
+            system_prompt, user_prompt,
+            response_schema.schema if response_schema is not None else None,
+        )
+        request_details.update(sanitize_provider_details({
+            "model": model or getattr(self.client, "model", None),
+            "purpose": PURPOSES.get((prompt_cache_key or "").partition(":")[0]),
+        }))
+        request_details["max_output_tokens"] = max_output_tokens
+        print("LLM call started " + json.dumps(sanitize_provider_details(request_details)),
+              file=sys.stderr, flush=True)
+        started = time.monotonic()
         try:
             response = await self.client.create_text_response(
                 system_prompt=system_prompt,
@@ -183,15 +202,21 @@ class UsageRecordingTextGenerationClient:
                 response_schema=response_schema,
             )
         except (httpx.HTTPError, LlmResponseValidationError) as exc:
-            exc.evaluation_provider_details = provider_failure_details(
+            failure_details = provider_failure_details(
                 exc, model=model or getattr(self.client, "model", None),
                 prompt_cache_key=prompt_cache_key,
             )
+            failure_details.update(request_details, elapsed_ms=int((time.monotonic() - started) * 1000))
+            exc.evaluation_provider_details = sanitize_provider_details(failure_details)
             if isinstance(exc, LlmResponseValidationError):
                 self._record_usage(
                     exc.input_token_count, exc.cached_input_token_count, exc.output_token_count,
                 )
             raise
+        print("LLM call completed " + json.dumps({
+            **sanitize_provider_details(request_details),
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+        }), file=sys.stderr, flush=True)
         self._record_usage(
             response.input_token_count,
             response.cached_input_token_count,

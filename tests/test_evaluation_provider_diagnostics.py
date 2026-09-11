@@ -7,11 +7,14 @@ import pytest
 from app.analysis.setting_extractor import CharacterSettingSchemaHint
 from app.llm.exceptions import LlmIncompleteResponseError
 from app.llm.openai_client import OpenAIResponsesClient
+from app.llm.protocols import LlmResponseSchema
+from app.llm.responses import LlmTextResponse
 from evals.multi_stage_setting import report_cli, runtime_cli
 from evals.multi_stage_setting.contracts import ScenarioPrediction
 from evals.multi_stage_setting.processing import ProcessingTrace
 from evals.multi_stage_setting.provider_diagnostics import (
     provider_failure_details,
+    request_size_details,
     sanitize_provider_details,
 )
 from evals.multi_stage_setting.runtime_adapter import (
@@ -296,7 +299,69 @@ def test_network_failure_still_reports_phase_and_selected_model():
     assert failure.provider.model == "gpt-5.6-terra"
     assert failure.provider.purpose == "CHARACTER_SUBJECT_RESOLUTION"
     assert failure.provider.http_status is None
+    assert failure.provider.network_exception == "ReadTimeout"
     assert "SECRET" not in failure.model_dump_json()
     assert "executionFailure" not in ScenarioPrediction(scenario_id="legacy").model_dump(
         by_alias=True
     )
+
+
+@pytest.mark.parametrize("kind", [httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError,
+                                  httpx.RemoteProtocolError])
+def test_network_exception_type_survives_wrapping_without_exception_text(kind):
+    wrapped = RuntimeError("SECRET")
+    wrapped.__cause__ = kind("SECRET URL and manuscript")
+    assert provider_failure_details(wrapped) == {"network_exception": kind.__name__}
+
+
+def test_overload_message_is_summarized_without_echoing_sensitive_suffix():
+    exc, _ = asyncio.run(_interrupted(503, {"error": {
+        "code": "slow_down", "type": "server_overloaded",
+        "message": "Slow down. SECRET manuscript, Authorization: sk-SECRET",
+    }}))
+    failure = exc.prediction_bundle.scenarios[0].execution_failure
+    assert failure.provider.provider_error_code == "slow_down"
+    assert failure.provider.message_summary == "Provider requested slower requests."
+    assert failure.provider.prompt_chars == len("SECRET_SYSTEMSECRET_MANUSCRIPT")
+    assert failure.provider.max_output_tokens == 1500
+    public = report_cli.build_public_diagnostics({"scenarios": [{
+        "scenarioId": "S1", "episodeNo": 1,
+        "executionFailure": failure.model_dump(mode="json", by_alias=True, exclude_none=True),
+    }]})
+    details = public[0]["executionFailure"]["provider"]
+    assert details["messageSummary"] == "Provider requested slower requests."
+    assert details["elapsedMs"] >= 0
+    assert "SECRET" not in json.dumps(public)
+    assert sanitize_provider_details({
+        "messageSummary": "SECRET", "networkException": "SECRET",
+        "elapsedMs": True, "promptBytes": -1, "inputFingerprint": "SECRET",
+    }) == {}
+
+
+def test_request_metrics_keep_actual_payload_and_hash_identical_across_models(capsys):
+    calls = []
+
+    class Client:
+        async def create_text_response(self, **kwargs):
+            calls.append(kwargs)
+            return LlmTextResponse(text="SECRET output", input_token_count=12)
+
+    schema = LlmResponseSchema("result", {"type": "object"})
+    usage = RuntimeUsageCounter()
+    client = UsageRecordingTextGenerationClient(Client(), usage)
+    for model in ("gpt-5.6-sol", "gpt-5.6-terra"):
+        asyncio.run(client.create_text_response(
+            "SECRET 한글", "SECRET input", model=model, max_output_tokens=6000,
+            prompt_cache_key="setting-extraction:v10", response_schema=schema,
+        ))
+    logs = capsys.readouterr().err
+    assert "SECRET" not in logs and "한글" not in logs
+    starts = [json.loads(line.removeprefix("LLM call started "))
+              for line in logs.splitlines() if line.startswith("LLM call started ")]
+    assert starts[0]["input_fingerprint"] == starts[1]["input_fingerprint"]
+    assert starts[0]["prompt_bytes"] == len("SECRET 한글SECRET input".encode())
+    assert starts[0]["max_output_tokens"] == 6000
+    assert calls[0]["system_prompt"] == "SECRET 한글"
+    assert calls[0]["response_schema"] is schema
+    assert usage.input_tokens == 24
+    assert request_size_details("SECRET 한글", "changed", schema.schema)["input_fingerprint"] != starts[0]["input_fingerprint"]

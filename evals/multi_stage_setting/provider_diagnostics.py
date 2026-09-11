@@ -1,5 +1,7 @@
-"""Allowlisted provider metadata; never persist requests, response bodies, or error messages."""
+"""Safe provider diagnostics; raw requests, bodies and free-form messages stay private."""
 
+import hashlib
+import json
 import re
 from typing import Any
 
@@ -35,6 +37,32 @@ ERROR_CODES = {
     "authentication_error",
     "permission_error",
     "api_error",
+    "slow_down",
+    "server_overloaded",
+    "engine_overloaded",
+}
+# Only fixed summaries of provider messages are published, never interpolated text.
+MESSAGE_SUMMARIES = {
+    "slow down": "Provider requested slower requests.",
+    "overloaded": "Provider reported overload.",
+    "temporarily unavailable": "Provider reported temporary unavailability.",
+    "service unavailable": "Provider reported temporary unavailability.",
+    "timed out": "Provider reported a timeout.",
+    "timeout": "Provider reported a timeout.",
+    "rate limit": "Provider reported a rate limit.",
+    "maximum context length": "Provider reported a context length limit.",
+    "invalid schema": "Provider reported an invalid schema.",
+    "internal server error": "Provider reported an internal server error.",
+}
+NETWORK_EXCEPTIONS = {
+    cls.__name__: cls for cls in (
+        httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout,
+        httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.CloseError,
+        httpx.RemoteProtocolError, httpx.LocalProtocolError,
+    )
+}
+COUNT_FIELDS = {
+    "elapsed_ms", "max_output_tokens", "prompt_chars", "prompt_bytes", "schema_bytes",
 }
 PURPOSES = {
     "setting-extraction": "CHARACTER_EXTRACTION",
@@ -81,13 +109,24 @@ def sanitize_provider_details(value: Any) -> dict[str, Any]:
         "request_id",
         "response_status",
         "incomplete_reason",
+        "network_exception",
+        "message_summary",
+        "elapsed_ms",
+        "max_output_tokens",
+        "prompt_chars",
+        "prompt_bytes",
+        "schema_bytes",
+        "input_fingerprint",
     ):
         parts = key.split("_")
         alias = parts[0] + "".join(part.title() for part in parts[1:])
         item = value.get(key, value.get(alias))
         if item is None:
             continue
-        if key == "http_status":
+        if key in COUNT_FIELDS:
+            if type(item) is int and 0 <= item <= 10**12:
+                result[key] = item
+        elif key == "http_status":
             if type(item) is int and 100 <= item <= 599:
                 result[key] = item
         elif not isinstance(item, str):
@@ -98,6 +137,13 @@ def sanitize_provider_details(value: Any) -> dict[str, Any]:
                 and len(item) <= 80
             ):
                 result[key] = item
+        elif key == "network_exception" and item in NETWORK_EXCEPTIONS:
+            result[key] = item
+        elif key == "message_summary":
+            if item in MESSAGE_SUMMARIES.values() or item == "Unrecognized provider message (withheld).":
+                result[key] = item
+        elif key == "input_fingerprint" and re.fullmatch(r"[0-9a-f]{64}", item):
+            result[key] = item
         elif key == "request_id":
             if re.fullmatch(r"req_[a-zA-Z0-9_-]{1,128}|[0-9a-fA-F-]{36}", item):
                 result[key] = item
@@ -135,6 +181,20 @@ def sanitize_provider_details(value: Any) -> dict[str, Any]:
     return result
 
 
+def request_size_details(system_prompt: str, user_prompt: str, schema: Any) -> dict[str, Any]:
+    """Describe size and compare identical inputs without logging their contents."""
+    schema_json = json.dumps(schema, ensure_ascii=False, sort_keys=True)
+    fingerprint_input = json.dumps(
+        [system_prompt, user_prompt, schema], ensure_ascii=False, sort_keys=True,
+    ).encode("utf-8")
+    return {
+        "prompt_chars": len(system_prompt) + len(user_prompt),
+        "prompt_bytes": len(system_prompt.encode("utf-8")) + len(user_prompt.encode("utf-8")),
+        "schema_bytes": len(schema_json.encode("utf-8")) if schema is not None else 0,
+        "input_fingerprint": hashlib.sha256(fingerprint_input).hexdigest(),
+    }
+
+
 def provider_failure_details(
     exc: BaseException,
     *,
@@ -151,6 +211,10 @@ def provider_failure_details(
         if isinstance(attached, dict):
             details = sanitize_provider_details(attached)
             break
+        for name, exception_type in NETWORK_EXCEPTIONS.items():
+            if isinstance(current, exception_type):
+                details.setdefault("network_exception", name)
+                break
         response = getattr(current, "response", None)
         if isinstance(response, httpx.Response):
             details["http_status"] = response.status_code
@@ -167,6 +231,13 @@ def provider_failure_details(
                         provider_error_type=error.get("type"),
                         parameter=error.get("param"),
                     )
+                    message = error.get("message")
+                    if isinstance(message, str):
+                        details["message_summary"] = next(
+                            (summary for phrase, summary in MESSAGE_SUMMARIES.items()
+                             if phrase in message.lower()),
+                            "Unrecognized provider message (withheld).",
+                        )
                 details["response_status"] = payload.get("status")
                 incomplete = payload.get("incomplete_details")
                 if isinstance(incomplete, dict):
