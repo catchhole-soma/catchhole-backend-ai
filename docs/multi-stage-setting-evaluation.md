@@ -811,6 +811,12 @@ scorer에 전달합니다. `FIXED`와 `ROLLING`은 항상 private 입력을 내�
 없는 오류 코드·매개변수는 `UNRECOGNIZED`이며, 잘못된 모델·요청 ID는 제외합니다.
 후보별 processing 기록과 점수는 이 회차 단위 진단 때문에 바꾸지 않습니다.
 
+별도 의미 채점 API도 `purpose=SEMANTIC_JUDGE`로 같은 허용 목록의 시작·완료·실패 로그를 남깁니다.
+실패 시 Actions의 `Evaluate predictions` 단계에서 `LLM call failed`를 찾아 HTTP 상태뿐 아니라
+제공자 오류 코드·고정 원인 요약·요청 ID·경과 시간을 확인합니다. 채점 실패는 예측의
+`executionFailure`로 기록되지 않으며, 보고서 생성 전에 중단되면 최종 점수는 미확정입니다.
+이 진단 추가는 재시도·모델·출력 상한·채점 판정과 출력 절단 시 분할 정책을 변경하지 않습니다.
+
 과거 실행에서 버린 provider 상세는 복원할 수 없습니다. 이 변경을 테스트하려면
 `feat/candidate-processing-diagnostics`의 새 커밋으로 **Run workflow**를 실행합니다.
 기존 실행의 **Re-run jobs**는 그 실행의 이전 커밋을 다시 사용하므로 새 진단 코드가 적용되지 않습니다.
