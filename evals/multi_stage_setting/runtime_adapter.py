@@ -21,6 +21,7 @@ from app.analysis.character_fact_comparison_pipeline import (
 from app.analysis.character_fact_projection import is_explicit_inactive_status
 from app.analysis.character_name_resolver import (
     ActiveCharacterStatus,
+    normalize_character_name,
 )
 from app.analysis.character_name_resolver import (
     KnownCharacter as RuntimeKnownCharacter,
@@ -47,6 +48,7 @@ from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.domain.enums import (
     CharacterFactComparisonOperation,
     SettingCandidateKind,
+    SettingCandidateMatchStatus,
     WorldSettingConsolidationStatus,
     WorldSettingOperation,
 )
@@ -731,14 +733,21 @@ async def _run_live_scenario(
     )
     character_runtime_by_id: dict[
         str,
-        tuple[CharacterStage1Prediction, UUID | None, str | None, str | None],
+        tuple[CharacterStage1Prediction, str | None, str | None],
     ] = {}
     for item in prepared:
         record = canonical_character_records[item.source_index]
         matched_id = item.character_match.matched_character_id
         entity_ref = character_ref_by_id.get(matched_id) if matched_id is not None else None
-        if item.candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
-            entity_ref = f"prediction-character:{_safe_ref_part(item.candidate.entity_name)}"
+        match_status = item.character_match.match_status.value
+        if item.character_match.match_status == SettingCandidateMatchStatus.UNRESOLVED:
+            # Evaluation compares concrete new names without production registration.
+            # Only model output determines this identity; no current-episode Gold is used.
+            entity_ref = (
+                f"prediction-character:{normalize_character_name(item.candidate.entity_name)}"
+            )
+            if item.candidate.candidate_kind == SettingCandidateKind.SETTING:
+                match_status = "EVALUATION_NEW_CHARACTER"
         matched_name = next(
             (
                 character.name
@@ -752,29 +761,25 @@ async def _run_live_scenario(
             item.candidate,
             entity_ref=entity_ref,
             matched_character_name=matched_name,
-            match_status=item.character_match.match_status.value,
+            match_status=match_status,
             canonical_fact_type=record.canonical_fact_type,
             sort_order=record.sort_order,
         )
         handoff_stage1.append(prediction)
         character_runtime_by_id[prediction.candidate_id] = (
             prediction,
-            matched_id,
             record.raw_fact_key,
             record.canonical_key_resolution,
         )
 
     character_batch_sources: list[_CharacterBatchSource] = []
-    for prediction, matched_id, raw_fact_key, resolution in character_runtime_by_id.values():
+    for prediction, raw_fact_key, resolution in character_runtime_by_id.values():
         trace.stage = "CHARACTER_HANDOFF"
         if prediction.candidate_kind == CandidateKind.CHARACTER_DISCOVERY:
             trace.record(prediction.candidate_id, prediction.domain, "NOT_APPLICABLE")
             continue
         if prediction.match_status == "AMBIGUOUS":
             trace.record(prediction.candidate_id, prediction.domain, "AMBIGUOUS_CHARACTER")
-            continue
-        if matched_id is None:
-            trace.record(prediction.candidate_id, prediction.domain, "WAITING_FOR_CHARACTER")
             continue
         if (
             prediction.entity_ref is None

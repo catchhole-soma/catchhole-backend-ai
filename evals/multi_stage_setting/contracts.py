@@ -977,7 +977,7 @@ class CharacterStage1Prediction(StrictModel):
     domain: Literal[EvaluationDomain.CHARACTER]
     candidate_kind: Literal[CandidateKind.SETTING, CandidateKind.CHARACTER_DISCOVERY]
     # 운영 UUID가 아니라 평가 state 안에서만 안정적인 캐릭터 selector다. 기존 캐릭터는
-    # beforeState의 entityRef를 사용하고, 신규 발견은 prediction namespace를 사용한다.
+    # beforeState의 entityRef를 사용하고, 신규 발견·설정은 prediction namespace를 사용한다.
     entity_ref: str | None = None
     entity_name: str = Field(min_length=1)
     matched_character_name: str | None = None
@@ -1453,6 +1453,31 @@ def character_state_ref(entity_ref: str, fact_type: str, fact_key: str) -> str:
             _stable_ref_segment(fact_type.upper()),
             _stable_ref_segment(fact_key),
         )
+    )
+
+
+def align_prediction_character_refs(
+    source: CharacterStage1Prediction,
+    decision: CharacterStage2Prediction,
+    expected_entity_ref: str,
+) -> CharacterStage2Prediction:
+    """Translate only a matched evaluation identity, preserving selected slots and raw output."""
+
+    if source.entity_ref is None or not source.entity_ref.startswith("prediction-character:"):
+        return decision
+    actual_prefix = character_state_ref(source.entity_ref, "", "").rsplit(":", 2)[0] + ":"
+    expected_prefix = character_state_ref(expected_entity_ref, "", "").rsplit(":", 2)[0] + ":"
+
+    def align(ref: str | None) -> str | None:
+        if ref is not None and ref.startswith(actual_prefix):
+            return expected_prefix + ref[len(actual_prefix) :]
+        return ref
+
+    return decision.model_copy(
+        update={
+            "target_ref": align(decision.target_ref),
+            "removed_snapshot_refs": [align(ref) for ref in decision.removed_snapshot_refs],
+        }
     )
 
 

@@ -45,6 +45,7 @@ from evals.multi_stage_setting.contracts import (
     WorldStage1Prediction,
     WorldStage2Gold,
     WorldStage2Prediction,
+    align_prediction_character_refs,
     character_state_ref,
     stage2_source_candidate_ids,
     world_entry_subject_ref,
@@ -1034,6 +1035,15 @@ def _evaluate_stage2_cases(
             prediction,
             expected_character_fact_key=expected_character_fact_key,
             expected_character_source=expected_character_source,
+            actual_character_source=next(
+                (
+                    source
+                    for source in scenario_prediction.stage1
+                    if isinstance(source, CharacterStage1Prediction)
+                    and source.candidate_id == prediction.source_candidate_id
+                ),
+                None,
+            ),
             expected_world_subject_ref=expected_world_subject_ref,
             expected_world_source=expected_world_source,
             allow_projected_world_target_equivalence=(
@@ -1146,6 +1156,7 @@ def _score_stage2_case(
     *,
     expected_character_fact_key: str | None = None,
     expected_character_source: CharacterStage1Gold | None = None,
+    actual_character_source: CharacterStage1Prediction | None = None,
     expected_world_subject_ref: str | None = None,
     expected_world_source: WorldStage1Gold | None = None,
     allow_projected_world_target_equivalence: bool = False,
@@ -1194,9 +1205,16 @@ def _score_stage2_case(
                 schema_pattern="status.*",
             )
         operation_matched = gold.operation == prediction.operation
-        target_matched = _same_ref(gold.target_ref, prediction.target_ref)
+        aligned_prediction = (
+            align_prediction_character_refs(
+                actual_character_source, prediction, expected_character_source.entity_ref
+            )
+            if actual_character_source is not None and expected_character_source is not None
+            else prediction
+        )
+        target_matched = _same_ref(gold.target_ref, aligned_prediction.target_ref)
         removed_matched = (
-            _same_ref_set(gold.removed_snapshot_refs, prediction.removed_snapshot_refs)
+            _same_ref_set(gold.removed_snapshot_refs, aligned_prediction.removed_snapshot_refs)
             if gold.removed_snapshot_refs or prediction.removed_snapshot_refs
             else None
         )
