@@ -82,6 +82,14 @@ on:
         required: false
         default: false
         type: boolean
+      extraction_max_output_tokens:
+        description: "캐릭터 1차 추출 출력 상한(기본 6000, 진단 대조 9000)"
+        required: false
+        default: "6000"
+        type: choice
+        options:
+          - "6000"
+          - "9000"
 
 permissions:
   contents: read
@@ -251,6 +259,7 @@ jobs:
         shell: bash
         env:
           LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS: ${{ inputs.extraction_max_output_tokens || '6000' }}
         run: |
           set -euo pipefail
           if [ -z "$LLM_API_KEY" ]; then
