@@ -106,7 +106,7 @@ def test_character_extra_without_stage2_gold_or_record_still_has_a_trace_row(dis
     markdown = render_markdown_summary(report)
     assert "**2차 처리 판단 결과**" in markdown
     row = _stage2_row(markdown, "P-character-extra")
-    assert "이 추출 항목에 연결된 2차 결과 없음" in row
+    assert "비교 대상 아님" in row if discovery else "처리 기록 부족" in row
     assert "연결된 2차 결과가 기록되지 않았습니다" in row
     assert "오답으로 채점" not in row
 
@@ -185,7 +185,7 @@ def test_world_extra_without_record_is_not_hidden_or_marked_as_wrong():
     assert case["result"] == "EXTRA_NO_DECISION"
     assert case["fields"] == {}
     row = _stage2_row(render_markdown_summary(report), "P-extra")
-    assert "이 추출 항목에 연결된 2차 결과 없음" in row
+    assert "처리 기록 부족" in row
     assert "오답으로 채점" not in row
 
 

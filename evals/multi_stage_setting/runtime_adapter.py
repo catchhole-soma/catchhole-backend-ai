@@ -1,27 +1,31 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from decimal import Decimal
 import hashlib
 import json
+import sys
+import time
+from dataclasses import dataclass
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Literal, Protocol, cast
 from uuid import UUID, uuid5
 
 import httpx
 
-from app.clients.exceptions import AiTokenQuotaExhaustedError
+from app.analysis.character_fact_comparator import (
+    CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY,
+    CharacterFactComparator,
+)
 from app.analysis.character_fact_comparison_pipeline import (
     CharacterFactBatchComparator,
     execute_character_fact_comparison_batch,
 )
 from app.analysis.character_fact_projection import is_explicit_inactive_status
-from app.analysis.character_fact_comparator import (
-    CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY,
-    CharacterFactComparator,
-)
 from app.analysis.character_name_resolver import (
     ActiveCharacterStatus,
+    normalize_character_name,
+)
+from app.analysis.character_name_resolver import (
     KnownCharacter as RuntimeKnownCharacter,
 )
 from app.analysis.character_subject_resolver import (
@@ -45,15 +49,17 @@ from app.analysis.world_setting_extractor import (
     WorldSettingExtractor,
 )
 from app.chunking.chunk_splitter import EpisodeChunkDraft, split_into_chunks
+from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.domain.enums import (
     CharacterFactComparisonOperation,
     SettingCandidateKind,
+    SettingCandidateMatchStatus,
     WorldSettingConsolidationStatus,
     WorldSettingOperation,
 )
 from app.domain.setting_values import normalize_setting_display_value
-from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.exceptions import LlmIncompleteResponseError, LlmResponseValidationError
+from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.llm.responses import LlmTextResponse
 from app.mappers.world_setting_candidate_mapper import (
@@ -91,9 +97,9 @@ from evals.multi_stage_setting.contracts import (
     ScenarioGold,
     ScenarioPipelineStatus,
     ScenarioPrediction,
-    StateApplicationPolicy,
     Stage1Prediction,
     Stage2Prediction,
+    StateApplicationPolicy,
     WorldStage1Gold,
     WorldStage1Prediction,
     WorldStage2Gold,
@@ -105,13 +111,19 @@ from evals.multi_stage_setting.contracts import (
     world_path_key,
     world_subject_ref,
 )
+from evals.multi_stage_setting.processing import ProcessingTrace
+from evals.multi_stage_setting.provider_diagnostics import (
+    PURPOSES,
+    provider_failure_details,
+    request_size_details,
+    sanitize_provider_details,
+)
 from evals.multi_stage_setting.state_effects import (
     StateApplicationError,
     apply_prediction_decision,
     apply_registered_characters_after_episode,
     build_gold_state_chain,
 )
-
 
 RUNTIME_UUID_NAMESPACE = UUID("1754f2f4-2b5d-5ef3-bf5c-2e245eea7a35")
 MAX_CHARACTER_CONTEXT_ENTRIES = 30
@@ -171,6 +183,19 @@ class UsageRecordingTextGenerationClient:
         prompt_cache_key: str | None = None,
         response_schema: LlmResponseSchema | None = None,
     ) -> LlmTextResponse:
+        request_details = request_size_details(
+            system_prompt, user_prompt,
+            response_schema.schema if response_schema is not None else None,
+        )
+        request_details.update(sanitize_provider_details({
+            "model": model or getattr(self.client, "model", None),
+            "purpose": PURPOSES.get((prompt_cache_key or "").partition(":")[0]),
+        }))
+        request_details["max_output_tokens"] = max_output_tokens
+        request_details["store_responses"] = getattr(self.client, "store_responses", False)
+        print("LLM call started " + json.dumps(sanitize_provider_details(request_details)),
+              file=sys.stderr, flush=True)
+        started = time.monotonic()
         try:
             response = await self.client.create_text_response(
                 system_prompt=system_prompt,
@@ -180,13 +205,23 @@ class UsageRecordingTextGenerationClient:
                 prompt_cache_key=prompt_cache_key,
                 response_schema=response_schema,
             )
-        except LlmResponseValidationError as exc:
-            self._record_usage(
-                exc.input_token_count,
-                exc.cached_input_token_count,
-                exc.output_token_count,
+        except (httpx.HTTPError, LlmResponseValidationError) as exc:
+            failure_details = provider_failure_details(
+                exc, model=model or getattr(self.client, "model", None),
+                prompt_cache_key=prompt_cache_key,
             )
+            failure_details.update(request_details, elapsed_ms=int((time.monotonic() - started) * 1000))
+            exc.evaluation_provider_details = sanitize_provider_details(failure_details)
+            if isinstance(exc, LlmResponseValidationError):
+                self._record_usage(
+                    exc.input_token_count, exc.cached_input_token_count, exc.output_token_count,
+                )
             raise
+        print("LLM call completed " + json.dumps({
+            **sanitize_provider_details(request_details),
+            **sanitize_provider_details({"response_id": response.raw_response.get("id")}),
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+        }), file=sys.stderr, flush=True)
         self._record_usage(
             response.input_token_count,
             response.cached_input_token_count,
@@ -245,6 +280,7 @@ class _WorldBatchSource:
     source_id: str
     candidate: WorkerWorldSettingCandidatePayload
     target_set: _WorldTargetSet
+    source_ids: tuple[str, ...] = ()
 
 
 def create_default_runtime_components(
@@ -252,12 +288,14 @@ def create_default_runtime_components(
     analysis_model: str | None = None,
     subject_resolution_model: str | None = None,
     comparison_model: str | None = None,
+    store_responses: bool = False,
 ) -> RuntimeComponents:
     """운영 extractor/comparator 구현으로 평가 runtime을 구성한다."""
 
     usage = RuntimeUsageCounter()
     client = UsageRecordingTextGenerationClient(
-        OpenAIResponsesClient.from_settings(),
+        (OpenAIResponsesClient.from_settings(store_responses=True)
+         if store_responses else OpenAIResponsesClient.from_settings()),
         usage,
     )
     return RuntimeComponents(
@@ -367,25 +405,42 @@ async def run_multi_stage_predictions(
             runtime_before = gold_chain[scenario.scenario_id].before_state.model_copy(deep=True)
 
         usage_before = components.usage.snapshot() if components.usage is not None else (0, 0, 0)
-        if mode == EvaluationMode.ORACLE:
-            prediction = await _run_oracle_scenario(
-                gold,
-                scenario,
-                runtime_before,
-                components,
-                enabled_domains,
-                character_schema_hints,
+        trace = ProcessingTrace(episode_no=scenario.episode_no)
+        try:
+            if mode == EvaluationMode.ORACLE:
+                prediction = await _run_oracle_scenario(
+                    gold,
+                    scenario,
+                    runtime_before,
+                    components,
+                    enabled_domains,
+                    character_schema_hints,
+                    trace=trace,
+                )
+            else:
+                prediction = await _run_live_scenario(
+                    scenario,
+                    runtime_before,
+                    mode,
+                    components,
+                    character_schema_hints,
+                    max_chunks,
+                    enabled_domains,
+                    trace=trace,
+                )
+        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError) as exc:
+            partial = trace.aborted(scenario.scenario_id, exc)
+            exc.prediction_bundle = PredictionBundleV3(
+                fixture_hash=gold.fixture_hash,
+                mode=mode,
+                evaluation_domains=enabled_domains,
+                evaluation_scenario_ids=[item.scenario_id for item in selected_scenarios],
+                analysis_model=analysis_model,
+                subject_resolution_model=subject_resolution_model,
+                comparison_model=comparison_model,
+                scenarios=[*scenario_predictions, partial],
             )
-        else:
-            prediction = await _run_live_scenario(
-                scenario,
-                runtime_before,
-                mode,
-                components,
-                character_schema_hints,
-                max_chunks,
-                enabled_domains,
-            )
+            raise
         usage_after = components.usage.snapshot() if components.usage is not None else usage_before
         scenario_usage = (
             usage_after[0] - usage_before[0],
@@ -447,6 +502,8 @@ async def _run_oracle_scenario(
     components: RuntimeComponents,
     enabled_domains: set[EvaluationDomain],
     schema_hints: tuple[CharacterSettingSchemaHint, ...],
+    *,
+    trace: ProcessingTrace,
 ) -> ScenarioPrediction:
     stage1_gold = [
         row
@@ -455,7 +512,22 @@ async def _run_oracle_scenario(
         and row.decision == "EXTRACT"
         and row.domain in enabled_domains
     ]
-    stage1 = [_prediction_from_gold(row) for row in stage1_gold]
+    stage1 = [
+        _prediction_from_gold(row).model_copy(update={"match_status": "UNRESOLVED"})
+        if isinstance(row, CharacterStage1Gold) and row.stage2_policy == "WAIT_FOR_CHARACTER_MATCH"
+        else _prediction_from_gold(row)
+        for row in stage1_gold
+    ]
+    trace.candidates = stage1
+    trace.raw = stage1
+    trace.stage = "CHARACTER_HANDOFF"
+    for row in stage1_gold:
+        if row.candidate_kind == CandidateKind.CHARACTER_DISCOVERY:
+            trace.record(row.gold_id, row.domain, "NOT_APPLICABLE")
+        elif (
+            isinstance(row, CharacterStage1Gold) and row.stage2_policy == "WAIT_FOR_CHARACTER_MATCH"
+        ):
+            trace.record(row.gold_id, row.domain, "WAITING_FOR_CHARACTER")
     stage1_by_id = {row.gold_id: row for row in stage1_gold}
     stage2: list[Stage2Prediction] = []
     failures: list[RuntimeFailure] = []
@@ -473,19 +545,24 @@ async def _run_oracle_scenario(
         sources = [stage1_by_id[source_id] for source_id in decision.source_gold_ids]
         if isinstance(decision, CharacterStage2Gold):
             source = cast(CharacterStage1Gold, sources[0])
-            assert source.fact_key is not None
-            raw_fact_key, initial_fact_key, resolution = _oracle_character_key_handoff(
-                source,
-                schema_hints,
-            )
-            character_sources.append(
-                _CharacterBatchSource(
-                    source=source,
-                    raw_fact_key=raw_fact_key,
-                    initial_canonical_fact_key=initial_fact_key,
-                    canonical_key_resolution=resolution,
+            trace.start([source.gold_id], "CHARACTER_PREPARATION")
+            try:
+                assert source.fact_key is not None
+                raw_fact_key, initial_fact_key, resolution = _oracle_character_key_handoff(
+                    source,
+                    schema_hints,
                 )
-            )
+                character_sources.append(
+                    _CharacterBatchSource(
+                        source=source,
+                        raw_fact_key=raw_fact_key,
+                        initial_canonical_fact_key=initial_fact_key,
+                        canonical_key_resolution=resolution,
+                    )
+                )
+            except Exception as exc:
+                trace.fail([source.gold_id], source.domain, exc)
+                failures.append(_runtime_failure(source.domain, 2, source.gold_id, exc))
         else:
             world_decisions.append(cast(WorldStage2Gold, decision))
 
@@ -494,12 +571,14 @@ async def _run_oracle_scenario(
         before_state,
         character_sources,
         components.character_comparator,
+        trace=trace,
     )
     stage2.extend(character_stage2)
     failures.extend(character_failures)
 
     world_batch_sources: list[_WorldBatchSource] = []
     for decision in world_decisions:
+        trace.start(decision.source_gold_ids, "WORLD_PREPARATION")
         try:
             sources = [stage1_by_id[source_id] for source_id in decision.source_gold_ids]
             world_sources = [cast(WorldStage1Gold, source) for source in sources]
@@ -514,10 +593,12 @@ async def _run_oracle_scenario(
         except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:  # 개별 모델 출력 실패는 다음 후보와 격리한다.
+            trace.fail(decision.source_gold_ids, decision.domain, exc)
             failures.append(_runtime_failure(decision.domain, 2, decision.decision_id, exc))
     world_stage2, world_failures = await _run_world_batches(
         world_batch_sources,
         components.world_comparator,
+        trace=trace,
     )
     stage2.extend(world_stage2)
     failures.extend(world_failures)
@@ -527,6 +608,8 @@ async def _run_oracle_scenario(
         stage1=stage1,
         stage2=_sort_stage2_by_stage1(stage1, stage2),
         failures=failures,
+        processing_version=1,
+        processing=trace.records,
     )
 
 
@@ -538,6 +621,8 @@ async def _run_live_scenario(
     schema_hints: tuple[CharacterSettingSchemaHint, ...],
     max_chunks: int | None,
     enabled_domains: set[EvaluationDomain],
+    *,
+    trace: ProcessingTrace,
 ) -> ScenarioPrediction:
     if scenario.source_text is None:
         raise ValueError(
@@ -554,6 +639,8 @@ async def _run_live_scenario(
     stage2: list[Stage2Prediction] = []
     failures: list[RuntimeFailure] = []
 
+    trace.candidates = handoff_stage1
+    trace.raw = raw_stage1
     character_records: list[_CharacterRecord] = []
     character_drafts = (
         drafts
@@ -583,6 +670,7 @@ async def _run_live_scenario(
                 raw_stage1,
                 failures,
                 failed_stage="CHARACTER_STAGE1",
+                trace=trace,
             )
 
         raw_candidates = extraction.candidates
@@ -645,6 +733,7 @@ async def _run_live_scenario(
                 raw_stage1,
                 failures,
                 failed_stage="CHARACTER_STAGE1",
+                trace=trace,
             )
 
     canonical_character_records: list[_CharacterRecord] = []
@@ -680,14 +769,21 @@ async def _run_live_scenario(
     )
     character_runtime_by_id: dict[
         str,
-        tuple[CharacterStage1Prediction, UUID | None, str | None, str | None],
+        tuple[CharacterStage1Prediction, str | None, str | None],
     ] = {}
     for item in prepared:
         record = canonical_character_records[item.source_index]
         matched_id = item.character_match.matched_character_id
         entity_ref = character_ref_by_id.get(matched_id) if matched_id is not None else None
-        if item.candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
-            entity_ref = f"prediction-character:{_safe_ref_part(item.candidate.entity_name)}"
+        match_status = item.character_match.match_status.value
+        if item.character_match.match_status == SettingCandidateMatchStatus.UNRESOLVED:
+            # Evaluation compares concrete new names without production registration.
+            # Only model output determines this identity; no current-episode Gold is used.
+            entity_ref = (
+                f"prediction-character:{normalize_character_name(item.candidate.entity_name)}"
+            )
+            if item.candidate.candidate_kind == SettingCandidateKind.SETTING:
+                match_status = "EVALUATION_NEW_CHARACTER"
         matched_name = next(
             (
                 character.name
@@ -701,29 +797,35 @@ async def _run_live_scenario(
             item.candidate,
             entity_ref=entity_ref,
             matched_character_name=matched_name,
-            match_status=item.character_match.match_status.value,
+            match_status=match_status,
             canonical_fact_type=record.canonical_fact_type,
             sort_order=record.sort_order,
         )
         handoff_stage1.append(prediction)
         character_runtime_by_id[prediction.candidate_id] = (
             prediction,
-            matched_id,
             record.raw_fact_key,
             record.canonical_key_resolution,
         )
 
     character_batch_sources: list[_CharacterBatchSource] = []
-    for prediction, matched_id, raw_fact_key, resolution in character_runtime_by_id.values():
+    for prediction, raw_fact_key, resolution in character_runtime_by_id.values():
+        trace.stage = "CHARACTER_HANDOFF"
+        if prediction.candidate_kind == CandidateKind.CHARACTER_DISCOVERY:
+            trace.record(prediction.candidate_id, prediction.domain, "NOT_APPLICABLE")
+            continue
+        if prediction.match_status == "AMBIGUOUS":
+            trace.record(prediction.candidate_id, prediction.domain, "AMBIGUOUS_CHARACTER")
+            continue
         if (
-            prediction.candidate_kind != CandidateKind.SETTING
-            or matched_id is None
-            or prediction.entity_ref is None
+            prediction.entity_ref is None
             or prediction.fact_type is None
             or prediction.fact_key is None
             or raw_fact_key is None
             or resolution is None
         ):
+            trace.start([prediction.candidate_id], "CHARACTER_PREPARATION")
+            trace.fail([prediction.candidate_id], prediction.domain, ValueError())
             continue
         character_batch_sources.append(
             _CharacterBatchSource(
@@ -742,6 +844,7 @@ async def _run_live_scenario(
         before_state,
         character_batch_sources,
         components.character_comparator,
+        trace=trace,
     )
     stage2.extend(character_stage2)
     failures.extend(character_failures)
@@ -754,6 +857,7 @@ async def _run_live_scenario(
         else []
     )
     for draft in world_drafts:
+        trace.start([], "WORLD_STAGE1")
         try:
             extraction = await components.world_extractor.extract_from_chunk(
                 chunk_text=draft.chunk_text,
@@ -798,6 +902,7 @@ async def _run_live_scenario(
                 raw_stage1,
                 failures,
                 failed_stage="WORLD_STAGE1",
+                trace=trace,
                 stage1=handoff_stage1,
                 stage2=stage2,
             )
@@ -811,6 +916,7 @@ async def _run_live_scenario(
             raw_stage1,
             failures,
             failed_stage="WORLD_STAGE1",
+            trace=trace,
             stage1=handoff_stage1,
             stage2=stage2,
         )
@@ -843,6 +949,10 @@ async def _run_live_scenario(
             confidence=item.extraction_confidence,
         )
         handoff_stage1.append(prediction)
+    for prediction in handoff_stage1:
+        if not isinstance(prediction, WorldStage1Prediction):
+            continue
+        trace.start([prediction.candidate_id], "WORLD_PREPARATION")
         try:
             world_batch_sources.append(
                 await _live_world_batch_source(
@@ -855,6 +965,7 @@ async def _run_live_scenario(
         except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:
+            trace.fail([prediction.candidate_id], prediction.domain, exc)
             failures.append(
                 _runtime_failure(EvaluationDomain.WORLD, 2, prediction.candidate_id, exc)
             )
@@ -862,6 +973,7 @@ async def _run_live_scenario(
     world_stage2, world_failures = await _run_world_batches(
         world_batch_sources,
         components.world_comparator,
+        trace=trace,
     )
     stage2.extend(world_stage2)
     failures.extend(world_failures)
@@ -872,6 +984,8 @@ async def _run_live_scenario(
         stage1=handoff_stage1,
         stage2=_sort_stage2_by_stage1(handoff_stage1, stage2),
         failures=failures,
+        processing_version=1,
+        processing=trace.records,
     )
 
 
@@ -880,13 +994,18 @@ async def _run_character_batches(
     state: EvaluationState,
     sources: list[_CharacterBatchSource],
     comparator: CharacterFactBatchComparator,
+    *,
+    trace: ProcessingTrace | None = None,
 ) -> tuple[list[CharacterStage2Prediction], list[RuntimeFailure]]:
     """Run one production-equivalent batch per character and FactType in this episode."""
 
+    trace = trace or ProcessingTrace()
     grouped: dict[tuple[str, CharacterFactType], list[_CharacterBatchSource]] = {}
     for item in sorted(sources, key=_character_batch_source_sort_key):
         source = item.source
         if source.entity_ref is None or source.fact_type is None or source.fact_key is None:
+            trace.start([_character_batch_source_id(source)], "CHARACTER_PREPARATION")
+            trace.fail([_character_batch_source_id(source)], "CHARACTER", ValueError())
             continue
         grouped.setdefault((source.entity_ref, source.fact_type), []).append(item)
 
@@ -896,25 +1015,28 @@ async def _run_character_batches(
         batch_size = _character_batch_candidate_limit(comparator)
         for offset in range(0, len(group), batch_size):
             batch_group = group[offset : offset + batch_size]
-            candidates = [
-                _worker_character_batch_candidate(scenario, item, index)
-                for index, item in enumerate(batch_group, start=1)
-            ]
-            # Spring claims each bounded group as a separate comparison batch. Request
-            # refs and projected state restart at that boundary; only provider segments
-            # inside one claimed batch share projection state.
-            snapshots, stable_ref_by_request_ref = _character_batch_snapshots(
-                state,
-                entity_ref,
-                fact_type,
-                [candidate.initial_canonical_fact_key for candidate in candidates],
-            )
-            source_by_candidate_ref = {
-                candidate.candidate_ref: item
-                for candidate, item in zip(candidates, batch_group, strict=True)
-            }
-            candidate_by_ref = {candidate.candidate_ref: candidate for candidate in candidates}
+            ids = [_character_batch_source_id(item.source) for item in batch_group]
+            trace.start(ids, "CHARACTER_PREPARATION")
             try:
+                candidates = [
+                    _worker_character_batch_candidate(scenario, item, index)
+                    for index, item in enumerate(batch_group, start=1)
+                ]
+                # Spring claims each bounded group as a separate comparison batch. Request
+                # refs and projected state restart at that boundary; only provider segments
+                # inside one claimed batch share projection state.
+                snapshots, stable_ref_by_request_ref = _character_batch_snapshots(
+                    state,
+                    entity_ref,
+                    fact_type,
+                    [candidate.initial_canonical_fact_key for candidate in candidates],
+                )
+                source_by_candidate_ref = {
+                    candidate.candidate_ref: item
+                    for candidate, item in zip(candidates, batch_group, strict=True)
+                }
+                candidate_by_ref = {candidate.candidate_ref: candidate for candidate in candidates}
+                trace.start(ids, "CHARACTER_STAGE2", forwarded=True)
                 execution = await execute_character_fact_comparison_batch(
                     comparator,
                     matched_character_name=_character_batch_matched_name(batch_group[0].source),
@@ -945,9 +1067,17 @@ async def _run_character_batches(
                             fact_type,
                             decision.resolved_canonical_fact_key,
                         )
+                for prediction in group_predictions:
+                    trace.complete(prediction)
                 predictions.extend(group_predictions)
                 for failure in execution.failures:
                     item = source_by_candidate_ref[failure.candidate_ref]
+                    trace.record(
+                        _character_batch_source_id(item.source),
+                        "CHARACTER",
+                        "COMPARISON_FAILED",
+                        failure_code=failure.failure_code,
+                    )
                     failures.append(
                         RuntimeFailure(
                             stage="CHARACTER_STAGE2",
@@ -959,6 +1089,7 @@ async def _run_character_batches(
             except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
                 raise
             except Exception as exc:
+                trace.fail(ids, "CHARACTER", exc)
                 failures.extend(
                     _runtime_failure(
                         EvaluationDomain.CHARACTER,
@@ -1062,6 +1193,7 @@ def _oracle_world_batch_source(
     target_set = _oracle_world_targets(state, primary, decision)
     return _WorldBatchSource(
         source_id=primary.gold_id,
+        source_ids=tuple(source.gold_id for source in sources),
         candidate=runtime_candidate,
         target_set=target_set,
     )
@@ -1096,7 +1228,10 @@ async def _live_world_batch_source(
 async def _run_world_batches(
     sources: list[_WorldBatchSource],
     comparator: WorldComparatorApi,
+    *,
+    trace: ProcessingTrace | None = None,
 ) -> tuple[list[WorldStage2Prediction], list[RuntimeFailure]]:
+    trace = trace or ProcessingTrace()
     grouped: dict[tuple[Any, ...], list[_WorldBatchSource]] = {}
     for source in sources:
         grouped.setdefault(_world_batch_key(source), []).append(source)
@@ -1104,36 +1239,47 @@ async def _run_world_batches(
     predictions: list[WorldStage2Prediction] = []
     failures: list[RuntimeFailure] = []
     for group in grouped.values():
-        candidates = [
-            WorkerWorldSettingComparisonBatchCandidate(
-                candidate_ref=f"C{index}",
-                candidate_id=item.candidate.candidate_id,
-                subject_name=item.candidate.subject_name,
-                scope_name=item.candidate.scope_name,
-                setting_name=item.candidate.setting_name,
-                extracted_value=item.candidate.extracted_value,
-                evidence_spans=item.candidate.evidence_spans,
-                extraction_confidence=item.candidate.extraction_confidence,
-            )
-            for index, item in enumerate(group, start=1)
-        ]
-        source_by_ref = {
-            candidate.candidate_ref: item for candidate, item in zip(candidates, group, strict=True)
-        }
-        target_set = group[0].target_set
+        ids = [source_id for item in group for source_id in (item.source_ids or (item.source_id,))]
+        trace.start(ids, "WORLD_PREPARATION")
         try:
+            candidates = [
+                WorkerWorldSettingComparisonBatchCandidate(
+                    candidate_ref=f"C{index}",
+                    candidate_id=item.candidate.candidate_id,
+                    subject_name=item.candidate.subject_name,
+                    scope_name=item.candidate.scope_name,
+                    setting_name=item.candidate.setting_name,
+                    extracted_value=item.candidate.extracted_value,
+                    evidence_spans=item.candidate.evidence_spans,
+                    extraction_confidence=item.candidate.extraction_confidence,
+                )
+                for index, item in enumerate(group, start=1)
+            ]
+            source_by_ref = {
+                candidate.candidate_ref: item
+                for candidate, item in zip(candidates, group, strict=True)
+            }
+            target_set = group[0].target_set
+            trace.start(ids, "WORLD_STAGE2", forwarded=True)
             result, _ = await comparator.compare_batch(
                 group[0].candidate.category.value,
                 candidates,
                 target_set.targets,
             )
+            group_predictions = []
             for decision in result.decisions:
                 source_refs = sorted(
                     decision.source_candidate_refs,
                     key=lambda reference: int(reference[1:]),
                 )
-                source_ids = [source_by_ref[ref].source_id for ref in source_refs]
-                predictions.append(
+                source_ids = [
+                    source_id
+                    for ref in source_refs
+                    for source_id in (
+                        source_by_ref[ref].source_ids or (source_by_ref[ref].source_id,)
+                    )
+                ]
+                group_predictions.append(
                     _world_stage2_prediction(
                         source_ids[0],
                         decision,
@@ -1141,9 +1287,13 @@ async def _run_world_batches(
                         source_ids=source_ids if len(source_ids) > 1 else None,
                     )
                 )
+            for prediction in group_predictions:
+                trace.complete(prediction)
+            predictions.extend(group_predictions)
         except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:
+            trace.fail(ids, "WORLD", exc)
             failures.extend(
                 _runtime_failure(EvaluationDomain.WORLD, 2, item.source_id, exc) for item in group
             )
@@ -1879,11 +2029,14 @@ def _pipeline_failed_prediction(
     failed_stage: Literal["CHARACTER_STAGE1", "WORLD_STAGE1"],
     stage1: list[Stage1Prediction] | None = None,
     stage2: list[Stage2Prediction] | None = None,
+    trace: ProcessingTrace | None = None,
 ) -> ScenarioPrediction:
     """Keep diagnostic raw outputs while exposing the production handoff boundary."""
 
     return ScenarioPrediction(
         scenario_id=scenario_id,
+        processing_version=1,
+        processing=trace.records if trace else [],
         pipeline_status=ScenarioPipelineStatus.PIPELINE_FAILED,
         failed_stage=failed_stage,
         raw_stage1=raw_stage1,

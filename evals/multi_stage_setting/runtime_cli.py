@@ -1,9 +1,10 @@
 import argparse
 import asyncio
-from decimal import Decimal
 import json
+from decimal import Decimal
 from pathlib import Path
 
+from app.exceptions.failure_classification import analysis_failure_code
 from evals.multi_stage_setting.contracts import EvaluationDomain, EvaluationMode
 from evals.multi_stage_setting.loaders import load_gold_snapshot_v3
 from evals.multi_stage_setting.runtime_adapter import (
@@ -32,25 +33,46 @@ def main() -> None:
         source_file_pattern=args.source_file_pattern,
         state_root=args.state_root,
     )
-    bundle = asyncio.run(
-        run_multi_stage_predictions(
-            gold,
-            mode=mode,
-            components=create_default_runtime_components(
+    try:
+        bundle = asyncio.run(
+            run_multi_stage_predictions(
+                gold,
+                mode=mode,
+                components=create_default_runtime_components(
+                    analysis_model=args.analysis_model,
+                    subject_resolution_model=args.subject_resolution_model,
+                    comparison_model=args.comparison_model,
+                    store_responses=args.store_responses,
+                ),
+                character_schema_hints=schema_hints,
+                max_chunks=args.max_chunks,
                 analysis_model=args.analysis_model,
                 subject_resolution_model=args.subject_resolution_model,
                 comparison_model=args.comparison_model,
-            ),
-            character_schema_hints=schema_hints,
-            max_chunks=args.max_chunks,
-            analysis_model=args.analysis_model,
-            subject_resolution_model=args.subject_resolution_model,
-            comparison_model=args.comparison_model,
-            domains=domains,
-            episode_numbers=episodes,
-            pricing=_pricing_from_args(args),
+                domains=domains,
+                episode_numbers=episodes,
+                pricing=_pricing_from_args(args),
+            )
         )
-    )
+    except Exception as exc:
+        partial = getattr(exc, "prediction_bundle", None)
+        if partial is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                partial.model_dump_json(by_alias=True, indent=2), encoding="utf-8"
+            )
+            failure = partial.scenarios[-1].execution_failure
+            details = (
+                " " + json.dumps(
+                    failure.model_dump(mode="json", by_alias=True, exclude_none=True),
+                    ensure_ascii=False,
+                )
+                if failure is not None else ""
+            )
+            raise SystemExit(
+                "Evaluation interrupted: " + analysis_failure_code(exc).value + details
+            ) from None
+        raise
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(bundle.model_dump(mode="json", by_alias=True), ensure_ascii=False, indent=2),
@@ -79,6 +101,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--analysis-model", default=None)
     parser.add_argument("--subject-resolution-model", default=None)
     parser.add_argument("--comparison-model", default=None)
+    parser.add_argument(
+        "--store-responses", action="store_true",
+        help="Explicit diagnostic opt-in: store prediction prompts and responses at OpenAI.",
+    )
     parser.add_argument("--max-chunks", type=int, default=None)
     parser.add_argument("--input-usd-per-million", type=Decimal, default=None)
     parser.add_argument("--cached-input-usd-per-million", type=Decimal, default=None)
@@ -89,9 +115,7 @@ def _parse_args() -> argparse.Namespace:
 
 def _parse_domains(value: str) -> set[EvaluationDomain]:
     try:
-        domains = {
-            EvaluationDomain(item.strip()) for item in value.split(",") if item.strip()
-        }
+        domains = {EvaluationDomain(item.strip()) for item in value.split(",") if item.strip()}
     except ValueError:
         raise ValueError("--domains accepts CHARACTER and WORLD.") from None
     if not domains:
