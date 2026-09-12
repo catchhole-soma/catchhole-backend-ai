@@ -710,7 +710,7 @@ def test_batch_comparator_preserves_canonical_paths_for_unscoped_independent_add
                         "proposed_scope_name": None,
                         "proposed_setting_name": "착용 가능 장비",
                         "proposed_value": "가죽과 금속 장비를 착용할 수 있다.",
-                        "comparison_reason": "함께 묶을 다른 장비 설정이 없어 루트에 둔다.",
+                        "comparison_reason": "함께 정리할 다른 장비 정보가 없어 독립된 설정으로 남긴다.",
                     },
                 ]
             }
@@ -790,7 +790,7 @@ def test_batch_comparator_retries_when_projection_leaves_synthetic_scope_singlet
         {
             **first_decisions[0],
             "proposed_scope_name": None,
-            "comparison_reason": "함께 묶을 형제가 없어 근력을 루트에 추가한다.",
+            "comparison_reason": "근력과 함께 정리할 다른 신체 정보가 없어 독립된 설정으로 남긴다.",
         },
         {
             **first_decisions[1],
@@ -942,7 +942,7 @@ def test_batch_comparator_rejects_move_for_a_missing_root_property() -> None:
                         "proposed_scope_name": "신체 능력",
                         "proposed_setting_name": "근력 기댓값",
                         "proposed_value": "근력 기댓값은 100이다.",
-                        "comparison_reason": "존재하지 않는 root 속성을 이동한다.",
+                        "comparison_reason": "아직 없는 정보를 다른 설정과 함께 정리한다.",
                     }
                 ]
             }
@@ -1036,7 +1036,7 @@ def test_batch_comparator_rejects_root_add_that_conflicts_with_existing_scope() 
                         "proposed_scope_name": None,
                         "proposed_setting_name": "신체",
                         "proposed_value": "신체 능력을 설명한다.",
-                        "comparison_reason": "기존 범위와 같은 이름의 root 설정이다.",
+                        "comparison_reason": "기존 세부 항목 묶음과 이름이 같다.",
                     }
                 ]
             }
@@ -1137,7 +1137,7 @@ def test_batch_comparator_rejects_cross_decision_top_level_kind_conflict() -> No
             "proposed_scope_name": None,
             "proposed_setting_name": "신체",
             "proposed_value": "강건하다.",
-            "comparison_reason": "신체를 root 설정으로 추가한다.",
+            "comparison_reason": "신체 정보를 독립된 설정으로 남긴다.",
         },
         *[
             {
@@ -1148,7 +1148,7 @@ def test_batch_comparator_rejects_cross_decision_top_level_kind_conflict() -> No
                 "proposed_scope_name": "신체",
                 "proposed_setting_name": setting_name,
                 "proposed_value": proposed_value,
-                "comparison_reason": "같은 이름을 scope로 사용하는 구조 충돌이다.",
+                "comparison_reason": "같은 이름이 여러 세부 정보를 묶는 데 쓰이고 있다.",
             }
             for candidate_ref, setting_name, proposed_value in (
                 ("C2", "근력", "근력이 높다."),
@@ -1833,7 +1833,7 @@ def test_comparator_does_not_assign_targetless_add_to_possible_subject() -> None
         "proposed_scope_name": None,
         "proposed_setting_name": "광원",
         "proposed_value": candidate.extracted_value,
-        "comparison_reason": "새 대상의 루트 광원 설정으로 추가한다.",
+        "comparison_reason": "새 대상의 광원 정보로 남긴다.",
     }
     possible_targets = [
         WorkerWorldSettingComparisonTarget(
@@ -1888,7 +1888,7 @@ def test_comparator_detects_scope_ambiguity_when_model_returns_root_add() -> Non
         "proposed_scope_name": None,
         "proposed_setting_name": "광원",
         "proposed_value": candidate.extracted_value,
-        "comparison_reason": "루트에 새 광원 설정을 추가한다.",
+        "comparison_reason": "새로운 광원 정보를 독립된 설정으로 남긴다.",
     }
     target = WorkerWorldSettingComparisonTarget(
         world_setting_id=TARGET_ID,
@@ -1931,7 +1931,7 @@ def test_comparator_does_not_mark_scope_unresolved_when_same_root_property_exist
         "proposed_scope_name": None,
         "proposed_setting_name": "광원",
         "proposed_value": candidate.extracted_value,
-        "comparison_reason": "루트 광원 설정을 추가한다.",
+        "comparison_reason": "광원 정보를 독립된 설정으로 남긴다.",
     }
     target = WorkerWorldSettingComparisonTarget(
         world_setting_id=TARGET_ID,
@@ -1986,7 +1986,7 @@ def test_comparator_still_retries_unscoped_match_to_different_setting_name() -> 
         "matched_property_name": None,
         "proposed_scope_name": None,
         "proposed_setting_name": "광원",
-        "comparison_reason": "루트의 새 광원 설정으로 추가한다.",
+        "comparison_reason": "새로운 광원 정보로 남긴다.",
     }
     target = WorkerWorldSettingComparisonTarget(
         world_setting_id=TARGET_ID,
@@ -2107,7 +2107,7 @@ def test_batch_comparator_normalizes_compatible_multi_source_scope_ambiguity() -
                         "proposed_scope_name": None,
                         "proposed_setting_name": "광원",
                         "proposed_value": "벽의 수정은 항상 주변을 밝힌다.",
-                        "comparison_reason": "루트 광원 설정으로 추가한다.",
+                        "comparison_reason": "광원 정보로 남긴다.",
                     }
                 ]
             }

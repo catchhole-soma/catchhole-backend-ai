@@ -29,7 +29,7 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
   - GPT-5.6 explicit cache breakpoint는 아직 사용하지 않으며, 현재는 정적 prefix 우선 배치와 cache key로 implicit cache 재사용을 돕습니다.
   - debug 로그에는 prompt 본문 없이 cached input 필드의 존재 여부와 token usage만 남깁니다.
   - 응답 텍스트와 token usage를 `LlmTextResponse`로 반환합니다.
-  - 호출별 `LlmResponseSchema`가 있을 때만 Responses API의 `text.format=json_schema`를 전달합니다. 현재는 캐릭터 설정 추출에만 적용합니다.
+  - 호출별 `LlmResponseSchema`가 있을 때만 Responses API의 `text.format=json_schema`를 전달합니다. 캐릭터 설정 추출과 누적 분석의 캐릭터·세계관 주체 해소에 적용합니다.
 - `responses.py`
   - LLM 호출 결과를 내부에서 전달하기 위한 `dataclass` 값 객체를 둡니다.
 - `protocols.py`
@@ -73,7 +73,15 @@ Spring의 `ai_token_usages`를 기준으로 조회합니다.
 
 ## 현재 추출 방식
 
-캐릭터 설정 추출은 Pydantic에서 생성한 strict JSON Schema를 Responses API에 전달하고, 응답을 Provider wire model과 저장 경계 model로 두 번 검증합니다. 그 밖의 LLM 호출은 기존 prompt + Python schema 검증을 유지합니다.
+캐릭터 설정 추출은 Pydantic에서 생성한 strict JSON Schema를 Responses API에 전달하고, 응답을 Provider wire model과 저장 경계 model로 두 번 검증합니다. 누적 분석의 캐릭터·세계관 주체 해소와 세계관 batch 비교도 strict JSON Schema와 출력 지침을 함께 전달합니다. 그 밖의 호출은 기존 prompt + Python schema 검증을 유지하며 공통 helper에 schema 인자가 없으면 기존 HTTP 요청 필드를 추가하지 않습니다.
+
+누적 분석의 인물 연결 응답은 `resolutions` 배열의 모든 항목에 `candidate_ref`와 `target_ref`가 있어야 합니다. 대상이 모호하면 `target_ref: null`을 명시하며 필드 생략을 모호성으로 처리하지 않습니다. 세계관 대상 응답도 `selected_subject_refs`와 `ambiguous`를 명시합니다. JSON 객체의 알 수 없는 필드는 거절합니다. 형식 검증 재시도에는 최초 입력과 허용된 필드 경로·오류 종류만 전달하고, 실패 응답의 값·모델이 만든 알 수 없는 key·UUID를 넣지 않습니다. 계속 잘못된 응답이나 허용되지 않은 대상 참조는 분석 실패로 남깁니다.
+
+누적 세계관 batch의 모든 응답 필드도 필수이며, 적용되지 않는 nullable 경로는 null, 이동할 root 속성이 없으면 빈 배열로 반환합니다. 원래 도메인 검증은 계속 적용합니다. 예를 들어 기존 root `신체 능력`이 값 하나로 존재하면 같은 이름의 scope 아래에 새 속성을 추가할 수 없습니다. 미확정 속성의 기존 exact 경로에도 다시 ADD할 수 없습니다. ordered 재시도에는 충돌한 판단·source ref와 입력에서 확인한 기존 경로를 제공하며, 원시 예외나 실패 응답값은 전달하지 않습니다. 고정 도메인 오류는 allowlist 규칙 코드로 설명하고 그 밖의 오류는 안전한 유형·필드 위치만 남깁니다. strict schema가 의미 판단의 정확성을 보장하지는 않으며, 계속 실패하면 전체 batch 실패로 남기고 자동으로 다른 operation이나 검토 판단으로 바꾸지 않습니다. 기존 확정 설정 기반 비교의 입력·캐시·schema 생략은 유지합니다.
+
+이 호출들의 입력 상한은 실제 prompt, 추가한 형식 피드백과 직렬화한 응답 schema를 모두 셉니다. 토큰 예약도 같은 schema를 포함하며, 각 응답의 형식 검증 결과와 별개로 provider가 반환한 사용량은 기존 원장 경계에서 정산합니다. HTTP 가짜 응답으로 schema 전달·누락 필드 보정·반복 실패·민감값 비노출을 검증하며 이 테스트를 실제 모델 정확도 검증으로 해석하지 않습니다.
+
+자동 누적 분석에서 AI 비교 응답만 실패한 경우에는 해당 묶음을 실패로 보존하고 다른 묶음을 진행합니다. 고정 입력·대상 계약이 깨지거나 캐릭터 단일 후보 또는 재시도 prompt가 입력 상한을 넘은 경우에는 작업을 중단하며, 실패 API에도 격리 불가능한 `UNEXPECTED_ERROR`를 저장합니다. Spring 입력 검증·claim·저장 오류를 AI 응답 실패와 같은 코드로 바꾸지 않습니다. 세계관 대상 저장 검증의 전용 실패 코드는 기존 계약대로 Spring source metadata와 함께 남기고, Backend는 그 metadata를 보고 진행을 차단합니다. 기존 확정 설정 기반 단일 과대 후보의 typed failure 정책은 유지합니다.
 
 JSON 파싱 실패 또는 Python schema 검증 실패는 `CharacterSettingExtractor`에서 재시도합니다. 다음 요청에는 최초 prompt와 값이 제거된 `reasonCode + fieldLocs`만 넣고 실패 응답 원문은 prompt나 로그에 남기지 않습니다. 다만 attribute 이름 정책처럼 schema로 표현하지 않은 프롬프트 정책 위반까지 강제하지는 않습니다.
 캐릭터 설정 추출은 `max_output_tokens=6000`에서 시작해 출력 절단 시 12000으로, 세계관 추출은 5000에서 시작해 절단 시 10000으로 한 번만 확장합니다. 주체 해소는 2000, 단건 비교는 3000, 세계관 batch 비교는 16000을 사용하며 절단 확장 재시도는 하지 않습니다. batch의 모든 원문 값·실제 target 경로·decision JSON을 보존하는 최소 출력 예상치가 16000을 넘으면 provider를 호출하지 않고 `BATCH_LIMIT_EXCEEDED` 검토로 전환합니다.

@@ -4,6 +4,10 @@ from pathlib import Path
 
 from app.analysis.json_response import request_validated_model
 from app.analysis.world_setting_schemas import WorldSettingExtractionResult
+from app.analysis.ordered_context import (
+    BoundedOrderedClient, ORDERED_STATE_INSTRUCTIONS, ordered_reference_data,
+)
+from app.schemas.analysis_context import WorkerAnalysisContext
 from app.core.config import get_settings
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
@@ -56,6 +60,7 @@ class WorldSettingExtractor:
         chunk_text: str,
         episode_no: int | None = None,
         episode_title: str | None = None,
+        analysis_context: WorkerAnalysisContext | None = None,
     ) -> WorldSettingExtractionResult:
         system_prompt = self.prompt_path.read_text(encoding="utf-8")
         metadata = json.dumps(
@@ -64,16 +69,22 @@ class WorldSettingExtractor:
             sort_keys=True,
         )
         user_prompt = f"metadata:\n{metadata}\n\nchunk_text:\n{chunk_text}"
+        if analysis_context is not None:
+            system_prompt += "\n\n" + ORDERED_STATE_INSTRUCTIONS
+            user_prompt += "\n\nunresolved_references:\n" + json.dumps(
+                ordered_reference_data(analysis_context.unresolved_references), ensure_ascii=False,
+            )
 
         return await request_validated_model(
-            client=self.llm_client,
+            client=BoundedOrderedClient(self.llm_client) if analysis_context else self.llm_client,
             response_model=WorldSettingExtractionResult,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key=WORLD_SETTING_EXTRACTION_CACHE_KEY,
+            prompt_cache_key=(WORLD_SETTING_EXTRACTION_CACHE_KEY
+                              + (":ordered-references-v1" if analysis_context else "")),
             operation_name="World-setting extraction",
             logger=logger,
             truncation_retry_max_output_tokens=self.truncation_retry_max_output_tokens,

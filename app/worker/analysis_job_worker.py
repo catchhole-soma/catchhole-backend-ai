@@ -17,6 +17,12 @@ from app.analysis.character_subject_resolver import (
     SubjectResolutionResult,
 )
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
+from app.analysis.exceptions import OrderedAnalysisIncompleteError
+from app.analysis.ordered_context import OrderedExtractionContext
+from app.analysis.ordered_character_subjects import (
+    OrderedSubjectResolutionMetrics,
+    initial_ordered_subjects, merge_ordered_subjects, resolve_ordered_character_subjects,
+)
 from app.analysis.schemas import CharacterSettingExtractionResult, ExtractedSettingCandidate
 from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
 from app.analysis.world_setting_extractor import WorldSettingExtractor
@@ -26,10 +32,13 @@ from app.analysis.world_setting_pipeline import (
     WorldSettingComparisonSpringApi,
 )
 from app.analysis.world_setting_schemas import WorldSettingExtractionResult
+from app.schemas.analysis_context import WorkerAnalysisContext
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import get_settings
 from app.db.session import get_session_maker
 from app.domain.enums import (
+    AnalysisMode,
+    AnalysisReviewMode,
     AnalysisFailureCode,
     AnalysisJobCheckpointStage,
     AnalysisJobType,
@@ -42,7 +51,7 @@ from app.embeddings.services.episode_chunk_embedding import (
     EpisodeChunkEmbeddingResult,
     EpisodeChunkEmbeddingService,
 )
-from app.exceptions.failure_classification import analysis_failure_code
+from app.exceptions.failure_classification import analysis_failure_code, COMPARISON_CANDIDATE_FAILURE_CODES
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.mappers.world_setting_candidate_mapper import WorldSettingCandidateMapper
@@ -54,6 +63,7 @@ from app.schemas.worker import (
 )
 from app.services.episode_chunk_service import EpisodeChunkService
 from app.services.episode_s3_chunking_service import EpisodeS3ChunkingService
+from app.services.ordered_analysis_fence import OrderedCandidateWriteContext
 from app.services.setting_candidate_service import (
     SettingCandidateSaveItem,
     SettingCandidateService,
@@ -103,6 +113,7 @@ class SpringWorkerApi(
         allowed_job_types: list[AnalysisJobType],
         model_name: str | None = None,
         current_step: str | None = None,
+        supported_analysis_modes: list[AnalysisMode] | None = None,
     ) -> WorkerAnalysisJobPayload | None: ...
 
     # claim 직후 현재 Worker가 어떤 단계에 진입했는지 Spring에 보고한다.
@@ -172,6 +183,7 @@ class SettingExtractorApi(Protocol):
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
         known_characters: tuple[KnownCharacter, ...] = (),
+        ordered_context: OrderedExtractionContext | None = None,
     ) -> CharacterSettingExtractionResult: ...
 
 
@@ -191,6 +203,7 @@ class WorldSettingExtractorApi(Protocol):
         chunk_text: str,
         episode_no: int | None = None,
         episode_title: str | None = None,
+        analysis_context: WorkerAnalysisContext | None = None,
     ) -> WorldSettingExtractionResult: ...
 
 
@@ -289,7 +302,7 @@ class AnalysisJobWorker:
         return await self.spring_client.claim(
             allowed_job_types=[AnalysisJobType.SETTING_EXTRACTION],
             model_name=self.extraction_model_name,
-            current_step=AnalysisStep.SETTING_EXTRACTION.value,
+            supported_analysis_modes=["CONFIRMED_ONLY", "ORDERED_PROVISIONAL"],
         )
 
     async def run_once(self) -> WorkerRunResult:
@@ -317,7 +330,7 @@ class AnalysisJobWorker:
             await self.spring_client.report_progress(
                 analysis_job_id=payload.analysis_job_id,
                 lease_token=payload.lease_token,
-                current_step=AnalysisStep.SETTING_EXTRACTION.value,
+                current_step=_resume_step(payload.checkpoint_stage).value,
                 episode_status=EpisodeProcessingStatus.ANALYZING,
             )
             async with WorkerLeaseHeartbeat(
@@ -327,6 +340,13 @@ class AnalysisJobWorker:
                 interval_seconds=self._heartbeat_interval_seconds,
             ) as lease_heartbeat:
                 summary = await self._run_analysis_steps(payload)
+                lease_heartbeat.raise_if_failed()
+                await self.spring_client.report_progress(
+                    analysis_job_id=payload.analysis_job_id,
+                    lease_token=payload.lease_token,
+                    current_step=AnalysisStep.PERSISTING.value,
+                    episode_status=EpisodeProcessingStatus.ANALYZING,
+                )
                 lease_heartbeat.raise_if_failed()
             # 분석이 성공하면 Spring에 완료 상태와 요약 정보를 보고
             await self.spring_client.complete(
@@ -421,6 +441,11 @@ class AnalysisJobWorker:
         summary_json = json.dumps(
             {
                 "episodeCount": 1,
+                **({"analysisMode": payload.analysis_mode,
+                    "inputStateHash": payload.analysis_context.input_state_hash,
+                    "contextPolicyVersion": payload.analysis_context.format_version,
+                    "provisionalCharacterCount": len(payload.provisional_characters)}
+                   if payload.analysis_context is not None else {}),
                 "chunkCount": len(chunks),
                 **embedding_metrics,
                 **character_metrics,
@@ -461,6 +486,12 @@ class AnalysisJobWorker:
             self._get_chunking_service().replace_chunks_from_s3_content,
             episode_id=episode.episode_id,
             content_s3_key=episode.content_s3_key,
+            **({"ordered_write_context": OrderedCandidateWriteContext(
+                lease_token=payload.lease_token, context=payload.analysis_context,
+                episode_id=episode.episode_id, content_s3_key=episode.content_s3_key,
+                content_s3_version=episode.content_s3_version, episode_no=episode.episode_no),
+                "analysis_job_id": payload.analysis_job_id, "work_id": payload.work_id}
+               if payload.analysis_context is not None else {}),
         )
         embedded_count = 0
         failed_count = 0
@@ -470,7 +501,14 @@ class AnalysisJobWorker:
                 result = await self._get_episode_chunk_embedding_service(
                     payload.analysis_job_id,
                     payload.lease_token,
-                ).embed_chunks(chunks)
+                ).embed_chunks(chunks,
+                    **({"ordered_write_context": OrderedCandidateWriteContext(
+                        lease_token=payload.lease_token, context=payload.analysis_context,
+                        episode_id=episode.episode_id, content_s3_key=episode.content_s3_key,
+                        content_s3_version=episode.content_s3_version,
+                        episode_no=episode.episode_no),
+                        "analysis_job_id": payload.analysis_job_id, "work_id": payload.work_id}
+                       if payload.analysis_context is not None else {}))
                 embedded_count = result.embedded_chunk_count
             except RecoverableEmbeddingProviderError:
                 failed_count = len(chunks)
@@ -509,6 +547,11 @@ class AnalysisJobWorker:
         status_context_entry_count = sum(
             len(character.active_statuses) for character in known_characters
         )
+        if payload.analysis_mode == AnalysisMode.ORDERED_PROVISIONAL:
+            status_context_character_count += sum(bool(item.active_statuses)
+                                                  for item in payload.provisional_characters)
+            status_context_entry_count += sum(len(item.active_statuses)
+                                              for item in payload.provisional_characters)
         if _checkpoint_reached(
             checkpoint,
             AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED,
@@ -537,6 +580,15 @@ class AnalysisJobWorker:
         fallback_unresolved = 0
         status_inactive_candidate_count = 0
         episode = payload.episode
+        ordered_context = (
+            OrderedExtractionContext(
+                analysis_context=payload.analysis_context,
+                known_characters=tuple(payload.known_characters),
+                provisional_characters=tuple(payload.provisional_characters),
+            )
+            if payload.analysis_mode == AnalysisMode.ORDERED_PROVISIONAL else None
+        )
+        ordered_subjects = initial_ordered_subjects(ordered_context) if ordered_context else []
         for index, chunk in enumerate(chunks):
             extraction_result = await setting_extractor.extract_from_chunk(
                 source_chunk_id=chunk.id,
@@ -546,12 +598,50 @@ class AnalysisJobWorker:
                 episode_title=episode.title,
                 schema_hints=schema_hints,
                 known_characters=tuple(known_characters),
+                **({"ordered_context": ordered_context} if ordered_context else {}),
             )
             resolved_candidates = resolve_candidate_evidence_offsets(
                 candidates=extraction_result.candidates,
                 chunk_text=chunk.chunk_text,
                 chunk_start_offset=chunk.start_offset,
             )
+            if ordered_context is not None:
+                subject_metrics = OrderedSubjectResolutionMetrics()
+                resolved, discovered = await resolve_ordered_character_subjects(
+                    client=subject_resolver.llm_client,
+                    model=subject_resolver.model,
+                    max_attempts=get_settings().llm_extraction_max_attempts,
+                    max_output_tokens=subject_resolver.max_output_tokens,
+                    context=SubjectResolutionChunkContext(
+                        previous_chunk_text=chunks[index - 1].chunk_text if index > 0 else None,
+                        current_chunk_text=chunk.chunk_text,
+                        next_chunk_text=(chunks[index + 1].chunk_text
+                                         if index + 1 < len(chunks) else None),
+                    ),
+                    candidates=resolved_candidates,
+                    subjects=ordered_subjects,
+                    episode_no=episode.episode_no,
+                    unresolved_references=tuple(payload.analysis_context.unresolved_references),
+                    metrics=subject_metrics,
+                    **({"continue_on_candidate_failure": True}
+                       if payload.review_mode == AnalysisReviewMode.AUTOMATIC else {}),
+                )
+                merge_ordered_subjects(ordered_subjects, discovered)
+                fallback_calls += subject_metrics.llm_call_count
+                fallback_resolved += subject_metrics.llm_resolved_count
+                fallback_unresolved += subject_metrics.llm_unresolved_count
+                status_inactive_candidate_count += sum(
+                    _is_explicit_inactive_status_candidate(item.candidate) for item in resolved
+                )
+                save_items.extend(
+                    SettingCandidateSaveItem(
+                        episode_id=episode.episode_id,
+                        source_content_s3_key=episode.content_s3_key,
+                        candidate=item.candidate,
+                        ordered_binding=item.binding,
+                    ) for item in resolved
+                )
+                continue
             resolution = await subject_resolver.resolve_candidates(
                 context=SubjectResolutionChunkContext(
                     previous_chunk_text=chunks[index - 1].chunk_text if index > 0 else None,
@@ -585,6 +675,14 @@ class AnalysisJobWorker:
             analysis_job_id=payload.analysis_job_id,
             save_items=save_items,
             known_characters=known_characters,
+            **({"ordered_write_context": OrderedCandidateWriteContext(
+                lease_token=payload.lease_token,
+                context=payload.analysis_context,
+                episode_id=episode.episode_id,
+                content_s3_key=episode.content_s3_key,
+                content_s3_version=episode.content_s3_version,
+                episode_no=episode.episode_no,
+            )} if ordered_context else {}),
         )
         await self.spring_client.report_progress(
             payload.analysis_job_id,
@@ -610,24 +708,45 @@ class AnalysisJobWorker:
         payload: WorkerAnalysisJobPayload,
         checkpoint: AnalysisJobCheckpointStage | None,
     ) -> CharacterFactComparisonRunResult:
-        if _checkpoint_reached(
+        finished = _checkpoint_reached(
             checkpoint,
             AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED,
-        ):
+        )
+        if finished and payload.analysis_mode != AnalysisMode.ORDERED_PROVISIONAL:
             return CharacterFactComparisonRunResult(0, 0)
+
+        if finished:
+            # Completed checkpoints survive ordered retries, but failed candidates
+            # may have returned to pending. Only the display step is revisited.
+            await self.spring_client.report_progress(
+                payload.analysis_job_id, payload.lease_token,
+                AnalysisStep.CHARACTER_FACT_COMPARISON, EpisodeProcessingStatus.ANALYZING,
+            )
 
         result = await self._get_character_fact_comparison_pipeline(
             payload.analysis_job_id,
             payload.lease_token,
-        ).process_all(payload.analysis_job_id, payload.lease_token)
+        ).process_all(payload.analysis_job_id, payload.lease_token,
+                      **({"analysis_context": payload.analysis_context}
+                         if payload.analysis_context is not None else {}),
+                      **({"continue_on_candidate_failure": True}
+                         if payload.review_mode == AnalysisReviewMode.AUTOMATIC else {}))
+        if payload.analysis_context is not None and result.failed_count and (
+            payload.review_mode != AnalysisReviewMode.AUTOMATIC
+            or result.first_failure_code not in COMPARISON_CANDIDATE_FAILURE_CODES
+        ):
+            raise OrderedAnalysisIncompleteError(
+                result.first_failure_code or AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
+            )
         # 개별 후보의 실패는 fail endpoint에 기록됐으므로 세계관 단계는 계속 수행한다.
-        await self.spring_client.report_progress(
-            payload.analysis_job_id,
-            payload.lease_token,
-            AnalysisStep.WORLD_SETTING_EXTRACTION,
-            EpisodeProcessingStatus.ANALYZING,
-            AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED,
-        )
+        if not finished:
+            await self.spring_client.report_progress(
+                payload.analysis_job_id,
+                payload.lease_token,
+                AnalysisStep.WORLD_SETTING_EXTRACTION,
+                EpisodeProcessingStatus.ANALYZING,
+                AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED,
+            )
         return result
 
     async def _run_world_extraction_stage(
@@ -642,6 +761,12 @@ class AnalysisJobWorker:
         ):
             return 0
 
+        if _checkpoint_reached(checkpoint, AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED):
+            await self.spring_client.report_progress(
+                payload.analysis_job_id, payload.lease_token,
+                AnalysisStep.WORLD_SETTING_EXTRACTION, EpisodeProcessingStatus.ANALYZING,
+            )
+
         extractor = self._get_world_setting_extractor(
             payload.analysis_job_id,
             payload.lease_token,
@@ -652,12 +777,17 @@ class AnalysisJobWorker:
                 chunk_text=chunk.chunk_text,
                 episode_no=payload.episode.episode_no,
                 episode_title=payload.episode.title,
+                **({"analysis_context": payload.analysis_context}
+                   if payload.analysis_context and payload.analysis_context.unresolved_references else {}),
             )
             extracted_items.extend(
                 WorldSettingCandidateMapper.to_publish_item(candidate, chunk)
                 for candidate in extraction_result.candidates
             )
-        candidates = WorldSettingCandidateMapper.consolidate_by_key(extracted_items)
+        candidates = (
+            extracted_items if payload.analysis_context is not None
+            else WorldSettingCandidateMapper.consolidate_by_key(extracted_items)
+        )
         published = await self.spring_client.publish_world_setting_candidates(
             payload.analysis_job_id,
             payload.lease_token,
@@ -670,23 +800,44 @@ class AnalysisJobWorker:
         payload: WorkerAnalysisJobPayload,
         checkpoint: AnalysisJobCheckpointStage | None,
     ) -> WorldSettingComparisonRunResult:
-        if _checkpoint_reached(
+        finished = _checkpoint_reached(
             checkpoint,
             AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED,
-        ):
+        )
+        if finished and payload.analysis_mode != AnalysisMode.ORDERED_PROVISIONAL:
             return WorldSettingComparisonRunResult(0, 0)
+
+        if payload.analysis_mode == AnalysisMode.ORDERED_PROVISIONAL and _checkpoint_reached(
+            checkpoint, AnalysisJobCheckpointStage.WORLD_CANDIDATES_PUBLISHED,
+        ):
+            await self.spring_client.report_progress(
+                payload.analysis_job_id, payload.lease_token,
+                AnalysisStep.WORLD_SETTING_COMPARISON, EpisodeProcessingStatus.ANALYZING,
+            )
 
         result = await self._get_world_setting_comparison_pipeline(
             payload.analysis_job_id,
             payload.lease_token,
-        ).process_all(payload.analysis_job_id, payload.lease_token)
-        await self.spring_client.report_progress(
-            payload.analysis_job_id,
-            payload.lease_token,
-            AnalysisStep.WORLD_SETTING_COMPARISON,
-            EpisodeProcessingStatus.ANALYZING,
-            AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED,
-        )
+        ).process_all(payload.analysis_job_id, payload.lease_token,
+                      **({"analysis_context": payload.analysis_context}
+                         if payload.analysis_context is not None else {}),
+                      **({"continue_on_candidate_failure": True}
+                         if payload.review_mode == AnalysisReviewMode.AUTOMATIC else {}))
+        if payload.analysis_context is not None and result.failed_count and (
+            payload.review_mode != AnalysisReviewMode.AUTOMATIC
+            or result.first_failure_code not in COMPARISON_CANDIDATE_FAILURE_CODES
+        ):
+            raise OrderedAnalysisIncompleteError(
+                result.first_failure_code or AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
+            )
+        if not finished:
+            await self.spring_client.report_progress(
+                payload.analysis_job_id,
+                payload.lease_token,
+                AnalysisStep.WORLD_SETTING_COMPARISON,
+                EpisodeProcessingStatus.ANALYZING,
+                AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED,
+            )
         return result
 
     def _error_message(self, exc: Exception) -> str:
@@ -861,6 +1012,17 @@ class AnalysisJobWorker:
         if self._llm_provider_client is None:
             self._llm_provider_client = OpenAIResponsesClient.from_settings()
         return self._llm_provider_client
+
+
+def _resume_step(checkpoint: AnalysisJobCheckpointStage | None) -> AnalysisStep:
+    return {
+        None: AnalysisStep.SETTING_EXTRACTION,
+        AnalysisJobCheckpointStage.CHUNKS_READY: AnalysisStep.SETTING_EXTRACTION,
+        AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED: AnalysisStep.CHARACTER_FACT_COMPARISON,
+        AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED: AnalysisStep.WORLD_SETTING_EXTRACTION,
+        AnalysisJobCheckpointStage.WORLD_CANDIDATES_PUBLISHED: AnalysisStep.WORLD_SETTING_COMPARISON,
+        AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED: AnalysisStep.PERSISTING,
+    }[checkpoint]
 
 
 def _checkpoint_reached(

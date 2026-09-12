@@ -121,7 +121,9 @@ def test_http_failure_before_first_candidate_retains_actual_call_metadata(status
     failure = scenario.execution_failure
     assert failure.episode_no == 1
     assert failure.stage == "CHARACTER_STAGE1"
-    assert failure.failure_code == "LLM_PROVIDER_ERROR"
+    # Permanent account/configuration failures must also stop automatic jobs.
+    # The diagnostic retains the actual HTTP/provider fields below.
+    assert failure.failure_code == ("UNEXPECTED_ERROR" if status in {400, 401} else "LLM_PROVIDER_ERROR")
     assert failure.provider.model == "gpt-5.6-sol"
     assert failure.provider.purpose == "CHARACTER_EXTRACTION"
     assert failure.provider.http_status == status

@@ -4,6 +4,7 @@ import json
 from collections import Counter
 from dataclasses import dataclass, replace
 from decimal import Decimal
+import hashlib
 from typing import Any
 
 from app.domain.enums import (
@@ -59,6 +60,10 @@ from evals.multi_stage_setting.matching import (
     match_stage1,
     world_setting_context_matches,
     world_setting_name_pairs,
+)
+from evals.multi_stage_setting.experimental_identity import (
+    ScoringIdentityAlignment,
+    build_scoring_identity_alignment,
 )
 from evals.multi_stage_setting.processing import processing_outcomes
 from evals.multi_stage_setting.semantic_outcome import (
@@ -163,6 +168,13 @@ async def evaluate_multi_stage(
         raise ValueError("Prediction bundle fixtureHash does not match Gold.")
 
     gold_chain = build_gold_state_chain(gold)
+    scoring_alignment = None
+    if predictions.mode in {EvaluationMode.COMMON_START, EvaluationMode.ORDERED_PROVISIONAL}:
+        # Validate again at consumption: models can be mutated after construction
+        # or created via unchecked model_copy, unlike JSON loaded through the CLI.
+        predictions = PredictionBundleV3.model_validate(predictions.model_dump())
+        scoring_alignment = build_scoring_identity_alignment(gold, gold_chain, predictions)
+        predictions = scoring_alignment.predictions(predictions)
     scenario_by_id = {item.scenario_id: item for item in gold.scenarios}
     prediction_by_scenario = {item.scenario_id: item for item in predictions.scenarios}
     unknown_prediction_scenarios = sorted(set(prediction_by_scenario) - scenario_by_id.keys())
@@ -339,6 +351,7 @@ async def evaluate_multi_stage(
         prediction_by_scenario,
         selected_ids,
         enabled_domains,
+        scoring_alignment=scoring_alignment,
     )
     stage2_cases = _evaluate_stage2_cases(
         gold,
@@ -457,7 +470,7 @@ async def evaluate_multi_stage(
     selected_scenarios = [
         scenario for scenario in gold.scenarios if scenario.scenario_id in selected_ids
     ]
-    return {
+    report = {
         "reportVersion": "setting-eval-report/v3",
         "run": {
             "mode": predictions.mode,
@@ -517,6 +530,26 @@ async def evaluate_multi_stage(
             semantic_decisions,
         ),
     }
+    if predictions.mode in {EvaluationMode.COMMON_START, EvaluationMode.ORDERED_PROVISIONAL}:
+        assert predictions.frozen_start_state is not None
+        report["run"].update({
+            "runtimePolicyVersion": predictions.runtime_policy_version,
+            "runtimeRunId": predictions.runtime_run_id,
+            "runtimeGeneration": predictions.runtime_generation,
+            "frozenStartStateHash": predictions.frozen_start_state.content_hash(),
+            "elapsedSeconds": sum(
+                item.runtime_state_trace.elapsed_seconds
+                for item in predictions.scenarios
+                if item.runtime_state_trace is not None
+            ),
+        })
+        for scenario in report["scenarios"]:
+            trace = prediction_by_scenario[scenario["scenarioId"]].runtime_state_trace
+            assert trace is not None
+            scenario["runtimeInputStateHash"] = trace.input_state_hash
+            scenario["runtimeOutputStateHash"] = trace.output_state_hash
+            scenario["sourceHash"] = trace.source_hash
+    return report
 
 
 def _stage1_name_case_id(expected: Stage1Gold, actual: Stage1Prediction) -> str:
@@ -1525,7 +1558,31 @@ def _build_predicted_state_chain(
     prediction_by_scenario: dict[str, ScenarioPrediction],
     selected_ids: set[str],
     enabled_domains: set[EvaluationDomain],
+    *,
+    scoring_alignment: ScoringIdentityAlignment | None = None,
 ) -> tuple[dict[str, ScenarioStateTransition], list[dict[str, str]]]:
+    if predictions.mode in {EvaluationMode.COMMON_START, EvaluationMode.ORDERED_PROVISIONAL}:
+        chain = _build_observed_runtime_state_chain(gold, predictions, selected_ids)
+        assert scoring_alignment is not None
+        errors = [
+            {"scenarioId": item.scenario_id, "sourceCandidateId": candidate_id,
+             "reason": "Prediction decision violates the runtime reducer contract."}
+            for item in predictions.scenarios
+            for candidate_id in item.runtime_state_trace.state_application_error_candidate_ids
+        ]
+        return {
+            scenario_id: ScenarioStateTransition(
+                scenario_id=scenario_id,
+                before_state=_align_observed_effect_ids(
+                    scoring_alignment.state(item.before_state), stage1_results, gold,
+                ),
+                after_state=_align_observed_effect_ids(
+                    scoring_alignment.state(item.after_state), stage1_results, gold,
+                ),
+                applied_decision_ids=item.applied_decision_ids,
+                held_decision_ids=item.held_decision_ids,
+            ) for scenario_id, item in chain.items()
+        }, errors
     result: dict[str, ScenarioStateTransition] = {}
     errors: list[dict[str, str]] = []
     gold_stage1_by_id = {item.gold_id: item for item in gold.stage1}
@@ -1683,6 +1740,118 @@ def _build_predicted_state_chain(
             held_decision_ids=tuple(held),
         )
     return result, errors
+
+
+def _align_observed_effect_ids(
+    state: EvaluationState,
+    stage1_results: dict[tuple[str, EvaluationDomain], Stage1MatchingResult],
+    gold: GoldSnapshotV3,
+) -> EvaluationState:
+    """Align reference-event identities for scoring, retaining every actual value/operation."""
+    source_ids = {
+        (scenario_id, match.prediction.candidate_id): match.source_gold_ids
+        for (scenario_id, _), result in stage1_results.items()
+        for match in result.matches if match.identity_matched
+    }
+    decisions = {source_id: item.decision_id for item in gold.stage2 for source_id in item.source_gold_ids}
+    history = []
+    for item in state.character_history:
+        candidate_id = item.source_gold_id.removeprefix("prediction:")
+        matched = source_ids.get((item.scenario_id, candidate_id), ())
+        history.append(item.model_copy(update={"source_gold_id": matched[0]}) if len(matched) == 1 else item)
+    held = []
+    for item in state.held_world_conflicts:
+        matched = [source_ids.get((item.scenario_id, candidate_id), ())
+                   for candidate_id in item.source_candidate_ids]
+        matched_decisions = {decisions[source_id] for group in matched for source_id in group
+                             if source_id in decisions}
+        held.append(item.model_copy(update={"decision_id": next(iter(matched_decisions))})
+                    if matched and all(matched) and len(matched_decisions) == 1 else item)
+    return state.model_copy(update={"character_history": history, "held_world_conflicts": held})
+
+
+def _build_observed_runtime_state_chain(
+    gold: GoldSnapshotV3,
+    predictions: PredictionBundleV3,
+    selected_ids: set[str],
+) -> dict[str, ScenarioStateTransition]:
+    """Score runtime observations; neither Gold decisions nor missing-input fallback apply.
+
+    The adapter must project Backend identities into stable evaluation identities
+    without changing values, paths, operations, or dependency order. The evaluator
+    intentionally does not turn a Gold state into an observed runtime state.
+    """
+    assert predictions.frozen_start_state is not None
+    prediction_by_id = {item.scenario_id: item for item in predictions.scenarios}
+    missing = selected_ids - prediction_by_id.keys()
+    if missing:
+        raise ValueError(f"Experimental evaluation is missing runtime traces: {sorted(missing)}")
+    scenario_by_id = {item.scenario_id: item for item in gold.scenarios}
+    if predictions.mode == EvaluationMode.ORDERED_PROVISIONAL:
+        ordered_predictions = sorted(
+            predictions.scenarios,
+            key=lambda item: item.runtime_state_trace.runtime_sequence,
+        )
+        if [item.runtime_state_trace.runtime_sequence for item in ordered_predictions] != list(
+            range(len(ordered_predictions))
+        ):
+            raise ValueError("Ordered evaluation is missing runtime traces in its explicit sequence.")
+        max_sequence = max(
+            prediction_by_id[item].runtime_state_trace.runtime_sequence for item in selected_ids
+        )
+        scenarios = [scenario_by_id[item.scenario_id]
+                     for item in ordered_predictions[:max_sequence + 1]]
+    else:
+        scenarios = sorted(
+            (item for item in gold.scenarios if item.scenario_id in selected_ids),
+            key=lambda item: (item.episode_no, item.scenario_id),
+        )
+    result: dict[str, ScenarioStateTransition] = {}
+    previous_trace = None
+    previous_prediction = None
+    previous_episode = 0
+    for scenario in scenarios:
+        trace = prediction_by_id[scenario.scenario_id].runtime_state_trace
+        if trace is None:
+            raise ValueError(f"Scenario {scenario.scenario_id} has no runtimeStateTrace.")
+        source_hash = scenario.source_hash or (
+            hashlib.sha256(scenario.source_text.encode("utf-8")).hexdigest()
+            if scenario.source_text is not None else None
+        )
+        if source_hash is not None and (
+            trace.source_hash.removeprefix("sha256:")
+            != source_hash.removeprefix("sha256:")
+        ):
+            raise ValueError(f"Runtime source hash differs for scenario {scenario.scenario_id}.")
+        if predictions.mode == EvaluationMode.ORDERED_PROVISIONAL:
+            if previous_prediction is not None and (
+                previous_prediction.failures
+                or previous_prediction.pipeline_status != "COMPLETED"
+            ):
+                raise ValueError("A failed ordered predecessor must block following episodes.")
+            expected_input = (
+                previous_trace.output_state
+                if previous_trace is not None else predictions.frozen_start_state
+            )
+            if trace.input_state_hash != expected_input.content_hash():
+                raise ValueError(f"Ordered input state chain is stale at {scenario.scenario_id}.")
+            if previous_trace is not None and (
+                trace.backend_input_state_hash != previous_trace.backend_output_state_hash
+            ):
+                raise ValueError("Ordered Backend journal hash chain is stale.")
+            if scenario.episode_no <= previous_episode:
+                raise ValueError("Ordered runtime sequence does not follow episode order.")
+        result[scenario.scenario_id] = ScenarioStateTransition(
+            scenario_id=scenario.scenario_id,
+            before_state=trace.input_state.model_copy(deep=True),
+            after_state=trace.output_state.model_copy(deep=True),
+            applied_decision_ids=tuple(trace.applied_event_ids),
+            held_decision_ids=(),
+        )
+        previous_trace = trace
+        previous_prediction = prediction_by_id[scenario.scenario_id]
+        previous_episode = scenario.episode_no
+    return result
 
 
 def _state_dependency_ids(

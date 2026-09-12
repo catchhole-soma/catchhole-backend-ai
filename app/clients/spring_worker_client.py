@@ -11,8 +11,10 @@ from app.clients.exceptions import (
     SpringWorkerTransportError,
     WorkerLeaseExpiredError,
 )
+from app.clients.safe_http_diagnostics import error_message, validation_fields
 from app.core.config import Settings, get_settings
 from app.domain.enums import (
+    AnalysisMode,
     AnalysisFailureCode,
     AnalysisJobCheckpointStage,
     AnalysisJobType,
@@ -45,6 +47,7 @@ from app.schemas.worker import (
     WorkerWorldSettingComparisonBatchContextRequest,
     WorkerWorldSettingComparisonBatchContextResponse,
     WorkerWorldSettingComparisonBatchPayload,
+    WorkerWorldSettingComparisonDiagnostic,
     WorkerWorldSettingComparisonCompleteRequest,
     WorkerWorldSettingComparisonContextRequest,
     WorkerWorldSettingComparisonContextResponse,
@@ -68,6 +71,7 @@ SPRING_ERROR_CODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{0,99}$")
 class _SpringErrorDetails:
     code: str | None
     reason_code: str | None
+    validation_fields: tuple[str, ...] = ()
 
 
 class SpringWorkerClient:
@@ -94,11 +98,13 @@ class SpringWorkerClient:
         allowed_job_types: list[AnalysisJobType],
         model_name: str | None = None,
         current_step: str | None = None,
+        supported_analysis_modes: list[AnalysisMode] | None = None,
     ) -> WorkerAnalysisJobPayload | None:
         request = WorkerAnalysisJobClaimRequest(
             model_name=model_name,
             current_step=current_step,
             allowed_job_types=allowed_job_types,
+            supported_analysis_modes=supported_analysis_modes,
         )
         response = await self._request(
             "POST",
@@ -459,7 +465,7 @@ class SpringWorkerClient:
                 "/world-setting-subject-resolutions"
             ),
             headers=self._headers(lease_token),
-            json=request.model_dump(by_alias=True, mode="json"),
+            json=request.model_dump(by_alias=True, mode="json", exclude_unset=True),
         )
         _raise_for_spring_status(response)
         return WorkerWorldSettingSubjectResolutionResponse.model_validate(
@@ -489,9 +495,12 @@ class SpringWorkerClient:
         comparison_batch_id: UUID,
         lease_token: UUID,
         target_world_setting_ids: list[UUID],
+        provisional_subject_keys: list[str] | None = None,
     ) -> WorkerWorldSettingComparisonBatchContextResponse:
         request = WorkerWorldSettingComparisonBatchContextRequest(
-            target_world_setting_ids=target_world_setting_ids
+            target_world_setting_ids=target_world_setting_ids,
+            **({"provisional_subject_keys": provisional_subject_keys}
+               if provisional_subject_keys is not None else {}),
         )
         response = await self._request(
             "POST",
@@ -500,7 +509,7 @@ class SpringWorkerClient:
                 f"/world-setting-comparison-batches/{comparison_batch_id}/context"
             ),
             headers=self._headers(lease_token),
-            json=request.model_dump(by_alias=True, mode="json"),
+            json=request.model_dump(by_alias=True, mode="json", exclude_unset=True),
         )
         _raise_for_spring_status(response)
         return WorkerWorldSettingComparisonBatchContextResponse.model_validate(
@@ -534,12 +543,14 @@ class SpringWorkerClient:
         failure_code: AnalysisFailureCode = AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
         source_error_code: str | None = None,
         source_reason_code: str | None = None,
+        diagnostics: list[WorkerWorldSettingComparisonDiagnostic] | None = None,
     ) -> None:
         request = WorkerWorldSettingComparisonFailRequest(
             failure_code=failure_code,
             error_message=error_message,
             source_error_code=source_error_code,
             source_reason_code=source_reason_code,
+            diagnostics=diagnostics,
         )
         response = await self._request(
             "POST",
@@ -548,7 +559,7 @@ class SpringWorkerClient:
                 f"/world-setting-comparison-batches/{comparison_batch_id}/fail"
             ),
             headers=self._headers(lease_token),
-            json=request.model_dump(by_alias=True, exclude_none=True),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
         _raise_for_spring_status(response)
 
@@ -744,6 +755,7 @@ def _spring_error_details(response: httpx.Response) -> _SpringErrorDetails:
             if isinstance(reason_code, str) and reason_code in ALLOWED_SPRING_REASON_CODES
             else None
         ),
+        validation_fields=validation_fields(error) if isinstance(error, dict) else (),
     )
 
 
@@ -758,10 +770,12 @@ def _raise_for_spring_status(response: httpx.Response) -> None:
             else SpringWorkerHttpError
         )
         raise error_type(
-            str(exc),
+            error_message(response.status_code, spring_error.code, spring_error.reason_code,
+                          spring_error.validation_fields),
             request=exc.request,
             response=exc.response,
             status_code=response.status_code,
             spring_error_code=spring_error.code,
             spring_reason_code=spring_error.reason_code,
-        ) from exc
+            validation_fields=spring_error.validation_fields,
+        ) from None

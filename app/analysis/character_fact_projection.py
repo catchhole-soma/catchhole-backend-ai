@@ -13,6 +13,7 @@ from app.domain.enums import (
     SettingValueType,
 )
 from app.domain.setting_values import normalize_setting_display_value
+from app.schemas.analysis_context import AnalysisStateProvenance
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class CharacterProjectionEntry:
     origin: str = "PERSISTED"
     source_candidate_ref: str | None = None
     dependency_candidate_refs: tuple[str, ...] = ()
+    provenance: AnalysisStateProvenance | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,7 @@ class CharacterProjectionState:
         value_type: SettingValueType | None,
         candidate_value_json: Any | None,
         decision: CharacterFactComparisonDecision,
+        source_episode_no: int | None = None,
     ) -> CharacterProjectionApplication:
         validate_character_fact_decision(
             decision,
@@ -137,6 +140,9 @@ class CharacterProjectionState:
                 origin="PRIOR_DECISION",
                 source_candidate_ref=candidate_ref,
                 dependency_candidate_refs=effect_dependencies,
+                provenance=AnalysisStateProvenance(
+                    confirmation_status="PROVISIONAL", source_episode_no=source_episode_no
+                ),
             )
             self._insert(projected_entry)
 

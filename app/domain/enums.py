@@ -1,6 +1,16 @@
 from enum import StrEnum
 
 
+class AnalysisMode(StrEnum):
+    CONFIRMED_ONLY = "CONFIRMED_ONLY"
+    ORDERED_PROVISIONAL = "ORDERED_PROVISIONAL"
+
+
+class AnalysisReviewMode(StrEnum):
+    MANUAL = "MANUAL"
+    AUTOMATIC = "AUTOMATIC"
+
+
 class AnalysisJobStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
@@ -136,7 +146,10 @@ class WorldSettingOperation(StrEnum):
 
 
 class WorldSettingComparisonReviewReason(StrEnum):
+    SUBJECT_UNRESOLVED = "SUBJECT_UNRESOLVED"
+    GENERAL_UNCERTAINTY = "GENERAL_UNCERTAINTY"
     SCOPE_UNRESOLVED = "SCOPE_UNRESOLVED"
+    SCOPE_MISMATCH = "SCOPE_MISMATCH"
     BATCH_LIMIT_EXCEEDED = "BATCH_LIMIT_EXCEEDED"
 
 
@@ -183,3 +196,4 @@ class WorldSettingSubjectResolutionType(StrEnum):
     NEW = "NEW"
     EXISTING = "EXISTING"
     AMBIGUOUS = "AMBIGUOUS"
+    FAILED = "FAILED"

@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, Numeric, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Numeric, String, Text, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -38,6 +38,9 @@ class SettingCandidate(TimestampMixin, Base):
     entity_name: Mapped[str] = mapped_column(String(100))
     raw_entity_mention: Mapped[str | None] = mapped_column(String(100))
     matched_character_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
+    provisional_subject_key: Mapped[str | None] = mapped_column(String(100))
+    confirmed_application_mode: Mapped[str | None] = mapped_column(String(30))
+    user_modified: Mapped[bool] = mapped_column(Boolean, default=False)
     match_status: Mapped[SettingCandidateMatchStatus] = mapped_column(String(30))
     attribute_name: Mapped[str | None] = mapped_column(String(100))
     attribute_value: Mapped[str | None] = mapped_column(Text)
@@ -46,6 +49,9 @@ class SettingCandidate(TimestampMixin, Base):
     evidence_spans: Mapped[list[dict] | None] = mapped_column(JSONB)
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
     review_status: Mapped[SettingCandidateReviewStatus] = mapped_column(String(30))
+    reviewed_automatically: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # Spring owns this explanation of why automatic confirmation was withheld.
+    automatic_review_hold_reason: Mapped[str | None] = mapped_column(String(50))
     raw_ai_result_json: Mapped[dict | None] = mapped_column(JSONB)
     # Python은 최초 상태만 기록하고, claim 이후 비교 생명주기와 결과는 Spring이 소유한다.
     comparison_status: Mapped[CharacterFactComparisonStatus] = mapped_column(
@@ -67,3 +73,5 @@ class SettingCandidate(TimestampMixin, Base):
     raw_comparison_json: Mapped[dict | None] = mapped_column(JSONB)
     compared_at: Mapped[datetime | None] = mapped_column(DateTime)
     comparison_error_message: Mapped[str | None] = mapped_column(Text)
+    comparison_failure_code: Mapped[str | None] = mapped_column(String(60))
+    preparation_failure_stage: Mapped[str | None] = mapped_column(String(40))

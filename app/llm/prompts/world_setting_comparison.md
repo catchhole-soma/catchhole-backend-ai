@@ -6,7 +6,7 @@
 {
   "consolidation_status": "SINGLE | MERGED | CONFLICT",
   "operation": "ADD | UPDATE | MERGE | EXCLUDE | REVIEW_REQUIRED",
-  "review_reason": "SCOPE_UNRESOLVED 또는 null",
+  "review_reason": "GENERAL_UNCERTAINTY | SCOPE_UNRESOLVED 또는 null",
   "target_ref": "T1 또는 null",
   "matched_scope_name": "기존 선택 범위명 또는 null",
   "matched_property_name": "기존 속성명 또는 null",
@@ -45,11 +45,13 @@
   기존 설명을 UPDATE로 지우지 않는다. 신체 능력 값에 근거 없는 마법 적성·전투 우위·인과·수치를 덧붙이지 않는다.
 - EXCLUDE: 일시적 사건·현재 상태이거나, 기존 내용과 실질적으로 동일해 반영할 필요가 없거나, 근거가 세계관 설정으로 부적절하다.
 - REVIEW_REQUIRED: 후보의 scope_name은 null인데 같은 setting_name의 기존 속성이 특정 scope 아래에만 있어 적용 범위를 자동 결정할 수 없다. 이 경우 review_reason은 SCOPE_UNRESOLVED다.
+- REVIEW_REQUIRED + GENERAL_UNCERTAINTY: 범위 문제가 아니라 대상의 동일성이나 내용의 의미를 확실히 판단하기 어려워 사용자가 확인해야 한다. 관련된 종류나 등급이 같다는 이유로 서로 다른 대상을 합치지 않는다. 대상이나 내용을 확인할 구체적인 이유를 자연스러운 한국어로 설명한다. 예: '대상이나 내용을 확실히 판단하기 어려워 확인이 필요합니다.'
+- GENERAL_UNCERTAINTY는 자동 반영하지 않는다. proposed_scope_name·proposed_setting_name·proposed_value는 후보 원본을 그대로 보존한다. 비교한 기존 속성이 있으면 실제 target_ref와 matched 경로를 남기고, 특정 속성을 비교하지 않았다면 matched 경로를 모두 null로 둔다. 입력에 없는 대상·속성을 만들거나 기존 범위 검토의 조건을 우회하지 않는다.
 - UPDATE와 MERGE는 target_ref와 기존 properties에 실제 존재하는 matched_scope_name(없으면 null)·matched_property_name을 반드시 반환한다.
 - ADD는 matched_scope_name과 matched_property_name을 모두 null로 반환한다.
 - 기존 속성과 실질적으로 중복되어 EXCLUDE한다면 target_ref와 기존 properties에 실제 존재하는 matched_scope_name(없으면 null)·matched_property_name을 반드시 반환한다. comparison_reason에서 특정 기존 속성을 비교 대상으로 언급할 때도 이 경로를 생략하지 않는다.
 - 일시적 사건·현재 상태·세계관 설정으로 부적절한 근거처럼 특정 기존 속성과 비교하지 않고 EXCLUDE한다면 matched_scope_name과 matched_property_name은 null로 반환한다.
-- REVIEW_REQUIRED는 candidate와 setting_name이 같은 기존 scoped 속성의 target_ref·matched_scope_name·matched_property_name을 반환한다. candidate의 scope_name을 기존 scope로 자동 상속하지 않는다.
+- SCOPE_UNRESOLVED 검토는 candidate와 setting_name이 같은 기존 scoped 속성의 target_ref·matched_scope_name·matched_property_name을 반환한다. candidate의 scope_name을 기존 scope로 자동 상속하지 않는다.
 - REVIEW_REQUIRED가 아니면 review_reason은 null이다.
 - ADD와 EXCLUDE의 proposed_scope_name·proposed_setting_name은 후보의 scope_name·setting_name을 그대로 유지한다. UPDATE와 MERGE는 선택한 기존 속성의 scope_name·setting_name을 그대로 유지한다.
 - EXCLUDE도 검토 화면에서 추출값을 보존한다. extracted_values가 하나면 proposed_value를 그대로 유지하고, 여러 개면 MERGED일 때 모든 보완 정보를 자연스럽게 합치며 CONFLICT일 때 candidate.extracted_value를 그대로 유지한다.
