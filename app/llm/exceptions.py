@@ -1,3 +1,6 @@
+from httpx import Response
+
+
 class LlmResponseValidationError(ValueError):
     """사용량이 포함된 성공 응답의 텍스트 구조가 계약을 위반한 경우다."""
 
@@ -48,6 +51,7 @@ class LlmIncompleteResponseError(LlmResponseValidationError):
         output_token_count: int | None = None,
         *,
         incomplete_reason: str | None = None,
+        response: Response | None = None,
     ) -> None:
         super().__init__(
             message,
@@ -56,3 +60,4 @@ class LlmIncompleteResponseError(LlmResponseValidationError):
             output_token_count=output_token_count,
         )
         self.incomplete_reason = incomplete_reason
+        self.response = response

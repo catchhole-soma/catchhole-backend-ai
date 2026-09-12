@@ -23,8 +23,10 @@ def test_saved_predictions_keep_legacy_scoring_contract(mode: str) -> None:
         FIXTURES / f"{mode.lower()}-predictions.json",
         fixture_hash=gold.fixture_hash or "",
     )
-    upstream = json.loads((FIXTURES / "expected-reports-pr65.json").read_text())
-    assert upstream["baselineCommit"] == "275bada00fcd4d420277d378ddf7f6d417dea899"
+    # Preserve the historical fixture. PR67 adds processing diagnostics; the new
+    # baseline is captured independently from PR65 after its merge of main.
+    upstream = json.loads((FIXTURES / "expected-reports-pr65-6deac04.json").read_text())
+    assert upstream["baselineCommit"] == "6deac0400c7b84a22715d669f30dfb12a7ca2b34"
     expected = upstream["modes"][mode]["report"]
 
     actual = asyncio.run(evaluate_multi_stage(gold, predictions, semantic_judge=None))

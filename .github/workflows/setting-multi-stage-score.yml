@@ -77,6 +77,19 @@ on:
         description: "OpenAI 비용 발생 확인을 위해 RUN 입력"
         required: true
         type: string
+      store_responses:
+        description: "진단 전용: 예측 요청의 원문과 응답을 OpenAI에 저장(명시적 승인 시만 사용)"
+        required: false
+        default: false
+        type: boolean
+      extraction_max_output_tokens:
+        description: "캐릭터 1차 추출 출력 상한(기본 6000, 진단 대조 9000)"
+        required: false
+        default: "6000"
+        type: choice
+        options:
+          - "6000"
+          - "9000"
 
 permissions:
   contents: read
@@ -106,6 +119,7 @@ jobs:
       JUDGE_MODEL: ${{ inputs.judge_model }}
       JUDGE_REASONING_EFFORT: ${{ inputs.judge_reasoning_effort }}
       CONFIRM_RUN: ${{ inputs.confirm_run }}
+      STORE_RESPONSES: ${{ inputs.store_responses }}
 
     steps:
       - name: Checkout
@@ -245,6 +259,7 @@ jobs:
         shell: bash
         env:
           LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS: ${{ inputs.extraction_max_output_tokens || '6000' }}
         run: |
           set -euo pipefail
           if [ -z "$LLM_API_KEY" ]; then
@@ -261,6 +276,9 @@ jobs:
             --comparison-model "$COMPARISON_MODEL"
             --output build/eval/multi-stage/private/predictions.json
           )
+          if [ "$STORE_RESPONSES" = "true" ]; then
+            runtime_args+=(--store-responses)
+          fi
           if [ "$RUN_MODE" != "ORACLE" ]; then
             runtime_args+=(--source-root build/eval/multi-stage/input/sources)
             if [[ ",$RUN_DOMAINS," == *,CHARACTER,* ]]; then
@@ -309,14 +327,20 @@ jobs:
           python -m evals.multi_stage_setting.cli "${evaluate_args[@]}"
 
       - name: Publish sanitized evaluation summary
+        if: ${{ always() && (hashFiles('build/eval/multi-stage/private/report.json') != '' || hashFiles('build/eval/multi-stage/private/predictions.json') != '') }}
         run: |
-          python -m evals.multi_stage_setting.report_cli \
-            --report build/eval/multi-stage/private/report.json \
+          if [ -f build/eval/multi-stage/private/report.json ]; then
+            report_args=(--report build/eval/multi-stage/private/report.json)
+          else
+            report_args=(--predictions build/eval/multi-stage/private/predictions.json)
+          fi
+          python -m evals.multi_stage_setting.report_cli "${report_args[@]}" \
             --json-output build/eval/multi-stage/public/score.json \
             --markdown-output build/eval/multi-stage/public/summary.md
           cat build/eval/multi-stage/public/summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload sanitized evaluation artifacts
+        if: ${{ always() && hashFiles('build/eval/multi-stage/public/diagnostics.json') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: setting-multi-stage-report-${{ github.run_id }}

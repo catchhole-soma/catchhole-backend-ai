@@ -13,8 +13,8 @@ from evals.multi_stage_setting.contracts import (
     CandidateKind,
     CharacterHistoryEntry,
     CharacterStage1Gold,
-    CharacterStage2Gold,
     CharacterStage1Prediction,
+    CharacterStage2Gold,
     CharacterStage2Prediction,
     CharacterStateEntry,
     EvaluationState,
@@ -22,19 +22,20 @@ from evals.multi_stage_setting.contracts import (
     HeldWorldConflict,
     KnownCharacter,
     ScenarioGold,
-    StartStateMode,
     Stage2Gold,
+    StartStateMode,
     WorldStage1Gold,
-    WorldStage2Gold,
     WorldStage1Prediction,
+    WorldStage2Gold,
     WorldStage2Prediction,
     WorldStateEntry,
+    align_prediction_character_refs,
     character_state_ref,
     infer_character_fact_type,
     validate_world_state_properties,
     world_entry_subject_ref,
-    world_subject_ref,
     world_state_ref,
+    world_subject_ref,
 )
 from evals.setting_extraction.models import GoldDecision, Importance
 
@@ -263,6 +264,11 @@ def apply_prediction_decision(
             if fact_type is None:
                 raise StateApplicationError("Character prediction has no canonical factType.")
             entity_name = source.matched_character_name or source.entity_name
+            aligned_decision = (
+                align_prediction_character_refs(source, decision, matched_character.entity_ref)
+                if matched_character is not None
+                else decision
+            )
             pseudo_source = CharacterStage1Gold(
                 gold_id=(
                     matched_gold_source.gold_id
@@ -305,8 +311,8 @@ def apply_prediction_decision(
                 source_gold_ids=[pseudo_source.gold_id],
                 domain="CHARACTER",
                 operation=decision.operation,
-                target_ref=decision.target_ref,
-                removed_snapshot_refs=decision.removed_snapshot_refs,
+                target_ref=aligned_decision.target_ref,
+                removed_snapshot_refs=aligned_decision.removed_snapshot_refs,
                 proposed_value=decision.proposed_value,
                 proposed_value_json=decision.proposed_value_json,
                 temporal_scope=decision.temporal_scope,

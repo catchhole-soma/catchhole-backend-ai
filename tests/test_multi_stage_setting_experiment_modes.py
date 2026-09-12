@@ -61,7 +61,7 @@ def test_common_start_uses_explicit_s0_for_every_episode_without_gold_lookup(mon
     def forbid_gold(*args):
         raise AssertionError("Gold state must never initialize COMMON_START runtime.")
 
-    async def live(scenario, before, *args):
+    async def live(scenario, before, *args, trace):
         seen.append(before.model_copy(deep=True))
         return ScenarioPrediction(
             scenario_id=scenario.scenario_id,

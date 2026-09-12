@@ -307,6 +307,62 @@ def test_other_provider_failures_are_not_retried_as_output_truncation(error):
     assert client.create_text_response.await_count == 1
 
 
+def test_judge_http_failure_records_safe_provider_reason_without_retry(capsys):
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    response = httpx.Response(
+        503,
+        request=request,
+        headers={"x-request-id": "req_judge503"},
+        json={"error": {
+            "code": "server_overloaded", "type": "server_error",
+            "message": "Server overloaded. PRIVATE_PROVIDER_TEXT",
+        }},
+    )
+    error = httpx.HTTPStatusError("PRIVATE_EXCEPTION", request=request, response=response)
+    client = _Client()
+    client.create_text_response = AsyncMock(side_effect=error)
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        asyncio.run(OpenAISemanticOutcomeJudge(client=client).judge_many(
+            _cases(2, expected="PRIVATE_SOURCE_TEXT"),
+        ))
+
+    output = capsys.readouterr().err
+    details = json.loads(next(
+        line.removeprefix("LLM call failed ") for line in output.splitlines()
+        if line.startswith("LLM call failed ")
+    ))
+    assert raised.value is error
+    assert client.create_text_response.await_count == 1
+    assert details == error.evaluation_provider_details
+    assert details["purpose"] == "SEMANTIC_JUDGE"
+    assert details["http_status"] == 503
+    assert details["request_id"] == "req_judge503"
+    assert details["provider_error_code"] == "server_overloaded"
+    assert details["message_summary"] == "Provider reported overload."
+    assert details["max_output_tokens"] == 32000
+    assert details["elapsed_ms"] >= 0
+    assert len(details["input_fingerprint"]) == 64
+    assert details["prompt_bytes"] > 0
+    assert "PRIVATE_" not in output
+
+
+def test_judge_read_timeout_records_exact_exception_and_completed_call_is_distinct(capsys):
+    client = _Client()
+    asyncio.run(OpenAISemanticOutcomeJudge(client=client).judge_many(_cases(1)))
+    success = capsys.readouterr().err
+    assert "LLM call completed " in success
+    client.create_text_response = AsyncMock(side_effect=httpx.ReadTimeout("PRIVATE_TIMEOUT"))
+
+    with pytest.raises(httpx.ReadTimeout):
+        asyncio.run(OpenAISemanticOutcomeJudge(client=client).judge_many(_cases(1)))
+
+    failure = capsys.readouterr().err
+    assert '"network_exception": "ReadTimeout"' in failure
+    assert "LLM call completed " not in failure
+    assert "PRIVATE_TIMEOUT" not in failure
+
+
 @pytest.mark.parametrize("malformed", ["missing", "duplicate"])
 def test_incomplete_case_coverage_is_still_rejected(malformed):
     cases = _cases(20)

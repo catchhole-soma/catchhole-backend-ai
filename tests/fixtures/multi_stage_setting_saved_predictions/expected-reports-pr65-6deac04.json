@@ -1,0 +1,2273 @@
+{
+  "baselineCommit": "6deac0400c7b84a22715d669f30dfb12a7ca2b34",
+  "modes": {
+    "ORACLE": {
+      "report": {
+        "reportVersion": "setting-eval-report/v3",
+        "run": {
+          "mode": "ORACLE",
+          "stateApplicationPolicy": "SCENARIO_LOCAL",
+          "domains": [
+            "CHARACTER",
+            "WORLD"
+          ],
+          "analysisModel": "synthetic-no-provider",
+          "subjectResolutionModel": null,
+          "comparisonModel": "synthetic-no-provider",
+          "promptVersions": {},
+          "characterSchemaHash": null,
+          "maxChunks": null,
+          "runtimeFailures": {
+            "total": 1,
+            "byStage": {
+              "CHARACTER_STAGE2": 1
+            },
+            "byErrorType": {
+              "SYNTHETIC_FAILURE": 1
+            }
+          },
+          "semanticJudgeEnabled": false,
+          "worldSettingNamePolicy": "item-scope-value-contextual/v2",
+          "semanticJudgeUsage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 0
+          },
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0,
+          "estimatedCostUsd": null
+        },
+        "dataset": {
+          "schemaVersion": "setting-eval/v3",
+          "name": "ordered-provisional legacy scorer regression",
+          "version": "synthetic-v1",
+          "fixtureHash": "86c8f0fe34e4dc40d11d45a0aa0fa60c15e1e0152adef536427e95776b43206f",
+          "scorable": true,
+          "scenarioCount": 2,
+          "dependencyScenarioCount": 0,
+          "episodes": [
+            1,
+            2
+          ]
+        },
+        "stages": {
+          "character": {
+            "stage1": {
+              "evaluated": false,
+              "reason": "ORACLE isolates Stage2."
+            },
+            "stage2": {
+              "metrics": {
+                "upstreamReachRate": 1.0,
+                "operationAccuracy": 0.5,
+                "characterCanonicalFactKeyResolutionAccuracy": 1.0,
+                "targetAccuracy": 1.0,
+                "removedSnapshotSetAccuracy": 1.0,
+                "temporalAccuracy": 1.0,
+                "consolidationAccuracy": null,
+                "proposedPathAccuracy": null,
+                "existingRootPropertyMoveSetAccuracy": null,
+                "proposedValueAccuracy": 1.0,
+                "resolvedProposedValueAccuracy": 1.0,
+                "proposedValueLowerBoundAccuracy": 1.0,
+                "proposedValueSemanticCoverage": 1.0,
+                "proposedValueJsonAccuracy": null,
+                "fullDecisionAccuracy": 0.5,
+                "resolvedFullDecisionAccuracy": 0.5,
+                "fullDecisionLowerBoundAccuracy": 0.5,
+                "semanticCoverage": 1.0,
+                "selectiveCoverage": 0.5,
+                "selectiveAccuracy": 1.0,
+                "resolvedSelectiveAccuracy": 1.0,
+                "selectiveLowerBoundAccuracy": 1.0,
+                "reviewRequiredRecall": null,
+                "falsePositiveSuppressionRate": null,
+                "harmfulActionRate": null,
+                "oracleAccuracy": 0.5,
+                "liveConditionalAccuracy": null
+              },
+              "counts": {
+                "gold": 2,
+                "waitingForCharacterMatch": 0,
+                "upstreamReached": 2,
+                "reachedAndCompared": 1,
+                "semanticPending": 0,
+                "upstreamOutcomes": {
+                  "REACHED": 2
+                },
+                "safeNoopCases": 0,
+                "harmfulActions": 0,
+                "extraStage1Predictions": 0,
+                "suppressedExtraPredictions": 0
+              }
+            }
+          },
+          "world": {
+            "stage1": {
+              "evaluated": false,
+              "reason": "ORACLE isolates Stage2."
+            },
+            "stage2": {
+              "metrics": {
+                "upstreamReachRate": 1.0,
+                "operationAccuracy": 0.5,
+                "characterCanonicalFactKeyResolutionAccuracy": null,
+                "targetAccuracy": 0.5,
+                "removedSnapshotSetAccuracy": null,
+                "temporalAccuracy": null,
+                "consolidationAccuracy": 1.0,
+                "proposedPathAccuracy": 1.0,
+                "existingRootPropertyMoveSetAccuracy": null,
+                "proposedValueAccuracy": null,
+                "resolvedProposedValueAccuracy": 1.0,
+                "proposedValueLowerBoundAccuracy": 0.5,
+                "proposedValueSemanticCoverage": 0.5,
+                "proposedValueJsonAccuracy": null,
+                "fullDecisionAccuracy": null,
+                "resolvedFullDecisionAccuracy": 0.0,
+                "fullDecisionLowerBoundAccuracy": 0.0,
+                "semanticCoverage": 0.5,
+                "selectiveCoverage": 1.0,
+                "selectiveAccuracy": null,
+                "resolvedSelectiveAccuracy": 0.0,
+                "selectiveLowerBoundAccuracy": 0.0,
+                "reviewRequiredRecall": null,
+                "falsePositiveSuppressionRate": null,
+                "harmfulActionRate": 1.0,
+                "oracleAccuracy": null,
+                "liveConditionalAccuracy": null
+              },
+              "counts": {
+                "gold": 2,
+                "waitingForCharacterMatch": 0,
+                "upstreamReached": 2,
+                "reachedAndCompared": 2,
+                "semanticPending": 1,
+                "upstreamOutcomes": {
+                  "REACHED": 2
+                },
+                "safeNoopCases": 1,
+                "harmfulActions": 1,
+                "extraStage1Predictions": 0,
+                "suppressedExtraPredictions": 0
+              }
+            }
+          },
+          "macroAverage": {
+            "stage1CandidateF1": null,
+            "stage2FullDecisionAccuracy": null,
+            "stage2ResolvedFullDecisionAccuracy": 0.25,
+            "stage2FullDecisionLowerBoundAccuracy": 0.25
+          }
+        },
+        "endToEnd": {
+          "metrics": {
+            "afterStateF1": null,
+            "resolvedAfterStateF1": 0.8333333333333333,
+            "afterStateLowerBoundF1": 0.5833333333333333,
+            "transitionPrecision": null,
+            "transitionRecall": null,
+            "transitionF1": null,
+            "resolvedTransitionPrecision": 1.0,
+            "resolvedTransitionRecall": 0.375,
+            "resolvedTransitionF1": 0.5454545454545454,
+            "transitionLowerBoundF1": 0.46153846153846156,
+            "rollingStateDivergence": null
+          },
+          "domains": {
+            "CHARACTER": {
+              "afterStatePrecision": 1.0,
+              "afterStateRecall": 0.5,
+              "afterStateF1": 0.6666666666666666,
+              "resolvedAfterStatePrecision": 1.0,
+              "resolvedAfterStateRecall": 0.5,
+              "resolvedAfterStateF1": 0.6666666666666666,
+              "afterStateLowerBoundF1": 0.6666666666666666,
+              "semanticCoverage": 1.0,
+              "semanticPending": 0
+            },
+            "WORLD": {
+              "afterStatePrecision": null,
+              "afterStateRecall": null,
+              "afterStateF1": null,
+              "resolvedAfterStatePrecision": 1.0,
+              "resolvedAfterStateRecall": 1.0,
+              "resolvedAfterStateF1": 1.0,
+              "afterStateLowerBoundF1": 0.5,
+              "semanticCoverage": 0.5,
+              "semanticPending": 1
+            }
+          },
+          "counts": {
+            "stateApplicationErrors": 1,
+            "dependencyStateApplicationErrors": 0,
+            "expectedTransitions": 9,
+            "predictedTransitions": 4,
+            "matchedTransitions": 3,
+            "semanticPendingTransitions": 1
+          },
+          "scenarios": [
+            {
+              "scenarioId": "S1",
+              "episodeNo": 1,
+              "afterStateF1": null,
+              "afterStateLowerBoundF1": 0.0,
+              "semanticPending": 1,
+              "rollingStateDivergence": null,
+              "expectedStateHash": "027c54c6cdb0f7f98c78e85ede2c48c5940fbd0e7e1c01d754c16e760194c277",
+              "predictedStateHash": "f23090004d91e36961652cbb77a6831db3c4fee527e32718f345ec0f6d641f44"
+            },
+            {
+              "scenarioId": "S2",
+              "episodeNo": 2,
+              "afterStateF1": 1.0,
+              "afterStateLowerBoundF1": 1.0,
+              "semanticPending": 0,
+              "rollingStateDivergence": 0.0,
+              "expectedStateHash": "38456841c6e862b698595263b4c875be05f0f92bfa510a2c8a7ace9c3522062f",
+              "predictedStateHash": "38456841c6e862b698595263b4c875be05f0f92bfa510a2c8a7ace9c3522062f"
+            }
+          ]
+        },
+        "failureCauses": {
+          "COMPARISON_ERROR": 2,
+          "STATE_APPLICATION_ERROR": 1
+        },
+        "scenarios": [
+          {
+            "scenarioId": "S1",
+            "episodeNo": 1,
+            "stage1": {},
+            "stage2": [
+              {
+                "decisionId": "DC1",
+                "domain": "CHARACTER",
+                "upstreamOutcome": "REACHED",
+                "failureCause": "COMPARISON_ERROR",
+                "operationMatched": false,
+                "characterCanonicalFactKeyResolutionMatched": null,
+                "targetMatched": null,
+                "removedSnapshotSetMatched": null,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": null,
+                "fullDecisionMatched": false,
+                "result": "COMPARATOR_MISSING",
+                "sourceGoldIds": [
+                  "C1"
+                ],
+                "sourceCandidateId": null,
+                "expected": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "status.arm_injury",
+                  "value": "왼팔 부상",
+                  "temporalScope": "PRESENT",
+                  "removedCount": 0,
+                  "removedPaths": []
+                },
+                "actual": null,
+                "fields": {
+                  "operation": "MISMATCH"
+                }
+              },
+              {
+                "decisionId": "DW1",
+                "domain": "WORLD",
+                "upstreamOutcome": "REACHED",
+                "failureCause": null,
+                "operationMatched": true,
+                "characterCanonicalFactKeyResolutionMatched": null,
+                "targetMatched": true,
+                "removedSnapshotSetMatched": null,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": null,
+                "fullDecisionMatched": null,
+                "result": "SEMANTIC_PENDING",
+                "sourceGoldIds": [
+                  "W1"
+                ],
+                "sourceCandidateId": "W1",
+                "expected": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "불빛",
+                  "value": "파란색",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "actual": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "불빛",
+                  "value": "푸른 빛",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "fields": {
+                  "operation": "MATCH",
+                  "target": "MATCH",
+                  "value": "PENDING",
+                  "consolidation": "MATCH",
+                  "proposedPath": "MATCH",
+                  "stateApplication": "MATCH"
+                },
+                "settingNameMatch": {
+                  "status": "MATCH",
+                  "method": "EXACT"
+                },
+                "matchedPropertyNameMatch": {
+                  "status": "MATCH",
+                  "method": "EXACT"
+                },
+                "processing": {
+                  "candidateId": "W1",
+                  "domain": "WORLD",
+                  "status": "COMPARED",
+                  "reasonCode": "DECISION_RECORDED",
+                  "comparisonForwarded": true,
+                  "stage": "WORLD_STAGE2",
+                  "failureCode": null,
+                  "decisionSourceCandidateId": "W1",
+                  "operation": "ADD",
+                  "recordOrigin": "LEGACY_CONFIRMED"
+                },
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛",
+                  "value": "파란색"
+                }
+              }
+            ],
+            "beforeStateHash": "d38d1436ab573b0e60314001a60ab55ca468cb4d89f4531609c662c1138e5db6",
+            "expectedAfterStateHash": "027c54c6cdb0f7f98c78e85ede2c48c5940fbd0e7e1c01d754c16e760194c277",
+            "predictedAfterStateHash": "f23090004d91e36961652cbb77a6831db3c4fee527e32718f345ec0f6d641f44",
+            "stateErrors": [],
+            "processingVersion": null,
+            "processing": [
+              {
+                "candidateId": "C1",
+                "domain": "CHARACTER",
+                "status": "RECORD_UNAVAILABLE",
+                "reasonCode": "LEGACY_RECORD_MISSING",
+                "comparisonForwarded": null,
+                "stage": null,
+                "failureCode": null,
+                "decisionSourceCandidateId": null,
+                "operation": null,
+                "recordOrigin": "UNAVAILABLE",
+                "goldIds": [],
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury"
+                }
+              },
+              {
+                "candidateId": "W1",
+                "domain": "WORLD",
+                "status": "COMPARED",
+                "reasonCode": "DECISION_RECORDED",
+                "comparisonForwarded": true,
+                "stage": "WORLD_STAGE2",
+                "failureCode": null,
+                "decisionSourceCandidateId": "W1",
+                "operation": "ADD",
+                "recordOrigin": "LEGACY_CONFIRMED",
+                "goldIds": [],
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛"
+                }
+              }
+            ]
+          },
+          {
+            "scenarioId": "S2",
+            "episodeNo": 2,
+            "stage1": {},
+            "stage2": [
+              {
+                "decisionId": "DC2",
+                "domain": "CHARACTER",
+                "upstreamOutcome": "REACHED",
+                "failureCause": null,
+                "operationMatched": true,
+                "characterCanonicalFactKeyResolutionMatched": true,
+                "targetMatched": true,
+                "removedSnapshotSetMatched": true,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": true,
+                "fullDecisionMatched": true,
+                "result": "FULL_MATCH",
+                "sourceGoldIds": [
+                  "C2"
+                ],
+                "sourceCandidateId": "C2",
+                "expected": {
+                  "operation": "REMOVE",
+                  "target": null,
+                  "path": "status.arm_injury",
+                  "value": null,
+                  "temporalScope": "PRESENT",
+                  "removedCount": 1,
+                  "removedPaths": [
+                    "가람 · STATUS › status.arm_injury"
+                  ]
+                },
+                "actual": {
+                  "operation": "REMOVE",
+                  "target": null,
+                  "path": "status.arm_injury",
+                  "value": null,
+                  "temporalScope": "PRESENT",
+                  "removedCount": 1,
+                  "removedPaths": [
+                    "가람 · STATUS › status.arm_injury"
+                  ]
+                },
+                "fields": {
+                  "operation": "MATCH",
+                  "target": "MATCH",
+                  "value": "MATCH",
+                  "canonicalPath": "MATCH",
+                  "temporal": "MATCH",
+                  "removedSet": "MATCH"
+                },
+                "processing": {
+                  "candidateId": "C2",
+                  "domain": "CHARACTER",
+                  "status": "COMPARED",
+                  "reasonCode": "DECISION_RECORDED",
+                  "comparisonForwarded": true,
+                  "stage": "CHARACTER_STAGE2",
+                  "failureCode": null,
+                  "decisionSourceCandidateId": "C2",
+                  "operation": "REMOVE",
+                  "recordOrigin": "LEGACY_CONFIRMED"
+                },
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury",
+                  "value": "왼팔 회복"
+                }
+              },
+              {
+                "decisionId": "DW2",
+                "domain": "WORLD",
+                "upstreamOutcome": "REACHED",
+                "failureCause": "COMPARISON_ERROR",
+                "operationMatched": false,
+                "characterCanonicalFactKeyResolutionMatched": null,
+                "targetMatched": false,
+                "removedSnapshotSetMatched": null,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": true,
+                "fullDecisionMatched": false,
+                "result": "DECISION_MISMATCH",
+                "sourceGoldIds": [
+                  "W2"
+                ],
+                "sourceCandidateId": "W2",
+                "expected": {
+                  "operation": "EXCLUDE",
+                  "target": "LOCATION · 등대 · 불빛",
+                  "path": "불빛",
+                  "value": "파란색",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "actual": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "불빛",
+                  "value": "파란색",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "fields": {
+                  "operation": "MISMATCH",
+                  "target": "MISMATCH",
+                  "value": "MATCH",
+                  "consolidation": "MATCH",
+                  "proposedPath": "MATCH",
+                  "stateApplication": "MISMATCH"
+                },
+                "settingNameMatch": {
+                  "status": "MATCH",
+                  "method": "EXACT"
+                },
+                "matchedPropertyNameMatch": {
+                  "status": "MISMATCH",
+                  "method": "UNRESOLVED"
+                },
+                "processing": {
+                  "candidateId": "W2",
+                  "domain": "WORLD",
+                  "status": "COMPARED",
+                  "reasonCode": "DECISION_RECORDED",
+                  "comparisonForwarded": true,
+                  "stage": "WORLD_STAGE2",
+                  "failureCode": null,
+                  "decisionSourceCandidateId": "W2",
+                  "operation": "ADD",
+                  "recordOrigin": "LEGACY_CONFIRMED"
+                },
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛",
+                  "value": "파란색"
+                }
+              }
+            ],
+            "beforeStateHash": "027c54c6cdb0f7f98c78e85ede2c48c5940fbd0e7e1c01d754c16e760194c277",
+            "expectedAfterStateHash": "38456841c6e862b698595263b4c875be05f0f92bfa510a2c8a7ace9c3522062f",
+            "predictedAfterStateHash": "38456841c6e862b698595263b4c875be05f0f92bfa510a2c8a7ace9c3522062f",
+            "stateErrors": [
+              {
+                "scenarioId": "S2",
+                "sourceCandidateId": "W2",
+                "reason": "Prediction decision violates the reference reducer contract."
+              }
+            ],
+            "processingVersion": null,
+            "processing": [
+              {
+                "candidateId": "C2",
+                "domain": "CHARACTER",
+                "status": "COMPARED",
+                "reasonCode": "DECISION_RECORDED",
+                "comparisonForwarded": true,
+                "stage": "CHARACTER_STAGE2",
+                "failureCode": null,
+                "decisionSourceCandidateId": "C2",
+                "operation": "REMOVE",
+                "recordOrigin": "LEGACY_CONFIRMED",
+                "goldIds": [],
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury"
+                }
+              },
+              {
+                "candidateId": "W2",
+                "domain": "WORLD",
+                "status": "COMPARED",
+                "reasonCode": "DECISION_RECORDED",
+                "comparisonForwarded": true,
+                "stage": "WORLD_STAGE2",
+                "failureCode": null,
+                "decisionSourceCandidateId": "W2",
+                "operation": "ADD",
+                "recordOrigin": "LEGACY_CONFIRMED",
+                "goldIds": [],
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "FIXED": {
+      "report": {
+        "reportVersion": "setting-eval-report/v3",
+        "run": {
+          "mode": "FIXED",
+          "stateApplicationPolicy": "SCENARIO_LOCAL",
+          "domains": [
+            "CHARACTER",
+            "WORLD"
+          ],
+          "analysisModel": "synthetic-no-provider",
+          "subjectResolutionModel": null,
+          "comparisonModel": "synthetic-no-provider",
+          "promptVersions": {},
+          "characterSchemaHash": null,
+          "maxChunks": null,
+          "runtimeFailures": {
+            "total": 1,
+            "byStage": {
+              "CHARACTER_STAGE2": 1
+            },
+            "byErrorType": {
+              "SYNTHETIC_FAILURE": 1
+            }
+          },
+          "semanticJudgeEnabled": false,
+          "worldSettingNamePolicy": "item-scope-value-contextual/v2",
+          "semanticJudgeUsage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 0
+          },
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0,
+          "estimatedCostUsd": null
+        },
+        "dataset": {
+          "schemaVersion": "setting-eval/v3",
+          "name": "ordered-provisional legacy scorer regression",
+          "version": "synthetic-v1",
+          "fixtureHash": "86c8f0fe34e4dc40d11d45a0aa0fa60c15e1e0152adef536427e95776b43206f",
+          "scorable": true,
+          "scenarioCount": 2,
+          "dependencyScenarioCount": 0,
+          "episodes": [
+            1,
+            2
+          ]
+        },
+        "stages": {
+          "character": {
+            "stage1": {
+              "evaluated": true,
+              "metrics": {
+                "candidatePrecision": 1.0,
+                "candidateRecall": 1.0,
+                "candidateF1": 1.0,
+                "weightedRecall": 1.0,
+                "entityOrSubjectAccuracy": 1.0,
+                "pathOrFactAccuracy": 1.0,
+                "valueAccuracy": 1.0,
+                "resolvedValueAccuracy": 1.0,
+                "valueLowerBoundAccuracy": 1.0,
+                "valueSemanticCoverage": 1.0,
+                "valueTypeAccuracy": 1.0,
+                "structuredValueAccuracy": 1.0,
+                "evidenceLocatableRate": 0.0,
+                "evidenceCoverageRate": 1.0
+              },
+              "counts": {
+                "gold": 2,
+                "predictions": 2,
+                "matches": 2,
+                "identityTruePositive": 2,
+                "missed": 0,
+                "extra": 0,
+                "hardNegativeHits": 0,
+                "semanticPending": 0,
+                "rawPredictions": 2,
+                "handoffPredictions": 2,
+                "groupedPredictions": 2
+              }
+            },
+            "stage2": {
+              "metrics": {
+                "upstreamReachRate": 1.0,
+                "operationAccuracy": 0.5,
+                "characterCanonicalFactKeyResolutionAccuracy": 1.0,
+                "targetAccuracy": 1.0,
+                "removedSnapshotSetAccuracy": 1.0,
+                "temporalAccuracy": 1.0,
+                "consolidationAccuracy": null,
+                "proposedPathAccuracy": null,
+                "existingRootPropertyMoveSetAccuracy": null,
+                "proposedValueAccuracy": 1.0,
+                "resolvedProposedValueAccuracy": 1.0,
+                "proposedValueLowerBoundAccuracy": 1.0,
+                "proposedValueSemanticCoverage": 1.0,
+                "proposedValueJsonAccuracy": null,
+                "fullDecisionAccuracy": 0.5,
+                "resolvedFullDecisionAccuracy": 0.5,
+                "fullDecisionLowerBoundAccuracy": 0.5,
+                "semanticCoverage": 1.0,
+                "selectiveCoverage": 0.5,
+                "selectiveAccuracy": 1.0,
+                "resolvedSelectiveAccuracy": 1.0,
+                "selectiveLowerBoundAccuracy": 1.0,
+                "reviewRequiredRecall": null,
+                "falsePositiveSuppressionRate": null,
+                "harmfulActionRate": null,
+                "oracleAccuracy": null,
+                "liveConditionalAccuracy": 0.5
+              },
+              "counts": {
+                "gold": 2,
+                "waitingForCharacterMatch": 0,
+                "upstreamReached": 2,
+                "reachedAndCompared": 1,
+                "semanticPending": 0,
+                "upstreamOutcomes": {
+                  "REACHED": 2
+                },
+                "safeNoopCases": 0,
+                "harmfulActions": 0,
+                "extraStage1Predictions": 0,
+                "suppressedExtraPredictions": 0
+              }
+            }
+          },
+          "world": {
+            "stage1": {
+              "evaluated": true,
+              "metrics": {
+                "candidatePrecision": 1.0,
+                "candidateRecall": 1.0,
+                "candidateF1": 1.0,
+                "weightedRecall": 1.0,
+                "entityOrSubjectAccuracy": 1.0,
+                "pathOrFactAccuracy": 1.0,
+                "valueAccuracy": 1.0,
+                "resolvedValueAccuracy": 1.0,
+                "valueLowerBoundAccuracy": 1.0,
+                "valueSemanticCoverage": 1.0,
+                "valueTypeAccuracy": null,
+                "structuredValueAccuracy": null,
+                "evidenceLocatableRate": 0.0,
+                "evidenceCoverageRate": 1.0
+              },
+              "counts": {
+                "gold": 2,
+                "predictions": 2,
+                "matches": 2,
+                "identityTruePositive": 2,
+                "missed": 0,
+                "extra": 0,
+                "hardNegativeHits": 0,
+                "semanticPending": 0,
+                "rawPredictions": 2,
+                "handoffPredictions": 2,
+                "groupedPredictions": 2
+              }
+            },
+            "stage2": {
+              "metrics": {
+                "upstreamReachRate": 1.0,
+                "operationAccuracy": 0.5,
+                "characterCanonicalFactKeyResolutionAccuracy": null,
+                "targetAccuracy": 0.5,
+                "removedSnapshotSetAccuracy": null,
+                "temporalAccuracy": null,
+                "consolidationAccuracy": 1.0,
+                "proposedPathAccuracy": 1.0,
+                "existingRootPropertyMoveSetAccuracy": null,
+                "proposedValueAccuracy": null,
+                "resolvedProposedValueAccuracy": 1.0,
+                "proposedValueLowerBoundAccuracy": 0.5,
+                "proposedValueSemanticCoverage": 0.5,
+                "proposedValueJsonAccuracy": null,
+                "fullDecisionAccuracy": null,
+                "resolvedFullDecisionAccuracy": 0.0,
+                "fullDecisionLowerBoundAccuracy": 0.0,
+                "semanticCoverage": 0.5,
+                "selectiveCoverage": 1.0,
+                "selectiveAccuracy": null,
+                "resolvedSelectiveAccuracy": 0.0,
+                "selectiveLowerBoundAccuracy": 0.0,
+                "reviewRequiredRecall": null,
+                "falsePositiveSuppressionRate": null,
+                "harmfulActionRate": 1.0,
+                "oracleAccuracy": null,
+                "liveConditionalAccuracy": null
+              },
+              "counts": {
+                "gold": 2,
+                "waitingForCharacterMatch": 0,
+                "upstreamReached": 2,
+                "reachedAndCompared": 2,
+                "semanticPending": 1,
+                "upstreamOutcomes": {
+                  "REACHED": 2
+                },
+                "safeNoopCases": 1,
+                "harmfulActions": 1,
+                "extraStage1Predictions": 0,
+                "suppressedExtraPredictions": 0
+              }
+            }
+          },
+          "macroAverage": {
+            "stage1CandidateF1": 1.0,
+            "stage2FullDecisionAccuracy": null,
+            "stage2ResolvedFullDecisionAccuracy": 0.25,
+            "stage2FullDecisionLowerBoundAccuracy": 0.25
+          }
+        },
+        "endToEnd": {
+          "metrics": {
+            "afterStateF1": null,
+            "resolvedAfterStateF1": 0.8333333333333333,
+            "afterStateLowerBoundF1": 0.5833333333333333,
+            "transitionPrecision": null,
+            "transitionRecall": null,
+            "transitionF1": null,
+            "resolvedTransitionPrecision": 1.0,
+            "resolvedTransitionRecall": 0.375,
+            "resolvedTransitionF1": 0.5454545454545454,
+            "transitionLowerBoundF1": 0.46153846153846156,
+            "rollingStateDivergence": null
+          },
+          "domains": {
+            "CHARACTER": {
+              "afterStatePrecision": 1.0,
+              "afterStateRecall": 0.5,
+              "afterStateF1": 0.6666666666666666,
+              "resolvedAfterStatePrecision": 1.0,
+              "resolvedAfterStateRecall": 0.5,
+              "resolvedAfterStateF1": 0.6666666666666666,
+              "afterStateLowerBoundF1": 0.6666666666666666,
+              "semanticCoverage": 1.0,
+              "semanticPending": 0
+            },
+            "WORLD": {
+              "afterStatePrecision": null,
+              "afterStateRecall": null,
+              "afterStateF1": null,
+              "resolvedAfterStatePrecision": 1.0,
+              "resolvedAfterStateRecall": 1.0,
+              "resolvedAfterStateF1": 1.0,
+              "afterStateLowerBoundF1": 0.5,
+              "semanticCoverage": 0.5,
+              "semanticPending": 1
+            }
+          },
+          "counts": {
+            "stateApplicationErrors": 1,
+            "dependencyStateApplicationErrors": 0,
+            "expectedTransitions": 9,
+            "predictedTransitions": 4,
+            "matchedTransitions": 3,
+            "semanticPendingTransitions": 1
+          },
+          "scenarios": [
+            {
+              "scenarioId": "S1",
+              "episodeNo": 1,
+              "afterStateF1": null,
+              "afterStateLowerBoundF1": 0.0,
+              "semanticPending": 1,
+              "rollingStateDivergence": null,
+              "expectedStateHash": "027c54c6cdb0f7f98c78e85ede2c48c5940fbd0e7e1c01d754c16e760194c277",
+              "predictedStateHash": "f23090004d91e36961652cbb77a6831db3c4fee527e32718f345ec0f6d641f44"
+            },
+            {
+              "scenarioId": "S2",
+              "episodeNo": 2,
+              "afterStateF1": 1.0,
+              "afterStateLowerBoundF1": 1.0,
+              "semanticPending": 0,
+              "rollingStateDivergence": 0.0,
+              "expectedStateHash": "38456841c6e862b698595263b4c875be05f0f92bfa510a2c8a7ace9c3522062f",
+              "predictedStateHash": "38456841c6e862b698595263b4c875be05f0f92bfa510a2c8a7ace9c3522062f"
+            }
+          ]
+        },
+        "failureCauses": {
+          "COMPARISON_ERROR": 2,
+          "STATE_APPLICATION_ERROR": 1,
+          "UPSTREAM_FALSE_POSITIVE": 0
+        },
+        "scenarios": [
+          {
+            "scenarioId": "S1",
+            "episodeNo": 1,
+            "stage1": {
+              "CHARACTER": {
+                "missedGoldIds": [],
+                "extraPredictionIds": [],
+                "upstreamOutcomes": {
+                  "C1": "REACHED"
+                },
+                "cases": [
+                  {
+                    "result": "FULL_MATCH",
+                    "sortOrder": 1,
+                    "goldIds": [
+                      "C1"
+                    ],
+                    "predictionId": "PC1",
+                    "expected": {
+                      "subject": "가람",
+                      "path": "STATUS › status.arm_injury",
+                      "value": "왼팔 부상"
+                    },
+                    "actual": {
+                      "subject": "가람",
+                      "path": "STATUS › status.arm_injury",
+                      "value": "왼팔 부상"
+                    },
+                    "fields": {
+                      "subject": "MATCH",
+                      "path": "MATCH",
+                      "value": "MATCH"
+                    },
+                    "upstreamOutcome": "REACHED",
+                    "processing": {
+                      "candidateId": "PC1",
+                      "domain": "CHARACTER",
+                      "status": "RECORD_UNAVAILABLE",
+                      "reasonCode": "LEGACY_RECORD_MISSING",
+                      "comparisonForwarded": null,
+                      "stage": null,
+                      "failureCode": null,
+                      "decisionSourceCandidateId": null,
+                      "operation": null,
+                      "recordOrigin": "UNAVAILABLE"
+                    }
+                  }
+                ]
+              },
+              "WORLD": {
+                "missedGoldIds": [],
+                "extraPredictionIds": [],
+                "upstreamOutcomes": {
+                  "W1": "REACHED"
+                },
+                "cases": [
+                  {
+                    "result": "FULL_MATCH",
+                    "sortOrder": 2,
+                    "goldIds": [
+                      "W1"
+                    ],
+                    "predictionId": "PW1",
+                    "expected": {
+                      "subject": "LOCATION · 등대",
+                      "path": "불빛",
+                      "value": "파란색"
+                    },
+                    "actual": {
+                      "subject": "LOCATION · 등대",
+                      "path": "불빛",
+                      "value": "파란색"
+                    },
+                    "fields": {
+                      "subject": "MATCH",
+                      "path": "MATCH",
+                      "value": "MATCH"
+                    },
+                    "upstreamOutcome": "REACHED",
+                    "settingNameMatch": {
+                      "status": "MATCH",
+                      "method": "EXACT"
+                    },
+                    "processing": {
+                      "candidateId": "PW1",
+                      "domain": "WORLD",
+                      "status": "COMPARED",
+                      "reasonCode": "DECISION_RECORDED",
+                      "comparisonForwarded": true,
+                      "stage": "WORLD_STAGE2",
+                      "failureCode": null,
+                      "decisionSourceCandidateId": "PW1",
+                      "operation": "ADD",
+                      "recordOrigin": "LEGACY_CONFIRMED"
+                    }
+                  }
+                ]
+              }
+            },
+            "stage2": [
+              {
+                "decisionId": "DC1",
+                "domain": "CHARACTER",
+                "upstreamOutcome": "REACHED",
+                "failureCause": "COMPARISON_ERROR",
+                "operationMatched": false,
+                "characterCanonicalFactKeyResolutionMatched": null,
+                "targetMatched": null,
+                "removedSnapshotSetMatched": null,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": null,
+                "fullDecisionMatched": false,
+                "result": "COMPARATOR_MISSING",
+                "sourceGoldIds": [
+                  "C1"
+                ],
+                "sourceCandidateId": "PC1",
+                "expected": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "status.arm_injury",
+                  "value": "왼팔 부상",
+                  "temporalScope": "PRESENT",
+                  "removedCount": 0,
+                  "removedPaths": []
+                },
+                "actual": null,
+                "fields": {
+                  "operation": "MISMATCH"
+                },
+                "processing": {
+                  "candidateId": "PC1",
+                  "domain": "CHARACTER",
+                  "status": "RECORD_UNAVAILABLE",
+                  "reasonCode": "LEGACY_RECORD_MISSING",
+                  "comparisonForwarded": null,
+                  "stage": null,
+                  "failureCode": null,
+                  "decisionSourceCandidateId": null,
+                  "operation": null,
+                  "recordOrigin": "UNAVAILABLE"
+                },
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury",
+                  "value": "왼팔 부상"
+                }
+              },
+              {
+                "decisionId": "DW1",
+                "domain": "WORLD",
+                "upstreamOutcome": "REACHED",
+                "failureCause": null,
+                "operationMatched": true,
+                "characterCanonicalFactKeyResolutionMatched": null,
+                "targetMatched": true,
+                "removedSnapshotSetMatched": null,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": null,
+                "fullDecisionMatched": null,
+                "result": "SEMANTIC_PENDING",
+                "sourceGoldIds": [
+                  "W1"
+                ],
+                "sourceCandidateId": "PW1",
+                "expected": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "불빛",
+                  "value": "파란색",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "actual": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "불빛",
+                  "value": "푸른 빛",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "fields": {
+                  "operation": "MATCH",
+                  "target": "MATCH",
+                  "value": "PENDING",
+                  "consolidation": "MATCH",
+                  "proposedPath": "MATCH",
+                  "stateApplication": "MATCH"
+                },
+                "settingNameMatch": {
+                  "status": "MATCH",
+                  "method": "EXACT"
+                },
+                "matchedPropertyNameMatch": {
+                  "status": "MATCH",
+                  "method": "EXACT"
+                },
+                "processing": {
+                  "candidateId": "PW1",
+                  "domain": "WORLD",
+                  "status": "COMPARED",
+                  "reasonCode": "DECISION_RECORDED",
+                  "comparisonForwarded": true,
+                  "stage": "WORLD_STAGE2",
+                  "failureCode": null,
+                  "decisionSourceCandidateId": "PW1",
+                  "operation": "ADD",
+                  "recordOrigin": "LEGACY_CONFIRMED"
+                },
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛",
+                  "value": "파란색"
+                }
+              }
+            ],
+            "beforeStateHash": "d38d1436ab573b0e60314001a60ab55ca468cb4d89f4531609c662c1138e5db6",
+            "expectedAfterStateHash": "027c54c6cdb0f7f98c78e85ede2c48c5940fbd0e7e1c01d754c16e760194c277",
+            "predictedAfterStateHash": "f23090004d91e36961652cbb77a6831db3c4fee527e32718f345ec0f6d641f44",
+            "stateErrors": [],
+            "processingVersion": null,
+            "processing": [
+              {
+                "candidateId": "PC1",
+                "domain": "CHARACTER",
+                "status": "RECORD_UNAVAILABLE",
+                "reasonCode": "LEGACY_RECORD_MISSING",
+                "comparisonForwarded": null,
+                "stage": null,
+                "failureCode": null,
+                "decisionSourceCandidateId": null,
+                "operation": null,
+                "recordOrigin": "UNAVAILABLE",
+                "goldIds": [
+                  "C1"
+                ],
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury"
+                }
+              },
+              {
+                "candidateId": "PW1",
+                "domain": "WORLD",
+                "status": "COMPARED",
+                "reasonCode": "DECISION_RECORDED",
+                "comparisonForwarded": true,
+                "stage": "WORLD_STAGE2",
+                "failureCode": null,
+                "decisionSourceCandidateId": "PW1",
+                "operation": "ADD",
+                "recordOrigin": "LEGACY_CONFIRMED",
+                "goldIds": [
+                  "W1"
+                ],
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛"
+                }
+              }
+            ]
+          },
+          {
+            "scenarioId": "S2",
+            "episodeNo": 2,
+            "stage1": {
+              "CHARACTER": {
+                "missedGoldIds": [],
+                "extraPredictionIds": [],
+                "upstreamOutcomes": {
+                  "C2": "REACHED"
+                },
+                "cases": [
+                  {
+                    "result": "FULL_MATCH",
+                    "sortOrder": 1,
+                    "goldIds": [
+                      "C2"
+                    ],
+                    "predictionId": "PC2",
+                    "expected": {
+                      "subject": "가람",
+                      "path": "STATUS › status.arm_injury",
+                      "value": "왼팔 회복"
+                    },
+                    "actual": {
+                      "subject": "가람",
+                      "path": "STATUS › status.arm_injury",
+                      "value": "왼팔 회복"
+                    },
+                    "fields": {
+                      "subject": "MATCH",
+                      "path": "MATCH",
+                      "value": "MATCH"
+                    },
+                    "upstreamOutcome": "REACHED",
+                    "processing": {
+                      "candidateId": "PC2",
+                      "domain": "CHARACTER",
+                      "status": "COMPARED",
+                      "reasonCode": "DECISION_RECORDED",
+                      "comparisonForwarded": true,
+                      "stage": "CHARACTER_STAGE2",
+                      "failureCode": null,
+                      "decisionSourceCandidateId": "PC2",
+                      "operation": "REMOVE",
+                      "recordOrigin": "LEGACY_CONFIRMED"
+                    }
+                  }
+                ]
+              },
+              "WORLD": {
+                "missedGoldIds": [],
+                "extraPredictionIds": [],
+                "upstreamOutcomes": {
+                  "W2": "REACHED"
+                },
+                "cases": [
+                  {
+                    "result": "FULL_MATCH",
+                    "sortOrder": 2,
+                    "goldIds": [
+                      "W2"
+                    ],
+                    "predictionId": "PW2",
+                    "expected": {
+                      "subject": "LOCATION · 등대",
+                      "path": "불빛",
+                      "value": "파란색"
+                    },
+                    "actual": {
+                      "subject": "LOCATION · 등대",
+                      "path": "불빛",
+                      "value": "파란색"
+                    },
+                    "fields": {
+                      "subject": "MATCH",
+                      "path": "MATCH",
+                      "value": "MATCH"
+                    },
+                    "upstreamOutcome": "REACHED",
+                    "settingNameMatch": {
+                      "status": "MATCH",
+                      "method": "EXACT"
+                    },
+                    "processing": {
+                      "candidateId": "PW2",
+                      "domain": "WORLD",
+                      "status": "COMPARED",
+                      "reasonCode": "DECISION_RECORDED",
+                      "comparisonForwarded": true,
+                      "stage": "WORLD_STAGE2",
+                      "failureCode": null,
+                      "decisionSourceCandidateId": "PW2",
+                      "operation": "ADD",
+                      "recordOrigin": "LEGACY_CONFIRMED"
+                    }
+                  }
+                ]
+              }
+            },
+            "stage2": [
+              {
+                "decisionId": "DC2",
+                "domain": "CHARACTER",
+                "upstreamOutcome": "REACHED",
+                "failureCause": null,
+                "operationMatched": true,
+                "characterCanonicalFactKeyResolutionMatched": true,
+                "targetMatched": true,
+                "removedSnapshotSetMatched": true,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": true,
+                "fullDecisionMatched": true,
+                "result": "FULL_MATCH",
+                "sourceGoldIds": [
+                  "C2"
+                ],
+                "sourceCandidateId": "PC2",
+                "expected": {
+                  "operation": "REMOVE",
+                  "target": null,
+                  "path": "status.arm_injury",
+                  "value": null,
+                  "temporalScope": "PRESENT",
+                  "removedCount": 1,
+                  "removedPaths": [
+                    "가람 · STATUS › status.arm_injury"
+                  ]
+                },
+                "actual": {
+                  "operation": "REMOVE",
+                  "target": null,
+                  "path": "status.arm_injury",
+                  "value": null,
+                  "temporalScope": "PRESENT",
+                  "removedCount": 1,
+                  "removedPaths": [
+                    "가람 · STATUS › status.arm_injury"
+                  ]
+                },
+                "fields": {
+                  "operation": "MATCH",
+                  "target": "MATCH",
+                  "value": "MATCH",
+                  "canonicalPath": "MATCH",
+                  "temporal": "MATCH",
+                  "removedSet": "MATCH"
+                },
+                "processing": {
+                  "candidateId": "PC2",
+                  "domain": "CHARACTER",
+                  "status": "COMPARED",
+                  "reasonCode": "DECISION_RECORDED",
+                  "comparisonForwarded": true,
+                  "stage": "CHARACTER_STAGE2",
+                  "failureCode": null,
+                  "decisionSourceCandidateId": "PC2",
+                  "operation": "REMOVE",
+                  "recordOrigin": "LEGACY_CONFIRMED"
+                },
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury",
+                  "value": "왼팔 회복"
+                }
+              },
+              {
+                "decisionId": "DW2",
+                "domain": "WORLD",
+                "upstreamOutcome": "REACHED",
+                "failureCause": "COMPARISON_ERROR",
+                "operationMatched": false,
+                "characterCanonicalFactKeyResolutionMatched": null,
+                "targetMatched": false,
+                "removedSnapshotSetMatched": null,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": true,
+                "fullDecisionMatched": false,
+                "result": "DECISION_MISMATCH",
+                "sourceGoldIds": [
+                  "W2"
+                ],
+                "sourceCandidateId": "PW2",
+                "expected": {
+                  "operation": "EXCLUDE",
+                  "target": "LOCATION · 등대 · 불빛",
+                  "path": "불빛",
+                  "value": "파란색",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "actual": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "불빛",
+                  "value": "파란색",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "fields": {
+                  "operation": "MISMATCH",
+                  "target": "MISMATCH",
+                  "value": "MATCH",
+                  "consolidation": "MATCH",
+                  "proposedPath": "MATCH",
+                  "stateApplication": "MISMATCH"
+                },
+                "settingNameMatch": {
+                  "status": "MATCH",
+                  "method": "EXACT"
+                },
+                "matchedPropertyNameMatch": {
+                  "status": "MISMATCH",
+                  "method": "UNRESOLVED"
+                },
+                "processing": {
+                  "candidateId": "PW2",
+                  "domain": "WORLD",
+                  "status": "COMPARED",
+                  "reasonCode": "DECISION_RECORDED",
+                  "comparisonForwarded": true,
+                  "stage": "WORLD_STAGE2",
+                  "failureCode": null,
+                  "decisionSourceCandidateId": "PW2",
+                  "operation": "ADD",
+                  "recordOrigin": "LEGACY_CONFIRMED"
+                },
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛",
+                  "value": "파란색"
+                }
+              }
+            ],
+            "beforeStateHash": "027c54c6cdb0f7f98c78e85ede2c48c5940fbd0e7e1c01d754c16e760194c277",
+            "expectedAfterStateHash": "38456841c6e862b698595263b4c875be05f0f92bfa510a2c8a7ace9c3522062f",
+            "predictedAfterStateHash": "38456841c6e862b698595263b4c875be05f0f92bfa510a2c8a7ace9c3522062f",
+            "stateErrors": [
+              {
+                "scenarioId": "S2",
+                "sourceCandidateId": "PW2",
+                "reason": "Prediction decision violates the reference reducer contract."
+              }
+            ],
+            "processingVersion": null,
+            "processing": [
+              {
+                "candidateId": "PC2",
+                "domain": "CHARACTER",
+                "status": "COMPARED",
+                "reasonCode": "DECISION_RECORDED",
+                "comparisonForwarded": true,
+                "stage": "CHARACTER_STAGE2",
+                "failureCode": null,
+                "decisionSourceCandidateId": "PC2",
+                "operation": "REMOVE",
+                "recordOrigin": "LEGACY_CONFIRMED",
+                "goldIds": [
+                  "C2"
+                ],
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury"
+                }
+              },
+              {
+                "candidateId": "PW2",
+                "domain": "WORLD",
+                "status": "COMPARED",
+                "reasonCode": "DECISION_RECORDED",
+                "comparisonForwarded": true,
+                "stage": "WORLD_STAGE2",
+                "failureCode": null,
+                "decisionSourceCandidateId": "PW2",
+                "operation": "ADD",
+                "recordOrigin": "LEGACY_CONFIRMED",
+                "goldIds": [
+                  "W2"
+                ],
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ROLLING": {
+      "report": {
+        "reportVersion": "setting-eval-report/v3",
+        "run": {
+          "mode": "ROLLING",
+          "stateApplicationPolicy": "ACCEPT_ALL_PREDICTIONS",
+          "domains": [
+            "CHARACTER",
+            "WORLD"
+          ],
+          "analysisModel": "synthetic-no-provider",
+          "subjectResolutionModel": null,
+          "comparisonModel": "synthetic-no-provider",
+          "promptVersions": {},
+          "characterSchemaHash": null,
+          "maxChunks": null,
+          "runtimeFailures": {
+            "total": 1,
+            "byStage": {
+              "CHARACTER_STAGE2": 1
+            },
+            "byErrorType": {
+              "SYNTHETIC_FAILURE": 1
+            }
+          },
+          "semanticJudgeEnabled": false,
+          "worldSettingNamePolicy": "item-scope-value-contextual/v2",
+          "semanticJudgeUsage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 0
+          },
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0,
+          "estimatedCostUsd": null
+        },
+        "dataset": {
+          "schemaVersion": "setting-eval/v3",
+          "name": "ordered-provisional legacy scorer regression",
+          "version": "synthetic-v1",
+          "fixtureHash": "86c8f0fe34e4dc40d11d45a0aa0fa60c15e1e0152adef536427e95776b43206f",
+          "scorable": true,
+          "scenarioCount": 2,
+          "dependencyScenarioCount": 0,
+          "episodes": [
+            1,
+            2
+          ]
+        },
+        "stages": {
+          "character": {
+            "stage1": {
+              "evaluated": true,
+              "metrics": {
+                "candidatePrecision": 1.0,
+                "candidateRecall": 1.0,
+                "candidateF1": 1.0,
+                "weightedRecall": 1.0,
+                "entityOrSubjectAccuracy": 1.0,
+                "pathOrFactAccuracy": 1.0,
+                "valueAccuracy": 1.0,
+                "resolvedValueAccuracy": 1.0,
+                "valueLowerBoundAccuracy": 1.0,
+                "valueSemanticCoverage": 1.0,
+                "valueTypeAccuracy": 1.0,
+                "structuredValueAccuracy": 1.0,
+                "evidenceLocatableRate": 0.0,
+                "evidenceCoverageRate": 1.0
+              },
+              "counts": {
+                "gold": 2,
+                "predictions": 2,
+                "matches": 2,
+                "identityTruePositive": 2,
+                "missed": 0,
+                "extra": 0,
+                "hardNegativeHits": 0,
+                "semanticPending": 0,
+                "rawPredictions": 2,
+                "handoffPredictions": 2,
+                "groupedPredictions": 2
+              }
+            },
+            "stage2": {
+              "metrics": {
+                "upstreamReachRate": 1.0,
+                "operationAccuracy": 0.5,
+                "characterCanonicalFactKeyResolutionAccuracy": 1.0,
+                "targetAccuracy": 1.0,
+                "removedSnapshotSetAccuracy": 1.0,
+                "temporalAccuracy": 1.0,
+                "consolidationAccuracy": null,
+                "proposedPathAccuracy": null,
+                "existingRootPropertyMoveSetAccuracy": null,
+                "proposedValueAccuracy": 1.0,
+                "resolvedProposedValueAccuracy": 1.0,
+                "proposedValueLowerBoundAccuracy": 1.0,
+                "proposedValueSemanticCoverage": 1.0,
+                "proposedValueJsonAccuracy": null,
+                "fullDecisionAccuracy": 0.5,
+                "resolvedFullDecisionAccuracy": 0.5,
+                "fullDecisionLowerBoundAccuracy": 0.5,
+                "semanticCoverage": 1.0,
+                "selectiveCoverage": 0.5,
+                "selectiveAccuracy": 1.0,
+                "resolvedSelectiveAccuracy": 1.0,
+                "selectiveLowerBoundAccuracy": 1.0,
+                "reviewRequiredRecall": null,
+                "falsePositiveSuppressionRate": null,
+                "harmfulActionRate": null,
+                "oracleAccuracy": null,
+                "liveConditionalAccuracy": 0.5
+              },
+              "counts": {
+                "gold": 2,
+                "waitingForCharacterMatch": 0,
+                "upstreamReached": 2,
+                "reachedAndCompared": 1,
+                "semanticPending": 0,
+                "upstreamOutcomes": {
+                  "REACHED": 2
+                },
+                "safeNoopCases": 0,
+                "harmfulActions": 0,
+                "extraStage1Predictions": 0,
+                "suppressedExtraPredictions": 0
+              }
+            }
+          },
+          "world": {
+            "stage1": {
+              "evaluated": true,
+              "metrics": {
+                "candidatePrecision": 1.0,
+                "candidateRecall": 1.0,
+                "candidateF1": 1.0,
+                "weightedRecall": 1.0,
+                "entityOrSubjectAccuracy": 1.0,
+                "pathOrFactAccuracy": 1.0,
+                "valueAccuracy": 1.0,
+                "resolvedValueAccuracy": 1.0,
+                "valueLowerBoundAccuracy": 1.0,
+                "valueSemanticCoverage": 1.0,
+                "valueTypeAccuracy": null,
+                "structuredValueAccuracy": null,
+                "evidenceLocatableRate": 0.0,
+                "evidenceCoverageRate": 1.0
+              },
+              "counts": {
+                "gold": 2,
+                "predictions": 2,
+                "matches": 2,
+                "identityTruePositive": 2,
+                "missed": 0,
+                "extra": 0,
+                "hardNegativeHits": 0,
+                "semanticPending": 0,
+                "rawPredictions": 2,
+                "handoffPredictions": 2,
+                "groupedPredictions": 2
+              }
+            },
+            "stage2": {
+              "metrics": {
+                "upstreamReachRate": 1.0,
+                "operationAccuracy": 0.5,
+                "characterCanonicalFactKeyResolutionAccuracy": null,
+                "targetAccuracy": 0.5,
+                "removedSnapshotSetAccuracy": null,
+                "temporalAccuracy": null,
+                "consolidationAccuracy": 1.0,
+                "proposedPathAccuracy": 1.0,
+                "existingRootPropertyMoveSetAccuracy": null,
+                "proposedValueAccuracy": null,
+                "resolvedProposedValueAccuracy": 1.0,
+                "proposedValueLowerBoundAccuracy": 0.5,
+                "proposedValueSemanticCoverage": 0.5,
+                "proposedValueJsonAccuracy": null,
+                "fullDecisionAccuracy": null,
+                "resolvedFullDecisionAccuracy": 0.0,
+                "fullDecisionLowerBoundAccuracy": 0.0,
+                "semanticCoverage": 0.5,
+                "selectiveCoverage": 1.0,
+                "selectiveAccuracy": null,
+                "resolvedSelectiveAccuracy": 0.0,
+                "selectiveLowerBoundAccuracy": 0.0,
+                "reviewRequiredRecall": null,
+                "falsePositiveSuppressionRate": null,
+                "harmfulActionRate": 1.0,
+                "oracleAccuracy": null,
+                "liveConditionalAccuracy": null
+              },
+              "counts": {
+                "gold": 2,
+                "waitingForCharacterMatch": 0,
+                "upstreamReached": 2,
+                "reachedAndCompared": 2,
+                "semanticPending": 1,
+                "upstreamOutcomes": {
+                  "REACHED": 2
+                },
+                "safeNoopCases": 1,
+                "harmfulActions": 1,
+                "extraStage1Predictions": 0,
+                "suppressedExtraPredictions": 0
+              }
+            }
+          },
+          "macroAverage": {
+            "stage1CandidateF1": 1.0,
+            "stage2FullDecisionAccuracy": null,
+            "stage2ResolvedFullDecisionAccuracy": 0.25,
+            "stage2FullDecisionLowerBoundAccuracy": 0.25
+          }
+        },
+        "endToEnd": {
+          "metrics": {
+            "afterStateF1": null,
+            "resolvedAfterStateF1": 0.0,
+            "afterStateLowerBoundF1": 0.0,
+            "transitionPrecision": null,
+            "transitionRecall": null,
+            "transitionF1": null,
+            "resolvedTransitionPrecision": null,
+            "resolvedTransitionRecall": 0.0,
+            "resolvedTransitionF1": 0.0,
+            "transitionLowerBoundF1": 0.0,
+            "rollingStateDivergence": null
+          },
+          "domains": {
+            "CHARACTER": {
+              "afterStatePrecision": null,
+              "afterStateRecall": 0.0,
+              "afterStateF1": 0.0,
+              "resolvedAfterStatePrecision": null,
+              "resolvedAfterStateRecall": 0.0,
+              "resolvedAfterStateF1": 0.0,
+              "afterStateLowerBoundF1": 0.0,
+              "semanticCoverage": 1.0,
+              "semanticPending": 0
+            },
+            "WORLD": {
+              "afterStatePrecision": null,
+              "afterStateRecall": null,
+              "afterStateF1": null,
+              "resolvedAfterStatePrecision": null,
+              "resolvedAfterStateRecall": null,
+              "resolvedAfterStateF1": null,
+              "afterStateLowerBoundF1": 0.0,
+              "semanticCoverage": 0.0,
+              "semanticPending": 2
+            }
+          },
+          "counts": {
+            "stateApplicationErrors": 2,
+            "dependencyStateApplicationErrors": 0,
+            "expectedTransitions": 9,
+            "predictedTransitions": 1,
+            "matchedTransitions": 0,
+            "semanticPendingTransitions": 1
+          },
+          "scenarios": [
+            {
+              "scenarioId": "S1",
+              "episodeNo": 1,
+              "afterStateF1": null,
+              "afterStateLowerBoundF1": 0.0,
+              "semanticPending": 1,
+              "rollingStateDivergence": null,
+              "expectedStateHash": "027c54c6cdb0f7f98c78e85ede2c48c5940fbd0e7e1c01d754c16e760194c277",
+              "predictedStateHash": "f23090004d91e36961652cbb77a6831db3c4fee527e32718f345ec0f6d641f44"
+            },
+            {
+              "scenarioId": "S2",
+              "episodeNo": 2,
+              "afterStateF1": null,
+              "afterStateLowerBoundF1": 0.0,
+              "semanticPending": 1,
+              "rollingStateDivergence": null,
+              "expectedStateHash": "38456841c6e862b698595263b4c875be05f0f92bfa510a2c8a7ace9c3522062f",
+              "predictedStateHash": "f23090004d91e36961652cbb77a6831db3c4fee527e32718f345ec0f6d641f44"
+            }
+          ]
+        },
+        "failureCauses": {
+          "COMPARISON_ERROR": 2,
+          "STATE_APPLICATION_ERROR": 2,
+          "UPSTREAM_FALSE_POSITIVE": 0
+        },
+        "scenarios": [
+          {
+            "scenarioId": "S1",
+            "episodeNo": 1,
+            "stage1": {
+              "CHARACTER": {
+                "missedGoldIds": [],
+                "extraPredictionIds": [],
+                "upstreamOutcomes": {
+                  "C1": "REACHED"
+                },
+                "cases": [
+                  {
+                    "result": "FULL_MATCH",
+                    "sortOrder": 1,
+                    "goldIds": [
+                      "C1"
+                    ],
+                    "predictionId": "PC1",
+                    "expected": {
+                      "subject": "가람",
+                      "path": "STATUS › status.arm_injury",
+                      "value": "왼팔 부상"
+                    },
+                    "actual": {
+                      "subject": "가람",
+                      "path": "STATUS › status.arm_injury",
+                      "value": "왼팔 부상"
+                    },
+                    "fields": {
+                      "subject": "MATCH",
+                      "path": "MATCH",
+                      "value": "MATCH"
+                    },
+                    "upstreamOutcome": "REACHED",
+                    "processing": {
+                      "candidateId": "PC1",
+                      "domain": "CHARACTER",
+                      "status": "RECORD_UNAVAILABLE",
+                      "reasonCode": "LEGACY_RECORD_MISSING",
+                      "comparisonForwarded": null,
+                      "stage": null,
+                      "failureCode": null,
+                      "decisionSourceCandidateId": null,
+                      "operation": null,
+                      "recordOrigin": "UNAVAILABLE"
+                    }
+                  }
+                ]
+              },
+              "WORLD": {
+                "missedGoldIds": [],
+                "extraPredictionIds": [],
+                "upstreamOutcomes": {
+                  "W1": "REACHED"
+                },
+                "cases": [
+                  {
+                    "result": "FULL_MATCH",
+                    "sortOrder": 2,
+                    "goldIds": [
+                      "W1"
+                    ],
+                    "predictionId": "PW1",
+                    "expected": {
+                      "subject": "LOCATION · 등대",
+                      "path": "불빛",
+                      "value": "파란색"
+                    },
+                    "actual": {
+                      "subject": "LOCATION · 등대",
+                      "path": "불빛",
+                      "value": "파란색"
+                    },
+                    "fields": {
+                      "subject": "MATCH",
+                      "path": "MATCH",
+                      "value": "MATCH"
+                    },
+                    "upstreamOutcome": "REACHED",
+                    "settingNameMatch": {
+                      "status": "MATCH",
+                      "method": "EXACT"
+                    },
+                    "processing": {
+                      "candidateId": "PW1",
+                      "domain": "WORLD",
+                      "status": "COMPARED",
+                      "reasonCode": "DECISION_RECORDED",
+                      "comparisonForwarded": true,
+                      "stage": "WORLD_STAGE2",
+                      "failureCode": null,
+                      "decisionSourceCandidateId": "PW1",
+                      "operation": "ADD",
+                      "recordOrigin": "LEGACY_CONFIRMED"
+                    }
+                  }
+                ]
+              }
+            },
+            "stage2": [
+              {
+                "decisionId": "DC1",
+                "domain": "CHARACTER",
+                "upstreamOutcome": "REACHED",
+                "failureCause": "COMPARISON_ERROR",
+                "operationMatched": false,
+                "characterCanonicalFactKeyResolutionMatched": null,
+                "targetMatched": null,
+                "removedSnapshotSetMatched": null,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": null,
+                "fullDecisionMatched": false,
+                "result": "COMPARATOR_MISSING",
+                "sourceGoldIds": [
+                  "C1"
+                ],
+                "sourceCandidateId": "PC1",
+                "expected": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "status.arm_injury",
+                  "value": "왼팔 부상",
+                  "temporalScope": "PRESENT",
+                  "removedCount": 0,
+                  "removedPaths": []
+                },
+                "actual": null,
+                "fields": {
+                  "operation": "MISMATCH"
+                },
+                "processing": {
+                  "candidateId": "PC1",
+                  "domain": "CHARACTER",
+                  "status": "RECORD_UNAVAILABLE",
+                  "reasonCode": "LEGACY_RECORD_MISSING",
+                  "comparisonForwarded": null,
+                  "stage": null,
+                  "failureCode": null,
+                  "decisionSourceCandidateId": null,
+                  "operation": null,
+                  "recordOrigin": "UNAVAILABLE"
+                },
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury",
+                  "value": "왼팔 부상"
+                }
+              },
+              {
+                "decisionId": "DW1",
+                "domain": "WORLD",
+                "upstreamOutcome": "REACHED",
+                "failureCause": null,
+                "operationMatched": true,
+                "characterCanonicalFactKeyResolutionMatched": null,
+                "targetMatched": true,
+                "removedSnapshotSetMatched": null,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": null,
+                "fullDecisionMatched": null,
+                "result": "SEMANTIC_PENDING",
+                "sourceGoldIds": [
+                  "W1"
+                ],
+                "sourceCandidateId": "PW1",
+                "expected": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "불빛",
+                  "value": "파란색",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "actual": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "불빛",
+                  "value": "푸른 빛",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "fields": {
+                  "operation": "MATCH",
+                  "target": "MATCH",
+                  "value": "PENDING",
+                  "consolidation": "MATCH",
+                  "proposedPath": "MATCH",
+                  "stateApplication": "MATCH"
+                },
+                "settingNameMatch": {
+                  "status": "MATCH",
+                  "method": "EXACT"
+                },
+                "matchedPropertyNameMatch": {
+                  "status": "MATCH",
+                  "method": "EXACT"
+                },
+                "processing": {
+                  "candidateId": "PW1",
+                  "domain": "WORLD",
+                  "status": "COMPARED",
+                  "reasonCode": "DECISION_RECORDED",
+                  "comparisonForwarded": true,
+                  "stage": "WORLD_STAGE2",
+                  "failureCode": null,
+                  "decisionSourceCandidateId": "PW1",
+                  "operation": "ADD",
+                  "recordOrigin": "LEGACY_CONFIRMED"
+                },
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛",
+                  "value": "파란색"
+                }
+              }
+            ],
+            "beforeStateHash": "d38d1436ab573b0e60314001a60ab55ca468cb4d89f4531609c662c1138e5db6",
+            "expectedAfterStateHash": "027c54c6cdb0f7f98c78e85ede2c48c5940fbd0e7e1c01d754c16e760194c277",
+            "predictedAfterStateHash": "f23090004d91e36961652cbb77a6831db3c4fee527e32718f345ec0f6d641f44",
+            "stateErrors": [],
+            "processingVersion": null,
+            "processing": [
+              {
+                "candidateId": "PC1",
+                "domain": "CHARACTER",
+                "status": "RECORD_UNAVAILABLE",
+                "reasonCode": "LEGACY_RECORD_MISSING",
+                "comparisonForwarded": null,
+                "stage": null,
+                "failureCode": null,
+                "decisionSourceCandidateId": null,
+                "operation": null,
+                "recordOrigin": "UNAVAILABLE",
+                "goldIds": [
+                  "C1"
+                ],
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury"
+                }
+              },
+              {
+                "candidateId": "PW1",
+                "domain": "WORLD",
+                "status": "COMPARED",
+                "reasonCode": "DECISION_RECORDED",
+                "comparisonForwarded": true,
+                "stage": "WORLD_STAGE2",
+                "failureCode": null,
+                "decisionSourceCandidateId": "PW1",
+                "operation": "ADD",
+                "recordOrigin": "LEGACY_CONFIRMED",
+                "goldIds": [
+                  "W1"
+                ],
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛"
+                }
+              }
+            ]
+          },
+          {
+            "scenarioId": "S2",
+            "episodeNo": 2,
+            "stage1": {
+              "CHARACTER": {
+                "missedGoldIds": [],
+                "extraPredictionIds": [],
+                "upstreamOutcomes": {
+                  "C2": "REACHED"
+                },
+                "cases": [
+                  {
+                    "result": "FULL_MATCH",
+                    "sortOrder": 1,
+                    "goldIds": [
+                      "C2"
+                    ],
+                    "predictionId": "PC2",
+                    "expected": {
+                      "subject": "가람",
+                      "path": "STATUS › status.arm_injury",
+                      "value": "왼팔 회복"
+                    },
+                    "actual": {
+                      "subject": "가람",
+                      "path": "STATUS › status.arm_injury",
+                      "value": "왼팔 회복"
+                    },
+                    "fields": {
+                      "subject": "MATCH",
+                      "path": "MATCH",
+                      "value": "MATCH"
+                    },
+                    "upstreamOutcome": "REACHED",
+                    "processing": {
+                      "candidateId": "PC2",
+                      "domain": "CHARACTER",
+                      "status": "COMPARED",
+                      "reasonCode": "DECISION_RECORDED",
+                      "comparisonForwarded": true,
+                      "stage": "CHARACTER_STAGE2",
+                      "failureCode": null,
+                      "decisionSourceCandidateId": "PC2",
+                      "operation": "REMOVE",
+                      "recordOrigin": "LEGACY_CONFIRMED"
+                    }
+                  }
+                ]
+              },
+              "WORLD": {
+                "missedGoldIds": [],
+                "extraPredictionIds": [],
+                "upstreamOutcomes": {
+                  "W2": "REACHED"
+                },
+                "cases": [
+                  {
+                    "result": "FULL_MATCH",
+                    "sortOrder": 2,
+                    "goldIds": [
+                      "W2"
+                    ],
+                    "predictionId": "PW2",
+                    "expected": {
+                      "subject": "LOCATION · 등대",
+                      "path": "불빛",
+                      "value": "파란색"
+                    },
+                    "actual": {
+                      "subject": "LOCATION · 등대",
+                      "path": "불빛",
+                      "value": "파란색"
+                    },
+                    "fields": {
+                      "subject": "MATCH",
+                      "path": "MATCH",
+                      "value": "MATCH"
+                    },
+                    "upstreamOutcome": "REACHED",
+                    "settingNameMatch": {
+                      "status": "MATCH",
+                      "method": "EXACT"
+                    },
+                    "processing": {
+                      "candidateId": "PW2",
+                      "domain": "WORLD",
+                      "status": "COMPARED",
+                      "reasonCode": "DECISION_RECORDED",
+                      "comparisonForwarded": true,
+                      "stage": "WORLD_STAGE2",
+                      "failureCode": null,
+                      "decisionSourceCandidateId": "PW2",
+                      "operation": "ADD",
+                      "recordOrigin": "LEGACY_CONFIRMED"
+                    }
+                  }
+                ]
+              }
+            },
+            "stage2": [
+              {
+                "decisionId": "DC2",
+                "domain": "CHARACTER",
+                "upstreamOutcome": "REACHED",
+                "failureCause": null,
+                "operationMatched": true,
+                "characterCanonicalFactKeyResolutionMatched": true,
+                "targetMatched": true,
+                "removedSnapshotSetMatched": true,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": true,
+                "fullDecisionMatched": true,
+                "result": "FULL_MATCH",
+                "sourceGoldIds": [
+                  "C2"
+                ],
+                "sourceCandidateId": "PC2",
+                "expected": {
+                  "operation": "REMOVE",
+                  "target": null,
+                  "path": "status.arm_injury",
+                  "value": null,
+                  "temporalScope": "PRESENT",
+                  "removedCount": 1,
+                  "removedPaths": [
+                    "가람 · STATUS › status.arm_injury"
+                  ]
+                },
+                "actual": {
+                  "operation": "REMOVE",
+                  "target": null,
+                  "path": "status.arm_injury",
+                  "value": null,
+                  "temporalScope": "PRESENT",
+                  "removedCount": 1,
+                  "removedPaths": [
+                    "STATUS › status.arm_injury (ref에서 canonical 경로 해석)"
+                  ]
+                },
+                "fields": {
+                  "operation": "MATCH",
+                  "target": "MATCH",
+                  "value": "MATCH",
+                  "canonicalPath": "MATCH",
+                  "temporal": "MATCH",
+                  "removedSet": "MATCH"
+                },
+                "processing": {
+                  "candidateId": "PC2",
+                  "domain": "CHARACTER",
+                  "status": "COMPARED",
+                  "reasonCode": "DECISION_RECORDED",
+                  "comparisonForwarded": true,
+                  "stage": "CHARACTER_STAGE2",
+                  "failureCode": null,
+                  "decisionSourceCandidateId": "PC2",
+                  "operation": "REMOVE",
+                  "recordOrigin": "LEGACY_CONFIRMED"
+                },
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury",
+                  "value": "왼팔 회복"
+                }
+              },
+              {
+                "decisionId": "DW2",
+                "domain": "WORLD",
+                "upstreamOutcome": "REACHED",
+                "failureCause": "COMPARISON_ERROR",
+                "operationMatched": false,
+                "characterCanonicalFactKeyResolutionMatched": null,
+                "targetMatched": false,
+                "removedSnapshotSetMatched": null,
+                "existingRootPropertyMoveSetMatched": null,
+                "valueMatched": true,
+                "fullDecisionMatched": false,
+                "result": "DECISION_MISMATCH",
+                "sourceGoldIds": [
+                  "W2"
+                ],
+                "sourceCandidateId": "PW2",
+                "expected": {
+                  "operation": "EXCLUDE",
+                  "target": "LOCATION · 등대 · 불빛",
+                  "path": "불빛",
+                  "value": "파란색",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "actual": {
+                  "operation": "ADD",
+                  "target": null,
+                  "path": "불빛",
+                  "value": "파란색",
+                  "consolidationStatus": "SINGLE",
+                  "rootMoveCount": 0,
+                  "rootMoveNames": []
+                },
+                "fields": {
+                  "operation": "MISMATCH",
+                  "target": "MISMATCH",
+                  "value": "MATCH",
+                  "consolidation": "MATCH",
+                  "proposedPath": "MATCH",
+                  "stateApplication": "MISMATCH"
+                },
+                "settingNameMatch": {
+                  "status": "MATCH",
+                  "method": "EXACT"
+                },
+                "matchedPropertyNameMatch": {
+                  "status": "MISMATCH",
+                  "method": "UNRESOLVED"
+                },
+                "processing": {
+                  "candidateId": "PW2",
+                  "domain": "WORLD",
+                  "status": "COMPARED",
+                  "reasonCode": "DECISION_RECORDED",
+                  "comparisonForwarded": true,
+                  "stage": "WORLD_STAGE2",
+                  "failureCode": null,
+                  "decisionSourceCandidateId": "PW2",
+                  "operation": "ADD",
+                  "recordOrigin": "LEGACY_CONFIRMED"
+                },
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛",
+                  "value": "파란색"
+                }
+              }
+            ],
+            "beforeStateHash": "027c54c6cdb0f7f98c78e85ede2c48c5940fbd0e7e1c01d754c16e760194c277",
+            "expectedAfterStateHash": "38456841c6e862b698595263b4c875be05f0f92bfa510a2c8a7ace9c3522062f",
+            "predictedAfterStateHash": "f23090004d91e36961652cbb77a6831db3c4fee527e32718f345ec0f6d641f44",
+            "stateErrors": [
+              {
+                "scenarioId": "S2",
+                "sourceCandidateId": "PC2",
+                "reason": "Prediction decision violates the reference reducer contract."
+              },
+              {
+                "scenarioId": "S2",
+                "sourceCandidateId": "PW2",
+                "reason": "Prediction decision violates the reference reducer contract."
+              }
+            ],
+            "processingVersion": null,
+            "processing": [
+              {
+                "candidateId": "PC2",
+                "domain": "CHARACTER",
+                "status": "COMPARED",
+                "reasonCode": "DECISION_RECORDED",
+                "comparisonForwarded": true,
+                "stage": "CHARACTER_STAGE2",
+                "failureCode": null,
+                "decisionSourceCandidateId": "PC2",
+                "operation": "REMOVE",
+                "recordOrigin": "LEGACY_CONFIRMED",
+                "goldIds": [
+                  "C2"
+                ],
+                "source": {
+                  "subject": "가람",
+                  "path": "STATUS › status.arm_injury"
+                }
+              },
+              {
+                "candidateId": "PW2",
+                "domain": "WORLD",
+                "status": "COMPARED",
+                "reasonCode": "DECISION_RECORDED",
+                "comparisonForwarded": true,
+                "stage": "WORLD_STAGE2",
+                "failureCode": null,
+                "decisionSourceCandidateId": "PW2",
+                "operation": "ADD",
+                "recordOrigin": "LEGACY_CONFIRMED",
+                "goldIds": [
+                  "W2"
+                ],
+                "source": {
+                  "subject": "LOCATION · 등대",
+                  "path": "불빛"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

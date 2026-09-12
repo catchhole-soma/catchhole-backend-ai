@@ -46,6 +46,7 @@ from evals.multi_stage_setting.contracts import (
     WorldStage1Prediction,
     WorldStage2Gold,
     WorldStage2Prediction,
+    align_prediction_character_refs,
     character_state_ref,
     stage2_source_candidate_ids,
     world_entry_subject_ref,
@@ -64,6 +65,7 @@ from evals.multi_stage_setting.experimental_identity import (
     ScoringIdentityAlignment,
     build_scoring_identity_alignment,
 )
+from evals.multi_stage_setting.processing import processing_outcomes
 from evals.multi_stage_setting.semantic_outcome import (
     CharacterSettingContext,
     SemanticOutcomeCase,
@@ -1066,6 +1068,15 @@ def _evaluate_stage2_cases(
             prediction,
             expected_character_fact_key=expected_character_fact_key,
             expected_character_source=expected_character_source,
+            actual_character_source=next(
+                (
+                    source
+                    for source in scenario_prediction.stage1
+                    if isinstance(source, CharacterStage1Prediction)
+                    and source.candidate_id == prediction.source_candidate_id
+                ),
+                None,
+            ),
             expected_world_subject_ref=expected_world_subject_ref,
             expected_world_source=expected_world_source,
             allow_projected_world_target_equivalence=(
@@ -1178,6 +1189,7 @@ def _score_stage2_case(
     *,
     expected_character_fact_key: str | None = None,
     expected_character_source: CharacterStage1Gold | None = None,
+    actual_character_source: CharacterStage1Prediction | None = None,
     expected_world_subject_ref: str | None = None,
     expected_world_source: WorldStage1Gold | None = None,
     allow_projected_world_target_equivalence: bool = False,
@@ -1226,9 +1238,16 @@ def _score_stage2_case(
                 schema_pattern="status.*",
             )
         operation_matched = gold.operation == prediction.operation
-        target_matched = _same_ref(gold.target_ref, prediction.target_ref)
+        aligned_prediction = (
+            align_prediction_character_refs(
+                actual_character_source, prediction, expected_character_source.entity_ref
+            )
+            if actual_character_source is not None and expected_character_source is not None
+            else prediction
+        )
+        target_matched = _same_ref(gold.target_ref, aligned_prediction.target_ref)
         removed_matched = (
-            _same_ref_set(gold.removed_snapshot_refs, prediction.removed_snapshot_refs)
+            _same_ref_set(gold.removed_snapshot_refs, aligned_prediction.removed_snapshot_refs)
             if gold.removed_snapshot_refs or prediction.removed_snapshot_refs
             else None
         )
@@ -3029,6 +3048,47 @@ def _scenario_details(
                 ],
             }
         )
+        detail = details[-1]
+        scenario_prediction = prediction_by_scenario.get(scenario.scenario_id)
+        if scenario_prediction is not None:
+            outcomes = processing_outcomes(scenario_prediction)
+            source_by_id = {source.candidate_id: source for source in scenario_prediction.stage1}
+            gold_ids_by_candidate = {}
+            for domain_detail in domain_stage1.values():
+                for row in domain_detail["cases"]:
+                    candidate_id = row.get("predictionId")
+                    gold_ids_by_candidate[candidate_id] = row.get("goldIds", [])
+                    if candidate_id in outcomes:
+                        row["processing"] = outcomes[candidate_id]
+            detail["processingVersion"] = scenario_prediction.processing_version
+            detail["processing"] = [
+                {
+                    **outcomes[source.candidate_id],
+                    "goldIds": gold_ids_by_candidate.get(source.candidate_id, []),
+                    "source": {
+                        key: value
+                        for key, value in _stage1_diagnostic_summary(source).items()
+                        if key != "value"
+                    },
+                }
+                for source in scenario_prediction.stage1
+            ]
+            for row in detail["stage2"]:
+                candidate_id = row.get("sourceCandidateId")
+                if candidate_id is None:
+                    # A matched Stage1 source remains identifiable even without a Stage2 decision.
+                    source_gold_ids = set(row.get("sourceGoldIds", []))
+                    matched_ids = [
+                        source_id
+                        for source_id, gold_ids in gold_ids_by_candidate.items()
+                        if source_id is not None and source_gold_ids.intersection(gold_ids)
+                    ]
+                    if len(matched_ids) == 1:
+                        candidate_id = matched_ids[0]
+                        row["sourceCandidateId"] = candidate_id
+                if candidate_id in outcomes:
+                    row["processing"] = outcomes[candidate_id]
+                    row["source"] = _stage1_diagnostic_summary(source_by_id[candidate_id])
     return details
 
 
@@ -3292,7 +3352,8 @@ def _stage2_diagnostic_fields(
         "sourceGoldIds": list(case.gold.source_gold_ids),
         "sourceCandidateId": (
             case.diagnostic_source_candidate_id or prediction.source_candidate_id
-            if prediction else None
+            if prediction
+            else None
         ),
         "expected": expected,
         "actual": actual,
@@ -3612,7 +3673,8 @@ def _extra_suppression_counts(
             continue
         decision = next(
             (
-                item for item in scenario.stage2
+                item
+                for item in scenario.stage2
                 if item.domain == domain and candidate_id in stage2_source_candidate_ids(item)
             ),
             None,
