@@ -448,9 +448,25 @@ async def run_multi_stage_predictions(
                 )
         except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError) as exc:
             partial = trace.aborted(scenario.scenario_id, exc)
+            if mode == EvaluationMode.COMMON_START:
+                assert scenario.source_text is not None
+                # 중단된 회차의 일부 판단을 완료 상태로 적용하지 않는다.
+                partial = partial.model_copy(update={
+                    "runtime_state_trace": RuntimeStateTrace(
+                        input_state=runtime_before,
+                        output_state=runtime_before.model_copy(deep=True),
+                        input_state_hash=runtime_before.content_hash(),
+                        output_state_hash=runtime_before.content_hash(),
+                        source_hash=hashlib.sha256(scenario.source_text.encode("utf-8")).hexdigest(),
+                        elapsed_seconds=monotonic() - started_at,
+                        state_readiness="FAILED",
+                    ),
+                })
             exc.prediction_bundle = PredictionBundleV3(
                 fixture_hash=gold.fixture_hash,
                 mode=mode,
+                frozen_start_state=frozen_start_state,
+                runtime_policy_version="common-start/v1" if mode == EvaluationMode.COMMON_START else None,
                 evaluation_domains=enabled_domains,
                 evaluation_scenario_ids=[item.scenario_id for item in selected_scenarios],
                 analysis_model=analysis_model,

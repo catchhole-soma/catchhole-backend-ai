@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import httpx
 from pydantic import ValidationError
 
 import evals.multi_stage_setting.runtime_adapter as runtime
@@ -53,6 +54,38 @@ def _trace(before, after):
         input_state_hash=before.content_hash(), output_state_hash=after.content_hash(),
         source_hash="synthetic-source", elapsed_seconds=0,
     )
+
+
+@pytest.mark.parametrize("failed_episode", [1, 2])
+def test_common_start_interruption_preserves_original_error_and_partial_bundle(monkeypatch, failed_episode):
+    original = httpx.ReadTimeout("synthetic provider interruption")
+    seen = []
+
+    async def live(scenario, before, *args, trace):
+        seen.append(scenario.episode_no)
+        if scenario.episode_no == failed_episode:
+            raise original
+        return ScenarioPrediction(scenario_id=scenario.scenario_id)
+
+    monkeypatch.setattr(runtime, "_run_live_scenario", live)
+    start = EvaluationState()
+    with pytest.raises(httpx.ReadTimeout) as raised:
+        asyncio.run(runtime.run_multi_stage_predictions(
+            _gold(), mode=EvaluationMode.COMMON_START, components=_components(), frozen_start_state=start,
+        ))
+    assert raised.value is original
+    bundle = original.prediction_bundle
+    # CLI serialization can retain both completed episodes and the failed episode.
+    restored = PredictionBundleV3.model_validate_json(bundle.model_dump_json(by_alias=True))
+    assert restored.frozen_start_state == start
+    assert restored.runtime_policy_version == "common-start/v1"
+    assert len(restored.scenarios) == failed_episode
+    partial = restored.scenarios[-1]
+    assert partial.execution_failure.episode_no == failed_episode
+    assert partial.runtime_state_trace.state_readiness == "FAILED"
+    assert partial.runtime_state_trace.input_state == partial.runtime_state_trace.output_state == start
+    assert seen == list(range(1, failed_episode + 1))
+    assert all(item.runtime_state_trace.state_readiness == "OBSERVED" for item in restored.scenarios[:-1])
 
 
 def test_common_start_uses_explicit_s0_for_every_episode_without_gold_lookup(monkeypatch):
