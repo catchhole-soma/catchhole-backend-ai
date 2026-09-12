@@ -16,8 +16,10 @@ from evals.multi_stage_setting.contracts import (
     CharacterStage2Gold,
     EvaluationDomain,
     GoldSnapshotV3,
+    KnownCharacter,
     ReviewStatus,
     ScenarioGold,
+    Stage2Policy,
     StartStateMode,
     StateGenerationStatus,
     ValueJsonProvenance,
@@ -57,6 +59,9 @@ SCENARIO_PROPERTY_SCHEMA = {
     "검수 상태": "select",
     "검수 메모": "rich_text",
 }
+OPTIONAL_SCENARIO_PROPERTY_SCHEMA = {
+    "회차 종료 캐릭터 등록": "rich_text",
+}
 STAGE1_PROPERTY_SCHEMA = {
     "정답 ID": "title",
     "시나리오": "relation",
@@ -92,6 +97,7 @@ STAGE1_PROPERTY_SCHEMA = {
 OPTIONAL_STAGE1_PROPERTY_SCHEMA = {
     # PATTERN STATUS 평가에서 1차 raw key와 검수된 canonical key를 분리한다.
     "inputFactKey": "rich_text",
+    "2차 처리 기준": "select",
 }
 STAGE2_PROPERTY_SCHEMA = {
     "판단 ID": "title",
@@ -142,6 +148,9 @@ def validate_notion_v3_schemas(
     """세 원본 DB의 컬럼 계약을 검증하고 Stage2 결과 컬럼 모드를 반환한다."""
 
     _validate_property_schema("Scenario", scenario_schema, SCENARIO_PROPERTY_SCHEMA)
+    _validate_optional_property_schema(
+        "Scenario optional", scenario_schema, OPTIONAL_SCENARIO_PROPERTY_SCHEMA
+    )
     _validate_property_schema("Stage1", stage1_schema, STAGE1_PROPERTY_SCHEMA)
     _validate_property_schema("Stage2", stage2_schema, STAGE2_PROPERTY_SCHEMA)
     _validate_optional_property_schema(
@@ -465,6 +474,9 @@ def _parse_scenario(
             cumulative_through_episode=int(_read_number(properties, "누적 기준 회차")),
             provided_context=context,
             known_character_names=_parse_known_character_names(context),
+            registered_characters_after_episode=_parse_registered_characters(
+                _read_text(properties, "회차 종료 캐릭터 등록"), row_id
+            ),
             state_generation_status=(
                 _read_select(properties, "상태 생성 상태") or "PENDING"
             ),
@@ -517,6 +529,9 @@ def _parse_stage1(
         "review_note": _read_text(properties, "검수 메모") or None,
     }
     display_value = _read_text(properties, "정답 표시값") or None
+    stage2_policy = Stage2Policy(
+        _read_select(properties, "2차 처리 기준") or Stage2Policy.REQUIRED
+    )
     if domain == EvaluationDomain.CHARACTER:
         value_type = _read_select(properties, "valueType") or None
         explicit_json = _parse_json_object(
@@ -533,6 +548,7 @@ def _parse_stage1(
         return CharacterStage1Gold(
             **common,
             domain=EvaluationDomain.CHARACTER,
+            stage2_policy=stage2_policy,
             entity_ref=_required_text(properties, "canonical entityRef", row_id),
             entity_name=_required_text(properties, "canonical entityName", row_id),
             raw_entity_mention=_read_text(properties, "rawEntityMention") or None,
@@ -551,6 +567,10 @@ def _parse_stage1(
             structured_scorable=scorable,
         )
     if domain == EvaluationDomain.WORLD:
+        if stage2_policy != Stage2Policy.REQUIRED:
+            raise ValueError(
+                f"Notion Stage1 row {row_id}: WAIT_FOR_CHARACTER_MATCH is CHARACTER-only."
+            )
         return WorldStage1Gold(
             **common,
             domain=EvaluationDomain.WORLD,
@@ -1043,6 +1063,22 @@ def _resolve_relations(
             f"Notion row {row_id} has {name} relation outside the exported snapshot."
         )
     return [value_by_page_id[page_id] for page_id in relation_ids]
+
+
+def _parse_registered_characters(value: str, row_id: str) -> list[KnownCharacter]:
+    if not value:
+        return []
+    field = "회차 종료 캐릭터 등록"
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        raise ValueError(f"Notion row {row_id} has invalid {field} JSON.") from None
+    if not isinstance(parsed, list) or any(not isinstance(item, dict) for item in parsed):
+        raise ValueError(f"Notion row {row_id} requires {field} to be an object array.")
+    try:
+        return [KnownCharacter.model_validate(item) for item in parsed]
+    except ValidationError:
+        raise ValueError(f"Notion row {row_id} has invalid {field} character data.") from None
 
 
 def _parse_json_object(value: str, row_id: str, field: str) -> dict[str, Any] | None:

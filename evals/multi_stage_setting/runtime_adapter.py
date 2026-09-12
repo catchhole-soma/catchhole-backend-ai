@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 import hashlib
 import json
+from time import monotonic
 from types import SimpleNamespace
 from typing import Any, Literal, Protocol, cast
 from uuid import UUID, uuid5
@@ -40,7 +41,10 @@ from app.analysis.world_setting_comparator import (
     WorldSettingComparator,
     WorldSettingSubjectResolver,
 )
-from app.analysis.world_setting_extractor import WorldSettingExtractor
+from app.analysis.world_setting_extractor import (
+    WORLD_SETTING_EXTRACTION_CACHE_KEY,
+    WorldSettingExtractor,
+)
 from app.chunking.chunk_splitter import EpisodeChunkDraft, split_into_chunks
 from app.domain.enums import (
     CharacterFactComparisonOperation,
@@ -85,6 +89,7 @@ from evals.multi_stage_setting.contracts import (
     PredictionBundleV3,
     PredictionEvidence,
     RuntimeFailure,
+    RuntimeStateTrace,
     ScenarioGold,
     ScenarioPipelineStatus,
     ScenarioPrediction,
@@ -105,6 +110,7 @@ from evals.multi_stage_setting.contracts import (
 from evals.multi_stage_setting.state_effects import (
     StateApplicationError,
     apply_prediction_decision,
+    apply_registered_characters_after_episode,
     build_gold_state_chain,
 )
 
@@ -298,6 +304,7 @@ async def run_multi_stage_predictions(
     domains: set[EvaluationDomain] | None = None,
     episode_numbers: set[int] | None = None,
     pricing: RuntimePricing | None = None,
+    frozen_start_state: EvaluationState | None = None,
 ) -> PredictionBundleV3:
     """Gold fixture를 운영 LLM 경계에 넣어 ORACLE/FIXED/ROLLING 예측을 생성한다.
 
@@ -307,6 +314,17 @@ async def run_multi_stage_predictions(
 
     if max_chunks is not None and max_chunks < 1:
         raise ValueError("max_chunks must be at least 1.")
+    if mode == EvaluationMode.ORDERED_PROVISIONAL:
+        raise ValueError(
+            "ORDERED_PROVISIONAL requires the Java sealed-journal adapter; "
+            "the legacy accept-all reducer cannot implement this policy."
+        )
+    if mode == EvaluationMode.COMMON_START:
+        if frozen_start_state is None:
+            raise ValueError("COMMON_START requires an explicit frozen_start_state; no Gold fallback.")
+        frozen_start_state = frozen_start_state.model_copy(deep=True).canonical()
+    elif frozen_start_state is not None:
+        raise ValueError("Legacy modes must not receive frozen_start_state.")
     if gold.fixture_hash is None:
         gold = gold.with_fixture_hash()
     selected_scenarios = [
@@ -348,13 +366,16 @@ async def run_multi_stage_predictions(
             enabled_domains,
         )
 
-    gold_chain = build_gold_state_chain(gold)
+    gold_chain = {} if mode == EvaluationMode.COMMON_START else build_gold_state_chain(gold)
     predicted_after: dict[str, EvaluationState] = {}
     scenario_predictions: list[ScenarioPrediction] = []
     for scenario in sorted(gold.scenarios, key=lambda item: (item.episode_no, item.scenario_id)):
         if scenario.scenario_id not in required_ids:
             continue
-        if mode == EvaluationMode.ROLLING and scenario.previous_scenario_id:
+        if mode == EvaluationMode.COMMON_START:
+            assert frozen_start_state is not None
+            runtime_before = frozen_start_state.model_copy(deep=True)
+        elif mode == EvaluationMode.ROLLING and scenario.previous_scenario_id:
             runtime_before = predicted_after.get(
                 scenario.previous_scenario_id,
                 gold_chain[scenario.scenario_id].before_state,
@@ -362,6 +383,7 @@ async def run_multi_stage_predictions(
         else:
             runtime_before = gold_chain[scenario.scenario_id].before_state.model_copy(deep=True)
 
+        started_at = monotonic()
         usage_before = components.usage.snapshot() if components.usage is not None else (0, 0, 0)
         if mode == EvaluationMode.ORACLE:
             prediction = await _run_oracle_scenario(
@@ -398,21 +420,41 @@ async def run_multi_stage_predictions(
                 ),
             }
         )
-        scenario_predictions.append(prediction)
-        predicted_after[scenario.scenario_id] = _apply_runtime_scenario(
+        state_errors: list[str] = []
+        runtime_after = _apply_runtime_scenario(
             scenario,
             runtime_before,
             prediction,
+            state_errors=state_errors if mode == EvaluationMode.COMMON_START else None,
         )
+        if mode == EvaluationMode.COMMON_START:
+            assert scenario.source_text is not None
+            prediction = prediction.model_copy(update={
+                "runtime_state_trace": RuntimeStateTrace(
+                    input_state=runtime_before,
+                    output_state=runtime_after,
+                    input_state_hash=runtime_before.content_hash(),
+                    output_state_hash=runtime_after.content_hash(),
+                    source_hash=hashlib.sha256(scenario.source_text.encode("utf-8")).hexdigest(),
+                    elapsed_seconds=monotonic() - started_at,
+                    state_application_error_candidate_ids=state_errors,
+                ),
+            })
+        scenario_predictions.append(prediction)
+        predicted_after[scenario.scenario_id] = runtime_after
 
     return PredictionBundleV3(
         fixture_hash=gold.fixture_hash,
         mode=mode,
         state_application_policy=(
-            StateApplicationPolicy.ACCEPT_ALL_PREDICTIONS
+            StateApplicationPolicy.COMMON_START
+            if mode == EvaluationMode.COMMON_START
+            else StateApplicationPolicy.ACCEPT_ALL_PREDICTIONS
             if mode == EvaluationMode.ROLLING
             else StateApplicationPolicy.SCENARIO_LOCAL
         ),
+        frozen_start_state=frozen_start_state,
+        runtime_policy_version="common-start/v1" if mode == EvaluationMode.COMMON_START else None,
         evaluation_domains=enabled_domains,
         evaluation_scenario_ids=[scenario.scenario_id for scenario in selected_scenarios],
         analysis_model=analysis_model,
@@ -422,7 +464,7 @@ async def run_multi_stage_predictions(
             "characterExtraction": SETTING_EXTRACTION_CACHE_KEY_VERSION,
             "characterSubjectResolution": "subject-resolution:v1",
             "characterComparison": CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY,
-            "worldExtraction": "world-setting-extraction:v2",
+            "worldExtraction": WORLD_SETTING_EXTRACTION_CACHE_KEY,
             "worldSubjectResolution": "world-setting-subject-resolution:v1",
             "worldComparison": WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
         },
@@ -1124,15 +1166,17 @@ async def _run_world_batches(
                 target_set.targets,
             )
             for decision in result.decisions:
-                first_ref = min(
+                source_refs = sorted(
                     decision.source_candidate_refs,
                     key=lambda reference: int(reference[1:]),
                 )
+                source_ids = [source_by_ref[ref].source_id for ref in source_refs]
                 predictions.append(
                     _world_stage2_prediction(
-                        source_by_ref[first_ref].source_id,
+                        source_ids[0],
                         decision,
                         target_set,
+                        source_ids=source_ids if len(source_ids) > 1 else None,
                     )
                 )
         except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
@@ -1238,6 +1282,8 @@ def _world_stage2_prediction(
     source_id: str,
     decision: Any,
     target_set: _WorldTargetSet,
+    *,
+    source_ids: list[str] | None = None,
 ) -> WorldStage2Prediction:
     stable_target = None
     if decision.target_ref is not None:
@@ -1258,6 +1304,7 @@ def _world_stage2_prediction(
         stable_target = matched.ref if matched is not None else world_entry_subject_ref(entries[0])
     return WorldStage2Prediction(
         source_candidate_id=source_id,
+        source_candidate_ids=source_ids or [],
         domain="WORLD",
         consolidation_status=decision.consolidation_status,
         operation=decision.operation,
@@ -1643,6 +1690,8 @@ def _apply_runtime_scenario(
     scenario: ScenarioGold,
     before_state: EvaluationState,
     prediction: ScenarioPrediction,
+    *,
+    state_errors: list[str] | None = None,
 ) -> EvaluationState:
     state = before_state
     stage1_by_id = {item.candidate_id: item for item in prediction.stage1}
@@ -1655,6 +1704,8 @@ def _apply_runtime_scenario(
         except StateApplicationError:
             # evaluator가 같은 오류를 STATE_APPLICATION_ERROR로 보고하므로 runtime은 다음
             # 후보와 회차 진행을 계속한다.
+            if state_errors is not None:
+                state_errors.append(decision.source_candidate_id)
             continue
     known_by_ref = {item.entity_ref: item for item in state.known_characters}
     for source in prediction.stage1:
@@ -1683,7 +1734,8 @@ def _apply_runtime_scenario(
                 ),
             ),
         )
-    return state.model_copy(update={"known_characters": list(known_by_ref.values())}).canonical()
+    state = state.model_copy(update={"known_characters": list(known_by_ref.values())})
+    return apply_registered_characters_after_episode(state, scenario).canonical()
 
 
 def _runtime_known_characters(

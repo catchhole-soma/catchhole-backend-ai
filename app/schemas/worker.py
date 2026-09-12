@@ -2,9 +2,11 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.domain.enums import (
+    AnalysisMode,
+    AnalysisReviewMode,
     AnalysisFailureCode,
     AnalysisJobCheckpointStage,
     AnalysisJobType,
@@ -20,6 +22,7 @@ from app.domain.enums import (
     WorldSettingOperation,
     WorldSettingSubjectResolutionType,
 )
+from app.schemas.analysis_context import AnalysisStateProvenance, WorkerAnalysisContext
 
 # Spring AI 토큰 원장 계약에서 허용하는 호출 목적과 종료 결과
 AiTokenPurpose = Literal[
@@ -62,6 +65,9 @@ class WorkerAnalysisJobClaimRequest(BaseModel):
     allowed_job_types: list[AnalysisJobType] = Field(
         alias="allowedJobTypes",
         min_length=1,
+    )
+    supported_analysis_modes: list[AnalysisMode] | None = Field(
+        default=None, alias="supportedAnalysisModes", min_length=1
     )
 
 
@@ -149,12 +155,21 @@ class WorkerAnalysisEpisodePayload(BaseModel):
 
 
 # Spring이 Worker에게 내려주는 캐릭터별 활성 STATUS 최소 문맥 DTO
+class WorkerEvidenceSpan(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    quote: str = Field(min_length=1)
+    start_offset: int | None = Field(default=None, alias="startOffset", ge=0)
+    end_offset: int | None = Field(default=None, alias="endOffset", ge=0)
+
+
 class WorkerAnalysisActiveCharacterStatusPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     fact_key: str = Field(alias="factKey", min_length=1, max_length=150)
     # provenance가 없는 legacy snapshot은 표시값이 없을 수 있으며 Worker가 값을 합성하지 않는다.
     fact_value: str | None = Field(alias="factValue")
+    provenance: AnalysisStateProvenance | None = None
 
 
 # Spring이 Worker에게 내려주는 기존 캐릭터 정보 DTO
@@ -163,9 +178,29 @@ class WorkerAnalysisKnownCharacterPayload(BaseModel):
 
     character_id: UUID = Field(alias="characterId")
     name: str
+    provenance: AnalysisStateProvenance | None = None
+    aliases: list[str] = Field(default_factory=list)
+    identity_evidence: list[WorkerEvidenceSpan] = Field(default_factory=list, alias="identityEvidence")
     active_statuses: list[WorkerAnalysisActiveCharacterStatusPayload] = Field(
         default_factory=list,
         alias="activeStatuses",
+    )
+
+
+class WorkerAnalysisProvisionalCharacterPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    provisional_subject_key: str = Field(
+        alias="provisionalSubjectKey", pattern=r"^provisional-character:[0-9a-f-]{36}$"
+    )
+    name: str = Field(min_length=1, max_length=100)
+    aliases: list[str] = Field(default_factory=list)
+    source_episode_no: int = Field(alias="sourceEpisodeNo", ge=1)
+    identity_evidence: list[WorkerEvidenceSpan] = Field(
+        default_factory=list, alias="identityEvidence"
+    )
+    active_statuses: list[WorkerAnalysisActiveCharacterStatusPayload] = Field(
+        default_factory=list, alias="activeStatuses"
     )
 
 
@@ -217,14 +252,45 @@ class WorkerAnalysisJobPayload(BaseModel):
         alias="knownCharacters",
     )
     episode: WorkerAnalysisEpisodePayload | None = None
+    analysis_mode: AnalysisMode = Field(
+        default=AnalysisMode.CONFIRMED_ONLY, alias="analysisMode"
+    )
+    review_mode: AnalysisReviewMode = Field(default=AnalysisReviewMode.MANUAL, alias="reviewMode")
+    analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
+    provisional_characters: list[WorkerAnalysisProvisionalCharacterPayload] = Field(
+        default_factory=list, alias="provisionalCharacters"
+    )
 
+    @field_validator("review_mode", mode="before")
+    @classmethod
+    def default_review_mode(cls, value):
+        return AnalysisReviewMode.MANUAL if value is None else value
 
-class WorkerEvidenceSpan(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    quote: str = Field(min_length=1)
-    start_offset: int | None = Field(default=None, alias="startOffset", ge=0)
-    end_offset: int | None = Field(default=None, alias="endOffset", ge=0)
+    @model_validator(mode="after")
+    def validate_analysis_mode(self) -> "WorkerAnalysisJobPayload":
+        if self.analysis_mode == AnalysisMode.CONFIRMED_ONLY:
+            if self.review_mode == AnalysisReviewMode.AUTOMATIC:
+                raise ValueError("Automatic review requires ordered episode analysis.")
+            if self.analysis_context is not None or self.provisional_characters:
+                raise ValueError("Confirmed-only jobs cannot include ordered analysis state.")
+            if any(status.provenance is not None
+                   and status.provenance.confirmation_status == "PROVISIONAL"
+                   for character in self.known_characters for status in character.active_statuses):
+                raise ValueError("Confirmed-only jobs cannot include provisional active statuses.")
+        else:
+            if self.analysis_context is None or self.episode is None:
+                raise ValueError("Ordered analysis requires a fixed input context and episode.")
+            if self.job_type != AnalysisJobType.SETTING_EXTRACTION:
+                raise ValueError("Only episode extraction jobs support ordered analysis.")
+            if self.episode.content_hash != self.analysis_context.source_hash:
+                raise ValueError("Ordered source hash must match the episode snapshot.")
+            if any(item.source_episode_no >= self.episode.episode_no
+                   for item in self.provisional_characters):
+                raise ValueError("Provisional character context must precede this episode.")
+            if any(item.source_episode_no >= self.episode.episode_no
+                   for item in self.analysis_context.unresolved_references):
+                raise ValueError("Unresolved reference context must precede this episode.")
+        return self
 
 
 class WorkerWorldSettingCandidatePublishItem(BaseModel):
@@ -236,7 +302,9 @@ class WorkerWorldSettingCandidatePublishItem(BaseModel):
     setting_name: str = Field(alias="settingName", min_length=1, max_length=100)
     extracted_value: str = Field(alias="extractedValue", min_length=1)
     evidence_spans: list[WorkerEvidenceSpan] = Field(alias="evidenceSpans", min_length=1)
-    extraction_confidence: Literal[0.65, 0.8, 0.95] = Field(alias="extractionConfidence")
+    extraction_confidence: float = Field(
+        alias="extractionConfidence", strict=True, ge=0, le=1, allow_inf_nan=False,
+    )
     raw_extraction_json: dict[str, Any] | None = Field(
         default=None,
         alias="rawExtractionJson",
@@ -282,10 +350,14 @@ class WorkerWorldSettingSubjectResolutionCandidate(BaseModel):
     source_episode_id: UUID = Field(alias="sourceEpisodeId")
     category: WorldSettingCategory
     subject_name: str = Field(alias="subjectName", min_length=1, max_length=100)
+    evidence_spans: list[WorkerEvidenceSpan] = Field(default_factory=list, alias="evidenceSpans")
+    source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo", ge=1)
 
 
 class WorkerWorldSettingSubjectResolutionPendingResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     candidates: list[WorkerWorldSettingSubjectResolutionCandidate]
+    analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
 
 
 class WorkerWorldSettingSubjectResolutionRequestItem(BaseModel):
@@ -296,6 +368,31 @@ class WorkerWorldSettingSubjectResolutionRequestItem(BaseModel):
         alias="targetWorldSettingIds",
         max_length=20,
     )
+    provisional_subject_keys: list[str] = Field(default_factory=list, alias="provisionalSubjectKeys", max_length=20)
+    ambiguous: bool = False
+    failure_code: AnalysisFailureCode | None = Field(default=None, alias="failureCode", exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def validate_selected_identities(self):
+        keys = self.provisional_subject_keys
+        if self.failure_code is not None:
+            if self.failure_code not in {
+                AnalysisFailureCode.LLM_NETWORK_ERROR, AnalysisFailureCode.LLM_PROVIDER_ERROR,
+                AnalysisFailureCode.LLM_OUTPUT_TRUNCATED, AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR,
+                AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+            }:
+                raise ValueError("World subject failures must be candidate-local response failures.")
+            if self.ambiguous or keys or self.target_world_setting_ids:
+                raise ValueError("Failed world subject resolution cannot select or establish an identity.")
+        if len(self.target_world_setting_ids) + len(keys) > 20:
+            raise ValueError("World subject selection exceeds the combined target limit.")
+        if len(keys) != len(set(keys)):
+            raise ValueError("Provisional world subject keys must be unique.")
+        if any(not key.startswith("provisional-world:") for key in keys):
+            raise ValueError("Provisional world targets require explicit provisional keys.")
+        if self.ambiguous and (keys or self.target_world_setting_ids):
+            raise ValueError("Ambiguous world subjects cannot select a target.")
+        return self
 
 
 class WorkerWorldSettingSubjectResolutionRequest(BaseModel):
@@ -310,6 +407,7 @@ class WorkerWorldSettingSubjectResolutionResult(BaseModel):
     canonical_subject_key: str = Field(alias="canonicalSubjectKey", min_length=1)
     canonical_subject_name: str = Field(alias="canonicalSubjectName", min_length=1)
     target_world_setting_ids: list[UUID] = Field(alias="targetWorldSettingIds", max_length=20)
+    provisional_subject_keys: list[str] = Field(default_factory=list, alias="provisionalSubjectKeys", max_length=20)
 
 
 class WorkerWorldSettingSubjectResolutionResponse(BaseModel):
@@ -334,6 +432,8 @@ class WorkerWorldSettingComparisonBatchPayload(BaseModel):
         alias="resolvedTargetWorldSettingIds",
         max_length=20,
     )
+    resolved_provisional_subject_keys: list[str] = Field(default_factory=list, alias="resolvedProvisionalSubjectKeys", max_length=20)
+    analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
     raw_scope_name: str | None = Field(default=None, alias="rawScopeName")
     candidates: list[WorkerWorldSettingComparisonBatchCandidate] = Field(
         min_length=1,
@@ -341,11 +441,27 @@ class WorkerWorldSettingComparisonBatchPayload(BaseModel):
     )
 
 
-class WorkerWorldSettingSubject(BaseModel):
+class WorkerWorldSubjectIdentity(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    world_setting_id: UUID = Field(alias="worldSettingId")
+    world_setting_id: UUID | None = Field(default=None, alias="worldSettingId")
+    provisional_subject_key: str | None = Field(default=None, alias="provisionalSubjectKey", pattern=r"^provisional-world:[0-9a-f-]{36}$")
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "WorkerWorldSubjectIdentity":
+        if (self.world_setting_id is None) == (self.provisional_subject_key is None):
+            raise ValueError("Exactly one actual or provisional world identity is required.")
+        return self
+
+    def identity_key(self) -> str:
+        return self.provisional_subject_key or f"world:{self.world_setting_id}"
+
+
+class WorkerWorldSettingSubject(WorkerWorldSubjectIdentity):
     subject_name: str = Field(alias="subjectName")
+    aliases: list[str] = Field(default_factory=list)
+    provenance: AnalysisStateProvenance | None = None
+    identity_evidence: list[WorkerEvidenceSpan] = Field(default_factory=list, alias="identityEvidence")
 
 
 class WorkerWorldSettingSubjectPageResponse(BaseModel):
@@ -372,6 +488,7 @@ class WorkerWorldSettingComparisonBatchContextRequest(BaseModel):
         alias="targetWorldSettingIds",
         max_length=20,
     )
+    provisional_subject_keys: list[str] = Field(default_factory=list, alias="provisionalSubjectKeys", max_length=20)
 
 
 class WorkerWorldSettingProperty(BaseModel):
@@ -380,12 +497,12 @@ class WorkerWorldSettingProperty(BaseModel):
     scope_name: str | None = Field(default=None, alias="scopeName")
     setting_name: str = Field(alias="settingName")
     value: str
+    provenance: AnalysisStateProvenance | None = None
 
 
-class WorkerWorldSettingComparisonTarget(BaseModel):
+class WorkerWorldSettingComparisonTarget(WorkerWorldSubjectIdentity):
     model_config = ConfigDict(populate_by_name=True)
 
-    world_setting_id: UUID = Field(alias="worldSettingId")
     subject_name: str = Field(alias="subjectName")
     properties: list[WorkerWorldSettingProperty]
     version: int = Field(ge=0)
@@ -407,6 +524,13 @@ class WorkerWorldSettingComparisonExactTarget(BaseModel):
 
     candidate_ref: str = Field(alias="candidateRef", pattern=r"^C[1-9][0-9]*$")
     world_setting_id: UUID | None = Field(default=None, alias="worldSettingId")
+    provisional_subject_key: str | None = Field(default=None, alias="provisionalSubjectKey")
+
+    @model_validator(mode="after")
+    def validate_target_identity(self):
+        if self.world_setting_id is not None and self.provisional_subject_key is not None:
+            raise ValueError("Exact targets cannot mix actual and provisional identities.")
+        return self
 
 
 class WorkerWorldSettingComparisonBatchContextResponse(BaseModel):
@@ -419,12 +543,13 @@ class WorkerWorldSettingComparisonBatchContextResponse(BaseModel):
     )
     exact_targets: list[WorkerWorldSettingComparisonExactTarget] = Field(alias="exactTargets")
     targets: list[WorkerWorldSettingComparisonTarget] = Field(max_length=20)
+    analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
+    context_token: str | None = Field(default=None, alias="contextToken", pattern=r"^[0-9a-f]{64}$")
 
 
-class WorkerWorldSettingContextVersion(BaseModel):
+class WorkerWorldSettingContextVersion(WorkerWorldSubjectIdentity):
     model_config = ConfigDict(populate_by_name=True)
 
-    world_setting_id: UUID = Field(alias="worldSettingId")
     version: int = Field(ge=0)
 
 
@@ -482,6 +607,7 @@ class WorkerWorldSettingComparisonBatchDecision(BaseModel):
         max_length=100,
     )
     target_world_setting_id: UUID | None = Field(default=None, alias="targetWorldSettingId")
+    provisional_subject_key: str | None = Field(default=None, alias="provisionalSubjectKey")
     matched_scope_name: str | None = Field(default=None, alias="matchedScopeName")
     matched_property_name: str | None = Field(default=None, alias="matchedPropertyName")
     consolidation_status: WorldSettingConsolidationStatus = Field(alias="consolidationStatus")
@@ -499,22 +625,70 @@ class WorkerWorldSettingComparisonBatchDecision(BaseModel):
         alias="rawComparisonJson",
     )
 
+    @model_validator(mode="after")
+    def validate_target_identity(self):
+        if self.target_world_setting_id is not None and self.provisional_subject_key is not None:
+            raise ValueError("Decisions cannot mix actual and provisional identities.")
+        return self
+
+
+class WorkerWorldSettingDiagnosticProperty(WorkerWorldSubjectIdentity):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    world_setting_id: UUID | None = Field(default=None, alias="targetWorldSettingId")
+    scope_name: str | None = Field(default=None, alias="scopeName", max_length=100)
+    property_name: str = Field(alias="propertyName", min_length=1, max_length=100)
+
+
+class WorkerWorldSettingComparisonDiagnostic(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    attempt: int = Field(ge=1, le=30)
+    rule: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$", max_length=100)
+    stage: Literal[
+        "RESPONSE_SCHEMA", "PROPERTY_SELECTION", "DECISION_VALIDATION",
+        "SCOPE_PLAN", "PROJECTED_SCOPE_PLAN",
+    ] | None = None
+    phase: Literal["BATCH", "RECOVERY"] | None = None
+    candidate_refs: list[str] = Field(default_factory=list, alias="candidateRefs", max_length=20)
+    selected_properties: list[WorkerWorldSettingDiagnosticProperty] = Field(
+        default_factory=list, alias="selectedProperties", max_length=20,
+    )
+
+
+class WorkerWorldSettingComparisonBatchFailure(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    source_candidate_refs: list[str] = Field(alias="sourceCandidateRefs", min_length=1, max_length=20)
+    failure_code: AnalysisFailureCode = Field(alias="failureCode")
+    error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
+    diagnostics: list[WorkerWorldSettingComparisonDiagnostic] = Field(default_factory=list, max_length=30)
+
 
 class WorkerWorldSettingComparisonBatchCompleteRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+    context_token: str | None = Field(default=None, alias="contextToken", pattern=r"^[0-9a-f]{64}$")
 
     context_versions: list[WorkerWorldSettingContextVersion] = Field(
         alias="contextVersions",
         max_length=20,
     )
     decisions: list[WorkerWorldSettingComparisonBatchDecision] = Field(
-        min_length=1,
+        min_length=0,
         max_length=20,
     )
+    failures: list[WorkerWorldSettingComparisonBatchFailure] | None = Field(default=None, max_length=20)
+    diagnostics: list[WorkerWorldSettingComparisonDiagnostic] | None = Field(default=None, max_length=30)
     raw_comparison_json: dict[str, Any] | None = Field(
         default=None,
         alias="rawComparisonJson",
     )
+
+    @model_validator(mode="after")
+    def validate_result_coverage_shape(self):
+        if not self.decisions and not self.failures:
+            raise ValueError("A world batch completion must include decisions or failures.")
+        return self
 
 
 class WorkerWorldSettingComparisonFailRequest(BaseModel):
@@ -522,6 +696,7 @@ class WorkerWorldSettingComparisonFailRequest(BaseModel):
 
     failure_code: AnalysisFailureCode = Field(alias="failureCode")
     error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
+    diagnostics: list[WorkerWorldSettingComparisonDiagnostic] | None = Field(default=None, max_length=30)
     source_error_code: str | None = Field(
         default=None,
         alias="sourceErrorCode",
@@ -584,6 +759,8 @@ class WorkerCharacterFactComparisonBatchPayload(BaseModel):
     character_ref: str = Field(alias="characterRef", pattern=r"^K[1-9][0-9]*$")
     matched_character_name: str = Field(alias="matchedCharacterName", min_length=1, max_length=100)
     canonical_fact_type: str = Field(alias="canonicalFactType", min_length=1, max_length=30)
+    analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
+    provisional_subject_key: str | None = Field(default=None, alias="provisionalSubjectKey")
     candidates: list[WorkerCharacterFactComparisonBatchCandidate] = Field(
         min_length=1,
         max_length=20,
@@ -620,7 +797,8 @@ class WorkerCharacterFactComparisonBatchSnapshotEntry(BaseModel):
         pattern=r"^P[1-9][0-9]*$",
         max_length=20,
     )
-    origin: Literal["PERSISTED", "PRIOR_DECISION"] = "PERSISTED"
+    origin: Literal["PERSISTED", "PRIOR_DECISION", "PROVISIONAL"] = "PERSISTED"
+    provenance: AnalysisStateProvenance | None = None
     source_candidate_ref: str | None = Field(
         default=None,
         alias="sourceCandidateRef",
@@ -646,6 +824,8 @@ class WorkerCharacterFactComparisonBatchContextResponse(BaseModel):
     character_ref: str = Field(alias="characterRef", pattern=r"^K[1-9][0-9]*$")
     matched_character_name: str = Field(alias="matchedCharacterName", min_length=1, max_length=100)
     canonical_fact_type: str = Field(alias="canonicalFactType", min_length=1, max_length=30)
+    analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
+    provisional_subject_key: str | None = Field(default=None, alias="provisionalSubjectKey")
     base_snapshot_version: int = Field(alias="baseSnapshotVersion", ge=0)
     candidates: list[WorkerCharacterFactComparisonBatchCandidate] = Field(
         min_length=1,
@@ -654,12 +834,16 @@ class WorkerCharacterFactComparisonBatchContextResponse(BaseModel):
     snapshot_entries: list[WorkerCharacterFactComparisonBatchSnapshotEntry] = Field(
         default_factory=list,
         alias="snapshotEntries",
-        max_length=30,
     )
     context_token: str = Field(alias="contextToken", min_length=64, max_length=64)
 
     @model_validator(mode="after")
     def validate_status_values(self) -> "WorkerCharacterFactComparisonBatchContextResponse":
+        if self.analysis_context is None and len(self.snapshot_entries) > 30:
+            raise ValueError("Confirmed-only character snapshots retain the legacy limit of 30.")
+        if self.analysis_context is None and any(entry.origin == "PROVISIONAL"
+                                                for entry in self.snapshot_entries):
+            raise ValueError("Provisional snapshots require an ordered input context.")
         for index, candidate in enumerate(self.candidates):
             _validate_status_active_value(
                 self.canonical_fact_type,

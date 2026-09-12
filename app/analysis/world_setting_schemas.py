@@ -1,4 +1,4 @@
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
@@ -24,7 +24,9 @@ class ExtractedWorldSettingCandidate(BaseModel):
     setting_name: TrimmedName
     extracted_value: TrimmedValue
     evidence_spans: list[ExtractedEvidenceSpan] = Field(min_length=1)
-    confidence: Literal[0.65, 0.8, 0.95]
+    # Confidence is descriptive metadata; a valid fractional score must not
+    # invalidate otherwise usable setting facts or get rounded upwards.
+    confidence: float = Field(strict=True, ge=0, le=1, allow_inf_nan=False)
 
 
 class WorldSettingExtractionResult(BaseModel):
@@ -67,6 +69,13 @@ class WorldSettingComparisonDecision(BaseModel):
         if self.operation == WorldSettingOperation.ADD and self.matched_property_name is not None:
             raise ValueError("ADD must not include matched_property_name.")
         if self.operation == WorldSettingOperation.REVIEW_REQUIRED:
+            if self.review_reason == WorldSettingComparisonReviewReason.SCOPE_MISMATCH and (
+                self.target_ref is None or self.matched_property_name is None
+                or self.proposed_scope_name is None
+            ):
+                raise ValueError(
+                    "Scope-mismatch review requires a matched target property and source scope."
+                )
             if self.review_reason == WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED and (
                 self.target_ref is None
                 or self.matched_scope_name is None
@@ -80,7 +89,9 @@ class WorldSettingComparisonDecision(BaseModel):
             ):
                 raise ValueError("Batch-limit REVIEW_REQUIRED must not include a matched path.")
             if self.review_reason not in {
+                WorldSettingComparisonReviewReason.GENERAL_UNCERTAINTY,
                 WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED,
+                WorldSettingComparisonReviewReason.SCOPE_MISMATCH,
                 WorldSettingComparisonReviewReason.BATCH_LIMIT_EXCEEDED,
             }:
                 raise ValueError("REVIEW_REQUIRED requires a supported review_reason.")

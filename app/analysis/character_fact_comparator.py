@@ -19,10 +19,18 @@ from app.analysis.character_fact_projection import (
     validate_resolved_canonical_fact_key,
     validate_status_active_value,
 )
-from app.analysis.exceptions import ComparisonValidationError
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.comparison_reason import (
+    USER_FACING_REASON_INSTRUCTIONS, mask_display_names,
+)
+from app.analysis.ordered_context import (
+    ORDERED_STATE_INSTRUCTIONS, ordered_provenance_data, ordered_reference_data,
+)
+from app.schemas.analysis_context import WorkerAnalysisReference
 from app.analysis.json_response import compact_error_message, request_validated_model
 from app.core.config import get_settings
 from app.domain.setting_values import normalize_setting_display_value
+from app.exceptions.failure_classification import is_candidate_comparison_failure
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.schemas.worker import (
@@ -42,7 +50,16 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "character_fact_comparison_batch.md"
 )
-CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v2"
+CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v3"
+ORDERED_CHARACTER_SLOT_INSTRUCTIONS = (
+    "현재 활성인 동일 Fact 유형·동일 resolved key가 있으면 새 내용이어도 ADD는 금지입니다. "
+    "예를 들어 profile.attribute의 기존 값과 새 후보의 문장이 다르더라도 같은 slot입니다. "
+    "의미에 따라 기존 정보를 보존하는 MERGE, 최신값으로 바꾸는 UPDATE, 중복 EXCLUDE 또는 "
+    "안전하게 판단할 수 없는 REVIEW_REQUIRED를 명시적으로 선택하세요. UPDATE/MERGE의 "
+    "target_ref는 그 시점의 활성 P*/앞선 Q*여야 합니다. ADD를 맞추려고 EXACT/ALIAS 또는 "
+    "비-STATUS PATTERN key를 바꾸거나 기존 정보를 임의로 제거하지 마세요. 앞 후보의 "
+    "UPDATE/MERGE로 P*가 Q*로 교체됐다면 이전 P*를 다시 사용하지 마세요."
+)
 logger = logging.getLogger(__name__)
 SNAPSHOT_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])[PQ][0-9]+(?![A-Za-z0-9])")
 CANDIDATE_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])C[0-9]+(?![A-Za-z0-9])")
@@ -66,6 +83,26 @@ INTERNAL_REASON_TERM_PATTERN = re.compile(
 class CharacterSnapshotReference:
     reference: str
     entry: WorkerCharacterSnapshotEntry
+
+
+class OrderedCharacterSlotConflict(ValueError):
+    """One unchanged validator rule, with no candidate values in its message."""
+
+    def __init__(self, candidate_ref: str, target: CharacterProjectionEntry) -> None:
+        self.candidate_ref = candidate_ref
+        self.target_ref = target.reference
+        self.target_fact_type = target.fact_type
+        self.target_fact_key = target.fact_key
+        self.target_source_candidate_ref = target.source_candidate_ref
+        super().__init__("CANONICAL_SLOT_ALREADY_EXISTS")
+
+
+class OrderedCharacterBatchRecoveryError(ComparisonValidationError):
+    """In-memory verified independent decisions; never serialize provider payloads."""
+
+    def __init__(self, message: str, retained_decisions: tuple) -> None:
+        super().__init__(message)
+        self.retained_decisions = retained_decisions
 
 
 class CharacterFactComparator:
@@ -184,12 +221,12 @@ class CharacterFactComparator:
         decision = await request_validated_model(
             client=self.llm_client,
             response_model=CharacterFactComparisonDecision,
-            system_prompt=self.prompt_path.read_text(encoding="utf-8"),
+            system_prompt=self.prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS,
             user_prompt=json.dumps(prompt_payload, ensure_ascii=False),
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="character-fact-comparison:v9",
+            prompt_cache_key="character-fact-comparison:v10",
             operation_name="Character-fact comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -212,6 +249,9 @@ class CharacterFactComparator:
         snapshot_entries: list[
             WorkerCharacterFactComparisonBatchSnapshotEntry | CharacterProjectionEntry
         ],
+        ordered_context: bool = False,
+        unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
+        max_attempts_override: int | None = None,
     ) -> tuple[CharacterFactComparisonBatchResult, dict]:
         """Compare ordered candidates while projecting each accepted decision in memory."""
 
@@ -224,44 +264,90 @@ class CharacterFactComparator:
                 "character_batch_candidate_limit_exceeded"
             )
         initial_entries = _projection_entries(snapshot_entries)
-        _validate_batch_candidates(candidates, canonical_fact_type)
+        if not ordered_context and any(entry.origin == "PROVISIONAL" for entry in initial_entries):
+            raise ComparisonValidationError("Provisional snapshots require explicit ordered analysis.")
+        if unresolved_references and not ordered_context:
+            raise ComparisonValidationError("Unresolved references require explicit ordered analysis.")
+        try:
+            _validate_batch_candidates(candidates, canonical_fact_type)
+            if ordered_context:
+                CharacterProjectionState(initial_entries)
+                for entry in initial_entries:
+                    ordered_provenance_data(entry.provenance)
+        except (TypeError, ValueError, ComparisonValidationError) as error:
+            if ordered_context:
+                raise OrderedInputContextError("Character batch source context is invalid.") from error
+            raise
         prompt_payload = _batch_prompt_payload(
             matched_character_name,
             canonical_fact_type,
             candidates,
             initial_entries,
         )
-        system_prompt = self.batch_prompt_path.read_text(encoding="utf-8")
+        system_prompt = self.batch_prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS
+        if ordered_context:
+            system_prompt += "\n\n" + ORDERED_STATE_INSTRUCTIONS + "\n\n" + ORDERED_CHARACTER_SLOT_INSTRUCTIONS
+            _add_ordered_snapshot_provenance(prompt_payload, initial_entries)
+            prompt_payload["unresolved_references"] = ordered_reference_data(unresolved_references)
         user_prompt = json.dumps(prompt_payload, ensure_ascii=False)
         estimated_input_tokens = _estimate_prompt_tokens(system_prompt, user_prompt, self.model)
         if estimated_input_tokens > self.batch_max_input_tokens:
+            if ordered_context:
+                raise OrderedInputContextError("character_batch_input_limit_exceeded")
             raise ComparisonValidationError("character_batch_input_limit_exceeded")
 
-        result = await request_validated_model(
-            client=self.llm_client,
-            response_model=CharacterFactComparisonBatchResult,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            model=self.model,
-            max_output_tokens=self.batch_max_output_tokens,
-            max_attempts=self.max_attempts,
-            prompt_cache_key=CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY,
-            operation_name="Character-fact batch comparison",
-            logger=logger,
-            validate_model=lambda comparison_result: _validate_batch_comparison_result(
-                comparison_result,
-                canonical_fact_type,
-                candidates,
-                initial_entries,
-            ),
-            retry_user_prompt_builder=lambda original, exc: _build_bounded_batch_retry_user_prompt(
-                original,
-                exc,
+        attempts = self.max_attempts if max_attempts_override is None else max_attempts_override
+        if type(attempts) is not int or not 1 <= attempts <= self.max_attempts:
+            raise OrderedInputContextError("Invalid character recovery attempt limit.")
+        last_failed_payload = None
+
+        def remember_validation_failure(attempt, error, payload):
+            nonlocal last_failed_payload
+            last_failed_payload = payload
+
+        try:
+            result = await request_validated_model(
+                client=self.llm_client,
+                response_model=CharacterFactComparisonBatchResult,
                 system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 model=self.model,
-                max_input_tokens=self.batch_max_input_tokens,
-            ),
-        )
+                max_output_tokens=self.batch_max_output_tokens,
+                max_attempts=attempts,
+                prompt_cache_key=(CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY
+                                  + (":ordered-provisional-v1" if ordered_context else "")),
+                operation_name="Character-fact batch comparison",
+                logger=logger,
+                validate_model=lambda comparison_result: _validate_batch_comparison_result(
+                    comparison_result,
+                    canonical_fact_type,
+                    candidates,
+                    initial_entries,
+                    ordered_context=ordered_context,
+                    display_names=(matched_character_name,),
+                ),
+                retry_user_prompt_builder=lambda original, exc: _build_bounded_batch_retry_user_prompt(
+                    original,
+                    exc,
+                    system_prompt=system_prompt,
+                    model=self.model,
+                    max_input_tokens=self.batch_max_input_tokens,
+                    ordered_context=ordered_context,
+                ),
+                **({"validation_failure_callback": remember_validation_failure,
+                    "validation_error_summary": lambda error: (
+                    "ordered_batch=CANONICAL_SLOT_ALREADY_EXISTS"
+                    if isinstance(error, OrderedCharacterSlotConflict) else compact_error_message(error)
+                )} if ordered_context else {}),
+            )
+        except ComparisonValidationError as error:
+            if not ordered_context or not is_candidate_comparison_failure(error):
+                raise
+            retained = _independent_ordered_decisions(
+                last_failed_payload, canonical_fact_type, candidates, initial_entries,
+                display_names=(matched_character_name,),
+            )
+            raise OrderedCharacterBatchRecoveryError(str(error), retained) from error
         normalized_result = _normalize_batch_comparison_result(
             result,
             canonical_fact_type,
@@ -281,18 +367,29 @@ class CharacterFactComparator:
         snapshot_entries: list[
             WorkerCharacterFactComparisonBatchSnapshotEntry | CharacterProjectionEntry
         ],
+        ordered_context: bool = False,
+        unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
     ) -> bool:
         if not candidates or len(candidates) > self.batch_max_candidates:
             return False
         initial_entries = _projection_entries(snapshot_entries)
+        if not ordered_context and any(entry.origin == "PROVISIONAL" for entry in initial_entries):
+            return False
+        if unresolved_references and not ordered_context:
+            return False
         prompt_payload = _batch_prompt_payload(
             matched_character_name,
             canonical_fact_type,
             candidates,
             initial_entries,
         )
+        system_prompt = self.batch_prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS
+        if ordered_context:
+            system_prompt += "\n\n" + ORDERED_STATE_INSTRUCTIONS + "\n\n" + ORDERED_CHARACTER_SLOT_INSTRUCTIONS
+            _add_ordered_snapshot_provenance(prompt_payload, initial_entries)
+            prompt_payload["unresolved_references"] = ordered_reference_data(unresolved_references)
         return _estimate_prompt_tokens(
-            self.batch_prompt_path.read_text(encoding="utf-8"),
+            system_prompt,
             json.dumps(prompt_payload, ensure_ascii=False),
             self.model,
         ) <= self.batch_max_input_tokens
@@ -313,6 +410,9 @@ def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
             "ADD/UPDATE/MERGE와 removed_snapshot_refs를 함께 사용하세요. candidate 또는 "
             "proposed STATUS의 value_json.active가 boolean false이면 ADD/UPDATE/MERGE를 "
             "선택하지 마세요. active가 있으면 문자열이 아닌 JSON boolean이어야 합니다. "
+            "proposal은 candidate.value_type을 유지하세요. STRING이면 "
+            "proposed_value_json.value에 JSON 문자열을 넣으세요. NUMBER는 JSON 숫자, "
+            "BOOLEAN은 JSON boolean을 사용하세요. "
             "판단 이유에는 "
             "내부 key·enum·UUID를 쓰지 말고 사용자가 이해할 수 있는 한국어만 쓰세요."
         ),
@@ -320,7 +420,9 @@ def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _build_batch_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
+def _build_batch_retry_user_prompt(
+    original_user_prompt: str, exc: Exception, *, ordered_context: bool = False,
+) -> str:
     payload = json.loads(original_user_prompt)
     payload["validation_feedback"] = {
         "previous_response_rejected": True,
@@ -331,10 +433,61 @@ def _build_batch_retry_user_prompt(original_user_prompt: str, exc: Exception) ->
             "EXACT/ALIAS와 비-STATUS PATTERN key는 initial_canonical_fact_key 그대로 반환하고, "
             "STATUS pattern key만 의미가 같은 안정적인 status.* 이름으로 정규화하세요. UPDATE/MERGE는 "
             "현재 활성인 동일 resolved key만 target으로 삼고, REMOVE는 현재 후보를 snapshot에 "
-            "남기지 않으면서 관련 STATUS를 한 개 이상 종료할 때만 선택하세요."
+            "남기지 않으면서 관련 STATUS를 한 개 이상 종료할 때만 선택하세요. "
+            "각 proposal은 해당 candidate.value_type을 유지하세요. STRING이면 "
+            "proposed_value_json.value에 JSON 문자열을 넣으세요. NUMBER는 JSON 숫자, "
+            "BOOLEAN은 JSON boolean을 사용하세요."
         ),
     }
+    if ordered_context and isinstance(exc, OrderedCharacterSlotConflict):
+        payload["validation_feedback"]["reason_code"] = "CANONICAL_SLOT_ALREADY_EXISTS"
+        payload["validation_feedback"]["correction"] = (
+            ORDERED_CHARACTER_SLOT_INSTRUCTIONS + " 모든 candidate를 입력 순서대로 포함한 JSON 전체를 다시 반환하세요."
+        )
+        context = _verified_slot_conflict_context(payload, exc)
+        if context is not None:
+            payload["validation_feedback"]["existing_slot"] = context
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _verified_slot_conflict_context(payload: dict, error: OrderedCharacterSlotConflict) -> dict | None:
+    """Recheck C/P/Q and any displayed key against input, never response values."""
+    candidates = payload.get("candidates", [])
+    candidate_index = next((index for index, item in enumerate(candidates)
+                            if isinstance(item, dict) and item.get("candidate_ref") == error.candidate_ref), None)
+    if candidate_index is None or not re.fullmatch(r"C[1-9][0-9]*", error.candidate_ref):
+        return None
+    candidate = candidates[candidate_index]
+    if not isinstance(candidate.get("initial_canonical_fact_key"), str):
+        return None
+    context = {"candidate_ref": error.candidate_ref,
+               "initial_canonical_fact_key": candidate["initial_canonical_fact_key"]}
+    if payload.get("canonical_fact_type") != error.target_fact_type:
+        return None
+    if re.fullmatch(r"P[1-9][0-9]*", error.target_ref):
+        target = next((item for item in payload.get("snapshot_entries", [])
+                       if isinstance(item, dict) and item.get("ref") == error.target_ref), None)
+        if (target is None or target.get("fact_type") != error.target_fact_type
+                or target.get("fact_key") != error.target_fact_key):
+            return None
+        context.update(active_target_ref=error.target_ref, fact_type=target["fact_type"],
+                       fact_key=target["fact_key"])
+        return context
+    if re.fullmatch(r"Q[1-9][0-9]*", error.target_ref):
+        target = next((item for item in candidates[:candidate_index] if isinstance(item, dict)
+                       and item.get("projected_snapshot_ref") == error.target_ref
+                       and item.get("candidate_ref") == error.target_source_candidate_ref), None)
+        if target is None:
+            return None
+        context.update(active_target_ref=error.target_ref,
+                       target_source_candidate_ref=target["candidate_ref"],
+                       fact_type=payload["canonical_fact_type"])
+        # A normalized STATUS key may originate in a prior response. The active Q
+        # still identifies that decision, but only an input-owned key is emitted.
+        if target.get("initial_canonical_fact_key") == error.target_fact_key:
+            context["fact_key"] = target["initial_canonical_fact_key"]
+        return context
+    return None
 
 
 def _build_bounded_batch_retry_user_prompt(
@@ -344,9 +497,12 @@ def _build_bounded_batch_retry_user_prompt(
     system_prompt: str,
     model: str,
     max_input_tokens: int,
+    ordered_context: bool = False,
 ) -> str:
-    retry_prompt = _build_batch_retry_user_prompt(original_user_prompt, exc)
+    retry_prompt = _build_batch_retry_user_prompt(original_user_prompt, exc, ordered_context=ordered_context)
     if _estimate_prompt_tokens(system_prompt, retry_prompt, model) > max_input_tokens:
+        if ordered_context:
+            raise OrderedInputContextError("character_batch_input_limit_exceeded")
         raise ComparisonValidationError("character_batch_input_limit_exceeded")
     return retry_prompt
 
@@ -418,6 +574,7 @@ def _validate_user_facing_reason(
         comparison_reason,
         candidate.canonical_fact_key,
         [reference.entry.fact_key for reference in references],
+        display_names=(candidate.entity_name, candidate.matched_character_name),
     )
 
 
@@ -425,6 +582,8 @@ def _validate_user_facing_reason_values(
     comparison_reason: str,
     candidate_fact_key: str,
     snapshot_fact_keys: list[str],
+    *,
+    display_names: tuple[str, ...] = (),
 ) -> None:
     if CANDIDATE_REFERENCE_PATTERN.search(comparison_reason):
         raise ValueError("comparison_reason must not expose request-local candidate refs.")
@@ -435,8 +594,9 @@ def _validate_user_facing_reason_values(
     )
     if leaked_fact_keys:
         raise ValueError("comparison_reason must not expose internal Fact keys.")
+    display_reason = mask_display_names(comparison_reason, display_names)
     if UUID_PATTERN.search(comparison_reason) or INTERNAL_REASON_TERM_PATTERN.search(
-        comparison_reason
+        display_reason
     ):
         raise ValueError("comparison_reason must not expose internal implementation terms.")
 
@@ -488,6 +648,7 @@ def _projection_entries(
             origin=entry.origin,
             source_candidate_ref=entry.source_candidate_ref,
             dependency_candidate_refs=tuple(entry.dependency_candidate_refs),
+            provenance=entry.provenance,
             fact_type=entry.fact_type,
             fact_key=entry.fact_key,
             fact_value=entry.fact_value,
@@ -519,6 +680,14 @@ def _validate_batch_candidates(
             candidate.value_json,
             field_name=f"candidate[{candidate.candidate_ref}].value_json",
         )
+
+
+def _add_ordered_snapshot_provenance(payload: dict, entries: list[CharacterProjectionEntry]) -> None:
+    for item, entry in zip(payload["snapshot_entries"], entries, strict=True):
+        try:
+            item.update(ordered_provenance_data(entry.provenance))
+        except ComparisonValidationError as error:
+            raise OrderedInputContextError("Character snapshot provenance is invalid.") from error
 
 
 def _batch_prompt_payload(
@@ -569,6 +738,9 @@ def _validate_batch_comparison_result(
     canonical_fact_type: str,
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
     initial_entries: list[CharacterProjectionEntry],
+    *,
+    ordered_context: bool = False,
+    display_names: tuple[str, ...] = (),
 ) -> None:
     expected_refs = [candidate.candidate_ref for candidate in candidates]
     actual_refs = [decision.candidate_ref for decision in result.decisions]
@@ -598,16 +770,28 @@ def _validate_batch_comparison_result(
             decision.comparison_reason,
             decision.resolved_canonical_fact_key,
             [entry.fact_key for entry in active_entries],
+            display_names=display_names,
         )
-        state.apply(
-            candidate_ref=candidate.candidate_ref,
-            projected_snapshot_ref=candidate.projected_snapshot_ref,
-            fact_type=canonical_fact_type,
-            resolved_fact_key=decision.resolved_canonical_fact_key,
-            value_type=candidate.value_type,
-            candidate_value_json=candidate.value_json,
-            decision=decision,
-        )
+        try:
+            state.apply(
+                candidate_ref=candidate.candidate_ref,
+                projected_snapshot_ref=candidate.projected_snapshot_ref,
+                fact_type=canonical_fact_type,
+                resolved_fact_key=decision.resolved_canonical_fact_key,
+                value_type=candidate.value_type,
+                candidate_value_json=candidate.value_json,
+                decision=decision,
+            )
+        except ValueError as error:
+            # Preserve every validator and all other errors. Only this exact
+            # domain-output rule gets input-owned ordered retry context.
+            if (ordered_context and type(error) is ValueError
+                    and error.args == ("ADD is invalid when the canonical Fact slot already exists.",)):
+                target_ref = state.exact_target_ref(canonical_fact_type, decision.resolved_canonical_fact_key)
+                target = state.entries_by_ref.get(target_ref)
+                if target is not None:
+                    raise OrderedCharacterSlotConflict(candidate.candidate_ref, target) from error
+            raise
 
 
 def _normalize_batch_comparison_result(
@@ -633,6 +817,65 @@ def _normalize_batch_comparison_result(
         )
         normalized_decisions.append(normalized)
     return CharacterFactComparisonBatchResult(decisions=normalized_decisions)
+
+
+def _independent_ordered_decisions(
+    payload: dict | None,
+    canonical_fact_type: str,
+    candidates: list[WorkerCharacterFactComparisonBatchCandidate],
+    initial_entries: list[CharacterProjectionEntry],
+    *,
+    display_names: tuple[str, ...] = (),
+) -> tuple[CharacterFactComparisonBatchDecision | None, ...]:
+    """Revalidate only the final response, skipping uncertain writes and their suffix.
+
+    Fixed non-STATUS keys bound each failed candidate's possible effects to that
+    key. STATUS can rename a key or remove other statuses, so after a failed
+    STATUS every later candidate must be reconsidered. Missing/duplicate/order
+    errors make all decisions untrusted. Provider values stay in memory only.
+    """
+    empty = (None,) * len(candidates)
+    rows = payload.get("decisions") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or len(rows) != len(candidates):
+        return empty
+    if any(not isinstance(row, dict) or row.get("candidate_ref") != candidate.candidate_ref
+           for row, candidate in zip(rows, candidates, strict=True)):
+        return empty
+    state = CharacterProjectionState(initial_entries)
+    blocked_keys: set[str] = set()
+    uncertain_status = False
+    retained = []
+    for row, candidate in zip(rows, candidates, strict=True):
+        if uncertain_status or candidate.initial_canonical_fact_key in blocked_keys:
+            retained.append(None)
+            continue
+        try:
+            result = CharacterFactComparisonBatchResult(decisions=[
+                CharacterFactComparisonBatchDecision.model_validate(row),
+            ])
+            _validate_batch_comparison_result(
+                result, canonical_fact_type, [candidate], state.entries, ordered_context=True,
+                display_names=display_names,
+            )
+            normalized = _normalize_batch_comparison_result(
+                result, canonical_fact_type, [candidate], state.entries,
+            ).decisions[0]
+            state.apply(
+                candidate_ref=candidate.candidate_ref,
+                projected_snapshot_ref=candidate.projected_snapshot_ref,
+                fact_type=canonical_fact_type,
+                resolved_fact_key=normalized.resolved_canonical_fact_key,
+                value_type=candidate.value_type,
+                candidate_value_json=candidate.value_json,
+                decision=normalized,
+            )
+        except (TypeError, ValueError):
+            blocked_keys.add(candidate.initial_canonical_fact_key)
+            uncertain_status = canonical_fact_type == "STATUS"
+            retained.append(None)
+        else:
+            retained.append(normalized)
+    return tuple(retained)
 
 
 def _replace_projection_references(

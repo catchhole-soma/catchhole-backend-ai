@@ -8,7 +8,12 @@ from evals.multi_stage_setting.loaders import (
     load_gold_snapshot_v3,
     load_prediction_bundle_v3,
 )
-from evals.multi_stage_setting.semantic_outcome import OpenAISemanticOutcomeJudge
+from evals.multi_stage_setting.semantic_outcome import (
+    DEFAULT_MODEL,
+    DEFAULT_REASONING_EFFORT,
+    REASONING_EFFORTS,
+    OpenAISemanticOutcomeJudge,
+)
 
 
 def main() -> None:
@@ -25,14 +30,11 @@ def main() -> None:
     )
     semantic_judge = None
     if args.semantic_judge == "openai":
-        semantic_judge = (
-            OpenAISemanticOutcomeJudge(model=args.judge_model)
-            if args.judge_model is not None
-            else OpenAISemanticOutcomeJudge()
+        semantic_judge = OpenAISemanticOutcomeJudge(
+            model=args.judge_model,
+            reasoning_effort=args.judge_reasoning_effort,
         )
-    report = asyncio.run(
-        evaluate_multi_stage(gold, predictions, semantic_judge=semantic_judge)
-    )
+    report = asyncio.run(evaluate_multi_stage(gold, predictions, semantic_judge=semantic_judge))
     serialized = json.dumps(report, ensure_ascii=False, indent=2)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(serialized, encoding="utf-8")
@@ -54,7 +56,12 @@ def _parse_args() -> argparse.Namespace:
         choices=("none", "openai"),
         default="none",
     )
-    parser.add_argument("--judge-model", default=None)
+    parser.add_argument("--judge-model", default=DEFAULT_MODEL)
+    parser.add_argument(
+        "--judge-reasoning-effort",
+        choices=REASONING_EFFORTS,
+        default=DEFAULT_REASONING_EFFORT,
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--quiet", action="store_true")
     return parser.parse_args()

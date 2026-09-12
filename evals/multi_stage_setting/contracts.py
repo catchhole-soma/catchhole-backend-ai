@@ -62,6 +62,11 @@ class CandidateKind(StrEnum):
     WORLD_SETTING = "WORLD_SETTING"
 
 
+class Stage2Policy(StrEnum):
+    REQUIRED = "REQUIRED"
+    WAIT_FOR_CHARACTER_MATCH = "WAIT_FOR_CHARACTER_MATCH"
+
+
 class ReviewStatus(StrEnum):
     DRAFT = "DRAFT"
     IN_REVIEW = "IN_REVIEW"
@@ -90,6 +95,8 @@ class EvaluationMode(StrEnum):
     ORACLE = "ORACLE"
     FIXED = "FIXED"
     ROLLING = "ROLLING"
+    COMMON_START = "COMMON_START"
+    ORDERED_PROVISIONAL = "ORDERED_PROVISIONAL"
 
 
 class StateApplicationPolicy(StrEnum):
@@ -97,6 +104,8 @@ class StateApplicationPolicy(StrEnum):
 
     SCENARIO_LOCAL = "SCENARIO_LOCAL"
     ACCEPT_ALL_PREDICTIONS = "ACCEPT_ALL_PREDICTIONS"
+    COMMON_START = "COMMON_START"
+    VALIDATED_PROVISIONAL = "VALIDATED_PROVISIONAL"
 
 
 class ScenarioPipelineStatus(StrEnum):
@@ -193,6 +202,7 @@ class HeldWorldConflict(StrictModel):
     scope_name: str | None = None
     setting_name: str = Field(min_length=1)
     source_values: list[str] = Field(min_length=2)
+    source_candidate_ids: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def validate_source_values(self) -> HeldWorldConflict:
@@ -340,6 +350,10 @@ class ScenarioGold(StrictModel):
     cumulative_through_episode: int = Field(ge=0)
     provided_context: str = ""
     known_character_names: list[str] = Field(default_factory=list)
+    registered_characters_after_episode: list[KnownCharacter] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
     state_generation_status: StateGenerationStatus = StateGenerationStatus.PENDING
     before_state_uri: str | None = None
     before_state_hash: str | None = None
@@ -374,6 +388,15 @@ class ScenarioGold(StrictModel):
             raise ValueError("SEED scenario requires seedState or beforeStateUri.")
         if any(not name.strip() for name in self.known_character_names):
             raise ValueError("knownCharacterNames must not contain blank values.")
+        _require_unique(
+            [item.entity_ref for item in self.registered_characters_after_episode],
+            "registeredCharactersAfterEpisode character refs",
+        )
+        for character in self.registered_characters_after_episode:
+            if not character.entity_ref.strip() or not character.name.strip():
+                raise ValueError("registeredCharactersAfterEpisode refs and names must not be blank.")
+            if not character.active:
+                raise ValueError("registeredCharactersAfterEpisode only supports active registration.")
         return self
 
 
@@ -405,6 +428,11 @@ class Stage1Common(StrictModel):
 class CharacterStage1Gold(Stage1Common):
     domain: Literal[EvaluationDomain.CHARACTER]
     candidate_kind: Literal[CandidateKind.SETTING, CandidateKind.CHARACTER_DISCOVERY]
+    # Explicit annotation only; omit the legacy default to preserve fixture hashes.
+    stage2_policy: Stage2Policy = Field(
+        default=Stage2Policy.REQUIRED,
+        exclude_if=lambda value: value == Stage2Policy.REQUIRED,
+    )
     entity_ref: str = Field(min_length=1)
     entity_name: str = Field(min_length=1)
     raw_entity_mention: str | None = None
@@ -423,6 +451,13 @@ class CharacterStage1Gold(Stage1Common):
     @model_validator(mode="after")
     def validate_character_candidate(self) -> CharacterStage1Gold:
         self.validate_extract_fields()
+        if self.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH and (
+            self.decision != GoldDecision.EXTRACT
+            or self.candidate_kind != CandidateKind.SETTING
+        ):
+            raise ValueError(
+                "WAIT_FOR_CHARACTER_MATCH requires an EXTRACT Character SETTING row."
+            )
         setting_fields = (
             self.fact_type,
             self.fact_key,
@@ -763,6 +798,13 @@ class GoldSnapshotV3(StrictModel):
                     and source.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
                 ):
                     raise ValueError("CHARACTER_DISCOVERY does not feed setting comparison.")
+                if (
+                    isinstance(source, CharacterStage1Gold)
+                    and source.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH
+                ):
+                    raise ValueError(
+                        "WAIT_FOR_CHARACTER_MATCH rows must not feed Stage2 decisions."
+                    )
                 source_use_count[gold_id] = source_use_count.get(gold_id, 0) + 1
                 decision_by_source[gold_id] = decision
             sources = [stage1_by_id[gold_id] for gold_id in decision.source_gold_ids]
@@ -889,7 +931,10 @@ class GoldSnapshotV3(StrictModel):
             if row.decision == GoldDecision.EXTRACT
             and not (
                 isinstance(row, CharacterStage1Gold)
-                and row.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
+                and (
+                    row.candidate_kind == CandidateKind.CHARACTER_DISCOVERY
+                    or row.stage2_policy == Stage2Policy.WAIT_FOR_CHARACTER_MATCH
+                )
             )
         }
         missing_stage2 = sorted(expected_stage2_sources - source_use_count.keys())
@@ -973,6 +1018,7 @@ class WorldStage1Prediction(StrictModel):
     candidate_kind: Literal[CandidateKind.WORLD_SETTING] = CandidateKind.WORLD_SETTING
     category: WorldSettingCategory
     subject_name: str = Field(min_length=1)
+    subject_ref: str | None = Field(default=None, exclude_if=lambda value: value is None)
     scope_name: str | None = None
     setting_name: str = Field(min_length=1)
     source_values: list[str] = Field(min_length=1)
@@ -1022,6 +1068,11 @@ class CharacterStage2Prediction(StrictModel):
 
 class WorldStage2Prediction(StrictModel):
     source_candidate_id: str = Field(min_length=1)
+    # Preserve batch provenance without changing the primary source used for scoring/state.
+    source_candidate_ids: list[str] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
     domain: Literal[EvaluationDomain.WORLD]
     consolidation_status: WorldSettingConsolidationStatus
     operation: WorldSettingOperation
@@ -1039,6 +1090,12 @@ class WorldStage2Prediction(StrictModel):
 
     @model_validator(mode="after")
     def validate_world_operation(self) -> WorldStage2Prediction:
+        if self.source_candidate_ids:
+            if any(not source_id.strip() for source_id in self.source_candidate_ids):
+                raise ValueError("sourceCandidateIds must not contain blanks.")
+            _require_unique(self.source_candidate_ids, "sourceCandidateIds")
+            if self.source_candidate_id not in self.source_candidate_ids:
+                raise ValueError("sourceCandidateIds must include sourceCandidateId.")
         if any(not name.strip() for name in self.existing_root_property_names_to_move):
             raise ValueError("existingRootPropertyNamesToMove must not contain blanks.")
         if len(
@@ -1069,11 +1126,44 @@ Stage2Prediction = Annotated[
 ]
 
 
+def stage2_source_candidate_ids(prediction: Stage2Prediction) -> list[str]:
+    if isinstance(prediction, WorldStage2Prediction) and prediction.source_candidate_ids:
+        return prediction.source_candidate_ids
+    return [prediction.source_candidate_id]
+
+
 class RuntimeFailure(StrictModel):
     stage: Literal["CHARACTER_STAGE1", "WORLD_STAGE1", "CHARACTER_STAGE2", "WORLD_STAGE2"]
     source_id: str | None = None
     error_type: str = Field(min_length=1)
     message: str = Field(min_length=1, max_length=500)
+
+
+class RuntimeStateTrace(StrictModel):
+    """Observed runtime states; never reconstructed from Gold in experimental modes."""
+
+    input_state: EvaluationState
+    output_state: EvaluationState
+    input_state_hash: str = Field(min_length=1)
+    output_state_hash: str = Field(min_length=1)
+    source_hash: str = Field(min_length=1)
+    applied_event_ids: list[str] = Field(default_factory=list)
+    state_application_error_candidate_ids: list[str] = Field(default_factory=list)
+    elapsed_seconds: float = Field(ge=0)
+    state_readiness: Literal["OBSERVED", "SEALED", "FAILED"] = "OBSERVED"
+    runtime_sequence: int | None = Field(default=None, ge=0)
+    backend_input_state_hash: str | None = None
+    backend_output_state_hash: str | None = None
+
+    @model_validator(mode="after")
+    def validate_hashes(self) -> RuntimeStateTrace:
+        if self.input_state_hash != self.input_state.content_hash():
+            raise ValueError("Runtime inputStateHash does not match inputState.")
+        if self.output_state_hash != self.output_state.content_hash():
+            raise ValueError("Runtime outputStateHash does not match outputState.")
+        _require_unique(self.applied_event_ids, "runtime applied event IDs")
+        _require_unique(self.state_application_error_candidate_ids, "runtime state error candidate IDs")
+        return self
 
 
 class ScenarioPrediction(StrictModel):
@@ -1088,6 +1178,7 @@ class ScenarioPrediction(StrictModel):
     cached_input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: Decimal | None = Field(default=None, ge=0)
+    runtime_state_trace: RuntimeStateTrace | None = None
 
     @model_validator(mode="after")
     def validate_pipeline_status(self) -> ScenarioPrediction:
@@ -1145,6 +1236,10 @@ class PredictionBundleV3(StrictModel):
     prompt_versions: dict[str, str] = Field(default_factory=dict)
     character_schema_hash: str | None = None
     max_chunks: int | None = Field(default=None, ge=1)
+    runtime_policy_version: str | None = None
+    runtime_run_id: str | None = None
+    runtime_generation: int | None = Field(default=None, ge=1)
+    frozen_start_state: EvaluationState | None = None
     scenarios: list[ScenarioPrediction] = Field(default_factory=list)
 
     @field_serializer("evaluation_domains")
@@ -1156,11 +1251,13 @@ class PredictionBundleV3(StrictModel):
 
     @model_validator(mode="after")
     def require_unique_scenarios(self) -> PredictionBundleV3:
-        expected_policy = (
-            StateApplicationPolicy.ACCEPT_ALL_PREDICTIONS
-            if self.mode == EvaluationMode.ROLLING
-            else StateApplicationPolicy.SCENARIO_LOCAL
-        )
+        expected_policy = {
+            EvaluationMode.ORACLE: StateApplicationPolicy.SCENARIO_LOCAL,
+            EvaluationMode.FIXED: StateApplicationPolicy.SCENARIO_LOCAL,
+            EvaluationMode.ROLLING: StateApplicationPolicy.ACCEPT_ALL_PREDICTIONS,
+            EvaluationMode.COMMON_START: StateApplicationPolicy.COMMON_START,
+            EvaluationMode.ORDERED_PROVISIONAL: StateApplicationPolicy.VALIDATED_PROVISIONAL,
+        }[self.mode]
         if self.state_application_policy is None:
             self.state_application_policy = expected_policy
         elif self.state_application_policy != expected_policy:
@@ -1170,6 +1267,40 @@ class PredictionBundleV3(StrictModel):
             )
         _require_unique([item.scenario_id for item in self.scenarios], "prediction scenario IDs")
         _require_unique(self.evaluation_scenario_ids, "prediction evaluation scenario IDs")
+        experimental = self.mode in {
+            EvaluationMode.COMMON_START,
+            EvaluationMode.ORDERED_PROVISIONAL,
+        }
+        if experimental:
+            if self.frozen_start_state is None or not self.runtime_policy_version:
+                raise ValueError("Experimental modes require frozenStartState/runtimePolicyVersion.")
+            if any(item.runtime_state_trace is None for item in self.scenarios):
+                raise ValueError("Experimental modes require every runtimeStateTrace.")
+            if self.mode == EvaluationMode.ORDERED_PROVISIONAL:
+                if not self.runtime_run_id or self.runtime_generation is None:
+                    raise ValueError("ORDERED_PROVISIONAL requires runtimeRunId/runtimeGeneration.")
+                for item in self.scenarios:
+                    trace = item.runtime_state_trace
+                    assert trace is not None
+                    failed = bool(item.failures) or item.pipeline_status != "COMPLETED"
+                    if trace.state_readiness != ("FAILED" if failed else "SEALED"):
+                        raise ValueError("Ordered trace readiness must preserve pipeline failures.")
+                    if not trace.backend_input_state_hash or not trace.backend_output_state_hash:
+                        raise ValueError("Ordered trace requires Backend journal input/output hashes.")
+                    if trace.runtime_sequence is None:
+                        raise ValueError("Ordered trace requires its explicit run sequence.")
+            if self.mode == EvaluationMode.COMMON_START and any(
+                item.runtime_state_trace.input_state_hash != self.frozen_start_state.content_hash()
+                for item in self.scenarios
+                if item.runtime_state_trace is not None
+            ):
+                raise ValueError("COMMON_START must use the same frozen state in every episode.")
+        elif self.frozen_start_state is not None or self.runtime_policy_version is not None or (
+            self.runtime_run_id is not None or self.runtime_generation is not None
+        ) or any(
+            item.runtime_state_trace is not None for item in self.scenarios
+        ):
+            raise ValueError("Legacy modes must not carry experimental runtime state policy.")
         for scenario in self.scenarios:
             stage1_by_id = {item.candidate_id: item for item in scenario.stage1}
             _require_unique(
@@ -1177,7 +1308,11 @@ class PredictionBundleV3(StrictModel):
                 f"prediction candidate IDs in {scenario.scenario_id}",
             )
             _require_unique(
-                [item.source_candidate_id for item in scenario.stage2],
+                [
+                    source_id
+                    for item in scenario.stage2
+                    for source_id in stage2_source_candidate_ids(item)
+                ],
                 f"Stage2 source candidate IDs in {scenario.scenario_id}",
             )
             if self.mode == EvaluationMode.ORACLE:
@@ -1186,17 +1321,19 @@ class PredictionBundleV3(StrictModel):
                 # cross-fixture relation once Gold is present.
                 continue
             for decision in scenario.stage2:
+                for source_id in stage2_source_candidate_ids(decision):
+                    source = stage1_by_id.get(source_id)
+                    if source is None:
+                        raise ValueError(
+                            f"Stage2 prediction in {scenario.scenario_id} references unknown "
+                            f"Stage1 candidate {source_id}."
+                        )
+                    if source.domain != decision.domain:
+                        raise ValueError(
+                            f"Stage2 prediction in {scenario.scenario_id} has a different "
+                            f"domain from Stage1 candidate {source_id}."
+                        )
                 source = stage1_by_id.get(decision.source_candidate_id)
-                if source is None:
-                    raise ValueError(
-                        f"Stage2 prediction in {scenario.scenario_id} references unknown "
-                        f"Stage1 candidate {decision.source_candidate_id}."
-                    )
-                if source.domain != decision.domain:
-                    raise ValueError(
-                        f"Stage2 prediction in {scenario.scenario_id} has a different "
-                        f"domain from Stage1 candidate {decision.source_candidate_id}."
-                    )
                 if (
                     isinstance(decision, CharacterStage2Prediction)
                     and decision.removed_snapshot_refs
