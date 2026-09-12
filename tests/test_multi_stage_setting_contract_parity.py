@@ -77,7 +77,12 @@ def test_world_matching_uses_production_identity_but_semantic_value_comparison(
 
     assert len(result.matches) == 1
     assert result.matches[0].entity_or_subject_matched is subject
-    assert result.matches[0].path_or_fact_matched is path
+    assert result.matches[0].path_or_fact_matched is (path if path else None)
+    raw_result = match_stage1(
+        [gold], [prediction], domain="WORLD", source_text=None, semantic_scoring=False,
+    )
+    assert raw_result.matches[0].entity_or_subject_matched is subject
+    assert raw_result.matches[0].path_or_fact_matched is path
     # Value comparison intentionally remains semantic and collapses whitespace.
     assert result.matches[0].value_status == "MATCH"
 

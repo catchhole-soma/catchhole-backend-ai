@@ -67,7 +67,7 @@ def test_comparator_hides_database_ids_and_accepts_add() -> None:
     )
     assert "모든 현재 STATUS의 의미 관계를 먼저 검토" in client.requests[0]["system_prompt"]
     assert "기존 장애가 해소됐는지는 독립적으로 판단" in client.requests[0]["system_prompt"]
-    assert client.requests[0]["prompt_cache_key"] == "character-fact-comparison:v9"
+    assert client.requests[0]["prompt_cache_key"] == "character-fact-comparison:v10"
     assert prompt_payload["snapshot_entries"][0]["ref"] == "P1"
     assert prompt_payload["snapshot_entries"][0]["fact_value"] == "출혈 중"
     assert prompt_payload["exact_target_ref"] is None
@@ -168,6 +168,53 @@ def test_comparator_retries_invalid_number_json_and_normalizes_display_value() -
     assert decision.proposed_fact_value == "36"
     assert raw["proposed_fact_value"] == "36"
     assert len(client.requests) == 2
+
+
+@pytest.mark.parametrize(
+    "invalid_json",
+    [
+        {"value": 36},
+        {"value": True},
+        {"value": None},
+        {"value": ["바바리안"]},
+        {"value": {"종족": "바바리안"}},
+        {"종족": "바바리안"},
+    ],
+)
+def test_comparator_retries_invalid_string_proposal_without_coercion(invalid_json) -> None:
+    invalid = {
+        "operation": "ADD",
+        "target_ref": None,
+        "removed_snapshot_refs": [],
+        "proposed_fact_value": "바바리안 종족",
+        "proposed_value_json": invalid_json,
+        "temporal_scope": "PRESENT",
+        "comparison_reason": "확인된 종족을 추가합니다.",
+    }
+    valid = {**invalid, "proposed_value_json": {"value": "바바리안"}}
+    client = FakeTextClient([invalid, valid])
+    candidate = _candidate().model_copy(
+        update={
+            "attribute_name": "profile.species",
+            "attribute_value": "바바리안",
+            "value_json": {"value": "바바리안"},
+            "value_type": SettingValueType.STRING,
+            "canonical_fact_type": "PROFILE",
+            "canonical_fact_key": "profile.species",
+        }
+    )
+
+    decision, raw = asyncio.run(
+        CharacterFactComparator(llm_client=client, max_attempts=2).compare(candidate, [])
+    )
+
+    assert len(client.requests) == 2
+    assert decision.proposed_value_json == {"value": "바바리안"}
+    assert decision.proposed_fact_value == "바바리안 종족"
+    assert raw == valid
+    feedback = json.loads(client.requests[1]["user_prompt"])["validation_feedback"]
+    assert "STRING" in feedback["reason"]
+    assert "STRING" in feedback["correction"]
 
 
 def test_comparator_allows_only_status_snapshot_removal() -> None:

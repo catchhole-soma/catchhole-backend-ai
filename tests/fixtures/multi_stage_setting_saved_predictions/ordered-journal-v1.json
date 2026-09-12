@@ -1,0 +1,92 @@
+{
+  "formatVersion": 1,
+  "baseState": {
+    "characters": {
+      "character:one": {
+        "name": "주인공",
+        "slots": {
+          "skill": {
+            "value": "검술"
+          }
+        }
+      }
+    },
+    "worldSettings": {},
+    "references": {}
+  },
+  "changes": [
+    {
+      "eventId": "ep1:injury",
+      "path": [
+        "characters",
+        "character:one",
+        "slots",
+        "injury"
+      ],
+      "value": {
+        "value": "오른발 부상",
+        "provenance": {
+          "confirmationStatus": "PROVISIONAL",
+          "sourceEpisodeNo": 1
+        }
+      },
+      "remove": false,
+      "operation": "ADD",
+      "sourceCandidateIds": [
+        "00000000-0000-0000-0000-000000000001"
+      ]
+    },
+    {
+      "eventId": "ep2:recovery",
+      "path": [
+        "characters",
+        "character:one",
+        "slots",
+        "injury"
+      ],
+      "value": null,
+      "remove": true,
+      "operation": "REMOVE",
+      "sourceCandidateIds": [
+        "00000000-0000-0000-0000-000000000001"
+      ]
+    },
+    {
+      "eventId": "ep2:history",
+      "path": [
+        "references",
+        "injury-history"
+      ],
+      "value": {
+        "reason": "과거 사건",
+        "episodeNo": 2
+      },
+      "remove": false,
+      "operation": "HISTORY_ONLY",
+      "sourceCandidateIds": [
+        "00000000-0000-0000-0000-000000000001"
+      ]
+    }
+  ],
+  "expectedState": {
+    "characters": {
+      "character:one": {
+        "name": "주인공",
+        "slots": {
+          "skill": {
+            "value": "검술"
+          }
+        }
+      }
+    },
+    "worldSettings": {},
+    "references": {
+      "injury-history": {
+        "reason": "과거 사건",
+        "episodeNo": 2
+      }
+    }
+  },
+  "expectedCanonical": "{\"characters\":{\"character:one\":{\"name\":\"주인공\",\"slots\":{\"skill\":{\"value\":\"검술\"}}}},\"references\":{\"injury-history\":{\"episodeNo\":2,\"reason\":\"과거 사건\"}},\"worldSettings\":{}}",
+  "expectedHash": "df2482cd25db7efbf1f410e58698868e734620cab8fade8f88d877e3e18b8424"
+}

@@ -20,7 +20,7 @@ from app.analysis.character_fact_projection import (
     CharacterProjectionState,
     validate_resolved_canonical_fact_key,
 )
-from app.analysis.exceptions import ComparisonValidationError
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
 from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import Settings
@@ -460,7 +460,7 @@ def test_batch_comparator_projects_in_order_and_hides_transport_ids() -> None:
     assert "`matched_character_name`" in request["system_prompt"]
     assert str(WORK_ID) not in serialized
     assert str(EPISODE_ID) not in serialized
-    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v2"
+    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v3"
 
 
 def test_batch_pipeline_falls_back_to_singletons_without_losing_projection() -> None:
@@ -915,7 +915,8 @@ def test_batch_comparator_retries_incomplete_candidate_coverage() -> None:
     assert "cover every candidate" in feedback["reason"]
 
 
-def test_batch_comparator_rejects_input_limit_before_provider_call() -> None:
+@pytest.mark.parametrize("ordered_context", [False, True])
+def test_batch_comparator_rejects_input_limit_before_provider_call(ordered_context) -> None:
     client = FakeTextClient({"decisions": []})
     comparator = CharacterFactComparator(
         llm_client=client,
@@ -924,7 +925,7 @@ def test_batch_comparator_rejects_input_limit_before_provider_call() -> None:
     )
 
     with pytest.raises(
-        ComparisonValidationError,
+        OrderedInputContextError if ordered_context else ComparisonValidationError,
         match="character_batch_input_limit_exceeded",
     ):
         asyncio.run(
@@ -933,13 +934,15 @@ def test_batch_comparator_rejects_input_limit_before_provider_call() -> None:
                 canonical_fact_type="STATUS",
                 candidates=[_candidates()[0]],
                 snapshot_entries=[],
+                ordered_context=ordered_context,
             )
         )
 
     assert client.requests == []
 
 
-def test_batch_comparator_rechecks_input_limit_before_validation_retry(monkeypatch) -> None:
+@pytest.mark.parametrize("ordered_context", [False, True])
+def test_batch_comparator_rechecks_input_limit_before_validation_retry(monkeypatch, ordered_context) -> None:
     client = SequencedTextClient([{"decisions": []}])
 
     def estimated_tokens(_system_prompt: str, user_prompt: str, _model: str) -> int:
@@ -953,7 +956,7 @@ def test_batch_comparator_rechecks_input_limit_before_validation_retry(monkeypat
     )
 
     with pytest.raises(
-        ComparisonValidationError,
+        OrderedInputContextError if ordered_context else ComparisonValidationError,
         match="character_batch_input_limit_exceeded",
     ):
         asyncio.run(
@@ -962,6 +965,7 @@ def test_batch_comparator_rechecks_input_limit_before_validation_retry(monkeypat
                 canonical_fact_type="STATUS",
                 candidates=[_candidates()[0]],
                 snapshot_entries=[],
+                ordered_context=ordered_context,
             )
         )
 

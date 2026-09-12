@@ -120,13 +120,35 @@ def test_worker_reports_progress_and_complete_to_spring() -> None:
     assert result.claimed is True
     assert result.analysis_job_id == ANALYSIS_JOB_ID
     assert spring_client.claim_model_name == "extraction-model"
+    assert spring_client.claim_current_step is None
+    assert spring_client.supported_analysis_modes == ["CONFIRMED_ONLY", "ORDERED_PROVISIONAL"]
     assert spring_client.progress_calls == [
-        (ANALYSIS_JOB_ID, "SETTING_EXTRACTION", EpisodeProcessingStatus.ANALYZING)
+        (ANALYSIS_JOB_ID, "SETTING_EXTRACTION", EpisodeProcessingStatus.ANALYZING),
+        (ANALYSIS_JOB_ID, "PERSISTING", EpisodeProcessingStatus.ANALYZING),
     ]
     assert spring_client.complete_calls == [
         (ANALYSIS_JOB_ID, '{"candidateCount": 0}', None, None),
     ]
     assert spring_client.fail_calls == []
+
+
+@pytest.mark.parametrize("checkpoint,expected_step", [
+    (AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED, "CHARACTER_FACT_COMPARISON"),
+    (AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED, "WORLD_SETTING_EXTRACTION"),
+    (AnalysisJobCheckpointStage.WORLD_CANDIDATES_PUBLISHED, "WORLD_SETTING_COMPARISON"),
+    (AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED, "PERSISTING"),
+])
+def test_resumed_job_reports_its_remaining_stage_without_resetting_the_checkpoint(
+    checkpoint, expected_step,
+):
+    payload = _payload().model_copy(update={"checkpoint_stage": checkpoint})
+    spring = FakeSpringWorkerClient(payload)
+    _run_once(SuccessfulAnalysisJobWorker(spring_client=spring))
+    assert spring.claim_current_step is None
+    assert spring.progress_calls[0][1] == expected_step
+    assert spring.progress_calls[-1][1] == "PERSISTING"
+    assert all(value is None for value in spring.progress_checkpoints)
+    assert payload.checkpoint_stage is checkpoint
 
 
 def test_worker_routes_each_llm_stage_to_its_configured_model() -> None:
@@ -905,7 +927,9 @@ class FakeSpringWorkerClient:
         self.payload = payload
         self.claim_called = False
         self.claim_model_name: str | None = None
+        self.claim_current_step: str | None = None
         self.progress_calls: list[tuple[UUID, str, EpisodeProcessingStatus]] = []
+        self.progress_checkpoints: list[AnalysisJobCheckpointStage | None] = []
         self.complete_calls: list[tuple[UUID, str | None, int | None, int | None]] = []
         self.fail_calls: list[tuple[UUID, str, str]] = []
 
@@ -914,9 +938,12 @@ class FakeSpringWorkerClient:
         allowed_job_types,
         model_name: str | None = None,
         current_step: str | None = None,
+        supported_analysis_modes=None,
     ) -> WorkerAnalysisJobPayload | None:
         self.claim_called = True
         self.claim_model_name = model_name
+        self.claim_current_step = current_step
+        self.supported_analysis_modes = supported_analysis_modes
         return self.payload
 
     async def report_progress(
@@ -928,6 +955,7 @@ class FakeSpringWorkerClient:
         checkpoint_stage=None,
     ) -> None:
         self.progress_calls.append((analysis_job_id, current_step, episode_status))
+        self.progress_checkpoints.append(checkpoint_stage)
 
     async def complete(
         self,
