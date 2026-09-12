@@ -36,6 +36,8 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 - `world_setting_comparison.md`
   - 후보 속성과 최대 3개 기존 대상의 현재 properties를 비교해 ADD/UPDATE/MERGE/EXCLUDE/REVIEW_REQUIRED를 제안합니다.
   - UUID/version 대신 `T*` 참조를 사용하고, UPDATE/MERGE의 실제 속성명과 최종 문자열을 반환합니다.
+- `world_setting_comparison_batch.md`
+  - 같은 canonical 주체·raw scope의 후보를 비교하고, 같은 속성의 source만 합쳐 최종 속성별로 decision을 반환합니다. 모든 `C*` source는 정확히 한 번 사용합니다.
 
 ## 설정 후보 출력 계약
 
@@ -83,14 +85,17 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 
 ## 세계관 prompt 출력 계약
 
-- 세계관 후보 한 건은 `category + subject_name + setting_name + extracted_value`로 표현되는 속성 하나입니다.
-- chunk별 추출 뒤 같은 `category + subject_name + setting_name` 후보는 게시 전에 한 건으로 통합합니다. 2차 비교 입력의 `extracted_values`는 통합 전 값 목록이며, 모델은 `SINGLE/MERGED/CONFLICT`를 판정합니다. `MERGED`는 모든 양립 가능한 정보를 보존한 자연스러운 `proposed_value` 하나를 반환하고, `CONFLICT`는 임의 절충 없이 입력값 전체를 그대로 반환합니다.
+- 세계관 후보 한 건은 `category + subject_name + scope_name + setting_name` 경로와 `extracted_value`로 표현되는 속성 하나입니다. scope는 선택적인 한 단계 범위이며, 비어 있으면 루트 속성입니다.
+- `POWER_SYSTEM`은 마법·스킬·능력 자체의 습득·발동 조건, 자원 소모, 효과·등급·제한으로 좁힙니다. 특정 능력의 사용과 무관한 세계·게임 공통 사망·전투·성장·진행 규칙과 기본 특성은 `WORLD_RULE_HISTORY`로 추출합니다. 여러 사용자에게 적용되는 마법 자체의 기전은 여전히 `POWER_SYSTEM`이며, 종족의 선천적 적성은 `RACE`입니다. 두 분류의 enum과 기존 경로·채점 계약은 유지합니다.
+- 종족의 서술형 전투 특징은 `RACE / 종족명 / 전투 특성` 아래 `마법 재능`, `신체 능력`, `전투 강점`으로 구분합니다. 원문에 있는 속성만 추출합니다. 체력·힘과 그에 따른 장비 착용 능력의 서술은 `신체 능력`에 모으며, 후속 회차의 양립 가능한 설명은 기존 경로에 MERGE합니다. 서로 독립된 수치 능력치·판정 규칙이나 장비 자체의 속성은 별도로 유지합니다.
+- chunk별 추출 뒤 같은 `category + subject_name + scope_name + setting_name` 후보는 게시 전에 한 건으로 통합합니다. 2차 비교 입력의 `extracted_values`는 통합 전 값 목록이며, 모델은 `SINGLE/MERGED/CONFLICT`를 판정합니다. `MERGED`는 모든 양립 가능한 정보를 보존한 자연스러운 `proposed_value` 하나를 반환하고, `CONFLICT`는 임의 절충 없이 입력값 전체를 그대로 반환합니다.
 - 통합 후보의 `evidence_spans`는 각 1차 후보의 실제 quote·offset 합집합입니다. 2차 비교는 이 근거를 수정하거나 새로 만들지 않습니다.
 - 추출 근거 quote는 원문 그대로 복사하며 offset은 Python mapper가 현재 chunk에서 다시 계산합니다.
 - 대상 탐색과 상세 비교 prompt에는 Backend UUID와 version을 넣지 않습니다. LLM은 입력에 있는 `S*`/`T*` ref만 반환합니다.
 - 대상 탐색은 같은 대상일 가능성이 없으면 빈 목록을 반환하고, 단순 연관성만으로 선택하지 않습니다.
-- ADD/EXCLUDE는 추출 설정명과 값을 보존합니다. UPDATE/MERGE는 선택한 target에 실제 존재하는 속성명을 그대로 사용합니다.
+- 단건 비교의 ADD는 원본 범위·설정명을 유지합니다. batch ADD는 source가 하나여도 canonical 범위·설정명을 제안할 수 있지만, raw와 다른 새 scope는 서로 다른 최종 하위 속성이 둘 이상일 때만 허용하며 scope와 설정명이 같을 수 없습니다. UPDATE/MERGE는 선택한 target에 실제 존재하는 범위·설정명을 그대로 사용합니다.
 - 후보 scope가 없고 다른 scope의 동명 속성만 관련될 수 있으면 자동으로 그 scope를 채우지 않고 `REVIEW_REQUIRED + SCOPE_UNRESOLVED`를 반환합니다. 기존 matched 경로는 보존하고 proposed 경로는 원본 후보의 root 경로를 유지합니다.
+- 범위 외의 대상·내용이 불확실하면 모델이 명시적으로 `REVIEW_REQUIRED + GENERAL_UNCERTAINTY`를 선택할 수 있습니다. source는 하나씩 검토하며 원본 주체·범위·설정명·값·근거를 유지합니다. 실제 비교한 기존 항목이 있으면 유효한 경로만 선택하고, 없으면 matched 경로를 비웁니다. 이 결과는 자동 확정하지 않으며 잘못된 scope 검토·없는 대상·일반 실행 실패를 자동 전환하지 않습니다. 사용자 문장은 “대상이나 내용을 확실히 판단하기 어려워 확인이 필요합니다”처럼 구체적인 자연어로 설명합니다.
 - 기존 속성과 중복되어 EXCLUDE할 때는 해당 `T*` 참조와 실제 속성명을 함께 반환해 Backend가 비교 당시 기존값을 보존합니다. 특정 기존 속성과 비교하지 않은 일시적 사건 등의 제외만 매칭 속성명을 비웁니다.
 - MERGE의 `proposed_value`는 기존·신규 정보를 모두 보존하되 중복을 제거한 최종 문자열 한 개입니다.
 - Python schema가 ref와 operation별 필드를 검증하고, Backend가 실제 대상 ID·현재 version·속성 존재 여부를 다시 검증합니다.

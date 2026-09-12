@@ -8,6 +8,10 @@
 2. 2차 LLM이 기존 상태와 후보를 비교해 올바른 반영 결정을 내렸는가
 3. 그 결정을 순서대로 적용한 최종 누적 상태가 올바른가
 
+평가 후 [AI 로직 버전 기록](ai-logic-versions/README.md)의 사람용 요약에 점수·상태·다음 조치를
+남깁니다. 실제 커밋·입력 해시·모델·judge 조건과 실행별 집계는 연결된 상세 기록에 보관합니다.
+조건이 다른 실행이나 미완료 점수를 개선 근거로 사용하지 않습니다.
+
 ## 전체 데이터 흐름
 
 ```mermaid
@@ -70,6 +74,11 @@ data source는 세 개만 사용합니다.
   캐릭터에서 생성 시점 최신순으로 자동 생성한 이름 미리보기입니다. 같은 이름의 서로 다른
   캐릭터도 임의로 합치지 않습니다. exporter는 기존 표 이관을 위해 이 컬럼을 읽지만 runtime은
   사람이 쓴 값을 신뢰하지 않고 상태에서 다시 계산합니다.
+- `회차 종료 캐릭터 등록`: 해당 회차 분석 후 사용자가 등록하는 캐릭터를 지정하는 선택
+  JSON 배열입니다. 예: `[{"entityRef":"character:bjorn-yandel","name":"비요른 얀델"}]`.
+  해당 회차의 1차 입력에는 보내지 않고, 회차 종료 상태와 다음 회차 입력에 반영합니다.
+  원문에서 이름을 추출했다는 정답으로 추가하지 않으며, 모델 예측이나 설정값을 보정하지
+  않습니다. 이 등록 자체는 모델의 상태 평가 정답·오답으로 세지 않습니다.
 - `상태 생성 상태`: `PENDING → GENERATED → VERIFIED`로 snapshot 생성·검증 여부를 기록합니다.
 - `beforeState URI/Hash`, `afterState URI/Hash`: 작성자가 파일명을 직접 적는 입력칸이 아니라,
   상태 fixture 도구가 reducer 결과로 만든 산출물을 검증하기 위한 필드입니다. Notion→v3
@@ -86,6 +95,10 @@ snapshot에 같이 포함됩니다. 실제 평가 대상은 `evaluationScenarioI
 
 ### 1차 설정 추출 Gold
 
+세계관 설정명 평가 정책은 이슈 [#62](https://github.com/catchhole-soma/catchhole-backend-ai/issues/62)에
+배경과 범위를 기록하며, 결과 JSON의 `run.worldSettingNamePolicy`는
+`item-scope-value-contextual/v2`로 구분합니다.
+
 1차 Gold는 **원문에서 발견해야 하는 후보**를 기록합니다. `1차 판정`은 `EXTRACT`,
 `DO_NOT_EXTRACT`, `REVIEW_REQUIRED`이고, 캐릭터와 세계관 모두 동일한 후보 검출 원칙으로
 평가합니다.
@@ -99,9 +112,10 @@ snapshot에 같이 포함됩니다. 실제 평가 대상은 `evaluationScenarioI
 - 세계관은 `category + normalized subject + scope + setting`을 경로로 사용하고, 같은 경로의
   원문 값은 `sourceValues`로 묶습니다.
 - 공용 `허용 factKey 별칭` 컬럼은 세계관 행에서는 `worldSettingName`의 사람이 검수한 별칭으로
-  해석합니다. 1차 매칭은 이 별칭을 canonical setting과 같은 사실로 인정하지만 Gold와 누적
-  상태의 경로는 항상 canonical `worldSettingName`으로 유지합니다. 2차의 proposed path는
-  canonical 이름을 반환하는 책임을 별도로 평가합니다.
+  해석합니다. 1차 매칭과 2차 출력 설정명 채점은 정규화한 이름·허용 별칭을 먼저 비교하고,
+  일치하지 않으면 같은 category·주체 안에서 문맥상 같은 속성인지 판정합니다. 상위 scope가
+  다르면 범위의 의미가 같은지도 별도로 판정하며, 이름 일치만으로 범위나 값까지 인정하지 않습니다.
+  Gold의 canonical 이름은 유지하며, 이 평가 때문에 모델의 원시 출력 이름을 고쳐 쓰지 않습니다.
 - `valueJson`은 표시값과 별도 품질 지표입니다. `STRING`, 엄격한 `NUMBER`, 엄격한 `BOOLEAN`은
   exporter가 단순 scalar JSON을 만들 수 있지만, `JSON`과 `UNKNOWN` 구조는 추측하지 않습니다.
 
@@ -191,9 +205,11 @@ key를 함께 종료할 수도 있습니다. 후보 자체도 현재 상태로 �
 분모에 넣습니다. 제거가 없는 일반 판단 수가 늘어도 상태 해소 정확도가 부풀지 않습니다.
 
 캐릭터의 `proposedValueJson`은 참고용 문자열이 아니라 실제 저장 결과의 일부입니다. Gold에
-구조화 JSON이 있으면 표시 문장이 맞아도 JSON subset이 다를 때 `fullDecisionAccuracy`, E2E
-structured state, transition이 오답입니다. Gold가 지정하지 않은 추가 JSON 필드는 세 지표 모두
-허용하며, transition도 Gold before/after subset에 투영한 값만 비교합니다.
+구조화 JSON이 있으면 표시 문장이 맞아도 Gold가 지정한 JSON subset을 만족해야
+`fullDecisionAccuracy`, E2E structured state, transition에서 정답입니다. 서술형 문자열의
+표현 차이는 의미 판정으로 확인하되, 숫자·불리언·식별자는 결정적으로 비교합니다. Gold가 지정하지
+않은 추가 JSON 필드는 세 지표 모두 허용하며, transition도 Gold before/after subset에 투영한
+값만 비교합니다.
 
 ### 세계관
 
@@ -273,6 +289,120 @@ transition recall에서 오답으로 반영됩니다. 이 구조로 “추출기
 `UPSTREAM_BLOCKED_SUBJECT`로 분리하고, 실패 원인은 `EXTRACTION_MISS`, `RETRIEVAL_MISS`,
 `COMPARISON_ERROR`, `STATE_APPLICATION_ERROR`, `UPSTREAM_FALSE_POSITIVE`로 집계합니다.
 
+### 인물 연결을 기다리는 1차 정답
+
+원문에서 설정을 추출했더라도 어느 캐릭터에게 연결할지 확정되지 않으면 운영 pipeline은
+2차 LLM을 호출하지 않습니다. 이 동작을 기대하는 캐릭터 `EXTRACT / SETTING` 정답에는
+`stage2Policy=WAIT_FOR_CHARACTER_MATCH`를 명시합니다. Notion의 선택형 **2차 처리 기준**
+컬럼에 같은 값을 기록하며, 이 행에 연결된 2차 정답은 두지 않습니다.
+
+1차의 대상·설정 분류·값·근거는 계속 채점합니다. 올바른 추출 뒤의 인물 연결 대기는
+2차 답안 누락이나 추출 실패로 세지 않습니다. 보고서의 인물 연결 대기 수는 답지에 이 정책을
+지정한 항목 수이며, 실제 추출에 성공한 수와는 다릅니다. 해당 1차 설정을 놓쳤거나 잘못
+추출한 경우에는 원래의 1차 오류를 그대로 기록합니다. 2차 정확도의 분모에는 2차 정답이 있는
+항목만 포함하며, 대기 항목에 대해 확정 설정이 저장될 것으로 기대하지 않습니다.
+
+기본값 `REQUIRED`는 기존처럼 설정마다 2차 정답 하나를 요구합니다. 기존 Notion DB에 컬럼이
+없거나 값이 비어 있으면 기본값을 사용합니다. 기본값은 JSON에 새 필드를 추가하지 않아 기존
+fixture hash를 보존합니다. 세계관이나 캐릭터 발견 정답에는 대기 정책을 사용할 수 없습니다.
+
+정책은 회차의 개별 Gold 행에만 적용합니다. 예를 들어 1화의 표시명이 `미상`이어도 내부
+`entityRef`는 유지하고, 2화의 캐릭터 발견·이름 연결과 2차 판단은 기존 기준으로 평가합니다.
+평가기에서 이후 회차의 이름을 앞선 입력에 주입하거나 운영의 인물 해소 로직을 바꾸지 않습니다.
+
+Notion 변경 시 1차 대기 정책 지정과 연결된 2차 정답 제거를 함께 적용하고, 이 정책을
+지원하는 브랜치에서 다시 export합니다. 2차만 삭제하거나 대기 정책과 2차 정답을 함께
+남기면 계약 검증 오류입니다. 변경 후 누적 상태를 다시 생성해 이후 회차의 동일 인물 연결도
+검증합니다.
+
+### 세계관 설정 항목·범위·값 판정
+
+세계관 의미 판정은 같은 category·주체인 후보 쌍에만 적용합니다. `worldSettingName`이 가리키는
+설정 항목, `worldScope`의 적용 범위, 설정값의 내용은 서로 독립된 세 축입니다.
+
+1. 정규화한 이름이 같으면 `EXACT`, Gold에 등록된 허용 별칭이면 `ALIAS`로 항목을 인정합니다.
+   범위와 값도 각각 정규화 일치로 먼저 확인합니다. 한 축이 일치해도 나머지 축의 판정을 생략하지
+   않습니다.
+2. 결정적으로 일치하지 않는 축은 이름·양쪽 범위·추출값·기존값·근거·필수/금지 사실과 관련
+   경로를 함께 제공해 LLM이 판정합니다. `sameSetting`은 같은 설정 항목인지,
+   `scopeEquivalent`는 범위가 의미상 동등한지, 의미 보존 필드는 내용이 맞는지를 나타냅니다.
+3. 빈 scope는 root property입니다. 빈 범위를 모든 범위와 자동으로 일치시키지 않습니다.
+   신규 `ADD`에서 독립 속성들을 `게임 규칙` 같은 상위 범위로 묶었더라도 적용 대상이나 조건이
+   바뀌지 않았다면 의미상 동등할 수 있습니다. 특정 지역·인물·시기 등으로 범위를 넓히거나
+   좁힌 경우에는 같은 값이 적혀 있어도 범위가 같다고 인정하지 않습니다.
+
+예를 들어 root의 `캐릭터 사망 규칙`과 `게임 규칙 › 사망 규칙`은 같은 항목인지, 새 상위 범위가
+의미를 바꾸지 않는 묶음인지, 사망 후 재육성해야 한다는 내용이 보존됐는지를 각각 확인합니다.
+이름이 비슷하거나 내용이 같다는 이유만으로 세 판정을 한꺼번에 통과시키지 않습니다.
+
+이 기준은 1차 일대일 후보 연결, 2차 proposed path/value, E2E 누적 상태와 전이에 적용합니다.
+1차에서 인정한 표현이 있어도 2차가 새로 출력한 경로와 값은 다시 확인합니다. 후보 하나로 서로
+다른 Gold 여러 개를 충족시키거나, 여러 예측을 평가용 키 하나에 덮어써 중복을 숨기지 않습니다.
+
+기존 target reference와 실제 `matchedScopeName/matchedPropertyName`, operation, consolidation,
+기존 root property 이동 대상은 계속 Gold와 실제 상태를 기준으로 엄격히 검증합니다.
+`UPDATE/MERGE`의 matched 경로와 proposed 경로도 같아야 합니다. 의미상 비슷하다는 이유로
+다른 기존 속성을 수정하거나 경로를 바꾸는 계약 위반을 정답으로 보정하지 않습니다. 신규 scope의
+실제 하위 속성이 둘 이상이어야 한다는 reducer 규칙도 그대로 적용합니다.
+
+### 캐릭터 의미 판정
+
+`profile.가족관계`와 `profile.가족_관계`처럼 마지막 한글 항목명에서 한글 사이 공백·밑줄만
+다르면 같은 키의 표기로 인정합니다. 이 정규화는 1차·2차·최종 상태 채점에 공통 적용하며
+LLM 판정을 요구하지 않습니다. 인물·factType과 값은 각각 채점하므로 항목명이 같다는 이유로
+틀린 값까지 인정하지 않습니다. namespace나 점 경계, 실제 단어가 다른 경우에는 적용하지 않고
+영문·숫자 식별자의 밑줄도 지우지 않습니다. 원시 키와 실제 상태 해시는 그대로 유지하며,
+같은 표기로 연결할 예측이 여러 개이면 기존 일대일·중복 검증을 유지합니다.
+
+캐릭터의 서술형 값은 표현이 달라도 필수 사실 보존·금지 사실·모순·근거 없는 추가 정보를 기준으로
+판정합니다. 같은 인물·factType 안에서 동적으로 정하는 STATUS pattern 이름과 JSON 안의
+서술형 문자열에도 의미 판정을 적용합니다. 현재 평가 bundle에는 스키마 원본이 없으므로
+동적 이름 판정은 기본 `status.*` namespace로 제한하며, 다른 namespace의 자유 이름을
+임의로 승인하지 않습니다. 인물 ID, factType, 고정 canonical key,
+숫자·불리언, target 및 제거 대상 reference는 계속 결정적으로 비교합니다. STATUS 이름 대응을
+인정해도 실제로 종료할 상태나 수정할 대상의 선택까지 바꾸지는 않습니다.
+
+### 의미 판정의 미확정 결과와 실행 설정
+
+judge가 항목·범위의 동등성을 결정할 수 없으면 nullable 판정으로, 값은 `valueResolved=false`로
+응답할 수 있습니다. judge를 사용하지 않거나 유효한 판정이 없는 경우도 해당 축을 `PENDING`으로
+남깁니다. 미확정을 정답·오답으로 추정하거나 후보 TP로 계산하지 않으며, 이 상태를 1차·2차·E2E에
+전파합니다. 다른 의미 축이나 구조 필드가 명시적으로 틀린 경우 그 오류는 그대로 유지합니다. caseId
+누락·중복, 잘못된 타입처럼 응답 계약이 깨진 경우는 미확정과 구분해 평가 오류로 거절합니다.
+
+이 판정은 평가에만 적용합니다. 제품 추출·비교 프롬프트, 원시 prediction, reference reducer의
+상태, before/after state와 fixture hash를 바꾸지 않습니다. 승인된 대응은 상태·전이 채점의
+일대일 평가용 키에만 사용하며, 원시 상태 해시 차이와 실제 상태 적용 오류는 보존합니다.
+캐릭터 이력의 후보 ID와 Gold ID 대응도 승인된 일대일 연결을 채점할 때만 사용합니다.
+전이는 먼저 원시 상태에서 계산한 뒤 평가용 대응을 적용하므로, 대응 방식의 변화만으로
+실제로 없던 ADD/UPDATE를 만들지 않습니다.
+
+`ROLLING`에서 일부 회차만 채점하면 누적 상태를 만든 이전 회차의 의미 판정도 필요할 수 있습니다.
+의존 회차의 추가 judge 사용량은 `semanticJudgeUsage`에 포함하지만, 그 회차의 1차·2차 항목을
+점수의 분자·분모에 추가하지 않습니다. 의존 회차의 판정은 선택 회차의 상태 대응에만 사용합니다.
+
+평가 judge 기본값은 `gpt-5.6-sol`, reasoning effort는 `medium`입니다. 각각 `--judge-model`과
+`--judge-reasoning-effort`로 지정하며 제품의 추출·주체 해소·비교 모델 및 공통 추론 강도와
+독립적으로 주입합니다. 평가만 실행해도 제품 모델 설정을 바꾸지 않습니다.
+
+요청 묶음은 회차를 섞지 않으며, 같은 회차 안에서 **입력 64,000토큰·출력 32,000토큰**을
+기본 상한으로 사용합니다. 기존 8쌍 고정 제한은 없고 비교 데이터의 길이에 따라 개수가 달라집니다.
+입력은 지시문·비교 JSON·응답 schema를 tokenizer로 계산한 뒤 message framing 여유분
+10% + 256토큰을 포함한 추정량입니다. 따라서 비교 데이터만으로 64,000토큰을 채우지 않습니다.
+기존 모델별 tokenizer 선택과 미지원 모델의 byte 상한 fallback을 공통 사용량 계산과 공유합니다.
+출력 상한은 실제 사용량이 아니라 추론과 최종 JSON에 허용하는 최대량입니다.
+출력이 잘리면 해당 묶음만 반으로 나눠 다시 판단하고, 잘린 호출의 사용량도 `semanticJudgeUsage`에
+포함합니다. 단일 비교에서도 출력이 잘리면 실패로 종료하며, 누락·중복 응답은 계속 거절합니다.
+단일 비교의 입력이 상한을 넘으면 해당 `judge_many` 호출의 API 전송 전에 오류로 알리고,
+문맥을 자르거나 일부 비교를 생략하지 않습니다. 입력 상한 변경은 평가 단계·표·공개 JSON 구조를
+바꾸지 않습니다.
+
+의미 judge 요청은 `multi-stage-setting-eval:semantic-outcome:v4` 캐시 키를 사용합니다. v4는
+항목·범위·값의 독립 판정과 미확정 응답 계약을 포함하므로 이전 v3 응답을 재사용하지 않습니다.
+같은 이름 쌍이라도 분류·주체·양쪽 범위·값·근거·관련 경로가 바뀌면 다른 판정 문맥입니다.
+실제 문맥을 요청에 보내 판정하며, 캐시 키를 정오 판정의 근거로 쓰지 않습니다. 이 버전은
+평가 judge 프롬프트 버전이며 `setting-eval/v3` 데이터 계약이나 제품 프롬프트 버전은 유지합니다.
+
 ## 주요 지표 읽는 법
 
 - 1차: 도메인별 후보 Precision/Recall/F1, identity/path/value/valueJson/evidence, raw→handoff 수
@@ -310,6 +440,44 @@ transition recall에서 오답으로 반영됩니다. 이 구조로 “추출기
 표시하며, 2차 호출 자체가 없었다고 해석하지 않습니다. 판정 이유는 내부 upstream 코드 대신
 답지와 다른 부분을 설명하고, 1차 문제로 2차에서 제외되면 연결된 1차 진단의 차이도 표시합니다.
 
+1차에서 '불필요하게 추출한 설정'으로 분류된 캐릭터·세계관 후보도 같은 2차 표에 표시합니다.
+연결된 실제 결과가 있으면 '과추출 항목의 2차 처리' 행에서 ADD·EXCLUDE·REVIEW_REQUIRED 등의
+처리 방식과 제안 경로·값을 확인할 수 있습니다. 결과 기록이 없으면 '과추출 항목의 2차 결과 없음'으로
+표시하며, 이 표시만으로 실제 호출 여부나 실패 원인을 단정하지 않습니다. 대응하는 2차 답지는
+없으므로 기대 처리 칸에 이를 명시하고, 이 진단 행을 정답·오답으로 채점하거나 Gold 기준 정확도의
+분모에 추가하지 않습니다. 표의 열과 집계 전용 `score.json` 구조는 유지합니다.
+
+여러 세계관 후보가 한 2차 결과로 합쳐지면 비공개 예측의 선택 필드 `sourceCandidateIds`에 원래
+후보 ID 전체를 기록합니다. 답지 연결과 과추출 억제 집계는 이 목록의 모든 후보를 확인합니다.
+같은 실제 결과를 공유하더라도 공개 행의 기존 `sourceCandidateId`에는 해당 행에 연결된 후보
+ID를 표시하므로 답지와 연결된 후보와 과추출 후보를 각각 추적할 수 있습니다. 원시 상태 적용은
+대표 후보를 기준으로 한 번만 수행합니다. 목록이 없는 기존 예측은 단일 source 연결로 읽으며,
+기록되지 않은 통합 관계를 이름·값으로 추정하지 않습니다.
+모델의 자유 형식 비교 이유는 공개하지 않고 기존 허용 필드와 고정 안내 문구만 사용합니다.
+
+세계관 진단의 선택 필드 `settingNameMatch`는 제안 설정명, 2차의 `matchedPropertyNameMatch`는
+비교한 기존 속성명의 `status`와 `method`를 기록합니다. 두 이름을 별도로 판정하며,
+공개 보고서는 `status=MATCH/MISMATCH/PENDING`, `method=EXACT/ALIAS/SEMANTIC/UNRESOLVED`만
+허용하고 다음 고정 문구로 설명합니다. 완전 일치 항목과 1차 문제로 제외된 2차의 원인에도
+같은 설명을 사용합니다.
+
+| 이름 판정 | 공개 설명 |
+| --- | --- |
+| 허용 별칭으로 일치 | 정답지에 등록된 별칭으로 같은 설정 항목임을 인정했습니다. |
+| 문맥 판정으로 일치 | 이름은 다르지만 문맥상 같은 설정 항목으로 판단했습니다. |
+| 문맥 판정으로 불일치 | 문맥상 다른 설정 항목으로 판단했습니다. |
+| 판정 미완료 | 설정명의 의미를 확인하지 못했습니다. |
+
+설정명이 일치로 인정됐는데 양쪽 경로의 상위 범위가 다르면, 같은 기존 판정 이유 셀에서 범위의
+인정·불일치·미확정을 별도로 설명합니다. `PARTIAL_MATCH`에 `PENDING` 필드가 있으면 의미 판정이
+끝나지 않았음을 명시합니다. 공개 JSON 구조, 표·컬럼·지표명은 추가하거나 바꾸지 않습니다.
+
+`EXACT`는 별도 설명을 생략할 수 있습니다. 모델이 만든 자유 형식 `reason`·`settingReason`·`scopeReason`은
+원문을 인용할 수 있으므로 공개 allowlist에 넣지 않습니다. quote, raw 응답과 함께 공개
+산출물에서 제외하며, 공개 화면은 답지·모델의 허용된 이름과 고정 설명만 표시합니다. 표시 문자열은
+HTML·Markdown을 이스케이프하고 기존 길이 제한을 적용합니다. 집계 전용 `score.json`에는
+개별 이름 판정이나 설명을 추가하지 않습니다.
+
 1차 집계에서는 예측을 '모델이 추출한 설정', 연결을 '비교한 설정 쌍', TP를
 '대상·설정 항목 일치'로 표시합니다. P·R·F1과 가중 Recall에는 뜻을 괄호로 설명하고,
 주체·경로·값은 '설정 대상·설정 항목·설정 내용 일치율'로 표시합니다. 근거 위치는
@@ -329,7 +497,7 @@ coverage·pending 및 오류 코드에는 한국어 괄호 설명을 붙입니�
 검증하지 않으므로 '실행 중 기록된 오류'로 표시하고, 단계별·유형별 집계가 같은 오류를
 다른 기준으로 분류한 수임을 명시합니다.
 
-의미 판정이 필요한 값에 judge를 사용하지 않으면 관련 결과는 틀림이 아니라 `pending`으로
+의미 판정이 필요한 항목·범위·값에 judge를 사용하지 않거나 판단할 수 없으면 해당 축은 `pending`으로
 남습니다. pending이 하나라도 있으면 해당 주 지표(`valueAccuracy`, `fullDecisionAccuracy`,
 `afterStateF1`, `transitionF1`)는 `null`입니다. 판정이 끝난 항목만 보는 `resolved*`, pending을
 오답으로 보는 보수적인 `*LowerBound*`, `semanticCoverage`를 함께 제공합니다. 보고서에서 대상
@@ -437,25 +605,37 @@ python -m evals.multi_stage_setting.state_cli \
 `*.before.notion.md` 역시 원고에서 파생된 상세 정답을 포함하므로 공개 Actions artifact에는
 업로드하지 않습니다.
 
-기본인 ORACLE 예측 생성, 평가, 원문·근거 인용과 raw 응답을 제외한 정제된 진단 요약은 다음
-진입점을 사용합니다. ORACLE은 1차 Gold를 직접 사용하므로 원문과 캐릭터 스키마 파일이 필요하지
-않습니다.
+기본 품질 평가는 **FIXED**로 실행합니다. 회차별 시작 상태를 Gold 기준으로 고정하고
+1차 추출부터 평가합니다. Actions 기본값과 로컬 실행 기준은 현재 운영 설정에 맞춰
+추출 `gpt-5.6-sol`, 주체 해소 `gpt-5.6-terra`, 비교 `gpt-5.6-sol`,
+제품 추론 강도 `medium`으로 둡니다. `LLM_MODEL` fallback은 `gpt-5.6-terra`입니다.
+다른 조건의 실험은 선택값을 바꾸고 실제 실행 조건을 해당 버전의 상세 기록에 따로 남깁니다.
+`v0001` 같은 로직 버전 번호와 `FIXED` 같은 평가 모드는 별개입니다.
+
+예측 생성·채점·정제된 진단 요약은 다음 진입점을 사용합니다. 로컬 CLI는 `--mode`를
+명시해야 하며, 모델과 추론 강도도 아래처럼 지정해 앱 설정의 fallback에 의존하지 않습니다.
 
 ```bash
+LLM_MODEL=gpt-5.6-terra LLM_REASONING_EFFORT=medium \
 python -m evals.multi_stage_setting.runtime_cli \
   --gold build/eval/multi-stage/gold.json \
-  --mode ORACLE \
+  --mode FIXED \
   --domains CHARACTER,WORLD \
   --episodes 1,2,3 \
-  --analysis-model gpt-5.6-terra \
-  --subject-resolution-model gpt-5.6-luna \
-  --comparison-model gpt-5.6-luna \
+  --analysis-model gpt-5.6-sol \
+  --subject-resolution-model gpt-5.6-terra \
+  --comparison-model gpt-5.6-sol \
+  --source-root private/eval/sources \
+  --character-setting-schemas private/eval/character-setting-schemas.json \
   --output build/eval/multi-stage/predictions.json
 
 python -m evals.multi_stage_setting.cli \
   --gold build/eval/multi-stage/gold.json \
   --predictions build/eval/multi-stage/predictions.json \
+  --source-root private/eval/sources \
   --semantic-judge openai \
+  --judge-model gpt-5.6-sol \
+  --judge-reasoning-effort medium \
   --output build/eval/multi-stage/report.json
 
 python -m evals.multi_stage_setting.report_cli \
@@ -470,7 +650,8 @@ python -m evals.multi_stage_setting.report_cli \
 `CHARACTER`를 평가할 때는
 `--character-setting-schemas private/eval/character-setting-schemas.json`도 추가합니다. 평가
 명령에도 같은 `--source-root`를 전달합니다. `SEED` 시나리오가 외부 상태 URI를 사용하면 runtime과
-평가 명령에 `--state-root`도 전달합니다. semantic judge를 끄려면
+평가 명령에 `--state-root`도 전달합니다. comparator만 격리하는 `ORACLE`은 1차 Gold를
+직접 사용하므로 원문과 캐릭터 스키마 파일을 생략할 수 있습니다. semantic judge를 끄려면
 `--semantic-judge none`을 사용하거나 옵션을 생략합니다.
 
 캐릭터 schema fixture는 Spring claim의 필드에 평가 전용 `canonicalFactType`을 선택적으로
@@ -528,7 +709,11 @@ S3 prefix 아래에는 live 평가 원문 `sources/`, 캐릭터 도메인을 평
 실패합니다. 모델 호출 전 reference reducer로 before/after state와 hash를 검증·생성하고,
 beforeValue가 비어 있는 2차 Gold도 같은 상태에서 자동으로 채운 뒤 갱신된 Gold를 평가합니다.
 provider의 HTTP/인증 장애는 개별 후보 오답으로 삼키지 않고 실행 자체를 실패시키며,
-형식 오류처럼 후보 단위로 복구 가능한 실패만 `runtimeFailures`에 집계합니다. 업로드 artifact에는
+형식 오류처럼 후보 단위로 복구 가능한 실패만 `runtimeFailures`에 집계합니다.
+캐릭터 2차의 `STRING` proposal은 `valueJson.value`가 JSON 문자열인지 모델 응답을 받는 즉시
+검증하고, 타입이 다르면 수정 지시와 함께 재시도합니다. 재시도 후에도 잘못된 후보는
+`COMPARISON_VALIDATION_FAILED`로 기록하며 정상 후보의 결과와 보고서 생성은 계속합니다.
+숫자·배열·객체를 임의로 문자열로 변환해 통과시키지 않습니다. 업로드 artifact에는
 `summary.md`와 집계 전용 `score.json`만 포함합니다. `summary.md`에는 허용 목록으로 정제한
 주체·경로·표시값 기반 항목 진단과 `runtimeFailures` 집계가 포함되지만 `score.json`은 자동 비교용
 집계 지표만 유지합니다.

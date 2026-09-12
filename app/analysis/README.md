@@ -60,10 +60,60 @@ Spring 기준으로는 여러 하위 기능을 조합해 도메인 분석 결과
   - normalized exact 대상이 없을 때 같은 category의 대상명만 `S*` 참조로 LLM에 전달해 최대 3개를 선택합니다.
   - Backend가 반환한 현재 속성 문맥은 UUID/version 없이 `T*` 참조로 LLM에 전달해 ADD/UPDATE/MERGE/EXCLUDE를 판단합니다.
   - 기존 속성과 중복되어 EXCLUDE하면 해당 `T*`와 실제 속성명을 검증해 Backend가 기존값을 저장할 수 있게 전달합니다.
+- `ordered_world_batch_contract.py`
+  - 누적 세계관 batch의 필수 nullable 선택 응답 schema와 기존 root/scoped 경로 충돌 지침을 제공합니다. 선택 ref를 입력 경로로 복원한 뒤 기존 도메인 model과 validator로 다시 검증합니다.
+  - 재시도에는 허용된 오류 코드·필드·판단 index와 입력에서 다시 확인한 기존 경로만 전달합니다. 실패 응답이나 원시 예외를 복사하지 않으며 의미상 잘못된 판단을 자동으로 통과시키지 않습니다.
+  - 이미 연결된 대상이 하나라면 임시 주체이거나 속성이 비어 있어도 모든 판단이 그 대상 참조를 보존해야 합니다. ordered 입력에 주체의 등록 상태를 별도로 표시하고, 누락 재시도는 `CANONICAL_TARGET_REQUIRED`와 입력에서 확인한 참조로 교정합니다. 누락을 Worker가 자동 보정하지 않습니다.
+  - 빈 속성 목록과 같은 배치의 신규 ADD를 기존 matched 속성으로 오인하지 않도록 명시합니다. ordered에만 `SCOPE_MISMATCH` 검토와 오류별 경로 피드백을 제공하며, 확정 설정 기반 호출에는 공통 자연어 이유 지침만 추가하고 schema 생략 계약은 유지합니다.
+  - 마지막 시도도 고정된 오류 코드와 허용된 필드·판단 index를 실패 요약에 남깁니다. 이 상세 요약은 ordered 세계관 batch에만 적용하며 응답값·원문·대상 UUID·알 수 없는 필드명·예외 문자열은 기록하지 않습니다.
 - `world_setting_pipeline.py`
   - 미해소 후보의 canonical 주체 저장, canonical batch claim, 비교 문맥 조회, 결과 저장을 조율합니다.
   - 정확한 HTTP 409 `WORLD_SETTING_CANDIDATE_COMPARISON_CONTEXT_STALE`은 같은 batch의 새 문맥으로 다시 비교하고, `WORLD_SETTING_SUBJECT_RESOLUTION_STALE`은 기존 batch를 reset한 뒤 주체 해소와 새 batch claim부터 다시 수행합니다.
   - Backend 계약 검증 400은 같은 LLM 결과를 다시 생성하지 않고 `COMPARISON_VALIDATION_FAILED`와 원본 source code/reason을 분리해 후보에 기록합니다.
+
+### Ordered 캐릭터의 제한된 부분 복구
+
+묶음 응답 재시도 후에도 검증이 실패하면, 마지막 응답에서 원본 후보 수·참조·순서가 모두 정확한 경우에만
+각 판단의 schema, 기존 비교 규칙과 순차 projection을 다시 검증합니다. `OrderedCharacterBatchRecoveryError`는
+그 검증을 통과한 독립 판단만 메모리로 전달하며 실패 응답 원문을 저장하거나 로그에 남기지 않습니다.
+파싱이나 coverage가 불명확하면 유지할 판단을 추정하지 않습니다.
+
+실패한 후보와 같은 고정 key의 후속 후보는 다시 비교합니다. STATUS는 다른 key도 상태 정규화·종료에 영향을
+줄 수 있어, 실패한 STATUS 뒤의 모든 STATUS를 다시 비교합니다. 그 밖의 독립 정상 판단은 추가 모델 호출 없이
+유지합니다. 재비교는 후보별 한 번으로 제한하며, 처음부터 단일 후보였던 실패에 추가 복구를 붙이지 않습니다.
+기존 Q 참조와 REMOVE 이후의 부재 dependency를 다시 계산하고, 실패 후보의 Q 참조를 사용할 수 없게 합니다.
+잘못된 ADD를 UPDATE로 바꾸거나 원본 key·값·근거를 조용히 바꾸지 않습니다.
+
+완료 요청은 모든 원본 source를 정확히 한 decision 또는 typed failure로 포함합니다. 수동 ordered 모드는
+혼합 결과를 저장한 뒤 후속 batch와 다음 stage를 중단합니다. 자동 모드는 정상 판단의 반영과 실패 참고 보존을
+Spring이 검증한 뒤 나머지를 진행합니다. quota·lease·고정 입력·Spring 오류는 부분 완료로 바꾸지 않으며,
+stale 문맥은 기존 재시도 한도 안에서 전체 결과를 다시 만듭니다. legacy의 기존 singleton fallback은 유지합니다.
+
+### 비교 완료 요청이 서버에서 거절된 경우
+
+서버의 HTTP 400은 모델 응답 검증 실패와 다릅니다. Python 검증을 통과했더라도 완료 요청의 DTO·대상·의존 관계를
+Spring이 거절하면 기존처럼 작업을 중단합니다. 이를 일괄 부분 성공으로 바꾸지 않습니다.
+`clients/safe_http_diagnostics.py`는 실패 저장과 로그에 실제 status, 허용된 고정 서버 code, 기존 reason-code,
+알려진 DTO field 경로만 남깁니다. 내부 URL·요청/응답 본문·details.message·거절된 값은 넣지 않습니다.
+현재 Java가 constraint code를 제공하지 않으므로 오류 문장으로 규칙을 추정하지 않습니다.
+
+48화의 원래 거절 요청/응답은 영속 저장되지 않았으므로 정확한 400 원인을 사후 확정할 수 없습니다.
+새 요약은 이후 거절을 구분하기 위한 진단 보완이며 이전 실패 원인을 복원하는 기능은 아닙니다.
+원래 응답 객체와 typed source code는 메모리에 유지하고, lease·quota·stale·Spring 오류의 제어 흐름은 유지합니다.
+
+### 사용자에게 보이는 판단 이유와 보류 원인
+
+`comparison_reason.py`의 공통 지침은 인물·세계관 비교 이유를 설정 내용과 근거의 관계로 설명하도록 합니다.
+예를 들어 “같은 slot에 ADD할 수 없다” 대신 “같은 항목에 정보가 있어 함께 정리할지 확인이 필요하다”처럼
+씁니다. 원문·값·근거·실제 고유명사는 수정하지 않습니다. 기존 내부 ID·참조 유출 검증은 유지하지만,
+root/slot/scope 같은 표현만으로 유효한 판단을 폐기하거나 추가 모델 호출을 하지 않습니다.
+저장된 과거 이유까지 포함한 공개 문장 정리는 Spring의 응답 경계가 담당합니다.
+
+CONFIRMED_ONLY도 이 공통 system 지침만 추가합니다. 이전 요청 golden과 user payload·schema·cache를 보존하며
+`legacy_reason_language_overrides.json`과 `legacy_subject_identity_overrides.json`으로 승인된
+system 문구 변경만 별도로 검증합니다.
+`SettingCandidate.automatic_review_hold_reason`은 Spring이 소유하는 nullable 문자열 매핑이며,
+Python은 자동 반영 보류 원인이나 기존 비교 결과를 직접 갱신하지 않습니다.
 
 ### 세계관 batch 비교 계약
 
@@ -71,6 +121,17 @@ Worker는 미해소 후보를 먼저 조회하고, 전체 subject 페이지의 e
 후보별 target ID 목록으로 Backend에 원자 저장합니다. Backend는 저장된 canonical key를 사용해
 `job + 회차 + category + canonical subject + raw scope`가 같은 후보만 batch로 묶습니다. Worker는 claim된 batch를
 다시 주체별로 나누지 않으며, batch 안에서 독립 속성만 별도 decision으로 나눕니다.
+
+ordered 주체 연결에서는 같은 분류의 입력 목록에서, 이름과 원본 근거가 같은 개념·개체임을 뒷받침하면
+모델이 임시 주체를 명시적으로 재사용할 수 있습니다. 일반적인 게임 캐릭터의 장비 지표와 전투 지표는
+서로 다른 속성이어도 같은 주체일 수 있습니다. 이름만 같다는 이유로 자동 병합하지 않고 다른 실체나
+모호한 관계는 구분합니다. 연관된 분류나 상위·하위 종류도 같은 대상의 별칭은 아닙니다. 예를 들어 원문이
+변이종·상위종·희귀종·상위 변이종을 각각 설명하면 구분합니다. 다른 이름을 연결할 때에는 별칭·약칭·번역이나
+같은 대상을 달리 부르는 원문 근거를 확인합니다. 이 지침은 새 호출이나 다른 이름의 강제 보류를 추가하지 않습니다.
+legacy 주체 선택의 “명백한 상하위 표기” 문구도 제거했지만, ordered는 그 파일 대신 별도 system 지침을 사용하므로
+해당 문구를 ordered의 실제 의미 오판 원인으로 단정하지 않습니다. 한 대상을 명시적으로 선택하면 그 대상의 메모리상 연결 근거에 원본 근거만
+중복 없이 보강해 후속 후보의 판단에 제공합니다. 첫 신규 anchor와 추출 원본은 유지합니다.
+이전 회차의 보류 참고는 선택 가능한 주체나 확정 사실이 아니며, 새 회차 자체의 근거 없이 승격할 수 없습니다.
 
 독립 decision은 source 후보가 하나여도 신규 `ADD`라면 2차 LLM이 제안한 canonical scope/name을 유지합니다.
 다만 raw와 다른 새 scope는 현재 ADD와 기존 문맥을 합친 최종 하위 속성이 둘 이상일 때만 허용합니다. 기존 root
@@ -84,6 +145,122 @@ Worker는 미해소 후보를 먼저 조회하고, 전체 subject 페이지의 e
 ref, 서로 다른 explicit scope 혼합, 잘못된 target ref, operation별 필드 위반은 부분 저장 없이 batch 전체
 validation failure입니다. 완료 요청에는 decision, source ref coverage, canonical subject, target ID, context
 version, raw comparison JSON을 보내며 원본 evidence/provenance는 Worker가 재작성하지 않습니다.
+
+#### Ordered 기존 속성의 선택 참조
+
+입력 `targets.properties[].ref`에 `T1.P1` 같은 요청 로컬 참조를 부여합니다. 모델은
+`matched_property_ref` 하나로 기존 위치를 선택하고, 허용된 전체 ref 목록을 strict schema enum으로 받습니다.
+Worker는 ref와 target_ref가 실제 같은 입력 대상에 속하는지 확인한 뒤 `matched_scope_name`과
+`matched_property_name`을 복원합니다. 두 matched 경로 필드는 provider 응답에서 허용하지 않습니다.
+UPDATE/MERGE는 proposed scope/name도 반드시 null로 반환하며 선택한 기존 경로로 함께 복원합니다.
+ADD/EXCLUDE/REVIEW_REQUIRED는 실제 proposed 이름을 반환합니다. Backend complete DTO와
+CONFIRMED_ONLY는 공통 자연어 이유 지침 외 기존 prompt·schema 생략·cache 계약을 유지합니다.
+
+#### Ordered 대상의 빈 속성과 범위 검토
+
+주체가 이미 연결되어 있다는 사실은 기존 속성이 존재한다는 뜻이 아닙니다. `properties=[]`인 임시 주체에는
+`target_ref`를 유지한 ADD를 제안할 수 있지만, UPDATE/MERGE나 matched 경로를 가진 EXCLUDE는 불가능합니다.
+일시적 사건 등 내용 자체를 제외할 근거가 있을 때만 matched_property_ref를 null로 둔 EXCLUDE를 사용합니다.
+같은 배치의 다른 후보와 이번 응답에서 ADD할 속성도 기존 문맥이 아닙니다. 신규 사실끼리 중복되면 source를
+보존해 하나의 decision으로 통합하고, 의미가 독립적이면 별도 경로로 ADD합니다.
+
+기존 `SCOPE_UNRESOLVED` 자동 정규화는 범위가 없는 후보와 기존 scoped 동명 속성에만 적용합니다.
+ordered에서는 이름이 다른 경우도 모델이 `REVIEW_REQUIRED + SCOPE_UNRESOLVED`를 명시적으로 제안하면
+검토할 수 있습니다. 예를 들어 root 후보 `전투 특징`과 기존 `행동 및 사냥 방식 › 함정 사용`의 관련성이
+불분명하면 원본 root 경로를 보존한 검토로 남깁니다. 단일 null-scope source와 실제 scoped 속성만 허용하며,
+proposed scope는 null, proposed 이름은 원본 그대로, 이동 목록은 []입니다. 원본 값과 근거, 모델의 구체적인
+관련성 설명을 보존하고 자동 반영하지 않습니다. 이름이 다른 concrete 연산의 실패를 자동 검토로 바꾸지는 않습니다.
+검토 사유는 **원본 후보의 범위**로 구분합니다. 예를 들어 root 후보 `근접 무기 효과`와 기존
+`전투 및 능력 › 독`의 관련성을 검토한다면 `SCOPE_UNRESOLVED`와 원본 null scope를 사용합니다.
+기존 속성에 scope가 있다는 이유로 `SCOPE_MISMATCH`를 선택하거나, schema 오류를 없애려고
+기존 범위를 proposed scope에 복사해서는 안 됩니다. 범위 불일치 및 SCOPE_MISMATCH schema 오류의
+재시도 피드백도 이 구분을 안내하며, 부적합 응답의 거절 조건과 자동 정규화는 그대로 유지합니다.
+`ORDERED_PROVISIONAL` batch는 별도로 모델이 명시한 `REVIEW_REQUIRED + SCOPE_MISMATCH`를 허용합니다.
+예를 들어 후보 `외곽 지역 › 조명 환경`이 기존 `1층 › 광원`과 관련될 수 있지만 두 범위의 포함 관계가 불명확하면,
+기존 값을 수정하지 않고 두 경로를 보존한 검토를 제안할 수 있습니다. 다음 조건을 모두 검사합니다.
+
+- source는 명시적 scope가 있는 후보 하나이며, matched 속성은 공급된 canonical 대상에 실제 존재해야 합니다.
+- matched scope는 source scope와 달라야 합니다. 기존 root 속성은 matched scope가 null이어도 됩니다.
+- proposed scope/name은 원본 후보 경로와 같아야 하고, 기존 속성 이동 목록은 비어 있어야 합니다.
+- 모델은 속성의 의미상 관련성과 확인할 범위 관계를 사용자에게 보일 한국어 이유로 설명합니다.
+
+원본 값과 근거는 유지하며, 이 검토로 현재 설정을 자동 변경하지 않습니다. scope 이름이 다르다는 사실만으로
+같은 속성임이 증명되는 것은 아닙니다. 다른 주체·없는 경로·무관한 속성이나 일반 오류를 검토로 자동 전환하지
+않으며, 잘못된 UPDATE/MERGE는 계속 거절합니다. `CONFIRMED_ONLY`의 단건·batch에서는 새 검토 이유를 허용하지 않습니다.
+
+후속 회차의 `analysisContext.unresolvedReferences`에는 원본 `scopeName`/`settingName`과 기존
+`matchedScopeName`/`matchedPropertyName`이 선택 필드로 전달됩니다. Python은 non-null 경로만 snake_case로
+prompt에 추가해 기존 참고 문맥의 형식을 보존합니다. matched property가 있고 matched scope가 생략되면 기존
+root 속성을 뜻합니다. 이 문맥은 `UNRESOLVED`이고 `applied_to_current_state=false`이며 선택 가능한 target이 아닙니다.
+
+#### Ordered 경로 오류의 재시도
+
+캐릭터 ordered batch는 기존 canonical slot에 ADD하는 응답을 `CANONICAL_SLOT_ALREADY_EXISTS`로
+식별하고 충돌한 C ref·현재 활성 P/앞선 Q ref·입력에서 확인한 key를 안내합니다. 예를 들어 기존
+`profile.attribute`에 배경 정보가 있고 새 독서 습관도 같은 key로 추출됐다면 문장이 달라도 ADD는
+불가능합니다. 모델이 두 정보를 보존할 MERGE나 안전한 검토 등 의미에 맞는 판단을 명시해야 합니다.
+기존 값·근거·응답은 피드백에 복사하지 않고, 앞선 판단으로 P가 Q로 교체된 경우 현재 Q를 가리킵니다.
+검증 조건이나 key를 바꾸고 응답을 자동 수정하는 방식은 아닙니다. 반복 실패 뒤에는 아래의 독립 검증과
+제한된 부분 복구를 적용합니다. 공유 projection validator는 유지합니다.
+
+| 검증 오류 | 피드백 코드 | 교정할 내용 |
+| --- | --- | --- |
+| 없는 property 선택 참조 또는 다른 target의 ref | `MATCHED_PROPERTY_REF_INVALID` / `MATCHED_PROPERTY_TARGET_MISMATCH` | 입력의 실제 속성 ref와 올바른 대상만 선택 |
+| UPDATE/MERGE가 기존 proposed 이름을 직접 작성 | `EXISTING_PROPOSED_PATH_FORBIDDEN` | proposed scope/name을 null로 두고 선택 ref에서 복원 |
+| EXCLUDE가 없는 기존 경로를 지정 | `MATCHED_EXCLUDE_PATH_NOT_FOUND` | 실제 기존 경로만 비교하거나, 내용상 제외 이유가 있을 때 matched 경로를 비움 |
+| UPDATE/MERGE·검토가 없는 속성을 지정 | `MATCHED_PROPERTY_PATH_NOT_FOUND` | 입력 target의 실제 전체 경로를 선택 |
+| 원본과 다른 새 scope의 하위 속성이 하나뿐 | `GENERATED_SCOPE_REQUIRES_SIBLINGS` | 실제 형제 조건을 충족하거나 root/원본 경로를 사용 |
+| concrete operation의 matched scope가 source와 다름 | `SOURCE_SCOPE_MISMATCH` | 원본 범위를 유지하거나 조건을 충족하는 명시적 범위 검토를 제안 |
+| 명시적 범위 검토의 source 수·범위·제안 경로·이동 목록 위반 | `SCOPE_MISMATCH_REVIEW_INVALID` | 단일 scoped 원본과 실제 matched 경로를 보존 |
+| SCOPE_MISMATCH에 명시적 원본 scope 또는 matched 선택이 없음 | `SCOPE_MISMATCH_MATCH_REQUIRED` | null 원본에 scope를 만들지 않고, 관련된 단일 후보는 SCOPE_UNRESOLVED와 원본 null 경로를 명시 |
+
+피드백은 최초 입력에서 재확인한 source 경로·target ref·기존 property index/경로와 고정 지침만 사용합니다.
+실패 응답의 제안 경로나 원시 예외는 재주입하지 않습니다. 매번 모든 source를 포함한 전체 응답을 다시 검증하며,
+재시도 소진은 검증 실패로 전달합니다. 세계관은 실패 원본 응답의 일부 decision을 성공으로 사용하지 않습니다. 정상 검토 판단과 provider·quota·lease·고정 입력 실패는 별도로 처리하고,
+필수 입력 또는 재시도 prompt의 상한 초과는 `OrderedInputContextError`로 전체 작업을 중단합니다.
+
+성공 반환의 raw JSON과 소진 예외에는 `validation_diagnostics`가 있습니다. 각 항목은
+`attempt_number`, 고정 `rule_code`, 입력의 `candidate_refs`, `selected_properties`,
+`allowed_matched_properties`를 포함합니다. 실제 선택 경로와 허용 제안 목록은 다르며, Spring 진단으로
+보낼 때는 실제 선택 경로만 매핑합니다. 경로 항목은 `ref`, `target_ref`, `scope_name`, `setting_name`이며
+원문·값·근거·응답 문자열은 포함하지 않습니다. 파싱 불가/출처 특정 불가 오류는 candidate와 선택 목록이
+비어 있습니다. 마지막 실패 시도도 기록하며 진단 callback 오류가 원래 실패를 덮지 않습니다.
+
+진단에는 선택 필드 `stage`와 `phase`를 추가합니다. stage는 응답 schema, 기존 속성 참조 복원, 개별 판단 검증,
+원래 범위 계획, 정규화 뒤 범위 계획을 각각 `RESPONSE_SCHEMA`, `PROPERTY_SELECTION`,
+`DECISION_VALIDATION`, `SCOPE_PLAN`, `PROJECTED_SCOPE_PLAN`으로 구분합니다. phase는 전체 비교 `BATCH`와
+분리 복구 `RECOVERY`입니다. 기존 필드 생략/null은 허용하며, 사용자에게 보이는 판단 문장에 이 값을 노출하지 않습니다.
+
+`ordered_world_rule_diagnostics.py`는 기존 고정 ValueError 문구만 진단 코드로 연결합니다. 예를 들어 같은 최종
+경로를 두 판단이 제안한 경우 `FINAL_PATH_DUPLICATED`와 실제 입력에서 확인한 관련 후보를 남깁니다.
+진단 전용 후보 참조는 복구의 실패 범위를 정하는 참조와 분리하여, 상세 정보가 추가됐다고 기존 전체 실패를
+일부 성공으로 바꾸지 않습니다. 알 수 없는 오류는 포괄적 코드로 유지하며 원문·값·원시 응답·임의 오류 문장을
+복사하지 않습니다. 마지막 시도, 분리 응답과 최종 합산 검증에도 단계와 진단을 보존합니다.
+
+33화 형태의 통제 회귀는 전체 5개 후보 중 3개 정상·2개 실패, 전체 3회와 분리 4회의 호출 경계를 검사합니다.
+이 테스트의 최종 경로 중복 응답은 합성 예시이며, 저장되지 않은 실제 거절 응답을 복원한 것이 아닙니다.
+서로 다른 몬스터 분류의 분리와 명시적 별칭의 재사용도 통제된 선택 응답으로 검증하며 실제 LLM 정확도 평가는 아닙니다.
+44화에서 관찰된 어둠의 근원/영생자, 일반 정수/수호자의 정수, 노랑/빨강 정수 이름도 반대 사례 fixture에 포함합니다.
+각 쌍이 다른 종류라고 명시하는 합성 근거를 사용하며, 실제 원문 해석이나 미보존 응답의 실패 원인이 확인됐다는 뜻은
+아닙니다. 실제로 어떤 대상에 연결됐는지와 그 연결의 의미상 타당성은 별도 읽기 전용 감사 결과로 판단합니다.
+
+복구 호출은 `compare_batch(..., max_attempts_override=1, preserve_source_paths=True)`를 사용합니다.
+이 옵션은 ADD의 proposed 경로를 원본 source 경로로 제한하고 모든 root 이동을 금지합니다.
+UPDATE/MERGE는 선택한 실제 기존 경로를 사용합니다. 기존 경로와의 충돌과 scope 검증도 그대로 적용합니다.
+복구 뒤에도 source coverage와 전체 완료 경계를 pipeline/Backend에서 검증해야 하며, validator 자체가
+부분 성공을 저장하지 않습니다.
+
+`world_setting_batch_recovery.py`는 순차 자동 분석의 다중 후보 응답 실패에만 적용합니다. 원본
+scope/name이 같은 source를 함께 재생성하고, 기존 속성의 읽기·쓰기 또는 root/scope 구조가 겹치는
+성공 그룹은 합쳐 다시 비교합니다. 모든 요청은 같은 고정 targets를 사용하고 마지막 성공 결과
+전체를 재검증합니다. 실패한 응답의 일부 decision을 바로 저장하지 않습니다. 독립적인 정상
+decision과 typed failures는 원본 source를 정확히 한 번씩 포함한 한 완료 요청으로 보냅니다.
+
+추가 복구 호출은 batch당 최대 20회이며 fresh-context 재시도에도 남은 예산을 공유합니다.
+기존 응답 시도와 별도인 이 예산에는 의존 그룹 재비교도 포함됩니다. 상한에 걸린 그룹은
+`RECOVERY_CALL_LIMIT`로 남기며 임의로 한 결과를 선택하지 않습니다. 입력·quota·lease·Spring API·
+예상 밖 오류는 복구 완료로 바꾸지 않습니다. 완료 진단은 실제 선택한 입력 경로만 API의
+`targetWorldSettingId`/`provisionalSubjectKey`로 변환하고, Java는 후보별 최근 30개를 보존합니다.
 
 singleton decision도 batch 완료에 포함되며 별도 단건 recompare로 다시 실행하지 않습니다. batch API를 지원하지
 않는 legacy Spring client는 기존 `claim_next_world_setting_comparison` 경로로 후보별 처리하므로 batch
