@@ -1,0 +1,233 @@
+{
+  "datasetVersion": "synthetic-v1",
+  "evaluationScenarioIds": [
+    "S1",
+    "S2"
+  ],
+  "fixtureHash": "86c8f0fe34e4dc40d11d45a0aa0fa60c15e1e0152adef536427e95776b43206f",
+  "name": "ordered-provisional legacy scorer regression",
+  "scenarios": [
+    {
+      "candidateFree": false,
+      "cumulativeThroughEpisode": 0,
+      "episodeNo": 1,
+      "goldVersion": "synthetic-v1",
+      "knownCharacterNames": [],
+      "providedContext": "",
+      "reviewStatus": "FINAL",
+      "scenarioId": "S1",
+      "sourceIdentifier": "01.txt",
+      "startStateMode": "EMPTY",
+      "stateGenerationStatus": "PENDING",
+      "targetDomains": [
+        "CHARACTER",
+        "WORLD"
+      ]
+    },
+    {
+      "candidateFree": false,
+      "cumulativeThroughEpisode": 1,
+      "episodeNo": 2,
+      "goldVersion": "synthetic-v1",
+      "knownCharacterNames": [],
+      "previousScenarioId": "S1",
+      "providedContext": "",
+      "reviewStatus": "FINAL",
+      "scenarioId": "S2",
+      "sourceIdentifier": "02.txt",
+      "startStateMode": "PREVIOUS_GOLD",
+      "stateGenerationStatus": "PENDING",
+      "targetDomains": [
+        "CHARACTER",
+        "WORLD"
+      ]
+    }
+  ],
+  "schemaVersion": "setting-eval/v3",
+  "scorable": true,
+  "stage1": [
+    {
+      "acceptedFactKeyAliases": [],
+      "candidateKind": "SETTING",
+      "contextTags": [],
+      "currentSchemaRepresentable": true,
+      "decision": "EXTRACT",
+      "displayValue": "왼팔 부상",
+      "domain": "CHARACTER",
+      "entityName": "가람",
+      "entityRef": "character:garam",
+      "episodeNo": 1,
+      "evidenceQuotes": [
+        "가람은 왼팔을 다쳤다."
+      ],
+      "factKey": "status.arm_injury",
+      "factType": "STATUS",
+      "goldId": "C1",
+      "importance": "MUST",
+      "reviewStatus": "FINAL",
+      "scenarioId": "S1",
+      "sortOrder": 1,
+      "structuredScorable": true,
+      "valueJson": {
+        "active": true,
+        "value": "왼팔 부상"
+      },
+      "valueJsonProvenance": "ANNOTATED",
+      "valueType": "STRING"
+    },
+    {
+      "acceptedSettingNameAliases": [],
+      "candidateKind": "WORLD_SETTING",
+      "category": "LOCATION",
+      "contextTags": [],
+      "currentSchemaRepresentable": true,
+      "decision": "EXTRACT",
+      "domain": "WORLD",
+      "episodeNo": 1,
+      "evidenceQuotes": [
+        "등대의 불빛은 파란색이다."
+      ],
+      "goldId": "W1",
+      "importance": "MUST",
+      "reviewStatus": "FINAL",
+      "scenarioId": "S1",
+      "settingName": "불빛",
+      "sortOrder": 2,
+      "sourceValues": [
+        "파란색"
+      ],
+      "subjectName": "등대"
+    },
+    {
+      "acceptedFactKeyAliases": [],
+      "candidateKind": "SETTING",
+      "contextTags": [],
+      "currentSchemaRepresentable": true,
+      "decision": "EXTRACT",
+      "displayValue": "왼팔 회복",
+      "domain": "CHARACTER",
+      "entityName": "가람",
+      "entityRef": "character:garam",
+      "episodeNo": 2,
+      "evidenceQuotes": [
+        "가람의 왼팔이 회복되었다."
+      ],
+      "factKey": "status.arm_injury",
+      "factType": "STATUS",
+      "goldId": "C2",
+      "importance": "MUST",
+      "reviewStatus": "FINAL",
+      "scenarioId": "S2",
+      "sortOrder": 1,
+      "structuredScorable": true,
+      "valueJson": {
+        "active": false,
+        "value": "왼팔 회복"
+      },
+      "valueJsonProvenance": "ANNOTATED",
+      "valueType": "STRING"
+    },
+    {
+      "acceptedSettingNameAliases": [],
+      "candidateKind": "WORLD_SETTING",
+      "category": "LOCATION",
+      "contextTags": [],
+      "currentSchemaRepresentable": true,
+      "decision": "EXTRACT",
+      "domain": "WORLD",
+      "episodeNo": 2,
+      "evidenceQuotes": [
+        "등대의 불빛은 여전히 파란색이다."
+      ],
+      "goldId": "W2",
+      "importance": "MUST",
+      "reviewStatus": "FINAL",
+      "scenarioId": "S2",
+      "settingName": "불빛",
+      "sortOrder": 2,
+      "sourceValues": [
+        "파란색"
+      ],
+      "subjectName": "등대"
+    }
+  ],
+  "stage2": [
+    {
+      "decisionId": "DC1",
+      "domain": "CHARACTER",
+      "episodeNo": 1,
+      "forbiddenFacts": [],
+      "operation": "ADD",
+      "proposedValue": "왼팔 부상",
+      "proposedValueJson": {
+        "active": true,
+        "value": "왼팔 부상"
+      },
+      "removedSnapshotRefs": [],
+      "requiredFacts": [],
+      "reviewStatus": "FINAL",
+      "scenarioId": "S1",
+      "sortOrder": 1,
+      "sourceGoldIds": [
+        "C1"
+      ],
+      "temporalScope": "PRESENT"
+    },
+    {
+      "consolidationStatus": "SINGLE",
+      "decisionId": "DW1",
+      "domain": "WORLD",
+      "episodeNo": 1,
+      "existingRootPropertyNamesToMove": [],
+      "forbiddenFacts": [],
+      "operation": "ADD",
+      "proposedSettingName": "불빛",
+      "proposedValue": "파란색",
+      "requiredFacts": [],
+      "reviewStatus": "FINAL",
+      "scenarioId": "S1",
+      "sortOrder": 2,
+      "sourceGoldIds": [
+        "W1"
+      ]
+    },
+    {
+      "decisionId": "DC2",
+      "domain": "CHARACTER",
+      "episodeNo": 2,
+      "forbiddenFacts": [],
+      "operation": "REMOVE",
+      "removedSnapshotRefs": [
+        "gold:character:character%3Agaram:STATUS:status.arm_injury"
+      ],
+      "requiredFacts": [],
+      "reviewStatus": "FINAL",
+      "scenarioId": "S2",
+      "sortOrder": 1,
+      "sourceGoldIds": [
+        "C2"
+      ],
+      "temporalScope": "PRESENT"
+    },
+    {
+      "consolidationStatus": "SINGLE",
+      "decisionId": "DW2",
+      "domain": "WORLD",
+      "episodeNo": 2,
+      "existingRootPropertyNamesToMove": [],
+      "forbiddenFacts": [],
+      "matchedPropertyName": "불빛",
+      "operation": "EXCLUDE",
+      "proposedSettingName": "불빛",
+      "proposedValue": "파란색",
+      "requiredFacts": [],
+      "reviewStatus": "FINAL",
+      "scenarioId": "S2",
+      "sortOrder": 2,
+      "sourceGoldIds": [
+        "W2"
+      ],
+      "targetRef": "gold:world:LOCATION:등대:불빛"
+    }
+  ]
+}

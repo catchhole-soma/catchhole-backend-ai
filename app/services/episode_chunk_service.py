@@ -7,6 +7,7 @@ from app.chunking.chunk_splitter import split_into_chunks
 from app.mappers.episode_chunk_mapper import EpisodeChunkMapper
 from app.models.episode_chunk import EpisodeChunk
 from app.repositories.episode_chunk_repository import EpisodeChunkRepository
+from app.services.ordered_analysis_fence import OrderedCandidateWriteContext, fence_ordered_candidate_write
 
 
 class EpisodeChunkService:
@@ -24,6 +25,8 @@ class EpisodeChunkService:
         episode_id: UUID,
         raw_text: str,
         metadata_json: dict | None = None,
+        ordered_write_context: OrderedCandidateWriteContext | None = None,
+        analysis_job_id: UUID | None = None, work_id: UUID | None = None,
     ) -> list[EpisodeChunk]:
         # Episode.content_s3_key로 읽은 회차 원문을 변경하지 않고 나눠야
         # chunk/evidence offset을 같은 원문에 그대로 적용할 수 있다.
@@ -42,6 +45,13 @@ class EpisodeChunkService:
         with self.session_factory() as session:
             repository = self.repository_factory(session)
             try:
+                if ordered_write_context is not None:
+                    if analysis_job_id is None or work_id is None:
+                        raise ValueError("Ordered chunk storage requires the claimed job and work.")
+                    fence_ordered_candidate_write(
+                        session, analysis_job_id=analysis_job_id, work_id=work_id,
+                        write_context=ordered_write_context, chunks_only=True,
+                    )
                 # 해당 회차의 기존 chunk를 전부 삭제(다시 분석하는 상황 고려)
                 repository.delete_by_episode_id(episode_id)
                 # 새로 생성한 chunk들을 저장 대상으로 세션에 등록

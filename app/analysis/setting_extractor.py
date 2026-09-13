@@ -11,6 +11,9 @@ from pydantic import ValidationError
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.json_response import parse_json_object
+from app.analysis.ordered_context import (
+    ORDERED_STATE_INSTRUCTIONS, OrderedExtractionContext, ensure_ordered_prompt_fits,
+)
 from app.analysis.schemas import (
     CharacterSettingExtractionResult,
     CharacterSettingProviderResponse,
@@ -134,6 +137,7 @@ class CharacterSettingExtractor:
         episode_title: str | None = None,
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
         known_characters: tuple[KnownCharacter, ...] = (),
+        ordered_context: OrderedExtractionContext | None = None,
     ) -> CharacterSettingExtractionResult:
         # Schema가 없으면 모든 설정 후보를 제외하라는 prompt가 만들어지므로,
         # 비용이 발생하는 LLM 호출 전에 잘못된 직접 호출을 차단한다.
@@ -150,6 +154,14 @@ class CharacterSettingExtractor:
             known_characters=known_characters,
         )
         prompt_cache_key = _build_schema_cache_key(schema_summary_json)
+        if ordered_context is not None:
+            system_prompt += "\n\n" + ORDERED_STATE_INSTRUCTIONS
+            user_prompt += "\n\nordered_character_state:\n" + ordered_context.prompt_json()
+            user_prompt += (
+                "\n임시 캐릭터 목록의 인물도 식별 문맥으로 사용하세요. 이미 연결된 임시 인물을 "
+                "다시 발견할 필요는 없지만 동명이인의 가능성은 원문 근거로 구분하세요."
+            )
+            prompt_cache_key += ":ordered-provisional-v1"
 
         # Provider schema와 저장 경계 schema 검증 실패만 안전한 사유와 함께 재시도한다.
         last_feedback: _SafeValidationFeedback | None = None
@@ -159,6 +171,8 @@ class CharacterSettingExtractor:
         truncation_retry_used = False
         for attempt in range(1, self.max_attempts + 1):
             while True:
+                if ordered_context is not None:
+                    ensure_ordered_prompt_fits(system_prompt, current_user_prompt)
                 try:
                     # 예외가 없다면 정상적으로 return
                     return await self._extract_once(

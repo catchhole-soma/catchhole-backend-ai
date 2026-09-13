@@ -7,6 +7,95 @@ Spring 기준으로는 비동기 작업 executor 또는 batch worker에 가깝�
 여러 패키지를 가로지르는 전체 흐름도는 [AI Worker Workflow](../../docs/ai-worker-workflow.md)를 기준으로 확인합니다.
 이 문서는 Worker 패키지의 책임과 상태/단계 정책을 중심으로 설명합니다.
 
+## 명시적인 누적 분석 모드
+
+분석 Worker는 `supportedAnalysisModes=[CONFIRMED_ONLY, ORDERED_PROVISIONAL]`로 claim합니다.
+재비교 Worker와 구버전 Worker의 지원 모드가 생략된 claim은 기존 확정 설정 경로만 대상으로 합니다.
+모드가 생략된 응답은 `CONFIRMED_ONLY`로 읽으며, 해당 모드에 임시 상태를 자동 주입하지 않습니다.
+
+`ORDERED_PROVISIONAL` 응답은 `analysisContext`의 `runId`, `generation`, `inputStateHash`,
+`sourceHash`, `formatVersion=1`과 단일 `episode`를 필수로 전달합니다. Spring이 불변 S0와 검증된
+변경 기록에서 복원한 상태가 `knownCharacters`와 별도의 `provisionalCharacters`로 전달됩니다.
+회차별 자동 반영에서는 Spring이 앞 회차 저장 완료 뒤 현재 설정을 새 입력으로 고정합니다.
+앞 회차의 미해결 주장은 `analysisContext.unresolvedReferences`에 별도로 담기며 캐릭터·세계관
+추출, 주체 해소, 2차 비교가 이를 참고합니다. 해당 주장은 현재 설정이나 선택 가능한 대상으로
+승격하지 않으며 작가 확인(`HUMAN`)과 AI 자동 반영(`AUTOMATIC`)의 신뢰도를 구분합니다.
+연결된 발견 후보의 새 이름과 근거도 저장 경계로 전달하므로 Spring은 이후 회차의
+`knownCharacters.aliases`와 `identityEvidence`를 확정 발견 기록에서 복원할 수 있습니다.
+모델·추론 강도와 기존 prompt 파일은 유지하며, ordered 호출에서만 미확정 안내와 각 항목의
+`confirmation_status`·`source_episode_no`를 추가합니다. Backend ID와 출처 candidate ID는 모델에
+보내지 않습니다. 일반 호출은 추가 키·안내·prompt cache suffix를 사용하지 않습니다.
+
+캐릭터 연결은 ordered 모드에서 추출 이름과 등록 이름·별칭의 완전/유일한 포함 관계를 코드로
+검사합니다. 여러 대상이 걸리거나 원문 표현과 추출 이름이 충돌하면 `AMBIGUOUS`로 남깁니다.
+하나의 짧은 등록 이름에 서로 다른 신규 전체 이름이 걸려도 자동으로 합치지 않습니다.
+신규 인물은 첫 discovery 후보의 UUID로 `provisional-character:<UUID>`를 만들고, 유일하게
+연결되는 발견·설정이 같은 키를 공유합니다. 모든 발견의 원래 이름과 근거는 별칭 누적을 위해
+보존합니다. 이름 매칭으로 새 인물을 임의 생성하거나 미상을 현재 설정으로 반영하지 않습니다.
+
+별도 인물 연결 LLM은 미연결 SETTING이 있고 현재 원문에 포함되지 않은 앞뒤 청크와 선택할
+대상이 있을 때만 호출합니다. 연결이 끝난 후보와 발견 후보는 재판단하지 않습니다. 단일 청크의
+미상은 검토로 남기며 같은 원문을 다시 보내지 않습니다. 조건부 호출에서 모델은 실제/이전 임시
+대상을 `K*`, 이번 청크의 발견 대상을 `D*`, 미해결 후보를 원래 순번의 `C*`로만 봅니다.
+없는 참조와 후보 누락·중복은 제한 횟수 안에서 재시도하며, 소진된 기술적 오류를 정상 미해결로
+숨기지 않습니다. 입력 상한·lease·quota·Backend 오류는 응답 보정 재시도로 처리하지 않습니다.
+`subjectFallback*` 지표는 이 조건부 LLM 해소만 세고 규칙 연결을 호출로 세지 않습니다.
+세계관도 새 대상의 원본 후보에 `provisional-world:<UUID>`를 연결하고 뒤 후보가 근거로 같은
+주체를 선택할 때만 키를 공유합니다. 실제 `worldSettingId`와 임시 키는 항상 별도 필드입니다.
+
+캐릭터·세계관 batch의 `analysisContext`는 claim과 같아야 합니다. 비교 문맥과 완료는 동일
+`contextToken`을 사용하며 세계관 요청은 실제 ID 목록과 `provisionalSubjectKeys` 목록을 분리합니다.
+임시 속성의 UPDATE/REMOVE는 Spring이 제공한 동일 입력 상태의 요청 로컬 ref를 사용합니다.
+Python은 정식 설정이나 journal을 직접 갱신하지 않습니다.
+
+ordered 재시도는 완료된 추출과 성공 batch를 보존합니다. 비교 checkpoint를 지났더라도 pending
+후보만 다시 claim하고 checkpoint를 이전 단계로 보고하지 않습니다. 실패 batch에는 부분 성공
+decision도 저장하지 않고 batch 전체 실패를 보고한 뒤 다음 batch와 다음 도메인 stage를 중단합니다.
+`REVIEW_REQUIRED`와 `EXCLUDE`는 검증된 비교 결과이므로 실행 실패로 취급하지 않습니다.
+
+직접 DB 저장이 있는 청크·캐릭터 후보·임베딩은 ordered 모드에서 Job/Episode 행을 짧게 잠그고
+lease, 실행 generation, 입력 hash, 원문 key/version/hash와 회차 번호, checkpoint와
+`journal_status=PENDING`을
+검증한 뒤 같은 트랜잭션에서 저장합니다. S3 읽기와 모델 호출은 잠금 밖에서 실행합니다.
+청크 생성은 고정된 S3 VersionId로 읽고 UTF-8 SHA-256도 검증합니다. 이미 완료한 stage의 늦은
+Worker가 현재 청크나 후보를 삭제할 수 없도록 checkpoint 이후 재쓰기를 거절합니다.
+
+필수 문맥을 top-k나 최근 회차 수로 자르지 않습니다. 캐릭터 비교는 기존 후보 분할·동일 projected
+상태 fallback을 사용하되 ordered 안내를 포함한 실제 입력 크기로 판정합니다. ordered 추출·주체
+해소·세계관 비교는 64,000 token의 보수적 상한을 첫 요청과 schema 재시도마다 검사합니다.
+필수 문맥 자체가 상한을 넘으면 provider 호출 없이 오류로 종료하며, 상태를 조용히 축약하거나
+다음 회차를 진행시키지 않습니다. 최근 원문/history 추가와 고급 문맥 분할은 별도 평가·개선 대상입니다.
+
+로컬 회귀 검증은 `pytest -m 'not integration'`으로 실행할 수 있습니다. 실제 PostgreSQL fencing
+검증은 `tests/test_ordered_analysis_fence_postgres.py`이며, 명시한 `GH180_TEST_DATABASE_URL`이
+localhost의 격리 `gh180_ai_test` DB일 때만 실행합니다. 운영 `.env`나 `DATABASE_URL`은 읽지 않습니다.
+
+실제 Spring HTTP/SQLAlchemy 경계 검증은 Java의 `OrderedAnalysisHttpWorkerIntegrationTest`와
+`tests/ordered_analysis_http_harness.py`를 함께 사용합니다. 테스트가 별도 `gh180_e2e_test` DB에
+Flyway를 적용하고 localhost 임의 포트로 Spring을 연 뒤, 실제 Worker와 비교 pipeline을 실행합니다.
+회차별 원문과 모델 응답은 고정 fake이며 provider 네트워크 호출이나 S3 접근을 하지 않습니다.
+10회차의 신규 임시 인물·부상 ADD/REMOVE·세계관 UPDATE·SEALED 순서와 정식 테이블 불변,
+동일 세계관 속성의 서로 다른 두 원본 보존 및 단일 decision/journal의 전체 출처 연결,
+캐릭터 선검증 HTTP 409 실패의 저장 및 이후 세계관 provider 호출 차단,
+세계관 batch 입력 상한 초과의 실패 저장·비교 provider 호출 차단을 확인합니다.
+캐릭터·세계관 ordered claim의 HTTP 409와 필수 context 입력 초과 HTTP 422는
+`COMPARISON_VALIDATION_FAILED`로 보고하고 다음 회차를 진행하지 않습니다.
+Java 디렉터리에서 명시한 로컬 `GH180_E2E_JDBC_URL`과
+`./gradlew test --tests '*OrderedAnalysisHttpWorkerIntegrationTest'`로 실행하며, 변수가 없으면 생략합니다.
+기본 sibling 경로는 `catchhole-backend-ai-gh180`과 `catchhole-backend-ai/.venv/bin/python`입니다.
+
+기존 모드의 요청 회귀 기준은 `tests/fixtures/legacy_requests_80d5184.json`입니다.
+`80d5184c006a42248ab214b36d0898c071887900`의 `app`을 `git archive`로 읽어 별도 프로세스에서
+`tests/legacy_request_probe.py`의 동일 합성 입력을 실행해 생성했습니다. `httpx.MockTransport`로
+실제 `OpenAIResponsesClient` HTTP JSON을 수집하며, system/user/schema와 model·reasoning·cache·
+출력 상한·`store=false`를 전체 및 항목별 hash로 비교합니다. probe 파일 hash도 기준값에 고정되어
+입력 변경으로 비교 의미가 바뀌는 일을 감지합니다. `pytest tests/test_legacy_request_golden.py`로
+네 요청(추출/캐릭터 batch/세계관 주체·batch)의 기준 커밋과 일치를 검사합니다.
+
+정상 HTTP 시나리오의 마지막에는 실제 Java DB의 S0와 10개 SEALED 기록을 읽기만 하여
+`ordered_journal` mirror로 각 input/output hash를 검증하고 기존 typed projector에 전달합니다.
+이 검증은 해당 합성 도메인 전이의 양 언어 호환성에 관한 것으로, 모델 정확도 측정은 아닙니다.
+
 ## 역할
 
 - Spring 내부 Worker API를 통해 실행할 분석 작업을 claim합니다.

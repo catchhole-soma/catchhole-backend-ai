@@ -37,8 +37,8 @@ def test_world_setting_extractor_accepts_all_categories(category: str) -> None:
     assert "chunk_text" in client.requests[0]["user_prompt"]
 
 
-def test_world_setting_extractor_retries_confidence_outside_fixed_scale() -> None:
-    invalid = _response(category="RACE", confidence=0.7)
+def test_world_setting_extractor_retries_confidence_outside_valid_range() -> None:
+    invalid = _response(category="RACE", confidence=1.2)
     valid = _response(category="RACE", confidence=0.8)
     client = FakeTextClient([invalid, valid])
 
@@ -62,6 +62,38 @@ def test_world_setting_extractor_accepts_empty_result_for_temporary_event() -> N
     )
 
     assert result.candidates == []
+
+
+@pytest.mark.parametrize("confidence", [0, 0.7, 0.9, 1])
+def test_fractional_confidence_is_preserved_without_retry_or_rounding(confidence):
+    client = FakeTextClient([_response(category="RACE", confidence=confidence)])
+    result = asyncio.run(WorldSettingExtractor(llm_client=client, max_attempts=3).extract_from_chunk(
+        "바바리안은 혹한 지역에서 살아간다."
+    ))
+    candidate = result.candidates[0]
+    chunk = EpisodeChunk(id=UUID(int=1), episode_id=UUID(int=2), chunk_index=0,
+                         chunk_text="바바리안은 혹한 지역에서 살아간다.", start_offset=0, end_offset=30)
+    published = WorldSettingCandidateMapper.to_publish_item(candidate, chunk)
+    assert len(client.requests) == 1
+    assert candidate.confidence == confidence
+    assert published.extraction_confidence == confidence
+    assert published.raw_extraction_json["confidence"] == confidence
+
+
+@pytest.mark.parametrize("confidence", [-0.1, 1.1, float("nan"), float("inf"), True, "0.9"])
+def test_confidence_rejects_non_numeric_non_finite_or_out_of_range_metadata(confidence):
+    from pydantic import ValidationError
+    from app.schemas.worker import WorkerWorldSettingCandidatePublishItem
+
+    data = json.loads(_response(category="RACE", confidence=confidence))["candidates"][0]
+    with pytest.raises(ValidationError):
+        ExtractedWorldSettingCandidate.model_validate(data)
+    with pytest.raises(ValidationError):
+        WorkerWorldSettingCandidatePublishItem(
+            category="RACE", subject_name="바바리안", setting_name="환경", extracted_value="혹한 지역",
+            evidence_spans=[{"quote": "바바리안은 혹한 지역에서 살아간다."}],
+            extraction_confidence=confidence,
+        )
 
 
 def test_world_setting_extractor_expands_output_cap_once_after_truncation() -> None:
@@ -104,7 +136,7 @@ def test_world_setting_extractor_stops_after_second_truncation() -> None:
 
 def test_world_setting_truncation_expansion_does_not_consume_validation_attempt() -> None:
     client = FakeTextClient([
-        _response(category="RACE", confidence=0.7),
+        _response(category="RACE", confidence=1.2),
         _truncated_error(5000),
         json.dumps({"candidates": []}),
     ])

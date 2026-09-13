@@ -1,0 +1,157 @@
+{
+  "analysisModel": "synthetic-no-provider",
+  "comparisonModel": "synthetic-no-provider",
+  "evaluationDomains": [
+    "CHARACTER",
+    "WORLD"
+  ],
+  "evaluationScenarioIds": [],
+  "fixtureHash": "86c8f0fe34e4dc40d11d45a0aa0fa60c15e1e0152adef536427e95776b43206f",
+  "mode": "FIXED",
+  "promptVersions": {},
+  "scenarios": [
+    {
+      "cachedInputTokens": 0,
+      "failures": [
+        {
+          "errorType": "SYNTHETIC_FAILURE",
+          "message": "Synthetic saved failure",
+          "sourceId": "PC1",
+          "stage": "CHARACTER_STAGE2"
+        }
+      ],
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "pipelineStatus": "COMPLETED",
+      "rawStage1": [],
+      "scenarioId": "S1",
+      "stage1": [
+        {
+          "candidateId": "PC1",
+          "candidateKind": "SETTING",
+          "displayValue": "왼팔 부상",
+          "domain": "CHARACTER",
+          "entityName": "가람",
+          "entityRef": "character:garam",
+          "evidenceSpans": [
+            {
+              "quote": "가람은 왼팔을 다쳤다."
+            }
+          ],
+          "factKey": "status.arm_injury",
+          "factType": "STATUS",
+          "matchStatus": "MATCHED",
+          "matchedCharacterName": "가람",
+          "sortOrder": 1,
+          "valueJson": {
+            "active": true,
+            "value": "왼팔 부상"
+          },
+          "valueType": "STRING"
+        },
+        {
+          "candidateId": "PW1",
+          "candidateKind": "WORLD_SETTING",
+          "category": "LOCATION",
+          "domain": "WORLD",
+          "evidenceSpans": [
+            {
+              "quote": "등대의 불빛은 파란색이다."
+            }
+          ],
+          "settingName": "불빛",
+          "sortOrder": 2,
+          "sourceValues": [
+            "파란색"
+          ],
+          "subjectName": "등대"
+        }
+      ],
+      "stage2": [
+        {
+          "consolidationStatus": "SINGLE",
+          "domain": "WORLD",
+          "existingRootPropertyNamesToMove": [],
+          "operation": "ADD",
+          "proposedSettingName": "불빛",
+          "proposedValue": "푸른 빛",
+          "sourceCandidateId": "PW1"
+        }
+      ]
+    },
+    {
+      "cachedInputTokens": 0,
+      "failures": [],
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "pipelineStatus": "COMPLETED",
+      "rawStage1": [],
+      "scenarioId": "S2",
+      "stage1": [
+        {
+          "candidateId": "PC2",
+          "candidateKind": "SETTING",
+          "displayValue": "왼팔 회복",
+          "domain": "CHARACTER",
+          "entityName": "가람",
+          "entityRef": "character:garam",
+          "evidenceSpans": [
+            {
+              "quote": "가람의 왼팔이 회복되었다."
+            }
+          ],
+          "factKey": "status.arm_injury",
+          "factType": "STATUS",
+          "matchStatus": "MATCHED",
+          "matchedCharacterName": "가람",
+          "sortOrder": 1,
+          "valueJson": {
+            "active": false,
+            "value": "왼팔 회복"
+          },
+          "valueType": "STRING"
+        },
+        {
+          "candidateId": "PW2",
+          "candidateKind": "WORLD_SETTING",
+          "category": "LOCATION",
+          "domain": "WORLD",
+          "evidenceSpans": [
+            {
+              "quote": "등대의 불빛은 여전히 파란색이다."
+            }
+          ],
+          "settingName": "불빛",
+          "sortOrder": 2,
+          "sourceValues": [
+            "파란색"
+          ],
+          "subjectName": "등대"
+        }
+      ],
+      "stage2": [
+        {
+          "domain": "CHARACTER",
+          "operation": "REMOVE",
+          "removedSnapshotRefs": [
+            "gold:character:character%3Agaram:STATUS:status.arm_injury"
+          ],
+          "resolvedCanonicalFactKey": "status.arm_injury",
+          "sourceCandidateId": "PC2",
+          "temporalScope": "PRESENT"
+        },
+        {
+          "consolidationStatus": "SINGLE",
+          "domain": "WORLD",
+          "existingRootPropertyNamesToMove": [],
+          "operation": "ADD",
+          "proposedSettingName": "불빛",
+          "proposedValue": "파란색",
+          "sourceCandidateId": "PW2"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": "setting-eval/v3",
+  "stateApplicationPolicy": "SCENARIO_LOCAL"
+}

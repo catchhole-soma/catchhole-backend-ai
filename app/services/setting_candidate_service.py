@@ -13,10 +13,17 @@ from app.analysis.character_name_resolver import (
     resolve_candidate_character,
 )
 from app.analysis.schemas import ExtractedSettingCandidate
-from app.domain.enums import SettingCandidateKind, SettingCandidateMatchStatus
+from app.analysis.ordered_character_subjects import OrderedCandidateBinding
+from app.domain.enums import (
+    CharacterFactComparisonStatus, SettingCandidateKind, SettingCandidateMatchStatus,
+)
 from app.mappers.setting_candidate_mapper import SettingCandidateMapper
 from app.models.setting_candidate import SettingCandidate
 from app.repositories.setting_candidate_repository import SettingCandidateRepository
+from app.services.ordered_analysis_fence import (
+    OrderedCandidateWriteContext,
+    fence_ordered_candidate_write,
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +31,7 @@ class SettingCandidateSaveItem:
     episode_id: UUID | None
     source_content_s3_key: str | None
     candidate: ExtractedSettingCandidate
+    ordered_binding: OrderedCandidateBinding | None = None
 
 
 @dataclass(frozen=True)
@@ -51,11 +59,18 @@ class SettingCandidateService:
         analysis_job_id: UUID,
         save_items: list[SettingCandidateSaveItem],
         known_characters: list[KnownCharacter],
+        ordered_write_context: OrderedCandidateWriteContext | None = None,
     ) -> list[SettingCandidate]:
-        prepared_candidates = prepare_setting_candidates(
-            [item.candidate for item in save_items],
-            known_characters,
-        )
+        if ordered_write_context is None:
+            if any(item.ordered_binding is not None for item in save_items):
+                raise ValueError("Ordered subject bindings require an ordered write fence.")
+            prepared_candidates = prepare_setting_candidates(
+                [item.candidate for item in save_items], known_characters,
+            )
+        else:
+            if any(item.ordered_binding is None for item in save_items):
+                raise ValueError("Ordered candidates require explicit subject resolution.")
+            prepared_candidates = _prepare_ordered_setting_candidates(save_items)
         candidates: list[SettingCandidate] = []
         for prepared in prepared_candidates:
             item = save_items[prepared.source_index]
@@ -67,11 +82,44 @@ class SettingCandidateService:
                 candidate=item.candidate,
                 character_match=prepared.character_match,
             )
+            if item.ordered_binding is not None:
+                binding = item.ordered_binding
+                if binding.actual_character_id is not None and binding.provisional_subject_key:
+                    raise ValueError("Actual and provisional character identities are exclusive.")
+                mapped_candidate.id = binding.candidate_id
+                mapped_candidate.provisional_subject_key = binding.provisional_subject_key
+                if (binding.provisional_subject_key is not None
+                        and item.candidate.candidate_kind == SettingCandidateKind.SETTING):
+                    mapped_candidate.comparison_status = CharacterFactComparisonStatus.PENDING
+                if binding.subject_failure_code is not None:
+                    if (binding.actual_character_id is not None or binding.provisional_subject_key
+                            or binding.match_status != SettingCandidateMatchStatus.AMBIGUOUS
+                            or item.candidate.candidate_kind != SettingCandidateKind.SETTING):
+                        raise ValueError("Failed subject resolution cannot establish a character identity.")
+                    mapped_candidate.comparison_status = CharacterFactComparisonStatus.FAILED
+                    mapped_candidate.comparison_failure_code = binding.subject_failure_code
+                    mapped_candidate.preparation_failure_stage = "SUBJECT_RESOLUTION"
+                    mapped_candidate.comparison_error_message = "설정을 어느 인물에 연결할지 확인하지 못했습니다."
+                mapped_candidate.raw_ai_result_json["orderedSubjectResolution"] = {
+                    "provisionalSubjectKey": binding.provisional_subject_key,
+                    "actualCharacterId": (str(binding.actual_character_id)
+                                          if binding.actual_character_id else None),
+                    "matchStatus": binding.match_status,
+                    **({"failureCode": binding.subject_failure_code, "failureStage": "SUBJECT_RESOLUTION"}
+                       if binding.subject_failure_code is not None else {}),
+                }
             candidates.append(mapped_candidate)
 
         with self.session_factory() as session:
             repository = self.repository_factory(session)
             try:
+                if ordered_write_context is not None:
+                    fence_ordered_candidate_write(
+                        session,
+                        analysis_job_id=analysis_job_id,
+                        work_id=work_id,
+                        write_context=ordered_write_context,
+                    )
                 # 같은 analysis_job_id 기준으로 재실행해도 후보가 중복 저장되지 않게 교체한다.
                 repository.delete_by_analysis_job_id(analysis_job_id)
                 saved_candidates = repository.save_all(candidates)
@@ -81,6 +129,53 @@ class SettingCandidateService:
                 raise
 
         return saved_candidates
+
+
+def _prepare_ordered_setting_candidates(
+    save_items: list[SettingCandidateSaveItem],
+) -> list[PreparedSettingCandidate]:
+    """Deduplicate only resolved facts anchored to the identical source occurrence.
+
+    Names alone and equal values at different points in the story are not enough.
+    Unknown offsets and unresolved identities retain every candidate for review.
+    """
+    prepared: list[PreparedSettingCandidate] = []
+    seen: dict[tuple, int] = {}
+    for index, item in enumerate(save_items):
+        binding = item.ordered_binding
+        assert binding is not None
+        candidate = item.candidate
+        row = PreparedSettingCandidate(index, candidate, CharacterNameMatch(
+            matched_character_id=binding.actual_character_id, match_status=binding.match_status,
+        ))
+        key = None
+        if (candidate.candidate_kind == SettingCandidateKind.SETTING
+                and binding.subject_failure_code is None
+                and (binding.actual_character_id is not None or binding.provisional_subject_key)
+                and binding.match_status != SettingCandidateMatchStatus.AMBIGUOUS
+                and item.episode_id is not None and item.source_content_s3_key
+                and candidate.value_json is not None
+                and all(span.start_offset is not None and span.end_offset is not None
+                        and span.end_offset > span.start_offset for span in candidate.evidence_spans)):
+            key = (
+                item.episode_id, item.source_content_s3_key,
+                binding.actual_character_id, binding.provisional_subject_key,
+                candidate.attribute_name, candidate.value_type,
+                json.dumps(candidate.value_json, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                tuple(sorted((span.start_offset, span.end_offset, span.quote)
+                             for span in candidate.evidence_spans)),
+            )
+        if key is not None and key in seen:
+            prior = seen[key]
+            confidence = candidate.confidence if candidate.confidence is not None else -1
+            old_confidence = prepared[prior].candidate.confidence
+            if confidence > (old_confidence if old_confidence is not None else -1):
+                prepared[prior] = row
+            continue
+        if key is not None:
+            seen[key] = len(prepared)
+        prepared.append(row)
+    return prepared
 
 
 def prepare_setting_candidates(

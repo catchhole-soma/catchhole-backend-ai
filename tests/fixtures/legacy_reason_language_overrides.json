@@ -1,0 +1,13 @@
+{
+  "reason": "User-authorized plain-language comparison explanation instructions; original baseline capture remains unchanged.",
+  "overrides": {
+    "character_batch": {
+      "sha256": "e6a6d074fa9df4339084b139d2f0ac02620029a4127575d43eac53227e4bc4dd",
+      "system_sha256": "097377dccce3e19083167e073c7041a84cd04debca33d5d6bef17ca44a71a527"
+    },
+    "world_batch": {
+      "sha256": "68356f1de9e072396452926812c5fba29f738599ac795a889e23f57b9f5697d7",
+      "system_sha256": "afc242b9f86252600c9c44cb6deb5ff318f460e5fb2dc65d95d4d79680a2164c"
+    }
+  }
+}
