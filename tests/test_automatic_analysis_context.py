@@ -38,6 +38,15 @@ from tests.test_setting_extractor import CHUNK_ID, DEFAULT_SCHEMA_HINTS
 def forbid_network(monkeypatch):
     def reject_network(*args, **kwargs):
         raise AssertionError("Synthetic contract tests must not make network requests.")
+
+    class Encoding:
+        def encode(self, text, **kwargs):
+            return list(text.encode("utf-8"))
+
+    # These tests check context propagation and relative input growth, not the
+    # provider vocabulary. A cold tiktoken cache would otherwise fetch that
+    # vocabulary before the synthetic request reaches our recording client.
+    monkeypatch.setattr("app.analysis.ordered_context.tiktoken.get_encoding", lambda name: Encoding())
     monkeypatch.setattr(socket.socket, "connect", reject_network)
 
 
