@@ -1,0 +1,157 @@
+{
+  "baselineCommit": "05d9c2d65498d28a1208b7f9bc8f0087307f64fc",
+  "probeHashes": {
+    "legacy_request_probe.py": "1f7dd18b80becd5af6d17f4519722e5040cdf9acd4650bc56289b3912035b87c",
+    "upstream_world_request_probe.py": "fed678416ca66c26690aa2e5043da7765c50511edb6e0fcad76c41b53671955b"
+  },
+  "requests": {
+    "character_batch": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 16000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "character-fact-comparison-batch:v3",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "246558ce4d412dd52eef1b5760cb6a7034501dd0f081a8bcab3568a5688a251e",
+      "store": false,
+      "system_sha256": "48d6c73cd5d72860bd3062d36bca0dafdde48774d2654c5f88a4b4b20ce6f795",
+      "user_sha256": "6c11e86d4ace7ff295e1975ddc9d50a57996daea2fe46895738535445a4e35e0"
+    },
+    "extraction": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store",
+        "text"
+      ],
+      "max_output_tokens": 6000,
+      "model": "gpt-5.6-terra",
+      "prompt_cache_key": "setting-extraction:v10:e9721bfb5d486efc",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "eb10e88d6a6a320639360f801c737b20c673a850e72df7447fefaf7e6b03c54c",
+      "sha256": "16d806f887f542bb244fc0ee2d1b6557cde6f23b68d9c6e4e523df2f1185ef7e",
+      "store": false,
+      "system_sha256": "bb879fa9e2afb9a10fe1d26a716a02a4be227dbd11810d7248933e55a9add714",
+      "user_sha256": "c1e02ab131f76ca84baed51d98cf98775c055fb973542a18d0a4265933fff7e9"
+    },
+    "world_batch": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 16000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "world-setting-comparison-batch:v5",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "16dc8cacc4e078eb39ba2702542d8bd3a34acefc8074728d80c77c46b9b669fa",
+      "store": false,
+      "system_sha256": "dff985ef30337b56085b1bf8cbe2eda98a0d4890ab646544d9f913ab0c33d16b",
+      "user_sha256": "6da91832d5728759da255828dfe696be58c7e6e1e4fbf73cb28d68ad80e7ef6c"
+    },
+    "world_subject": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 2000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "world-setting-subject-resolution:v1",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "e73c1e00c49c069c9de2b53fba064565bcfad831bc0e342a1663f35151b6dbb7",
+      "store": false,
+      "system_sha256": "574d1ad7016ca6b23c575d61d1eebee661ce94c8a40ae36bc61950a38d24e6c6",
+      "user_sha256": "59bbe13b48ff1690d97d472ecb294c19bebb72ce1bb9efcdb5c87cd6ab9b9294"
+    },
+    "world_extraction": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 5000,
+      "model": "gpt-5.6-terra",
+      "prompt_cache_key": "world-setting-extraction:v2",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "4b3f4904ca772185f1eb7a336b9a27871f1f4c57081c092eba5d08ce15b1d534",
+      "store": false,
+      "system_sha256": "22ef8f6afb4b3454e0d47880cdf2d6149dd464c0466a94624d895b053a7088b6",
+      "user_sha256": "ac7a1c0f1f6879972a6fb04f38b761b30ee24369f7cf08807451ba0323dc9610"
+    },
+    "world_singleton": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 3000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "world-setting-comparison:v9",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "3ad2ad1e496e397a22a8f09896f847a3885729b029faee68c5d8251ae3ba8a7f",
+      "store": false,
+      "system_sha256": "175f0be75f29aa099d9a55c68b1e425e53dec616751a7b7c9169e446abd385be",
+      "user_sha256": "c37bfed56b1547ad654568a0fb0ea5508e84647ff57fedaf43217ff1cbd43749"
+    }
+  },
+  "gh180Overrides": {
+    "character_batch": {
+      "sha256": "ef5b5d69cde812fd79538297150d39954bc0a8528c5932d4dc32d06c1986cfc1",
+      "system_sha256": "17b4de92e9c997d80a8a6ebe5fae26bc48f2de58643cbd18a9bbd2e3135cf6f7"
+    },
+    "world_batch": {
+      "prompt_cache_key": "world-setting-comparison-batch:v9",
+      "sha256": "fd5db449d9d491466b3d49baab06c42d71b8927a2cf5bb0609ee96e8e22dd0ed",
+      "system_sha256": "23bdea71207a6a127e04dcbe7d527777ea7aa49126af5ee77bd63a1dc1a7a4a9"
+    },
+    "world_subject": {
+      "sha256": "aa6d10e63bffa4242cfa6754ab230228254659aa4547c98b2757b1944a0e2c92",
+      "system_sha256": "d562990f9406b4ea437f81b224cdc5b323258861ead2cb222bda33e82df6e75a"
+    },
+    "world_singleton": {
+      "prompt_cache_key": "world-setting-comparison:v12",
+      "sha256": "ce9d7dcff1531dbe7235e1fc490180f47ce54227b3bf6e39ef756c1f8a26c3fa",
+      "system_sha256": "39aecd65cde527c17e3cf9500ff186e9c8f5b6a40aef2242f3fda27ba5ca16ef"
+    }
+  },
+  "overrideReason": "GH180 public-language, subject-identity and GENERAL_UNCERTAINTY instructions only; main extraction unchanged; comparison single v12 and batch v9 keep caches distinct from PR65 and earlier integrated code."
+}

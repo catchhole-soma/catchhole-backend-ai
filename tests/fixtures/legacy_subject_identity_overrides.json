@@ -1,0 +1,9 @@
+{
+  "reason": "Authorized subject-identity guidance separates related classifications from aliases; historical capture and request inputs remain unchanged.",
+  "overrides": {
+    "world_subject": {
+      "sha256": "aa6d10e63bffa4242cfa6754ab230228254659aa4547c98b2757b1944a0e2c92",
+      "system_sha256": "d562990f9406b4ea437f81b224cdc5b323258861ead2cb222bda33e82df6e75a"
+    }
+  }
+}

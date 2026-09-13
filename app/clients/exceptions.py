@@ -31,11 +31,13 @@ class SpringWorkerHttpError(httpx.HTTPStatusError):
         status_code: int | None = None,
         spring_error_code: str | None = None,
         spring_reason_code: str | None = None,
+        validation_fields: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message, request=request, response=response)
         self.status_code = response.status_code if status_code is None else status_code
         self.spring_error_code = spring_error_code
         self.spring_reason_code = spring_reason_code
+        self.validation_fields = validation_fields
 
 
 class SpringWorkerTransportError(RuntimeError):

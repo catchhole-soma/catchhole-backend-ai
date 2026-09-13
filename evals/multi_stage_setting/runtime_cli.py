@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.exceptions.failure_classification import analysis_failure_code
-from evals.multi_stage_setting.contracts import EvaluationDomain, EvaluationMode
+from evals.multi_stage_setting.contracts import EvaluationDomain, EvaluationMode, EvaluationState
 from evals.multi_stage_setting.loaders import load_gold_snapshot_v3
 from evals.multi_stage_setting.runtime_adapter import (
     RuntimePricing,
@@ -21,7 +21,12 @@ def main() -> None:
     domains = _parse_domains(args.domains)
     episodes = _parse_episode_numbers(args.episodes)
     if mode != EvaluationMode.ORACLE and args.source_root is None:
-        raise ValueError("FIXED/ROLLING require --source-root.")
+        raise ValueError("Live extraction modes require --source-root.")
+    frozen_start_state = (
+        EvaluationState.model_validate_json(args.frozen_start_state.read_text(encoding="utf-8"))
+        if args.frozen_start_state is not None
+        else None
+    )
     schema_hints = (
         load_character_setting_schema_hints(args.character_setting_schemas)
         if args.character_setting_schemas is not None
@@ -52,6 +57,7 @@ def main() -> None:
                 domains=domains,
                 episode_numbers=episodes,
                 pricing=_pricing_from_args(args),
+                frozen_start_state=frozen_start_state,
             )
         )
     except Exception as exc:
@@ -97,6 +103,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--source-root", type=Path, default=None)
     parser.add_argument("--source-file-pattern", default="{episode_no:02d}화.txt")
     parser.add_argument("--state-root", type=Path, default=None)
+    parser.add_argument(
+        "--frozen-start-state", type=Path, default=None,
+        help="Explicit runtime EvaluationState for COMMON_START; never a per-episode Gold state.",
+    )
     parser.add_argument("--character-setting-schemas", type=Path, default=None)
     parser.add_argument("--analysis-model", default=None)
     parser.add_argument("--subject-resolution-model", default=None)

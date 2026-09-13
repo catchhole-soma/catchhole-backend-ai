@@ -37,7 +37,7 @@ class S3TextObjectStorage:
         )
 
     # S3 object key를 받아 해당 파일 내용을 문자열로 반환
-    def get_text(self, key: str) -> str:
+    def get_text(self, key: str, version_id: str | None = None) -> str:
         # 테스트에서는 fake client를 주입하고, 실제 실행에서는 boto3 client를 생성
         client_options = {"region_name": self.region}
         if self.access_key_id and self.secret_access_key:
@@ -49,6 +49,7 @@ class S3TextObjectStorage:
                 client_options["aws_session_token"] = self.session_token
         client = self.client or boto3.client("s3", **client_options)
         # S3에서 객체를 가져옴
-        response = client.get_object(Bucket=self.bucket, Key=key)
+        response = client.get_object(Bucket=self.bucket, Key=key,
+                                     **({"VersionId": version_id} if version_id else {}))
         # read()로 bytes를 읽고, decode("utf-8")로 문자열로 변환
         return response["Body"].read().decode("utf-8")

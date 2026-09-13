@@ -3,7 +3,11 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
-from app.analysis.exceptions import ComparisonValidationError
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.world_setting_batch_recovery import (
+    MAX_RECOVERY_CALLS, can_recover_response, exception_diagnostics, map_diagnostics, recover_world_batch,
+)
+from app.schemas.analysis_context import AnalysisStateProvenance, WorkerAnalysisContext
 from app.analysis.world_setting_comparator import (
     WorldSettingComparator,
     WorldSettingSubjectResolver,
@@ -12,6 +16,7 @@ from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpE
 from app.domain.enums import AnalysisFailureCode, WorldSettingCategory
 from app.exceptions.failure_classification import (
     comparison_failure_code,
+    is_candidate_comparison_failure,
     spring_failure_source,
 )
 from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
@@ -21,6 +26,8 @@ from app.schemas.worker import (
     WorkerWorldSettingComparisonBatchCompleteRequest,
     WorkerWorldSettingComparisonBatchContextResponse,
     WorkerWorldSettingComparisonBatchDecision,
+    WorkerWorldSettingComparisonBatchFailure,
+    WorkerWorldSettingComparisonDiagnostic,
     WorkerWorldSettingComparisonBatchPayload,
     WorkerWorldSettingComparisonCompleteRequest,
     WorkerWorldSettingComparisonContextResponse,
@@ -92,6 +99,7 @@ class WorldSettingComparisonSpringApi(Protocol):
         failure_code: AnalysisFailureCode,
         source_error_code: str | None = None,
         source_reason_code: str | None = None,
+        diagnostics: list[WorkerWorldSettingComparisonDiagnostic] | None = None,
     ) -> None: ...
 
     async def claim_next_world_setting_comparison(
@@ -280,6 +288,8 @@ class _BatchComparisonStats:
     clustered_candidate_count: int
     singleton_candidate_count: int
     stale_retry_count: int
+    failed_count: int = 0
+    first_failure_code: AnalysisFailureCode | None = None
 
 
 class WorldSettingComparisonPipeline:
@@ -298,7 +308,9 @@ class WorldSettingComparisonPipeline:
         self.max_context_attempts = max_context_attempts
 
     async def process_all(
-        self, analysis_job_id: UUID, lease_token: UUID
+        self, analysis_job_id: UUID, lease_token: UUID,
+        analysis_context: WorkerAnalysisContext | None = None,
+        continue_on_candidate_failure: bool = False,
     ) -> WorldSettingComparisonRunResult:
         if hasattr(self.spring_client, "claim_next_world_setting_comparison_batch"):
             resolution_api_names = (
@@ -317,7 +329,10 @@ class WorldSettingComparisonPipeline:
                 )
             if implemented_resolution_apis:
                 usage_before = _component_usage_snapshot(self.subject_resolver)
-                await self._prepare_subject_resolutions(analysis_job_id, lease_token)
+                await self._prepare_subject_resolutions(
+                    analysis_job_id, lease_token, analysis_context,
+                    continue_on_candidate_failure=continue_on_candidate_failure,
+                )
                 subject_resolution_usage = _component_usage_snapshot(
                     self.subject_resolver
                 ).since(usage_before)
@@ -327,13 +342,20 @@ class WorldSettingComparisonPipeline:
                 analysis_job_id,
                 lease_token,
                 subject_resolution_usage,
+                analysis_context,
+                continue_on_candidate_failure,
             )
+        if analysis_context is not None:
+            raise ComparisonValidationError("Ordered analysis requires the world batch API.")
         return await self._process_all_legacy_candidates(analysis_job_id, lease_token)
 
     async def _prepare_subject_resolutions(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
+        analysis_context: WorkerAnalysisContext | None = None,
+        *,
+        continue_on_candidate_failure: bool = False,
     ) -> None:
         subjects_by_category: dict[WorldSettingCategory, list[WorkerWorldSettingSubject]] = {}
         while True:
@@ -341,6 +363,8 @@ class WorldSettingComparisonPipeline:
                 analysis_job_id,
                 lease_token,
             )
+            if pending.analysis_context != analysis_context:
+                raise ComparisonValidationError("World subjects do not match the claimed input state.")
             if not pending.candidates:
                 return
             resolutions: list[WorkerWorldSettingSubjectResolutionRequestItem] = []
@@ -353,6 +377,65 @@ class WorldSettingComparisonPipeline:
                         candidate.category,
                     )
                     subjects_by_category[candidate.category] = subjects
+                if pending.analysis_context is not None:
+                    try:
+                        selected, ambiguous = await self.subject_resolver.select_ordered_subjects(
+                            candidate, subjects,
+                            **({"unresolved_references": tuple(pending.analysis_context.unresolved_references)}
+                               if pending.analysis_context.unresolved_references else {}),
+                        )
+                    except Exception as exc:
+                        if not (continue_on_candidate_failure and is_candidate_comparison_failure(exc)):
+                            raise
+                        # A failed response does not mean "new" or "ambiguous".
+                        # Preserve a typed failure without adding an identity or
+                        # its evidence to the targets used by later candidates.
+                        failure_code = comparison_failure_code(exc)
+                        resolutions.append(WorkerWorldSettingSubjectResolutionRequestItem(
+                            candidate_id=candidate.candidate_id, target_world_setting_ids=[],
+                            failure_code=failure_code,
+                        ))
+                        logger.warning(
+                            "World subject resolution deferred. analysis_job_id=%s candidate_id=%s failure_code=%s",
+                            analysis_job_id, candidate.candidate_id, failure_code,
+                        )
+                        continue
+                    if not selected and not ambiguous:
+                        # A new identity is anchored to a real source candidate; later
+                        # rows may share it only after semantic subject resolution.
+                        created = WorkerWorldSettingSubject(
+                            provisional_subject_key=f"provisional-world:{candidate.candidate_id}",
+                            subject_name=candidate.subject_name,
+                            identity_evidence=candidate.evidence_spans,
+                            provenance=AnalysisStateProvenance(
+                                confirmation_status="PROVISIONAL",
+                                source_episode_no=candidate.source_episode_no,
+                            ),
+                        )
+                        selected = [created]
+                        subjects.append(created)
+                    elif len(selected) == 1 and not ambiguous:
+                        # Enrich only a model-selected identity, never merge by name
+                        # or promote unresolved references into selectable subjects.
+                        chosen = selected[0]
+                        for index, subject in enumerate(subjects):
+                            if subject.identity_key() != chosen.identity_key():
+                                continue
+                            evidence = list(subject.identity_evidence)
+                            for span in candidate.evidence_spans:
+                                if span not in evidence:
+                                    evidence.append(span)
+                            subjects[index] = subject.model_copy(update={"identity_evidence": evidence})
+                            break
+                    resolutions.append(WorkerWorldSettingSubjectResolutionRequestItem(
+                        candidate_id=candidate.candidate_id,
+                        target_world_setting_ids=[item.world_setting_id for item in selected
+                                                  if item.world_setting_id is not None],
+                        provisional_subject_keys=[item.provisional_subject_key for item in selected
+                                                  if item.provisional_subject_key is not None],
+                        ambiguous=ambiguous,
+                    ))
+                    continue
                 candidate_key = normalize_world_setting_name(candidate.subject_name)
                 exact_matches = [
                     subject
@@ -437,6 +520,8 @@ class WorldSettingComparisonPipeline:
         analysis_job_id: UUID,
         lease_token: UUID,
         subject_resolution_usage: TextGenerationUsageSnapshot,
+        analysis_context: WorkerAnalysisContext | None = None,
+        continue_on_candidate_failure: bool = False,
     ) -> WorldSettingComparisonRunResult:
         completed_count = 0
         failed_count = 0
@@ -473,6 +558,8 @@ class WorldSettingComparisonPipeline:
                     cluster_usages=tuple(cluster_usages),
                 )
             batch_count += 1
+            if batch.analysis_context != analysis_context:
+                raise ComparisonValidationError("World batch does not match the claimed input state.")
             usage_before = self._usage_snapshot()
             try:
                 stats = await self._compare_batch_with_fresh_context(
@@ -481,6 +568,7 @@ class WorldSettingComparisonPipeline:
                     batch,
                     batch_count,
                     cluster_usages,
+                    allow_recovery=analysis_context is not None and continue_on_candidate_failure,
                 )
             except AiTokenQuotaExhaustedError as exc:
                 source_error_code, source_reason_code = spring_failure_source(exc)
@@ -492,6 +580,8 @@ class WorldSettingComparisonPipeline:
                     AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
                     source_error_code=source_error_code,
                     source_reason_code=source_reason_code,
+                    **({"diagnostics": exc.world_comparison_diagnostics}
+                       if getattr(exc, "world_comparison_diagnostics", None) else {}),
                 )
                 raise
             except Exception as exc:
@@ -530,6 +620,8 @@ class WorldSettingComparisonPipeline:
                     await self._prepare_subject_resolutions(
                         analysis_job_id,
                         lease_token,
+                        analysis_context,
+                        continue_on_candidate_failure=continue_on_candidate_failure,
                     )
                     subject_resolution_usage += _component_usage_snapshot(
                         self.subject_resolver
@@ -563,6 +655,8 @@ class WorldSettingComparisonPipeline:
                     failure_code,
                     source_error_code=source_error_code,
                     source_reason_code=source_reason_code,
+                    **({"diagnostics": exc.world_comparison_diagnostics}
+                       if getattr(exc, "world_comparison_diagnostics", None) else {}),
                 )
                 failed_count += len(batch.candidates)
                 if failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED:
@@ -585,9 +679,18 @@ class WorldSettingComparisonPipeline:
                     batch.comparison_batch_id,
                     len(batch.candidates),
                 )
+                if analysis_context is not None and not (
+                    continue_on_candidate_failure and is_candidate_comparison_failure(exc)
+                ):
+                    raise
                 continue
 
-            completed_count += stats.candidate_count
+            completed_count += stats.candidate_count - stats.failed_count
+            failed_count += stats.failed_count
+            if first_failure_code is None and stats.first_failure_code is not None:
+                first_failure_code = stats.first_failure_code
+            if stats.first_failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED:
+                batch_validation_failure_count += 1
             decision_count += stats.decision_count
             cluster_count += stats.cluster_count
             clustered_candidate_count += stats.clustered_candidate_count
@@ -748,8 +851,11 @@ class WorldSettingComparisonPipeline:
         batch: WorkerWorldSettingComparisonBatchPayload,
         batch_sequence: int,
         cluster_usage_sink: list[WorldSettingComparisonClusterUsage],
+        *,
+        allow_recovery: bool = False,
     ) -> _BatchComparisonStats:
         stale_retry_count = 0
+        recovery_calls_used = 0
         for attempt in range(1, self.max_context_attempts + 1):
             target_ids = batch.resolved_target_world_setting_ids
             context = await self.spring_client.get_world_setting_comparison_batch_context(
@@ -757,24 +863,65 @@ class WorldSettingComparisonPipeline:
                 batch.comparison_batch_id,
                 lease_token,
                 target_ids,
+                **({"provisional_subject_keys": batch.resolved_provisional_subject_keys}
+                   if batch.analysis_context is not None else {}),
             )
-            _validate_batch_context_response(batch, context)
-            targets_by_id = {target.world_setting_id: target for target in context.targets}
-            if set(target_ids) != set(targets_by_id):
-                raise ComparisonValidationError(
+            try:
+                _validate_batch_context_response(batch, context)
+            except ComparisonValidationError as exc:
+                raise OrderedInputContextError("World batch input context is invalid.") from exc
+            if context.analysis_context != batch.analysis_context:
+                raise OrderedInputContextError("Ordered world batch input context changed.")
+            if batch.analysis_context is not None and context.context_token is None:
+                raise OrderedInputContextError("Ordered world comparison requires a context token.")
+            targets_by_id = {target.identity_key(): target for target in context.targets}
+            selected_identity_keys = [f"world:{target_id}" for target_id in target_ids]
+            selected_identity_keys.extend(batch.resolved_provisional_subject_keys)
+            if set(selected_identity_keys) != set(targets_by_id):
+                raise OrderedInputContextError(
                     "Backend batch context does not cover every selected target."
                 )
 
             completion_decisions: list[WorkerWorldSettingComparisonBatchDecision] = []
-            cluster_targets = [targets_by_id[target_id] for target_id in target_ids]
+            failures: list[WorkerWorldSettingComparisonBatchFailure] = []
+            diagnostics: list[WorkerWorldSettingComparisonDiagnostic] = []
+            cluster_targets = [targets_by_id[target_id] for target_id in selected_identity_keys]
             usage_before = _component_usage_snapshot(self.comparator)
             try:
-                comparison_result, raw_comparison = await self.comparator.compare_batch(
-                    batch.category,
-                    batch.candidates,
-                    cluster_targets,
-                )
-            except BaseException:
+                unresolved = (tuple(context.analysis_context.unresolved_references)
+                              if context.analysis_context else ())
+                try:
+                    comparison_result, raw_comparison = await self.comparator.compare_batch(
+                        batch.category,
+                        batch.candidates,
+                        cluster_targets,
+                        **({"ordered_context": True} if batch.analysis_context is not None else {}),
+                        **({"unresolved_references": unresolved} if unresolved else {}),
+                    )
+                    domain_decisions = comparison_result.decisions
+                    if batch.analysis_context is not None:
+                        diagnostics = map_diagnostics(
+                            raw_comparison.get("validation_diagnostics", []), batch.candidates, cluster_targets,
+                        )
+                except Exception as initial_error:
+                    if not (allow_recovery and len(batch.candidates) > 1 and can_recover_response(initial_error)):
+                        raise
+                    recovered = await recover_world_batch(
+                        self.comparator, batch.category, batch.candidates, cluster_targets,
+                        initial_error, unresolved_references=unresolved,
+                        max_recovery_calls=MAX_RECOVERY_CALLS - recovery_calls_used,
+                    )
+                    recovery_calls_used += recovered.recovery_calls
+                    domain_decisions = recovered.decisions
+                    failures, diagnostics = recovered.failures, recovered.diagnostics
+                    raw_comparison = {
+                        "recoveryMode": "FROZEN_INDEPENDENT_GROUPS",
+                        "recoveryCalls": recovered.recovery_calls,
+                        "decisions": [item.model_dump(mode="json") for item in domain_decisions],
+                    }
+            except BaseException as exc:
+                if batch.analysis_context is not None:
+                    exc.world_comparison_diagnostics = exception_diagnostics(exc, batch.candidates, cluster_targets)
                 usage = _component_usage_snapshot(self.comparator).since(usage_before)
                 cluster_usage_sink.append(
                     _unassigned_cluster_usage(
@@ -791,7 +938,7 @@ class WorldSettingComparisonPipeline:
                 for index, target in enumerate(cluster_targets, start=1)
             }
             try:
-                for decision in comparison_result.decisions:
+                for decision in domain_decisions:
                     selected_target = (
                         None
                         if decision.target_ref is None
@@ -820,6 +967,8 @@ class WorldSettingComparisonPipeline:
                                 if selected_target is None
                                 else selected_target.world_setting_id
                             ),
+                            provisional_subject_key=(selected_target.provisional_subject_key
+                                                     if selected_target is not None else None),
                             matched_scope_name=decision.matched_scope_name,
                             matched_property_name=decision.matched_property_name,
                             consolidation_status=decision.consolidation_status,
@@ -832,7 +981,7 @@ class WorldSettingComparisonPipeline:
                             raw_comparison_json=decision.model_dump(mode="json"),
                         )
                     )
-                _validate_completion_coverage(batch.candidates, completion_decisions)
+                _validate_completion_coverage(batch.candidates, completion_decisions, failures)
             except Exception:
                 cluster_usage_sink.append(
                     _unassigned_cluster_usage(
@@ -843,23 +992,30 @@ class WorldSettingComparisonPipeline:
                     )
                 )
                 raise
-            cluster_usage_sink.extend(
-                _attributed_cluster_usages(
+            if failures:
+                cluster_usage_sink.append(_unassigned_cluster_usage(
+                    batch_sequence, attempt, len(batch.candidates), usage,
+                ))
+            else:
+                cluster_usage_sink.extend(_attributed_cluster_usages(
                     batch_sequence,
                     attempt,
                     completion_decisions,
                     usage,
-                )
-            )
+                ))
             request = WorkerWorldSettingComparisonBatchCompleteRequest(
+                context_token=context.context_token,
                 context_versions=[
                     WorkerWorldSettingContextVersion(
                         world_setting_id=target.world_setting_id,
+                        provisional_subject_key=target.provisional_subject_key,
                         version=target.version,
                     )
                     for target in context.targets
                 ],
                 decisions=completion_decisions,
+                failures=failures or None,
+                diagnostics=diagnostics or None,
                 raw_comparison_json={
                     "schemaVersion": "world-comparison-batch-v1",
                     "clusters": [raw_comparison],
@@ -907,6 +1063,8 @@ class WorldSettingComparisonPipeline:
                 clustered_candidate_count=clustered_candidate_count,
                 singleton_candidate_count=singleton_candidate_count,
                 stale_retry_count=stale_retry_count,
+                failed_count=sum(len(failure.source_candidate_refs) for failure in failures),
+                first_failure_code=failures[0].failure_code if failures else None,
             )
         raise AssertionError("Unreachable batch comparison attempt loop.")
 
@@ -1069,7 +1227,9 @@ def _validate_batch_context_response(
         )
 
     exact_targets = {
-        exact_target.candidate_ref: exact_target.world_setting_id
+        exact_target.candidate_ref: (exact_target.provisional_subject_key
+            or (f"world:{exact_target.world_setting_id}"
+                if exact_target.world_setting_id is not None else None))
         for exact_target in context.exact_targets
     }
     if len(exact_targets) != len(context.exact_targets):
@@ -1081,7 +1241,7 @@ def _validate_batch_context_response(
             "Backend batch context must include one exact-target entry per candidate."
         )
 
-    target_ids = [target.world_setting_id for target in context.targets]
+    target_ids = [target.identity_key() for target in context.targets]
     if len(set(target_ids)) != len(target_ids):
         raise ComparisonValidationError(
             "Backend batch context contains duplicated comparison targets."
@@ -1121,11 +1281,30 @@ def _validate_subject_resolution_response(
         raise ComparisonValidationError(
             "Backend subject-resolution response does not match the submitted targets."
         )
+    by_id = {item.candidate_id: item for item in request.resolutions}
+    allowed_new_keys = {f"provisional-world:{item.candidate_id}" for item in request.resolutions}
+    for result in response.resolutions:
+        source = by_id[result.candidate_id]
+        if source.failure_code is not None:
+            if (str(result.resolution_type) != "FAILED"
+                    or result.canonical_subject_key != f"failed:{source.candidate_id}"
+                    or result.provisional_subject_keys or result.target_world_setting_ids):
+                raise ComparisonValidationError("Backend changed a failed world subject resolution.")
+        elif str(result.resolution_type) == "FAILED":
+            raise ComparisonValidationError("Backend introduced an unreported world subject failure.")
+        if source.ambiguous and str(result.resolution_type) != "AMBIGUOUS":
+            raise ComparisonValidationError("Backend changed an ambiguous world subject resolution.")
+        if result.provisional_subject_keys != source.provisional_subject_keys:
+            if not (str(result.resolution_type) == "NEW"
+                    and not source.provisional_subject_keys and not source.target_world_setting_ids
+                    and set(result.provisional_subject_keys).issubset(allowed_new_keys)):
+                raise ComparisonValidationError("Backend changed provisional world subject targets.")
 
 
 def _validate_completion_coverage(
     candidates: list[WorkerWorldSettingComparisonBatchCandidate],
     decisions: list[WorkerWorldSettingComparisonBatchDecision],
+    failures: list[WorkerWorldSettingComparisonBatchFailure] | None = None,
 ) -> None:
     expected_refs = {candidate.candidate_ref for candidate in candidates}
     if len(expected_refs) != len(candidates):
@@ -1140,6 +1319,7 @@ def _validate_completion_coverage(
         for decision in decisions
         for source_ref in decision.source_candidate_refs
     ]
+    source_refs.extend(source_ref for failure in failures or [] for source_ref in failure.source_candidate_refs)
     unknown_refs = set(source_refs) - expected_refs
     if unknown_refs:
         raise ComparisonValidationError(

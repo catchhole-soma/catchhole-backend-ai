@@ -1,7 +1,12 @@
 import httpx
 import pytest
 
-from app.analysis.exceptions import ComparisonValidationError, LlmExtractionError
+from app.analysis.exceptions import (
+    ComparisonValidationError,
+    LlmExtractionError,
+    OrderedAnalysisIncompleteError,
+    OrderedInputContextError,
+)
 from app.clients.exceptions import (
     AiTokenQuotaExhaustedError,
     SpringWorkerHttpError,
@@ -12,6 +17,7 @@ from app.domain.enums import AnalysisFailureCode
 from app.exceptions.failure_classification import (
     analysis_failure_code,
     comparison_failure_code,
+    is_candidate_comparison_failure,
 )
 from app.llm.exceptions import (
     LlmIncompleteResponseError,
@@ -93,6 +99,28 @@ def test_provider_payload_failure_takes_precedence_over_comparison_wrapper() -> 
     assert comparison_failure_code(error) is AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR
 
 
+@pytest.mark.parametrize(("status", "code"), [
+    (400, "invalid_request_error"), (401, "invalid_api_key"), (403, "permission_denied"),
+    (429, "insufficient_quota"), (429, "billing_hard_limit_reached"),
+    (429, "billing_not_active"), (429, "quota_exceeded"), (429, "usage_limit_reached"),
+])
+def test_global_provider_failures_cannot_be_saved_as_deferrable_candidate_errors(status, code):
+    failure = _http_status_error(httpx.HTTPStatusError, code, status_code=status)
+    wrapped = ComparisonValidationError("wrapped response error")
+    wrapped.__cause__ = failure
+    for error in (failure, wrapped):
+        assert is_candidate_comparison_failure(error) is False
+        assert comparison_failure_code(error) is AnalysisFailureCode.UNEXPECTED_ERROR
+        assert analysis_failure_code(error) is AnalysisFailureCode.UNEXPECTED_ERROR
+
+
+@pytest.mark.parametrize("status", [408, 429, 500, 503])
+def test_transient_provider_failures_keep_existing_candidate_isolation_after_retries(status):
+    failure = _http_status_error(httpx.HTTPStatusError, "rate_limit_exceeded", status_code=status)
+    assert is_candidate_comparison_failure(failure) is True
+    assert comparison_failure_code(failure) is AnalysisFailureCode.LLM_PROVIDER_ERROR
+
+
 def test_spring_worker_http_failure_is_not_classified_as_provider_failure() -> None:
     error = _http_status_error(SpringWorkerHttpError, "INTERNAL_SERVER_ERROR")
 
@@ -153,6 +181,52 @@ def test_raw_provider_http_failure_remains_provider_error() -> None:
     error = _http_status_error(httpx.HTTPStatusError, "rate_limit_exceeded")
 
     assert analysis_failure_code(error) is AnalysisFailureCode.LLM_PROVIDER_ERROR
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize("cause_type", [ComparisonValidationError, LlmResponseValidationError])
+def test_input_context_failure_persists_non_deferrable_code_even_with_provider_cause(
+    wrapped, cause_type,
+):
+    failure = OrderedInputContextError("Frozen input is invalid.")
+    failure.__cause__ = cause_type("Earlier response failed.")
+    if wrapped:
+        wrapper = ComparisonValidationError("Comparison failed.")
+        wrapper.__cause__ = failure
+        failure = wrapper
+    assert analysis_failure_code(failure) is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert comparison_failure_code(failure) is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert is_candidate_comparison_failure(failure) is False
+
+
+@pytest.mark.parametrize("outer_type", [OrderedInputContextError, OrderedAnalysisIncompleteError])
+@pytest.mark.parametrize("quota", [True, False])
+def test_execution_failure_takes_precedence_over_outer_comparison_failure(outer_type, quota):
+    failure = outer_type(AnalysisFailureCode.COMPARISON_VALIDATION_FAILED)
+    failure.__cause__ = AiTokenQuotaExhaustedError() if quota else _http_status_error(
+        WorkerLeaseExpiredError, "ANALYSIS_JOB_LEASE_CONFLICT", status_code=409,
+    )
+    expected = (AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED if quota
+                else AnalysisFailureCode.WORKER_LEASE_EXPIRED)
+    assert analysis_failure_code(failure) is expected
+    assert comparison_failure_code(failure) is expected
+    assert is_candidate_comparison_failure(failure) is False
+
+
+def test_input_context_failure_overrides_wrapped_world_backend_validation_code():
+    failure = OrderedInputContextError("Input and response do not belong together.")
+    failure.__cause__ = _http_status_error(
+        SpringWorkerHttpError, "WORLD_SETTING_COMPARISON_TARGET_INVALID", status_code=400,
+    )
+    assert analysis_failure_code(failure) is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert comparison_failure_code(failure) is AnalysisFailureCode.UNEXPECTED_ERROR
+
+
+def test_incomplete_job_keeps_diagnostic_code_but_cannot_be_persisted_as_deferrable_batch():
+    failure = OrderedAnalysisIncompleteError(AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR)
+    assert analysis_failure_code(failure) is AnalysisFailureCode.LLM_RESPONSE_PARSE_ERROR
+    assert comparison_failure_code(failure) is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert is_candidate_comparison_failure(failure) is False
 
 
 def _http_status_error(

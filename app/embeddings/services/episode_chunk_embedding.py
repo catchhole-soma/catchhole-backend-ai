@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, TypeVar
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -10,6 +11,7 @@ from app.embeddings.client import OpenAIEmbeddingsClient
 from app.embeddings.exceptions import EmbeddingDataIntegrityError
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.models.episode_chunk import EpisodeChunk
+from app.services.ordered_analysis_fence import OrderedCandidateWriteContext, fence_ordered_candidate_write
 from app.repositories.episode_chunk_repository import (
     EpisodeChunkEmbeddingUpdate,
     EpisodeChunkRepository,
@@ -53,7 +55,11 @@ class EpisodeChunkEmbeddingService:
         self.now_factory = now_factory
         self.blocking_runner = blocking_runner or asyncio.to_thread
 
-    async def embed_chunks(self, chunks: list[EpisodeChunk]) -> EpisodeChunkEmbeddingResult:
+    async def embed_chunks(
+        self, chunks: list[EpisodeChunk],
+        ordered_write_context: OrderedCandidateWriteContext | None = None,
+        analysis_job_id: UUID | None = None, work_id: UUID | None = None,
+    ) -> EpisodeChunkEmbeddingResult:
         """청크 순서대로 벡터를 생성하고 임베딩 필드만 한 트랜잭션으로 갱신한다."""
 
         if not chunks:
@@ -84,7 +90,10 @@ class EpisodeChunkEmbeddingService:
         ]
 
         updated_chunks = await self.blocking_runner(
-            lambda: self._persist_embedding_updates(embedding_updates)
+            lambda: self._persist_embedding_updates(embedding_updates,
+                **({"ordered_write_context": ordered_write_context,
+                    "analysis_job_id": analysis_job_id, "work_id": work_id}
+                   if ordered_write_context is not None else {}))
         )
 
         return EpisodeChunkEmbeddingResult(
@@ -95,10 +104,19 @@ class EpisodeChunkEmbeddingService:
     def _persist_embedding_updates(
         self,
         embedding_updates: list[EpisodeChunkEmbeddingUpdate],
+        ordered_write_context: OrderedCandidateWriteContext | None = None,
+        analysis_job_id: UUID | None = None, work_id: UUID | None = None,
     ) -> list[EpisodeChunk]:
         with self.session_factory() as session:
             repository = self.repository_factory(session)
             try:
+                if ordered_write_context is not None:
+                    if analysis_job_id is None or work_id is None:
+                        raise ValueError("Ordered embedding storage requires the claimed job and work.")
+                    fence_ordered_candidate_write(
+                        session, analysis_job_id=analysis_job_id, work_id=work_id,
+                        write_context=ordered_write_context, chunks_only=True,
+                    )
                 updated_chunks = repository.update_embeddings(embedding_updates)
                 session.commit()
             except Exception:

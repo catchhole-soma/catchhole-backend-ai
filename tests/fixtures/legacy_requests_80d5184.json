@@ -1,0 +1,92 @@
+{
+  "baselineCommit": "80d5184c006a42248ab214b36d0898c071887900",
+  "capture": "OpenAIResponsesClient HTTP JSON via httpx.MockTransport; synthetic input only",
+  "probeSha256": "1f7dd18b80becd5af6d17f4519722e5040cdf9acd4650bc56289b3912035b87c",
+  "requests": {
+    "character_batch": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 16000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "character-fact-comparison-batch:v2",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "69ba31e06695d7aa3ad901dacaca449cdf6e33e06ba3f392c14b7a617168ac48",
+      "store": false,
+      "system_sha256": "3da69202aff90cc3dab60edfc3fa4dd53e964324972575f0d17e91e84be322ce",
+      "user_sha256": "6c11e86d4ace7ff295e1975ddc9d50a57996daea2fe46895738535445a4e35e0"
+    },
+    "extraction": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store",
+        "text"
+      ],
+      "max_output_tokens": 6000,
+      "model": "gpt-5.6-terra",
+      "prompt_cache_key": "setting-extraction:v10:e9721bfb5d486efc",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "eb10e88d6a6a320639360f801c737b20c673a850e72df7447fefaf7e6b03c54c",
+      "sha256": "16d806f887f542bb244fc0ee2d1b6557cde6f23b68d9c6e4e523df2f1185ef7e",
+      "store": false,
+      "system_sha256": "bb879fa9e2afb9a10fe1d26a716a02a4be227dbd11810d7248933e55a9add714",
+      "user_sha256": "c1e02ab131f76ca84baed51d98cf98775c055fb973542a18d0a4265933fff7e9"
+    },
+    "world_batch": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 16000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "world-setting-comparison-batch:v5",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "16dc8cacc4e078eb39ba2702542d8bd3a34acefc8074728d80c77c46b9b669fa",
+      "store": false,
+      "system_sha256": "dff985ef30337b56085b1bf8cbe2eda98a0d4890ab646544d9f913ab0c33d16b",
+      "user_sha256": "6da91832d5728759da255828dfe696be58c7e6e1e4fbf73cb28d68ad80e7ef6c"
+    },
+    "world_subject": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 2000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "world-setting-subject-resolution:v1",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "e73c1e00c49c069c9de2b53fba064565bcfad831bc0e342a1663f35151b6dbb7",
+      "store": false,
+      "system_sha256": "574d1ad7016ca6b23c575d61d1eebee661ce94c8a40ae36bc61950a38d24e6c6",
+      "user_sha256": "59bbe13b48ff1690d97d472ecb294c19bebb72ce1bb9efcdb5c87cd6ab9b9294"
+    }
+  }
+}

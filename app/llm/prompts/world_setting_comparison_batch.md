@@ -13,7 +13,7 @@ canonical-subject batch다. 이 batch를 다시 주체별로 나누지 말고, �
     "existing_root_property_names_to_move": ["같은 대상의 기존 root 속성명"],
     "consolidation_status": "SINGLE | MERGED | CONFLICT",
     "operation": "ADD | UPDATE | MERGE | EXCLUDE | REVIEW_REQUIRED",
-    "review_reason": "SCOPE_UNRESOLVED 또는 null",
+    "review_reason": "GENERAL_UNCERTAINTY | SCOPE_UNRESOLVED 또는 null",
     "target_ref": "T1 또는 null",
     "matched_scope_name": "기존 선택 범위명 또는 null",
     "matched_property_name": "기존 속성명 또는 null",
@@ -84,6 +84,16 @@ canonical-subject batch다. 이 batch를 다시 주체별로 나누지 말고, �
   같은 기존 scoped 속성을 가리키지만 그 범위를 자동 결정할 수 없을 때 사용한다.
   일부 후보만 해당하거나 서로 다른 target·scoped 속성을 가리키면 한 decision으로 묶지
   않는다. review_reason은 SCOPE_UNRESOLVED다.
+- 범위 문제가 아니라 대상의 동일성이나 내용의 의미를 확실히 판단하기 어려우면
+  REVIEW_REQUIRED + GENERAL_UNCERTAINTY로 사용자가 확인하게 한다. 관련된 종류나 등급이
+  같다는 이유로 서로 다른 대상을 합치지 않는다. 이 검토는 source 하나씩 별도 decision으로
+  반환한다. proposed_scope_name·proposed_setting_name·proposed_value는 해당 후보 원본
+  그대로이며 existing_root_property_names_to_move는 []다. 이미 연결된 target_ref는 유지하되
+  이 판단이 대상 연결을 확정한다는 뜻은 아니다. 실제로 비교한 기존 속성이 있으면 그 실제
+  matched 경로를 선택하고, 특정 기존 속성과 비교하지 않았다면 matched 경로는 null이다.
+  입력에 없는 대상·속성을 만들거나 범위 검토의 조건을 우회하지 않는다. 이 결과는 자동으로
+  설정에 반영하지 않는다. comparison_reason에는 어떤 대상·내용을 확인해야 하는지 자연스러운
+  한국어로 설명한다. 예: '대상이나 내용을 확실히 판단하기 어려워 확인이 필요합니다.'
 - proposed_value는 최종 저장 문자열 하나다. MERGED라면 중복을 제거하되 모든 양립 가능한 정보를 보존한다.
 - CONFLICT라면 source_candidate_refs의 모든 extracted_value를 빠짐없이 보존하고 임의로 하나를
   선택하거나 삭제하지 않는다.

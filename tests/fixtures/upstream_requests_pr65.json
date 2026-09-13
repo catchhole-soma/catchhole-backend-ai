@@ -1,0 +1,157 @@
+{
+  "baselineCommit": "275bada00fcd4d420277d378ddf7f6d417dea899",
+  "probeHashes": {
+    "legacy_request_probe.py": "1f7dd18b80becd5af6d17f4519722e5040cdf9acd4650bc56289b3912035b87c",
+    "upstream_world_request_probe.py": "fed678416ca66c26690aa2e5043da7765c50511edb6e0fcad76c41b53671955b"
+  },
+  "requests": {
+    "character_batch": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 16000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "character-fact-comparison-batch:v3",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "246558ce4d412dd52eef1b5760cb6a7034501dd0f081a8bcab3568a5688a251e",
+      "store": false,
+      "system_sha256": "48d6c73cd5d72860bd3062d36bca0dafdde48774d2654c5f88a4b4b20ce6f795",
+      "user_sha256": "6c11e86d4ace7ff295e1975ddc9d50a57996daea2fe46895738535445a4e35e0"
+    },
+    "extraction": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store",
+        "text"
+      ],
+      "max_output_tokens": 6000,
+      "model": "gpt-5.6-terra",
+      "prompt_cache_key": "setting-extraction:v10:e9721bfb5d486efc",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "eb10e88d6a6a320639360f801c737b20c673a850e72df7447fefaf7e6b03c54c",
+      "sha256": "16d806f887f542bb244fc0ee2d1b6557cde6f23b68d9c6e4e523df2f1185ef7e",
+      "store": false,
+      "system_sha256": "bb879fa9e2afb9a10fe1d26a716a02a4be227dbd11810d7248933e55a9add714",
+      "user_sha256": "c1e02ab131f76ca84baed51d98cf98775c055fb973542a18d0a4265933fff7e9"
+    },
+    "world_batch": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 16000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "world-setting-comparison-batch:v6",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "e72fe0bbf75af7fc64a34953e860f72733a622820cac6397916320bba4c5df4d",
+      "store": false,
+      "system_sha256": "b7a3c060cff7fbe89f26a1a5568542c1cd901f427b674ff57d328bd179430546",
+      "user_sha256": "6da91832d5728759da255828dfe696be58c7e6e1e4fbf73cb28d68ad80e7ef6c"
+    },
+    "world_subject": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 2000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "world-setting-subject-resolution:v1",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "e73c1e00c49c069c9de2b53fba064565bcfad831bc0e342a1663f35151b6dbb7",
+      "store": false,
+      "system_sha256": "574d1ad7016ca6b23c575d61d1eebee661ce94c8a40ae36bc61950a38d24e6c6",
+      "user_sha256": "59bbe13b48ff1690d97d472ecb294c19bebb72ce1bb9efcdb5c87cd6ab9b9294"
+    },
+    "world_extraction": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 5000,
+      "model": "gpt-5.6-terra",
+      "prompt_cache_key": "world-setting-extraction:v4",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "d14fa6b77f982c89772b62927ef63a81a9fa79bcb0bf5840799765e274bdf14f",
+      "store": false,
+      "system_sha256": "e172c1a00645c4cedddb8b614c0e76f73507db4a6827b0d3fb1f62e2b757fba1",
+      "user_sha256": "ac7a1c0f1f6879972a6fb04f38b761b30ee24369f7cf08807451ba0323dc9610"
+    },
+    "world_singleton": {
+      "keys": [
+        "input",
+        "max_output_tokens",
+        "model",
+        "prompt_cache_key",
+        "reasoning",
+        "store"
+      ],
+      "max_output_tokens": 3000,
+      "model": "gpt-5.6-luna",
+      "prompt_cache_key": "world-setting-comparison:v10",
+      "reasoning": {
+        "effort": "none"
+      },
+      "schema_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "sha256": "5626f2d4cecf8250824a7a3230412d1adfc95aa7554a5601f7b88fa13a45a8b5",
+      "store": false,
+      "system_sha256": "5181fedda3eb89f59364eb6447673f9ba7a71a0af546e6e35560b26879f6ef68",
+      "user_sha256": "c37bfed56b1547ad654568a0fb0ea5508e84647ff57fedaf43217ff1cbd43749"
+    }
+  },
+  "gh180Overrides": {
+    "character_batch": {
+      "sha256": "ef5b5d69cde812fd79538297150d39954bc0a8528c5932d4dc32d06c1986cfc1",
+      "system_sha256": "17b4de92e9c997d80a8a6ebe5fae26bc48f2de58643cbd18a9bbd2e3135cf6f7"
+    },
+    "world_batch": {
+      "prompt_cache_key": "world-setting-comparison-batch:v8",
+      "sha256": "9496090f6cd3a415d0a153d96b9a584709d44d3c708fa0fe579f56072b4f0cc9",
+      "system_sha256": "7710a1c84c7f0335a981f1375ad4ad9c70d8fa9bf43fde8dad784d75103d3df2"
+    },
+    "world_subject": {
+      "sha256": "aa6d10e63bffa4242cfa6754ab230228254659aa4547c98b2757b1944a0e2c92",
+      "system_sha256": "d562990f9406b4ea437f81b224cdc5b323258861ead2cb222bda33e82df6e75a"
+    },
+    "world_singleton": {
+      "prompt_cache_key": "world-setting-comparison:v11",
+      "sha256": "42d49d9a36fa8800fad469f98743af5e0a3e603ab568768f5f21648cd390d966",
+      "system_sha256": "17cd4a8c42d13484150009f5693e1c3aed7e7255767f57876f5f924649e693d5"
+    }
+  },
+  "overrideReason": "GH180 public-language and subject-identity instructions; PR65 scope-priority clarification; approved GENERAL_UNCERTAINTY review instructions with singleton v11 and batch v8 cache. Baseline requests and probes are unchanged."
+}

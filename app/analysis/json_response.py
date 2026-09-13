@@ -5,13 +5,17 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from app.analysis.exceptions import ComparisonValidationError, LlmExtractionError
+from app.analysis.exceptions import (
+    ComparisonValidationError,
+    LlmExtractionError,
+    OrderedInputContextError,
+)
 from app.llm.exceptions import (
     LlmIncompleteResponseError,
     LlmOutputTruncatedError,
     LlmResponseValidationError,
 )
-from app.llm.protocols import TextGenerationClient
+from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -93,6 +97,9 @@ async def request_validated_model(
     validate_model: Callable[[ModelT], None] | None = None,
     retry_user_prompt_builder: Callable[[str, Exception], str] | None = None,
     truncation_retry_max_output_tokens: int | None = None,
+    response_schema: LlmResponseSchema | None = None,
+    validation_error_summary: Callable[[Exception | None], str] | None = None,
+    validation_failure_callback: Callable[[int, Exception, dict | None], None] | None = None,
 ) -> ModelT:
     """LLM JSON 객체를 Pydantic 모델로 검증하고 동일 요청 범위에서 재시도한다."""
 
@@ -100,8 +107,10 @@ async def request_validated_model(
     current_user_prompt = user_prompt
     current_max_output_tokens = max_output_tokens
     truncation_retry_used = False
+    summarize_error = validation_error_summary or safe_validation_error_summary
     for attempt in range(1, max_attempts + 1):
         while True:
+            parsed_payload = None
             try:
                 response = await client.create_text_response(
                     system_prompt=system_prompt,
@@ -109,11 +118,8 @@ async def request_validated_model(
                     model=model,
                     max_output_tokens=current_max_output_tokens,
                     prompt_cache_key=prompt_cache_key,
+                    **({"response_schema": response_schema} if response_schema is not None else {}),
                 )
-                result = response_model.model_validate(parse_json_object(response.text))
-                if validate_model is not None:
-                    validate_model(result)
-                return result
             except LlmOutputTruncatedError as exc:
                 can_expand_once = (
                     not truncation_retry_used
@@ -137,35 +143,61 @@ async def request_validated_model(
                     exc.output_token_count,
                     exc.incomplete_reason,
                 )
+                continue
             except LlmIncompleteResponseError:
                 # provider가 완료하지 못한 응답은 JSON/schema 보정으로 회복할 수 없다.
                 raise
-            except (TypeError, ValueError) as exc:
+            except LlmResponseValidationError as exc:
+                # Provider가 명시한 응답 형식 오류만 재시도한다. 호출 경계의
+                # 입력 상한·quota·lease·예상 밖 오류는 검증 실패로 바꾸지 않는다.
                 last_error = exc
-                if attempt < max_attempts:
-                    logger.warning(
-                        "%s response validation failed. retrying attempt=%s/%s error=%s",
-                        operation_name,
-                        attempt,
-                        max_attempts,
-                        safe_validation_error_summary(exc),
-                    )
-                    if retry_user_prompt_builder is not None:
-                        # 매번 최초 입력을 기준으로 피드백을 새로 만들어 실패 문구가
-                        # 재시도마다 중첩되지 않게 한다.
-                        current_user_prompt = retry_user_prompt_builder(user_prompt, exc)
-                break
+            else:
+                try:
+                    parsed_payload = parse_json_object(response.text)
+                    result = response_model.model_validate(parsed_payload)
+                    if validate_model is not None:
+                        validate_model(result)
+                except (
+                    OrderedInputContextError,
+                    LlmIncompleteResponseError,
+                    LlmOutputTruncatedError,
+                ):
+                    # 고정 입력/실행 오류는 도메인 응답 보정으로 회복되지 않는다.
+                    raise
+                except (TypeError, ValueError, ComparisonValidationError) as exc:
+                    last_error = exc
+                else:
+                    return result
+            if validation_failure_callback is not None:
+                try:
+                    validation_failure_callback(attempt, last_error, parsed_payload)
+                except Exception:  # noqa: BLE001 - optional diagnostics cannot replace the real failure.
+                    logger.warning("%s validation diagnostics unavailable. attempt=%s", operation_name, attempt)
+            if attempt < max_attempts:
+                logger.warning(
+                    "%s response validation failed. retrying attempt=%s/%s error=%s",
+                    operation_name,
+                    attempt,
+                    max_attempts,
+                    summarize_error(last_error),
+                )
+                if retry_user_prompt_builder is not None:
+                    # 매번 최초 입력을 기준으로 피드백을 새로 만들어 실패 문구가
+                    # 재시도마다 중첩되지 않게 한다.
+                    current_user_prompt = retry_user_prompt_builder(user_prompt, last_error)
+            break
     error_type = (
         ComparisonValidationError
-        if "comparison" in operation_name.casefold()
+        if isinstance(last_error, ComparisonValidationError)
+        or "comparison" in operation_name.casefold()
         else LlmExtractionError
     )
     sanitized_cause = (
-        LlmResponseValidationError(safe_validation_error_summary(last_error))
+        LlmResponseValidationError(summarize_error(last_error))
         if isinstance(last_error, LlmResponseValidationError)
         else None
     )
     raise error_type(
         f"{operation_name} failed after {max_attempts} attempts: "
-        f"{safe_validation_error_summary(last_error)}"
+        f"{summarize_error(last_error)}"
     ) from sanitized_cause
