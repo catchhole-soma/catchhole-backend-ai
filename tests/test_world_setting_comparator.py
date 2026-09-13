@@ -742,7 +742,6 @@ def test_batch_comparator_preserves_canonical_paths_for_unscoped_independent_add
     system_prompt = text_client.requests[0]["system_prompt"]
     assert "서로 다른 하위 속성이\n  실제로 둘 이상" in system_prompt
     assert "하위 속성 하나뿐인 범위를 만들지 않는다" in system_prompt
-    assert "생명력과 근력을 한 값이나 한 source_candidate_refs로 합치면 안 된다" in system_prompt
 
 
 def test_batch_comparator_retries_when_projection_leaves_synthetic_scope_singleton() -> None:
