@@ -82,7 +82,7 @@ def test_general_review_of_unscoped_content_completes_once_without_changing_sour
     assert (candidate.model_dump(), target.model_dump()) == before
     assert raw["decisions"][0]["review_reason"] == "GENERAL_UNCERTAINTY"
     assert len(client.requests) == 1
-    assert client.requests[0]["prompt_cache_key"] == "world-setting-comparison-batch:v9" + (
+    assert client.requests[0]["prompt_cache_key"] == "world-setting-comparison-batch:v10" + (
         ":ordered-provisional-v6" if ordered else ""
     )
 
@@ -156,7 +156,7 @@ def test_single_general_review_preserves_raw_content_and_optional_existing_path(
         None, candidate.setting_name, candidate.extracted_value,
     )
     assert raw["proposed_value"] == candidate.extracted_value
-    assert client.requests[0]["prompt_cache_key"] == "world-setting-comparison:v12"
+    assert client.requests[0]["prompt_cache_key"] == "world-setting-comparison:v13"
 
 
 @pytest.mark.parametrize("change", ["target_null", "unknown_target", "unknown_property", "scope_without_property"])

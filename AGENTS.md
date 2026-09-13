@@ -9,12 +9,12 @@
 
 ## AI Logic Version Records
 
-- 결과에 영향을 주는 추출·주체 해소·비교·후처리·프롬프트·제품 모델/실행 설정 변경 PR마다 `docs/ai-logic-versions/`에 다음 `vNNNN.md`를 추가하고 목록을 갱신한다. 규칙과 양식은 해당 디렉터리의 `README.md`와 `TEMPLATE.md`를 따른다.
-- 기본 품질 평가는 다단계 `FIXED` 모드에서 추출 `gpt-5.6-sol`·주체 해소 `gpt-5.6-terra`·비교 `gpt-5.6-sol`, 제품 `LLM_REASONING_EFFORT=medium`으로 실행한다. `LLM_MODEL` fallback은 `gpt-5.6-terra`다. 로컬 CLI에도 이 값들을 명시하며 다른 모드·모델의 실험은 실제 사용값으로 별도 기록한다. 로직 버전 번호와 평가 모드를 혼동하지 않는다.
-- 기록에는 이전 버전, 변경 이유와 전후 동작, 복원 기준 전체 Git SHA, 구현 PR, 프롬프트 버전과 실행 설정을 남긴다. 머지 전 최신 main의 버전 번호와 코드 기준을 확인하고, squash/rebase로 SHA가 바뀌면 최종 복원 SHA를 문서로 보완한다.
-- 평가 실행별로 실제 코드·채점기 SHA, 고정 입력 식별값, 모델·judge·실행 조건, 핵심 집계 점수와 미판정·실패 수를 기록한다. `null`을 0으로 바꾸거나 조건이 다른 점수를 개선폭으로 표시하지 않는다.
-- 미측정·실패·부분 완료는 사유와 담당자·재평가 계획을 기록하면 머지를 허용한다. 이 상태를 성능 개선 검증으로 표시하지 않으며 원문·정답·개별 예측 보고서를 버전 MD에 복사하지 않는다.
-- 문서·테스트만의 변경은 버전을 올리지 않는다. 채점기·Gold·judge만 바뀌면 같은 로직 버전에 새 평가 기록을 추가한다. 예전 로직 복원도 최신 main에서 새 PR과 다음 버전으로 남기고 기존 배포 흐름을 따른다.
+- 결과에 영향을 주는 추출·주체 해소·비교·후처리·프롬프트·제품 모델/실행 설정 변경 PR마다 `docs/ai-logic-versions/vNNNN.md`(사람용 요약), `docs/ai-logic-versions/details/vNNNN.md`(AI용 상세), 목록을 함께 갱신한다. 작성 절차와 근거 항목은 `docs/ai-logic-versions/details/README.md`를 따른다.
+- 사람용 요약은 변경 이유·점수 표·남은 문제를 중심으로 20~35줄 안팎으로 쓴다. 전체 SHA·해시·실행 옵션·과거 평가·반복 지침은 상세에 둔다. 상세를 먼저 기록하고 요약의 수치·조건·상태를 맞춘다.
+- 기본 품질 평가는 다단계 `FIXED` 모드에서 추출 `gpt-5.6-sol`·주체 해소 `gpt-5.6-terra`·비교 `gpt-5.6-sol`, 제품 `LLM_REASONING_EFFORT=medium`으로 실행한다. `LLM_MODEL` fallback은 `gpt-5.6-terra`, judge는 Sol·medium이다. 로컬 CLI에도 명시하고 실제 사용값을 기록한다.
+- 상세에는 복원할 전체 SHA, 구현 PR, 실제 코드·채점기 SHA, 입력 식별값, 모델·judge 조건, 집계 점수·분모·미판정/실패 수를 남긴다. 머지 전 번호 충돌을 확인하고 squash/rebase 후 최종 복원 SHA를 보완한다. 과거 실행은 보존하고 `null`을 0으로 바꾸거나 다른 조건의 점수를 개선폭으로 표시하지 않는다.
+- 미측정·실패·부분 완료는 사유·담당자·재평가 계획을 기록하면 머지를 허용한다. 오류·미판정과 필요한 다음 조치는 요약에도 남긴다. 원문·정답·개별 예측·비밀값은 요약과 상세 모두에 복사하지 않는다.
+- 문서·테스트만의 변경은 버전을 올리지 않는다. 채점기·Gold·judge만 바뀌면 같은 로직의 상세에 실행을 추가하고 요약을 갱신한다. 예전 로직 복원도 최신 main에서 새 PR과 다음 버전으로 남긴다.
 
 ## Spring Worker API
 
@@ -56,7 +56,7 @@
 
 ## Async Worker Runtime
 
-- `ORDERED_PROVISIONAL`은 claim의 명시적 `analysisMode`와 고정 `analysisContext`가 있을 때만 사용한다. Worker는 `supportedAnalysisModes`로 지원을 광고하고 누적 모드를 파일 수·남은 Job 수·임시 데이터 존재 여부로 추론하지 않는다. `CONFIRMED_ONLY`의 기존 모델·입력 의미와 구버전 응답 기본값을 유지한다. 최신 main의 공통 prompt를 기준으로 자연어 이유·세계관 주체 연결·일반 검토 지침만 더한다. #65의 세계관 추출·분류 기준은 포함하지 않는다. user payload·schema·모델 계약은 유지하며 과거 80d 기준과 main 05d9c2d 기준은 별도 golden으로 보존한다.
+- `ORDERED_PROVISIONAL`은 claim의 명시적 `analysisMode`와 고정 `analysisContext`가 있을 때만 사용한다. Worker는 `supportedAnalysisModes`로 지원을 광고하고 누적 모드를 파일 수·남은 Job 수·임시 데이터 존재 여부로 추론하지 않는다. `CONFIRMED_ONLY`의 기존 모델·입력 의미와 구버전 응답 기본값을 유지한다. 최신 main의 공통 prompt를 기준으로 자연어 이유·세계관 주체 연결·일반 검토 지침만 더한다. main #65의 세계관 추출·분류 기준을 유지한다. user payload·schema·모델 계약은 유지하며 과거 80d 기준과 main 05d9c2d 기준은 별도 golden으로 보존한다.
 - 누적 상태의 실제 ID와 `provisional-character:*`/`provisional-world:*` 식별자는 별도 필드로 전달한다. 임시 UUID를 실제 FK로 저장하지 않는다. ordered 캐릭터 연결은 추출된 이름과 등록된 이름·별칭의 완전/유일한 포함 관계를 코드로 검사한다. 복수 대상, 원문 표현과 추출 이름의 충돌, 같은 짧은 등록 이름에 걸리는 경쟁 신규 전체 이름은 보류한다. 모호한 결과를 적용된 현재 상태로 취급하지 않는다.
 - ordered 캐릭터 인물 연결 LLM은 미연결 SETTING에 대해 현재 원문에 포함되지 않는 앞뒤 청크가 실제로 추가되고 선택 가능한 대상이 있을 때만 호출한다. 단일 청크의 미상, 빈/중복 문맥, 미상 발견 후보에는 호출하지 않는다. 이미 규칙으로 연결한 후보는 재판단하지 않으며 모든 발견의 원래 이름·근거와 신규 인물의 첫 발견 anchor를 보존한다. 자동 반영은 미연결 후보를 검토 대상으로 남기고 나머지를 처리한다. `CONFIRMED_ONLY`의 기존 fallback 정책은 유지한다.
 - ordered 캐릭터·세계관 주체 해소는 명시적인 JSON 출력 예시와 strict `LlmResponseSchema`를 함께 전달한다. 응답의 모든 필드는 필수이며 캐릭터 대상 미해결은 생략 대신 명시적 `null`, 세계관 미해결은 대상 빈 목록과 명시적 모호성으로 표현한다. schema 검증 재시도는 최초 입력에 허용된 필드 경로·오류 종류만 덧붙이고 실패 응답·입력값·동적 key·UUID를 피드백에 복사하지 않는다. 필수 입력 상한에는 schema와 재시도 피드백도 포함하며, 반복 실패를 정상 미해결 판단으로 바꾸지 않는다. 기존 확정 설정 기반 호출은 선택 schema 인자가 없을 때 요청 형식을 유지한다.
@@ -140,6 +140,8 @@
 - 캐릭터 Fact·세계관 후보의 1차 추출은 `LLM_EXTRACTION_MODEL`, 캐릭터·세계관 주체 해소는 `LLM_SUBJECT_RESOLUTION_MODEL`, 후보와 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 2026-09-09 사용자가 확인한 운영 라우팅은 추출·비교 `gpt-5.6-sol`, 주체 해소 `gpt-5.6-terra`다. 개별 값이 없으면 기존 `LLM_MODEL`(기본 `gpt-5.6-terra`)을 fallback으로 사용한다.
 - 캐릭터·세계관 2차 비교·재비교 prompt에는 Backend가 반환한 1차 `evidenceSpans`를 읽기 전용 문맥으로 전달한다. 2차 LLM이 quote·offset을 다시 생성하거나 비교 완료 payload로 반환하지 않으며, 원고가 바뀐 경우에만 새 1차 분석 후보와 근거를 만든다.
 - 운영 세계관 후보는 Spring 게시 전에 정규화한 `category + subject_name + scope_name + setting_name`별로 하나로 통합한다. `scope_name`은 세계관에만 있는 선택적 1단계 범위이며 빈 값은 루트 property를 뜻한다. 같은 설정명이라도 범위가 다르면 통합하지 않고, 운영 2차 비교의 기존 속성 선택은 반드시 범위+설정명 전체 경로를 정확히 매칭한다. 2차 비교는 추출값 하나면 `SINGLE`, 여러 값이 양립하면 `MERGED`, 동시에 참일 수 없으면 `CONFLICT`로 판정한다. `MERGED`만 자연스러운 최종 문자열 하나로 정리하고 `CONFLICT`는 모든 추출값을 그대로 보존해 사용자 판단으로 넘긴다. 각 1차 후보의 quote·offset과 raw payload는 어느 상태에서도 수정하지 않는다.
+- 종족의 서술형 전투 특징은 `RACE / 종족명 / 전투 특성 / 마법 재능·신체 능력·전투 강점`으로 구분한다. 체력·힘·신체 능력에 따른 장비 착용 설명은 `신체 능력`을 보충하되, 독립된 수치 능력치·판정 규칙은 합치지 않는다. 원문에 있는 하위 속성만 추출하며 기존 경로·raw scope 검증을 우회하지 않는다.
+- `POWER_SYSTEM`은 마법·스킬·능력 자체의 조건·자원·효과·제약을 설명할 때만 사용한다. 특정 능력과 무관한 세계·게임 공통 사망·전투·진행 규칙은 `WORLD_RULE_HISTORY`, 종족의 선천적 적성은 `RACE`로 유지한다. 분류 경계 조정만으로 enum·주체 식별·채점 기준이나 답지를 변경하지 않는다.
 - 공통 추론 강도는 `LLM_REASONING_EFFORT`로 주입한다. 현재 운영·품질 평가 기준은 `medium`이며 환경변수를 생략한 앱 설정의 기본값 `none`에 의존하지 않고 명시적으로 지정한다.
 - GPT-5.6 모델의 토큰 예약량은 `o200k_base` tokenizer로 계산한다. 사용하는 tiktoken 버전이 모델 별칭을 모를 수 있으므로 모델명 자동 탐지 실패를 byte 상한으로 방치하지 않는다.
 - Responses API는 HTTP 200만으로 성공을 판정하지 않고 `status=completed`를 요구한다. `status=incomplete`와 `incomplete_details.reason=max_tokens|max_output_tokens`, 또는 JSON 파싱 실패와 `outputTokens == maxOutputTokens`가 함께 나타나면 `LLM_OUTPUT_TRUNCATED`로 분류한다.
@@ -157,4 +159,4 @@
 - saved prediction 평가에서는 runtime input/output hash·source hash·run/generation·sequence·SEALED 상태를 검증한다. 실패 회차를 검토 의도로 바꾸거나 이후 회차를 실행한 것처럼 채우지 않는다. Java domain reducer revision을 runtime policy에 기록한다.
 - DRAFT 정답지와 operation accuracy 평균을 FINAL 품질/완전 결정 일치율로 보고하지 않는다. 지표 분자·분모·평균 방식과 semantic judge 사용 여부를 명시하고 유료 실행은 별도 승인을 받은 경우에만 진행한다. 실행안과 현재 adapter 제한은 `docs/ordered-provisional-evaluation.md`를 따른다.
 
-- ORDERED 평가에서 Java journal v1의 누락된 자료형을 Gold 또는 JSON 모양으로 추측하지 않는다. 시작 상태는 실제 exporter의 자료형 목록을 제공하고 이후에는 seal된 쓰기와 연결된 실제 후보 자료형만 평가 DTO에 반영한다. 원본 journal/hash를 변경하지 않으며 metadata 누락·충돌은 거절한다. 과거 저장 예측·#65 채점 기준을 역사 자료로 보존하고, 저장 예측의 전체 보고서는 main 05d9c2d에서 독립 포착한 기준을 보존하고, 요청 6종은 최신 main a3ac55d의 git archive에서 독립 포착한 기준과 대조한다.
+- ORDERED 평가에서 Java journal v1의 누락된 자료형을 Gold 또는 JSON 모양으로 추측하지 않는다. 시작 상태는 실제 exporter의 자료형 목록을 제공하고 이후에는 seal된 쓰기와 연결된 실제 후보 자료형만 평가 DTO에 반영한다. 원본 journal/hash를 변경하지 않으며 metadata 누락·충돌은 거절한다. 과거 저장 예측·#65 채점 기준을 역사 자료로 보존하고, 저장 예측의 전체 보고서는 main 05d9c2d에서 독립 포착한 기준을 보존하고, 요청 6종은 최신 main 4ed7e55의 git archive에서 독립 포착한 기준과 대조한다.

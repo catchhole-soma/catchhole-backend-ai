@@ -328,13 +328,17 @@ seal된 ADD/UPDATE/MERGE 쓰기와 연결된 1차 후보 자료형만 사용하�
 넘기는 실제 입력은 바꾸지 않으며 Gold·미래 회차·JSON 모양으로 자료형을 추측하지 않는다.
 운영과 같은 live B 평가 runner/exporter는 여전히 별도 연결이 필요하다.
 
-통합 검증 범위와 미측정 사유는 [v0004 상세](ai-logic-versions/details/v0004.md)에 기록한다.
+통합 검증 범위와 미측정 사유는 [v0005 상세](ai-logic-versions/details/v0005.md)에 기록한다.
 
 
-## 현재 기준 — 2026-09-13: main 직접 대상, #65 제외
+## 분리 당시 기준 — 2026-09-13: main 직접 대상, #65 제외
 
 #65의 추출·분류 prompt를 제거하고 main `05d9c2d65498d28a1208b7f9bc8f0087307f64fc`
 위에 GH180 변경만 분리했다. 과거 통합 기록과 fixtures는 보존하지만 현재 회귀는 독립된
 main archive에서 만든 `expected-reports-main-05d9c2d.json`을 사용한다. 같은 합성 입력으로
 ORACLE/FIXED/ROLLING 전체 보고서가 일치하며 새 모델 호출이나 품질 평가는 수행하지 않았다.
-분리 코드 SHA와 검증·미측정 범위는 [v0004](ai-logic-versions/v0004.md)를 따른다.
+분리 코드 SHA와 검증·미측정 범위는 [v0005](ai-logic-versions/v0005.md)를 따른다.
+
+최종 통합에서는 main `4ed7e5556a91641c320c9e55dc646d4f17b0648d`에 머지된 #65를 포함한다.
+요청 대조는 `upstream_requests_main_4ed7e55.json`을 사용하고, 과거 채점 보고서는 동일 합성 입력의
+회귀 기준으로 보존한다. 현재 검증과 미측정 범위는 [v0005 상세](ai-logic-versions/details/v0005.md)를 따른다.

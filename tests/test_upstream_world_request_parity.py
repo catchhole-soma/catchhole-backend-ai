@@ -14,8 +14,8 @@ PROBE = ROOT / "tests/upstream_world_request_probe.py"
 
 @pytest.fixture(scope="module")
 def captured():
-    expected = json.loads((ROOT / "tests/fixtures/upstream_requests_main_a3ac55d.json").read_text())
-    assert expected["baselineCommit"] == "a3ac55dff1eb7c3597f093f9039448e975d4374e"
+    expected = json.loads((ROOT / "tests/fixtures/upstream_requests_main_4ed7e55.json").read_text())
+    assert expected["baselineCommit"] == "4ed7e5556a91641c320c9e55dc646d4f17b0648d"
     assert expected["probeHashes"][PROBE.name] == sha256(PROBE.read_bytes()).hexdigest()
     actual = subprocess.run([sys.executable, str(PROBE), str(ROOT)], cwd=ROOT,
         env={"PATH": os.environ["PATH"], "PYTHONPATH": str(ROOT), "PYTHONDONTWRITEBYTECODE": "1"},
@@ -29,6 +29,6 @@ def test_world_request_keeps_upstream_input_and_transport(purpose, captured):
     overrides = expected["gh180Overrides"].get(purpose, {})
     assert set(overrides) <= {"sha256", "system_sha256", "prompt_cache_key"}
     if purpose == "world_extraction":
-        # PR65 classification/extraction changes must not enter this branch.
+        # Keep the latest main extraction request exactly, including PR65.
         assert overrides == {}
     assert actual[purpose] == {**expected["requests"][purpose], **overrides}

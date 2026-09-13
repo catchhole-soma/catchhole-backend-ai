@@ -48,8 +48,8 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     assert all(set(row) == {"sha256", "system_sha256"} for row in overrides.values())
     # The immutable historical capture stays intact. Only the explicitly requested
     # plain-language and subject-identity instructions have a separate expectation.
-    upstream = json.loads((ROOT / "tests/fixtures/upstream_requests_main_a3ac55d.json").read_text())
-    assert upstream["baselineCommit"] == "a3ac55dff1eb7c3597f093f9039448e975d4374e"
+    upstream = json.loads((ROOT / "tests/fixtures/upstream_requests_main_4ed7e55.json").read_text())
+    assert upstream["baselineCommit"] == "4ed7e5556a91641c320c9e55dc646d4f17b0648d"
     assert upstream["probeHashes"][PROBE.name] == sha256(PROBE.read_bytes()).hexdigest()
     expected = upstream["requests"][purpose]
     # A new upstream prompt/cache is authorized, but user data, schema, model,

@@ -213,7 +213,7 @@ def test_ordered_batch_strict_schema_reaches_http_and_reservation(provisional):
         prop = decision_schema["properties"][field]
         assert {"type": "null"} in prop["anyOf"]
         assert "default" not in prop
-    assert body["prompt_cache_key"] == "world-setting-comparison-batch:v9:ordered-provisional-v6"
+    assert body["prompt_cache_key"] == "world-setting-comparison-batch:v10:ordered-provisional-v6"
     assert body["model"] == "gpt-5.6-luna"
     assert body["reasoning"] == {"effort": "none"}
     assert body["store"] is False
@@ -541,6 +541,6 @@ def test_legacy_world_batch_http_request_preserves_transport_with_integrated_pro
                 "text": json.dumps(expected_user, ensure_ascii=False)}]},
         ],
         "max_output_tokens": 16000,
-        "prompt_cache_key": "world-setting-comparison-batch:v9",
+        "prompt_cache_key": "world-setting-comparison-batch:v10",
         "reasoning": {"effort": "none"},
     }]
