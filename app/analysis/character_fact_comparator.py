@@ -26,9 +26,9 @@ from app.domain.setting_values import normalize_setting_display_value
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.schemas.worker import (
-    WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterFactComparisonBatchCandidate,
     WorkerCharacterFactComparisonBatchSnapshotEntry,
+    WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterPriorFactCandidate,
     WorkerCharacterSnapshotEntry,
 )
@@ -42,7 +42,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "character_fact_comparison_batch.md"
 )
-CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v3"
+CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v4"
 logger = logging.getLogger(__name__)
 SNAPSHOT_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])[PQ][0-9]+(?![A-Za-z0-9])")
 CANDIDATE_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9])C[0-9]+(?![A-Za-z0-9])")

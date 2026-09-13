@@ -763,6 +763,13 @@ async def _run_live_scenario(
     prepared = prepare_setting_candidates(
         [record.candidate for record in canonical_character_records],
         known_characters,
+        source_identities=[
+            (
+                _stable_uuid(scenario.scenario_id, "source-episode"),
+                scenario.source_hash or scenario.source_identifier,
+            )
+            for _ in canonical_character_records
+        ],
     )
     character_runtime_by_id: dict[
         str,

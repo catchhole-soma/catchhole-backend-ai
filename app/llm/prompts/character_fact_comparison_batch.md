@@ -20,6 +20,12 @@ CharacterFact는 삭제하지 않는 사건 이력이고 snapshot은 현재 상�
 - 사용자 확정 전 실제 DB 상태는 바뀌지 않는다.
 - `validation_feedback`이 있으면 거절 이유를 반영해 전체 JSON을 다시 반환한다.
 
+`snapshot_entries`가 비어 있어도 모든 후보를 ADD로 처리하지 않는다. 예를 들어 C1이
+`status.의식_상실 active=true`라면 ADD로 Q1을 만들고, 뒤의 C2가 의식을 되찾아
+`active=false`라면 REMOVE로 Q1을 끝낸다. 두 후보는 모두 사건 이력에 남지만 최종 snapshot에는
+의식 상실이 없다. 제거할 활성 상태가 없는 회복 후보 하나만 있다면 거짓 상태를 ADD하지 말고
+문맥에 따라 HISTORY_ONLY, EXCLUDE 또는 REVIEW_REQUIRED를 고른다.
+
 # key 해소
 
 - `canonical_key_resolution=EXACT|ALIAS` 또는 비-STATUS `PATTERN`이면
