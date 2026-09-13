@@ -114,6 +114,7 @@ class SpringWorkerApi(
         model_name: str | None = None,
         current_step: str | None = None,
         supported_analysis_modes: list[AnalysisMode] | None = None,
+        supports_character_comparison_groups: bool | None = None,
     ) -> WorkerAnalysisJobPayload | None: ...
 
     # claim 직후 현재 Worker가 어떤 단계에 진입했는지 Spring에 보고한다.
@@ -665,6 +666,7 @@ class AnalysisJobWorker:
                     episode_id=episode.episode_id,
                     source_content_s3_key=episode.content_s3_key,
                     candidate=candidate,
+                    source_content_version=episode.content_s3_version,
                 )
                 for candidate in resolution.candidates
             )
@@ -708,14 +710,23 @@ class AnalysisJobWorker:
         payload: WorkerAnalysisJobPayload,
         checkpoint: AnalysisJobCheckpointStage | None,
     ) -> CharacterFactComparisonRunResult:
+        if payload.analysis_mode != AnalysisMode.ORDERED_PROVISIONAL:
+            if not _checkpoint_reached(
+                checkpoint, AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_HANDED_OFF
+            ):
+                await self.spring_client.report_progress(
+                    payload.analysis_job_id,
+                    payload.lease_token,
+                    AnalysisStep.WORLD_SETTING_EXTRACTION,
+                    EpisodeProcessingStatus.ANALYZING,
+                    AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_HANDED_OFF,
+                )
+            return CharacterFactComparisonRunResult(0, 0)
+
         finished = _checkpoint_reached(
             checkpoint,
             AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED,
         )
-        if finished and payload.analysis_mode != AnalysisMode.ORDERED_PROVISIONAL:
-            return CharacterFactComparisonRunResult(0, 0)
-
-
         result = await self._get_character_fact_comparison_pipeline(
             payload.analysis_job_id,
             payload.lease_token,
@@ -1013,6 +1024,7 @@ def _resume_step(checkpoint: AnalysisJobCheckpointStage | None) -> AnalysisStep:
         AnalysisJobCheckpointStage.CHUNKS_READY: AnalysisStep.SETTING_EXTRACTION,
         AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED: AnalysisStep.CHARACTER_FACT_COMPARISON,
         AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_FINISHED: AnalysisStep.WORLD_SETTING_EXTRACTION,
+        AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_HANDED_OFF: AnalysisStep.WORLD_SETTING_EXTRACTION,
         AnalysisJobCheckpointStage.WORLD_CANDIDATES_PUBLISHED: AnalysisStep.WORLD_SETTING_COMPARISON,
         AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED: AnalysisStep.PERSISTING,
     }[checkpoint]

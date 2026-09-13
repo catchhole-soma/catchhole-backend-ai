@@ -14,8 +14,8 @@ PROBE = ROOT / "tests/upstream_world_request_probe.py"
 
 @pytest.fixture(scope="module")
 def captured():
-    expected = json.loads((ROOT / "tests/fixtures/upstream_requests_main_05d9c2d.json").read_text())
-    assert expected["baselineCommit"] == "05d9c2d65498d28a1208b7f9bc8f0087307f64fc"
+    expected = json.loads((ROOT / "tests/fixtures/upstream_requests_main_a3ac55d.json").read_text())
+    assert expected["baselineCommit"] == "a3ac55dff1eb7c3597f093f9039448e975d4374e"
     assert expected["probeHashes"][PROBE.name] == sha256(PROBE.read_bytes()).hexdigest()
     actual = subprocess.run([sys.executable, str(PROBE), str(ROOT)], cwd=ROOT,
         env={"PATH": os.environ["PATH"], "PYTHONPATH": str(ROOT), "PYTHONDONTWRITEBYTECODE": "1"},

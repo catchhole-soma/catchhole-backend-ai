@@ -34,9 +34,9 @@ from app.exceptions.failure_classification import is_candidate_comparison_failur
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.schemas.worker import (
-    WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterFactComparisonBatchCandidate,
     WorkerCharacterFactComparisonBatchSnapshotEntry,
+    WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterPriorFactCandidate,
     WorkerCharacterSnapshotEntry,
 )
@@ -50,7 +50,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "character_fact_comparison_batch.md"
 )
-CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v3"
+CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v4"
 ORDERED_CHARACTER_SLOT_INSTRUCTIONS = (
     "현재 활성인 동일 Fact 유형·동일 resolved key가 있으면 새 내용이어도 ADD는 금지입니다. "
     "예를 들어 profile.attribute의 기존 값과 새 후보의 문장이 다르더라도 같은 slot입니다. "

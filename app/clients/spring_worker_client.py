@@ -32,11 +32,11 @@ from app.schemas.worker import (
     WorkerAnalysisJobHeartbeatResponse,
     WorkerAnalysisJobPayload,
     WorkerAnalysisJobProgressRequest,
-    WorkerCharacterFactComparisonClaimPayload,
     WorkerCharacterFactComparisonBatchCompleteRequest,
     WorkerCharacterFactComparisonBatchContextResponse,
     WorkerCharacterFactComparisonBatchFailRequest,
     WorkerCharacterFactComparisonBatchPayload,
+    WorkerCharacterFactComparisonClaimPayload,
     WorkerCharacterFactComparisonCompleteRequest,
     WorkerCharacterFactComparisonContextResponse,
     WorkerCharacterFactComparisonFailRequest,
@@ -99,12 +99,14 @@ class SpringWorkerClient:
         model_name: str | None = None,
         current_step: str | None = None,
         supported_analysis_modes: list[AnalysisMode] | None = None,
+        supports_character_comparison_groups: bool | None = None,
     ) -> WorkerAnalysisJobPayload | None:
         request = WorkerAnalysisJobClaimRequest(
             model_name=model_name,
             current_step=current_step,
             allowed_job_types=allowed_job_types,
             supported_analysis_modes=supported_analysis_modes,
+            supports_character_comparison_groups=supports_character_comparison_groups,
         )
         response = await self._request(
             "POST",

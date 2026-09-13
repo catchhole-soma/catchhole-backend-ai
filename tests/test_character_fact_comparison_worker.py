@@ -28,6 +28,7 @@ def test_character_comparison_worker_claims_only_its_job_type_and_completes() ->
     assert spring.allowed_job_types == ["CHARACTER_FACT_COMPARISON"]
     assert spring.claim_model_name == "comparison-model"
     assert spring.current_step == "CHARACTER_FACT_COMPARISON"
+    assert spring.supports_character_comparison_groups is True
     assert spring.complete_calls == [ANALYSIS_JOB_ID]
     assert spring.fail_calls == []
 
@@ -93,13 +94,23 @@ class FakeSpringApi:
         self.allowed_job_types = None
         self.claim_model_name = None
         self.current_step = None
+        self.supports_character_comparison_groups = None
         self.complete_calls = []
         self.fail_calls = []
 
-    async def claim(self, allowed_job_types, model_name=None, current_step=None):
+    async def claim(
+        self,
+        allowed_job_types,
+        model_name=None,
+        current_step=None,
+        supports_character_comparison_groups=None,
+    ):
         self.allowed_job_types = allowed_job_types
         self.claim_model_name = model_name
         self.current_step = current_step
+        self.supports_character_comparison_groups = (
+            supports_character_comparison_groups
+        )
         return self.payload
 
     async def report_progress(self, *args, **kwargs):
