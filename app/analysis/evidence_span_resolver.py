@@ -43,16 +43,6 @@ def _resolve_candidate_evidence_spans(
     chunk_text: str,
     chunk_start_offset: int,
 ) -> list[ExtractedEvidenceSpan]:
-    # 같은 quote를 여러 번 반환한 경우 각 span을 독립적으로 str.find()하면 모두 원문의
-    # 첫 위치를 가리킨다. 후보 단위로 첫 quote만 남겨 잘못된 중복 하이라이트를 막는다.
-    unique_spans: list[tuple[int, ExtractedEvidenceSpan]] = []
-    seen_quotes: set[str] = set()
-    for original_index, span in enumerate(spans):
-        if span.quote in seen_quotes:
-            continue
-        seen_quotes.add(span.quote)
-        unique_spans.append((original_index, span))
-
     resolved_spans = [
         (
             original_index,
@@ -62,19 +52,32 @@ def _resolve_candidate_evidence_spans(
                 chunk_start_offset=chunk_start_offset,
             ),
         )
-        for original_index, span in unique_spans
+        for original_index, span in enumerate(spans)
     ]
+
+    # 위치가 유일하게 확인된 완전 동일 span만 합친다. 반복 문장의 null 위치는
+    # 서로 다른 사건일 수 있으므로 보수적으로 모두 남긴다.
+    unique_spans: list[tuple[int, ExtractedEvidenceSpan]] = []
+    seen_ranges: set[tuple[int, int, str]] = set()
+    for original_index, resolved in resolved_spans:
+        if resolved.start_offset is None or resolved.end_offset is None:
+            unique_spans.append((original_index, resolved))
+            continue
+        key = (resolved.start_offset, resolved.end_offset, " ".join(resolved.quote.split()))
+        if key not in seen_ranges:
+            seen_ranges.add(key)
+            unique_spans.append((original_index, resolved))
 
     # LLM이 복수 근거를 역순으로 반환해도 화면과 저장 결과는 원문 순서를 따른다.
     # 원문에서 찾지 못한 span 사이에는 위치 정보가 없으므로 기존 입력 순서를 유지한다.
-    resolved_spans.sort(
+    unique_spans.sort(
         key=lambda item: (
             item[1].start_offset is None,
             item[1].start_offset if item[1].start_offset is not None else 0,
             item[0],
         )
     )
-    return [span for _, span in resolved_spans]
+    return [span for _, span in unique_spans]
 
 
 def resolve_evidence_span_offsets(
@@ -114,6 +117,10 @@ def _find_exact_range(chunk_text: str, quote: str) -> tuple[int, int] | None:
     if start < 0:
         return None
 
+    # 같은 quote가 두 번 이상 있으면 어느 사건인지 확정할 수 없다.
+    if chunk_text.find(quote, start + 1) >= 0:
+        return None
+
     # Python의 slice 방식처럼 end는 마지막 글자의 다음 위치로 둔다.
     # 예: chunk_text[start:end]
     return start, start + len(quote)
@@ -142,6 +149,9 @@ def _find_whitespace_normalized_range(chunk_text: str, quote: str) -> tuple[int,
 
     # 정규화된 문자열에서도 찾지 못한 경우
     if normalized_start < 0:
+        return None
+
+    if normalized_chunk_text.text.find(normalized_quote, normalized_start + 1) >= 0:
         return None
 
     # 정규화된 문자열 기준 끝 위치
