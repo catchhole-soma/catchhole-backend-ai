@@ -28,6 +28,7 @@ from app.llm.exceptions import (
 )
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.llm.responses import LlmTextResponse
+from app.monitoring.worker_metrics import WorkerMetrics, get_process_metrics, llm_error_type
 
 logger = logging.getLogger(__name__)
 TException = TypeVar("TException", bound=BaseException)
@@ -136,6 +137,7 @@ class MeteredTextGenerationClient:
         random_source: RandomSource = random.random,
         jitter_max_seconds: float = 1.0,
         monotonic_ns: Callable[[], int] = perf_counter_ns,
+        metrics: WorkerMetrics | None = None,
     ) -> None:
         _validate_retry_configuration(max_retries, retry_base_seconds, jitter_max_seconds)
         self.delegate = delegate
@@ -151,6 +153,7 @@ class MeteredTextGenerationClient:
         self.random_source = random_source
         self.jitter_max_seconds = jitter_max_seconds
         self.monotonic_ns = monotonic_ns
+        self.metrics = metrics if metrics is not None else get_process_metrics()
         self._attempt = 0
         self._provider_request_count = 0
         self._provider_latency_ns = 0
@@ -184,6 +187,7 @@ class MeteredTextGenerationClient:
             max_output_tokens,
             response_schema,
         )
+        retry_error_type = "other"
         for retry_index in range(self.max_retries + 1):
             async with _optional_semaphore(self.request_semaphore):
                 self._attempt += 1
@@ -199,6 +203,10 @@ class MeteredTextGenerationClient:
                     lease_token=self.lease_token,
                 )
                 try:
+                    if retry_index and self.metrics is not None:
+                        self.metrics.record_llm_retry(
+                            self.purpose, effective_model, retry_error_type,
+                        )
                     self._provider_request_count += 1
                     provider_started_ns = self.monotonic_ns()
                     try:
@@ -211,16 +219,28 @@ class MeteredTextGenerationClient:
                             response_schema=response_schema,
                         )
                     finally:
-                        self._provider_latency_ns += max(
+                        provider_latency_ns = max(
                             0,
                             self.monotonic_ns() - provider_started_ns,
                         )
+                        self._provider_latency_ns += provider_latency_ns
                 except asyncio.CancelledError:
+                    if self.metrics is not None:
+                        self.metrics.record_llm_call(
+                            self.purpose, effective_model, "canceled", "canceled",
+                            provider_latency_ns / 1_000_000_000, None,
+                        )
                     _detach_failed_provider_finalization(self.ledger, request_id)
                     raise
                 except Exception as exc:
                     usage = _usage_from_text_error(exc)
                     self._record_usage(usage)
+                    retry_error_type = llm_error_type(exc)
+                    if self.metrics is not None:
+                        self.metrics.record_llm_call(
+                            self.purpose, effective_model, "failure", retry_error_type,
+                            provider_latency_ns / 1_000_000_000, usage,
+                        )
                     if isinstance(exc, (LlmOutputTruncatedError, LlmIncompleteResponseError)):
                         logger.warning(
                             "LLM response incomplete. purpose=%s attempt=%s "
@@ -249,7 +269,7 @@ class MeteredTextGenerationClient:
                         jitter_max_seconds=self.jitter_max_seconds,
                     )
                 else:
-                    self._record_usage(
+                    usage = (
                         (
                             response.input_token_count,
                             response.cached_input_token_count or 0,
@@ -259,6 +279,12 @@ class MeteredTextGenerationClient:
                         and isinstance(response.output_token_count, int)
                         else None
                     )
+                    self._record_usage(usage)
+                    if self.metrics is not None:
+                        self.metrics.record_llm_call(
+                            self.purpose, effective_model, "success", "none",
+                            provider_latency_ns / 1_000_000_000, usage,
+                        )
                     await _finalize_successful_text_request(
                         self.ledger,
                         request_id,

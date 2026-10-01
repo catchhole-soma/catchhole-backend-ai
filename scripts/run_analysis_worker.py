@@ -1,11 +1,18 @@
 import argparse
 import asyncio
+import signal
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-import signal
+from time import monotonic
 from typing import Protocol
 
 from app.core.config import Settings, get_settings
+from app.monitoring.worker_metrics import (
+    WorkerMetrics,
+    create_worker_metrics,
+    job_error_outcome,
+    set_process_metrics,
+)
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunResult
 from app.worker.character_fact_comparison_worker import CharacterFactComparisonWorker
@@ -34,6 +41,7 @@ async def run_worker_loop(
     max_iterations: int | None = None,
     stop_event: asyncio.Event | None = None,
     sleeper: AsyncSleeper = asyncio.sleep,
+    metrics: WorkerMetrics | None = None,
 ) -> list[WorkerRunResult]:
     """빈 슬롯을 먼저 확보한 뒤 정확히 한 Job만 claim하는 비동기 scheduler."""
 
@@ -76,7 +84,7 @@ async def run_worker_loop(
             except asyncio.CancelledError:
                 slots.release()
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - a failed claim must keep the poller alive.
                 slots.release()
                 _print_failure(exc, phase="claim")
                 wait_before_next_poll = True
@@ -102,6 +110,7 @@ async def run_worker_loop(
                     payload,
                     slots,
                     results if collect_results else None,
+                    metrics,
                 ),
                 name=f"analysis-job-{payload.analysis_job_id}",
             )
@@ -174,14 +183,15 @@ async def _process_claimed_job(
     payload: WorkerAnalysisJobPayload,
     slots: asyncio.Semaphore,
     results: list[WorkerRunResult] | None,
+    metrics: WorkerMetrics | None = None,
 ) -> WorkerRunResult | None:
     try:
-        result = await worker.process_claimed(payload)
+        result = await _run_claimed_with_metrics(worker, payload, metrics)
     except asyncio.CancelledError:
         # 배포 강제 종료는 terminal FAILED로 바꾸지 않는다. heartbeat를 멈추고
         # Spring의 lease 만료/checkpoint 재회수 경로가 이어서 처리하게 한다.
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - one failed job must not cancel its peers.
         # Worker가 자기 Job 실패를 Spring에 보고한 뒤에도 다른 Job Task는 유지한다.
         _print_failure(exc, analysis_job_id=payload.analysis_job_id, phase="process")
         return None
@@ -192,6 +202,29 @@ async def _process_claimed_job(
     if results is not None:
         results.append(result)
     return result
+
+
+async def _run_claimed_with_metrics(
+    worker: WorkerSchedulerApi,
+    payload: WorkerAnalysisJobPayload,
+    metrics: WorkerMetrics | None,
+) -> WorkerRunResult:
+    outcome = "unknown"
+    if metrics is not None:
+        metrics.record_job_started()
+    started = monotonic()
+    try:
+        result = await worker.process_claimed(payload)
+        outcome = "success"
+        return result
+    except BaseException as exc:
+        outcome = job_error_outcome(exc)
+        raise
+    finally:
+        if metrics is not None:
+            metrics.record_job_finished(
+                getattr(payload, "job_type", "other"), outcome, monotonic() - started,
+            )
 
 
 async def _wait_until_scheduler_can_progress(
@@ -265,26 +298,41 @@ def main() -> None:
 
 
 async def _async_main(args: argparse.Namespace, settings: Settings) -> None:
-    if args.worker_kind == "world-comparison":
-        worker: WorkerSchedulerApi = WorldSettingComparisonWorker(
-            subject_resolution_model_name=(args.subject_resolution_model_name or args.model_name),
-            comparison_model_name=args.comparison_model_name or args.model_name,
-        )
-    elif args.worker_kind == "character-comparison":
-        worker = CharacterFactComparisonWorker(
-            comparison_model_name=args.comparison_model_name or args.model_name,
-        )
-    else:
-        worker = AnalysisJobWorker(
-            extraction_model_name=args.extraction_model_name or args.model_name,
-            subject_resolution_model_name=(args.subject_resolution_model_name or args.model_name),
-            comparison_model_name=args.comparison_model_name or args.model_name,
-            embedding_generation_enabled=settings.embedding_generation_enabled,
-        )
-
+    metrics = create_worker_metrics(settings, args.worker_kind, (
+        args.model_name, args.extraction_model_name, args.subject_resolution_model_name,
+        args.comparison_model_name,
+    ))
+    previous_metrics = set_process_metrics(metrics)
+    worker: WorkerSchedulerApi | None = None
     try:
+        if metrics is not None:
+            metrics.start_exporter(settings.ai_worker_metrics_host, settings.ai_worker_metrics_port)
+        if args.worker_kind == "world-comparison":
+            worker = WorldSettingComparisonWorker(
+                subject_resolution_model_name=(args.subject_resolution_model_name or args.model_name),
+                comparison_model_name=args.comparison_model_name or args.model_name,
+            )
+        elif args.worker_kind == "character-comparison":
+            worker = CharacterFactComparisonWorker(
+                comparison_model_name=args.comparison_model_name or args.model_name,
+            )
+        else:
+            worker = AnalysisJobWorker(
+                extraction_model_name=args.extraction_model_name or args.model_name,
+                subject_resolution_model_name=(args.subject_resolution_model_name or args.model_name),
+                comparison_model_name=args.comparison_model_name or args.model_name,
+                embedding_generation_enabled=settings.embedding_generation_enabled,
+            )
+
         if args.once:
-            _print_result(await worker.run_once())
+            payload = await worker.claim_next()
+            if payload is None:
+                kind = {"analysis": "analysis", "character-comparison": "character-fact comparison",
+                        "world-comparison": "world-setting comparison"}[args.worker_kind]
+                result = WorkerRunResult(False, None, f"Claimable {kind} job does not exist.")
+            else:
+                result = await _run_claimed_with_metrics(worker, payload, metrics)
+            _print_result(result)
             return
 
         stop_event = asyncio.Event()
@@ -296,9 +344,16 @@ async def _async_main(args: argparse.Namespace, settings: Settings) -> None:
             shutdown_grace_seconds=args.shutdown_grace_seconds,
             max_iterations=args.max_iterations,
             stop_event=stop_event,
+            metrics=metrics,
         )
     finally:
-        await worker.aclose()
+        try:
+            if worker is not None:
+                await worker.aclose()
+        finally:
+            set_process_metrics(previous_metrics)
+            if metrics is not None:
+                metrics.stop_exporter()
 
 
 def _parse_args(settings: Settings | None = None) -> argparse.Namespace:
