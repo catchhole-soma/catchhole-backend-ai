@@ -392,3 +392,40 @@ AWS_SECRET_ACCESS_KEY=replace-with-secret-access-key
 GitHub Actions가 사용하는 AWS Identity and Access Management 사용자 또는 역할에는 Worker 서버용 Amazon EC2 인스턴스를 대상으로 `ssm:SendCommand`를 실행하고 결과를 조회할 권한이 있어야 한다. 기존 정책에 API 서버용 인스턴스 ID만 있다면 Worker 서버용 인스턴스 ID를 별도로 추가해야 한다.
 
 예전에 사용하던 `BACKEND_DEPLOY_TOKEN`은 더 이상 필요하지 않다. 각 저장소가 자신의 Amazon EC2 인스턴스만 배포하므로 인공지능 작업 이미지 발행이 백엔드 저장소의 통합 배포를 호출하지 않는다.
+
+## 분석 Worker Prometheus 지표
+
+Python CLI의 같은 프로세스에서 `prometheus_client.start_http_server`가 HTTP thread를 제공한다. 별도 FastAPI 서버는 필요 없다. 앱의 기본값은 비활성·127.0.0.1:9102이며 운영 Compose는 활성화와 컨테이너 내부 0.0.0.0:9102를 명시한다. 호스트 publish의 기본값은 localhost다.
+
+- `AI_WORKER_METRICS_ENABLED=true`: CLI exporter 활성화.
+- `AI_WORKER_METRICS_BIND_ADDRESS`: 최초 localhost, 모니터링 SG만 TCP 9102–9108 접근하도록 적용한 뒤 Worker EC2 사설 IPv4로 변경.
+- `AI_WORKER_METRICS_PORT_RANGE=9102-9106`: 분석 replica 5개에 각기 다른 host port를 할당. 같은 host 고정 port 하나를 모든 replica에 지정하면 충돌한다.
+- 캐릭터 비교 host 9107 / 세계관 비교 host 9108, 각 컨테이너 내부는 동일 9102.
+- Worker 5×10, 비교 각 1의 동시성과 180/210초 graceful shutdown은 변경하지 않는다. scale을 바꿀 때 port range 용량과 target 예상 수·SG를 함께 검토한다.
+
+[generate_worker_targets.py](generate_worker_targets.py)는 Docker inspect의 실제 mapping을 확인하고 일곱 개 endpoint를 생성한다. 부족한 프로세스, duplicate 주소/replica, wildcard·localhost·public host bind를 발견하면 실패한다. **운영 사설 수집용**이며 localhost 개발용 target 생성기는 아니다. 이 파일은 같은 배포 SHA의 코드와 함께 Worker 서버에 설치한다.
+
+```bash
+cd /opt/catchhole
+# 배포 대상 저장소의 같은 SHA에서 deploy/generate_worker_targets.py도 복사한다.
+if python3 generate_worker_targets.py --expected-analysis 5 > worker-targets.json.next && python3 -m json.tool worker-targets.json.next >/dev/null; then
+  mv worker-targets.json.next worker-targets.json
+fi
+```
+
+위 조건문은 생성과 검증이 모두 성공한 경우에만 targets를 교체한다. 생성 실패 시 기존 targets를 빈 파일로 교체하지 않는다. Docker 배포 사용자가 같은 프로젝트의 컨테이너를 inspect할 수 있어야 한다.
+
+생성한 JSON을 모니터링 EC2의 `/opt/catchhole-monitoring/monitoring/targets/workers/catchhole-worker.json.next`로 전달한 뒤 검사·rename한다. JSON은 주소/port/유한한 Worker 구분만 포함하며 Worker env나 인증값을 전송하지 않는다. 다른 EC2이므로 Worker 서버의 로컬 JSON 생성만으로 수집 대상이 자동 갱신되지는 않는다. 기존 CI는 Compose/이미지를 배포하므로 운영 적용 담당자는 **매 배포 뒤 target 생성·전달 확인**을 배포 확인 항목으로 수행한다. 특히 host 주소/port range/scale 변경·컨테이너 재생성 후 다시 확인한다.
+
+모니터링의 `up{job="catchhole-worker",environment="prod"}`에서 일곱 endpoint가 모두 1인지 확인한다. 하나가 빠졌으면 다른 정상 프로세스의 수치로 이를 가리지 않는다. 유휴 Worker는 active=0, last-finished=0(아직 종료 없음)일 수 있다. 수집 실패/port bind 실패는 분석 결과와 별도로 확인한다.
+
+LLM Histogram은 delegate 한 호출의 monotonic 시간이며 semaphore·예약/정산·retry sleep은 제외한다. transport 재시도만 retries Counter에 기록하며 schema/출력 절단의 바깥 재시도는 호출/오류/시간으로 보인다. usage input에는 cached input이 포함된다. 이 Counter를 quota 감사 원장이나 금액으로 대체하지 않는다. 운영/로컬 labels, 지표 정의와 성공률은 Java 저장소 `docs/analysis-metrics.md`를 따른다.
+
+로컬 fake 검증:
+
+```bash
+python -m pytest tests/test_worker_metrics.py tests/test_ai_token_metering.py tests/test_run_analysis_worker.py
+python -m unittest discover -s deploy/tests -p 'test_worker_targets.py'
+```
+
+실제 LLM 과금 호출 없이 지연/429/timeout/취소와 exporter HTTP를 검증한다. exporter의 생성·업데이트·bind·종료 오류가 원래 Worker·ledger 결과를 바꾸지 않도록 경고만 남긴다. rollout은 Java schema/API 배포 성공 뒤 기존 AI main 배포를 사용하며 이전 이미지로 rollback할 때 target/bind와 수집 상태도 함께 확인한다.
