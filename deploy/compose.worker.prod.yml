@@ -3,6 +3,9 @@ name: catchhole-worker
 x-worker-environment: &worker-environment
   TZ: ${APP_TIMEZONE:-Asia/Seoul}
   APP_ENV: prod
+  AI_WORKER_METRICS_ENABLED: ${AI_WORKER_METRICS_ENABLED:-true}
+  AI_WORKER_METRICS_HOST: 0.0.0.0
+  AI_WORKER_METRICS_PORT: 9102
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
   DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-3}
   DATABASE_POOL_MAX_OVERFLOW: ${DATABASE_POOL_MAX_OVERFLOW:-0}
@@ -45,6 +48,8 @@ x-worker-service: &worker-service
 services:
   ai-worker:
     <<: *worker-service
+    ports:
+      - "${AI_WORKER_METRICS_BIND_ADDRESS:-127.0.0.1}:${AI_WORKER_METRICS_PORT_RANGE:-9102-9106}:9102"
     deploy:
       replicas: ${AI_WORKER_PROCESS_COUNT:-5}
     environment:
@@ -52,6 +57,8 @@ services:
 
   ai-character-comparison-worker:
     <<: *worker-service
+    ports:
+      - "${AI_WORKER_METRICS_BIND_ADDRESS:-127.0.0.1}:9107:9102"
     command: ["python", "scripts/run_analysis_worker.py", "--worker-kind", "character-comparison"]
     environment:
       <<: *worker-environment
@@ -64,6 +71,8 @@ services:
 
   ai-world-comparison-worker:
     <<: *worker-service
+    ports:
+      - "${AI_WORKER_METRICS_BIND_ADDRESS:-127.0.0.1}:9108:9102"
     command: ["python", "scripts/run_analysis_worker.py", "--worker-kind", "world-comparison"]
     environment:
       <<: *worker-environment
