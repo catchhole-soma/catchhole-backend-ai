@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     ai_worker_concurrency: int = 1
     ai_worker_idle_sleep_seconds: float = 5.0
     ai_worker_shutdown_grace_seconds: float = 180.0
+    # CLI 프로세스당 하나의 Prometheus exporter. Compose에서 명시적으로 활성화한다.
+    ai_worker_metrics_enabled: bool = False
+    ai_worker_metrics_host: str = "127.0.0.1"
+    ai_worker_metrics_port: int = 9102
     # SQLAlchemy/S3처럼 아직 동기인 I/O만 실행하는 전용 executor 크기
     ai_worker_blocking_max_workers: int = 3
 

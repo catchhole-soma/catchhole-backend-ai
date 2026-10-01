@@ -160,3 +160,11 @@
 - DRAFT 정답지와 operation accuracy 평균을 FINAL 품질/완전 결정 일치율로 보고하지 않는다. 지표 분자·분모·평균 방식과 semantic judge 사용 여부를 명시하고 유료 실행은 별도 승인을 받은 경우에만 진행한다. 실행안과 현재 adapter 제한은 `docs/ordered-provisional-evaluation.md`를 따른다.
 
 - ORDERED 평가에서 Java journal v1의 누락된 자료형을 Gold 또는 JSON 모양으로 추측하지 않는다. 시작 상태는 실제 exporter의 자료형 목록을 제공하고 이후에는 seal된 쓰기와 연결된 실제 후보 자료형만 평가 DTO에 반영한다. 원본 journal/hash를 변경하지 않으며 metadata 누락·충돌은 거절한다. 과거 저장 예측·#65 채점 기준을 역사 자료로 보존하고, 저장 예측의 전체 보고서는 main 05d9c2d에서 독립 포착한 기준을 보존하고, 요청 6종은 최신 main 4ed7e55의 git archive에서 독립 포착한 기준과 대조한다.
+
+## Application Metrics (GH206)
+
+- `app.monitoring.worker_metrics`는 CLI 프로세스별 독립 registry/exporter를 관리한다. `AI_WORKER_METRICS_ENABLED=false`, `AI_WORKER_METRICS_HOST=127.0.0.1`, `AI_WORKER_METRICS_PORT=9102`가 앱 기본값이며 운영 Compose가 명시적으로 활성화한다. 별도 FastAPI 실행 없이 같은 프로세스의 HTTP thread에서 `/metrics`를 제공한다.
+- 공통 custom label은 `application=catchhole-ai`, `environment=local|prod`와 `worker_kind=analysis|character-comparison|world-comparison`이다. purpose/job_type/error/outcome은 고정 목록, model은 기동 설정/CLI의 허용 목록으로 제한하고 미등록 값은 other로 정규화한다. Job·작품·회원 ID/원고/prompt/응답/예외 원문/비밀값을 label에 넣지 않는다.
+- 개별 LLM Histogram은 delegate 한 호출만 측정한다. semaphore·token 예약/정산·retry sleep을 제외하고 기존 providerLatencyMs 누적값을 하나의 호출로 기록하지 않는다. retries는 기존 transport loop의 실제 추가 호출이며 바깥 schema/truncation 재시도를 추정하지 않는다. cached input은 input의 일부, usage 누락은 별도 Counter로 기록한다.
+- process_claimed 실행 시도와 canonical 회차 결과 준비는 다른 지표다. 후속 비교/부분 성공/사용자 재시도·lease recovery의 DB 결과는 Spring이 소유한다. 계측 오류는 기존 분석/ledger/slot 정리를 바꾸지 않는다.
+- 분석 replica마다 다른 host metrics port를 쓰고 각각 scrape한다. 기본 host bind localhost, 운영은 사설 IPv4와 모니터링 SG만 허용한다. target 생성/전달·drain·rollback은 `deploy/WORKER_EC2_DEPLOYMENT.md`를 따른다. 현재 5×10 및 비교 각1 동시성을 변경하지 않는다.
