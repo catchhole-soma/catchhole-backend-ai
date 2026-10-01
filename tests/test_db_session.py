@@ -9,7 +9,9 @@ def test_get_engine_uses_database_url(monkeypatch) -> None:
 
     engine = get_engine()
 
-    assert str(engine.url) == "sqlite+pysqlite:///:memory:"
+    # URL 문자열의 percent-encoding 대신 실제 드라이버와 DB 대상을 확인한다.
+    assert engine.url.drivername == "sqlite+pysqlite"
+    assert engine.url.database == ":memory:"
     _clear_settings_and_db_cache()
 
 
