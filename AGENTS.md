@@ -45,6 +45,7 @@
 - `source_chunk_id`는 LLM 생성값이 아니라 Worker가 가진 `EpisodeChunk.id`를 source of truth로 사용한다. LLM 응답에 값이 없거나 잘못되어도 Pydantic 검증 전에 현재 chunk ID로 덮어쓴다.
 - 설정 추출 prompt에는 claim의 `knownCharacters` 대표 이름만 전달하고 Backend 내부 매칭용 `characterId`는 노출하지 않는다. 원문에 명시된 미등록 이름은 `candidate_kind=CHARACTER_DISCOVERY`로 추출하고 설정 payload는 모두 `null`로 두며, 기존 이름과 매칭되는 발견 후보와 같은 분석 안의 중복 발견은 저장 전에 제외한다.
 - `knownCharacters[].activeStatuses`는 회차 시작 전에 활성인 STATUS의 `factKey`와 nullable `factValue`만 포함하고 임의 절단하지 않는다. 1차 prompt에는 상위 대표 이름을 `characterName`으로 결합한 최소 문맥만 전달하며 UUID·value JSON·provenance·history는 노출하지 않는다. 기존 상태의 단순 반복은 재추출하지 않고, 치료 수단만으로 종료를 단정하지 않으며 실제 기능·증상·행동 변화의 근거만 후보로 남긴다. 같은 회차 projected 상태 누적은 이 목록의 책임이 아니다.
+- 캐릭터 1차 추출은 순간 감각·장면 전환 반응만으로 STATUS의 시작·종료를 만들거나 당연한 행동 정지를 별도 능력 제약으로 확대하지 않는다. 기존 활성 상태의 변경·종료와 사망·부활은 우선 보존하며, 같은 회차 안에서 끝난다는 사실 자체를 제외 기준으로 사용하지 않는다.
 - STATUS 후보의 `value_json.active`는 존재하면 JSON boolean만 허용한다. candidate나 2차 proposal의 `active=false`는 현재 snapshot에 ADD/UPDATE/MERGE하지 않고 REMOVE 또는 비반영 판단으로 처리한다.
 - 회차 시작 `activeStatuses`에는 기존 snapshot의 active 원본 값을 전달하지 않는다. Spring이 현재 slot으로 선택한 factKey와 nullable factValue를 문맥으로 신뢰하며, 신규 후보·제안의 active 타입 검증을 legacy snapshot 값에 소급 적용하지 않는다.
 - `CHARACTER_DISCOVERY`의 캐릭터 매칭은 `entity_name`만 기준으로 한다. `케닉의 넷째 아들 세룸` 같은 `raw_entity_mention` 안의 기존 관계자 이름을 발견 대상 캐릭터로 오연결하거나 subject fallback으로 재해석하지 않는다.
