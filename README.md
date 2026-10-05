@@ -183,7 +183,7 @@ sudo journalctl CONTAINER_NAME=catchhole-worker-ai-worker-1 -n 1 -o json-pretty
 - `LLM_SUBJECT_RESOLUTION_MODEL`: 캐릭터 Fact와 세계관 후보의 주체를 기존 캐릭터·세계관 대상에 연결하는 모델명. 운영값과 다단계 평가 기본값은 `gpt-5.6-terra`입니다.
 - `LLM_COMPARISON_MODEL`: 캐릭터 Fact·세계관 후보와 현재 확정 데이터를 비교해 반영 방식을 제안하는 모델명. 운영값과 다단계 평가 기본값은 `gpt-5.6-sol`입니다.
 - `LLM_MODEL`: 단계별 모델 변수가 없을 때 사용하는 하위 호환 모델명. 기본값은 `gpt-5.6-terra`입니다.
-- `LLM_REASONING_EFFORT`: GPT-5.6 추론 강도. 운영값과 다단계 평가 기본값은 `medium`으로 명시합니다. 환경변수를 생략한 앱 설정 기본값은 `none`입니다.
+- `LLM_REASONING_EFFORT`: 추론 지원 모델의 추론 강도. 환경변수를 생략하면 앱·Worker Compose 모두 `medium`을 사용하며 명시한 값이 우선합니다. GPT-6 계열도 요청에 이 값을 전달합니다. 운영·다단계 평가에서는 `medium`을 명시합니다.
 - `OPENAI_RESPONSES_API_URL`: OpenAI Responses API endpoint
 - `LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 캐릭터 설정 추출의 최초 6,000·절단 재시도 12,000 token 상한
 - `LLM_WORLD_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_WORLD_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 세계관 추출의 최초 5,000·절단 재시도 10,000 token 상한

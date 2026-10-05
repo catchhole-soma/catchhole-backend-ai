@@ -24,7 +24,8 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
   - OpenAI Responses API를 호출합니다.
   - 원고와 분석 결과가 provider 측에 저장되지 않도록 모든 요청에 `store: false`를 강제합니다.
   - `LLM_API_KEY`, 단계별 `LLM_EXTRACTION_MODEL`·`LLM_SUBJECT_RESOLUTION_MODEL`·`LLM_COMPARISON_MODEL`, fallback `LLM_MODEL`, `LLM_REASONING_EFFORT`, `OPENAI_RESPONSES_API_URL` 설정을 사용합니다.
-  - 운영 기본 라우팅은 후보 추출 `gpt-5.6-terra`, 주체 해소·비교 `gpt-5.6-luna`이며 공통 MVP 추론 강도는 `none`입니다.
+  - 예제 라우팅은 후보 추출 `gpt-5.6-terra`, 주체 해소·비교 `gpt-5.6-luna`입니다. 공통 추론 강도는 `LLM_REASONING_EFFORT`를 생략하면 `medium`이며 명시한 값이 우선합니다.
+  - GPT-6 계열에도 지정한 추론 강도를 `reasoning.effort`로 전달합니다. 모델별 지원값은 다르며, 예를 들어 GPT-6 Sol·Luna의 `none`은 지원되지만 GPT-6 Astra·GPT-6.1 Sol의 `none`은 공급자가 거절합니다. 미지원 명시값을 조용히 생략하지 않습니다([공식 추론 가이드](https://developers.openai.com/api/docs/guides/reasoning)). 비추론 모델에는 `reasoning`을 보내지 않습니다.
   - 같은 정적 prompt prefix를 공유하는 호출에는 안정적인 `prompt_cache_key`를 전달합니다.
   - GPT-5.6 explicit cache breakpoint는 아직 사용하지 않으며, 현재는 정적 prefix 우선 배치와 cache key로 implicit cache 재사용을 돕습니다.
   - debug 로그에는 prompt 본문 없이 cached input 필드의 존재 여부와 token usage만 남깁니다.
