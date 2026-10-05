@@ -46,8 +46,14 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     assert set(identity_overrides) == {"world_subject"}
     overrides = {**overrides, **identity_overrides}
     assert all(set(row) == {"sha256", "system_sha256"} for row in overrides.values())
-    # The immutable historical capture stays intact. Only the explicitly requested
-    # plain-language and subject-identity instructions have a separate expectation.
+    state_scope_overrides = json.loads(
+        (ROOT / "tests/fixtures/character_state_scope_request_overrides.json").read_text()
+    )["overrides"]
+    assert set(state_scope_overrides) == {"extraction"}
+    assert set(state_scope_overrides["extraction"]) == {
+        "sha256", "system_sha256", "prompt_cache_key"
+    }
+    # Historical captures stay intact; authorized prompt changes are separate.
     upstream = json.loads((ROOT / "tests/fixtures/upstream_requests_main_4ed7e55.json").read_text())
     assert upstream["baselineCommit"] == "4ed7e5556a91641c320c9e55dc646d4f17b0648d"
     assert upstream["probeHashes"][PROBE.name] == sha256(PROBE.read_bytes()).hexdigest()
@@ -58,6 +64,9 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     assert {k:v for k,v in expected.items() if k not in changing} == {
         k:v for k,v in baseline[purpose].items() if k not in changing
     }
-    authorized = upstream["gh180Overrides"].get(purpose, {})
+    authorized = {
+        **upstream["gh180Overrides"].get(purpose, {}),
+        **state_scope_overrides.get(purpose, {}),
+    }
     assert set(authorized) <= changing
     assert actual[purpose] == {**expected, **authorized}
