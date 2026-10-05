@@ -5,6 +5,7 @@ import logging
 import httpx
 import pytest
 
+from app.core.config import Settings
 from app.llm.exceptions import (
     LlmIncompleteResponseError,
     LlmOutputTruncatedError,
@@ -206,12 +207,52 @@ def test_create_text_response_sends_configured_reasoning_effort() -> None:
     assert request_body["reasoning"] == {"effort": "none"}
 
 
-def test_create_text_response_omits_reasoning_for_non_reasoning_model_override() -> None:
+@pytest.mark.parametrize(
+    "model", ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-6.1-sol"],
+)
+@pytest.mark.parametrize(
+    ("configured_effort", "expected_effort"),
+    [(None, "medium"), ("low", "low"), ("medium", "medium"), ("high", "high"), ("none", "none")],
+)
+def test_request_uses_reasoning_effort_loaded_from_settings(
+    monkeypatch, model: str, configured_effort: str | None, expected_effort: str,
+) -> None:
+    if configured_effort is None:
+        monkeypatch.delenv("LLM_REASONING_EFFORT", raising=False)
+    else:
+        monkeypatch.setenv("LLM_REASONING_EFFORT", configured_effort)
+    settings = Settings(
+        _env_file=None,
+        llm_api_key="test-key",
+        llm_model="gpt-5.6-terra",
+        openai_responses_api_url="https://api.openai.test/v1/responses",
+    )
+    requests: list[httpx.Request] = []
+
+    async def run() -> None:
+        client = OpenAIResponsesClient.from_settings(settings)
+        await client.http_client.aclose()
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: _response(request, requests)),
+        ) as http_client:
+            client.http_client = http_client
+            await client.create_text_response(system_prompt="규칙", user_prompt="원문", model=model)
+
+    asyncio.run(run())
+
+    request_body = json.loads(requests[0].content)
+    assert request_body["model"] == model
+    assert request_body["reasoning"] == {"effort": expected_effort}
+    assert request_body["store"] is False
+
+
+@pytest.mark.parametrize("effort", ["none", "low", "medium", "high"])
+def test_create_text_response_omits_reasoning_for_non_reasoning_model_override(effort: str) -> None:
     requests: list[httpx.Request] = []
     client = OpenAIResponsesClient(
         api_key="test-key",
         model="gpt-5.6-terra",
-        reasoning_effort="none",
+        reasoning_effort=effort,
         responses_api_url="https://api.openai.test/v1/responses",
         http_client=httpx.AsyncClient(
             transport=httpx.MockTransport(lambda request: _response(request, requests))
@@ -248,6 +289,27 @@ def test_create_text_response_does_not_inherit_none_for_o_series_override() -> N
     request_body = json.loads(requests[0].content)
     assert request_body["model"] == "o3"
     assert "reasoning" not in request_body
+
+
+@pytest.mark.parametrize("model", ["o1", "o3", "o4-mini"])
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+def test_create_text_response_preserves_o_series_reasoning_effort(model: str, effort: str) -> None:
+    requests: list[httpx.Request] = []
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        reasoning_effort=effort,
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: _response(request, requests))
+        ),
+    )
+
+    asyncio.run(client.create_text_response(system_prompt="규칙", user_prompt="원문", model=model))
+
+    request_body = json.loads(requests[0].content)
+    assert request_body["model"] == model
+    assert request_body["reasoning"] == {"effort": effort}
 
 
 def test_malformed_success_response_preserves_reported_usage() -> None:
