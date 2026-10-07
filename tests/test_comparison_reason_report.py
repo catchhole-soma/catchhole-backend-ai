@@ -203,31 +203,88 @@ def test_reason_paraphrases_do_not_create_repeated_earlier_proposals():
     assert "대상 범위를 살펴야 한다." not in row
 
 
-def test_invalid_internal_identifiers_are_hidden_with_korean_suffixes_without_erasing_reason():
-    reason = "C1의 T1.P2와 비교하여 REVIEW_REQUIRED로 제안했다. ABC_GUILD의 기록도 확인한다. "
+@pytest.mark.parametrize("status", ["REJECTED", "BATCH_ABORTED"])
+def test_public_failed_proposal_humanizes_free_text_without_changing_original_or_trace(status):
+    reason = "C1의 T1.P2와 비교했다. 처리 방식은 REVIEW_REQUIRED이다. ABC_GUILD의 기록도 확인한다. "
     reason += "a18b1bb6-2eb5-45b4-a30b-8f0694b0c123의 위치를 확인한다."
-    report = _report(_case(failure={"status": "REJECTED", "attempts": [_attempt(reason)]}))
+    attempt = _attempt(reason, rule="REASON_LOCAL_REFERENCE_FORBIDDEN")
+    attempt["decision"].update(
+        target="T1의 구름 짐승", path="C1의 사냥 방식 › 함정 사용",
+        matchedPath="T1.P2의 사냥 방식 › 함정 사용", value="Q1의 정보를 합쳤다. 처리 방식은 MERGE이다.",
+    )
+    attempt["rejectedSourceIds"] = ["a18b1bb6-2eb5-45b4-a30b-8f0694b0c123"]
+    attempt["rejectedSourceNames"] = ["C1의 ABC_GUILD · 함정 사용"]
+    report = _report(_case(failure={"status": status, "attempts": [attempt]}))
+    original = deepcopy(report)
 
     public = build_public_diagnostics(report)[0]["stage2"][0]
-    assert public["comparisonFailure"]["attempts"][0]["decision"]["comparisonReason"] == reason
+    exported = public["comparisonFailure"]["attempts"][0]
+    decision = exported["decision"]
+    assert decision["comparisonReason"] == (
+        "내부 참조의 내부 참조와 비교했다. 처리 방식은 자동으로 반영하지 않고 검토 요청이다. "
+        "ABC_GUILD의 기록도 확인한다. 내부 식별번호의 위치를 확인한다."
+    )
+    assert decision["target"] == "내부 참조의 구름 짐승"
+    assert decision["path"] == "내부 참조의 사냥 방식 › 함정 사용"
+    assert decision["matchedPath"] == "내부 참조의 사냥 방식 › 함정 사용"
+    assert decision["value"] == "내부 참조의 정보를 합쳤다. 처리 방식은 기존 설정과 합쳐 반영이다."
+    assert exported["rejectedSourceNames"] == ["내부 참조의 ABC_GUILD · 함정 사용"]
+    assert decision["operation"] == "REVIEW_REQUIRED"
+    assert decision["reviewReason"] == "SCOPE_UNRESOLVED"
+    assert exported["ruleCode"] == "REASON_LOCAL_REFERENCE_FORBIDDEN"
+    assert exported["stage"] == "DECISION_VALIDATION"
+    assert exported["rejectedSourceIds"] == attempt["rejectedSourceIds"]
+    assert public["sourceCandidateId"] == "candidate-one"
+    assert public["sourceGoldIds"] == ["gold-one"]
     row = _row(report)
     assert "ABC_GUILD의 기록도 확인한다." in row
     assert "위치를 확인한다." in row
     for internal in ("C1", "T1.P2", "REVIEW_REQUIRED", "a18b1bb6-2eb5-45b4-a30b-8f0694b0c123"):
         assert internal not in row
+    assert "내부 참조의 구름 짐승" in row
+    assert "내부 참조의 정보를 합쳤다. 처리 방식은 기존 설정과 합쳐 반영이다." in row
+    if status == "BATCH_ABORTED":
+        assert "중단을 일으킨 항목: 내부 참조의 ABC_GUILD · 함정 사용" in row
+    assert report == original
+    assert build_source_free_summary(report) == build_source_free_summary(original)
+
+
+def test_public_successful_reason_is_humanized_without_scrubbing_fact_values():
+    report = _report(_case(actual={
+        "operation": "ADD", "comparisonReason": "C1의 정보는 ADD로 제안했다. ABC_GUILD의 새 정보다.",
+        "value": "ABC_GUILD의 C1 기록에는 ADD가 적혀 있다.",
+    }))
+    original = deepcopy(report)
+
+    public = build_public_diagnostics(report)[0]["stage2"][0]
+    assert public["actual"]["comparisonReason"] == "내부 참조의 정보는 새 설정 추가로 제안했다. ABC_GUILD의 새 정보다."
+    assert public["actual"]["operation"] == "ADD"
+    assert public["actual"]["value"] == original["scenarios"][0]["stage2"][0]["actual"]["value"]
+    assert "AI 판단 이유: 내부 참조의 정보는 새 설정 추가로 제안했다. ABC_GUILD의 새 정보다." in _row(report)
+    assert report == original
 
 
 def test_reason_projection_is_bounded_and_source_free_aggregate_is_unchanged():
-    attempt = _attempt("합성 설명" * 5000)
+    attempt = _attempt("ADD " * 1100)
+    attempt["decision"].update({key: "ADD " * 1100 for key in ("target", "path", "value", "matchedPath")})
+    attempt["rejectedSourceNames"] = ["C1 " * 170 for _ in range(30)]
     report = _report(_case(failure={"status": "REJECTED", "attempts": [deepcopy(attempt) for _ in range(100)]}))
+    original = deepcopy(report)
     baseline = deepcopy(report)
     baseline["scenarios"][0]["stage2"][0].pop("comparisonFailure")
 
     public = build_public_diagnostics(report)[0]["stage2"][0]
-    assert len(public["comparisonFailure"]["attempts"]) < 100
-    assert len(public["comparisonFailure"]["attempts"][-1]["decision"]["comparisonReason"]) <= 4000
+    assert len(public["comparisonFailure"]["attempts"]) == 20
+    latest = public["comparisonFailure"]["attempts"][-1]
+    for key in ("comparisonReason", "target", "path", "value", "matchedPath"):
+        assert latest["decision"][key].startswith("새 설정 추가 ")
+        assert len(latest["decision"][key]) <= 4000
+        assert latest["decision"][key].endswith("…")
+    assert len(latest["rejectedSourceNames"]) == 20
+    assert all(name.startswith("내부 참조 ") and len(name) <= 500 for name in latest["rejectedSourceNames"])
     assert build_source_free_summary(report) == build_source_free_summary(baseline)
     assert "comparisonReason" not in json.dumps(build_source_free_summary(report))
+    assert report == original
 
 
 def test_mismatched_consolidation_and_time_are_explained_without_internal_enums():
@@ -294,7 +351,7 @@ def test_interrupted_prediction_cli_reuses_comparison_reason_projection(tmp_path
         attribution="IDENTIFIED", batch_source_ids=["candidate-one", "candidate-two"], rejected_source_ids=["candidate-one"],
         decisions=[ComparisonDecisionDiagnostic(
             decision_index=0, source_candidate_ids=["candidate-one"], operation="REVIEW_REQUIRED",
-            review_reason="SCOPE_UNRESOLVED", comparison_reason="범위를 먼저 확인해야 한다.",
+            review_reason="SCOPE_UNRESOLVED", comparison_reason="T1.P2와 비교했다. C1의 범위를 먼저 확인해야 한다.",
             target="구름 짐승", proposed_scope_name="사냥 방식", proposed_setting_name="함정 사용",
         ), ComparisonDecisionDiagnostic(
             decision_index=1, source_candidate_ids=["candidate-two"], operation="REVIEW_REQUIRED",
@@ -312,7 +369,8 @@ def test_interrupted_prediction_cli_reuses_comparison_reason_projection(tmp_path
         )],
     )
     predictions, markdown, aggregate = (tmp_path / name for name in ("predictions.json", "summary.md", "aggregate.json"))
-    predictions.write_text(bundle.model_dump_json(by_alias=True), encoding="utf-8")
+    original_predictions = bundle.model_dump_json(by_alias=True)
+    predictions.write_text(original_predictions, encoding="utf-8")
     monkeypatch.setattr("sys.argv", [
         "report_cli", "--predictions", str(predictions), "--markdown-output", str(markdown),
         "--json-output", str(aggregate),
@@ -330,6 +388,12 @@ def test_interrupted_prediction_cli_reuses_comparison_reason_projection(tmp_path
     assert "중단을 일으킨 항목: 몬스터 · 구름 짐승 · 사냥 방식 › 함정 사용" in collateral_row
     assert "MONSTER" not in collateral_row and "RACE" not in collateral_row
     public = json.loads((tmp_path / "diagnostics.json").read_text(encoding="utf-8"))
-    assert public["scenarios"][0]["stage2"][0]["comparisonFailure"]["status"] == "REJECTED"
+    failure = public["scenarios"][0]["stage2"][0]["comparisonFailure"]
+    assert failure["status"] == "REJECTED"
+    assert failure["attempts"][0]["decision"]["comparisonReason"] == "내부 참조와 비교했다. 내부 참조의 범위를 먼저 확인해야 한다."
+    assert "AI 판단 이유: 내부 참조와 비교했다. 내부 참조의 범위를 먼저 확인해야 한다." in rendered
+    assert predictions.read_text(encoding="utf-8") == original_predictions
+    assert bundle.model_dump_json(by_alias=True) == original_predictions
+    assert "T1.P2와 비교했다. C1의 범위를 먼저 확인해야 한다." in original_predictions
     assert "comparisonReason" not in aggregate.read_text(encoding="utf-8")
     capsys.readouterr()

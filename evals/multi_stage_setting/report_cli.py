@@ -1768,7 +1768,7 @@ def _sanitize_stage2_summary(value: Any) -> dict[str, Any] | None:
     )
     result: dict[str, Any] = {key: _text(value.get(key)) for key in text_keys}
     if "comparisonReason" in value:
-        result["comparisonReason"] = _bounded_comparison_text(value.get("comparisonReason"))
+        result["comparisonReason"] = _bounded_human_comparison_text(value.get("comparisonReason"))
     result["removedCount"] = _integer(value.get("removedCount"))
     result["removedPaths"] = _text_list(value.get("removedPaths"))
     result["rootMoveCount"] = _integer(value.get("rootMoveCount"))
@@ -1793,8 +1793,8 @@ def _sanitize_comparison_failure(value: Any) -> dict[str, Any] | None:
             decision = {
                 "operation": _choice(decision.get("operation"), set(_OPERATION_LABELS)),
                 "reviewReason": _choice(decision.get("reviewReason"), set(_REVIEW_REASON_LABELS)),
-                **{key: _bounded_comparison_text(decision.get(key)) for key in ("comparisonReason", "target", "path", "value")},
-                "matchedPath": _bounded_comparison_text(decision.get("matchedPath")) if verified else None,
+                **{key: _bounded_human_comparison_text(decision.get(key)) for key in ("comparisonReason", "target", "path", "value")},
+                "matchedPath": _bounded_human_comparison_text(decision.get("matchedPath")) if verified else None,
                 "matchedPathVerified": verified,
             }
         else:
@@ -1804,10 +1804,14 @@ def _sanitize_comparison_failure(value: Any) -> dict[str, Any] | None:
             "ruleCode": _bounded_comparison_text(raw.get("ruleCode"), limit=120),
             "stage": _choice(raw.get("stage"), {"RESPONSE_SCHEMA", "PROPERTY_SELECTION", "DECISION_VALIDATION", "SCOPE_PLAN", "PROJECTED_SCOPE_PLAN"}),
             "rejectedSourceIds": [text[:180] for text in _text_list(raw.get("rejectedSourceIds"))[:20]],
-            "rejectedSourceNames": [text[:500] for text in _text_list(raw.get("rejectedSourceNames"))[:20]],
+            "rejectedSourceNames": [_human_comparison_text(text)[:500] for text in _text_list(raw.get("rejectedSourceNames"))[:20]],
             "decision": decision,
         })
     return {"status": status, "attempts": attempts}
+
+
+def _bounded_human_comparison_text(value: Any) -> str | None:
+    return _bounded_comparison_text(_human_comparison_text(_text(value)))
 
 
 def _bounded_comparison_text(value: Any, *, limit: int = _MAX_COMPARISON_REASON_LENGTH) -> str | None:
