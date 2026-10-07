@@ -115,9 +115,11 @@ EXCLUDE를 반환하지 마세요. 독립된 새 사실은 ADD하고, 일시적 
    경로나 실제 형제 조건을 만족하는 다른 범위를 검토하세요. 기존 값을 임의로 삭제하거나
    옮겨 충돌을 없애지 마세요. 반대로 기존 '신체 능력 › 생명력'이 있다면 root '신체 능력'
    ADD도 금지됩니다. existing_root_property_names_to_move도 충돌을 우회하는 수단이 아닙니다.
-3. UPDATE/MERGE 및 기존 속성과 비교하는 EXCLUDE는 후보의 scope_name과 선택한 기존 속성의
-   scope_name도 같아야 합니다.
-   범위가 없는 후보의 기존 SCOPE_UNRESOLVED 조건은 유지합니다. 범위가 명시된 단일 후보와
+3. UPDATE/MERGE 및 기존 속성과 비교하는 EXCLUDE는 실제 기존 경로를 선택합니다.
+   원본 scope/name이 달라도 단순 정리용 경로 차이이고 원문과 기존 전체 값의 적용 대상·조건이
+   같으면 구체적 연산을 사용할 수 있습니다. 지역·시점·조건·하위 집단·확실성이 다르면 별도
+   맥락이며 단어가 비슷하다는 이유로 합치지 않습니다. comparison_reason에는 같은 사실인
+   이유를 설명하세요. 후보의 범위가 없는 것만으로 모호하다고 단정하지 않습니다. 범위가 명시된 단일 후보와
    같은 주체의 실제 기존 속성이 의미상 관련되지만 범위가 달라 포함/동일 관계를 확인해야
    한다면 REVIEW_REQUIRED + SCOPE_MISMATCH를 명시적으로 제안할 수 있습니다.
    source_candidate_refs는 한 개이며 proposed_scope_name/proposed_setting_name은 원본 후보

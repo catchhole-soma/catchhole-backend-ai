@@ -232,6 +232,7 @@ def apply_prediction_decision(
     *,
     matched_gold_source: CharacterStage1Gold | WorldStage1Gold | None = None,
     matched_gold_decision: Stage2Gold | None = None,
+    source_candidates: list[CharacterStage1Prediction | WorldStage1Prediction] | None = None,
 ) -> tuple[EvaluationState, bool]:
     """운영 출력 DTO를 Gold와 같은 reference reducer에 적용한다.
 
@@ -329,6 +330,20 @@ def apply_prediction_decision(
         if isinstance(source, WorldStage1Prediction) and isinstance(
             decision, WorldStage2Prediction
         ):
+            actual_sources = [source]
+            if source_candidates is not None:
+                linked_ids = decision.source_candidate_ids or [decision.source_candidate_id]
+                by_id = {item.candidate_id: item for item in source_candidates}
+                if len(by_id) != len(source_candidates) or any(ref not in by_id for ref in linked_ids):
+                    raise StateApplicationError("World decision must reference exact existing input sources.")
+                actual_sources = [by_id[ref] for ref in linked_ids]
+                source_group = (source.category, source.subject_ref or normalize_world_setting_name(source.subject_name),
+                                normalize_world_setting_name(source.scope_name or ""))
+                if any(not isinstance(item, WorldStage1Prediction) or (
+                    item.category, item.subject_ref or normalize_world_setting_name(item.subject_name),
+                    normalize_world_setting_name(item.scope_name or ""),
+                ) != source_group for item in actual_sources):
+                    raise StateApplicationError("World decision sources must share category, canonical subject and raw scope.")
             matched_world = (
                 matched_gold_source if isinstance(matched_gold_source, WorldStage1Gold) else None
             )
@@ -366,6 +381,12 @@ def apply_prediction_decision(
                 ),
                 source_values=source.source_values,
             )
+            pseudo_sources = [pseudo_source.model_copy(update={
+                "gold_id": pseudo_source.gold_id if item.candidate_id == source.candidate_id else f"prediction:{item.candidate_id}",
+                "setting_name": pseudo_source.setting_name if item.candidate_id == source.candidate_id else item.setting_name,
+                "source_values": item.source_values,
+                "evidence_quotes": [span.quote for span in item.evidence_spans] or ["prediction-output"],
+            }) for item in actual_sources]
             pseudo_decision = WorldStage2Gold(
                 decision_id=(
                     matched_gold_decision.decision_id
@@ -375,7 +396,7 @@ def apply_prediction_decision(
                 scenario_id=scenario.scenario_id,
                 episode_no=scenario.episode_no,
                 sort_order=0,
-                source_gold_ids=[pseudo_source.gold_id],
+                source_gold_ids=[item.gold_id for item in pseudo_sources],
                 domain="WORLD",
                 operation=decision.operation,
                 consolidation_status=decision.consolidation_status,
@@ -413,12 +434,15 @@ def apply_prediction_decision(
                 ),
                 review_status="FINAL",
             )
+            if "proposed_scope_name" not in decision.model_fields_set:
+                pseudo_decision.__pydantic_fields_set__.discard("proposed_scope_name")
             return _apply_world(
                 state,
                 state,
                 scenario,
-                [pseudo_source],
+                pseudo_sources,
                 pseudo_decision,
+                count_runtime_source_values=source_candidates is not None,
             )
     except ValueError as exc:
         if isinstance(exc, StateApplicationError):
@@ -621,6 +645,8 @@ def _apply_world(
     scenario: ScenarioGold,
     sources: list[WorldStage1Gold],
     decision: WorldStage2Gold,
+    *,
+    count_runtime_source_values: bool = False,
 ) -> tuple[EvaluationState, bool]:
     primary = sources[0]
     primary_group = (
@@ -650,11 +676,13 @@ def _apply_world(
                 continue
             normalized_values.add(normalized)
             unique_values.append(value)
-    if len(unique_values) == 1 and (
+    value_count = (sum(len(source.source_values) for source in sources)
+                   if count_runtime_source_values else len(unique_values))
+    if value_count == 1 and (
         decision.consolidation_status != WorldSettingConsolidationStatus.SINGLE
     ):
         raise StateApplicationError("One unique world source value requires SINGLE.")
-    if len(unique_values) > 1 and (
+    if value_count > 1 and (
         decision.consolidation_status == WorldSettingConsolidationStatus.SINGLE
     ):
         raise StateApplicationError("Multiple world source values require MERGED or CONFLICT.")
@@ -719,7 +747,9 @@ def _apply_world(
     if decision.consolidation_status == WorldSettingConsolidationStatus.CONFLICT:
         conflict_scope = (
             decision.proposed_scope_name
-            if decision.proposed_scope_name is not None
+            if "proposed_scope_name" in decision.model_fields_set or decision.operation in {
+                WorldSettingOperation.UPDATE, WorldSettingOperation.MERGE,
+            }
             else primary.scope_name
         )
         held = list(state.held_world_conflicts)
@@ -749,7 +779,9 @@ def _apply_world(
         return state, True
     proposed_scope = (
         decision.proposed_scope_name
-        if decision.proposed_scope_name is not None
+        if "proposed_scope_name" in decision.model_fields_set or decision.operation in {
+            WorldSettingOperation.UPDATE, WorldSettingOperation.MERGE,
+        }
         else primary.scope_name
     )
     proposed_setting = decision.proposed_setting_name or primary.setting_name

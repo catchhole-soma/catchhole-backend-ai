@@ -48,7 +48,8 @@ class Comparator:
         self.calls = []
 
     async def compare_batch(self, category, sources, targets, **kwargs):
-        assert kwargs["ordered_context"] and kwargs["preserve_source_paths"]
+        assert kwargs["ordered_context"] is False
+        assert kwargs["defer_generated_scope_validation"]
         assert kwargs["max_attempts_override"] == 1
         self.calls.append([item.candidate_ref for item in sources])
         output = self.action(sources)
@@ -57,10 +58,17 @@ class Comparator:
         return WorldSettingComparisonBatchResult(decisions=output), {}
 
 
-def run(comparator, sources, existing=None):
+def run(comparator, sources, existing=None, initial_rows=None, max_recovery_calls=20):
+    error = ComparisonValidationError("initial response failed")
+    if initial_rows is None:
+        by_path = {}
+        for item in sources:
+            by_path.setdefault((item.scope_name, item.setting_name), []).append(item)
+        initial_rows = [{**decision(rows), "consolidation_status": "invalid"} for rows in by_path.values()]
+    error.world_batch_response_payload = {"decisions": initial_rows}
     return asyncio.run(recover_world_batch(
-        comparator, "MONSTER", sources, [existing or target()],
-        ComparisonValidationError("initial response failed"),
+        comparator, "MONSTER", sources, [existing or target()], error,
+        ordered_context=False, max_recovery_calls=max_recovery_calls,
     ))
 
 
@@ -98,8 +106,11 @@ def test_shared_existing_path_is_recompared_as_one_dependency_group(joint_failur
         return [decision(rows, operation="MERGE", name="숙련도")]
 
     comparator = Comparator(action)
-    result = run(comparator, sources, existing)
-    assert comparator.calls == [["C1"], ["C2"], ["C3"], ["C1", "C2"]]
+    result = run(comparator, sources, existing, initial_rows=[
+        decision([sources[0]], operation="MERGE", name="숙련도"),
+        decision([sources[1]], operation="MERGE", name="숙련도"), decision([sources[2]]),
+    ])
+    assert comparator.calls == [["C1", "C2"]]
     if joint_failure:
         assert [item.source_candidate_refs for item in result.decisions] == [["C3"]]
         assert [item.source_candidate_refs for item in result.failures] == [["C1", "C2"]]
@@ -119,7 +130,7 @@ def test_recovery_stops_immediately_on_job_level_errors(error):
     assert not can_recover_response(error)
 
 
-def test_recovery_disallows_new_synthetic_scope_even_from_alternate_comparator():
+def test_recovery_rejects_synthetic_scope_without_actual_siblings():
     def action(rows):
         value = decision(rows)
         if rows[0].candidate_ref == "C1":
@@ -133,8 +144,10 @@ def test_recovery_disallows_new_synthetic_scope_even_from_alternate_comparator()
 def test_recovery_call_limit_does_not_choose_one_of_conflicting_writes():
     sources = [candidate(i) for i in range(1, 21)]
     comparator = Comparator(lambda rows: [decision(rows, operation="UPDATE", name="숙련도")])
-    result = run(comparator, sources, target([{"setting_name": "숙련도", "value": "기초"}]))
-    assert len(comparator.calls) == 20
+    result = run(comparator, sources, target([{"setting_name": "숙련도", "value": "기초"}]),
+                 initial_rows=[decision([source], operation="UPDATE", name="숙련도") for source in sources],
+                 max_recovery_calls=0)
+    assert not comparator.calls
     assert not result.decisions
     assert len(result.failures[0].source_candidate_refs) == 20
     assert result.failures[0].diagnostics[-1].rule == "RECOVERY_CALL_LIMIT"

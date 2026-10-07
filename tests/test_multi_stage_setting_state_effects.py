@@ -9,6 +9,8 @@ from evals.multi_stage_setting.contracts import (
     ScenarioGold,
     WorldStage1Gold,
     WorldStage2Gold,
+    WorldStage1Prediction,
+    WorldStage2Prediction,
     WorldStateEntry,
     character_state_ref,
     world_state_ref,
@@ -16,6 +18,7 @@ from evals.multi_stage_setting.contracts import (
 )
 from evals.multi_stage_setting.state_effects import (
     apply_gold_decision,
+    apply_prediction_decision,
     build_gold_state_chain,
 )
 
@@ -1317,6 +1320,149 @@ def _character_source(fact_key: str) -> CharacterStage1Gold:
         value_json_provenance="ANNOTATED",
         structured_scorable=True,
     )
+
+
+@pytest.mark.parametrize("operation", ["MERGE", "UPDATE"])
+@pytest.mark.parametrize("consolidation", ["SINGLE", "CONFLICT"])
+def test_world_semantic_comparison_preserves_explicit_matched_root(operation, consolidation):
+    source = _world_source("사용 방식", "서고 회원은 책을 빌릴 수 있다").model_copy(update={"scope_name": "회원 규칙"})
+    if consolidation == "CONFLICT":
+        source = source.model_copy(update={"source_values": ["회원은 책을 빌릴 수 있다", "회원은 책을 빌릴 수 없다"]})
+    existing = WorldStateEntry(
+        ref=world_state_ref("RACE", "고블린", None, "도서 대출"), category="RACE",
+        subject_name="고블린", setting_name="도서 대출", value="회원은 책을 빌릴 수 있다",
+    )
+    decision = WorldStage2Gold(
+        decision_id="DW-ROOT-SEMANTIC", scenario_id="S1", episode_no=1, sort_order=1,
+        source_gold_ids=[source.gold_id], domain="WORLD", operation=operation,
+        consolidation_status=consolidation, target_ref=existing.ref,
+        matched_scope_name=None, matched_property_name="도서 대출", proposed_scope_name=None,
+        proposed_setting_name="도서 대출", proposed_value="서고 회원은 책을 빌릴 수 있다", review_status="FINAL",
+    )
+    after, held = apply_gold_decision(EvaluationState(world_facts=[existing]), _scenario({"WORLD"}), [source], decision)
+    if consolidation == "CONFLICT":
+        assert held
+        assert after.held_world_conflicts[0].scope_name is None
+    else:
+        assert not held
+        assert len(after.world_facts) == 1
+        assert after.world_facts[0].ref == existing.ref
+        assert after.world_facts[0].scope_name is None
+
+
+@pytest.mark.parametrize("operation", ["MERGE", "UPDATE", "EXCLUDE"])
+def test_gold_snapshot_accepts_semantic_match_across_organizational_scopes(operation):
+    source = _world_source("사용 방식", "서고 회원은 책을 빌릴 수 있다").model_copy(update={"scope_name": "회원 규칙"})
+    decision = WorldStage2Gold(
+        decision_id="DW-SCOPE-SEMANTIC", scenario_id="S1", episode_no=1, sort_order=1,
+        source_gold_ids=[source.gold_id], domain="WORLD", operation=operation,
+        consolidation_status="SINGLE", target_ref=world_state_ref("RACE", "고블린", None, "도서 대출"),
+        matched_scope_name=None, matched_property_name="도서 대출",
+        proposed_scope_name=source.scope_name if operation == "EXCLUDE" else None,
+        proposed_setting_name=source.setting_name if operation == "EXCLUDE" else "도서 대출",
+        proposed_value=source.display_value, review_status="FINAL",
+    )
+    gold = GoldSnapshotV3(dataset_version="synthetic", name="semantic scope policy", scenarios=[_scenario({"WORLD"})],
+                          stage1=[source], stage2=[decision])
+    assert gold.stage2[0].matched_scope_name is None
+
+
+@pytest.mark.parametrize("operation", ["MERGE", "UPDATE"])
+def test_world_semantic_match_still_rejects_missing_actual_path_and_changed_proposal(operation):
+    source = _world_source("사용 방식", "서고 회원은 책을 빌릴 수 있다").model_copy(update={"scope_name": "회원 규칙"})
+    existing = WorldStateEntry(ref=world_state_ref("RACE", "고블린", None, "도서 대출"), category="RACE",
+                               subject_name="고블린", setting_name="도서 대출", value="회원은 책을 빌릴 수 있다")
+    row = dict(decision_id="DW-INVALID-SEMANTIC", scenario_id="S1", episode_no=1, sort_order=1,
+               source_gold_ids=[source.gold_id], domain="WORLD", operation=operation,
+               consolidation_status="SINGLE", target_ref=existing.ref,
+               matched_scope_name=None, matched_property_name="도서 대출", proposed_scope_name=None,
+               proposed_setting_name="도서 대출", proposed_value=source.display_value, review_status="FINAL")
+    with pytest.raises(ValueError, match="preserve the matched property path"):
+        WorldStage2Gold(**{**row, "proposed_scope_name": "회원 규칙"})
+    with pytest.raises(ValueError, match="matched path differs"):
+        apply_gold_decision(EvaluationState(world_facts=[existing]), _scenario({"WORLD"}), [source],
+                            WorldStage2Gold(**{**row, "matched_property_name": "없는 속성", "proposed_setting_name": "없는 속성"}))
+
+
+@pytest.mark.parametrize("explicit_root", [False, True])
+def test_world_add_distinguishes_explicit_canonical_root_from_omitted_legacy_scope(explicit_root):
+    source = _world_source("교육", "장로가 아이들을 가르친다").model_copy(update={"scope_name": "생활"})
+    fields = {"proposed_scope_name": None} if explicit_root else {}
+    decision = WorldStage2Gold(
+        decision_id="DW-CANONICAL-ROOT", scenario_id="S1", episode_no=1, sort_order=1,
+        source_gold_ids=[source.gold_id], domain="WORLD", operation="ADD", consolidation_status="SINGLE",
+        proposed_setting_name="성장 교육", proposed_value=source.display_value, review_status="FINAL", **fields,
+    )
+    after, _ = apply_gold_decision(EvaluationState(), _scenario({"WORLD"}), [source], decision)
+    assert after.world_facts[0].scope_name == (None if explicit_root else "생활")
+
+
+@pytest.mark.parametrize("explicit_root", [False, True])
+def test_actual_world_add_preserves_explicit_root_and_legacy_omission(explicit_root):
+    source = WorldStage1Prediction(candidate_id="source", sort_order=1, domain="WORLD", category="RACE",
+                                   subject_name="고블린", scope_name="생활", setting_name="교육", source_values=["장로가 가르친다"])
+    decision = WorldStage2Prediction(source_candidate_id="source", domain="WORLD", operation="ADD",
+                                    consolidation_status="SINGLE", proposed_setting_name="성장 교육", proposed_value="장로가 가르친다",
+                                    **({"proposed_scope_name": None} if explicit_root else {}))
+    after, _ = apply_prediction_decision(EvaluationState(), _scenario({"WORLD"}), source, decision)
+    assert after.world_facts[0].scope_name == (None if explicit_root else "생활")
+
+
+@pytest.mark.parametrize("same_value", [False, True])
+def test_actual_merged_world_decision_validates_every_linked_source_value(same_value):
+    first = WorldStage1Prediction(candidate_id="first", sort_order=1, domain="WORLD", category="RACE",
+                                  subject_name="고블린", setting_name="교육", source_values=["장로가 가르친다"])
+    second = first.model_copy(update={"candidate_id": "second", "setting_name": "양육", "source_values":
+                                       first.source_values if same_value else ["아이들이 배우며 자란다"]})
+    decision = WorldStage2Prediction(source_candidate_id="first", source_candidate_ids=["first", "second"],
+                                    domain="WORLD", operation="ADD", consolidation_status="MERGED",
+                                    proposed_scope_name=None, proposed_setting_name="성장 교육", proposed_value="장로에게 배우며 자란다")
+    after, held = apply_prediction_decision(EvaluationState(), _scenario({"WORLD"}), first, decision,
+                                          source_candidates=[first, second])
+    assert not held
+    assert len(after.world_facts) == 1
+    assert after.world_facts[0].value == "장로에게 배우며 자란다"
+
+
+@pytest.mark.parametrize("invalid", ["missing", "category", "subject", "scope"])
+def test_actual_world_merge_rejects_unknown_or_mixed_linked_sources(invalid):
+    first = WorldStage1Prediction(candidate_id="first", sort_order=1, domain="WORLD", category="RACE",
+                                  subject_name="고블린", setting_name="교육", source_values=["장로가 가르친다"])
+    changes = {"category": "LOCATION", "subject_name": "다른 종족", "scope_name": "다른 조건"}
+    update = {"candidate_id": "second", "setting_name": "양육", "source_values": ["아이들이 배우며 자란다"]}
+    key = {"category": "category", "subject": "subject_name", "scope": "scope_name"}.get(invalid)
+    if key:
+        update[key] = changes[key]
+    second = first.model_copy(update=update)
+    decision = WorldStage2Prediction(source_candidate_id="first", source_candidate_ids=["first", "second"],
+                                    domain="WORLD", operation="ADD", consolidation_status="MERGED",
+                                    proposed_scope_name=None, proposed_setting_name="성장 교육", proposed_value="장로에게 배우며 자란다")
+    with pytest.raises(ValueError):
+        apply_prediction_decision(EvaluationState(), _scenario({"WORLD"}), first, decision,
+                                  source_candidates=[first] if invalid == "missing" else [first, second])
+
+
+@pytest.mark.parametrize("same_ref", [False, True])
+def test_actual_world_merge_uses_resolved_subject_identity_before_raw_name(same_ref):
+    identity = "canonical-world:1"
+    first = WorldStage1Prediction(candidate_id="first", sort_order=1, domain="WORLD", category="RACE",
+        subject_name="고블린", subject_ref=identity, setting_name="교육", source_values=["장로가 가르친다"])
+    second = first.model_copy(update={"candidate_id": "second", "setting_name": "양육", "source_values": ["아이들이 배우며 자란다"],
+        "subject_name": "녹색 종족" if same_ref else "고블린", "subject_ref": identity if same_ref else "canonical-world:2"})
+    existing = WorldStateEntry(ref=world_state_ref("RACE", "고블린", None, "기원", subject_ref=identity),
+        subject_ref=identity, category="RACE", subject_name="고블린", setting_name="기원", value="오래된 종족이다")
+    decision = WorldStage2Prediction(source_candidate_id="first", source_candidate_ids=["first", "second"], domain="WORLD",
+        operation="ADD", consolidation_status="MERGED", target_ref=world_subject_ref("RACE", "고블린", subject_ref=identity),
+        proposed_scope_name=None, proposed_setting_name="성장 교육", proposed_value="장로에게 배우며 자란다")
+    if same_ref:
+        after, _ = apply_prediction_decision(EvaluationState(world_facts=[existing]), _scenario({"WORLD"}), first, decision,
+                                            source_candidates=[first, second])
+        assert len(after.world_facts) == 2
+        assert after.world_facts[-1].subject_ref == identity
+    else:
+        with pytest.raises(ValueError, match="canonical subject"):
+            apply_prediction_decision(EvaluationState(world_facts=[existing]), _scenario({"WORLD"}), first, decision,
+                                      source_candidates=[first, second])
 
 
 def _world_source(

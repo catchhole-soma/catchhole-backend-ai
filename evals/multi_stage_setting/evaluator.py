@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass, replace
 from decimal import Decimal
-import hashlib
 from typing import Any
 
 from app.domain.enums import (
@@ -13,6 +13,7 @@ from app.domain.enums import (
     WorldSettingOperation,
 )
 from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
+from evals.multi_stage_setting.comparison_diagnostics import comparison_failure_case
 from evals.multi_stage_setting.character_semantics import (
     character_fact_key_spelling_matches,
     character_setting_ref_mapping,
@@ -50,7 +51,12 @@ from evals.multi_stage_setting.contracts import (
     character_state_ref,
     stage2_source_candidate_ids,
     world_entry_subject_ref,
+    world_path_key,
     world_subject_ref,
+)
+from evals.multi_stage_setting.experimental_identity import (
+    ScoringIdentityAlignment,
+    build_scoring_identity_alignment,
 )
 from evals.multi_stage_setting.matching import (
     FieldMatchStatus,
@@ -61,11 +67,12 @@ from evals.multi_stage_setting.matching import (
     world_setting_context_matches,
     world_setting_name_pairs,
 )
-from evals.multi_stage_setting.experimental_identity import (
-    ScoringIdentityAlignment,
-    build_scoring_identity_alignment,
-)
 from evals.multi_stage_setting.processing import processing_outcomes
+from evals.multi_stage_setting.reviewed_repeats import (
+    CharacterRepeatProvenanceBundle,
+    reviewed_repeat_diagnostics,
+    validate_repeat_provenance,
+)
 from evals.multi_stage_setting.semantic_outcome import (
     CharacterSettingContext,
     SemanticOutcomeCase,
@@ -101,6 +108,8 @@ class Stage2Case:
     removed_matched: bool | None = None
     temporal_matched: bool | None = None
     consolidation_matched: bool | None = None
+    world_consolidation_contract_matched: bool | None = None
+    world_consolidation_source_matches: tuple[Stage1Match, ...] = ()
     proposed_path_matched: bool | None = None
     root_property_moves_matched: bool | None = None
     value_matched: bool | None = None
@@ -113,6 +122,7 @@ class Stage2Case:
     matched_property_semantic_case_id: str | None = None
     world_target_context_matched: bool | None = None
     world_proposed_scope_matched: bool | None = None
+    world_exclude_proposed_path_allowed: bool | None = None
     world_path_preserved_matched: bool | None = None
     world_application_matched: bool | None = None
     proposed_scope_semantic_case_id: str | None = None
@@ -161,11 +171,17 @@ async def evaluate_multi_stage(
     predictions: PredictionBundleV3,
     *,
     semantic_judge: SemanticOutcomeJudge | None = None,
+    character_repeat_provenance: dict[str, Any] | CharacterRepeatProvenanceBundle | None = None,
 ) -> dict[str, Any]:
     if gold.fixture_hash is None:
         gold = gold.with_fixture_hash()
     if predictions.fixture_hash != gold.fixture_hash:
         raise ValueError("Prediction bundle fixtureHash does not match Gold.")
+    # Bind review to the original payload, before any scorer-only identity alignment.
+    repeat_provenance = (
+        validate_repeat_provenance(character_repeat_provenance, gold, predictions)
+        if character_repeat_provenance is not None else None
+    )
 
     gold_chain = build_gold_state_chain(gold)
     scoring_alignment = None
@@ -188,6 +204,7 @@ async def evaluate_multi_stage(
         raise ValueError(f"Prediction bundle selects unknown scenarios: {unknown_selected_ids}")
     enabled_domains = predictions.evaluation_domains
     stage1_results: dict[tuple[str, EvaluationDomain], Stage1MatchingResult] = {}
+    reviewed_repeats: dict[str, list[dict[str, Any]]] = {}
     state_stage1_results: dict[tuple[str, EvaluationDomain], Stage1MatchingResult] = {}
     semantic_cases: list[SemanticOutcomeCase] = []
     semantic_decisions: dict[str, Any] = {}
@@ -296,6 +313,15 @@ async def evaluate_multi_stage(
                     },
                 )
                 stage1_results[(scenario.scenario_id, domain)] = result
+                if (domain == EvaluationDomain.CHARACTER and repeat_provenance is not None
+                        and scenario.scenario_id in repeat_provenance.scenarios):
+                    reviewed_repeats[scenario.scenario_id] = reviewed_repeat_diagnostics(
+                        repeat_provenance.scenarios[scenario.scenario_id],
+                        scenario.source_text,
+                        scenario_prediction,
+                        [row for row in rows if isinstance(row, CharacterStage1Gold)],
+                        result,
+                    )
                 # Judge output must not change reducer inputs, application order, or raw hashes.
                 state_stage1_results[(scenario.scenario_id, domain)] = match_stage1(
                     rows,
@@ -425,6 +451,7 @@ async def evaluate_multi_stage(
         semantic_decisions,
         evaluated=predictions.mode != EvaluationMode.ORACLE,
         enabled_domains=enabled_domains,
+        reviewed_repeats=reviewed_repeats,
     )
     stage2_report = _build_stage2_report(
         stage2_cases,
@@ -528,6 +555,7 @@ async def evaluate_multi_stage(
             state_application_errors,
             selected_ids,
             semantic_decisions,
+            reviewed_repeats=reviewed_repeats,
         ),
     }
     if predictions.mode in {EvaluationMode.COMMON_START, EvaluationMode.ORDERED_PROVISIONAL}:
@@ -773,7 +801,7 @@ def _add_character_scoring_ref_maps(
             _evaluation_state_values(actual.before_state, EvaluationDomain.CHARACTER)
         )
         actual_after = set(_evaluation_state_values(actual.after_state, EvaluationDomain.CHARACTER))
-        approved, pending = [], []
+        approved, pending, declared_aliases = [], [], []
         history_sources = set()
         for case in cases:
             if (
@@ -804,6 +832,11 @@ def _add_character_scoring_ref_maps(
                     identity[1] = f"prediction:{case.prediction.source_candidate_id}"
                     history_sources.add((identity[0], source.gold_id, identity[1]))
                     pairs.append((ref, _effect_ref(kind, tuple(identity))))
+            if any(
+                character_fact_key_spelling_matches(alias, case.prediction.resolved_canonical_fact_key)
+                for alias in source.accepted_fact_key_aliases
+            ):
+                declared_aliases.extend(pairs)
             (
                 pending
                 if case.canonical_fact_key_matched is None or case.upstream_semantic_pending
@@ -814,9 +847,12 @@ def _add_character_scoring_ref_maps(
             actual_before,
             approved + pending,
             history_source_matches=history_sources,
+            declared_alias_pairs=declared_aliases,
         )
         after_map = character_setting_ref_mapping(
-            expected_after, actual_after, approved + pending, history_source_matches=history_sources
+            expected_after, actual_after, approved + pending,
+            history_source_matches=history_sources,
+            declared_alias_pairs=declared_aliases,
         )
         world = maps[scenario_id]
         maps[scenario_id] = ScoringRefMaps(
@@ -1079,6 +1115,12 @@ def _evaluate_stage2_cases(
             ),
             expected_world_subject_ref=expected_world_subject_ref,
             expected_world_source=expected_world_source,
+            world_exclude_proposed_path_allowed=(
+                _world_exclude_proposed_path_allowed(prediction, scenario_prediction.stage1,
+                                                     predicted_chain[decision.scenario_id].before_state)
+                if isinstance(prediction, WorldStage2Prediction)
+                and prediction.operation == WorldSettingOperation.EXCLUDE else None
+            ),
             allow_projected_world_target_equivalence=(
                 isinstance(decision, WorldStage2Gold)
                 and isinstance(prediction, WorldStage2Prediction)
@@ -1102,6 +1144,15 @@ def _evaluate_stage2_cases(
             if source_id in candidate_ids
         )
         if isinstance(decision, WorldStage2Gold):
+            assert isinstance(prediction, WorldStage2Prediction)
+            (
+                case.world_consolidation_contract_matched,
+                case.world_consolidation_source_matches,
+            ) = _world_consolidation_contract(
+                decision, prediction, scenario_prediction, source_rows,
+                None if predictions.mode == EvaluationMode.ORACLE else matching,
+            )
+            case.consolidation_matched = _world_consolidation_result(case, {})
             case.related_world_paths = _world_decision_paths(
                 expected_world_source,
                 gold,
@@ -1122,6 +1173,95 @@ def _evaluate_stage2_cases(
         semantic_cases.extend(_stage2_semantic_cases(case, source_rows))
         cases.append(case)
     return cases
+
+
+def _world_consolidation_contract(
+    gold: WorldStage2Gold,
+    prediction: WorldStage2Prediction,
+    scenario: ScenarioPrediction,
+    gold_sources: list[Stage1Gold],
+    matching: Stage1MatchingResult | None,
+) -> tuple[bool, tuple[Stage1Match, ...]]:
+    """Validate the complete linked input, reusing its existing Stage1 meaning judgment."""
+    linked_ids = stage2_source_candidate_ids(prediction)
+    if len(set(linked_ids)) != len(linked_ids):
+        return False, ()
+    uses = Counter(
+        source_id for decision in scenario.stage2
+        for source_id in stage2_source_candidate_ids(decision)
+    )
+    if any(uses[source_id] != 1 for source_id in linked_ids):
+        return False, ()
+    if matching is None:
+        # ORACLE handoff is the whole Gold decision group when only its primary ID is stored.
+        if prediction.source_candidate_ids and set(linked_ids) != set(gold.source_gold_ids):
+            return False, ()
+        sources = [row for row in gold_sources if isinstance(row, WorldStage1Gold)]
+        matches = ()
+    else:
+        source_ids = set(gold.source_gold_ids)
+        matches = tuple(
+            match for match in matching.matches if source_ids.intersection(match.source_gold_ids)
+        )
+        if (
+            not matches
+            or {source_id for match in matches for source_id in match.source_gold_ids} != source_ids
+            or any(match.identity_matched is False for match in matches)
+        ):
+            return False, ()
+        paths = {
+            world_path_key(row.category, row.subject_name, row.scope_name, row.setting_name)
+            for match in matches
+            if isinstance((row := match.prediction), WorldStage1Prediction)
+        }
+        # Matching consolidates original candidates by raw path; a decision must retain all of them.
+        sources = [
+            row for row in scenario.stage1 if isinstance(row, WorldStage1Prediction)
+            and world_path_key(row.category, row.subject_name, row.scope_name, row.setting_name)
+            in paths
+        ]
+        if {row.candidate_id for row in sources} != set(linked_ids):
+            return False, matches
+    # Runtime batch validation counts every linked source value, including equal values
+    # supplied by different candidates. Each candidate's own sourceValues are already unique.
+    values = [
+        normalize_world_setting_name(value) for row in sources for value in row.source_values
+    ]
+    if matching is None:
+        # ORACLE Gold rows describe one preconsolidated handoff, not distinct runtime candidates.
+        values = list(dict.fromkeys(values))
+    if not values:
+        return False, matches
+    if gold.consolidation_status == WorldSettingConsolidationStatus.CONFLICT:
+        contract_matched = (
+            len(set(values)) > 1
+            and prediction.consolidation_status == WorldSettingConsolidationStatus.CONFLICT
+        )
+    else:
+        expected = (
+            WorldSettingConsolidationStatus.SINGLE if len(values) == 1
+            else WorldSettingConsolidationStatus.MERGED
+        )
+        contract_matched = prediction.consolidation_status == expected
+    return contract_matched, matches
+
+
+def _world_consolidation_result(case: Stage2Case, decisions: dict[str, Any]) -> bool | None:
+    assert isinstance(case.gold, WorldStage2Gold)
+    assert isinstance(case.prediction, WorldStage2Prediction)
+    same_single = (
+        case.gold.consolidation_status == case.prediction.consolidation_status
+        == WorldSettingConsolidationStatus.SINGLE
+    )
+    return _all_or_pending([
+        case.world_consolidation_contract_matched,
+        *(match.identity_matched for match in case.world_consolidation_source_matches),
+        *(
+            {"MATCH": True, "MISMATCH": False}.get(_resolved_stage1_value_status(match, decisions))
+            for match in case.world_consolidation_source_matches
+            if not same_single
+        ),
+    ])
 
 
 def _world_decision_paths(
@@ -1183,6 +1323,29 @@ def _world_decision_paths(
     return tuple(paths)
 
 
+def _world_exclude_proposed_path_allowed(prediction, sources, before):
+    """EXCLUDE describes its original assertion or real match; it does not write a path."""
+    linked = set(stage2_source_candidate_ids(prediction))
+    selected = [row for row in sources if row.candidate_id in linked]
+    if (len(selected) != len(linked) or not selected
+            or any(not isinstance(row, WorldStage1Prediction) for row in selected)):
+        return False
+    source_paths = {(normalize_world_setting_name(row.scope_name or ""),
+                     normalize_world_setting_name(row.setting_name)) for row in selected}
+    proposed = (normalize_world_setting_name(prediction.proposed_scope_name or ""),
+                normalize_world_setting_name(prediction.proposed_setting_name))
+    if prediction.matched_property_name is None:
+        return prediction.target_ref is None and proposed in source_paths
+    matched = next((row for row in before.world_facts if row.ref == prediction.target_ref
+                    and _same_world_name(row.scope_name, prediction.matched_scope_name)
+                    and _same_world_name(row.setting_name, prediction.matched_property_name)), None)
+    if matched is None or any(row.category != matched.category for row in selected):
+        return False
+    matched_path = (normalize_world_setting_name(matched.scope_name or ""),
+                    normalize_world_setting_name(matched.setting_name))
+    return proposed in source_paths or proposed == matched_path
+
+
 def _score_stage2_case(
     gold: CharacterStage2Gold | WorldStage2Gold,
     prediction: CharacterStage2Prediction | WorldStage2Prediction,
@@ -1192,6 +1355,7 @@ def _score_stage2_case(
     actual_character_source: CharacterStage1Prediction | None = None,
     expected_world_subject_ref: str | None = None,
     expected_world_source: WorldStage1Gold | None = None,
+    world_exclude_proposed_path_allowed: bool | None = None,
     allow_projected_world_target_equivalence: bool = False,
 ) -> Stage2Case:
     if isinstance(gold, CharacterStage2Gold) and isinstance(prediction, CharacterStage2Prediction):
@@ -1216,8 +1380,13 @@ def _score_stage2_case(
         else:
             value_matched = None
         assert expected_character_fact_key is not None
-        canonical_fact_key_matched = character_fact_key_spelling_matches(
-            expected_character_fact_key, prediction.resolved_canonical_fact_key
+        canonical_fact_key_matched = any(
+            character_fact_key_spelling_matches(key, prediction.resolved_canonical_fact_key)
+            for key in (
+                expected_character_fact_key,
+                *(expected_character_source.accepted_fact_key_aliases
+                  if expected_character_source is not None else ()),
+            )
         )
         character_context = None
         if (
@@ -1315,13 +1484,19 @@ def _score_stage2_case(
         target_context_matched = target_ref_matched and _same_world_name(
             gold.matched_scope_name, prediction.matched_scope_name
         )
+        strict_exclude_match = (target_context_matched and _same_world_name(
+            gold.matched_property_name, prediction.matched_property_name,
+        ))
         scope_matched: bool | None = _same_world_name(
             gold.proposed_scope_name, prediction.proposed_scope_name
         )
         if (
             not scope_matched
-            and gold.operation == WorldSettingOperation.ADD
-            and prediction.operation == WorldSettingOperation.ADD
+            and (gold.operation == prediction.operation == WorldSettingOperation.ADD or (
+                gold.operation == prediction.operation == WorldSettingOperation.EXCLUDE
+                and strict_exclude_match and gold.matched_property_name is not None
+                and world_exclude_proposed_path_allowed is True
+            ))
             and expected_world_source is not None
         ):
             scope_matched = None
@@ -1347,6 +1522,9 @@ def _score_stage2_case(
         )
         target_matched = _all_or_pending([target_context_matched, property_matched])
         path_matched = _all_or_pending([scope_matched, setting_matched])
+        if gold.operation == prediction.operation == WorldSettingOperation.EXCLUDE:
+            path_matched = _all_or_pending([path_matched, world_exclude_proposed_path_allowed])
+            target_matched = strict_exclude_match
         path_preserved_matched = (
             _same_world_name(prediction.matched_scope_name, prediction.proposed_scope_name)
             and _same_world_name(prediction.matched_property_name, prediction.proposed_setting_name)
@@ -1406,6 +1584,7 @@ def _score_stage2_case(
             ),
             world_target_context_matched=target_context_matched,
             world_proposed_scope_matched=scope_matched,
+            world_exclude_proposed_path_allowed=world_exclude_proposed_path_allowed,
             world_path_preserved_matched=path_preserved_matched,
         )
     return Stage2Case(
@@ -1701,6 +1880,8 @@ def _build_predicted_state_chain(
                     decision_prediction,
                     matched_gold_source=matched_gold_source,
                     matched_gold_decision=gold_decision,
+                    source_candidates=(scenario_prediction.stage1
+                                       if predictions.mode != EvaluationMode.ORACLE else None),
                 )
             except StateApplicationError:
                 errors.append(
@@ -2331,8 +2512,13 @@ def _apply_semantic_results(
                 (case.setting_name_match or {}).get("status")
             )
         if isinstance(case.gold, WorldStage2Gold):
+            if case.world_consolidation_contract_matched is not None:
+                case.consolidation_matched = _world_consolidation_result(case, decisions)
             case.proposed_path_matched = _all_or_pending(
-                [case.world_proposed_scope_matched, name_matched]
+                [case.world_proposed_scope_matched, name_matched] + (
+                    [case.world_exclude_proposed_path_allowed]
+                    if case.world_exclude_proposed_path_allowed is not None else []
+                )
             )
         if case.matched_property_semantic_case_id is not None:
             property_matched = _stage2_semantic_name_result(
@@ -2430,6 +2616,7 @@ def _build_stage1_report(
     *,
     evaluated: bool,
     enabled_domains: set[EvaluationDomain],
+    reviewed_repeats: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[EvaluationDomain, dict[str, Any]]:
     report = {}
     for domain in EvaluationDomain:
@@ -2562,6 +2749,34 @@ def _build_stage1_report(
                 "groupedPredictions": prediction_count,
             },
         }
+        if domain == EvaluationDomain.CHARACTER and reviewed_repeats:
+            reviews = [group for scenario_id, groups in reviewed_repeats.items()
+                       if scenario_id in selected_ids for group in groups]
+            groups = [group for group in reviews if group["status"] == "GROUPED"]
+            repeated = sum(len(group["candidateIds"]) - 1 for group in groups)
+            stage = report[domain]
+            stage["scoringUnit"] = "REVIEWED_FACT"
+            stage["candidateProcessing"] = {
+                "metrics": {key: stage["metrics"][key] for key in (
+                    "candidatePrecision", "candidateRecall", "candidateF1",
+                )},
+                "counts": dict(stage["counts"]),
+            }
+            fact_prediction_count = prediction_count - repeated
+            precision, recall, f1 = _prf(true_positive, fact_prediction_count, gold_positive)
+            stage["metrics"].update({
+                "candidatePrecision": None if identity_pending else precision,
+                "candidateRecall": None if identity_pending else recall,
+                "candidateF1": None if identity_pending else f1,
+            })
+            stage["counts"].update({
+                "predictions": fact_prediction_count,
+                "groupedPredictions": fact_prediction_count,
+                "extra": stage["counts"]["extra"] - repeated,
+                "repeatedFactGroups": len(groups),
+                "repeatedCandidateProcessing": repeated,
+                "reviewedRepeatGroupsRejected": len(reviews) - len(groups),
+            })
     return report
 
 
@@ -2654,7 +2869,12 @@ def _build_stage2_report(
             "temporalAccuracy": _accuracy(
                 [case.temporal_matched for case in reached if case.temporal_matched is not None]
             ),
-            "consolidationAccuracy": _accuracy(
+            "consolidationAccuracy": None
+            if any(
+                isinstance(case.gold, WorldStage2Gold) and case.consolidation_matched is None
+                for case in reached
+            )
+            else _accuracy(
                 [
                     case.consolidation_matched
                     for case in reached
@@ -2969,6 +3189,8 @@ def _scenario_details(
     state_errors: list[dict[str, str]],
     selected_ids: set[str],
     semantic_decisions: dict[str, Any],
+    *,
+    reviewed_repeats: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     details = []
     stage1_gold_by_id = {item.gold_id: item for item in gold.stage1}
@@ -3054,6 +3276,14 @@ def _scenario_details(
         if scenario_prediction is not None:
             outcomes = processing_outcomes(scenario_prediction)
             source_by_id = {source.candidate_id: source for source in scenario_prediction.stage1}
+            source_labels_by_id = {
+                source.candidate_id: f"{source.subject_name} · " + _world_diagnostic_path(source.scope_name, source.setting_name)
+                for source in scenario_prediction.stage1 if isinstance(source, WorldStage1Prediction)
+            }
+            comparison_failures = {
+                failure.source_id: failure for failure in scenario_prediction.failures
+                if failure.stage in {"CHARACTER_STAGE2", "WORLD_STAGE2"}
+            }
             gold_ids_by_candidate = {}
             for domain_detail in domain_stage1.values():
                 for row in domain_detail["cases"]:
@@ -3090,6 +3320,31 @@ def _scenario_details(
                 if candidate_id in outcomes:
                     row["processing"] = outcomes[candidate_id]
                     row["source"] = _stage1_diagnostic_summary(source_by_id[candidate_id])
+                if candidate_id in comparison_failures:
+                    failure_detail = comparison_failure_case(
+                        comparison_failures[candidate_id], candidate_id, source_labels_by_id,
+                    )
+                    if failure_detail is not None:
+                        row["comparisonFailure"] = failure_detail
+        if reviewed_repeats is not None and scenario.scenario_id in reviewed_repeats:
+            groups = reviewed_repeats[scenario.scenario_id]
+            domain_stage1[EvaluationDomain.CHARACTER.value]["reviewedRepeatGroups"] = groups
+            annotations = {
+                candidate_id: {
+                    "factRepresentativePredictionId": group["representativePredictionId"],
+                    "factGoldIds": group["goldIds"],
+                    **({"repeatOfPredictionId": group["representativePredictionId"]}
+                       if candidate_id != group["representativePredictionId"] else {}),
+                }
+                for group in groups if group["status"] == "GROUPED"
+                for candidate_id in group["candidateIds"]
+            }
+            for row in domain_stage1[EvaluationDomain.CHARACTER.value]["cases"]:
+                row.update(annotations.get(row.get("predictionId"), {}))
+            for row in detail["stage2"]:
+                row.update(annotations.get(row.get("sourceCandidateId"), {}))
+            for row in detail.get("processing", []):
+                row.update(annotations.get(row.get("candidateId"), {}))
     return details
 
 
@@ -3335,7 +3590,9 @@ def _stage2_diagnostic_fields(
                 )
         elif isinstance(case.gold, WorldStage2Gold):
             assert isinstance(prediction, WorldStage2Prediction)
-            fields["consolidation"] = _boolean_match_status(case.consolidation_matched)
+            fields["consolidation"] = _boolean_match_status(
+                case.consolidation_matched, none_status="PENDING"
+            )
             fields["proposedPath"] = _boolean_match_status(
                 case.proposed_path_matched, none_status="PENDING"
             )
@@ -3377,6 +3634,8 @@ def _stage2_prediction_summary(
         "target": _stage2_target_label(prediction.target_ref, before_state),
         "path": _stage2_prediction_path(prediction),
         "value": prediction.proposed_value,
+        **({"comparisonReason": prediction.comparison_reason}
+           if prediction.comparison_reason is not None else {}),
     }
     if isinstance(prediction, CharacterStage2Prediction):
         actual["temporalScope"] = prediction.temporal_scope.value

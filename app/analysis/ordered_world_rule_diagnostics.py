@@ -50,11 +50,16 @@ class OrderedWorldRuleDiagnosticError(ValueError):
 
 
 @contextmanager
-def diagnose_world_rule(enabled, stage, decision_index=None, candidate_refs=()):
+def diagnose_world_rule(enabled, stage, decision_index=None, candidate_refs=(), *, observer=None):
     """Annotate known response rules; unrelated/fixed-input exceptions escape unchanged."""
     try:
         yield
     except ValueError as error:
+        if observer is not None:
+            try:
+                observer(error, stage, decision_index, candidate_refs)
+            except Exception:  # noqa: BLE001, S110 - optional observation cannot change validation.
+                pass
         if not enabled:
             raise
         if type(error) is ValueError and len(error.args) == 1 and type(error.args[0]) is str:

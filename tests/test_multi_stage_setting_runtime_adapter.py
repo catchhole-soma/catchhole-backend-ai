@@ -559,7 +559,7 @@ def test_fixed_runtime_reuses_character_dedupe_and_world_consolidation() -> None
     assert bundle.prompt_versions["characterExtraction"] == "setting-extraction:v12"
     assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v4"
     assert bundle.prompt_versions["worldExtraction"] == "world-setting-extraction:v4"
-    assert bundle.prompt_versions["worldComparison"] == "world-setting-comparison-batch:v10"
+    assert bundle.prompt_versions["worldComparison"] == "world-setting-comparison-batch:v11"
 
 
 @pytest.mark.parametrize("retry_succeeds", [True, False])
@@ -698,7 +698,7 @@ def test_fixed_runtime_preserves_all_sources_for_a_merged_world_decision() -> No
                 decisions=[
                     WorldSettingComparisonBatchDecision(
                         source_candidate_refs=[item.candidate_ref for item in reversed(candidates)],
-                        consolidation_status="SINGLE",
+                        consolidation_status="MERGED",
                         operation="ADD",
                         proposed_setting_name="사냥 방식",
                         proposed_value="함정을 설치하고 주변에 매복한다.",
@@ -748,6 +748,7 @@ def test_fixed_runtime_preserves_all_sources_for_a_merged_world_decision() -> No
     assert decision.source_candidate_id == scenario.stage1[0].candidate_id
     assert decision.proposed_setting_name == "사냥 방식"
     report = asyncio.run(evaluate_multi_stage(gold, bundle))
+    assert report["endToEnd"]["counts"]["stateApplicationErrors"] == 0
     cases = build_public_diagnostics(report)[0]["stage2"]
     assert [case["result"] for case in cases] == ["EXTRA_PROCESSED", "EXTRA_PROCESSED"]
     assert cases[0]["actual"] == cases[1]["actual"]

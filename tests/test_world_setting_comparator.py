@@ -744,7 +744,7 @@ def test_batch_comparator_preserves_canonical_paths_for_unscoped_independent_add
     assert "하위 속성 하나뿐인 범위를 만들지 않는다" in system_prompt
 
 
-def test_batch_comparator_retries_when_projection_leaves_synthetic_scope_singleton() -> None:
+def test_batch_comparator_preserves_scope_siblings_without_automatic_scope_review() -> None:
     candidates = [
         _batch_candidate("C1", "근력", "근력이 높다.").model_copy(
             update={"scope_name": None}
@@ -817,14 +817,9 @@ def test_batch_comparator_retries_when_projection_leaves_synthetic_scope_singlet
         )
     )
 
-    assert len(text_client.requests) == 2
-    assert result.decisions[0].operation == "ADD"
-    assert result.decisions[0].proposed_scope_name is None
-    assert result.decisions[1].operation == "REVIEW_REQUIRED"
-    retry_payload = json.loads(text_client.requests[1]["user_prompt"])
-    assert "at least two distinct final child properties" in retry_payload[
-        "validation_feedback"
-    ]["reason"]
+    assert len(text_client.requests) == 1
+    assert [row.operation for row in result.decisions] == ["ADD", "ADD"]
+    assert [row.proposed_scope_name for row in result.decisions] == ["신체 능력", "신체 능력"]
 
 
 def test_batch_comparator_allows_new_scope_when_later_candidate_relocates_root_sibling() -> None:
@@ -1615,7 +1610,7 @@ def test_comparator_restores_conflicting_source_values_without_retry() -> None:
     assert len(text_client.requests) == 1
 
 
-def test_comparator_never_matches_same_setting_name_from_a_different_scope() -> None:
+def test_comparator_requires_proposed_scope_to_match_actual_stored_path() -> None:
     candidate = _candidate(
         "방향별 몬스터 출몰 규칙",
         "동쪽에서 고블린이 출몰한다.",
@@ -1627,7 +1622,7 @@ def test_comparator_never_matches_same_setting_name_from_a_different_scope() -> 
         "target_ref": "T1",
         "matched_scope_name": "2층",
         "matched_property_name": "방향별 몬스터 출몰 규칙",
-        "proposed_scope_name": "2층",
+        "proposed_scope_name": "1층",
         "proposed_setting_name": "방향별 몬스터 출몰 규칙",
         "proposed_value": candidate.extracted_value,
         "comparison_reason": "다른 층의 기존 설정을 갱신한다.",
@@ -1676,7 +1671,7 @@ def test_comparator_never_matches_same_setting_name_from_a_different_scope() -> 
 
 
 @pytest.mark.parametrize("operation", ["UPDATE", "MERGE", "EXCLUDE", "REVIEW_REQUIRED"])
-def test_comparator_turns_unscoped_same_name_match_into_scope_review(
+def test_comparator_preserves_explicit_operation_for_unscoped_same_name_match(
     operation: str,
 ) -> None:
     candidate = _candidate("광원", "벽의 수정들이 주변을 밝힌다.")
@@ -1713,14 +1708,14 @@ def test_comparator_turns_unscoped_same_name_match_into_scope_review(
         ).compare(candidate, [target])
     )
 
-    assert result.operation == "REVIEW_REQUIRED"
-    assert result.review_reason == "SCOPE_UNRESOLVED"
+    assert result.operation == operation
+    assert result.review_reason == ("SCOPE_UNRESOLVED" if operation == "REVIEW_REQUIRED" else None)
     assert result.matched_scope_name == "1층"
     assert result.matched_property_name == "광원"
-    assert result.proposed_scope_name is None
+    assert result.proposed_scope_name == ("1층" if operation in {"UPDATE", "MERGE"} else None)
     assert result.proposed_setting_name == "광원"
     assert result.proposed_value == candidate.extracted_value
-    assert "범위 확인" in result.comparison_reason
+    assert result.comparison_reason == decision["comparison_reason"]
     assert raw_result == result.model_dump(mode="json")
     assert len(text_client.requests) == 1
 
@@ -1774,8 +1769,8 @@ def test_comparator_scopes_root_property_check_to_selected_target(
         ).compare(candidate, [unrelated_target, selected_target])
     )
 
-    assert result.operation == "REVIEW_REQUIRED"
-    assert result.review_reason == "SCOPE_UNRESOLVED"
+    assert result.operation == operation
+    assert result.review_reason is None
     assert result.target_ref == "T2"
     assert result.matched_scope_name == "1층"
     assert result.matched_property_name == "광원"
@@ -1877,7 +1872,7 @@ def test_comparator_does_not_assign_targetless_add_to_possible_subject() -> None
     assert result.matched_property_name is None
 
 
-def test_comparator_detects_scope_ambiguity_when_model_returns_root_add() -> None:
+def test_comparator_retains_model_root_add_without_inventing_scope_uncertainty() -> None:
     candidate = _candidate("광원", "벽의 수정들이 주변을 밝힌다.")
     decision = {
         "consolidation_status": "SINGLE",
@@ -1911,11 +1906,11 @@ def test_comparator_detects_scope_ambiguity_when_model_returns_root_add() -> Non
         ).compare(candidate, [target])
     )
 
-    assert result.operation == "REVIEW_REQUIRED"
-    assert result.review_reason == "SCOPE_UNRESOLVED"
-    assert result.target_ref == "T1"
-    assert result.matched_scope_name == "1층"
-    assert result.matched_property_name == "광원"
+    assert result.operation == "ADD"
+    assert result.review_reason is None
+    assert result.target_ref is None
+    assert result.matched_scope_name is None
+    assert result.matched_property_name is None
     assert result.proposed_scope_name is None
     assert len(text_client.requests) == 1
 
@@ -1965,7 +1960,7 @@ def test_comparator_does_not_mark_scope_unresolved_when_same_root_property_exist
     assert result.matched_property_name is None
 
 
-def test_comparator_still_retries_unscoped_match_to_different_setting_name() -> None:
+def test_comparator_accepts_semantic_match_to_different_setting_name() -> None:
     candidate = _candidate("광원", "벽의 수정들이 주변을 밝힌다.")
     invalid = {
         "consolidation_status": "SINGLE",
@@ -2009,8 +2004,9 @@ def test_comparator_still_retries_unscoped_match_to_different_setting_name() -> 
         ).compare(candidate, [target])
     )
 
-    assert result.operation == "ADD"
-    assert len(text_client.requests) == 2
+    assert result.operation == "UPDATE"
+    assert result.matched_property_name == "조도"
+    assert len(text_client.requests) == 1
 
 
 def test_batch_comparator_retries_single_for_one_source_with_multiple_values() -> None:
@@ -2075,7 +2071,7 @@ def test_batch_comparator_rebuilds_conflict_value_in_input_candidate_order() -> 
     assert result.decisions[0].proposed_value == "검만 사용한다.\n몽둥이만 사용한다."
 
 
-def test_batch_comparator_normalizes_compatible_multi_source_scope_ambiguity() -> None:
+def test_batch_comparator_preserves_explicit_compatible_multi_source_scope_review() -> None:
     candidates = [
         _batch_candidate("C1", "광원", "벽의 수정이 주변을 밝힌다.").model_copy(
             update={"scope_name": None}
@@ -2102,7 +2098,10 @@ def test_batch_comparator_normalizes_compatible_multi_source_scope_ambiguity() -
                     {
                         "source_candidate_refs": ["C1", "C2"],
                         "consolidation_status": "MERGED",
-                        "operation": "ADD",
+                        "operation": "REVIEW_REQUIRED",
+                        "review_reason": "SCOPE_UNRESOLVED",
+                        "matched_scope_name": "1층",
+                        "matched_property_name": "광원",
                         "target_ref": "T1",
                         "proposed_scope_name": None,
                         "proposed_setting_name": "광원",
@@ -2157,7 +2156,10 @@ def test_batch_comparator_rejects_partially_compatible_scope_ambiguity() -> None
                     {
                         "source_candidate_refs": ["C1", "C2"],
                         "consolidation_status": "MERGED",
-                        "operation": "ADD",
+                        "operation": "REVIEW_REQUIRED",
+                        "review_reason": "SCOPE_UNRESOLVED",
+                        "matched_scope_name": "1층",
+                        "matched_property_name": "광원",
                         "target_ref": "T1",
                         "proposed_scope_name": None,
                         "proposed_setting_name": "광원",

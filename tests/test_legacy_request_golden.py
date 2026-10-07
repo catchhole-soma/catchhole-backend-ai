@@ -67,6 +67,7 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     authorized = {
         **upstream["gh180Overrides"].get(purpose, {}),
         **state_scope_overrides.get(purpose, {}),
+        **json.loads((ROOT / "tests/fixtures/world_semantic_scope_request_overrides.json").read_text())["overrides"].get(purpose, {}),
     }
     assert set(authorized) <= changing
     assert actual[purpose] == {**expected, **authorized}

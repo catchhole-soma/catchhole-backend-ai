@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
@@ -49,6 +50,70 @@ _MAX_ROWS_PER_SECTION = 25
 _MAX_DIAGNOSTIC_ROWS = 200
 _MAX_SUMMARY_BYTES = 900_000
 _MAX_CELL_LENGTH = 180
+_MAX_COMPARISON_REASON_LENGTH = 4000
+_MAX_COMPARISON_ATTEMPTS = 20
+_REVIEW_REASON_LABELS = {
+    "SUBJECT_UNRESOLVED": "설정 대상을 확정하지 못함",
+    "GENERAL_UNCERTAINTY": "대상이나 내용을 확정하기 어려움",
+    "SCOPE_UNRESOLVED": "어느 범위의 설정인지 확인 필요",
+    "SCOPE_MISMATCH": "원본과 기존 설정의 범위 관계 확인 필요",
+    "BATCH_LIMIT_EXCEEDED": "한 번에 비교할 수 있는 처리량을 넘음",
+}
+_COMPARISON_RULE_LABELS = {
+    "SCOPE_UNRESOLVED_SOURCE_INVALID": (
+        "새 항목에 범위가 없고 같은 이름의 기존 설정이 특정 범위에 있을 때만 "
+        "이 검토 방식을 허용합니다. 이번 제안은 그 조건을 충족하지 못했습니다."
+    ),
+    "SOURCE_SCOPE_MISMATCH": "반영할 범위가 원본 후보의 범위와 다름",
+    "SCOPE_MISMATCH_MATCH_REQUIRED": "범위 관계를 검토하려면 실제 기존 설정을 지정해야 함",
+    "SCOPE_MISMATCH_REVIEW_INVALID": "원본 범위와 실제 기존 설정의 범위 관계가 검토 조건을 충족하지 못함",
+    "SCOPE_UNRESOLVED_REVIEW_INVALID": "범위를 확인해야 하는 검토의 원본·대상·경로 조건을 충족하지 못함",
+    "CANONICAL_TARGET_REQUIRED": "비교할 설정 대상을 지정하지 못함",
+    "MATCHED_PROPERTY_REF_INVALID": "비교 대상으로 지정한 기존 설정을 찾을 수 없음",
+    "RESPONSE_SCHEMA_INVALID": "AI 응답이 정해진 결과 형식을 충족하지 못함",
+    "FINAL_PATH_DUPLICATED": "여러 판단이 같은 최종 경로를 사용함",
+    "FINAL_ROOT_SCOPE_CONFLICT": "같은 이름을 설정 항목과 상위 범위로 동시에 사용함",
+    "ADD_MATCH_FORBIDDEN": "새 설정 추가 판단에 기존 설정의 비교 경로를 함께 지정함",
+    "EXCLUDE_TARGET_REQUIRED": "기존 설정과 같은 내용이라는 제외 판단에 비교 대상을 지정하지 못함",
+    "UPDATE_MERGE_MATCH_REQUIRED": "수정·병합할 실제 기존 설정을 지정하지 못함",
+    "STORED_SCOPE_CHANGED": "수정·병합할 기존 설정의 범위를 변경함",
+    "STORED_PROPERTY_CHANGED": "수정·병합할 기존 설정명을 변경함",
+    "SCOPE_EQUALS_PROPERTY": "상위 범위와 하위 설정에 같은 이름을 사용함",
+    "ROOT_MOVE_ADD_REQUIRED": "기존 설정을 옮길 새 범위를 추가하는 판단이 없음",
+    "ROOT_MOVE_REPEATED": "같은 기존 설정을 여러 번 옮기려 함",
+    "ROOT_MOVE_SOURCE_NOT_FOUND": "옮기려는 기존 설정을 찾을 수 없음",
+    "ROOT_MOVE_CHILD_CONFLICT": "옮길 설정이 새 범위의 독립된 하위 항목이 되지 못함",
+    "ROOT_MOVE_DESTINATION_CONFLICT": "옮길 위치에 다른 설정이 이미 있음",
+    "ROOT_MOVE_UPDATE_CONFLICT": "같은 기존 설정을 옮기면서 수정·병합하려 함",
+    "REASON_LOCAL_REFERENCE_FORBIDDEN": "AI 판단 이유에 사용자에게 보여줄 수 없는 내부 참조가 포함됨",
+    "REASON_UUID_FORBIDDEN": "AI 판단 이유에 내부 식별번호가 포함됨",
+    "REASON_INTERNAL_TOKEN_FORBIDDEN": "AI 판단 이유에 내부 처리 용어가 포함됨",
+    "PROVIDER_BUDGET_REVIEW_FORBIDDEN": "응답 처리량 문제를 사용자 검토 판단으로 대신 처리함",
+}
+_PROCESSING_STAGE_LABELS = {
+    "CHARACTER_STAGE1": "캐릭터 설정 추출", "WORLD_STAGE1": "세계관 설정 추출",
+    "CHARACTER_HANDOFF": "캐릭터 비교 대상 연결", "WORLD_HANDOFF": "세계관 비교 대상 연결",
+    "CHARACTER_PREPARATION": "캐릭터 비교 준비", "WORLD_PREPARATION": "세계관 비교 준비",
+    "CHARACTER_STAGE2": "캐릭터 설정 비교", "WORLD_STAGE2": "세계관 설정 비교",
+}
+_FAILURE_CODE_LABELS = {
+    "AI_TOKEN_QUOTA_EXHAUSTED": "사용 가능한 AI 토큰이 부족함",
+    "LLM_OUTPUT_TRUNCATED": "AI 응답이 출력 한도에서 잘림",
+    "LLM_NETWORK_ERROR": "AI 제공자와 통신하지 못함",
+    "LLM_PROVIDER_ERROR": "AI 제공자에서 요청을 처리하지 못함",
+    "LLM_RESPONSE_PARSE_ERROR": "AI 응답을 결과 형식으로 읽지 못함",
+    "COMPARISON_VALIDATION_FAILED": "AI 비교 결과가 처리 규칙을 충족하지 못함",
+    "WORKER_LEASE_EXPIRED": "작업 처리 권한이 만료됨",
+    "UNEXPECTED_ERROR": "예상하지 못한 실행 오류",
+}
+_TEMPORAL_LABELS = {
+    "PRESENT": "현재의 정보", "PAST": "과거의 정보", "HYPOTHETICAL": "가정 속 정보",
+    "UNKNOWN": "시점 확인 필요",
+}
+_CONSOLIDATION_LABELS = {
+    "SINGLE": "추출값 하나를 사용", "MERGED": "여러 추출값을 하나로 합침",
+    "CONFLICT": "추출값이 서로 충돌하여 하나로 확정하지 못함",
+}
 _STAGE1_FIELD_ORDER = ("subject", "path", "value")
 _STAGE2_FIELD_ORDER = (
     "operation",
@@ -73,6 +138,7 @@ _STAGE2_RESULTS = {
     "DECISION_MISMATCH",
     "EXTRA_PROCESSED",
     "EXTRA_NO_DECISION",
+    "COMPARISON_UNSCORED",
 }
 _FIELD_STATUSES = {
     "MATCH",
@@ -189,8 +255,15 @@ def build_public_diagnostics(report: dict[str, Any]) -> list[dict[str, Any]]:
                 cases = _sanitize_cases(raw_domain.get("cases"), _sanitize_stage1_case)
                 if cases:
                     stage1[domain] = {"cases": cases}
+                    if report.get("stages", {}).get(domain, {}).get("stage1", {}).get(
+                        "scoringUnit"
+                    ) == "REVIEWED_FACT":
+                        stage1[domain]["scoringUnit"] = "REVIEWED_FACT"
 
         stage2 = _sanitize_cases(raw_scenario.get("stage2"), _sanitize_stage2_case)
+        if report.get("dataset", {}).get("scorable") is False:
+            for case in stage2:
+                case["result"] = "COMPARISON_UNSCORED"
         processing = _sanitize_cases(raw_scenario.get("processing"), _sanitize_processing)
         if raw_scenario.get("processingVersion") == 1:
             raw_records = raw_scenario.get("processing", [])
@@ -319,7 +392,7 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
         f"`{_count(run.get('outputTokens'))}` · 추정 비용 "
         f"`{_inline(run.get('estimatedCostUsd') or '미설정')}` USD",
         "",
-        "> 공개 보고서는 주체·경로·정규화된 표시값만 보여줍니다. 원문, 근거 quote/offset, "
+        "> 공개 보고서는 주체·경로·표시값과 기록된 AI 비교 이유·검증 결과를 보여줍니다. 원문, 근거 quote/offset, "
         "raw LLM 응답, valueJson은 포함하지 않습니다.",
         "",
         "## 1차 추출 집계",
@@ -379,6 +452,13 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
             f"불필요하게 추출한 설정 {_count(counts.get('extra'))} · "
             f"추출 금지 항목을 추출한 횟수 {_count(counts.get('hardNegativeHits'))}"
         )
+        if stage.get("scoringUnit") == "REVIEWED_FACT":
+            processing = stage.get("candidateProcessing", {})
+            quantity += (
+                f" · 검수된 사실 단위 · 반복 후보 처리 {_count(counts.get('repeatedCandidateProcessing'))}"
+                f" · 후보 처리 진단 기준 F1 "
+                f"{_format_ratio(processing.get('metrics', {}).get('candidateF1'))}"
+            )
         lines.append(
             f"| {domain.upper()} | {_cell(quantity)} | "
             f"P {_format_ratio(metrics.get('candidatePrecision'))}<br>"
@@ -597,6 +677,10 @@ def _stage2_metric_cell(stage: dict[str, Any], key: str) -> str:
 
 def _append_end_to_end(lines: list[str], summary: dict[str, Any]) -> None:
     end_to_end = summary["endToEnd"]
+    reviewed_fact = any(
+        summary.get("stages", {}).get(domain, {}).get("stage1", {}).get("scoringUnit")
+        == "REVIEWED_FACT" for domain in _DOMAINS
+    )
     lines.extend(
         [
             "",
@@ -690,7 +774,10 @@ def _append_end_to_end(lines: list[str], summary: dict[str, Any]) -> None:
                 "(평가 시작 데이터를 준비하는 앞선 회차에서 발생한 반영 오류): "
                 f"`{_count(counts.get('dependencyStateApplicationErrors'))}`"
             ),
-            "- 실패 원인:",
+            (
+                "- 후보 처리 진단의 원시 실패 원인 (사실 품질 오류 수와 별도):"
+                if reviewed_fact else "- 실패 원인:"
+            ),
             "",
             "| 원인 | 건수 |",
             "| --- | ---: |",
@@ -706,7 +793,10 @@ def _append_end_to_end(lines: list[str], summary: dict[str, Any]) -> None:
         failure_explanations = {
             "COMPARISON_ERROR": "2차 판단이 틀렸거나 결과가 없음",
             "EXTRACTION_MISS": "필요한 1차 설정을 제대로 확보하지 못해 2차 채점에서 제외됨",
-            "UPSTREAM_FALSE_POSITIVE": "불필요하게 추출한 설정",
+            "UPSTREAM_FALSE_POSITIVE": (
+                "원시 미매칭 후보 처리 진단; 검수된 반복 포함"
+                if reviewed_fact else "불필요하게 추출한 설정"
+            ),
         }
         for cause, count in nonzero_failures:
             explanation = failure_explanations.get(cause)
@@ -821,6 +911,9 @@ def _append_diagnostics_limited(
             if remaining_rows <= 0:
                 break
             stage1_cases = scenario.get("stage1", {}).get(domain, {}).get("cases", [])
+            reviewed_fact = scenario.get("stage1", {}).get(domain, {}).get(
+                "scoringUnit"
+            ) == "REVIEWED_FACT"
             stage2_cases = [
                 case for case in scenario.get("stage2", []) if case.get("domain") == domain.upper()
             ]
@@ -830,10 +923,12 @@ def _append_diagnostics_limited(
             if stage1_cases:
                 counts = Counter(case["result"] for case in stage1_cases)
                 lines.append(
-                    "**1차 추출 결과** · 완전 일치 "
-                    f"{counts['FULL_MATCH']} · 부분 일치 {counts['PARTIAL_MATCH']} · "
+                    ("**1차 후보 처리 진단** · 완전 일치 " if reviewed_fact
+                     else "**1차 추출 결과** · 완전 일치 ")
+                    + f"{counts['FULL_MATCH']} · 부분 일치 {counts['PARTIAL_MATCH']} · "
                     f"추출하지 못한 설정 {counts['MISSED']} · "
-                    f"불필요하게 추출한 설정 {counts['EXTRA']}"
+                    + (f"원시 미매칭 후보 {counts['EXTRA']} (검수된 반복 포함)" if reviewed_fact
+                       else f"불필요하게 추출한 설정 {counts['EXTRA']}")
                 )
                 lines.append("")
                 remaining_rows = _append_case_tables(
@@ -856,7 +951,8 @@ def _append_diagnostics_limited(
             if stage2_cases:
                 counts = Counter(case["result"] for case in stage2_cases)
                 lines.append(
-                    "**2차 처리 판단 결과** · "
+                    ("**2차 처리 판단 결과(후보 처리 진단)** · " if reviewed_fact
+                     else "**2차 처리 판단 결과** · ")
                     + " · ".join(
                         f"{_result_label(result)} {counts[result]}"
                         for result in (
@@ -874,6 +970,8 @@ def _append_diagnostics_limited(
                     )
                 )
                 lines.append("")
+                if all(case["result"] == "COMPARISON_UNSCORED" for case in stage2_cases):
+                    lines[-2] = f"**2차 비교 진단 (미채점)** · {len(stage2_cases)}건"
                 remaining_rows = _append_case_tables(
                     lines,
                     stage2_cases,
@@ -969,7 +1067,8 @@ def _stage1_row(case: dict[str, Any], domain: str = "character") -> tuple[str, .
     expected = case.get("expected") or {}
     actual = case.get("actual") or {}
     return (
-        _cell(_result_label(case["result"])),
+        _cell("검수된 반복(품질 감점 제외)" if case.get("repeatOfPredictionId")
+              else _result_label(case["result"])),
         _cell(", ".join(case.get("goldIds", [])) or "-"),
         _cell(case.get("predictionId")),
         _comparison_cell(
@@ -982,6 +1081,12 @@ def _stage1_row(case: dict[str, Any], domain: str = "character") -> tuple[str, .
         ),
         _comparison_cell(expected.get("value"), actual.get("value")),
         _diagnostic_reason(case, domain)
+        + (
+            "<br>검수된 반복 사실 — 대표 후보 "
+            + _cell(case["repeatOfPredictionId"])
+            + ", 공유 정답 " + _cell(", ".join(case.get("factGoldIds", [])))
+            if case.get("repeatOfPredictionId") else ""
+        )
         + (
             "<br>"
             + _processing_text(case["processing"])
@@ -1049,20 +1154,110 @@ def _stage2_row(
         actual_text = source_description + "<br>" + _processing_text(processing)
         if case.get("actual"):
             actual_text += "<br>" + _stage2_shape(case["actual"], domain)
+    comparison_failure = case.get("comparisonFailure")
+    if comparison_failure and comparison_failure.get("attempts"):
+        decision = comparison_failure["attempts"][-1].get("decision")
+        if decision:
+            actual_text = source_description + "<br>AI 제안 (미확정)<br>" + _failed_proposal(decision, domain)
     return (
-        _cell(_result_label(case["result"])),
+        _cell("검수된 반복(품질 감점 제외)" if case.get("repeatOfPredictionId")
+              else "2차 판단 미확정 (미채점)" if case["result"] == "COMPARISON_UNSCORED"
+              else "2차 판단 미확정" if comparison_failure
+              else _result_label(case["result"])),
         identifiers,
         _stage2_shape(
             case.get("expected") or {},
             domain,
             ", ".join(subject for subject in expected_subjects if subject),
         )
-        if case.get("expected")
+        if case.get("expected") and case["result"] != "COMPARISON_UNSCORED"
+        else "답지 대응 미채점" if case["result"] == "COMPARISON_UNSCORED"
         else "대응하는 2차 답지 없음",
         actual_text,
         _diagnostic_reason(case, domain, source_cases)
-        + ("<br>" + _processing_reason(processing) if processing else ""),
+        + ("<br>" + _processing_reason(processing) if processing and not comparison_failure else "")
+        + "<br>" + _comparison_explanation(case),
     )
+
+
+def _failed_proposal(decision: dict[str, Any], domain: str) -> str:
+    parts = []
+    if decision.get("operation"):
+        parts.append(_cell("처리 방식: " + _OPERATION_LABELS[decision["operation"]]))
+    if decision.get("reviewReason"):
+        parts.append(_cell("확인할 내용: " + _REVIEW_REASON_LABELS[decision["reviewReason"]]))
+    for key, label in (
+        ("target", "비교 대상"), ("path", "제안한 설정 항목"),
+        ("matchedPath", "기존 설정 항목"), ("value", "제안한 설정값"),
+    ):
+        if decision.get(key):
+            display = decision[key] if key == "value" else _path_label(decision[key], domain)
+            limit = _MAX_COMPARISON_REASON_LENGTH + len(label) + 2 if key == "value" else _MAX_CELL_LENGTH
+            parts.append(_cell(label + ": " + display, limit=limit))
+    return "<br>".join(parts) or "제안 기록 없음"
+
+
+def _comparison_explanation(case: dict[str, Any]) -> str:
+    failure = case.get("comparisonFailure")
+    if not failure:
+        reason = (case.get("actual") or {}).get("comparisonReason")
+        return "AI 판단 이유: " + _reason_cell(reason)
+    attempts = failure.get("attempts", [])
+    latest = attempts[-1] if attempts else {}
+    decision = latest.get("decision") or {}
+    parts = ["AI 판단 이유: " + _reason_cell(decision.get("comparisonReason"))]
+    if failure["status"] == "BATCH_ABORTED":
+        parts.append("검증 결과: 다른 항목에서 검증이 중단되어 이 항목의 판단은 확정되지 않음")
+        names = latest.get("rejectedSourceNames", [])
+        if names:
+            parts.append("중단을 일으킨 항목: " + _cell(", ".join(names)))
+    elif failure["status"] == "REJECTED":
+        rule = _COMPARISON_RULE_LABELS.get(latest.get("ruleCode"), "거절 규칙의 기록이 없어 확인할 수 없음")
+        source_path = (case.get("source") or {}).get("path")
+        matched_path = decision.get("matchedPath")
+        if (latest.get("ruleCode") == "SCOPE_UNRESOLVED_SOURCE_INVALID"
+                and source_path and matched_path and decision.get("matchedPathVerified")
+                and source_path.rsplit(" › ", 1)[-1] != matched_path.rsplit(" › ", 1)[-1]):
+            rule = "이 검토 방식은 새 항목과 기존 항목의 이름이 같아야 합니다. 이번 제안은 그 조건을 충족하지 못했습니다."
+        parts.append("시스템 검증에서 거절: " + _cell(rule))
+    else:
+        known_failure = {
+            "RESPONSE_SCHEMA_INVALID": "답변 형식 검증 실패. 어느 항목이 원인인지는 특정하지 못함",
+            "RESPONSE_JSON_INVALID": "답변을 읽을 수 있는 형식이 아님. 어느 항목이 원인인지는 특정하지 못함",
+        }.get(latest.get("ruleCode"))
+        parts.append("검증 결과: " + (
+            known_failure or "응답 검증이 중단되어 이 항목을 거절한 구체적인 조건은 확인할 수 없음"
+            if attempts else "기록이 없어 확인할 수 없음"
+        ))
+    parts.append("영향: 이번 비교 결과를 확정·반영하지 못함")
+    previous = []
+    identity_keys = ("operation", "reviewReason", "target", "path", "matchedPath", "value")
+    latest_identity = tuple(decision.get(key) for key in identity_keys)
+    seen = {latest_identity}
+    for attempt in attempts[:-1]:
+        proposal = attempt.get("decision")
+        identity = tuple((proposal or {}).get(key) for key in identity_keys)
+        if proposal and identity not in seen:
+            previous.append(proposal)
+            seen.add(identity)
+    if previous:
+        parts.append(f"앞선 제안 {len(previous)}건은 상세 기록에서 확인할 수 있음")
+    return "<br>".join(parts)
+
+
+def _reason_cell(value: Any) -> str:
+    return _cell(_human_comparison_text(value), limit=_MAX_COMPARISON_REASON_LENGTH) if value else "기록이 없어 확인할 수 없음"
+
+
+def _human_comparison_text(value: Any) -> str:
+    text = str(value or "")
+    prefix, suffix = r"(?<![A-Za-z0-9_])", r"(?![A-Za-z0-9_])"
+    text = re.sub(prefix + r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}" + suffix,
+                  "내부 식별번호", text)
+    text = re.sub(prefix + r"[CSTPQ]\d+(?:\.P\d+)?" + suffix, "내부 참조", text)
+    labels = _OPERATION_LABELS | _REVIEW_REASON_LABELS | _COMPARISON_RULE_LABELS | _PROCESSING_STAGE_LABELS
+    return re.sub(prefix + "(?:" + "|".join(map(re.escape, labels)) + ")" + suffix,
+                  lambda match: labels[match[0]], text)
 
 
 def _stage2_shape(
@@ -1088,26 +1283,12 @@ def _stage2_shape(
     if value.get("temporalScope") is not None:
         parts.append(
             "정보의 시점: "
-            + _explained(
-                value["temporalScope"],
-                {
-                    "PRESENT": "현재의 정보",
-                    "PAST": "과거의 정보",
-                    "HYPOTHETICAL": "가정 속 정보",
-                },
-            )
+            + _explained(value["temporalScope"], _TEMPORAL_LABELS)
         )
     if value.get("consolidationStatus") is not None:
         parts.append(
             "추출값 통합 판단: "
-            + _explained(
-                value["consolidationStatus"],
-                {
-                    "SINGLE": "추출값 하나를 사용",
-                    "MERGED": "여러 추출값을 하나로 합침",
-                    "CONFLICT": "추출값이 서로 충돌하여 하나로 확정하지 못함",
-                },
-            )
+            + _explained(value["consolidationStatus"], _CONSOLIDATION_LABELS)
         )
     removed_paths = value.get("removedPaths") or []
     if removed_paths:
@@ -1128,6 +1309,13 @@ def _diagnostic_reason(
     source_cases: list[dict[str, Any]] | None = None,
 ) -> str:
     result = case["result"]
+    if result == "COMPARISON_UNSCORED":
+        return "실행 중 남긴 비교 진단입니다. 답지 대응과 점수는 채점하지 않았습니다."
+    if case.get("repeatOfPredictionId"):
+        return (
+            "앞선 후보와 같은 현재 사실임을 검수해 1차 사실 품질 점수에서 추가 감점하지 않습니다."
+            "<br>실제 2차 판단과 상태 반영은 후보 처리 진단에 보존합니다."
+        )
     if result == "MISSED":
         return "이 답지 항목에 대응하는 모델 추출 결과를 찾지 못했습니다."
     if result == "EXTRA":
@@ -1235,6 +1423,10 @@ def _field_difference_lines(case: dict[str, Any], domain: str) -> list[str]:
                 if name == "operation":
                     gold_value = _explained(gold_value, _OPERATION_LABELS)
                     model_value = _explained(model_value, _OPERATION_LABELS)
+                elif name in {"temporal", "consolidation"}:
+                    labels = _TEMPORAL_LABELS if name == "temporal" else _CONSOLIDATION_LABELS
+                    gold_value = _explained(gold_value, labels)
+                    model_value = _explained(model_value, labels)
                 parts.append(
                     f"{label} 불일치 — 답지: {gold_value or '표시된 내용 없음'} / "
                     f"모델: {model_value or '표시된 내용 없음'}"
@@ -1311,7 +1503,7 @@ def _axis_label(name: str, domain: str) -> str:
 
 def _explained(value: Any, labels: dict[str, str]) -> str:
     text = str(value or "")
-    return f"{text} ({labels[text]})" if text in labels else text
+    return labels.get(text, text)
 
 
 def _path_label(value: Any, domain: str) -> str:
@@ -1365,6 +1557,7 @@ def _result_label(value: str) -> str:
         "DECISION_MISMATCH": "판단 불일치 (처리 방식이나 반영할 정보 등이 답지와 다름)",
         "EXTRA_PROCESSED": "과추출 항목의 2차 처리",
         "EXTRA_NO_DECISION": "과추출 항목의 2차 결과 없음",
+        "COMPARISON_UNSCORED": "2차 판단 미확정 (미채점)",
     }.get(value, value)
 
 
@@ -1454,9 +1647,9 @@ def _processing_text(record: dict[str, Any]) -> str:
 def _processing_reason(record: dict[str, Any]) -> str:
     parts = [_PROCESSING_REASONS[record["reasonCode"]]]
     if record.get("stage"):
-        parts.append("단계: " + record["stage"])
+        parts.append("단계: " + _PROCESSING_STAGE_LABELS[record["stage"]])
     if record.get("failureCode"):
-        parts.append("사유 코드: " + record["failureCode"])
+        parts.append("실패 이유: " + _FAILURE_CODE_LABELS[record["failureCode"]])
     if record.get("recordOrigin") == "LEGACY_CONFIRMED":
         parts.append("기존 기록에서 확인된 사실만 복원")
     return "<br>".join(_cell(part) for part in parts)
@@ -1496,6 +1689,7 @@ def _sanitize_stage1_case(value: dict[str, Any]) -> dict[str, Any] | None:
         sanitized["processing"] = processing
     if isinstance(value.get("source"), dict):
         sanitized["source"] = {key: _text(value["source"].get(key)) for key in ("subject", "path")}
+    sanitized.update(_sanitize_repeat_annotation(value))
     return sanitized
 
 
@@ -1524,9 +1718,24 @@ def _sanitize_stage2_case(value: dict[str, Any]) -> dict[str, Any] | None:
         sanitized["matchedPropertyNameMatch"] = property_match
     if (processing := _sanitize_processing(value.get("processing"))) is not None:
         sanitized["processing"] = processing
+    if (failure := _sanitize_comparison_failure(value.get("comparisonFailure"))) is not None:
+        sanitized["comparisonFailure"] = failure
     if isinstance(value.get("source"), dict):
         sanitized["source"] = {key: _text(value["source"].get(key)) for key in ("subject", "path")}
+    sanitized.update(_sanitize_repeat_annotation(value))
     return sanitized
+
+
+def _sanitize_repeat_annotation(value: dict[str, Any]) -> dict[str, Any]:
+    representative = _text(value.get("factRepresentativePredictionId"))
+    if representative is None:
+        return {}
+    return {
+        "factRepresentativePredictionId": representative,
+        "factGoldIds": _text_list(value.get("factGoldIds")),
+        **({"repeatOfPredictionId": _text(value["repeatOfPredictionId"])}
+           if "repeatOfPredictionId" in value else {}),
+    }
 
 
 def _sanitize_setting_name_match(value: Any) -> dict[str, str] | None:
@@ -1558,11 +1767,54 @@ def _sanitize_stage2_summary(value: Any) -> dict[str, Any] | None:
         "consolidationStatus",
     )
     result: dict[str, Any] = {key: _text(value.get(key)) for key in text_keys}
+    if "comparisonReason" in value:
+        result["comparisonReason"] = _bounded_comparison_text(value.get("comparisonReason"))
     result["removedCount"] = _integer(value.get("removedCount"))
     result["removedPaths"] = _text_list(value.get("removedPaths"))
     result["rootMoveCount"] = _integer(value.get("rootMoveCount"))
     result["rootMoveNames"] = _text_list(value.get("rootMoveNames"))
     return result
+
+
+def _sanitize_comparison_failure(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    status = _choice(value.get("status"), {"REJECTED", "BATCH_ABORTED", "UNKNOWN"})
+    if status is None:
+        return None
+    attempts = []
+    raw_attempts = value.get("attempts", [])
+    for raw in (raw_attempts[-_MAX_COMPARISON_ATTEMPTS:] if isinstance(raw_attempts, list) else []):
+        if not isinstance(raw, dict):
+            continue
+        decision = raw.get("decision")
+        if isinstance(decision, dict):
+            verified = decision.get("matchedPathVerified") is True
+            decision = {
+                "operation": _choice(decision.get("operation"), set(_OPERATION_LABELS)),
+                "reviewReason": _choice(decision.get("reviewReason"), set(_REVIEW_REASON_LABELS)),
+                **{key: _bounded_comparison_text(decision.get(key)) for key in ("comparisonReason", "target", "path", "value")},
+                "matchedPath": _bounded_comparison_text(decision.get("matchedPath")) if verified else None,
+                "matchedPathVerified": verified,
+            }
+        else:
+            decision = None
+        attempts.append({
+            "attemptNumber": _integer(raw.get("attemptNumber")),
+            "ruleCode": _bounded_comparison_text(raw.get("ruleCode"), limit=120),
+            "stage": _choice(raw.get("stage"), {"RESPONSE_SCHEMA", "PROPERTY_SELECTION", "DECISION_VALIDATION", "SCOPE_PLAN", "PROJECTED_SCOPE_PLAN"}),
+            "rejectedSourceIds": [text[:180] for text in _text_list(raw.get("rejectedSourceIds"))[:20]],
+            "rejectedSourceNames": [text[:500] for text in _text_list(raw.get("rejectedSourceNames"))[:20]],
+            "decision": decision,
+        })
+    return {"status": status, "attempts": attempts}
+
+
+def _bounded_comparison_text(value: Any, *, limit: int = _MAX_COMPARISON_REASON_LENGTH) -> str | None:
+    text = _text(value)
+    if not text or not text.strip():
+        return None
+    return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
 def _sanitize_runtime_failures(value: Any) -> dict[str, Any]:
@@ -1601,7 +1853,9 @@ def _aggregate_only(
     include_domains: bool = False,
 ) -> dict[str, Any]:
     result = {
-        key: value[key] for key in ("evaluated", "reason", "metrics", "counts") if key in value
+        key: value[key] for key in (
+            "evaluated", "reason", "metrics", "counts", "scoringUnit", "candidateProcessing",
+        ) if key in value
     }
     if include_domains:
         result["domains"] = value.get("domains", {})
@@ -1635,12 +1889,12 @@ def _matched_count(accuracy: Any, total: int) -> int:
     return max(0, min(total, round(float(accuracy) * total)))
 
 
-def _cell(value: Any) -> str:
+def _cell(value: Any, *, limit: int = _MAX_CELL_LENGTH) -> str:
     if value is None or value == "":
         return "-"
     text = str(value).replace("\r\n", "\n").replace("\r", "\n").replace("\n", " / ")
-    if len(text) > _MAX_CELL_LENGTH:
-        text = text[: _MAX_CELL_LENGTH - 1] + "…"
+    if len(text) > limit:
+        text = text[: limit - 1] + "…"
     escaped = html.escape(text, quote=False)
     return escaped.translate(
         str.maketrans(
@@ -1684,6 +1938,7 @@ def _format_axis_ratio(value: Any, counts: Counter[str]) -> str:
 def main() -> None:
     args = _parse_args()
     if args.predictions is not None:
+        from evals.multi_stage_setting.comparison_diagnostics import comparison_failure_case
         from evals.multi_stage_setting.contracts import PredictionBundleV3
         from evals.multi_stage_setting.processing import processing_outcomes
 
@@ -1720,6 +1975,31 @@ def main() -> None:
                         "goldCorrespondence": "NOT_EVALUATED",
                     }
                 )
+            failure_by_source = {
+                failure.source_id: failure for failure in scenario.failures
+                if failure.stage in {"CHARACTER_STAGE2", "WORLD_STAGE2"}
+            }
+            source_labels = {
+                record["candidateId"]: " · ".join(
+                    part for part in (
+                        _subject_label(record["source"]["subject"], record["domain"].lower()),
+                        record["source"]["path"],
+                    ) if part
+                ) for record in records
+            }
+            cases = []
+            for record in records:
+                candidate_id = record["candidateId"]
+                failure = failure_by_source.get(candidate_id)
+                if failure is None:
+                    continue
+                detail = comparison_failure_case(failure, candidate_id, source_labels)
+                if detail is not None:
+                    cases.append({
+                        "result": "COMPARISON_UNSCORED", "domain": record["domain"],
+                        "sourceCandidateId": candidate_id, "source": record["source"],
+                        "processing": record, "comparisonFailure": detail,
+                    })
             report["scenarios"].append(
                 {
                     "scenarioId": scenario.scenario_id,
@@ -1733,7 +2013,7 @@ def main() -> None:
                         if scenario.execution_failure else {}
                     ),
                     "stage1": {},
-                    "stage2": [],
+                    "stage2": cases,
                     "processing": records,
                 }
             )
