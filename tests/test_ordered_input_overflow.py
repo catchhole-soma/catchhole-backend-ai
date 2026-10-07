@@ -38,7 +38,7 @@ def offline_dependencies(monkeypatch):
     monkeypatch.setattr(world_setting_comparator, "get_settings", lambda: SimpleNamespace())
 
 
-@pytest.mark.parametrize("overflow_on_retry", [False, True], ids=["initial", "retry-feedback"])
+@pytest.mark.parametrize("overflow_on_retry", [False, True], ids=["initial", "recovery-boundary"])
 def test_automatic_world_input_overflow_stops_before_next_batch(
     overflow_on_retry, monkeypatch, caplog,
 ):
@@ -83,6 +83,10 @@ def test_automatic_world_input_overflow_stops_before_next_batch(
                 system_prompt, user_prompt, response_schema=response_schema,
             )
             fixed_limit = first_size if overflow_on_retry else first_size - 1
+        elif overflow_on_retry:
+            # Recovery sends a bounded fresh request without old retry feedback.
+            # Inject an input-bound failure there to verify the same fatal boundary.
+            fixed_limit = 0
         return ensure_ordered_prompt_fits(
             system_prompt, user_prompt, fixed_limit, response_schema=response_schema,
         )
@@ -111,7 +115,7 @@ def test_automatic_world_input_overflow_stops_before_next_batch(
     assert len(client.requests) == int(overflow_on_retry)
     assert len(prompt_checks) == 1 + int(overflow_on_retry)
     if overflow_on_retry:
-        assert len(prompt_checks[1]) > len(prompt_checks[0])
+        assert "validation_feedback" not in prompt_checks[1]
     assert spring.claim_count == 1
     assert spring.batches == [second]
     assert spring.completions == []

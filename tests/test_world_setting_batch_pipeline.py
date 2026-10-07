@@ -326,7 +326,7 @@ def test_batch_pipeline_fails_all_sources_when_completion_coverage_is_missing() 
         ({"proposed_scope_name": "SECRET_PROVIDER_VALUE"}, "_validate_batch_scope_plan"),
     ],
 )
-def test_real_validation_origin_reaches_logs_and_spring_failure_payload(
+def test_real_validation_persists_typed_partial_failure_without_provider_values(
     invalid_fields, validator, caplog, monkeypatch
 ) -> None:
     monkeypatch.setattr(
@@ -366,37 +366,20 @@ def test_real_validation_origin_reaches_logs_and_spring_failure_payload(
     with caplog.at_level(logging.WARNING):
         result = asyncio.run(run_pipeline())
 
-    assert create_response.await_count == 3
+    assert create_response.await_count == 2
     assert result.completed_count == 0
     assert result.failed_count == 2
     assert result.first_failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
-    assert spring.completions == []
-    assert len(requests) == 1
-    assert requests[0].method == "POST"
-    assert requests[0].url.path == (
-        f"/api/internal/v1/analysis-jobs/{ANALYSIS_JOB_ID}"
-        f"/world-setting-comparison-batches/{BATCH_ID}/fail"
-    )
-    payload = json.loads(requests[0].content)
-    error_message = payload["errorMessage"]
-    assert re.fullmatch(
-        r"World-setting batch comparison failed after 3 attempts: "
-        rf"ValueError\(origin=app\.analysis\.world_setting_comparator\.{validator}:\d+\)",
-        error_message,
-    )
-    assert payload == {
-        "errorMessage": error_message,
-        "failureCode": "COMPARISON_VALIDATION_FAILED",
-    }
-    retry_logs = [record.message for record in caplog.records if "retrying attempt=" in record.message]
-    assert len(retry_logs) == 2
-    assert all(f".{validator}:" in message for message in retry_logs)
-    assert error_message in caplog.text
-    assert len(error_message) < 1000
-    assert "/" not in error_message
+    assert len(spring.completions) == 1
+    completion = spring.completions[0]
+    assert completion.decisions == []
+    assert [failure.source_candidate_refs for failure in completion.failures] == [["C1", "C2"]]
+    assert completion.failures[0].failure_code == AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
+    assert completion.failures[0].diagnostics
+    assert requests == []
+    public = completion.failures[0].model_dump_json() + caplog.text
     for private_value in ("SECRET_PROVIDER_VALUE", "SECRET_API_KEY", "무리를 지어"):
-        assert private_value not in error_message
-        assert private_value not in caplog.text
+        assert private_value not in public
 
 
 def test_batch_pipeline_stops_after_quota_failure_without_claiming_next_batch() -> None:
@@ -903,7 +886,7 @@ class FakeBatchComparator:
         self.target_values: list[list[list[str]]] = []
         self.llm_client = FakeUsageClient()
 
-    async def compare_batch(self, category, candidates, targets):
+    async def compare_batch(self, category, candidates, targets, **kwargs):
         self.call_count += 1
         self.target_ids.append([target.world_setting_id for target in targets])
         self.target_versions.append([target.version for target in targets])
@@ -916,7 +899,7 @@ class FakeBatchComparator:
 
 
 class QuotaFailingBatchComparator:
-    async def compare_batch(self, category, candidates, targets):
+    async def compare_batch(self, category, candidates, targets, **kwargs):
         raise AiTokenQuotaExhaustedError()
 
 

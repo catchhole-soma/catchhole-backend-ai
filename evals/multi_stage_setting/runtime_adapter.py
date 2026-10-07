@@ -40,6 +40,7 @@ from app.analysis.setting_extractor import (
     CharacterSettingExtractor,
     CharacterSettingSchemaHint,
 )
+from app.analysis.world_setting_batch_recovery import compare_world_batch_with_recovery
 from app.analysis.world_setting_comparator import (
     WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
     WorldSettingComparator,
@@ -59,6 +60,7 @@ from app.domain.enums import (
     WorldSettingOperation,
 )
 from app.domain.setting_values import normalize_setting_display_value
+from app.exceptions.failure_classification import is_candidate_comparison_failure
 from app.llm.exceptions import LlmIncompleteResponseError, LlmResponseValidationError
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
@@ -80,6 +82,10 @@ from app.schemas.worker import (
     WorkerWorldSettingSubject,
 )
 from app.services.setting_candidate_service import prepare_setting_candidates
+from evals.multi_stage_setting.comparison_diagnostics import (
+    candidate_comparison_attempts,
+    capture_world_comparison_attempt,
+)
 from evals.multi_stage_setting.contracts import (
     CandidateKind,
     CharacterFactType,
@@ -1301,6 +1307,7 @@ async def _run_world_batches(
     failures: list[RuntimeFailure] = []
     for group in grouped.values():
         ids = [source_id for item in group for source_id in (item.source_ids or (item.source_id,))]
+        comparison_attempts = []
         trace.start(ids, "WORLD_PREPARATION")
         try:
             candidates = [
@@ -1321,12 +1328,36 @@ async def _run_world_batches(
                 for candidate, item in zip(candidates, group, strict=True)
             }
             target_set = group[0].target_set
+            def record_comparison_attempt(attempt_number, error, response_payload, context,
+                                          _attempts=comparison_attempts, _sources=source_by_ref,
+                                          _targets=target_set.targets):
+                _attempts.append(capture_world_comparison_attempt(
+                    attempt_number, error, response_payload, context,
+                    {ref: list(item.source_ids or (item.source_id,)) for ref, item in _sources.items()},
+                    _targets,
+                ))
+
             trace.start(ids, "WORLD_STAGE2", forwarded=True)
-            result, _ = await comparator.compare_batch(
-                group[0].candidate.category.value,
-                candidates,
-                target_set.targets,
-            )
+            if isinstance(comparator, WorldSettingComparator):
+                result, _ = await compare_world_batch_with_recovery(
+                    comparator, group[0].candidate.category.value, candidates, target_set.targets,
+                    evaluation_failure_callback=record_comparison_attempt,
+                )
+                for failure in result.failures:
+                    failed_ids = [source_id for ref in failure.source_candidate_refs
+                                  for source_id in (source_by_ref[ref].source_ids or (source_by_ref[ref].source_id,))]
+                    for source_id in failed_ids:
+                        trace.record(source_id, "WORLD", "COMPARISON_FAILED",
+                                     failure_code=failure.failure_code)
+                        failures.append(RuntimeFailure(
+                            stage="WORLD_STAGE2", source_id=source_id,
+                            error_type=failure.failure_code.value, message=failure.error_message,
+                            comparison_attempts=candidate_comparison_attempts(comparison_attempts, source_id),
+                        ))
+            else:
+                result, _ = await comparator.compare_batch(
+                    group[0].candidate.category.value, candidates, target_set.targets,
+                )
             group_predictions = []
             for decision in result.decisions:
                 source_refs = sorted(
@@ -1354,9 +1385,13 @@ async def _run_world_batches(
         except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:
+            if not is_candidate_comparison_failure(exc):
+                raise
             trace.fail(ids, "WORLD", exc)
             failures.extend(
-                _runtime_failure(EvaluationDomain.WORLD, 2, item.source_id, exc) for item in group
+                _runtime_failure(EvaluationDomain.WORLD, 2, item.source_id, exc).model_copy(
+                    update={"comparison_attempts": candidate_comparison_attempts(comparison_attempts, item.source_id)},
+                ) for item in group
             )
     return _link_projected_world_subject_adds(sources, predictions), failures
 
@@ -1873,7 +1908,8 @@ def _apply_runtime_scenario(
         if source is None:
             continue
         try:
-            state, _ = apply_prediction_decision(state, scenario, source, decision)
+            state, _ = apply_prediction_decision(state, scenario, source, decision,
+                                                source_candidates=prediction.stage1)
         except StateApplicationError:
             # evaluator가 같은 오류를 STATE_APPLICATION_ERROR로 보고하므로 runtime은 다음
             # 후보와 회차 진행을 계속한다.

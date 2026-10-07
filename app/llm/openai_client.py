@@ -22,7 +22,7 @@ class OpenAIResponsesClient:
         api_key: str,  # OpenAi 키
         model: str,  # 기본 모델명
         responses_api_url: str,  # OpenAI Responses API 주소
-        reasoning_effort: str | None = None,  # GPT-5.6 추론 강도
+        reasoning_effort: str | None = None,  # 추론 지원 모델의 추론 강도
         http_client: httpx.AsyncClient | None = None,  # 실제 HTTP 요청 도구
         *,
         store_responses: bool = False,
@@ -230,15 +230,15 @@ class OpenAIResponsesClient:
 def _supports_reasoning(model: str) -> bool:
     """Responses API에서 reasoning 설정을 받는 현재 사용 모델 계열만 허용한다."""
 
-    return model.startswith(("gpt-5", "o1", "o3", "o4"))
+    return model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4"))
 
 
 def _resolve_reasoning_effort(model: str, configured_effort: str | None) -> str | None:
-    """모델 전용 기본값이 호환되지 않는 override 요청에는 추론 강도를 상속하지 않는다."""
+    """기존 모델의 none 호환 처리를 유지하고 GPT-6의 명시값은 공급자에 전달한다."""
 
     if configured_effort is None or not _supports_reasoning(model):
         return None
-    if configured_effort == "none" and not model.startswith("gpt-5.6"):
+    if configured_effort == "none" and not model.startswith(("gpt-5.6", "gpt-6")):
         return None
     return configured_effort
 

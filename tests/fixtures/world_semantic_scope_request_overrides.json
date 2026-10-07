@@ -1,0 +1,15 @@
+{
+  "policy": "Approved semantic comparison across organizational paths; full applicability remains meaningful. Historical captures are immutable. Only system prompt and cache versions change.",
+  "overrides": {
+    "world_batch": {
+      "sha256": "a0664ff2b873c450fa046b64bfe10755df0135f07077040bce9b16146ac3d2ab",
+      "system_sha256": "aaacf376a52e4b77c096b52d65ef44cc92686120fca8f494c3791f38b464b618",
+      "prompt_cache_key": "world-setting-comparison-batch:v11"
+    },
+    "world_singleton": {
+      "sha256": "bd44b44710fd7d926830292c2d1c5ed3b23364cd3635adfccabff86b15a11dff",
+      "system_sha256": "62b541c7ad4a59b0dfa2da8d16692a29cd2f39070cebabc6275cf5b04615ddc7",
+      "prompt_cache_key": "world-setting-comparison:v14"
+    }
+  }
+}

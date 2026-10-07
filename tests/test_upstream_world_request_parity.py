@@ -26,7 +26,8 @@ def captured():
 @pytest.mark.parametrize("purpose", ["world_extraction", "world_singleton"])
 def test_world_request_keeps_upstream_input_and_transport(purpose, captured):
     actual, expected = captured
-    overrides = expected["gh180Overrides"].get(purpose, {})
+    overrides = {**expected["gh180Overrides"].get(purpose, {}),
+                 **json.loads((ROOT / "tests/fixtures/world_semantic_scope_request_overrides.json").read_text())["overrides"].get(purpose, {})}
     assert set(overrides) <= {"sha256", "system_sha256", "prompt_cache_key"}
     if purpose == "world_extraction":
         # Keep the latest main extraction request exactly, including PR65.

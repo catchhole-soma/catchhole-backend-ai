@@ -104,14 +104,16 @@ def character_setting_ref_mapping(
     *,
     schema_hints: Sequence["CharacterSettingSchemaHint"] = (),
     history_source_matches: AbstractSet[tuple[str, str, str]] = frozenset(),
+    declared_alias_pairs: Iterable[tuple[str, str]] = (),
 ) -> dict[str, str]:
     """Map actual scoring refs to expected refs, preserving identity and duplicates.
 
-    Pairs are (expected, actual), already approved by the semantic judge. Facts
+    Pairs are (expected, actual), already approved for scoring. Facts
     and history (including their JSON variants) are supported, but each pair must
     have the same ref kind, person, FactType and history provenance/operation.
     Callers supply each approved ref pair explicitly; this never creates facts,
     changes reducer input, or rewrites target/removal references.
+    Declared Gold aliases grant key eligibility only for their explicit ref pair.
     """
 
     expected = {ref: _character_ref_parts(ref) for ref in expected_refs}
@@ -122,6 +124,7 @@ def character_setting_ref_mapping(
     result = {ref: ref for ref in sorted(exact)}
     expected_by_actual: dict[str, set[str]] = {}
     actual_by_expected: dict[str, set[str]] = {}
+    aliases = set(declared_alias_pairs)
     for expected_ref, actual_ref in approved_pairs:
         left, right = expected.get(expected_ref), actual.get(actual_ref)
         if (
@@ -132,6 +135,7 @@ def character_setting_ref_mapping(
             or not _same_ref_identity(left[0], right[0], history_source_matches)
             or not (
                 character_fact_key_spelling_matches(left[2], right[2])
+                or (expected_ref, actual_ref) in aliases
                 or dynamic_status_key_pair(left[1], left[2], right[2], schema_hints=schema_hints)
             )
         ):

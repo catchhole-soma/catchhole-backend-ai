@@ -1,0 +1,10 @@
+{
+  "reason": "User-authorized CHARACTER stage1 state-scope policy and cache version only; historical captures, user input, schema, models, reasoning and world requests remain unchanged.",
+  "overrides": {
+    "extraction": {
+      "prompt_cache_key": "setting-extraction:v12:e9721bfb5d486efc",
+      "sha256": "ccfd687c58092f0acf83837c9e19b236418404e2e7bb413e5348f7243d7da251",
+      "system_sha256": "79831c6680aff85eaddae9f9198808182a392dabedaf579efb28d351db1d32e4"
+    }
+  }
+}

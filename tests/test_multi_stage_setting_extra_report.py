@@ -3,6 +3,7 @@ import json
 from copy import deepcopy
 
 import pytest
+from app.domain.enums import WorldSettingConsolidationStatus
 
 from evals.multi_stage_setting.contracts import (
     CharacterStage1Prediction,
@@ -57,8 +58,13 @@ def test_world_extra_keeps_actual_stage2_result_without_rescoring_gold(mode, ope
     markdown = render_markdown_summary(report)
     assert "과추출 항목의 2차 처리 1" in markdown
     extra_row = _stage2_row(markdown, "P-extra")
-    assert f"처리 방식: {operation}" in extra_row
-    assert "LOCATION (장소) · 심연" in extra_row
+    operation_label = {
+        "ADD": "새 설정 추가",
+        "EXCLUDE": "이번 추출 정보를 반영하지 않음",
+        "REVIEW_REQUIRED": "자동으로 반영하지 않고 검토 요청",
+    }[operation]
+    assert f"처리 방식: {operation_label}" in extra_row
+    assert "장소 · 심연" in extra_row
     assert "대응하는 2차 답지 없음" in extra_row
     assert "정답·오답은 판정하지 않습니다" in extra_row
     assert "SECRET_" not in markdown
@@ -86,7 +92,7 @@ def test_world_extra_and_missed_gold_both_show_their_own_stage2_rows():
     assert report["stages"]["world"]["stage2"]["counts"]["upstreamReached"] == 0
     markdown = render_markdown_summary(report)
     assert "이 답지 항목과 연결된 2차 결과 없음" in markdown
-    assert "처리 방식: ADD" in _stage2_row(markdown, "P-extra")
+    assert "처리 방식: 새 설정 추가" in _stage2_row(markdown, "P-extra")
 
 
 @pytest.mark.parametrize("discovery", [False, True])
@@ -124,7 +130,7 @@ def test_character_extra_keeps_actual_operation_and_canonical_path(operation):
             {"value": "바바리안", "private": "SECRET_JSON"} if operation == "ADD" else None
         ),
         temporal_scope="PRESENT",
-        comparison_reason="SECRET_REASON",
+        comparison_reason="새 추출 내용과 기존 정보를 비교해 내린 판단이다.",
     )
     bundle = _bundle(gold, [_character_source()], [decision])
 
@@ -151,7 +157,7 @@ def test_merged_extra_candidates_share_one_actual_decision_without_duplicating_s
     ]
     sources[1] = sources[1].model_copy(update={"setting_name": "튜토리얼 종료 조건"})
     decision = _world_decision("P1", extra=not with_gold).model_copy(
-        update={"source_candidate_ids": ["P1", "P2"]}
+        update={"source_candidate_ids": ["P1", "P2"], "consolidation_status": WorldSettingConsolidationStatus.MERGED}
     )
     bundle = _bundle(gold, sources, [decision])
     bundle = PredictionBundleV3.model_validate_json(bundle.model_dump_json())
@@ -161,8 +167,9 @@ def test_merged_extra_candidates_share_one_actual_decision_without_duplicating_s
     legacy_report = asyncio.run(evaluate_multi_stage(gold, legacy_bundle))
 
     cases = build_public_diagnostics(report)[0]["stage2"]
+    # Another raw path is an unmatched extra source; sharing final text cannot waive linkage.
     assert [(case["sourceCandidateId"], case["result"]) for case in cases] == [
-        ("P1", "FULL_MATCH" if with_gold else "EXTRA_PROCESSED"),
+        ("P1", "DECISION_MISMATCH" if with_gold else "EXTRA_PROCESSED"),
         ("P2", "EXTRA_PROCESSED"),
     ]
     assert cases[0]["actual"] == cases[1]["actual"]
@@ -171,7 +178,12 @@ def test_merged_extra_candidates_share_one_actual_decision_without_duplicating_s
         report["scenarios"][0]["predictedAfterStateHash"]
         == (legacy_report["scenarios"][0]["predictedAfterStateHash"])
     )
-    assert build_source_free_summary(report) == build_source_free_summary(legacy_report)
+    assert report["endToEnd"] == legacy_report["endToEnd"]
+    if with_gold:
+        assert cases[0]["fields"]["consolidation"] == "MISMATCH"
+        assert legacy_report["stages"]["world"]["stage2"]["metrics"]["fullDecisionAccuracy"] == 1
+    else:
+        assert build_source_free_summary(report) == build_source_free_summary(legacy_report)
     assert "2차 결과 없음" not in _stage2_row(render_markdown_summary(report), "P2")
 
 
@@ -215,7 +227,7 @@ def test_gold_matched_secondary_source_keeps_its_own_public_diagnostic_id():
     sources = [_world_source("P1"), _world_source("P2")]
     sources[0] = sources[0].model_copy(update={"setting_name": "튜토리얼 종료 조건"})
     decision = _world_decision("P1").model_copy(
-        update={"source_candidate_ids": ["P1", "P2"]}
+        update={"source_candidate_ids": ["P1", "P2"], "consolidation_status": WorldSettingConsolidationStatus.MERGED}
     )
     bundle = _bundle(gold, sources, [decision])
     original = bundle.model_dump(mode="json")
@@ -223,15 +235,17 @@ def test_gold_matched_secondary_source_keeps_its_own_public_diagnostic_id():
     report = asyncio.run(evaluate_multi_stage(gold, bundle))
 
     cases = build_public_diagnostics(report)[0]["stage2"]
+    # The Gold-matched secondary keeps its diagnostic ID even when an unrelated primary is linked.
     assert [(case["sourceCandidateId"], case["result"]) for case in cases] == [
-        ("P2", "FULL_MATCH"), ("P1", "EXTRA_PROCESSED"),
+        ("P2", "DECISION_MISMATCH"), ("P1", "EXTRA_PROCESSED"),
     ]
     assert cases[0]["actual"] == cases[1]["actual"]
     assert "sourceCandidateIds" not in json.dumps(cases)
-    assert "처리 방식: ADD" in _stage2_row(render_markdown_summary(report), "P2")
+    assert "처리 방식: 새 설정 추가" in _stage2_row(render_markdown_summary(report), "P2")
     assert bundle.model_dump(mode="json") == original
     assert report["endToEnd"]["counts"]["predictedTransitions"] == 1
-    assert report["stages"]["world"]["stage2"]["metrics"]["fullDecisionAccuracy"] == 1
+    assert cases[0]["fields"]["consolidation"] == "MISMATCH"
+    assert report["stages"]["world"]["stage2"]["metrics"]["fullDecisionAccuracy"] == 0
 
 
 def test_oracle_world_batch_provenance_rejects_an_unknown_secondary_gold_source():
@@ -329,7 +343,7 @@ def _world_decision(source_id, operation="ADD", *, extra=False):
         consolidation_status="SINGLE",
         proposed_setting_name="도달 조건" if extra else "튜토리얼 완료 시점",
         proposed_value="심연에 도달하면 튜토리얼이 완료된다.",
-        comparison_reason="SECRET_REASON",
+        comparison_reason="새 추출 내용과 기존 정보를 비교해 내린 판단이다.",
     )
 
 

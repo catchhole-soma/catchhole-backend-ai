@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
 from app.analysis.world_setting_batch_recovery import (
-    MAX_RECOVERY_CALLS, can_recover_response, exception_diagnostics, map_diagnostics, recover_world_batch,
+    MAX_RECOVERY_CALLS, compare_world_batch_with_recovery, exception_diagnostics, map_diagnostics,
 )
 from app.schemas.analysis_context import AnalysisStateProvenance, WorkerAnalysisContext
 from app.analysis.world_setting_comparator import (
@@ -568,7 +568,7 @@ class WorldSettingComparisonPipeline:
                     batch,
                     batch_count,
                     cluster_usages,
-                    allow_recovery=analysis_context is not None and continue_on_candidate_failure,
+                    allow_recovery=True,
                 )
             except AiTokenQuotaExhaustedError as exc:
                 source_error_code, source_reason_code = spring_failure_source(exc)
@@ -679,8 +679,8 @@ class WorldSettingComparisonPipeline:
                     batch.comparison_batch_id,
                     len(batch.candidates),
                 )
-                if analysis_context is not None and not (
-                    continue_on_candidate_failure and is_candidate_comparison_failure(exc)
+                if not is_candidate_comparison_failure(exc) or (
+                    analysis_context is not None and not continue_on_candidate_failure
                 ):
                     raise
                 continue
@@ -890,11 +890,19 @@ class WorldSettingComparisonPipeline:
             try:
                 unresolved = (tuple(context.analysis_context.unresolved_references)
                               if context.analysis_context else ())
-                try:
+                if allow_recovery:
+                    recovered, raw_comparison = await compare_world_batch_with_recovery(
+                        self.comparator, batch.category, batch.candidates, cluster_targets,
+                        ordered_context=batch.analysis_context is not None,
+                        unresolved_references=unresolved,
+                        max_recovery_calls=MAX_RECOVERY_CALLS - recovery_calls_used,
+                    )
+                    recovery_calls_used += recovered.recovery_calls
+                    domain_decisions = recovered.decisions
+                    failures, diagnostics = recovered.failures, recovered.diagnostics
+                else:
                     comparison_result, raw_comparison = await self.comparator.compare_batch(
-                        batch.category,
-                        batch.candidates,
-                        cluster_targets,
+                        batch.category, batch.candidates, cluster_targets,
                         **({"ordered_context": True} if batch.analysis_context is not None else {}),
                         **({"unresolved_references": unresolved} if unresolved else {}),
                     )
@@ -903,22 +911,6 @@ class WorldSettingComparisonPipeline:
                         diagnostics = map_diagnostics(
                             raw_comparison.get("validation_diagnostics", []), batch.candidates, cluster_targets,
                         )
-                except Exception as initial_error:
-                    if not (allow_recovery and len(batch.candidates) > 1 and can_recover_response(initial_error)):
-                        raise
-                    recovered = await recover_world_batch(
-                        self.comparator, batch.category, batch.candidates, cluster_targets,
-                        initial_error, unresolved_references=unresolved,
-                        max_recovery_calls=MAX_RECOVERY_CALLS - recovery_calls_used,
-                    )
-                    recovery_calls_used += recovered.recovery_calls
-                    domain_decisions = recovered.decisions
-                    failures, diagnostics = recovered.failures, recovered.diagnostics
-                    raw_comparison = {
-                        "recoveryMode": "FROZEN_INDEPENDENT_GROUPS",
-                        "recoveryCalls": recovered.recovery_calls,
-                        "decisions": [item.model_dump(mode="json") for item in domain_decisions],
-                    }
             except BaseException as exc:
                 if batch.analysis_context is not None:
                     exc.world_comparison_diagnostics = exception_diagnostics(exc, batch.candidates, cluster_targets)

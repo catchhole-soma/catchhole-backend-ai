@@ -61,7 +61,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "world_setting_comparison_batch.md"
 )
-WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY = "world-setting-comparison-batch:v10"
+WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY = "world-setting-comparison-batch:v11"
 logger = logging.getLogger(__name__)
 LOCAL_REFERENCE_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])[CST]\d+(?![A-Za-z0-9_])",
@@ -376,7 +376,7 @@ class WorldSettingComparator:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="world-setting-comparison:v13",
+            prompt_cache_key="world-setting-comparison:v14",
             operation_name="World-setting comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -386,9 +386,6 @@ class WorldSettingComparator:
             ),
             retry_user_prompt_builder=_build_retry_user_prompt,
         )
-        # scope 없는 후보를 다른 scope의 동명 속성에 연결한 응답은 실패로 재시도하지
-        # 않고 사용자가 범위를 선택하는 정상 검토 결과로 바꾼다.
-        decision = _normalize_scope_ambiguity(decision, candidate, references)
         # LLM이 판단할 필요가 없는 불변 필드는 원본 후보에서 복원한다. 단일
         # ADD/EXCLUDE/REVIEW_REQUIRED 값을 문장만 다듬어 반환했다는 이유로 같은 비교를
         # 반복하지 않게 한다.
@@ -405,6 +402,8 @@ class WorldSettingComparator:
         unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
         max_attempts_override: int | None = None,
         preserve_source_paths: bool = False,
+        evaluation_failure_callback=None,
+        defer_generated_scope_validation: bool = False,
     ) -> tuple[WorldSettingComparisonBatchResult, dict]:
         if not candidates:
             raise ValueError("World-setting comparison batch must include candidates.")
@@ -490,6 +489,14 @@ class WorldSettingComparator:
             return oversized_result, raw_result
         diagnostics = []
         restored_result = None
+        evaluation_context = None
+        rejected_payload = None
+
+        def observe_rejection(error, stage, decision_index, candidate_refs):
+            nonlocal evaluation_context
+            if evaluation_context is None:
+                evaluation_context = {"stage": stage, "decision_index": decision_index,
+                                      "candidate_refs": tuple(candidate_refs)}
 
         def validate_ordered(selection):
             nonlocal restored_result
@@ -498,17 +505,29 @@ class WorldSettingComparator:
             _validate_batch_comparison_result(
                 restored_result, candidates, references, ordered_context=True,
                 preserve_source_paths=preserve_source_paths,
+                require_generated_scope_siblings=not defer_generated_scope_validation,
+                validation_observer=observe_rejection if evaluation_failure_callback else None,
             )
 
         def record_diagnostics(attempt_number, error, response_payload):
-            entries = validation_diagnostics(
-                raw_payload, attempt_number, error, response_payload,
-                phase="RECOVERY" if preserve_source_paths else "BATCH",
-            )
-            diagnostics.extend(entries)
-            for entry in entries:
-                logger.warning("World-setting ordered validation diagnostic=%s",
-                               json.dumps(entry, ensure_ascii=False))
+            nonlocal evaluation_context, rejected_payload
+            rejected_payload = response_payload
+            if ordered_context:
+                entries = validation_diagnostics(
+                    raw_payload, attempt_number, error, response_payload,
+                    phase="RECOVERY" if preserve_source_paths else "BATCH",
+                )
+                diagnostics.extend(entries)
+                for entry in entries:
+                    logger.warning("World-setting ordered validation diagnostic=%s",
+                                   json.dumps(entry, ensure_ascii=False))
+            if evaluation_failure_callback is not None:
+                try:
+                    evaluation_failure_callback(
+                        attempt_number, error, response_payload, evaluation_context,
+                    )
+                finally:
+                    evaluation_context = None
 
         try:
             result = await request_validated_model(
@@ -521,26 +540,31 @@ class WorldSettingComparator:
                 max_output_tokens=self.batch_max_output_tokens,
                 max_attempts=(self.max_attempts if max_attempts_override is None else max_attempts_override),
                 prompt_cache_key=(WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY
-                                  + (":ordered-provisional-v6" if ordered_context else "")),
+                                  + (":ordered-provisional-v7" if ordered_context else "")),
                 operation_name="World-setting batch comparison",
                 logger=logger,
                 validate_model=(validate_ordered if ordered_context else
                                lambda comparison_result: _validate_batch_comparison_result(
                                    comparison_result, candidates, references,
                                    ordered_context=ordered_context,
+                                   require_generated_scope_siblings=not defer_generated_scope_validation,
+                                   validation_observer=observe_rejection if evaluation_failure_callback else None,
                                )),
                 retry_user_prompt_builder=(ordered_world_batch_retry_prompt if ordered_context
                                            else _build_batch_retry_user_prompt),
                 **({"response_schema": property_response_schema(raw_payload),
-                    "validation_error_summary": ordered_world_batch_error_summary,
-                    "validation_failure_callback": record_diagnostics}
+                    "validation_error_summary": ordered_world_batch_error_summary}
                    if ordered_context else {}),
+                validation_failure_callback=record_diagnostics,
             )
         except OrderedInputContextError:
             raise
         except ComparisonValidationError as exc:
-            if ordered_context:
-                exc.validation_diagnostics = tuple(diagnostics)
+            exc.validation_diagnostics = tuple(diagnostics)
+            # Rejected data stays in memory for independently validated recovery.
+            # It must never enter exception text, logs or public diagnostics.
+            exc.world_batch_response_payload = rejected_payload
+            exc.world_batch_request_payload = raw_payload
             raise
         if ordered_context:
             result = restored_result
@@ -721,6 +745,8 @@ def _validate_batch_comparison_result(
     *,
     ordered_context: bool = False,
     preserve_source_paths: bool = False,
+    validation_observer=None,
+    require_generated_scope_siblings: bool = True,
 ) -> None:
     candidates_by_ref = {candidate.candidate_ref: candidate for candidate in candidates}
     allowed_refs = set(candidates_by_ref)
@@ -730,7 +756,7 @@ def _validate_batch_comparison_result(
     }
     for decision_index, decision in enumerate(result.decisions):
         with diagnose_world_rule(ordered_context, "DECISION_VALIDATION", decision_index,
-                                 decision.source_candidate_refs):
+                                 decision.source_candidate_refs, observer=validation_observer):
             source_refs = set(decision.source_candidate_refs)
             unknown_refs = source_refs - allowed_refs
             if unknown_refs:
@@ -843,7 +869,7 @@ def _validate_batch_comparison_result(
                         "SCOPE_MISMATCH_REVIEW_INVALID", decision_index, decision, target,
                     )
                 continue
-            if (ordered_context and decision.operation == WorldSettingOperation.REVIEW_REQUIRED
+            if (decision.operation == WorldSettingOperation.REVIEW_REQUIRED
                     and decision.review_reason == WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED
                     and not all(_same_optional_name(source.setting_name, decision.matched_property_name)
                                 for source in sources)):
@@ -863,18 +889,11 @@ def _validate_batch_comparison_result(
                         "SCOPE_UNRESOLVED_REVIEW_INVALID", decision_index, decision, target,
                     )
                 continue
-            scope_ambiguity_match = _find_batch_scope_ambiguity_match(
-                decision,
-                sources,
-                references,
-            )
             if decision.operation == WorldSettingOperation.REVIEW_REQUIRED:
-                if scope_ambiguity_match is None:
+                if _find_batch_scope_ambiguity_match(decision, sources, references) is None:
                     raise ValueError(
                         "SCOPE_UNRESOLVED must identify compatible ambiguous source candidates."
                     )
-                continue
-            if scope_ambiguity_match is not None:
                 continue
             if decision.operation == WorldSettingOperation.ADD:
                 if decision.matched_scope_name is not None or decision.matched_property_name is not None:
@@ -938,18 +957,6 @@ def _validate_batch_comparison_result(
                             "MATCHED_EXCLUDE_PATH_NOT_FOUND", decision_index, decision, target,
                         )
                     raise ValueError("The matched EXCLUDE path does not exist.")
-                if any(
-                    not _same_optional_name(
-                        source.scope_name,
-                        decision.matched_scope_name,
-                    )
-                    for source in sources
-                ):
-                    if ordered_context:
-                        raise _ordered_path_error(
-                            "SOURCE_SCOPE_MISMATCH", decision_index, decision, target,
-                        )
-                    raise ValueError("A matched EXCLUDE must preserve the source scope.")
                 continue
             if decision.target_ref is None or decision.matched_property_name is None:
                 raise ValueError("UPDATE and MERGE require a matched target property.")
@@ -964,15 +971,6 @@ def _validate_batch_comparison_result(
                         "MATCHED_PROPERTY_PATH_NOT_FOUND", decision_index, decision, target,
                     )
                 raise ValueError("The matched property path does not exist.")
-            if any(
-                not _same_optional_name(source.scope_name, decision.matched_scope_name)
-                for source in sources
-            ):
-                if ordered_context:
-                    raise _ordered_path_error(
-                        "SOURCE_SCOPE_MISMATCH", decision_index, decision, target,
-                    )
-                raise ValueError("UPDATE and MERGE must preserve the source scope.")
             if not _same_optional_name(
                 decision.proposed_scope_name,
                 decision.matched_scope_name,
@@ -992,11 +990,14 @@ def _validate_batch_comparison_result(
             )
         raise ValueError(f"Missing source candidate refs: {sorted(missing_refs)}")
     _validate_batch_scope_plan(result, candidates_by_ref, references_by_key,
-                               ordered_context=ordered_context)
+                               ordered_context=ordered_context, validation_observer=validation_observer,
+                               require_generated_scope_siblings=require_generated_scope_siblings)
     with diagnose_world_rule(ordered_context, "PROJECTED_SCOPE_PLAN"):
         projected_result = _project_batch_comparison_result(result, candidates, references)
     _validate_batch_scope_plan(projected_result, candidates_by_ref, references_by_key,
-                               ordered_context=ordered_context, diagnostic_stage="PROJECTED_SCOPE_PLAN")
+                               ordered_context=ordered_context, diagnostic_stage="PROJECTED_SCOPE_PLAN",
+                               validation_observer=validation_observer,
+                               require_generated_scope_siblings=require_generated_scope_siblings)
 
 
 def _project_batch_comparison_result(
@@ -1014,12 +1015,7 @@ def _project_batch_comparison_result(
             for candidate in candidates
             if candidate.candidate_ref in selected_source_refs
         ]
-        normalized = _normalize_batch_scope_ambiguity(
-            decision,
-            sources,
-            references,
-        )
-        normalized = _normalize_batch_deterministic_fields(normalized, sources)
+        normalized = _normalize_batch_deterministic_fields(decision, sources)
         if (
             normalized.operation != WorldSettingOperation.ADD
             and normalized.existing_root_property_names_to_move
@@ -1039,6 +1035,8 @@ def _validate_batch_scope_plan(
     *,
     ordered_context: bool = False,
     diagnostic_stage: str = "SCOPE_PLAN",
+    validation_observer=None,
+    require_generated_scope_siblings: bool = True,
 ) -> None:
     """2차가 합성한 범위가 실제 형제 속성과 안전한 root 이동으로 뒷받침되는지 확인한다."""
 
@@ -1061,7 +1059,8 @@ def _validate_batch_scope_plan(
     def claim_final_path(path: tuple[str | None, str | None, str]) -> None:
         if path in final_paths:
             with diagnose_world_rule(ordered_context, diagnostic_stage, decision_index,
-                                     final_path_sources[path] + decision.source_candidate_refs):
+                                     final_path_sources[path] + decision.source_candidate_refs,
+                                     observer=validation_observer):
                 raise ValueError("Batch decisions must not propose the same final path.")
         final_paths.add(path)
         final_path_sources[path] = list(decision.source_candidate_refs)
@@ -1072,7 +1071,8 @@ def _validate_batch_scope_plan(
         existing_kind = top_level_kinds.get(top_level_key)
         if existing_kind is not None and existing_kind != proposed_kind:
             with diagnose_world_rule(ordered_context, diagnostic_stage, decision_index,
-                                     top_level_sources[top_level_key] + decision.source_candidate_refs):
+                                     top_level_sources[top_level_key] + decision.source_candidate_refs,
+                                     observer=validation_observer):
                 raise ValueError(
                     "Batch decisions must not propose scalar and scoped paths under the same "
                     "top-level name."
@@ -1082,7 +1082,7 @@ def _validate_batch_scope_plan(
 
     for decision_index, decision in enumerate(result.decisions):
         with diagnose_world_rule(ordered_context, diagnostic_stage, decision_index,
-                                 decision.source_candidate_refs):
+                                 decision.source_candidate_refs, observer=validation_observer):
             if decision.review_reason == WorldSettingComparisonReviewReason.GENERAL_UNCERTAINTY:
                 # This result writes no setting path. Its one source is preserved
                 # by the deterministic projection after identity/path validation.
@@ -1166,7 +1166,7 @@ def _validate_batch_scope_plan(
 
     for decision_index, decision in enumerate(result.decisions):
         with diagnose_world_rule(ordered_context, diagnostic_stage, decision_index,
-                                 decision.source_candidate_refs):
+                                 decision.source_candidate_refs, observer=validation_observer):
             if (
                 decision.operation in {
                     WorldSettingOperation.UPDATE,
@@ -1201,7 +1201,7 @@ def _validate_batch_scope_plan(
             if raw_scope == proposed_scope:
                 continue
             members = scope_members.get((decision.target_ref, proposed_scope), set())
-            if len(members) < 2:
+            if require_generated_scope_siblings and len(members) < 2:
                 if ordered_context:
                     raise _ordered_path_error(
                         "GENERATED_SCOPE_REQUIRES_SIBLINGS", decision_index, decision,
@@ -1331,14 +1331,11 @@ def _validate_comparison_decision(
             raise ValueError("The matched property path does not exist in the selected target.")
         return
     if decision.operation == WorldSettingOperation.REVIEW_REQUIRED:
-        if not _is_scope_ambiguity_match(decision, candidate, references_by_key):
-            raise ValueError(
-                "SCOPE_UNRESOLVED must match a same-name property under a different scope."
-            )
-        return
-    if _is_scope_ambiguity_match(decision, candidate, references_by_key):
-        # 구버전 또는 비결정적인 모델이 UPDATE/MERGE/EXCLUDE로 반환해도 실제 concrete
-        # operation으로 통과시키지 않고 compare()에서 REVIEW_REQUIRED로 정규화한다.
+        target = references_by_key.get(decision.target_ref)
+        if (candidate.scope_name is not None or decision.matched_scope_name is None
+                or target is None or not _has_property(
+                    target, decision.matched_scope_name, decision.matched_property_name)):
+            raise ValueError("SCOPE_UNRESOLVED requires an unscoped source and a real scoped property.")
         return
     if decision.operation in {WorldSettingOperation.ADD, WorldSettingOperation.EXCLUDE}:
         # 범위명·설정명·단일 추출값은 compare()가 후보 원본으로 정규화한다.
@@ -1349,8 +1346,6 @@ def _validate_comparison_decision(
     if decision.operation == WorldSettingOperation.EXCLUDE:
         if decision.matched_property_name is None:
             return
-        if decision.matched_scope_name != candidate.scope_name:
-            raise ValueError("A matched property must use the extracted scope name.")
         target = references_by_key[decision.target_ref]
         if not _has_property(
             target,
@@ -1359,8 +1354,6 @@ def _validate_comparison_decision(
         ):
             raise ValueError("The matched property path does not exist in the selected target.")
         return
-    if decision.matched_scope_name != candidate.scope_name:
-        raise ValueError("UPDATE and MERGE must match the extracted scope name.")
     target = references_by_key[decision.target_ref]
     if not _has_property(
         target,
@@ -1372,59 +1365,6 @@ def _validate_comparison_decision(
         raise ValueError("UPDATE and MERGE must preserve the stored scope name.")
     if decision.proposed_setting_name != decision.matched_property_name:
         raise ValueError("UPDATE and MERGE must preserve the stored property name.")
-
-
-def _normalize_scope_ambiguity(
-    decision: WorldSettingComparisonDecision,
-    candidate: WorkerWorldSettingCandidatePayload,
-    references: list[ComparisonTargetReference],
-) -> WorldSettingComparisonDecision:
-    match = _find_scope_ambiguity_match(decision, candidate, references)
-    if match is None:
-        return decision
-    matched_path = f"{match.scope_name} › {match.property_name}"
-    return decision.model_copy(
-        update={
-            "operation": WorldSettingOperation.REVIEW_REQUIRED,
-            "review_reason": WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED,
-            "target_ref": match.target_ref,
-            "matched_scope_name": match.scope_name,
-            "matched_property_name": match.property_name,
-            "proposed_scope_name": candidate.scope_name,
-            "proposed_setting_name": candidate.setting_name,
-            "comparison_reason": (
-                f"후보에는 범위가 없지만 기존 '{matched_path}' 설정과 관련될 수 있어 "
-                "적용 범위 확인이 필요합니다."
-            ),
-        }
-    )
-
-
-def _normalize_batch_scope_ambiguity(
-    decision: WorldSettingComparisonBatchDecision,
-    sources: list[WorkerWorldSettingComparisonBatchCandidate],
-    references: list[ComparisonTargetReference],
-) -> WorldSettingComparisonBatchDecision:
-    match = _find_batch_scope_ambiguity_match(decision, sources, references)
-    if match is None:
-        return decision
-    matched_path = f"{match.scope_name} › {match.property_name}"
-    return decision.model_copy(
-        update={
-            "operation": WorldSettingOperation.REVIEW_REQUIRED,
-            "review_reason": WorldSettingComparisonReviewReason.SCOPE_UNRESOLVED,
-            "target_ref": match.target_ref,
-            "matched_scope_name": match.scope_name,
-            "matched_property_name": match.property_name,
-            "proposed_scope_name": None,
-            "proposed_setting_name": sources[0].setting_name,
-            "comparison_reason": (
-                f"후보들에는 범위가 없지만 기존 '{matched_path}' 설정과 "
-                "관련될 수 있어 적용 범위 확인이 필요합니다."
-            ),
-            "existing_root_property_names_to_move": [],
-        }
-    )
 
 
 def _find_batch_scope_ambiguity_match(
