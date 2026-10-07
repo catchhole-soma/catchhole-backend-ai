@@ -29,7 +29,8 @@ class RecordedClient:
 
     async def create_text_response(self, **kwargs):
         self.requests.append(kwargs)
-        return LlmTextResponse(text=json.dumps(self.responses.pop(0), ensure_ascii=False))
+        response = self.responses.pop(0)
+        return LlmTextResponse(text=response if isinstance(response, str) else json.dumps(response, ensure_ascii=False))
 
 
 def _sources():
@@ -138,6 +139,64 @@ def test_observation_preserves_shared_recovery_requests_and_failure_metadata():
     assert failures[0].error_type == result.failures[0].failure_code.value
     assert failures[0].message == result.failures[0].error_message
     assert observed_client.requests == plain_client.requests
+
+
+@pytest.mark.parametrize("later_parse_error", [False, True])
+def test_independent_failed_retries_keep_candidate_local_attempts_and_attribution(later_parse_error):
+    from evals.multi_stage_setting.comparison_diagnostics import comparison_failure_case
+
+    initial = _response()
+    first = initial["decisions"][0]
+    second = copy.deepcopy(first)
+    second.update(source_candidate_refs=["C2"], proposed_setting_name="언어",
+                  proposed_value="산악어를 쓴다", comparison_reason="언어의 적용 범위를 확인해야 합니다.")
+    initial["decisions"][1] = second
+    responses = [initial, {"decisions": [first]}, "not-json" if later_parse_error else {"decisions": [second]}]
+    predictions, failures = asyncio.run(_run_world_batches(
+        _sources(), WorldSettingComparator(llm_client=RecordedClient(responses)),
+    ))
+
+    assert predictions == []
+    assert [failure.source_id for failure in failures] == ["first", "second"]
+    assert [[attempt.attempt_number for attempt in failure.comparison_attempts] for failure in failures] == [[1, 2], [1, 3]]
+    assert failures[0].comparison_attempts[-1].batch_source_ids == ["first"]
+    assert failures[1].comparison_attempts[-1].batch_source_ids == ["second"]
+    assert comparison_failure_case(failures[0], "first")["status"] == "REJECTED"
+    assert comparison_failure_case(failures[1], "second")["status"] == ("UNKNOWN" if later_parse_error else "REJECTED")
+    assert failures[0].error_type == "COMPARISON_VALIDATION_FAILED"
+    mixed = failures[0].model_copy(update={
+        "comparison_attempts": [*failures[0].comparison_attempts, failures[1].comparison_attempts[-1]],
+    })
+    original = mixed.model_dump()
+    projected = comparison_failure_case(mixed, "first")
+    assert projected["status"] == "REJECTED"
+    assert [attempt["attemptNumber"] for attempt in projected["attempts"]] == [1, 2]
+    assert mixed.model_dump() == original
+    if later_parse_error:
+        assert failures[1].error_type == "COMPARISON_VALIDATION_FAILED"
+        assert failures[1].comparison_attempts[-1].rule_code == "RESPONSE_JSON_INVALID"
+        assert failures[1].comparison_attempts[-1].decisions == []
+        assert failures[1].comparison_attempts[-1].rejected_source_ids == []
+
+
+def test_retry_attempt_cannot_attribute_a_returned_outside_request_source():
+    from evals.multi_stage_setting.comparison_diagnostics import capture_world_comparison_attempt
+
+    error = ValueError("synthetic rejection")
+    error.diagnostic_rule_code = "SCOPE_UNRESOLVED_REVIEW_INVALID"
+    source_ids = {"C1": ["first"], "C2": ["second"]}
+    context = {"request_candidate_refs": ["C1"], "candidate_refs": ["C2"], "stage": "DECISION_VALIDATION"}
+    attempt = capture_world_comparison_attempt(2, error,
+        {"decisions": [{**_response()["decisions"][0], "source_candidate_refs": ["C2"]}]},
+        context, source_ids, _sources()[0].target_set.targets,
+    )
+
+    assert attempt.batch_source_ids == ["first"]
+    assert attempt.rejected_source_ids == []
+    assert attempt.attribution == "UNKNOWN"
+    assert attempt.decisions[0].source_candidate_ids == []
+    assert source_ids == {"C1": ["first"], "C2": ["second"]}
+    assert context["candidate_refs"] == ["C2"]
 
 
 @pytest.mark.parametrize("operation", [{"unexpected": "container"}, [], None])

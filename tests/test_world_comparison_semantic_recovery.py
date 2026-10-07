@@ -164,6 +164,56 @@ def test_schema_invalid_write_retries_dependent_valid_writer_as_one_group():
     assert len(json.loads(requests[1]["user_prompt"])["candidates"]) == 2
 
 
+@pytest.mark.parametrize("ordered", [False, True])
+def test_missing_sole_target_write_retries_connected_writer_atomically(ordered):
+    sources = [candidate("C1", "조건", "값1"), candidate("C2", "교육", "값2")]
+    missing_target = {**decision(["C1"], "조건", "값1", ordered=ordered), "target_ref": None}
+    sibling = decision(["C2"], "조건", "값2", ordered=ordered)
+    result, requests = execute(sources, [{"decisions": [missing_target, sibling]},
+        {"decisions": [decision(["C1", "C2"], "조건", "두 근거를 검증한 값", ordered=ordered)]},
+    ], ordered=ordered)
+
+    assert not result.failures
+    assert [row.source_candidate_refs for row in result.decisions] == [["C1", "C2"]]
+    assert result.decisions[0].target_ref == "T1"
+    assert [row["ref"] for row in json.loads(requests[1]["user_prompt"])["candidates"]] == ["C1", "C2"]
+    assert missing_target["target_ref"] is None
+    assert sibling["target_ref"] == "T1"
+
+
+@pytest.mark.parametrize("ordered", [False, True])
+def test_dependency_target_inference_does_not_authorize_missing_target_response(ordered):
+    sources = [candidate("C1", "조건", "값1"), candidate("C2", "교육", "값2")]
+    missing_target = {**decision(["C1"], "조건", "값1", ordered=ordered), "target_ref": None}
+    result, requests = execute(sources, [{"decisions": [missing_target,
+        decision(["C2"], "교육", "값2", ordered=ordered)]}, {"decisions": [missing_target]}], ordered=ordered)
+
+    assert [row.source_candidate_refs for row in result.decisions] == [["C2"]]
+    assert result.decisions[0].target_ref == "T1"
+    assert [row.source_candidate_refs for row in result.failures] == [["C1"]]
+    assert len(requests) == 2
+    assert missing_target["target_ref"] is None
+
+
+@pytest.mark.parametrize("multiple_targets", [False, True])
+def test_rejected_write_does_not_guess_target_from_unknown_or_multiple_targets(multiple_targets):
+    sources = [candidate("C1", "조건", "값1"), candidate("C2", "교육", "값2")]
+    bad = {**decision(["C1"], "조건", "값1"), "target_ref": None if multiple_targets else "T99"}
+    if multiple_targets:
+        bad["consolidation_status"] = "invalid"
+    retry = {**decision(["C1"], "조건" if multiple_targets else "별도 조건", "값1"),
+             "target_ref": "T2" if multiple_targets else "T1"}
+    client = Client([{"decisions": [bad, decision(["C2"], "조건", "값2")]}, {"decisions": [retry]}])
+    result, _ = asyncio.run(compare_world_batch_with_recovery(
+        comparator(client), "WORLD_RULE_HISTORY", sources, [target(), target()] if multiple_targets else [target()],
+    ))
+
+    assert not result.failures
+    assert [row.source_candidate_refs for row in result.decisions] == [["C1"], ["C2"]]
+    assert [row["ref"] for row in json.loads(client.requests[1]["user_prompt"])["candidates"]] == ["C1"]
+    assert bad["target_ref"] == (None if multiple_targets else "T99")
+
+
 def test_generated_scope_siblings_are_retried_together_and_retained():
     sources = [candidate("C1", "규칙", "값1"), candidate("C2", "교육", "값2"), candidate("C3", "무기", "값3")]
     first = decision(["C1"], "규칙", "값1", scope="문화")

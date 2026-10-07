@@ -82,7 +82,10 @@ from app.schemas.worker import (
     WorkerWorldSettingSubject,
 )
 from app.services.setting_candidate_service import prepare_setting_candidates
-from evals.multi_stage_setting.comparison_diagnostics import capture_world_comparison_attempt
+from evals.multi_stage_setting.comparison_diagnostics import (
+    candidate_comparison_attempts,
+    capture_world_comparison_attempt,
+)
 from evals.multi_stage_setting.contracts import (
     CandidateKind,
     CharacterFactType,
@@ -1349,7 +1352,7 @@ async def _run_world_batches(
                         failures.append(RuntimeFailure(
                             stage="WORLD_STAGE2", source_id=source_id,
                             error_type=failure.failure_code.value, message=failure.error_message,
-                            comparison_attempts=comparison_attempts,
+                            comparison_attempts=candidate_comparison_attempts(comparison_attempts, source_id),
                         ))
             else:
                 result, _ = await comparator.compare_batch(
@@ -1387,7 +1390,7 @@ async def _run_world_batches(
             trace.fail(ids, "WORLD", exc)
             failures.extend(
                 _runtime_failure(EvaluationDomain.WORLD, 2, item.source_id, exc).model_copy(
-                    update={"comparison_attempts": comparison_attempts},
+                    update={"comparison_attempts": candidate_comparison_attempts(comparison_attempts, item.source_id)},
                 ) for item in group
             )
     return _link_projected_world_subject_adds(sources, predictions), failures

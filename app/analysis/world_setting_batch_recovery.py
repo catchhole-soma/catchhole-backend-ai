@@ -220,6 +220,10 @@ def _record_rejected_dependencies(group, row, request, references):
     if not isinstance(row, dict):
         return
     target_ref = row.get("target_ref")
+    if target_ref is None and len(references) == 1:
+        # The sole request target bounds dependencies only. The response still
+        # fails canonical-target validation until a retry explicitly selects it.
+        target_ref = references[0].reference
     if target_ref is not None and (not isinstance(target_ref, str)
                                   or target_ref not in {reference.reference for reference in references}):
         return
@@ -343,7 +347,9 @@ async def recover_world_batch(comparator, category, candidates, targets, initial
             kwargs["unresolved_references"] = tuple(unresolved_references)
         if evaluation_failure_callback is not None:
             def callback(attempt, error, payload, context):
-                evaluation_failure_callback(attempt + offset, error, payload, context)
+                diagnostic_context = dict(context) if isinstance(context, dict) else {}
+                diagnostic_context["request_candidate_refs"] = group.refs
+                evaluation_failure_callback(attempt + offset, error, payload, diagnostic_context)
             kwargs["evaluation_failure_callback"] = callback
         try:
             result, raw = await comparator.compare_batch(category, group.candidates, targets, **kwargs)

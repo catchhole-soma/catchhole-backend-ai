@@ -27,6 +27,9 @@ def capture_world_comparison_attempt(attempt_number, error, response_payload, co
                 "RESPONSE_JSON_INVALID" if isinstance(error, json.JSONDecodeError) else
                 "COMPARISON_VALIDATION_FAILED")
     context = context if isinstance(context, dict) else {}
+    request_refs = context.get("request_candidate_refs")
+    if isinstance(request_refs, (list, tuple)):
+        source_ids_by_ref = {ref: ids for ref, ids in source_ids_by_ref.items() if ref in request_refs}
     refs = context.get("candidate_refs", ())
     rejected = _source_ids(refs, source_ids_by_ref) if code not in {
         "RESPONSE_SCHEMA_INVALID", "RESPONSE_JSON_INVALID", "COMPARISON_VALIDATION_FAILED",
@@ -67,7 +70,7 @@ def capture_world_comparison_attempt(attempt_number, error, response_payload, co
     return ComparisonAttemptDiagnostic(
         attempt_number=attempt_number, rule_code=code, stage=stage,
         attribution="IDENTIFIED" if rejected else "UNKNOWN",
-        batch_source_ids=list(dict.fromkeys(source_id for ids in source_ids_by_ref.values() for source_id in ids)),
+        batch_source_ids=_source_ids(context.get("request_candidate_refs", list(source_ids_by_ref)), source_ids_by_ref),
         rejected_source_ids=rejected, decisions=decisions,
     )
 
@@ -93,16 +96,23 @@ def _same_name(left, right):
     return type(right) is str and normalize_world_setting_name(left) == normalize_world_setting_name(right)
 
 
+def candidate_comparison_attempts(attempts, candidate_id):
+    """Keep exact request history; absent legacy scope remains conservatively relevant."""
+    return [attempt for attempt in attempts
+            if not attempt.batch_source_ids or candidate_id in attempt.batch_source_ids]
+
+
 def comparison_failure_case(failure, candidate_id, source_labels_by_id=None):
     """Project one candidate's proposed judgment; the batch error is not proof about other decisions."""
-    if not failure.comparison_attempts:
+    relevant_attempts = candidate_comparison_attempts(failure.comparison_attempts, candidate_id)
+    if not relevant_attempts:
         return None
-    latest = failure.comparison_attempts[-1]
+    latest = relevant_attempts[-1]
     source_labels_by_id = source_labels_by_id or {}
     status = ("REJECTED" if candidate_id in latest.rejected_source_ids else
               "BATCH_ABORTED" if latest.attribution == "IDENTIFIED" else "UNKNOWN")
     attempts = []
-    for attempt in failure.comparison_attempts:
+    for attempt in relevant_attempts:
         decision = next((item for item in attempt.decisions if candidate_id in item.source_candidate_ids), None)
         attempts.append({
             "attemptNumber": attempt.attempt_number, "ruleCode": attempt.rule_code,
