@@ -168,7 +168,19 @@ def test_rejected_retry_reservation_does_not_count_an_extra_provider_attempt(met
 @pytest.mark.parametrize(
     ("error", "error_type"),
     [
+        (status_error(400), "400"),
+        (status_error(401), "401"),
+        (status_error(403), "403"),
+        (status_error(402), "4xx"),
+        (status_error(404), "4xx"),
+        (status_error(499), "4xx"),
+        (status_error(408), "timeout"),
+        (status_error(429), "429"),
+        (status_error(500), "5xx"),
         (status_error(503), "5xx"),
+        (status_error(599), "5xx"),
+        (status_error(399), "other"),
+        (status_error(600), "other"),
         (httpx.ReadTimeout("private timeout"), "timeout"),
         (TimeoutError("private timeout"), "timeout"),
         (httpx.ConnectError("private network"), "network"),
@@ -202,6 +214,37 @@ def test_provider_error_labels_are_fixed_and_failure_usage_is_retained(metrics, 
         assert value(metrics, "catchhole_llm_usage_tokens_total", **LLM, token_type="input") == 12
     else:
         assert value(metrics, "catchhole_llm_usage_unavailable_total", **LLM) == 1
+    assert "private" not in str(list(metrics.registry.collect()))
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type"),
+    [(400, "400"), (401, "401"), (403, "403"), (422, "4xx")],
+)
+@pytest.mark.parametrize("chain_attribute", ["__cause__", "__context__"])
+def test_wrapped_http_4xx_is_recorded_before_outer_validation_error(
+    metrics, status, error_type, chain_attribute
+):
+    error = LlmResponseValidationError("private validation wrapper")
+    intermediate = ValueError("private provider wrapper")
+    setattr(error, chain_attribute, intermediate)
+    setattr(intermediate, chain_attribute, status_error(status))
+
+    with pytest.raises(LlmResponseValidationError):
+        asyncio.run(client(metrics, [error], max_retries=0).create_text_response("s", "u"))
+
+    assert (
+        value(metrics, "catchhole_llm_calls_total", **LLM, outcome="failure", error_type=error_type)
+        == 1
+    )
+    assert "private" not in str(list(metrics.registry.collect()))
+
+
+@pytest.mark.parametrize("error_type", ["400", "401", "403", "4xx"])
+def test_llm_retry_records_bounded_http_4xx_label(metrics, error_type):
+    metrics.record_llm_retry("SETTING_EXTRACTION", "gpt-5.6-sol", error_type)
+
+    assert value(metrics, "catchhole_llm_retries_total", **LLM, error_type=error_type) == 1
 
 
 def test_provider_cancellation_preserves_ledger_cleanup_and_semaphore(metrics):
