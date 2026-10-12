@@ -26,6 +26,14 @@ class Outbox:
         self.db.execute("""CREATE TABLE IF NOT EXISTS reports (
             id TEXT PRIMARY KEY, dispatch TEXT NOT NULL, runner TEXT NOT NULL,
             action TEXT NOT NULL, payload TEXT NOT NULL, expires REAL NOT NULL)""")
+        # Upgrade existing volumes in place; retry order must survive restarts.
+        if "last_attempt" not in {
+            column[1] for column in self.db.execute("PRAGMA table_info(reports)")
+        }:
+            with self.db:
+                self.db.execute(
+                    "ALTER TABLE reports ADD COLUMN last_attempt INTEGER NOT NULL DEFAULT 0"
+                )
         self.max_rows = max_rows
         self._reserved_slots = 0
 
@@ -68,7 +76,7 @@ class Outbox:
             raise RuntimeError("Missing report reservation")
         with self.db:
             self.db.execute(
-                "INSERT INTO reports VALUES (?,?,?,?,?,?)",
+                "INSERT INTO reports (id,dispatch,runner,action,payload,expires) VALUES (?,?,?,?,?,?)",
                 (
                     key,
                     dispatch.model_dump_json(by_alias=True),
@@ -80,16 +88,34 @@ class Outbox:
             )
 
     async def flush(self, client: ChatExecutionClient):
-        # Different report types recover independently. A broken usage endpoint must
-        # not prevent persisting a finished answer (Spring marks settlement pending).
-        rows = self.db.execute("SELECT * FROM reports ORDER BY rowid LIMIT 16").fetchall()
-        slots = asyncio.Semaphore(4)
+        # Each kind owns batch and connection slots, so stalled usage requests cannot
+        # starve finished answers (or vice versa). Attempt order is durable and fair
+        # within each kind, including when older rows keep receiving transient errors.
+        batches = []
+        with self.db:
+            self.db.execute("DELETE FROM reports WHERE expires<=?", (time.time(),))
+            for is_finish in (False, True):
+                batches.append(
+                    self.db.execute(
+                        """SELECT id,dispatch,runner,action,payload,expires FROM reports
+                    WHERE (action='finish')=? ORDER BY last_attempt,rowid LIMIT 8""",
+                        (is_finish,),
+                    ).fetchall()
+                )
+            attempt = self.db.execute(
+                "SELECT COALESCE(MAX(last_attempt),0)+1 FROM reports"
+            ).fetchone()[0]
+            self.db.executemany(
+                "UPDATE reports SET last_attempt=? WHERE id=?",
+                [(attempt, row[0]) for batch in batches for row in batch],
+            )
+        concurrency = 2 if all(batches) else 4
 
-        async def deliver(row):
+        async def deliver(row, slots):
             key, raw, runner, action, payload, expires = row
-            discard = expires <= time.time()
-            if not discard:
-                async with slots:
+            async with slots:
+                discard = expires <= time.time()
+                if not discard:
                     try:
                         await client.request(
                             Dispatch.model_validate_json(raw),
@@ -104,7 +130,11 @@ class Outbox:
                 with self.db:
                     self.db.execute("DELETE FROM reports WHERE id=?", (key,))
 
-        await asyncio.gather(*(deliver(row) for row in rows))
+        jobs = []
+        for batch in batches:
+            slots = asyncio.Semaphore(concurrency)
+            jobs.extend(deliver(row, slots) for row in batch)
+        await asyncio.gather(*jobs)
 
     def close(self):
         self.db.close()
