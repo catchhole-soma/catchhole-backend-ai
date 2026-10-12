@@ -18,6 +18,8 @@
 
 ## Spring Worker API
 
+- GH236의 `SettingToolsClient`는 분석 Worker와 독립적인 읽기 전용 설정 조회 client다. `SettingToolContext`의 회원·작품은 신뢰 서버가 인증된 실행에서 고정하며 모델 인자로 받지 않는다. 현재값·이력·원문 상태는 Spring 계약을 보존하고 빈 결과로 축약하지 않는다. 계약과 Java/Python fixture 동기화는 `docs/setting-tools-v1.md`를 따른다. 챗봇 실행에 AnalysisJob/Worker lease를 임의 생성하지 않는다.
+
 - 분석 runner는 claim의 `allowedJobTypes`를 명시한다. 기본 `analysis` 프로세스는 `SETTING_EXTRACTION`, 별도 `character-comparison`/`world-comparison` 프로세스는 각각 사용자 재비교용 `CHARACTER_FACT_COMPARISON`/`WORLD_SETTING_COMPARISON`만 claim해 서로의 작업을 가져가지 않는다. `character-comparison` Worker만 `supportsCharacterComparisonGroups=true`를 보내 새 입력 hash 그룹 Job을 claim한다.
 - claim 뒤 상태 변경, checkpoint, 세계관 후보 API와 토큰 예약에는 `X-Worker-Lease-Token`을 전송하고, 장기 provider 호출 중에는 60초 주기로 heartbeat를 보낸다. lease가 만료된 응답을 우회해 DB 상태를 직접 바꾸지 않는다.
 - `SETTING_EXTRACTION`의 재시작 경계는 `CHUNKS_READY → CHARACTER_CANDIDATES_SAVED → CHARACTER_COMPARISONS_HANDED_OFF → legacy CHARACTER_COMPARISONS_FINISHED → WORLD_CANDIDATES_PUBLISHED → WORLD_COMPARISONS_FINISHED` 순서를 사용한다. 새 원 Job은 후보 게시만 그룹 숨김 Job에 인계하고 직접 캐릭터 비교를 실행하지 않는다. legacy finished를 예약 완료로 재해석하거나 완료된 stage의 외부 호출·저장을 반복하지 않는다.
