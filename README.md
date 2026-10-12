@@ -295,3 +295,5 @@ Python AI 서버의 실패 응답은 Spring 서버가 해석하기 쉽도록 공
 ```
 
 성공 응답은 FastAPI response model을 우선 사용하고, Spring API의 사용자-facing 응답은 Spring 서버에서 정리합니다.
+
+- [채팅 실행·인증·사용량 계약 v1](docs/chat-execution-v1.md) — #237, 기본 비활성; 자연어 orchestration은 #238.
