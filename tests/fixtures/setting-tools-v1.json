@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "tool": "CHARACTER_EVIDENCE",
+  "items": {
+    "content": [
+      {
+        "kind": "EVIDENCE",
+        "id": "00000000-0000-0000-0000-000000000001",
+        "subjectId": "00000000-0000-0000-0000-000000000002",
+        "subjectName": "아리아",
+        "category": "STAT",
+        "scopeName": null,
+        "settingKey": "stats.mana",
+        "displayName": "mana",
+        "value": "10",
+        "structuredValueJson": null,
+        "valueTruncated": false,
+        "contributesToCurrent": false,
+        "operation": null,
+        "historyOnly": null,
+        "settingVersion": null,
+        "effectiveFromEpisodeNo": 1,
+        "origin": "CONFIRMED_ANALYSIS",
+        "sources": [
+          {
+            "tool": "CHARACTER_EVIDENCE",
+            "targetId": "00000000-0000-0000-0000-000000000001"
+          }
+        ],
+        "sourcesTruncated": false,
+        "evidence": {
+          "status": "AVAILABLE",
+          "candidateId": "00000000-0000-0000-0000-000000000003",
+          "episodeId": "00000000-0000-0000-0000-000000000004",
+          "sourceEpisodeNo": 1,
+          "sourceChunkId": null,
+          "sourceHash": "2bf0c0bf0a484aab4482dc4167dbee86eb625824de00222b700c0dae190c0696",
+          "sourceVersion": "v1",
+          "matchesCurrentSource": true,
+          "quotes": [
+            {
+              "text": "마력은 10이다.",
+              "startOffset": 2,
+              "endOffset": 11
+            }
+          ],
+          "truncated": false
+        },
+        "sourceEpisodeId": "00000000-0000-0000-0000-000000000004",
+        "sourceEpisodeNo": 1
+      }
+    ],
+    "page": 0,
+    "size": 20,
+    "totalElements": 1,
+    "totalPages": 1,
+    "hasNext": false
+  },
+  "partial": false,
+  "limitations": [
+    "SETTING_BOOK_UNSUPPORTED"
+  ]
+}
