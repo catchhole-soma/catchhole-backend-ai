@@ -50,7 +50,7 @@ class Execution:
         each schema retry/embedding request with this method.
         """
         if self.calls >= self.context.max_calls:
-            raise ChatTransportError(429)
+            raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         self.outbox.reserve_slot()
         try:
             call_id = uuid4()
@@ -171,8 +171,8 @@ class ChatRuntime:
             finish = Finish(failure="INTERRUPTED")
         except ChatTransportError as exc:
             finish = Finish(
-                failure="QUOTA_EXHAUSTED"
-                if exc.status == 429 or exc.code == "QUOTA_EXHAUSTED"
+                failure=exc.code
+                if exc.code in {"QUOTA_EXHAUSTED", "EXECUTION_LIMIT_EXCEEDED"}
                 else "NETWORK_FAILURE"
             )
         except Exception:

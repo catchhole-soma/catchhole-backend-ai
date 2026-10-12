@@ -52,6 +52,7 @@ class Finish(ContractModel):
             "PROVIDER_FAILURE",
             "NETWORK_FAILURE",
             "QUOTA_EXHAUSTED",
+            "EXECUTION_LIMIT_EXCEEDED",
             "HANDLER_UNAVAILABLE",
             "INTERRUPTED",
         ]

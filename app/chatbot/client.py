@@ -44,8 +44,13 @@ class ChatExecutionClient:
             code = None
             try:
                 envelope = response.json()
-                if envelope.get("error", {}).get("code") == "AI_TOKEN_QUOTA_EXHAUSTED":
-                    code = "QUOTA_EXHAUSTED"
+                error = envelope.get("error") if isinstance(envelope, dict) else None
+                raw_code = error.get("code") if isinstance(error, dict) else None
+                if isinstance(raw_code, str):
+                    code = {
+                        "AI_TOKEN_QUOTA_EXHAUSTED": "QUOTA_EXHAUSTED",
+                        "CHAT_LIMIT_EXCEEDED": "EXECUTION_LIMIT_EXCEEDED",
+                    }.get(raw_code)
             except ValueError:
                 pass
             raise ChatTransportError(response.status_code, code)
