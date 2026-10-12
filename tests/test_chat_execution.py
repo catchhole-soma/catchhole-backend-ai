@@ -6,7 +6,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from app.chatbot.client import ChatTransportError
+from app.chatbot.client import ChatExecutionClient, ChatTransportError
 from app.chatbot.http_app import create_app
 from app.chatbot.outbox import Outbox
 from app.chatbot.runtime import ChatRuntime, ProviderResult, ProviderFailure, BusyError
@@ -80,7 +80,7 @@ class Spring:
 
     async def reserve(self, d, runner, call_id, purpose, model, amount):
         if self.deny_reserve:
-            raise ChatTransportError(429)
+            raise ChatTransportError(409, "QUOTA_EXHAUSTED")
         self.reservations.append((call_id, purpose, amount))
 
     async def request(self, d, runner, action, body, **kwargs):
@@ -350,6 +350,7 @@ def test_versioned_java_python_fixture():
         "usage": Usage,
         "call": CallView,
         "finish": Finish,
+        "executionLimitFinish": Finish,
     }.items():
         assert (
             model.model_validate(fixture[name]).model_dump(by_alias=True, mode="json")
@@ -358,7 +359,8 @@ def test_versioned_java_python_fixture():
 
 
 @pytest.mark.anyio
-async def test_failed_settlement_does_not_block_result_storage(tmp_path):
+@pytest.mark.parametrize("pending_calls", [1, 16, 32])
+async def test_failed_settlement_does_not_block_result_storage(tmp_path, pending_calls):
     class SettlementBroken(Spring):
         async def request(self, d, runner, action, body, **kwargs):
             if action.startswith("calls/"):
@@ -368,11 +370,201 @@ async def test_failed_settlement_does_not_block_result_storage(tmp_path):
     spring = SettlementBroken()
     box = Outbox(str(tmp_path / "box"))
     d, runner = dispatch(), uuid4()
-    box.put("call", d, runner, "calls/x", usage().model_dump(mode="json"), d.deadline.timestamp())
+    for i in range(pending_calls):
+        box.put(
+            f"call-{i}",
+            d,
+            runner,
+            f"calls/{i}",
+            usage().model_dump(mode="json"),
+            d.deadline.timestamp() + 86400,
+        )
     box.put("result", d, runner, "finish", answer().model_dump(mode="json"), d.deadline.timestamp())
     await box.flush(spring)
-    assert box.count() == 1
+    assert box.count() == pending_calls
     assert spring.reports[0][1] == "finish"
+    box.close()
+
+
+@pytest.mark.anyio
+async def test_stalled_usage_requests_leave_capacity_for_finish(tmp_path):
+    unblock_usage, delivered_finish = asyncio.Event(), asyncio.Event()
+
+    class Stalled(Spring):
+        async def request(self, d, runner, action, body, **kwargs):
+            if action.startswith("calls/"):
+                await unblock_usage.wait()
+                raise ChatTransportError(503)
+            delivered_finish.set()
+            return await super().request(d, runner, action, body, **kwargs)
+
+    box = Outbox(str(tmp_path / "box"))
+    d, runner = dispatch(), uuid4()
+    for i in range(16):
+        box.put(
+            f"call-{i}",
+            d,
+            runner,
+            f"calls/{i}",
+            usage().model_dump(mode="json"),
+            d.deadline.timestamp() + 86400,
+        )
+    box.put("finish", d, runner, "finish", answer().model_dump(mode="json"), d.deadline.timestamp())
+    delivery = asyncio.create_task(box.flush(Stalled()))
+    try:
+        await asyncio.wait_for(delivered_finish.wait(), timeout=1)
+    finally:
+        unblock_usage.set()
+        await delivery
+        box.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("action", ["finish", "calls/x"])
+async def test_failed_reports_rotate_after_reopening_legacy_outbox(tmp_path, action):
+    import json
+    import sqlite3
+
+    path = str(tmp_path / "legacy.db")
+    d, runner = dispatch(), uuid4()
+    payload = (answer() if action == "finish" else usage()).model_dump(mode="json")
+    # A pre-fix outbox must remain readable without discarding pending reports.
+    with sqlite3.connect(path) as old:
+        old.execute("""CREATE TABLE reports (id TEXT PRIMARY KEY, dispatch TEXT NOT NULL,
+            runner TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL,
+            expires REAL NOT NULL)""")
+        for i in range(33):
+            body = payload if i == 32 else {**payload, "blocked": True}
+            old.execute(
+                "INSERT INTO reports VALUES (?,?,?,?,?,?)",
+                (
+                    str(i),
+                    d.model_dump_json(by_alias=True),
+                    str(runner),
+                    action,
+                    json.dumps(body),
+                    d.deadline.timestamp(),
+                ),
+            )
+    old.close()
+
+    class PartialOutage(Spring):
+        async def request(self, d, runner, action, body, **kwargs):
+            if body.get("blocked"):
+                raise ChatTransportError(503)
+            return await super().request(d, runner, action, body, **kwargs)
+
+    spring = PartialOutage()
+    # Reopening between batches also checks durable retry order and idempotent upgrade.
+    for _ in range(5):
+        box = Outbox(path)
+        await box.flush(spring)
+        box.close()
+    assert len(spring.reports) == 1
+    assert spring.reports[0][1] == action
+    box = Outbox(path)
+    assert box.count() == 32
+    box.close()
+
+
+@pytest.mark.anyio
+async def test_expired_reports_are_removed_even_behind_failed_backlog(tmp_path):
+    box = Outbox(str(tmp_path / "box"))
+    d, runner = dispatch(), uuid4()
+    for i in range(32):
+        box.put(
+            f"call-{i}",
+            d,
+            runner,
+            f"calls/{i}",
+            usage().model_dump(mode="json"),
+            d.deadline.timestamp() + 86400,
+        )
+    box.put("expired", d, runner, "finish", answer().model_dump(mode="json"), 0)
+    spring = Spring()
+    spring.fail_delivery = True
+    await box.flush(spring)
+    assert box.count() == 32
+    box.close()
+
+
+@pytest.mark.anyio
+async def test_local_call_limit_keeps_measured_usage_and_separate_failure(tmp_path):
+    spring = Spring()
+    d = dispatch()
+    spring.contexts[d.attempt_id] = context(d).model_copy(update={"max_calls": 1})
+    calls = 0
+
+    async def provider():
+        nonlocal calls
+        calls += 1
+        return ProviderResult("answer", usage())
+
+    async def handler(execution):
+        await execution.call("CHAT_ANSWER", "fake", 100, provider)
+        await execution.call("CHAT_ANSWER", "fake", 100, provider)
+        return answer()
+
+    box = Outbox(str(tmp_path / "box"))
+    runtime = ChatRuntime(spring, box, handler=handler)
+    runtime.submit(d)
+    await finished(runtime)
+    await runtime.deliver()
+    assert calls == 1 and len(spring.reservations) == 1
+    assert (
+        next(body for _, action, body in spring.reports if action.startswith("calls/"))["kind"]
+        == "SETTLE"
+    )
+    assert (
+        next(body for _, action, body in spring.reports if action == "finish")["failure"]
+        == "EXECUTION_LIMIT_EXCEEDED"
+    )
+    box.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "status, error, expected",
+    [
+        (409, {"error": {"code": "AI_TOKEN_QUOTA_EXHAUSTED"}}, "QUOTA_EXHAUSTED"),
+        (429, {"error": {"code": "CHAT_LIMIT_EXCEEDED"}}, "EXECUTION_LIMIT_EXCEEDED"),
+        (429, {"error": {"code": "UNRECOGNIZED"}}, "NETWORK_FAILURE"),
+        (429, {"error": None}, "NETWORK_FAILURE"),
+    ],
+)
+async def test_reservation_error_code_controls_failure_not_http_status(
+    tmp_path, status, error, expected
+):
+    d = dispatch()
+    invoked = False
+
+    async def transport(request):
+        if request.url.path.endswith("/start"):
+            return httpx.Response(
+                200,
+                json={"success": True, "data": context(d).model_dump(by_alias=True, mode="json")},
+            )
+        assert request.url.path.endswith("/calls")
+        return httpx.Response(status, json=error)
+
+    async def provider():
+        nonlocal invoked
+        invoked = True
+
+    async def handler(execution):
+        await execution.call("CHAT_ANSWER", "fake", 100, provider)
+        return answer()
+
+    box = Outbox(str(tmp_path / "box"))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        client = ChatExecutionClient("http://spring", "test-key", http)
+        runtime = ChatRuntime(client, box, handler=handler)
+        runtime.submit(d)
+        await finished(runtime)
+        reports = Spring()
+        await box.flush(reports)
+    assert not invoked
+    assert reports.reports[0][2]["failure"] == expected
     box.close()
 
 

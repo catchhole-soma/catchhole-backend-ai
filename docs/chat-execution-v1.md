@@ -70,7 +70,7 @@ sequenceDiagram
 | Python GET `/healthz` | ready/draining, 비밀값·실행 정보 없음 |
 | Python GET `/metrics` | 내부 API key 필요 |
 
-오류: 입력 400, 인증 401, 실행 범위 403, 접근 가능한 대상 없음 404, 입력/상태 충돌 409, 계정 잔액 부족은 기존 AI_TOKEN_QUOTA_EXHAUSTED 409, 실행 한도 429, 기능 비활성 503, 본문 상한 413. 외부 provider 오류 원문을 전달하지 않는다. 실패 enum은 `PROVIDER_FAILURE`, `NETWORK_FAILURE`, `QUOTA_EXHAUSTED`, `HANDLER_UNAVAILABLE`, `INTERRUPTED`다. 시간 초과·삭제는 실행 상태로 별도 구분한다.
+오류: 입력 400, 인증 401, 실행 범위 403, 접근 가능한 대상 없음 404, 입력/상태 충돌 409, 계정 잔액 부족은 기존 AI_TOKEN_QUOTA_EXHAUSTED 409, 실행 한도 429, 기능 비활성 503, 본문 상한 413. 외부 provider 오류 원문을 전달하지 않는다. 실행 제한은 HTTP 429 + `CHAT_LIMIT_EXCEEDED` 코드로 `EXECUTION_LIMIT_EXCEEDED`를 보고한다. 계정 잔액 부족은 `AI_TOKEN_QUOTA_EXHAUSTED` 코드일 때만 `QUOTA_EXHAUSTED`로 보고하며 알 수 없는 429를 잔액 부족으로 추정하지 않는다. 실패 enum은 `PROVIDER_FAILURE`, `NETWORK_FAILURE`, `QUOTA_EXHAUSTED`, `EXECUTION_LIMIT_EXCEEDED`, `HANDLER_UNAVAILABLE`, `INTERRUPTED`다. 시간 초과·삭제는 실행 상태로 별도 구분한다.
 
 ## 상태와 재시도
 
@@ -106,7 +106,7 @@ stateDiagram-v2
 - 같은 callId의 owner/purpose/model/reservation 또는 완료 정산값이 달라지면 충돌한다. SETTLED/RELEASED 재전송은 잔액을 다시 바꾸지 않는다.
 - 운영 backfill run은 actor/policy/작품/예약 예산을 기록하고 OPERATIONAL_BACKFILL만 허용한다. work의 member_id는 귀속 정보이며 사용자 계정에는 예약·차감을 하지 않는다. 완료된 예약도 run의 누적 예약 예산에 포함하므로 회수/재전송으로 예산을 재사용하지 않는다. 실제 백필 실행·embedding은 #239이며 이 run은 채팅 dispatcher가 자동 전달하지 않는다.
 
-Python outbox는 SQLite 파일과 전용 볼륨을 사용한다. provider 호출 자체를 재생하지 않고 결과·사용량 보고만 재전송한다. 정산 endpoint 장애가 답변 저장을 막지 않도록 보고를 독립 전달한다. 결과는 실행 deadline까지만, 사용량은 deadline+24시간까지만 로컬에 보관한다. 삭제/권한 취소가 확인된 보고는 즉시 지우고 SQLite secure_delete를 사용한다. 네트워크가 끊기면 삭제 사실을 즉시 알 수 없으므로 TTL이 로컬 보관의 최대 시간이다. 원문 전체·질문은 outbox에 저장하지 않는다. 결과 본문과 capability가 있는 민감 볼륨이므로 사설 호스트 권한으로 관리한다.
+Python outbox는 SQLite 파일과 전용 볼륨을 사용한다. provider 호출 자체를 재생하지 않고 결과·사용량 보고만 재전송한다. 답변과 사용량은 각각 최대 8건을 선택하고, 두 종류가 함께 대기하면 각 2개씩 독립 전송 슬롯을 사용한다(한 종류만 있으면 최대 4개). 종류별로 마지막 시도 순서를 SQLite에 남겨 일시 실패가 같은 종류의 후속 보고도 막지 않게 순환한다. 기존 볼륨에는 시작 시 `last_attempt` 컬럼을 추가하고 미전송 기록을 보존한다. 만료 기록은 매 전달 주기마다 전체 대기열에서 먼저 제거한다. 시작 시 백그라운드 복구를 시작하지만 전체 backlog 처리를 기다린 뒤 요청을 받는 구조는 아니다. 결과는 실행 deadline까지만, 사용량은 deadline+24시간까지만 로컬에 보관한다. 삭제/권한 취소가 확인된 보고는 즉시 지우고 SQLite secure_delete를 사용한다. 네트워크가 끊기면 삭제 사실을 즉시 알 수 없으므로 TTL이 로컬 보관의 최대 시간이다. 원문 전체·질문은 outbox에 저장하지 않는다. 결과 본문과 capability가 있는 민감 볼륨이므로 사설 호스트 권한으로 관리한다.
 
 프로세스가 provider 실행 중 종료되면 자동 재호출하지 않는다. Spring이 deadline에 TIMED_OUT으로 바꾸고 예약을 회수한다. 디스크 오류로 실측 보고 자체를 저장하지 못하면 보고 복구가 불가능할 수 있으므로 UNKNOWN이 남는다. 이를 성공 정산으로 위장하지 않는다. Python의 report_storage_failure와 Spring의 usageUnknown을 운영에서 확인한다.
 
@@ -170,3 +170,10 @@ Spring HTTP 전송 기본값은 2 thread + 32 queue이며 DB에 접수된 실행
 - 변경 Python 파일 Ruff 검사, Compose config 검사, AI Docker 이미지 빌드 통과.
 - 네트워크를 차단한 테스트 컨테이너에서 FastAPI health/metrics 인증, non-root outbox 파일 소유권, 기존 Worker 동시 기동 중 health 16회, 두 프로세스 정상 종료 확인. 테스트 컨테이너와 테스트 볼륨 정리 완료.
 - 실제 provider 호출, 운영 배포, 기존 5+2 Worker 처리량 측정은 하지 않았다.
+
+### 2026-10-12 PR 리뷰 보완 검증
+
+- outbox 종류별 전송 슬롯·영속 재시도 순서·기존 SQLite 파일 업그레이드·대기열 전체 만료 제거를 추가했다. 16/32건의 정산 장애, 응답 대기, 재시작 이후 같은 종류 후속 보고의 전달을 회귀 검증했다.
+- 실행 한도 실패를 `EXECUTION_LIMIT_EXCEEDED`로 분리했다. 실제 Spring의 잔액 부족 409와 실행 제한 429 코드, 내부 finish 저장·공개 재조회, Python의 로컬 호출 제한과 HTTP 오류 분류를 검증했다.
+- Java 전체 `test bootJar --rerun-tasks`를 Docker 및 `GH237_AI_CHECKOUT`이 있는 환경에서 실행: 1,690 통과, 24 skip. 기존 migration 테스트 2개와 채팅 계약 31개(H2 14, PostgreSQL 15, 공통 fixture 1, 실제 HTTP 왕복 1)가 모두 실행·통과했다.
+- Python 전체 pytest: 2,180 통과, 14 skip. 실행 테스트 32개와 변경 파일 Ruff 통과. 기존 FastAPI TestClient deprecation warning 1건.
