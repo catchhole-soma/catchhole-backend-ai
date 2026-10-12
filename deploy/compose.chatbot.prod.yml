@@ -1,0 +1,30 @@
+# Separate from analysis/comparison replicas; deploy explicitly after #238 readiness.
+name: catchhole-chatbot
+services:
+  chatbot:
+    image: ${AI_IMAGE:?Set an immutable AI image tag}
+    command: ["uvicorn", "app.chatbot.http_app:app", "--host", "0.0.0.0", "--port", "8082", "--workers", "1", "--no-access-log"]
+    init: true
+    restart: unless-stopped
+    environment:
+      SPRING_INTERNAL_API_KEY: ${SPRING_INTERNAL_API_KEY:?Required}
+      SPRING_INTERNAL_API_BASE_URL: ${SPRING_INTERNAL_API_BASE_URL:?Required}
+      CHAT_OUTBOX_PATH: /var/lib/catchhole-chat/outbox.sqlite3
+      CHAT_CAPACITY: ${CHAT_CAPACITY:-4}
+      CHAT_SHUTDOWN_GRACE: 15
+    ports:
+      - "${CHAT_BIND_ADDRESS:-127.0.0.1}:8082:8082"
+    volumes:
+      - chat_outbox:/var/lib/catchhole-chat
+    cpus: ${CHAT_CPUS:-0.5}
+    mem_limit: ${CHAT_MEMORY:-512m}
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: journald
+volumes:
+  chat_outbox:

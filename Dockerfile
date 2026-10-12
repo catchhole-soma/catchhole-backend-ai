@@ -27,6 +27,11 @@ RUN python -m pip install --upgrade pip setuptools wheel \
     && cd /tmp \
     && python -c "from pathlib import Path; import app; prompt_dir = Path(app.__file__).parent / 'llm' / 'prompts'; required = ('character_setting_extraction.md', 'character_subject_resolution.md', 'world_setting_extraction.md', 'world_setting_subject_resolution.md', 'world_setting_comparison.md', 'world_setting_comparison_batch.md'); missing = [name for name in required if not (prompt_dir / name).is_file()]; assert not missing, f'missing packaged prompts: {missing}'"
 
+# A new named outbox volume inherits this directory's non-root ownership.
+RUN mkdir -p /var/lib/catchhole-chat \
+    && chown catchhole:catchhole /var/lib/catchhole-chat \
+    && chmod 700 /var/lib/catchhole-chat
+
 USER catchhole:catchhole
 
 CMD ["python", "scripts/run_analysis_worker.py"]

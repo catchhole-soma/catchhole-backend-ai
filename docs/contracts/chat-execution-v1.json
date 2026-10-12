@@ -1,0 +1,55 @@
+{
+  "dispatch": {
+    "schemaVersion": 1,
+    "attemptId": "00000000-0000-0000-0000-000000000237",
+    "capability": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "deadline": "2030-01-01T00:00:00Z"
+  },
+  "context": {
+    "schemaVersion": 1,
+    "questionId": "00000000-0000-0000-0000-000000000236",
+    "attemptId": "00000000-0000-0000-0000-000000000237",
+    "workId": "00000000-0000-0000-0000-000000000001",
+    "memberId": 1,
+    "question": "아리아의 현재 마력은?",
+    "episodeFrom": 2,
+    "episodeTo": 5,
+    "deadline": "2030-01-01T00:00:00Z",
+    "tokenBudget": 32000,
+    "maxCalls": 8,
+    "maxToolCalls": 20,
+    "operational": false
+  },
+  "reserve": {
+    "callId": "00000000-0000-0000-0000-000000000238",
+    "purpose": "CHAT_ANSWER",
+    "model": "test-only",
+    "reservedTokens": 100
+  },
+  "usage": {
+    "kind": "SETTLE",
+    "inputTokens": 20,
+    "cachedInputTokens": 10,
+    "outputTokens": 5,
+    "outcome": "SUCCESS"
+  },
+  "call": {
+    "callId": "00000000-0000-0000-0000-000000000238",
+    "status": "SETTLED",
+    "reservedTokens": 100,
+    "inputTokens": 20,
+    "cachedInputTokens": 10,
+    "outputTokens": 5
+  },
+  "finish": {
+    "result": {
+      "outcome": "INSUFFICIENT_EVIDENCE",
+      "text": "확인된 근거가 부족합니다.",
+      "sources": [],
+      "limitations": [
+        "계약 검증 fixture"
+      ]
+    },
+    "failure": null
+  }
+}

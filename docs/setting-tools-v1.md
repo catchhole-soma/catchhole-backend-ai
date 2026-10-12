@@ -11,3 +11,7 @@
 - 단위/계약 테스트: `.venv/bin/python -m pytest tests/test_setting_tools_client.py -q`. `tests/fixtures/setting-tools-v1.json`은 Java의 실제 HTTP 응답 계약 fixture와 동일해야 한다.
 
 자연어 라우팅·LLM 답변·프롬프트·분석 runtime은 변경하지 않았으므로 AI 로직 버전은 올리지 않는다. 다음 구현은 #237 실행/인증/과금 경계와 #238 단일 질문 도구 호출이다.
+
+## 채팅 실행 연결 (#237)
+
+실행 인증·토큰 원장·FastAPI 경로는 [채팅 실행 v1](chat-execution-v1.md)을 따른다. 채팅에서는 실행 capability/runner에 고정된 `/api/internal/v1/chat-runs/{id}/tools`를 사용한다. 자연어 도구 선택은 #238이다.

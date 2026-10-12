@@ -1,6 +1,6 @@
 """Spring 소유권/현재값/근거 정책을 호출하는 클라이언트. DB/LLM/Worker lease와 독립적이다."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 import httpx
@@ -15,6 +15,9 @@ class SettingToolContext:
 
     member_id: int
     work_id: UUID
+    attempt_id: UUID | None = None
+    capability: str | None = field(default=None, repr=False)
+    runner_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -23,6 +26,11 @@ class SettingToolContext:
             or not isinstance(self.work_id, UUID)
         ):
             raise ValueError("인증된 설정 조회 범위가 필요합니다.")
+        scoped = (self.attempt_id, self.capability, self.runner_id)
+        if any(value is not None for value in scoped) and not all(
+            value is not None for value in scoped
+        ):
+            raise ValueError("완전한 실행 인증 문맥이 필요합니다.")
 
 
 class SettingToolClientError(RuntimeError):
@@ -50,13 +58,22 @@ class SettingToolsClient:
     async def query(self, request: SettingToolQuery) -> SettingToolResponse:
         # model_construct 등 검증 우회를 호출 경계에서 다시 차단한다.
         request = SettingToolQuery.model_validate(request.model_dump())
+        headers = {"X-Internal-Api-Key": self._api_key}
+        if self._context.attempt_id is not None:
+            path = f"/api/internal/v1/chat-runs/{self._context.attempt_id}/tools"
+            headers.update(
+                {
+                    "X-Chat-Capability": self._context.capability,
+                    "X-Chat-Runner": str(self._context.runner_id),
+                }
+            )
+        else:
+            path = f"/api/internal/v1/works/{self._context.work_id}/setting-tools/queries"
+            headers["X-Setting-Tool-Member-Id"] = str(self._context.member_id)
         try:
             response = await self._http.post(
-                f"{self._base_url}/api/internal/v1/works/{self._context.work_id}/setting-tools/queries",
-                headers={
-                    "X-Internal-Api-Key": self._api_key,
-                    "X-Setting-Tool-Member-Id": str(self._context.member_id),
-                },
+                f"{self._base_url}{path}",
+                headers=headers,
                 json=request.model_dump(by_alias=True, mode="json"),
                 timeout=15,
                 follow_redirects=False,
