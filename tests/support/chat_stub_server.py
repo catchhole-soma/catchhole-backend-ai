@@ -37,14 +37,14 @@ async def handler(execution):
     )
 
 
-def main():
+def main(*, handler_override=None):
     if os.getenv("CHAT_TEST_ONLY") != "true":
         raise RuntimeError("This entry point is only for integration tests")
     key = os.environ["SPRING_INTERNAL_API_KEY"]
     runtime = ChatRuntime(
         ChatExecutionClient(os.environ["SPRING_INTERNAL_API_BASE_URL"], key, httpx.AsyncClient()),
         Outbox(os.environ["CHAT_OUTBOX_PATH"]),
-        handler=handler,
+        handler=handler_override or handler,
     )
     uvicorn.run(
         create_app(runtime=runtime, api_key=key),

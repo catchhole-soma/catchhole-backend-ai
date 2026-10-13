@@ -14,7 +14,10 @@ from fastapi.responses import JSONResponse, Response
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from app.chatbot.client import ChatExecutionClient, ChatTransportError
 from app.chatbot.outbox import Outbox
-from app.chatbot.runtime import ChatRuntime, BusyError
+from app.chatbot.runtime import ChatRuntime, BusyError, unconfigured_handler
+from app.chatbot.qa import ChatQaHandler
+from app.chatbot.qa_config import ChatQaSettings
+from app.llm.openai_client import OpenAIResponsesClient
 from app.schemas.chat_execution import Dispatch
 
 
@@ -26,18 +29,36 @@ def create_app(*, runtime: ChatRuntime | None = None, api_key: str | None = None
         if len(key) < 16:
             raise RuntimeError("A private internal API key is required")
         http = None
+        provider_http = None
         lock = None
         if runtime is None:
+            qa = ChatQaSettings()
+            provider_key = os.getenv("LLM_API_KEY", "") if qa.enabled else ""
+            if qa.enabled and not provider_key:
+                raise RuntimeError("LLM_API_KEY is required when CHAT_QA_ENABLED is true")
             path = os.getenv("CHAT_OUTBOX_PATH", "/tmp/catchhole-chat/outbox.sqlite3")
             Path(path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             lock = open(path + ".lock", "a")
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             http = httpx.AsyncClient(limits=httpx.Limits(max_connections=16), timeout=10)
             url = os.environ["SPRING_INTERNAL_API_BASE_URL"]
+            handler = unconfigured_handler
+            if qa.enabled:
+                provider_http = httpx.AsyncClient(timeout=httpx.Timeout(90, connect=10))
+                delegate = OpenAIResponsesClient(
+                    api_key=provider_key,
+                    model=qa.model,
+                    responses_api_url="https://api.openai.com/v1/responses",
+                    reasoning_effort=qa.reasoning_effort,
+                    http_client=provider_http,
+                    store_responses=False,
+                )
+                handler = ChatQaHandler(delegate, qa)
             app.state.runtime = ChatRuntime(
                 ChatExecutionClient(url, key, http),
                 Outbox(path),
                 capacity=int(os.getenv("CHAT_CAPACITY", "4")),
+                handler=handler,
             )
         else:
             app.state.runtime = runtime
@@ -65,6 +86,8 @@ def create_app(*, runtime: ChatRuntime | None = None, api_key: str | None = None
             if runtime is None:
                 app.state.runtime.outbox.close()
                 await http.aclose()
+                if provider_http is not None:
+                    await provider_http.aclose()
                 lock.close()
 
     app = FastAPI(

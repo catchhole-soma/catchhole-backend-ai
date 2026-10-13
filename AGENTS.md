@@ -191,3 +191,14 @@
 - 실행 한도는 `EXECUTION_LIMIT_EXCEEDED`, 계정 잔액 부족은 `QUOTA_EXHAUSTED`로 구분한다. HTTP 429만으로 잔액 부족을 추정하지 않는다. 실패 안내와 재시도 판단에서 계정 상태와 실행 제한을 혼동하지 않기 위함이다.
 - UNKNOWN은 사용량 0이 아니다. 원문 변경/삭제 시 저장 답변 자체도 무효화한다. 후속 대화 저장소가 생기면 같은 파기 계약을 연결한다.
 - 이 변경은 모델/프롬프트/기존 분석 결과에 영향을 주지 않는다. 테스트 stub은 tests/support 전용이며 운영 handler로 사용하지 않는다.
+
+### RDB 단일 질의응답 (#238)
+
+- 계약·사례·한계·재현 명령은 `docs/chat-qa-v1.md`를 Java/Python에 동일하게 보관한다. 기존 `ChatResult`/조회 DTO를 재사용하며 현재값 계산과 권한 판정은 Spring이 소유한다.
+- `app/schemas/chat_qa.py`는 질문 유형과 요청 내 행 참조만 받는다. `app/chatbot/qa.py`는 대상 탐색·현재값/이력 조회·관련 행 선택·직접 근거 조회를 조율하며, `qa_render.py`가 실제 서버 값과 검증된 인용만 답변으로 조립한다. `qa_prompts.py`의 버전은 분류 `chat-qa-plan-v1`, 행 선택 `chat-qa-select-v1`이다.
+- 현재값/이력의 저장 key와 scope를 모델이 추측해 조회하지 않는다. 제한된 페이지로 실제 항목을 읽고 모델이 `R1` 같은 요청 내 참조를 선택한다. 이름은 질문에 명시된 문자열만 조회하며 복수 후보·불완전한 탐색 페이지는 추가 확인으로 끝낸다. 모델이 선택한 행의 의미적 적합성은 별도 품질 검증 대상이다.
+- `qa_config.py`의 `CHAT_QA_*` 설정은 `.env`를 읽지 않고 프로세스 환경으로 주입한다. `ENABLED=false`, `MODEL=gpt-5.6-terra`, `REASONING_EFFORT=medium`, `MAX_ATTEMPTS=2`, `MAX_OUTPUT_TOKENS=1500`, `MAX_INPUT_TOKENS=8000`, `MAX_CONTEXT_CHARACTERS=24000`, `PAGE_SIZE=20`, `MAX_PAGES=2`, `MAX_ITEMS=80`, `MAX_TOOL_CALLS=16`, `MAX_SELECTED_ROWS=10`, `MAX_EVIDENCE_CALLS=8`, `MAX_ANSWER_CHARACTERS=12000`을 기본으로 한다. 이름 앞에는 모두 `CHAT_QA_`를 붙인다.
+- 독립 `compose.chatbot.prod.yml`이 위 설정과 `LLM_API_KEY`를 명시적으로 전달한다. `deploy/chatbot.env.example`에 예제를 유지한다. QA 활성화 시 key가 없으면 기동을 거절하며, 기본 비활성 상태에서는 provider client를 생성하지 않는다. Spring 기능 flag와 별도여서 명시적 운영 활성화가 필요하다.
+- 질문 해석과 행 선택은 기존 `ChatTextClient`/`Execution.call()`을 사용한다. schema 재시도도 새 호출로 예약·정산하고 자동 transport retry는 하지 않는다. 조회 오류를 빈 결과로 바꾸지 않으며 현재값/이력/출처 범위와 원문 확인 불가 상태를 보존한다.
+- `app/chatbot/replay.py`는 네트워크·DB·API key 없는 합성 CLI 재현기다. `tests/fixtures/chat-qa-v1.json`의 고정 모델 출력은 코드 경로 검증용이며 배포 모델 품질 측정값으로 보고하지 않는다. 실제 HTTP 검증용 `tests/support/chat_qa_stub_server.py`는 `CHAT_TEST_ONLY=true`와 localhost 제한을 유지한다.
+- 이 변경은 챗봇 분류·선택·출력 로직에 영향을 주므로 AI 로직 버전을 기록한다. 기존 분석 Worker의 추출·비교 프롬프트와 모델 설정은 변경하지 않는다.
