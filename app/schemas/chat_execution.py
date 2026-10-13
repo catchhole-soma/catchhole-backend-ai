@@ -5,6 +5,7 @@ from typing import Literal, Self
 from uuid import UUID
 from pydantic import Field, model_validator
 from app.schemas.setting_tools import ContractModel, SourceReference
+from app.schemas.chat_retrieval import RetrievalReference
 
 
 class Dispatch(ContractModel):
@@ -34,6 +35,9 @@ class ChatResult(ContractModel):
     outcome: Literal["ANSWER", "CLARIFICATION", "INSUFFICIENT_EVIDENCE"]
     text: str = Field(min_length=1, max_length=16000, repr=False)
     sources: list[SourceReference] = Field(max_length=50)
+    retrieval_sources: list[RetrievalReference] = Field(
+        default_factory=list, max_length=12, exclude_if=lambda value: not value
+    )
     limitations: list[str] = Field(max_length=20)
 
     @model_validator(mode="after")

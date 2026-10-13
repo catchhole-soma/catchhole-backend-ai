@@ -11,12 +11,22 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, CollectorRegistry
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
+from sqlalchemy.orm import sessionmaker
 from app.chatbot.client import ChatExecutionClient, ChatTransportError
 from app.chatbot.outbox import Outbox
 from app.chatbot.runtime import ChatRuntime, BusyError, unconfigured_handler
 from app.chatbot.qa import ChatQaHandler
 from app.chatbot.qa_config import ChatQaSettings
+from app.chatbot.hybrid import HybridQaHandler
+from app.chatbot.hybrid_config import HybridSettings
+from app.chatbot.hybrid_metrics import HybridMetrics
+from app.embeddings.client import OpenAIEmbeddingsClient
+from app.retrieval.contracts import IndexSpec
+from app.retrieval.search import RetrievalSearchService
 from app.llm.openai_client import OpenAIResponsesClient
 from app.schemas.chat_execution import Dispatch
 
@@ -31,8 +41,22 @@ def create_app(*, runtime: ChatRuntime | None = None, api_key: str | None = None
         http = None
         provider_http = None
         lock = None
+        engine = None
         if runtime is None:
             qa = ChatQaSettings()
+            hybrid = HybridSettings()
+            if hybrid.enabled and not qa.enabled:
+                raise RuntimeError("CHAT_RETRIEVAL_ENABLED requires CHAT_QA_ENABLED")
+            if hybrid.enabled:
+                try:
+                    database_url = make_url(hybrid.database_url)
+                    if database_url.drivername != "postgresql+psycopg":
+                        raise ValueError()
+                except (ValueError, ArgumentError):
+                    # Never copy a DSN (which can include credentials) into an error.
+                    raise RuntimeError(
+                        "CHAT_RETRIEVAL_DATABASE_URL must use postgresql+psycopg"
+                    ) from None
             provider_key = os.getenv("LLM_API_KEY", "") if qa.enabled else ""
             if qa.enabled and not provider_key:
                 raise RuntimeError("LLM_API_KEY is required when CHAT_QA_ENABLED is true")
@@ -43,6 +67,7 @@ def create_app(*, runtime: ChatRuntime | None = None, api_key: str | None = None
             http = httpx.AsyncClient(limits=httpx.Limits(max_connections=16), timeout=10)
             url = os.environ["SPRING_INTERNAL_API_BASE_URL"]
             handler = unconfigured_handler
+            registry = CollectorRegistry()
             if qa.enabled:
                 provider_http = httpx.AsyncClient(timeout=httpx.Timeout(90, connect=10))
                 delegate = OpenAIResponsesClient(
@@ -54,11 +79,38 @@ def create_app(*, runtime: ChatRuntime | None = None, api_key: str | None = None
                     store_responses=False,
                 )
                 handler = ChatQaHandler(delegate, qa)
+                if hybrid.enabled:
+                    engine = create_engine(
+                        database_url,
+                        pool_size=2,
+                        max_overflow=0,
+                        pool_timeout=5,
+                        pool_pre_ping=True,
+                        hide_parameters=True,
+                        connect_args={
+                            "connect_timeout": 5,
+                            "options": "-c default_transaction_read_only=on -c statement_timeout=5000",
+                        },
+                    )
+                    spec = IndexSpec(version=hybrid.embedding_version)
+                    search = RetrievalSearchService(sessionmaker(engine), spec)
+                    embedding = OpenAIEmbeddingsClient(
+                        api_key=provider_key,
+                        model=spec.model,
+                        dimensions=spec.dimensions,
+                        version=spec.version,
+                        embeddings_api_url="https://api.openai.com/v1/embeddings",
+                        http_client=provider_http,
+                    )
+                    handler = HybridQaHandler(
+                        delegate, search, embedding, qa, hybrid, HybridMetrics(registry)
+                    )
             app.state.runtime = ChatRuntime(
                 ChatExecutionClient(url, key, http),
                 Outbox(path),
                 capacity=int(os.getenv("CHAT_CAPACITY", "4")),
                 handler=handler,
+                registry=registry,
             )
         else:
             app.state.runtime = runtime
@@ -88,6 +140,8 @@ def create_app(*, runtime: ChatRuntime | None = None, api_key: str | None = None
                 await http.aclose()
                 if provider_http is not None:
                     await provider_http.aclose()
+                if engine is not None:
+                    engine.dispose()
                 lock.close()
 
     app = FastAPI(
