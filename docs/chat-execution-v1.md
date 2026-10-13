@@ -4,7 +4,7 @@
 
 Spring은 질문·인증 범위·실행 상태·저장 답변·토큰 계정을 소유하고, Python은 별도 FastAPI 프로세스로 단일 실행을 처리한다. 기존 분석/해소 Worker의 claim loop나 AnalysisJob lease는 사용하지 않는다. 같은 AI 저장소/이미지에 실행 진입점을 추가했으며 기존 Worker replica 수를 변경하지 않는다.
 
-실제 자연어 해석·도구 선택·답변 생성은 **#238**이다. 운영 기본 handler는 `HANDLER_UNAVAILABLE`로 종료하며 provider를 호출하지 않는다. `CHAT_ENABLED=false`가 기본이다. 실제 유료 모델 없는 고정 handler는 `tests/support/chat_stub_server.py`에만 있다. `CHAT_TEST_ONLY=true` 없이 실행할 수 없고 localhost에만 바인딩한다. 아직 운영에 배포하지 않았다.
+실제 자연어 해석·도구 선택·답변 연결은 **#238**의 [RDB 질의응답 계약](chat-qa-v1.md)에 정의한다. `CHAT_QA_ENABLED=false`인 기본 구성에서는 아래 비활성 handler를 유지한다. 운영 기본 handler는 `HANDLER_UNAVAILABLE`로 종료하며 provider를 호출하지 않는다. `CHAT_ENABLED=false`가 기본이다. 실제 유료 모델 없는 고정 handler는 `tests/support/chat_stub_server.py`에만 있다. `CHAT_TEST_ONLY=true` 없이 실행할 수 없고 localhost에만 바인딩한다. 아직 운영에 배포하지 않았다.
 
 ## 책임과 흐름
 
