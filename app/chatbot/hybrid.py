@@ -255,11 +255,14 @@ class _HybridSession(_Session):
         await self.evidence(self.chosen)
         self.add_direct_evidence()
         draft = None
+        partial_snapshot = None
         # A linked quote can already explain the cause/process: no query embedding is needed.
         if self.evidences:
             draft = await self.answer(plan)
             if draft.coverage == "COMPLETE":
                 return await self.finish_answer(draft)
+            if draft.coverage == "PARTIAL":
+                partial_snapshot = (draft, tuple(self.evidences))
 
         query = " ".join(plan.search_terms) or ctx.question[:1000]
         if len(ctx.question) > 1000 and not plan.search_terms:
@@ -308,8 +311,15 @@ class _HybridSession(_Session):
             draft = await self.answer(plan)
             if draft.coverage == "COMPLETE":
                 return await self.finish_answer(draft)
-        if draft and draft.coverage != "NONE":
+            # Equal PARTIAL coverage does not establish an improvement. Keep the first
+            # supported answer and its E-reference mapping, which recomposition can replace.
+            if draft.coverage == "PARTIAL" and partial_snapshot is None:
+                partial_snapshot = (draft, tuple(self.evidences))
+        if partial_snapshot is not None:
+            draft, evidence_snapshot = partial_snapshot
+            self.evidences = list(evidence_snapshot)
             self.codes.append("PARTIAL_ANSWER")
+            # Finalization still revalidates the restored sources and registers their quotes.
             return await self.finish_answer(draft)
         return message(
             "INSUFFICIENT_EVIDENCE",
