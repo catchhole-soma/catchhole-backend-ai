@@ -91,32 +91,39 @@ class OperationalEmbeddingProvider:
                 raise IndexProviderFailure("PROVIDER_CONTRACT", False, usage)
             return ProviderResult(result.embeddings, usage)
 
-        try:
-            async with asyncio.timeout(max(0, dispatch.deadline.timestamp() - time.time())):
+        interrupted = False
+        async with asyncio.timeout(max(0, dispatch.deadline.timestamp() - time.time())):
+            try:
                 result = await execution.call(
                     "OPERATIONAL_BACKFILL", self.spec.model, maximum, invoke, preflight=preflight
                 )
-            finish = Finish(
-                result=ChatResult(
-                    outcome="ANSWER",
-                    text="Retrieval embedding attempt completed",
-                    sources=[],
-                    limitations=[],
+                finish = Finish(
+                    result=ChatResult(
+                        outcome="ANSWER",
+                        text="Retrieval embedding attempt completed",
+                        sources=[],
+                        limitations=[],
+                    )
                 )
-            )
-            return result
-        finally:
-            self.outbox.put(
-                f"finish:{operation_id}",
-                dispatch,
-                runner,
-                "finish",
-                finish.model_dump(by_alias=True, mode="json"),
-                dispatch.deadline.timestamp(),
-                reserved=True,
-            )
-            self.outbox.release_slot()
-            await self.outbox.flush(self.client)
+                return result
+            except asyncio.CancelledError:
+                interrupted = True
+                raise
+            finally:
+                self.outbox.put(
+                    f"finish:{operation_id}",
+                    dispatch,
+                    runner,
+                    "finish",
+                    finish.model_dump(by_alias=True, mode="json"),
+                    dispatch.deadline.timestamp(),
+                    reserved=True,
+                )
+                self.outbox.release_slot()
+                # Cancellation cleanup persists reports without starting more network I/O.
+                # Normal delivery shares both this deadline and the caller's time limit.
+                if not interrupted:
+                    await self.outbox.flush(self.client)
 
     def _usage(self, usage):
         if usage.kind == "SETTLE":
