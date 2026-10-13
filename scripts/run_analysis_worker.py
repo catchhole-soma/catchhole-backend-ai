@@ -322,6 +322,7 @@ async def _async_main(args: argparse.Namespace, settings: Settings) -> None:
                 subject_resolution_model_name=(args.subject_resolution_model_name or args.model_name),
                 comparison_model_name=args.comparison_model_name or args.model_name,
                 embedding_generation_enabled=settings.embedding_generation_enabled,
+                retrieval_preparation_enabled=settings.retrieval_preparation_enabled,
             )
 
         if args.once:

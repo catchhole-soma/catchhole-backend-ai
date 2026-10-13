@@ -43,6 +43,8 @@ class Execution:
         model: str,
         maximum_tokens: int,
         invoke: Callable[[], Awaitable[ProviderResult]],
+        *,
+        preflight: Callable[[], Awaitable[None]] | None = None,
     ) -> Any:
         """One reservation per actual provider invocation; automatic provider retries are forbidden.
 
@@ -58,8 +60,11 @@ class Execution:
                 self.dispatch, self.runner, call_id, purpose, model, maximum_tokens
             )
             self.calls += 1
-            usage = Usage(kind="UNKNOWN")
+            usage = Usage(kind="RELEASE")
             try:
+                if preflight is not None:
+                    await preflight()
+                usage = Usage(kind="UNKNOWN")
                 response = await invoke()
                 measured = Usage.model_validate(response.usage.model_dump())
                 if measured.kind == "RELEASE":
