@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.chatbot.client import ChatTransportError
 from app.chatbot.hybrid_config import HybridSettings
-from app.chatbot.hybrid_metrics import HybridMetrics
+from app.chatbot.hybrid_metrics import HybridMetrics, ObservedEmbeddingClient, ObservedTextClient
 from app.chatbot.hybrid_prompts import ANSWER_PROMPT, ANSWER_VERSION, PLAN_PROMPT, PLAN_VERSION
 from app.chatbot.providers import ChatEmbeddingClient
 from app.chatbot.qa import ChatQaHandler, _Session, response_schema
@@ -53,7 +53,9 @@ class _QueryEmbedding:
         self.model = "text-embedding-3-small"
         self.version = session.handler.hybrid.embedding_version
         self.client = ChatEmbeddingClient(
-            session.handler.embedding, session.execution, model_name=self.model
+            ObservedEmbeddingClient(session.handler.embedding, session.metrics),
+            session.execution,
+            model_name=self.model,
         )
 
     async def create_embedding(self, text):
@@ -66,7 +68,6 @@ class _QueryEmbedding:
         if session.embedding_calls >= session.handler.hybrid.max_query_embeddings:
             raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         session.embedding_calls += 1
-        session.metrics.operations.labels("embedding").inc()
         response = await self.client.create_embeddings([text])
         if isinstance(response.input_token_count, int) and response.input_token_count >= 0:
             session.metrics.tokens.labels("embedding_input").inc(response.input_token_count)
@@ -87,16 +88,17 @@ class _QueryEmbedding:
 
 class HybridQaHandler(ChatQaHandler):
     def __init__(self, delegate, search, embedding, settings=None, hybrid=None, metrics=None):
-        super().__init__(delegate, settings)
+        self.metrics = metrics or HybridMetrics()
+        super().__init__(ObservedTextClient(delegate, self.metrics, PLAN_VERSION), settings)
         self.search, self.embedding = search, embedding
         self.hybrid = hybrid or HybridSettings()
-        self.metrics = metrics or HybridMetrics()
 
     async def __call__(self, execution):
         session = _HybridSession(self, execution)
         try:
             result = await session.run()
         except (SearchScopeUnavailable, SQLAlchemyError):
+            session.codes.append("SEARCH_UNAVAILABLE")
             result = message(
                 "INSUFFICIENT_EVIDENCE",
                 "원문 검색 범위나 저장소를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
@@ -104,6 +106,7 @@ class HybridQaHandler(ChatQaHandler):
             )
         except ChatTransportError as exc:
             if exc.code in {"SOURCE_CHANGED", "STORAGE_UNAVAILABLE"}:
+                session.codes.append(exc.code)
                 result = message(
                     "INSUFFICIENT_EVIDENCE",
                     "답변에 사용한 원문을 현재 상태로 검증하지 못해 답변을 보류했습니다.",
@@ -124,6 +127,20 @@ class HybridQaHandler(ChatQaHandler):
         finally:
             self.metrics.rounds.observe(session.rounds)
         self.metrics.outcomes.labels(result.failure or result.result.outcome).inc()
+        known = {
+            "SEARCH_UNAVAILABLE",
+            "SOURCE_CHANGED",
+            "STORAGE_UNAVAILABLE",
+            "INDEX_PARTIAL",
+            "NO_SEARCH_EVIDENCE",
+            "SEARCH_LIMIT",
+            "CONTEXT_LIMIT",
+            "EVIDENCE_CONTEXT_LIMIT",
+            "PARTIAL_ANSWER",
+            "SETTING_SOURCE_CONFLICT",
+        }
+        for code in set(session.codes) & known:
+            self.metrics.reasons.labels(code).inc()
         return result
 
 
@@ -139,11 +156,11 @@ class _HybridSession(_Session):
         if self.model_calls >= self.hcfg.max_model_calls:
             raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         self.model_calls += 1
-        self.metrics.model_calls.labels(purpose).inc()
 
     def record_model_response(self, purpose, response):
         for name, value in (
             ("text_input", response.input_token_count),
+            ("text_cached_input", response.cached_input_token_count),
             ("text_output", response.output_token_count),
         ):
             if isinstance(value, int) and value >= 0:

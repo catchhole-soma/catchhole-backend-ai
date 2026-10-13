@@ -33,6 +33,18 @@ class HybridMetrics:
             ["outcome"],
             registry=self.registry,
         )
+        self.reasons = Counter(
+            "chat_retrieval_limitations",
+            "Known search availability/coverage reasons",
+            ["reason"],
+            registry=self.registry,
+        )
+        self.model_latency = Histogram(
+            "chat_retrieval_model_seconds",
+            "Provider invocation latency excluding reservation",
+            ["purpose"],
+            registry=self.registry,
+        )
         self.model_calls = Counter(
             "chat_retrieval_model_calls",
             "Actual model attempts including schema retry",
@@ -42,3 +54,29 @@ class HybridMetrics:
         self.tokens = Counter(
             "chat_retrieval_tokens", "Measured provider usage", ["kind"], registry=self.registry
         )
+
+
+class ObservedTextClient:
+    def __init__(self, delegate, metrics, plan_version):
+        self.delegate, self.metrics, self.plan_version = delegate, metrics, plan_version
+
+    async def create_text_response(self, *args, **kwargs):
+        # Called by ChatTextClient only after Execution.call reserved the invocation.
+        purpose = (
+            "CHAT_INTERPRETATION"
+            if kwargs.get("prompt_cache_key") == self.plan_version
+            else "CHAT_ANSWER"
+        )
+        self.metrics.model_calls.labels(purpose).inc()
+        with self.metrics.model_latency.labels(purpose).time():
+            return await self.delegate.create_text_response(*args, **kwargs)
+
+
+class ObservedEmbeddingClient:
+    def __init__(self, delegate, metrics):
+        self.delegate, self.metrics, self.version = delegate, metrics, delegate.version
+
+    async def create_embeddings(self, inputs):
+        self.metrics.operations.labels("embedding").inc()
+        with self.metrics.latency.labels("embedding").time():
+            return await self.delegate.create_embeddings(inputs)
