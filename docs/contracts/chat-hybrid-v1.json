@@ -1,0 +1,49 @@
+{
+  "retrievalRequest": {
+    "sources": [
+      {
+        "chunkId": "33333333-3333-4333-8333-333333333333",
+        "episodeId": "22222222-2222-4222-8222-222222222222",
+        "sourceEpisodeNo": 3,
+        "sourceHash": "1f2b83cb4004e8325ae43f5b09a8f44602895f79160a89f25a05a435fbe5d7da",
+        "sourceVersion": "synthetic-version-1",
+        "quote": "민수는 동료를 지키기 위해 흑염🔥을 사용했다.",
+        "startOffset": 0,
+        "endOffset": 25
+      }
+    ]
+  },
+  "retrievalResponse": {
+    "schemaVersion": 1,
+    "sources": [
+      {
+        "chunkId": "33333333-3333-4333-8333-333333333333",
+        "episodeId": "22222222-2222-4222-8222-222222222222",
+        "sourceEpisodeNo": 3,
+        "sourceHash": "1f2b83cb4004e8325ae43f5b09a8f44602895f79160a89f25a05a435fbe5d7da",
+        "sourceVersion": "synthetic-version-1",
+        "quote": "민수는 동료를 지키기 위해 흑염🔥을 사용했다.",
+        "startOffset": 0,
+        "endOffset": 25
+      }
+    ]
+  },
+  "result": {
+    "outcome": "ANSWER",
+    "text": "원문에서 확인한 장면입니다.\n\n[원문 1] 민수는 동료를 지키기 위해 흑염🔥을 사용했다.",
+    "sources": [],
+    "limitations": [],
+    "retrievalSources": [
+      {
+        "chunkId": "33333333-3333-4333-8333-333333333333",
+        "episodeId": "22222222-2222-4222-8222-222222222222",
+        "sourceEpisodeNo": 3,
+        "sourceHash": "1f2b83cb4004e8325ae43f5b09a8f44602895f79160a89f25a05a435fbe5d7da",
+        "sourceVersion": "synthetic-version-1",
+        "quote": "민수는 동료를 지키기 위해 흑염🔥을 사용했다.",
+        "startOffset": 0,
+        "endOffset": 25
+      }
+    ]
+  }
+}
