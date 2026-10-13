@@ -157,6 +157,7 @@ class RetrievalSearchRepository:
             "FROM valid v JOIN valid seed ON seed.episode_id=v.episode_id "
             "AND abs(v.chunk_index-seed.chunk_index)<=:radius "
             "WHERE seed.id=ANY(CAST(:ids AS uuid[])) "
+            "AND NOT (v.id=ANY(CAST(:ids AS uuid[]))) "
             "GROUP BY v.id,v.episode_id,v.episode_no,v.chunk_index,v.chunk_text,v.start_offset,"
             "v.end_offset,v.chunk_hash,v.source_key,v.source_version,v.source_hash,v.chunk_policy "
             "ORDER BY score DESC,v.episode_no,v.chunk_index,v.id LIMIT :limit",

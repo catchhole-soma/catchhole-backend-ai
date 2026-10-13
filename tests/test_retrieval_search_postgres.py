@@ -203,11 +203,36 @@ def test_missing_embeddings_allow_text_but_partial_vector_readiness(corpus):
     assert corpus.read("direct", ids) == [
         replace(row, methods=("DIRECT",), score=1.0) for row in rows
     ]
-    assert len(corpus.read("neighbors", rows[:1])) == 2
+    assert [c.chunk_id for c in corpus.read("neighbors", rows[:1])] == [ids[1]]
     assert not corpus.read("vector", [1.0, 0.0] + [0.0] * 1534)
     readiness = corpus.read("readiness")
     assert readiness.text_ready_sources == 1 and readiness.vector_ready_sources == 0
     assert readiness.limitations == ("VECTOR_INDEX_PARTIAL",)
+
+
+@pytest.mark.parametrize("seed_count", [6, 12])
+def test_neighbors_exclude_seeds_before_limit_and_preserve_current_scope(corpus, seed_count):
+    outside, episode = corpus.episode(1), corpus.episode(2)
+    outside_ids = corpus.chunks(outside, ["context before", "needle outside", "context after"])
+    ids = corpus.chunks(
+        episode,
+        [
+            f"{'needle' if index % 3 == 1 else 'context'} {index}"
+            for index in range(seed_count * 3)
+        ],
+    )
+    scope = replace(corpus.scope, episode_from=2, episode_to=2)
+    seeds = corpus.read("keyword", "needle", scope=scope, limit=seed_count)
+    assert len(seeds) == seed_count
+    # Invalid adjacent text and an otherwise valid seed outside the episode range
+    # must be filtered before the neighbor budget is applied.
+    corpus.mutate("UPDATE retrieval_chunks SET chunk_hash=repeat('b',64) WHERE id=:id", id=ids[0])
+    outside_seeds = corpus.read("direct", [outside_ids[1]])
+    neighbors = corpus.read("neighbors", [*seeds, *outside_seeds], scope=scope, radius=1, limit=6)
+    assert [chunk.chunk_index for chunk in neighbors] == [2, 3, 5, 6, 8, 9]
+    assert {chunk.episode_id for chunk in neighbors} == {episode}
+    assert {chunk.chunk_id for chunk in neighbors}.isdisjoint(chunk.chunk_id for chunk in seeds)
+    assert all(chunk.methods == ("NEIGHBOR",) for chunk in neighbors)
 
 
 def test_invalid_chunks_are_filtered_before_top_k_and_counted_partial(corpus):
