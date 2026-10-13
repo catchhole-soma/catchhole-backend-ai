@@ -17,7 +17,7 @@ class HybridSettings(BaseSettings):
     per_episode: int = Field(default=3, ge=1, le=12)
     evidence_tokens: int = Field(default=3000, ge=200, le=12000)
     max_rounds: int = Field(default=2, ge=1, le=2)
-    max_model_calls: int = Field(default=6, ge=1, le=12)
+    max_model_calls: int = Field(default=6, ge=1, le=6)
     max_query_embeddings: int = Field(default=1, ge=0, le=1)
 
     @model_validator(mode="after")

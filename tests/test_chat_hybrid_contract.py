@@ -9,9 +9,23 @@ from sqlalchemy import create_engine
 
 from app.chatbot import http_app
 from app.chatbot.hybrid import HybridQaHandler
+from app.chatbot.hybrid_config import HybridSettings
 from app.schemas.chat_execution import ChatResult
 from app.schemas.chat_hybrid import HybridPlan
 from app.schemas.chat_retrieval import RetrievalReceipt, RetrievalReference
+
+
+@pytest.mark.parametrize("limit", [1, 6])
+def test_model_call_limit_accepts_supported_environment_bounds(monkeypatch, limit):
+    monkeypatch.setenv("CHAT_RETRIEVAL_MAX_MODEL_CALLS", str(limit))
+    assert HybridSettings().max_model_calls == limit
+
+
+@pytest.mark.parametrize("limit", [7, 12])
+def test_model_call_limit_rejects_environment_override_above_six(monkeypatch, limit):
+    monkeypatch.setenv("CHAT_RETRIEVAL_MAX_MODEL_CALLS", str(limit))
+    with pytest.raises(ValueError, match="max_model_calls"):
+        HybridSettings()
 
 
 def test_shared_current_source_wire_fixture():

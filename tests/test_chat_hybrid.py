@@ -412,6 +412,18 @@ def test_model_and_tool_budgets_stop_before_additional_external_work(tmp_path):
     assert len(result["raw"].requests) == 1
 
 
+def test_schema_retries_share_six_call_cap_across_planning_selection_and_answers(tmp_path):
+    case = scenario("mixed_current_and_scene")
+    case["maxCalls"] = 12  # The text limit must hold even with a larger server budget.
+    outputs = [response for valid in case["outputs"] for response in ({}, valid)]
+    result = asyncio.run(replay(tmp_path, case, outputs=outputs))
+
+    assert result["finish"]["failure"] == "EXECUTION_LIMIT_EXCEEDED"
+    assert len(result["raw"].requests) == 6
+    assert len(result["spring"].reservations) == len(result["spring"].reports) == 6
+    assert not result["embedding"].inputs
+
+
 def test_no_query_embedding_budget_exposes_insufficient_evidence(tmp_path):
     result = asyncio.run(
         replay(tmp_path, scenario("vector_after_empty_keyword"), hybrid={"max_query_embeddings": 0})
