@@ -89,3 +89,26 @@ class ChatExecutionClient:
             return result
         except ValueError:
             raise ChatTransportError(409) from None
+
+    async def operation(self, operation_id: UUID, work_id: UUID, actor: str, policy: str, tokens: int) -> Dispatch:
+        try:
+            response = await self.http.post(
+                f"{self.base_url}/api/internal/v1/chat-runs/operations/{operation_id}",
+                headers={"X-Internal-Api-Key": self.api_key},
+                json={"workId": str(work_id), "actor": actor, "policy": policy, "tokenBudget": tokens},
+                timeout=10, follow_redirects=False,
+            )
+        except httpx.RequestError:
+            raise ChatTransportError() from None
+        if not 200 <= response.status_code < 300:
+            raise ChatTransportError(response.status_code)
+        try:
+            body = response.json()
+            if body["success"] is not True:
+                raise ValueError()
+            result = Dispatch.model_validate(body["data"])
+            if result.attempt_id != operation_id:
+                raise ValueError()
+            return result
+        except (ValueError, KeyError, TypeError):
+            raise ChatTransportError() from None

@@ -202,3 +202,12 @@
 - 질문 해석과 행 선택은 기존 `ChatTextClient`/`Execution.call()`을 사용한다. schema 재시도도 새 호출로 예약·정산하고 자동 transport retry는 하지 않는다. 조회 오류를 빈 결과로 바꾸지 않으며 현재값/이력/출처 범위와 원문 확인 불가 상태를 보존한다.
 - `app/chatbot/replay.py`는 네트워크·DB·API key 없는 합성 CLI 재현기다. `tests/fixtures/chat-qa-v1.json`의 고정 모델 출력은 코드 경로 검증용이며 배포 모델 품질 측정값으로 보고하지 않는다. 실제 HTTP 검증용 `tests/support/chat_qa_stub_server.py`는 `CHAT_TEST_ONLY=true`와 localhost 제한을 유지한다.
 - 이 변경은 챗봇 분류·선택·출력 로직에 영향을 주므로 AI 로직 버전을 기록한다. 기존 분석 Worker의 추출·비교 프롬프트와 모델 설정은 변경하지 않는다.
+
+### 원문 검색 준비 (#239)
+
+- `app/retrieval`과 `docs/retrieval-index-v1.md`는 현재 회차 검색용 준비/계량 계약이다. 공통 문서를 Java와 동기화한다. 기존 분석용 `episode_chunks`/source_chunk_id를 검색 크기로 바꾸지 않는다.
+- V76 `retrieval_sources`/`retrieval_chunks`는 현재 원문 key/version/hash와 `cl100k-800-100-boundary-v1`(최대 800토큰, 약 100토큰 겹침)을 보존한다. 원문 slice와 Unicode code point offset을 저장하며 tokenizer token bytes를 decode해 재조립하지 않는다.
+- 새 분석의 `RETRIEVAL_PREPARATION_ENABLED=false`는 검색 청크 준비만 제어한다. 별도 one-shot CLI가 기존 `EMBEDDING_GENERATION_ENABLED=false`로 벡터 생성 여부를 결정한다. 검색 준비는 기존 분석의 사용자 과금 경로를 호출하지 않고 OPERATIONAL_BACKFILL/RETRIEVAL_INDEX_SERVICE_PAID_V1로 기록한다.
+- CLI는 명시한 작품/회차/입력·청크·시도·시간 상한을 유지하며 .env를 읽지 않는다. S3/DB/원장/임베딩 실사용은 dry-run과 구분한다. SQLite outbox를 먼저 복구하고 성공 벡터는 공유 PostgreSQL에서 판정한다. API 응답 후 DB 반영 전 종료의 중복 호출 가능성을 숨기지 않는다.
+- 검색 소비자는 `retrieval_current_chunks`에 서버 범위와 policy/model/version 필터를 함께 적용한다. 모델·차원·tokenizer 변경은 기존 공간과 혼합하지 않고 명시적 재생성/전환 계획이 필요하다. 설정집/과거 버전은 지원 전 READY로 표시하지 않는다.
+- 별도 `compose.retrieval.prod.yml`은 수동 실행 전용이며 기본 --help/OFF다. 기존 연결 상한 27개를 지키려면 실행기 2개 연결을 위해 분석 Worker 1개를 drain한다. 민감 outbox 볼륨과 Spring의 회차/작품 파기 경로를 유지한다.
