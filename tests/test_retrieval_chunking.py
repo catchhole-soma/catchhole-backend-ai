@@ -53,3 +53,29 @@ def test_long_whitespace_never_becomes_an_empty_embedding_input(splitter):
     chunks = splitter.split(text)
     assert chunks and all(c.text.strip() for c in chunks)
     assert chunks[-1].end == len(text)
+
+
+@pytest.mark.parametrize("spaces", [25000, 249000])
+def test_discarded_space_windows_make_progress_and_preserve_later_text(monkeypatch, spaces):
+    splitter = RetrievalSplitter()
+    count = splitter.count
+    calls = 0
+
+    def bounded_count(value):
+        nonlocal calls
+        calls += 1
+        # Catch repeated tokenization without a slow, machine-dependent timing assertion.
+        assert calls <= 256, "Discarded space windows repeatedly retain overlap"
+        return count(value)
+
+    monkeypatch.setattr(splitter, "count", bounded_count)
+    text = " " * spaces + "\r\n아리아는 반지를 버렸다.😀"
+    chunks = splitter.split(text)
+    assert len(chunks) == 1
+    chunk = chunks[0]
+    assert not text[: chunk.start].strip()
+    assert chunk.end == len(text)
+    assert chunk.text == text[chunk.start : chunk.end]
+    assert chunk.text.strip() == text.strip()
+    assert chunk.tokens == count(chunk.text) <= 800
+    assert chunk.content_hash == sha256(chunk.text.encode()).hexdigest()

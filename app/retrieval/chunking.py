@@ -74,6 +74,10 @@ class RetrievalSplitter:
                         sha256(value.encode("utf-8")).hexdigest(),
                     )
                 )
+            else:
+                # Discarded whitespace needs no overlap with the following chunk.
+                start = end
+                continue
             if end == len(text):
                 break
             overlap = end

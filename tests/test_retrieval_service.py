@@ -297,3 +297,104 @@ def test_expired_inherited_deadline_does_not_start_provider(fixture, monkeypatch
         assert report["providerAttempts"] == 0 and not store.operations
 
     asyncio.run(execute())
+
+
+@pytest.mark.parametrize("stop_attempt", [1, 2])
+def test_retry_backoff_stops_at_deadline_without_another_attempt(
+    fixture, monkeypatch, stop_attempt
+):
+    store, service, scope = fixture
+    service.prepare(scope)
+
+    async def execute():
+        delays = []
+        sleep = asyncio.sleep
+
+        async def backoff(delay):
+            delays.append(delay)
+            # Reach the second backoff without waiting through the first one.
+            if len(delays) == stop_attempt:
+                await sleep(delay)
+
+        def fail(_):
+            raise IndexProviderFailure("PROVIDER_RETRYABLE", True)
+
+        monkeypatch.setattr("app.retrieval.service.asyncio.sleep", backoff)
+        provider = Provider(fail)
+        report = await asyncio.wait_for(
+            service.run(
+                scope,
+                provider,
+                enabled=True,
+                limits=Limits(max_retries=2),
+                deadline=asyncio.get_running_loop().time() + 0.1,
+            ),
+            timeout=0.5,
+        )
+        assert len(delays) == stop_attempt and 0 < delays[-1] <= 0.1
+        assert report["state"] == "TIME_LIMIT"
+        assert report["providerAttempts"] == len(store.operations) == stop_attempt
+        assert report["embeddedChunks"] == 0
+
+    asyncio.run(execute())
+
+
+@pytest.mark.parametrize(
+    "stage,change",
+    [("validate", "edit"), ("attempted", "archive"), ("save", "purge"), ("failed", "rechunk")],
+)
+def test_changed_source_abandons_its_batches_and_processes_next_source(stage, change):
+    first, second = MemoryStore(), MemoryStore()
+    second.source = replace(second.source, work_id=first.source.work_id, episode_no=2)
+    for store in (first, second):
+        RetrievalIndexService(store, Storage(), IndexSpec()).prepare(Scope(store.source.work_id))
+    snapshots = [first.source, second.source]
+    stores = {store.source.episode_id: store for store in (first, second)}
+    validations = []
+
+    class MultipleSources:
+        chunk_state = staticmethod(MemoryStore.chunk_state)
+
+        def sources(self, scope):
+            return snapshots, False
+
+        def __getattr__(self, method):
+            def call(source, *args):
+                store = stores[source.episode_id]
+                if method == "validate":
+                    validations.append(source.episode_id)
+                if store is first and method == stage:
+                    if change == "edit":
+                        store.source = replace(store.source, content_hash="b" * 64)
+                    elif change == "rechunk":
+                        store.chunks = []
+                    else:
+                        store.source = replace(
+                            store.source,
+                            state="ARCHIVED" if change == "archive" else "PURGE_PENDING",
+                        )
+                return getattr(store, method)(source, *args)
+
+            return call
+
+    def provider_result(provider):
+        if stage == "failed" and provider.attempts == 1:
+            raise IndexProviderFailure("PROVIDER_RETRYABLE", True)
+
+    service = RetrievalIndexService(MultipleSources(), Storage(), IndexSpec())
+    report = run(
+        service,
+        Scope(first.source.work_id),
+        Provider(provider_result),
+        limits=Limits(batch_size=1, max_chunks=len(second.chunks) + 1),
+    )
+    assert report["state"] == "PARTIAL"
+    assert report["changedChunks"] == 1
+    assert report["sourceFailures"] == [
+        {"episodeId": str(snapshots[0].episode_id), "code": "SOURCE_CHANGED"}
+    ]
+    assert validations.count(snapshots[0].episode_id) == 1
+    assert report["embeddedChunks"] == len(second.chunks)
+    assert all(chunk.status == "READY" for chunk in second.chunks)
+    assert not any(chunk.status == "READY" for chunk in first.chunks)
+    assert report["providerAttempts"] == len(second.chunks) + int(stage in {"save", "failed"})

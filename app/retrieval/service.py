@@ -198,6 +198,7 @@ class RetrievalIndexService:
                 continue
             missing = [c for c in chunks if self.store.chunk_state(c, self.spec) != "READY"]
             report["skippedReadyChunks"] += len(chunks) - len(missing)
+            source_changed = False
             for offset in range(0, len(missing), limits.batch_size):
                 batch = missing[
                     offset : offset + min(limits.batch_size, limits.max_chunks - selected)
@@ -239,6 +240,7 @@ class RetrievalIndexService:
                         break
                     except SourceChanged:
                         report["changedChunks"] += len(batch)
+                        source_changed = True
                         break
                     except IndexProviderFailure as exc:
                         try:
@@ -247,12 +249,13 @@ class RetrievalIndexService:
                             )
                         except SourceChanged:
                             report["changedChunks"] += len(batch)
+                            source_changed = True
                             break
                         except SQLAlchemyError:
                             report["state"] = "DATABASE_FAILURE"
                             break
                         if exc.retryable and attempt < limits.max_retries:
-                            await asyncio.sleep(2**attempt)
+                            await asyncio.sleep(min(2**attempt, max(0, deadline - loop.time())))
                             continue
                         report["failedChunks"] += len(batch)
                         if not exc.retryable:
@@ -267,6 +270,11 @@ class RetrievalIndexService:
                     except TimeoutError:
                         report["state"] = "PROVIDER_TIMEOUT"
                         break
+                if source_changed:
+                    report["sourceFailures"].append(
+                        {"episodeId": str(source.episode_id), "code": "SOURCE_CHANGED"}
+                    )
+                    break
                 if (
                     report["state"] == "COMPLETED"
                     and offset + len(batch) < len(missing)
