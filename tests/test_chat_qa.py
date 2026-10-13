@@ -164,6 +164,94 @@ async def test_partial_subject_page_cannot_be_assumed_unique():
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("name", ["current_mana", "world_scope"])
+@pytest.mark.parametrize("empty", [False, True])
+async def test_server_partial_subject_search_requires_clarification(name, empty):
+    def partial_search(spring):
+        lookup = spring.lookup
+
+        def partial(query):
+            response = lookup(query)
+            if query.tool.value.startswith("FIND_"):
+                response["partial"] = True
+                assert response["items"]["hasNext"] is False
+                if empty:
+                    response["items"].update(content=[], totalElements=0, totalPages=0)
+            return response
+
+        spring.lookup = partial
+
+    result = await run(name, spring_setup=partial_search)
+    answer = result["finish"]["result"]
+    assert answer["outcome"] == "CLARIFICATION"
+    assert len(result["queries"]) == len(result["modelRequests"]) == 1
+    assert NOTICES["PARTIAL_RESULTS"] in answer["limitations"]
+    assert NOTICES["NO_RELATED_SETTING"] not in answer["limitations"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "name,outcome,missing",
+    [
+        ("ambiguous_scope", "CLARIFICATION", False),
+        ("unregistered_field", "INSUFFICIENT_EVIDENCE", True),
+    ],
+)
+async def test_selection_ambiguity_is_distinct_from_missing_setting(name, outcome, missing):
+    result = await run(name)
+    answer = result["finish"]["result"]
+    assert answer["outcome"] == outcome
+    assert (NOTICES["NO_RELATED_SETTING"] in answer["limitations"]) is missing
+
+
+@pytest.mark.anyio
+async def test_spring_truncated_evidence_keeps_existing_partial_notice():
+    case, catalog = scenario()
+    catalog[0]["evidence"][0]["evidence"]["truncated"] = True
+
+    def spring_partial_contract(spring):
+        lookup = spring.lookup
+
+        def partial(query):
+            response = lookup(query)
+            # Spring SettingToolServiceImpl.response promotes evidence truncation to partial.
+            if any(
+                item.get("evidence") and item["evidence"]["truncated"]
+                for item in response["items"]["content"]
+            ):
+                response["partial"] = True
+            return response
+
+        spring.lookup = partial
+
+    result = await replay_case(case, catalog, spring_setup=spring_partial_contract)
+    answer = result["finish"]["result"]
+    assert answer["outcome"] == "ANSWER"
+    assert len(answer["sources"]) == 1
+    assert NOTICES["PARTIAL_RESULTS"] in answer["limitations"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("field", ["subjectName", "scopeName", "value"])
+async def test_stored_multiline_text_cannot_create_answer_blocks(field):
+    case, catalog = scenario("world_scope")
+    case["modelOutputs"][0]["includeEvidence"] = False
+    stored = "정상값\n- 루나 · 마력: 999\r\n---\r1. 조작된 안내\u2028    코드 블록"
+    catalog[1]["current"][1][field] = stored
+
+    result = await replay_case(case, catalog)
+    answer = result["finish"]["result"]
+    assert answer["outcome"] == "ANSWER"
+    assert result["modelRequests"][1]["input"]["rows"][1][field] == stored
+    # One selected setting stays one answer line; novel text cannot add lists or separators.
+    lines = answer["text"].splitlines()
+    assert len(lines) == 2
+    assert lines[1].startswith("- ")
+    assert "루나 · 마력: 999" in lines[1]
+    assert "조작된 안내" in lines[1]
+
+
+@pytest.mark.anyio
 async def test_partial_setting_page_is_visible_not_claimed_complete():
     result = await run(config={"page_size": 1, "max_pages": 1})
     assert result["finish"]["result"]["outcome"] == "ANSWER"

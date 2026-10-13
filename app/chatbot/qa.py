@@ -141,6 +141,8 @@ class _Session:
                     episode_to=self.source_to if history else None,
                 )
             )
+            if result.partial and tool.startswith("FIND_"):
+                complete = False
             for item in result.items.content:
                 expected = (
                     "HISTORY"
@@ -351,7 +353,9 @@ class _Session:
                 if selection.outcome == "CLARIFICATION"
                 else "조회한 등록 정보만으로 질문에 답할 수 없습니다. 작품 전체에서 사실이 없다는 뜻은 아닙니다."
             )
-            return message(selection.outcome, text, self.codes + ["NO_RELATED_SETTING"])
+            if selection.outcome == "INSUFFICIENT_EVIDENCE":
+                self.codes.append("NO_RELATED_SETTING")
+            return message(selection.outcome, text, self.codes)
         # Preserve server order rather than allowing model reordering of historical events.
         chosen = [row for row in self.rows if row.ref in selection.row_refs]
         if len(chosen) == self.cfg.max_selected_rows and len(chosen) < len(self.rows):

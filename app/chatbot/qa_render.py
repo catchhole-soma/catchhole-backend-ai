@@ -49,6 +49,8 @@ NOTICES = {
 
 def safe_text(value: str) -> str:
     # Stored strings may contain Markdown instructions/links; present them as literal data.
+    # Keep each value inline so stored line breaks cannot introduce answer blocks.
+    value = " ".join(value.splitlines())
     value = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", value)
     return re.sub(r"([\\`*_{}\[\]<>()#!|])", r"\\\1", value)
 
