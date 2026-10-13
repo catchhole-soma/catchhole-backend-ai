@@ -2,6 +2,7 @@
 
 ## Pull Requests
 
+- 챗봇 검토·사용 중 새로 확인한 조회/답변/비용 한계는 [Java #247](https://github.com/catchhole-soma/catchhole-backend-java/issues/247)에 재현 조건·현재/기대 동작·검증 상태·관련 PR을 누적한다. 미검증 우려와 확인된 문제를 구분하고, 개별 개선 PR로 누적 이슈 전체를 자동 종료하지 않는다.
 - PR을 작성할 때 `.github/pull_request_template.md`의 섹션과 체크리스트를 유지하고 실제 변경에 맞게 모두 채운다.
 - 관련 Jira 이슈와 GitHub 이슈·PR을 본문에 연결하고, 리뷰어가 재현할 수 있는 검증 명령과 결과를 참고 사항에 기록한다.
 - `main` 대상 PR은 `.github/workflows/test.yml`에서 전체 pytest를 실행한다. DB를 사용하지 않는 단위 테스트는 로컬 `.env`나 CI의 `DATABASE_URL`에 의존하지 않고 경계 의존성을 주입·mock한다.
