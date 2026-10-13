@@ -212,3 +212,13 @@
 - CLI는 명시한 작품/회차/입력·청크·시도·시간 상한을 유지하며 .env를 읽지 않는다. S3/DB/원장/임베딩 실사용은 dry-run과 구분한다. SQLite outbox를 먼저 복구하고 성공 벡터는 공유 PostgreSQL에서 판정한다. API 응답 후 DB 반영 전 종료의 중복 호출 가능성을 숨기지 않는다.
 - 검색 소비자는 `retrieval_current_chunks`에 서버 범위와 policy/model/version 필터를 함께 적용한다. 모델·차원·tokenizer 변경은 기존 공간과 혼합하지 않고 명시적 재생성/전환 계획이 필요하다. 설정집/과거 버전은 지원 전 READY로 표시하지 않는다.
 - 별도 `compose.retrieval.prod.yml`은 수동 실행 전용이며 기본 --help/OFF다. 기존 연결 상한 27개를 지키려면 실행기 2개 연결을 위해 분석 Worker 1개를 drain한다. 민감 outbox 볼륨과 Spring의 회차/작품 파기 경로를 유지한다.
+
+### RDB·원문 결합 답변 (#240)
+
+- 공통 계약은 양쪽 `docs/chat-hybrid-retrieval-v1.md`와 `docs/contracts/chat-hybrid-v1.json`이다. `app/chatbot/hybrid*.py`·`app/schemas/chat_hybrid.py`는 독립 rdbMode/sourceNeed를 해석하고 기존 RDB 경로, 직접 근거, 키워드·인접·벡터 검색을 제한된 정책으로 연결한다. 원문 필요가 있으면 RDB 미등록만으로 종료하지 않는다.
+- `app/retrieval/{search_contracts,search_repository,search,evidence}.py`는 오류 검증에도 재사용할 수 있는 읽기 전용 공통 모듈이다. 회원·작품·회차 범위는 서버 문맥에서 만들며 임의 SQL·LLM 생성 ID/settingKey/scopeName을 받지 않는다. 전체 허용 코퍼스에 유효성 필터·정렬을 적용한 뒤 LIMIT한다. 연결 회차는 keyword 정렬 힌트이며 범위를 제한하지 않는다.
+- 기존 `EpisodeChunkVectorSearchService`를 명시적 scoped adapter와 계량된 query embedding client로만 재사용한다. legacy `episode_chunks`나 전역 `.env`/provider default로 우회하지 않는다. 임베딩 없는 유효 텍스트는 keyword/인접에 사용하되 부분 준비를 표시한다.
+- 검색 근거는 기존 Fact 참조와 다른 `RetrievalReference`로 전달한다. 생성한 주장에는 관측된 E*만 허용하고 원문 quote는 코드가 복사한다. 저장 전 Python fingerprint 및 Spring 실제 원문/receipt 검증이 실패하면 관련 설명 전체를 보류한다. 올바른 참조/인용이 의미적 지지를 보장한다고 주장하지 않는다.
+- `CHAT_RETRIEVAL_ENABLED=false` 기본, QA ON과 명시적 `CHAT_RETRIEVAL_DATABASE_URL`(postgresql+psycopg)이 있어야 사용한다. 검색 연결은 읽기 전용 transaction·pool 2/overflow 0·5초 SQL/연결/풀 상한이며 전체 DB 연결 예산에 포함한다. 배포 설정/기본 상한은 `hybrid_config.py`, 별도 chatbot Compose와 env 예제에 함께 유지한다.
+- 검색 최대 2라운드·질문 임베딩 1회·텍스트 모델 6회(각 schema 재시도 포함), 기존 서버/QA 전체 도구·실행 토큰 상한을 함께 적용한다. provider 사용량은 기존 실행 원장을 통해 예약·정산한다. 검색 metrics에는 고정 method/purpose/outcome만 사용하고 질문·ID·원문을 label로 넣지 않는다.
+- 오프라인 fixture의 고정 모델 출력은 연결 검증용이다. 유효한 인용을 가진 무관한 주장의 negative control은 품질 통과로 집계하지 않는다. 실제 모델/judge API 없이 내부 의미 검토한 결과와 실제 모델 품질 측정을 구분하고 v0009 기록을 유지한다. 이전 이력 전체 조회 한계와 #247 OPT-09 보류를 이번 기능으로 해결했다고 표시하지 않는다.
