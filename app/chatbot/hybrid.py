@@ -68,9 +68,13 @@ class _QueryEmbedding:
         if session.embedding_calls >= session.handler.hybrid.max_query_embeddings:
             raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         session.embedding_calls += 1
-        response = await self.client.create_embeddings([text])
+        response = await self.client.create_embeddings([text], validate=self.validate_response)
+        return response.embeddings[0]
+
+    def validate_response(self, response):
+        # Validate before the metered invocation settles its measured usage.
         if isinstance(response.input_token_count, int) and response.input_token_count >= 0:
-            session.metrics.tokens.labels("embedding_input").inc(response.input_token_count)
+            self.session.metrics.tokens.labels("embedding_input").inc(response.input_token_count)
         vectors = response.embeddings
         if (
             response.model != self.model
@@ -82,8 +86,7 @@ class _QueryEmbedding:
             )
             or not any(vectors[0])
         ):
-            raise ProviderFailure()
-        return vectors[0]
+            raise ValueError("Invalid query embedding response")
 
 
 class HybridQaHandler(ChatQaHandler):

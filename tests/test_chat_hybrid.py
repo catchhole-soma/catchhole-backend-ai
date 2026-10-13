@@ -568,17 +568,28 @@ def test_embedding_unknown_usage_is_not_zero_usage(tmp_path):
         {"embeddings": [[1.0] * 12]},
     ],
 )
-def test_embedding_response_model_dimension_and_finiteness_are_validated(tmp_path, bad):
+@pytest.mark.parametrize("input_tokens", [7, None])
+def test_embedding_response_model_dimension_and_finiteness_are_validated(
+    tmp_path, bad, input_tokens
+):
     result = asyncio.run(
         replay(
             tmp_path,
             scenario("vector_after_empty_keyword"),
-            embedding_setup=lambda e: setattr(e, "response", replace(e.response, **bad)),
+            embedding_setup=lambda e: setattr(
+                e, "response", replace(e.response, input_token_count=input_tokens, **bad)
+            ),
         )
     )
     assert result["finish"]["failure"] == "PROVIDER_FAILURE"
     assert len(result["embedding"].inputs) == 1
     assert len(result["spring"].reports) == 2
+    reservation = result["spring"].reservations[-1]
+    report = result["spring"].reports[-1]
+    assert reservation["purpose"] == "CHAT_QUERY_EMBEDDING"
+    assert report["kind"] == ("SETTLE" if input_tokens is not None else "UNKNOWN")
+    assert report["inputTokens"] == input_tokens
+    assert report["outcome"] == ("FAILURE" if input_tokens is not None else None)
 
 
 def test_server_episode_scope_is_not_expanded_by_planner(tmp_path):
