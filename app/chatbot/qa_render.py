@@ -17,6 +17,18 @@ class AnswerRow:
 
 
 NOTICES = {
+    "NARRATIVE_SOURCE_RANGE": "회차는 근거가 서술된 출처이며 사건이 일어난 시점과 다를 수 있습니다.",
+    "INDEX_PARTIAL": "검색 데이터가 일부만 준비되어 작품 전체를 검색한 결과가 아닙니다.",
+    "NO_SUPPORTED_SOURCES": "허용 범위에 검색할 현재 회차 원문이 없습니다.",
+    "TEXT_INDEX_PARTIAL": "일부 회차의 검색용 원문 청크가 없거나 현재 원문과 다릅니다.",
+    "VECTOR_INDEX_PARTIAL": "일부 회차의 임베딩이 없거나 모델·버전이 달라 의미 검색에서 제외됐습니다.",
+    "SEARCH_LIMIT": "검색 후보·검색 라운드 상한이 적용되어 모든 관련 원문을 확인한 것은 아닙니다.",
+    "SEARCH_QUERY_LIMIT": "검색어 길이 한도로 질문의 일부만 검색에 사용했습니다.",
+    "EVIDENCE_CONTEXT_LIMIT": "중복·근거 수·회차별 수·문맥 한도로 일부 검색 후보를 답변에서 제외했습니다.",
+    "PARTIAL_ANSWER": "확인한 근거로 질문의 일부만 답변했습니다.",
+    "SETTING_SOURCE_CONFLICT": "등록 설정과 원문을 함께 표시했습니다. 어느 쪽이 옳은지 자동 확정하거나 수정하지 않았습니다.",
+    "SEARCH_UNAVAILABLE": "검색 범위나 저장소 확인에 실패했습니다. 근거가 없다는 뜻은 아닙니다.",
+    "NO_SEARCH_EVIDENCE": "이번 조회에서 충분한 원문 근거를 찾지 못했습니다.",
     "SETTING_BOOK_UNSUPPORTED": "업로드한 설정집은 아직 조회하지 않습니다.",
     "PARTIAL_RESULTS": "조회 한도에 도달해 일부 등록 정보만 확인했습니다.",
     "CONTEXT_LIMIT": "입력 문맥 한도로 일부 항목을 검토하지 못했습니다.",

@@ -4,6 +4,7 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 from app.schemas.chat_execution import Dispatch, ExecutionContext, CallView
+from app.schemas.chat_retrieval import RetrievalReceipt
 
 
 class ChatTransportError(RuntimeError):
@@ -50,6 +51,8 @@ class ChatExecutionClient:
                     code = {
                         "AI_TOKEN_QUOTA_EXHAUSTED": "QUOTA_EXHAUSTED",
                         "CHAT_LIMIT_EXCEEDED": "EXECUTION_LIMIT_EXCEEDED",
+                        "CHAT_SCOPE_INVALID": "SOURCE_CHANGED",
+                        "CHAT_SOURCE_UNAVAILABLE": "STORAGE_UNAVAILABLE",
                     }.get(raw_code)
             except ValueError:
                 pass
@@ -90,13 +93,36 @@ class ChatExecutionClient:
         except ValueError:
             raise ChatTransportError(409) from None
 
-    async def operation(self, operation_id: UUID, work_id: UUID, actor: str, policy: str, tokens: int) -> Dispatch:
+    async def retrieval_sources(self, dispatch, runner, sources):
+        raw = await self.request(
+            dispatch,
+            runner,
+            "retrieval-sources",
+            {"sources": [source.model_dump(by_alias=True, mode="json") for source in sources]},
+        )
+        try:
+            receipt = RetrievalReceipt.model_validate(raw)
+            if receipt.sources != list(sources):
+                raise ValueError("Receipt does not match the exact requested slices")
+            return receipt.sources
+        except ValueError:
+            raise ChatTransportError(409, "SOURCE_CHANGED") from None
+
+    async def operation(
+        self, operation_id: UUID, work_id: UUID, actor: str, policy: str, tokens: int
+    ) -> Dispatch:
         try:
             response = await self.http.post(
                 f"{self.base_url}/api/internal/v1/chat-runs/operations/{operation_id}",
                 headers={"X-Internal-Api-Key": self.api_key},
-                json={"workId": str(work_id), "actor": actor, "policy": policy, "tokenBudget": tokens},
-                timeout=10, follow_redirects=False,
+                json={
+                    "workId": str(work_id),
+                    "actor": actor,
+                    "policy": policy,
+                    "tokenBudget": tokens,
+                },
+                timeout=10,
+                follow_redirects=False,
             )
         except httpx.RequestError:
             raise ChatTransportError() from None

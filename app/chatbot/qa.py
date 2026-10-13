@@ -74,6 +74,12 @@ class _Session:
         self.source_from = execution.context.episode_from
         self.source_to = execution.context.episode_to
 
+    def before_model_call(self, purpose):
+        pass
+
+    def record_model_response(self, purpose, response):
+        pass
+
     def fits(self, prompt: str, payload: dict, schema: LlmResponseSchema) -> bool:
         text = encode(payload)
         return (
@@ -98,6 +104,7 @@ class _Session:
             )
             if not self.fits(retry_prompt, payload, schema):
                 raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
+            self.before_model_call(purpose)
             response = await client.create_text_response(
                 retry_prompt,
                 encode(payload),
@@ -105,6 +112,7 @@ class _Session:
                 prompt_cache_key=version,
                 response_schema=schema,
             )
+            self.record_model_response(purpose, response)
             try:
                 parsed = cls.model_validate_json(response.text)
                 if validate:
@@ -254,6 +262,11 @@ class _Session:
             PLAN_VERSION,
             validate_plan,
         )
+        return await self.answer_plan(plan)
+
+    async def answer_plan(self, plan: QuestionPlan) -> Finish:
+        """Reuse bounded RDB behavior after a trusted, validated planner has run."""
+        question = self.execution.context.question
         if plan.intent in {"NEEDS_SEARCH", "PAST_STATE", "CLARIFICATION", "UNSUPPORTED"}:
             outcome, text, code = {
                 "NEEDS_SEARCH": (

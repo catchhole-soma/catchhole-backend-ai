@@ -4,7 +4,10 @@ Delegates must make exactly one transport call (existing raw clients do); do not
 pass the analysis Metered* wrappers, which own their own retry/lease lifecycle.
 """
 
+from collections.abc import Callable
+
 from app.chatbot.runtime import Execution, ProviderFailure, ProviderResult
+from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.schemas.chat_execution import Usage
 from app.usage.metering import (
@@ -90,7 +93,12 @@ class ChatEmbeddingClient:
         self.delegate, self.execution, self.model_name = delegate, execution, model_name
         self.version = delegate.version
 
-    async def create_embeddings(self, inputs: list[str]):
+    async def create_embeddings(
+        self,
+        inputs: list[str],
+        *,
+        validate: Callable[[EmbeddingBatchResponse], None] | None = None,
+    ):
         if not inputs:
             raise ValueError("Embedding input is required")
         maximum = _estimate_embedding_token_upper_bound(inputs)
@@ -105,6 +113,13 @@ class ChatEmbeddingClient:
                 raise ProviderFailure(
                     measured_usage(_usage_from_embedding_error(exc), "FAILURE")
                 ) from None
+            if validate is not None:
+                try:
+                    validate(result)
+                except (TypeError, ValueError):
+                    raise ProviderFailure(
+                        measured_usage((result.input_token_count, 0, 0), "FAILURE")
+                    ) from None
             return ProviderResult(
                 result, measured_usage((result.input_token_count, 0, 0), "SUCCESS")
             )

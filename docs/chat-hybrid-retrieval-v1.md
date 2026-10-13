@@ -1,0 +1,177 @@
+# RDB·원문 결합 조회 계약 v1 — GH240
+
+관련 이슈: [#240](https://github.com/catchhole-soma/catchhole-backend-java/issues/240).
+선행 계약: [설정 조회](setting-tools-v1.md), [질문 실행·사용량](chat-execution-v1.md), [RDB 단일 답변](chat-qa-v1.md), [원문 검색 준비](retrieval-index-v1.md).
+Java/Python 저장소에 같은 내용으로 보관하며, [공통 JSON fixture](contracts/chat-hybrid-v1.json)로 검색 인용의 wire 계약을 대조한다.
+
+이 문서는 구현된 공통 조회·인용 계약과 질문 조율을 설명한다. 최종 통합 검증 결과는 아래 기록에서 구분하며, 구현이나 합성 테스트 통과가 운영 활성화 또는 실제 모델 품질 측정을 뜻하지 않는다.
+
+## 책임과 지원 범위
+
+Spring은 사용자·작품 소유권, 실행 시도·허용 출처 범위, 사용량 예약·정산, 검색 인용 검증·사용 허가, 최종 결과 저장과 파기를 담당한다. Python의 챗봇 처리기는 질문을 해석하고 RDB와 원문에서 필요한 자료를 모으며, `app/retrieval`의 공통 조회·근거 합성은 답변 형식이나 오류 판정에 종속되지 않는다.
+
+| 영역 | 제공하는 것 | 의미의 한계 |
+|---|---|---|
+| RDB 현재 설정 | 캐릭터 snapshot·현재 세계관 속성 | 현재 Fact 한 행이나 과거 상태 전체 복원이 아님 |
+| 확정 이력 | 출처 회차로 제한한 등록 이력 | 출처 회차와 사건 발생 시점은 다름 |
+| 직접 원문 | 등록 설정에 연결되어 유효성이 확인된 인용 | 능력 보유 근거가 획득 과정까지 설명한다는 뜻은 아님 |
+| 검색 원문 | 현재 회차의 유효한 검색 청크·키워드·벡터·인접 문맥 | 검색된 일부 자료가 작품 전체 검토를 뜻하지 않음 |
+| 미지원 | 업로드 설정집 검색, 과거 원문 버전, 특정 회차 당시 전체 상태, 원고/설정 수정 | #221의 미완료 출처 처리를 이용 가능한 것으로 간주하지 않음 |
+
+기존 분석용 `episode_chunks`와 후보 source 연결은 유지한다. 검색은 GH239의 `retrieval_sources`·`retrieval_chunks`를 사용하며 분석용 6,000자 청크를 검색 크기로 다시 쓰지 않는다. 공통 검색을 소비하는 #66은 검사 대상 선정·검사 범위·오류 검증 문맥을 소유한다. 이번 챗봇 응답은 오류 리포트의 최종 충돌·심각도 판정이 아니다.
+
+## 질문 한 건의 흐름
+
+`HybridPlan`은 `rdbMode`와 `sourceNeed`를 독립적으로 표현한다. `rdbMode`는 NONE/CURRENT/HISTORY/CURRENT_AND_HISTORY/DIRECT_EVIDENCE, `sourceNeed`는 NONE/SCENE/REASON/PROCESS다. 특정 회차 전체 상태 복원·지원 밖 요청·모호한 질문은 disposition으로 먼저 구분한다.
+
+1. Spring이 질문을 접수하고 인증된 작품, 실행 시도, 허용 출처 회차와 전체 호출/사용량 한도를 고정한다. Python은 모델 출력에서 회원·작품·실행 ID를 받지 않는다.
+2. 질문이 현재 설정, 이력, 직접 근거, 장면·이유·과정 중 무엇을 요구하는지 확인한다. “현재 능력과 그것을 얻은 과정”처럼 두 요구가 함께 있는 경우 RDB 요구와 원문 요구를 모두 보존한다.
+3. 이름/설정 조회는 GH236의 읽기 전용 도구를 사용한다. 단순 설정 질문은 충분한 등록값으로 종료할 수 있다. RDB hit는 장면·이유 요구의 충족 조건이 아니며, 등록된 대상이 없다는 이유만으로 원문에 없는 인물·사건이라고 단정하지 않는다.
+4. `sourceNeed=NONE`이면 기존 RDB `answer_plan` 경로와 추출형 렌더러를 사용한다. 장면·이유·과정에서는 RDB 관련 행과 직접 근거를 먼저 모아 `GroundedAnswer`를 만든다. 직접 근거가 질문 전체를 설명한다고 판단되면 검색을 생략한다. 부족하면 1차 키워드+인접 조회 → 답변, 2차 벡터+인접 조회 → 답변으로 최대 두 라운드를 실행한다. 검색어·인물명은 질문에 명시된 문자열만 허용하며 원문으로부터 새 이름/SQL을 만들지 않는다. 직접 근거의 회차 ID는 키워드 정렬 우선순위로 사용하고 검색 범위 필터로 고정하지 않는다. 따라서 처음 서버가 허용한 범위의 다른 회차도 후보로 유지하며 벡터는 그 허용 범위 전체를 조회한다. 현재 설정을 출처 회차 당시 상태라고 말하지 않는다.
+5. 중복 청크를 합치고 관련 회차를 다양하게 선택하며, 같은 원문 버전의 실제 겹침만 하나의 문맥으로 조합한다. 행·근거·인접 확장·문맥/출력 토큰·도구/모델 호출 한도를 함께 적용한다.
+6. 답변에 사용할 원문 인용을 Spring의 실행별 검증 경로로 보낸다. 허용된 인용만 답변 자료로 사용하고, 결과에는 본문에서 실제 사용한 기존 직접 근거와 새 검색 인용을 각각 연결한다.
+7. Python은 최종 답변에 사용한 검색 인용을 재조회·등록하고 직접 근거도 다시 읽어 같은 자료인지 확인한다. 최종 결과를 저장할 때 Spring이 검색 인용의 사용 허가와 현재 원문을 다시 검증한다. 무효 근거를 삭제하고도 남은 문장을 완전한 답으로 게시하지 않으며 이번 흐름은 변경된 근거를 발견하면 답변을 보류한다.
+
+질문·설정값·원문의 문장은 자료다. 자료에 포함된 역할 변경, SQL/URL 실행, 다른 작품 조회 지시가 도구 권한이나 실행 범위가 되지 않는다. DB 쿼리는 개발자가 작성한 제한된 조회 코드만 사용한다.
+
+## 공통 검색 인터페이스
+
+Python의 `RetrievalSearchService`는 `readiness`, `keyword`, `direct`, `neighbors`, `vector`, `revalidate`를 제공한다. `SearchScope`의 회원·작품·회차는 신뢰 서버 문맥에서 만들어야 한다. 서비스 자체가 임의 사용자 입력을 인증해 주는 API는 아니다.
+
+- `keyword(scope, query, limit, preferred_episode_ids=())`: 최대 1,000자 검색어와 제한된 검색어 조합을 사용한다. 확인된 직접 근거 회차를 SQL 정렬에서 우선할 수 있지만 해당 ID 목록으로 검색 대상을 제한하지 않는다. 실제 준비된 유효 텍스트는 임베딩이 없어도 조회 가능하다. 검색어 또는 결과를 줄이면 한도를 표시한다.
+- `direct(scope, chunk_ids, limit)`: 검색 청크 ID를 같은 유효성/권한 조건에서 확인한다. 분석 Fact의 source ID와 검색 청크 ID를 서로 대체하지 않는다.
+- `neighbors(scope, seeds, radius, limit)`: 현재 유효한 seed의 같은 출처·정책·버전 주변 청크만 확장한다. 다른 회차를 인접 청크로 붙이지 않는다.
+- `vector(scope, query, embedding_client, limit)`: 준비 상태와 권한을 먼저 확인한다. 유효 벡터가 없으면 질문 임베딩 API를 호출하지 않는다. 모델/버전이 맞는 실행 계량 client를 주입하고 기존 `EpisodeChunkVectorSearchService`를 검색 repository adapter와 함께 재사용한다.
+- `revalidate(scope, chunks)`: 결과를 다시 읽어 처음 관측한 원문/청크와 같은 자료인지 확인한다. 사용자가 없거나 작품 접근이 취소된 상태를 정상 빈 검색 결과로 바꾸지 않는다.
+
+`SearchReadiness`는 출처 수, 텍스트 준비 출처/청크, 벡터 준비 출처/청크와 제한 사유를 구분한다. 텍스트 준비가 벡터 준비를 뜻하지 않고, 검색어 미일치·색인 일부 준비·원문 이용 불가도 서로 다르다. 초기 검색 순위·청크 800/100 정책은 실측 최적값이 아니다.
+
+동기 DB 조회는 주입한 blocking runner로 이벤트 루프 밖에서 실행한다. HTTP runtime은 검색 DB에 `default_transaction_read_only=on`, 연결/SQL/풀 대기 각 5초, `pool_size=2`·`max_overflow=0`을 적용한다. 이 두 연결도 배포 전체 DB 연결 예산에 포함해야 하며, 기존 분석 Worker 동시성을 자동으로 늘리지 않는다.
+
+## 유효성·중복 제거·문맥 한도
+
+모든 조회에서 회원/작품 활성 상태와 귀속, 회차 보관·파기 예약, 현재 원문 key/hash/version, 청크 정책, 검색 범위를 확인한다. 벡터 조회에는 READY와 모델·임베딩 버전을 추가 적용한다. 키워드/직접/인접 조회도 다른 버전의 실제 벡터가 있는 청크를 정상 호환으로 간주하지 않는다.
+
+`ChunkEvidence`는 원래 청크/회차 ID, 출처 회차, source key/version/hash, policy, 원문 code point offset, chunk hash, 텍스트, 검색 방식과 score를 보존한다. source key와 원문은 로그/metric label에 노출하지 않는다. `score`가 높다는 것은 답변을 의미적으로 입증한다는 뜻이 아니다.
+
+`compose_evidence`는 다음 규칙을 적용한다.
+
+- 같은 청크 ID·동일 fingerprint는 검색 방식만 합치고 하나로 취급한다. 같은 ID에 다른 텍스트/버전이 오면 충돌 자료로 제외한다.
+- 먼저 원문 길이와 offset, UTF-8 SHA-256, 허용된 검색 방식과 유한 score를 검사한다.
+- 직접 근거를 우선하고 회차별 교대로 선택해 한 회차의 유사 청크가 전체 자료를 차지하지 않게 한다. 전체 개수·회차별 개수·문맥 토큰 상한을 각각 지킨다.
+- 동일한 source fingerprint의 닿거나 겹친 slice만 합친다. 겹친 문자열이 다르면 임의로 보정하지 않는다. 합친 문맥도 원래 청크별 참조를 유지한다.
+- 상한으로 제외한 청크, 유효성 실패, 충돌은 `limited`/제외 수에 남긴다. 텍스트를 몰래 자르거나 일부 자료를 전체로 표시하지 않는다. 토큰 예산은 문맥 본문용이며 system prompt·질문·schema·출력 여유는 조율 계층이 별도로 포함한다.
+
+## Spring 검색 인용 계약
+
+`POST /api/internal/v1/chat-runs/{id}/retrieval-sources`는 기존 내부 API key와 `X-Chat-Capability`·`X-Chat-Runner`를 요구한다. 유효한 현재 실행과 서버가 고정한 작품·회차 범위 안에서만 검증한다. 이 경로는 모델이 임의 원고를 읽는 공개 도구가 아니다.
+
+| 자료 | 형태 |
+|---|---|
+| 요청 | `{sources: [RetrievalReference]}` — 1~12개 |
+| 응답 payload | `{schemaVersion: 1, sources: [검증한 같은 참조]}` — `CommonResponse`로 감쌈 |
+| 최종 결과 | 기존 `outcome/text/sources/limitations` + 선택적 `retrievalSources` |
+
+`RetrievalReference`는 `chunkId`, `episodeId`, `sourceEpisodeNo`, `sourceHash`, nullable `sourceVersion`, `quote`, `startOffset`, `endOffset`를 가진다. sourceHash는 소문자 64자리 SHA-256이다. 위치는 회차 원문 전체 기준 **0-based Unicode code point, 끝 제외** 구간이며 Python 문자열 인덱스와 같은 단위다. Java UTF-16 char 길이나 UTF-8 바이트 위치를 사용하지 않는다. 인용은 공백이 아닌 텍스트이며 최대 4,000 code point, sourceVersion은 최대 100자다.
+
+검증에서는 같은 작품/회원·출처 범위, 현재 DB manifest, 실제 청크 hash/slice, 실제 저장소 원문 hash와 slice를 대조하고 읽은 뒤 DB 메타데이터를 다시 확인한다. `CHAT_RETRIEVAL_EMBEDDING_VERSION` 기본값은 `v1`이며 현재 policy `cl100k-800-100-boundary-v1`·model `text-embedding-3-small`과 맞춘다. 유효한 준비 청크의 embedding=NULL은 키워드/인접 인용을 위해 허용한다.
+
+성공 시 전체 인용 필드를 포함하는 실행 receipt를 남긴다. 기존 `sources`는 `CHARACTER_EVIDENCE`/`WORLD_EVIDENCE` 등 기존 typed 참조를 유지하고, 검색 청크를 Fact ID로 가장하지 않는다. `retrievalSources`는 생략/빈 목록이 구형 결과와 호환되며 Java는 빈 목록을 JSON에서 생략한다. 같은 source를 받았다는 것만으로 임의 quote/offset을 바꿔 사용할 수 없다. 최종 `finish`는 receipt와 실제 현재 원문을 다시 대조한다.
+
+`CHAT_SCOPE_INVALID`(403)는 범위·stale·인용 불일치 등 인용을 사용할 수 없는 상태이고 `CHAT_SOURCE_UNAVAILABLE`(503)는 저장소 읽기 장애다. 두 상태를 근거 없음이나 사용자 quota 부족으로 바꾸지 않는다.
+
+공통 fixture는 `retrievalRequest`, `retrievalResponse`, `result` 세 최상위 항목을 가진다. fixture 원문은 `민수는 동료를 지키기 위해 흑염🔥을 사용했다.` 한 문장 전체이며 offset은 `[0, 25)`다. emoji로 UTF-16 길이 26과 code point 길이 25의 차이를 검증한다. `sourceHash`는 실제 합성 문장의 UTF-8 SHA-256이며 실제 사용자 자료가 아니다. `result.sources=[]`는 기존 직접 근거를 이 예제에서 사용하지 않았다는 뜻이다. 본문에서 사용한 검색 인용 한 개가 `result.retrievalSources`에 그대로 들어간다.
+
+## 현재 저장소 검증의 제한
+
+현재 Java `ObjectStorageService.getText(key)`는 저장소 응답의 실제 S3 VersionId를 반환하지 않는다. 따라서 `sourceVersion`은 DB의 현재 manifest와 대조하지만, S3 응답 자체가 그 versionId인지 확인했다고 표현하면 안 된다. 실제 읽은 본문을 SHA-256과 원문 slice로 검증하여 다른 내용의 재노출을 차단한다. 동일 본문의 다른 S3 version을 식별하는 보장은 없다.
+
+원문당 `getText` 전체 다운로드 이후 최대 250,000 code point와 hash를 검사한다. 인용이 작아도 원문 전체를 읽으며, 이 상한은 전송 바이트·다운로드 중 메모리 사용량의 사전 제한이 아니다. 검증 한 번 안에서는 같은 회차의 원문을 재사용하지만, 인용 등록과 최종 finish에서 다시 읽는 비용이 있다. S3 장애/지연과 DB 잠금 점유를 실제 부하에서 별도로 확인해야 한다. 작은 quote 상한을 저장소 I/O 상한이라고 설명하지 않는다.
+
+회차 수정·삭제·교체 이벤트에서 작품 전체 채팅 질문/답변/receipt를 무효화하는 GH237의 보수적인 정책을 유지한다. 출처 검증 후 파기되었으면 완료 결과를 게시할 수 없어야 한다. #241이 대화 테이블에 사본을 만들 때에도 같은 정리를 연결해야 한다.
+
+## 의미 검증과 평가 설계
+
+원문 답변의 `GroundedAnswer`는 COMPLETE/PARTIAL/NONE coverage, 최대 8개 주장과 최대 4개 등록값/원문 불일치 참조를 받는다. LLM은 짧은 자연어 주장과 요청 내 E*/R* 참조를 선택하고, 코드는 실제 quote와 RDB 값을 붙인다. 최종 본문에 사용하는 근거만 typed source 목록에 남기고 길이 초과 시 주장을 남긴 채 인용만 잘라내지 않는다. 본문과 인용을 함께 담지 못하면 질문 범위를 좁히도록 근거 부족 결과를 반환한다.
+
+구조 검증과 의미적 지지는 다른 결과다. 올바른 청크 ID와 실제 quote가 있어도 질문의 이유·과정을 설명하지 않을 수 있다. 실제 원문에 있는 인물 이름만 같다는 이유로 인용이 답변을 입증한다고 판정하지 않는다. 현재 runtime은 참조의 존재·원문 일치·범위를 결정적으로 검증하지만, 생성한 claim의 의미를 별도 entailment 모델이나 판정기로 자동 검증하지 않는다. COMPLETE/PARTIAL/NONE 역시 답변 모델의 판단이며 서버가 의미적 정확성을 인증한 상태가 아니다. 상시 judge를 추가하지 않은 초기 설계의 한계로 남기고 합성 기대 근거 검토와 후속 실제 모델 평가에서 따로 측정한다.
+
+| 합성 사례 | 검사할 동작 |
+|---|---|
+| RDB 현재 능력만 요청 | 검색/질문 임베딩 호출 없이 등록값 응답 |
+| 현재 능력과 획득 과정 동시 요청 | RDB 값을 보존하면서 부족한 과정 근거 추가 조회 |
+| RDB에 없는 장면/대상 | 원문 조회 경로가 존재하며 RDB miss를 존재 부정으로 변환하지 않음 |
+| 직접 원문으로 과정까지 확인 | 불필요한 확대 검색 여부를 구분 |
+| 키워드/벡터가 같은 청크 반환 | 중복 제거, 원래 ID와 source version 유지 |
+| 한 회차에 유사 청크 집중 | 회차 다양성과 원래 허용 범위를 함께 준수 |
+| 유효한 ID·quote지만 질문과 무관 | 구조 검증은 통과할 수 있지만 기대 답변/관련성 검토에서는 실패 |
+| 근거에 없는 동기/원인 추가 | 평가에서 근거 없는 주장으로 실패 표시; runtime의 자동 의미 검출은 미구현 |
+| 과거 출처/회상·허용 회차 밖 정답 | 출처 번호를 사건 시점으로 바꾸거나 검색 범위를 확대하지 않음 |
+| 텍스트만 준비·벡터 없음 | 키워드는 사용 가능, 질문 임베딩 호출 생략, 준비 범위 표시 |
+| 조회 중/검증 후 삭제·교체 | 무효 인용 및 이를 근거로 한 답변 게시 차단 |
+| 모델/정책 불일치·파기 대기 | 같은 유효 검색 공간에 섞이지 않음 |
+| provider 실패·quota·도구/문맥 상한 | 원인 구분, 제한 표시, 실패 호출 사용량 보존 |
+
+평가층은 (1) 계약/분기 단위 테스트, (2) 격리 PostgreSQL의 실제 필터·정렬·벡터·유효성 검증, (3) Spring/Python HTTP·receipt·결과 저장·정산 연결, (4) 합성 질문에서 기대 주장/근거를 사람이 검토하는 것으로 구분한다. 고정 model JSON을 재생해 얻은 통과율은 **fixture의 연결 동작 검증**이며 실제 배포 모델의 분류·관련성·답변 품질·비용 측정이 아니다. 별도 judge를 상시 호출하는 설계나 실제 모델의 정확도 수치를 가정하지 않는다.
+
+`tests/fixtures/chat-hybrid-v1.json`은 위 wire fixture와 다른 **합성 질문 재현 자료**다. `valid_id_unrelated_claim_negative_control`은 “비가 내렸다”는 유효한 원문을 E1로 제공하면서 “반지를 강물에 던졌다”는 지지되지 않는 model claim을 의도적으로 주입한다. 현재 구조 검증에서는 ANSWER가 만들어지는 사실을 확인하고, `semanticExpected=UNSUPPORTED_CLAIM`·`qualityMeasurement=false`로 별도 표시한다. 이는 실제 모델에서 관측한 실패율이 아니며 테스트 PASS도 답변 품질 PASS가 아니다. 유효 인용만으로 의미적 정확성을 보장할 수 없다는 경계를 드러내는 인위적 대조군이다.
+
+10개 질문의 근거/주장, 적절한 처리 경로와 보류 원인은 AI 저장소의 `docs/evaluations/chat-hybrid-v1-offline-review.md`에 내부 검토로 기록한다. 지지되는 작성 사례 7개·타당한 보류 2개·의도적 의미 실패 대조군 1개이며 실제 모델 정확도 비율로 집계하지 않는다. 빈 키워드 결과나 무관한 weather 반환은 검색 대역에 주입한 분기다. 특히 원문에 실제 검색어가 있어도 대역이 빈 결과를 반환하는 사례가 있으므로 실제 키워드 실패·벡터 우위를 입증하는 자료로 쓰지 않는다.
+
+#242에서는 같은 데이터셋·원문/RDB 버전·회차 범위·생성 모델·질문으로 RDB/직접 근거만, 원문만, 결합 방식을 비교한다. 사용자 직접 입력처럼 원문에 없는 정보는 가용성이 다른 별도 범주로 비교한다. 답변 가능 질문의 응답률, 사실 정확도, 인용 지지율, 필수 근거 누락, 범위 준수, 지연·실패·호출 수와 전체 비용을 기록한다. 통과 기준은 baseline 뒤 최종 평가 전에 고정하며 결과에 맞춰 사후 완화하지 않는다.
+
+## 사용량과 관측
+
+질문 해석·행/근거 선택·답변의 실제 provider 호출과 각 schema 재시도는 `ChatTextClient`/`Execution.call()`을 사용한다. 질문 embedding은 `ChatEmbeddingClient`의 `CHAT_QUERY_EMBEDDING`으로 예약·정산한다. 검색 준비의 서비스 부담 `OPERATIONAL_BACKFILL`과 혼용하지 않는다. SDK의 숨은 자동 재시도로 원장을 우회하지 않는다.
+
+실제 input/cached/output, 실패·절단 사용량, UNKNOWN과 예약 복구 계약을 유지한다. cached input은 input의 일부이며 UNKNOWN은 0토큰이 아니다. 질문별 비용 감사의 기준은 실행 원장이다. 검색용 Prometheus의 provider 응답 token counter만으로 실패·UNKNOWN·지연 정산을 포함한 최종 비용을 대신 계산하지 않는다. 검색 방식/라운드/도구 수, 반환·사용 근거 수, 문맥량·단계 지연·실패 이유는 전체 질문 ID와 연계해 조사할 수 있어야 하지만 고유 ID·질문·원문·답변을 metric label로 사용하지 않는다. 조회 상한과 전체 실행의 모델 호출/누적 예약 예산을 각각 지켜야 한다.
+
+모델/embedding의 호출 counter와 provider latency는 예약이 통과한 뒤 실제 provider delegate를 호출하는 경계에서 측정한다. 예약 거절을 provider 호출로 세지 않고 provider latency에는 예약 대기 시간을 포함하지 않는다. cached-input token과 제한된 reason 분류를 별도로 기록하며, UNKNOWN이나 정산 지연이 있는 원장의 비용을 이 counter만으로 확정하지 않는다.
+
+## 실행 설정
+
+환경변수는 프로세스에 명시적으로 전달한다. `HybridSettings`는 분석 `.env`를 자동으로 읽지 않는다. Python QA도 활성화된 상태에서 hybrid를 선택하며, 비활성 기본 경로는 기존 RDB handler다.
+
+| 변수 | 기본값 | 의미 |
+|---|---|---|
+| `CHAT_RETRIEVAL_ENABLED` | `false` | hybrid handler 사용; `CHAT_QA_ENABLED`도 필요 |
+| `CHAT_RETRIEVAL_DATABASE_URL` | 빈 값 | 검색 전용으로 명시한 사설 DB 연결; 비밀값 출력 금지 |
+| `CHAT_RETRIEVAL_EMBEDDING_VERSION` | `v1` | Python 검색과 Java 인용 검증이 공유하는 임베딩 버전 |
+| `CHAT_RETRIEVAL_KEYWORD_TOP_K` / `VECTOR_TOP_K` | `12` / `12` | 라운드별 검색 결과 상한 |
+| `CHAT_RETRIEVAL_NEIGHBOR_RADIUS` / `MAX_NEIGHBORS` | `1` / `6` | 인접 범위와 반환 수 상한 |
+| `CHAT_RETRIEVAL_MAX_EVIDENCE` / `PER_EPISODE` | `8` / `3` | 최종 자료 수와 검색 회차별 상한; 직접 근거도 전체 개수에 포함 |
+| `CHAT_RETRIEVAL_EVIDENCE_TOKENS` | `3000` | 검색 문맥 본문 토큰 상한; 전체 모델 입력 상한도 별도 적용 |
+| `CHAT_RETRIEVAL_MAX_ROUNDS` | `2` | 키워드 다음 벡터까지의 최대 검색 라운드 |
+| `CHAT_RETRIEVAL_MAX_MODEL_CALLS` | `6` | 계획·선택·답변과 schema 재시도를 포함한 모델 호출 상한 |
+| `CHAT_RETRIEVAL_MAX_QUERY_EMBEDDINGS` | `1` | 질문 embedding 호출 상한; 0이면 벡터 단계를 생략 |
+
+표의 `VECTOR_TOP_K` 같은 축약된 두 번째 변수에도 `CHAT_RETRIEVAL_` prefix가 붙는다. 기존 `CHAT_QA_MAX_TOOL_CALLS=16`과 서버 실행의 도구 한도 중 작은 값을 적용하고, 검색·인접·receipt·재검증도 예산에 포함한다. 모델/embedding 호출은 실행의 전체 호출·누적 예약 토큰 한도 안에서도 제한된다. 직접 인용은 검색 본문 토큰 상한 밖에서 전달될 수 있으므로 전체 `CHAT_QA_MAX_INPUT_TOKENS`와 문자 상한 검사를 유지한다. 위 값은 초기 설정이며 품질/비용의 실측 최적값이 아니다.
+
+## 운영 상태와 후속 작업
+
+- Spring `CHAT_ENABLED=false`, Python `CHAT_QA_ENABLED=false`·`CHAT_RETRIEVAL_ENABLED=false`, 검색 준비/생성의 기본 OFF 상태를 유지한다. 코드 병합·이미지 배포는 챗봇 공개나 백필 실행을 의미하지 않는다.
+- 운영 약 400회차의 전체 백필은 **미실시**다. 신규/수정 원고의 상시 임베딩 소비 스케줄도 제공 완료로 표시하지 않는다. 검색 응답은 실제 준비 범위를 알려야 한다.
+- 확인된 미전송 보고 후 백필 후속 호출 문제는 [#247 OPT-09](https://github.com/catchhole-soma/catchhole-backend-java/issues/247)로 보류되어 있다. 기본 OFF 상태의 적용과 문제 해결 상태를 구분하며 실제 백필을 시작하기 전 보완 권고를 유지한다. 이번 조회 구현의 완료로 해당 항목을 닫지 않는다.
+- 구조 검증의 의미적 지지 보장 한계는 같은 #247의 OPT-10, 저장소 응답 version/전체 다운로드 한계는 OPT-11로 기록한다. 합성 대조군과 코드로 확인한 경계이며 실제 모델의 관측 오류율이나 운영 저장소 장애 측정값으로 확대하지 않는다.
+- 생성·재개·중단·DB 연결 예산은 GH239 운영 문서를 따른다. 이번 작업에서 운영 DB/원고나 유료 provider/judge를 호출하지 않는다. 실제 모델 품질·latency·비용, EC2 동시 부하는 미측정으로 남긴다.
+- 대화/후속 질문·화면·저장 사본 파기는 #241, 방식별 확대 평가·베타 준비는 #242, 오류 검증 전용 정책은 #66에 남는다.
+
+## 검증 기록
+
+검증일은 2026-10-13이다. 최종 AI 제품/테스트 코드는 `655ac61efba34974124985921cb7f347da466b9e`, Java는 `821f2b41a82e343790e6f2d289a9efdf3f99c4ef`다. 해당 내용과 같은 working tree에서 실행했으며, 실행 중 커밋으로 코드 내용이 바뀌지 않았다. 이후 문서 기록만 추가한다. 실제 provider/judge API·운영 DB·운영 원고·운영 S3를 호출하지 않았다.
+
+| 검증 단계 | 결과와 해석 |
+|---|---|
+| 공통 문서/JSON fixture | 양쪽 파일 byte 일치. 합성 quote의 실제 UTF-8 SHA-256·Unicode code point offset·참조 동일성 확인. Python `RetrievalReference`/`RetrievalReceipt`/`ChatResult` parse/dump와 Java round-trip 계약 통과 |
+| 초기 Python 전체 | `73ad2a0060315a6a8f202b4b1f5836a3ce054451` 기준 **2,429 passed / 14 skipped / 1 warning**, 10.73초. 신규 96개 포함. 이 기록은 계측 보완 이전 결과로 보존 |
+| 최종 Python 전체 | `655ac61efba34974124985921cb7f347da466b9e` 기준 **2,431 passed / 14 skipped / 1 warning**, 10.57초. 신규 98개 = hybrid 47 + 계약/runtime 10 + 공통 retrieval 41(격리 PG 19 포함). warning은 기존 Starlette/httpx 사용 중단 예고 |
+| Java 전체·패키징 | **1,731 passed / 24 skipped**, `bootJar` 성공, 1분 59초. 기존 GH237 실제 HTTP 1개와 GH238 실제 HTTP 2개 포함 |
+| Java 추가 HTTP 후 증분 | 전체 실행 뒤 제품 코드 변경 없이 GH240 실제 HTTP 테스트 1개를 추가하여 해당 PG 클래스 **32 passed**, 13초. 새 GH240 검증은 기존 PG 31 + 추가 HTTP 1 + fixture 1 = 33개. 전체 결과와 합쳐 한 번의 전체 실행 1,732 passed라고 표시하지 않음 |
+| 정적 확인 | Ruff, diff whitespace 검사, Compose 정적 parse 및 기본 OFF 설정 확인 통과 |
+| 질문 10개 내부 의미 검토 | 근거가 지지하는 작성 사례 7개, 타당한 보류 2개, 의도적 의미 실패 대조군 1개. 고정 대역의 연결·의미 검토이며 실제 모델 품질 점수 없음 |
+
+Python 전체 명령은 AI checkout의 `.venv/bin/pytest -q`다. `GH239_TEST_DATABASE_URL`과 `GH240_TEST_DATABASE_URL`을 각각 명시적인 로컬 `gh239_test`/`gh240_test`에 설정했고, PostgreSQL 16/pgvector 0.8.2(`127.0.0.1:35439`)를 사용했다. `GH239_JAVA_CHECKOUT`·`GH240_JAVA_CHECKOUT`은 현재 Java checkout을 가리켰다. 접속 비밀값은 문서에 기록하지 않는다.
+
+Java 전체 명령은 `./gradlew test bootJar`이며, 격리 Testcontainers PostgreSQL과 명시한 AI checkout으로 기존 실제 HTTP 검증을 실행했다. 추가 검증은 `GH240_AI_CHECKOUT`을 현재 AI checkout으로 설정하고 `./gradlew test --tests '*ChatRetrievalSourcesPostgresIntegrationTest'`를 실행했다. 새 실제 HTTP 검증은 Python `ChatExecutionClient.start → retrieval-sources → finish`와 Spring 결과 저장을 연결한다. 실제 localhost HTTP와 PostgreSQL을 사용하지만 원문 저장소는 mock이며 모델/embedding provider 호출은 없다.
+
+원본 로컬 실행 로그는 상위 작업 디렉터리의 `.codex-artifacts/gh240/`에 보관했다. `python-full.log`와 `python-final.log`를 구분하고, Java 전체 `java-full.log`/`java-full-counts.json`과 추가 `java-retrieval-http.log`를 구분한다. 로그를 합성 모델 품질이나 실제 운영 부하 측정으로 재해석하지 않는다. 격리 DB의 실제 쿼리 검증, HTTP 직렬화/저장 계약, 작성된 의미 사례 검토는 서로 다른 검증층이다.
