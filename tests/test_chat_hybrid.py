@@ -509,6 +509,33 @@ def test_retrieval_metrics_have_only_bounded_labels_without_question_or_source_i
     )
 
 
+def test_rejected_reservation_is_not_counted_as_provider_invocation(tmp_path):
+    def setup(spring):
+        spring.reserve_status = 429
+        spring.reserve_code = "AI_TOKEN_QUOTA_EXHAUSTED"
+
+    result = asyncio.run(replay(tmp_path, spring_setup=setup))
+    assert result["finish"]["failure"] == "QUOTA_EXHAUSTED"
+    assert not result["raw"].requests
+    samples = [s for metric in result["metrics"].registry.collect() for s in metric.samples]
+    assert sum(s.value for s in samples if s.name == "chat_retrieval_model_calls_total") == 0
+
+
+def test_search_unavailable_has_fixed_failure_reason_metric(tmp_path):
+    def setup(search):
+        search.failures["keyword"] = SQLAlchemyError("sensitive database details")
+
+    result = asyncio.run(replay(tmp_path, search_setup=setup))
+    samples = [s for metric in result["metrics"].registry.collect() for s in metric.samples]
+    assert any(
+        s.name == "chat_retrieval_limitations_total"
+        and s.labels == {"reason": "SEARCH_UNAVAILABLE"}
+        and s.value == 1
+        for s in samples
+    )
+    assert "sensitive" not in str(samples)
+
+
 def test_embedding_unknown_usage_is_not_zero_usage(tmp_path):
     def setup(embedding):
         embedding.response = replace(embedding.response, input_token_count=None)
