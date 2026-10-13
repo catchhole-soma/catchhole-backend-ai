@@ -319,6 +319,7 @@ class _HybridSession(_Session):
     async def collect_rows(self, plan):
         if plan.rdb_mode == "NONE":
             return None
+        targets = set()
         for subject in plan.subjects:
             tool = "FIND_CHARACTERS" if subject.domain == "CHARACTER" else "FIND_WORLD_SETTINGS"
             found, complete = await self.pages(tool, query=subject.name.strip())
@@ -334,6 +335,7 @@ class _HybridSession(_Session):
             item = found[0]
             if item.id is None or item.id != item.subject_id:
                 raise SettingToolClientError("CONTRACT_ERROR")
+            targets.add((subject.domain, item.subject_id))
             modes = (
                 ["CURRENT", "HISTORY"]
                 if plan.rdb_mode == "CURRENT_AND_HISTORY"
@@ -355,6 +357,7 @@ class _HybridSession(_Session):
             self.rows.pop()
             self.codes.append("CONTEXT_LIMIT")
         if not self.rows:
+            self.codes.append("NO_RELATED_SETTING")
             return None
 
         def valid(selection):
@@ -380,6 +383,8 @@ class _HybridSession(_Session):
         self.chosen = [r for r in self.rows if r.ref in selection.row_refs]
         if len(self.chosen) == self.cfg.max_selected_rows and len(self.chosen) < len(self.rows):
             self.codes.append("SELECTION_LIMIT")
+        if {(row.domain, row.item.subject_id) for row in self.chosen} != targets:
+            self.codes.append("NO_RELATED_SETTING")
         return None
 
     def add_direct_evidence(self):
