@@ -36,7 +36,9 @@ class Scope:
     def __post_init__(self):
         if not 1 <= self.max_sources <= 100 or not 1 <= self.episode_from <= self.episode_to:
             raise ValueError("Invalid retrieval scope limits")
-        if len(self.episode_ids) > 100 or len(set(self.episode_ids)) != len(self.episode_ids):
+        if len(self.episode_ids) > self.max_sources or len(set(self.episode_ids)) != len(
+            self.episode_ids
+        ):
             raise ValueError("Invalid episode IDs")
 
 

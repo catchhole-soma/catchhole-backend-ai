@@ -79,3 +79,10 @@ def test_report_only_recovery_does_not_read_db_s3_or_provider(monkeypatch, tmp_p
     )
     args = parser().parse_args(["recover-reports", "--outbox", str(tmp_path / "reports.db")])
     assert asyncio.run(main(args))["state"] == "REPORTS_DELIVERED"
+
+
+def test_explicit_episode_ids_cannot_be_silently_cut_into_a_source_page():
+    from app.retrieval.contracts import Scope
+
+    with pytest.raises(ValueError, match="Invalid episode IDs"):
+        Scope(uuid4(), (uuid4(), uuid4()), max_sources=1)
