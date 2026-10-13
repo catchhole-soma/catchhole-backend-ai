@@ -288,6 +288,7 @@ class _HybridSession(_Session):
                     ctx.question[:1000],
                     _QueryEmbedding(self),
                     limit=self.hcfg.vector_top_k,
+                    excluded_chunk_ids=tuple(dict.fromkeys(c.chunk_id for c in candidates)),
                 )
             candidates.extend(found)
             if found and self.hcfg.neighbor_radius:

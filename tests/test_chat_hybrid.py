@@ -87,6 +87,7 @@ class FakeSearch:
                 3, 1, 0, 1, 0, ("TEXT_INDEX_PARTIAL", "VECTOR_INDEX_PARTIAL")
             )
         self.calls, self.scopes = [], []
+        self.vector_exclusions = []
         self.failures = {}
         self.changed = False
         self.limited = False
@@ -101,11 +102,13 @@ class FakeSearch:
         self.record("keyword", scope)
         return SearchResult(tuple(self.keyword_chunks[:limit]), self.readiness, self.limited)
 
-    async def vector(self, scope, query, embedding_client, limit):
+    async def vector(self, scope, query, embedding_client, limit, excluded_chunk_ids=()):
         self.record("vector", scope)
+        self.vector_exclusions.append(tuple(excluded_chunk_ids))
         if self.readiness.vector_chunks:
             await embedding_client.create_embedding(query)
-        return SearchResult(tuple(self.vector_chunks[:limit]), self.readiness, self.limited)
+        chunks = [c for c in self.vector_chunks if c.chunk_id not in excluded_chunk_ids]
+        return SearchResult(tuple(chunks[:limit]), self.readiness, self.limited)
 
     async def neighbors(self, scope, seeds, radius, limit):
         self.record("neighbors", scope)
@@ -316,6 +319,28 @@ def test_invented_search_term_is_rejected_before_search(tmp_path):
     bad = case["outputs"][0] | {"searchTerms": ["질문에 없는 단어"]}
     result = asyncio.run(replay(tmp_path, case, outputs=[bad, bad]))
     assert result["finish"]["failure"] == "PROVIDER_FAILURE" and not result["search"].calls
+
+
+def test_vector_expansion_excludes_keyword_and_neighbor_candidates_before_top_k(tmp_path):
+    case = scenario("vector_after_unhelpful_keyword")
+    case["vector"] = ["weather", "raon", "ring"]
+    neighbor = source_chunk("raon", method="NEIGHBOR")
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            hybrid={"vector_top_k": 1},
+            search_setup=lambda search: search.neighbor_chunks.append(neighbor),
+        )
+    )
+    assert result["search"].vector_exclusions == [
+        (source_chunk("weather").chunk_id, neighbor.chunk_id)
+    ]
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    assert result["finish"]["result"]["retrievalSources"][0]["chunkId"] == str(
+        source_chunk("ring").chunk_id
+    )
+    assert len(result["embedding"].inputs) == 1
 
 
 def test_invalid_citation_retry_is_a_separate_metered_model_call(tmp_path):

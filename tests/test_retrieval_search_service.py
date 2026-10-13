@@ -35,7 +35,7 @@ def service_fixture(*, vectors=1):
             )
 
         def vector(self, vector, *, limit, excluded_chunk_ids):
-            events.append(("vector", vector, limit))
+            events.append(("vector", vector, limit, tuple(excluded_chunk_ids)))
             return [found]
 
         def revalidate(self, chunks):
@@ -65,7 +65,25 @@ def test_existing_vector_service_uses_only_bound_current_corpus_adapter_and_inje
     assert result.chunks == (found,)
     assert result.readiness.vector_chunks == 1 and not result.limited
     assert sum(event == ("embedding", "민수 흑염") for event in events) == 1
-    assert ("vector", [1.0] * 1536, 4) in events
+    assert ("vector", [1.0] * 1536, 4, ()) in events
+
+
+def test_vector_exclusions_reach_the_bound_repository_through_the_existing_service():
+    service, scope, embedding, events, found = service_fixture()
+    excluded = (uuid4(), uuid4())
+    result = asyncio.run(
+        service.vector(scope, "민수 흑염", embedding, limit=4, excluded_chunk_ids=excluded)
+    )
+    assert result.chunks == (found,)
+    assert ("vector", [1.0] * 1536, 4, excluded) in events
+
+
+@pytest.mark.parametrize("excluded", [["not-a-uuid"], [uuid4()] * 101])
+def test_invalid_vector_exclusions_are_rejected_before_any_io(excluded):
+    service, scope, embedding, events, _ = service_fixture()
+    with pytest.raises(ValueError):
+        asyncio.run(service.vector(scope, "민수 흑염", embedding, excluded_chunk_ids=excluded))
+    assert not events
 
 
 def test_missing_vectors_preserve_text_readiness_without_calling_embedding():

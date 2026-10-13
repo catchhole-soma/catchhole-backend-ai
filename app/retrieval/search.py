@@ -79,9 +79,10 @@ class RetrievalSearchService:
 
         return await self.blocking_runner(read)
 
-    async def vector(self, scope, query, embedding_client, limit=20):
+    async def vector(self, scope, query, embedding_client, limit=20, excluded_chunk_ids=()):
         validate_query(query)
         validate_limit(limit)
+        validate_ids(excluded_chunk_ids)
         if (
             not embedding_client
             or embedding_client.model != self.spec.model
@@ -106,6 +107,7 @@ class RetrievalSearchService:
             top_k=limit,
             episode_no_from=scope.episode_from,
             episode_no_to=scope.episode_to,
+            excluded_chunk_ids=list(excluded_chunk_ids),
         )
         current = await self.revalidate(scope, chunks)
         readiness = await self.readiness(scope)

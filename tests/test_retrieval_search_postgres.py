@@ -195,6 +195,40 @@ def test_keyword_wildcards_are_literal_bound_values(corpus):
     assert corpus.read("keyword", "' OR 1=1 --") == []
 
 
+def test_vector_expansion_excludes_prior_hits_before_top_k_through_the_service(corpus):
+    first, second = corpus.episode(1), corpus.episode(2)
+    prior = corpus.chunks(first, [f"needle seed {index}" for index in range(12)], ready=True)
+    novel = corpus.chunks(
+        second, ["new explanation"], ready=True, vectors=[[0.8, 0.6] + [0.0] * 1534]
+    )[0]
+    seeds = corpus.read("keyword", "needle", limit=12)
+    assert {chunk.chunk_id for chunk in seeds} == set(prior)
+
+    class Embedding:
+        model, version = corpus.spec.model, corpus.spec.version
+        calls = 0
+
+        async def create_embedding(self, query):
+            self.calls += 1
+            return [1.0, 0.0] + [0.0] * 1534
+
+    client = Embedding()
+    service = RetrievalSearchService(corpus.sessions)
+    original = asyncio.run(service.vector(corpus.scope, "question", client, limit=12))
+    assert {chunk.chunk_id for chunk in original.chunks} == set(prior)
+    expanded = asyncio.run(
+        service.vector(
+            corpus.scope,
+            "question",
+            client,
+            limit=12,
+            excluded_chunk_ids=tuple(chunk.chunk_id for chunk in seeds),
+        )
+    )
+    assert [chunk.chunk_id for chunk in expanded.chunks] == [novel]
+    assert client.calls == 2
+
+
 def test_missing_embeddings_allow_text_but_partial_vector_readiness(corpus):
     episode = corpus.episode(1)
     ids = corpus.chunks(episode, ["민수의 흑염", "민수의 검"])
