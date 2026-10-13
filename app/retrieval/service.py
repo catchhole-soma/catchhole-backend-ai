@@ -4,7 +4,6 @@ import asyncio
 from dataclasses import asdict
 from decimal import Decimal
 from hashlib import sha256
-import time
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -137,7 +136,7 @@ class RetrievalIndexService:
                 prepared += 1
         return {"preparedSources": prepared, "hasMoreSources": more}
 
-    async def run(self, scope, provider, *, enabled: bool, limits=Limits()):
+    async def run(self, scope, provider, *, enabled: bool, limits=Limits(), deadline=None):
         if not enabled:
             return {"state": "DISABLED", "providerAttempts": 0, "userTokenDebit": False}
         report = {
@@ -150,7 +149,22 @@ class RetrievalIndexService:
             "sourceFailures": [],
             "userTokenDebit": False,
         }
-        started, selected = time.monotonic(), 0
+        loop = asyncio.get_running_loop()
+        # CLI recovery and indexing share one deadline; direct callers retain their own cap.
+        deadline = (
+            min(deadline, loop.time() + limits.max_seconds)
+            if deadline is not None
+            else loop.time() + limits.max_seconds
+        )
+        if loop.time() >= deadline:
+            report.update(
+                state="TIME_LIMIT",
+                providerAttempts=provider.attempts,
+                measuredInputTokens=provider.input_tokens,
+                unknownUsageCalls=provider.unknown_usage,
+            )
+            return report
+        selected = 0
         sources, more = await asyncio.to_thread(self.store.sources, scope)
         report["hasMoreSources"] = more
         report["nextEpisodeFrom"] = sources[-1].episode_no + 1 if more else None
@@ -158,7 +172,7 @@ class RetrievalIndexService:
             if selected >= limits.max_chunks:
                 report["state"] = "CHUNK_LIMIT"
                 break
-            if time.monotonic() - started >= limits.max_seconds:
+            if loop.time() >= deadline:
                 report["state"] = "TIME_LIMIT"
                 break
             if source.state != "AVAILABLE":
@@ -202,11 +216,14 @@ class RetrievalIndexService:
                     ):
                         report["state"] = "BUDGET_EXHAUSTED"
                         break
-                    if time.monotonic() - started >= limits.max_seconds:
+                    if loop.time() >= deadline:
                         report["state"] = "TIME_LIMIT"
                         break
                     try:
                         await asyncio.to_thread(self.store.validate, source, self.spec, batch)
+                        if loop.time() >= deadline:
+                            report["state"] = "TIME_LIMIT"
+                            break
 
                         async def before_call(operation_id):
                             await asyncio.to_thread(
@@ -215,9 +232,7 @@ class RetrievalIndexService:
 
                         # Unknown outcomes still consume this invocation's admission budget.
                         report["attemptedInputTokens"] = total
-                        async with asyncio.timeout(
-                            max(0.001, limits.max_seconds - (time.monotonic() - started))
-                        ):
+                        async with asyncio.timeout_at(deadline):
                             vectors = await provider.embed(source, batch, before_call)
                         await asyncio.to_thread(self.store.save, source, self.spec, batch, vectors)
                         report["embeddedChunks"] += len(batch)

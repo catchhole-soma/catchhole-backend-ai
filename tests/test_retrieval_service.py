@@ -233,3 +233,67 @@ def test_database_failure_after_paid_response_is_visible_and_resumable(fixture):
     assert report["state"] == "DATABASE_FAILURE" and report["providerAttempts"] == 1
     store.save = original
     assert run(service, scope)["embeddedChunks"] > 0
+
+
+def test_inherited_deadline_only_allows_remaining_time_for_provider(fixture):
+    store, service, scope = fixture
+    service.prepare(scope)
+
+    async def execute():
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        provider = Provider()
+
+        async def embed(*args):
+            provider.attempts += 1
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        provider.embed = embed
+        report = await asyncio.wait_for(
+            service.run(
+                scope,
+                provider,
+                enabled=True,
+                limits=Limits(max_seconds=1),
+                deadline=asyncio.get_running_loop().time() + 0.1,
+            ),
+            timeout=0.5,
+        )
+        assert started.is_set() and cancelled.is_set()
+        assert report["state"] == "PROVIDER_TIMEOUT"
+        assert report["providerAttempts"] == 1 and report["embeddedChunks"] == 0
+
+    asyncio.run(execute())
+
+
+@pytest.mark.parametrize("stage", ["before_sources", "validation"])
+def test_expired_inherited_deadline_does_not_start_provider(fixture, monkeypatch, stage):
+    store, service, scope = fixture
+    service.prepare(scope)
+
+    async def execute():
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        # Advance only this loop's clock at a synchronous boundary, without wall-clock sleeps.
+        monkeypatch.setattr(loop, "time", lambda: now)
+        deadline = now - 1 if stage == "before_sources" else now + 1
+        if stage == "before_sources":
+            monkeypatch.setattr(store, "sources", lambda _: pytest.fail("DB read after expiry"))
+        else:
+            original = store.validate
+
+            def validate(*args):
+                nonlocal now
+                original(*args)
+                now += 2
+
+            monkeypatch.setattr(store, "validate", validate)
+        provider = Provider()
+        report = await service.run(scope, provider, enabled=True, deadline=deadline)
+        assert report["state"] == "TIME_LIMIT"
+        assert report["providerAttempts"] == 0 and not store.operations
+
+    asyncio.run(execute())

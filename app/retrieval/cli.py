@@ -67,6 +67,10 @@ def parser():
 
 
 async def main(args):
+    loop = asyncio.get_running_loop()
+    deadline = None
+    if args.mode == "execute":
+        deadline = loop.time() + Limits(max_seconds=args.max_seconds).max_seconds
     cfg = Settings(_env_file=None)
     if args.mode in {"execute", "recover-reports"}:
         if not args.outbox or not cfg.spring_internal_api_key:
@@ -77,7 +81,20 @@ async def main(args):
                     cfg.spring_internal_api_base_url, cfg.spring_internal_api_key, http
                 )
                 # Delivery is always first, including generation OFF and report-only recovery.
-                await outbox.flush(client)
+                try:
+                    if deadline is not None and loop.time() >= deadline:
+                        raise TimeoutError
+                    async with asyncio.timeout_at(deadline):
+                        await outbox.flush(client)
+                    if deadline is not None and loop.time() >= deadline:
+                        raise TimeoutError
+                except TimeoutError:
+                    return {
+                        "state": "TIME_LIMIT",
+                        "providerAttempts": 0,
+                        "userTokenDebit": False,
+                        "pendingReports": outbox.count(),
+                    }
                 if args.mode == "recover-reports" or outbox.count():
                     return {
                         "state": "REPORTS_PENDING" if outbox.count() else "REPORTS_DELIVERED",
@@ -89,13 +106,13 @@ async def main(args):
                     raise ValueError("Explicit actor and provider credentials are required")
                 delegate = OpenAIEmbeddingsClient.from_settings(cfg)
                 try:
-                    return await _scoped(args, cfg, (client, delegate, outbox))
+                    return await _scoped(args, cfg, (client, delegate, outbox), deadline=deadline)
                 finally:
                     await delegate.aclose()
     return await _scoped(args, cfg)
 
 
-async def _scoped(args, cfg, dependencies=None):
+async def _scoped(args, cfg, dependencies=None, *, deadline=None):
     if args.work_id is None or not cfg.database_url.startswith("postgresql"):
         raise ValueError("Explicit work scope and PostgreSQL DATABASE_URL are required")
     scope = Scope(
@@ -130,7 +147,9 @@ async def _scoped(args, cfg, dependencies=None):
                 return await asyncio.to_thread(service.prepare, scope)
             client, delegate, outbox = dependencies
             provider = OperationalEmbeddingProvider(client, delegate, outbox, spec, args.actor)
-            report = await service.run(scope, provider, enabled=True, limits=limits)
+            report = await service.run(
+                scope, provider, enabled=True, limits=limits, deadline=deadline
+            )
             report["pendingReports"] = outbox.count()
             return report
     finally:
