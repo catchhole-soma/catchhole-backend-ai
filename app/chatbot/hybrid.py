@@ -212,7 +212,7 @@ class _HybridSession(_Session):
             return message("CLARIFICATION", "조회할 대상과 질문을 알려주세요.", self.codes)
 
         def valid(plan):
-            explicit = ctx.question.casefold()
+            explicit = self.observed_question_text()
             if any(s.name.strip().casefold() not in explicit for s in plan.subjects) or any(
                 t.strip().casefold() not in explicit for t in plan.search_terms
             ):
@@ -221,10 +221,7 @@ class _HybridSession(_Session):
         plan = await self.model(
             HybridPlan,
             PLAN_PROMPT,
-            {
-                "question": ctx.question,
-                "sourceRange": {"from": ctx.episode_from, "to": ctx.episode_to},
-            },
+            self.plan_payload(PLAN_PROMPT, response_schema(HybridPlan)),
             "CHAT_INTERPRETATION",
             PLAN_VERSION,
             valid,
@@ -288,7 +285,11 @@ class _HybridSession(_Session):
                     break
                 found = await self.search(
                     "vector",
-                    ctx.question[:1000],
+                    (
+                        " ".join([s.name for s in plan.subjects] + plan.search_terms)
+                        + " "
+                        + ctx.question
+                    )[:1000],
                     _QueryEmbedding(self),
                     limit=self.hcfg.vector_top_k,
                     excluded_chunk_ids=tuple(dict.fromkeys(c.chunk_id for c in candidates)),
@@ -499,6 +500,7 @@ class _HybridSession(_Session):
         )
         return {
             "question": self.execution.context.question,
+            **self.conversation_payload(),
             "plan": plan.model_dump(by_alias=True),
             "rows": rows,
             "passages": passages,

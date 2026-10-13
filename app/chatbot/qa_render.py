@@ -17,6 +17,7 @@ class AnswerRow:
 
 
 NOTICES = {
+    "CONVERSATION_LIMIT": "최근 대화 일부만 참고했습니다. 대상이 불분명하면 이름과 항목을 다시 알려주세요.",
     "NARRATIVE_SOURCE_RANGE": "회차는 근거가 서술된 출처이며 사건이 일어난 시점과 다를 수 있습니다.",
     "INDEX_PARTIAL": "검색 데이터가 일부만 준비되어 작품 전체를 검색한 결과가 아닙니다.",
     "NO_SUPPORTED_SOURCES": "허용 범위에 검색할 현재 회차 원문이 없습니다.",

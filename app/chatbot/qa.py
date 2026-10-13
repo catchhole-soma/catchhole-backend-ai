@@ -73,6 +73,33 @@ class _Session:
         self.rows: list[AnswerRow] = []
         self.source_from = execution.context.episode_from
         self.source_to = execution.context.episode_to
+        self.conversation = [t.model_dump() for t in execution.context.conversation]
+        if execution.context.conversation_truncated:
+            self.codes.append("CONVERSATION_LIMIT")
+
+    def conversation_payload(self):
+        return {"conversation": self.conversation} if self.conversation else {}
+
+    def observed_question_text(self):
+        # History supplies vocabulary for reference resolution, never evidence or authority.
+        return "\n".join(
+            [self.execution.context.question or ""]
+            + [text for turn in self.conversation for text in turn.values()]
+        ).casefold()
+
+    def plan_payload(self, prompt, schema):
+        ctx = self.execution.context
+        while True:
+            payload = {
+                "question": ctx.question,
+                "sourceRange": {"from": ctx.episode_from, "to": ctx.episode_to},
+                **self.conversation_payload(),
+                "conversationTruncated": "CONVERSATION_LIMIT" in self.codes,
+            }
+            if self.fits(prompt, payload, schema) or not self.conversation:
+                return payload
+            self.conversation.pop(0)
+            self.codes.append("CONVERSATION_LIMIT")
 
     def before_model_call(self, purpose):
         pass
@@ -208,6 +235,7 @@ class _Session:
     def payload(self, question: str, plan: QuestionPlan):
         return {
             "question": question,
+            **self.conversation_payload(),
             "plan": plan.model_dump(by_alias=True),
             "maxSelectedRows": self.cfg.max_selected_rows,
             "partial": any(c in self.codes for c in {"PARTIAL_RESULTS", "CONTEXT_LIMIT"}),
@@ -245,19 +273,18 @@ class _Session:
             return message(
                 "CLARIFICATION", "조회할 인물이나 세계관 항목과 질문을 알려주세요.", self.codes
             )
-        question = context.question
 
         def validate_plan(plan):
-            if any(s.name.strip().casefold() not in question.casefold() for s in plan.subjects):
+            if any(
+                s.name.strip().casefold() not in self.observed_question_text()
+                for s in plan.subjects
+            ):
                 raise ValueError("Only names explicitly present in the question may be searched")
 
         plan = await self.model(
             QuestionPlan,
             PLAN_PROMPT,
-            {
-                "question": question,
-                "sourceRange": {"from": context.episode_from, "to": context.episode_to},
-            },
+            self.plan_payload(PLAN_PROMPT, response_schema(QuestionPlan)),
             "CHAT_INTERPRETATION",
             PLAN_VERSION,
             validate_plan,
