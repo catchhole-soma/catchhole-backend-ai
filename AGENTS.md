@@ -196,8 +196,8 @@
 ### RDB 단일 질의응답 (#238)
 
 - 계약·사례·한계·재현 명령은 `docs/chat-qa-v1.md`를 Java/Python에 동일하게 보관한다. 기존 `ChatResult`/조회 DTO를 재사용하며 현재값 계산과 권한 판정은 Spring이 소유한다.
-- `app/schemas/chat_qa.py`는 질문 유형과 요청 내 행 참조만 받는다. `app/chatbot/qa.py`와 공통 `qa_lookup.py`는 대상·실제 경로 탐색·필터된 현재값/이력 조회·직접 근거 조회를 조율하며, `qa_render.py`가 실제 서버 값과 검증된 인용만 답변으로 조립한다. `qa_prompts.py`의 버전은 분류 `chat-qa-plan-v3`, 실제 경로 선택 `chat-qa-field-select-v1`, 구형 계획 호환 행 선택 `chat-qa-select-v3`이다. 후속 대화 계약은 #241을 따른다.
-- 현재값/이력의 저장 key와 scope를 모델이 추측해 조회하지 않는다. 새 분류 schema는 필수 focus로 고정 FactType과 질문의 항목 표현을 구분한다. 유형 전체는 먼저 필터하고, 동적 항목은 값 없는 FIELD 목록을 끝까지 확인한 뒤 F 참조를 선택해 실제 저장 경로로 조회한다. 필터된 결과는 전역 도구 예산까지 순회하고 모델의 10행 선택이나 입력 문맥 상한으로 자르지 않는다. 구형 기록 계획의 R 행 선택 경로만 기존 페이지/행 상한을 유지한다. 한 현재 scalar 조건의 인물 목록도 같은 경로 해소와 Spring snapshot 비교를 사용한다. 이름은 현재 질문 또는 제한된 서버 대화 문맥에 명시된 문자열만 조회하며 복수 후보·불완전한 탐색 페이지는 추가 확인으로 끝낸다. 모델이 선택한 행의 의미적 적합성은 별도 품질 검증 대상이다.
+- `app/schemas/chat_qa.py`는 질문 유형·답변 목적·작품 전체 collection과 요청 내 참조만 받는다. `qa.py`/`qa_lookup.py`는 대상·경로·필터 조회, `qa_collection.py`는 모집단·페이지 token 검사, `qa_synthesis.py`는 등록 자료의 소개·조건 판정·목록/집계를 맡고 `qa_render.py`가 실제 값·검증된 근거를 표시한다. 분류는 `chat-qa-plan-v4`, 경로 선택은 `chat-qa-field-select-v1`, 구형 행 선택은 `chat-qa-select-v3`이다. 현재 계약은 `docs/chat-query-quality-v1.md`, 후속 대화는 #241을 따른다.
+- 현재값/이력의 저장 key와 scope를 모델이 추측해 조회하지 않는다. 새 분류 schema는 필수 focus로 고정 FactType과 질문의 항목 표현을 구분한다. 유형 전체는 먼저 필터하고, 동적 항목은 값 없는 FIELD 목록을 끝까지 확인한 뒤 F 참조를 선택해 실제 저장 경로로 조회한다. 필터된 결과는 전역 도구 예산까지 순회하고 모델의 10행 선택이나 입력 문맥 상한으로 자르지 않는다. 구형 기록 계획의 R 행 선택 경로만 기존 페이지/행 상한을 유지한다. 새 작품 전체 조건은 collection으로 현재 자료를 읽고 인물별 MATCH/NO_MATCH/UNKNOWN을 판정한다. 기존 CHARACTER_LIST 기록만 단일 scalar 정확 일치 경로를 유지한다. 이름은 현재 질문 또는 제한된 서버 대화 문맥에 명시된 문자열만 조회하며 복수 후보·불완전한 탐색 페이지는 추가 확인으로 끝낸다. 모델이 선택한 행의 의미적 적합성은 별도 품질 검증 대상이다.
 - `qa_config.py`의 `CHAT_QA_*` 설정은 `.env`를 읽지 않고 프로세스 환경으로 주입한다. `ENABLED=false`, `MODEL=gpt-5.6-terra`, `REASONING_EFFORT=medium`, `MAX_ATTEMPTS=2`, `MAX_OUTPUT_TOKENS=1500`, `MAX_INPUT_TOKENS=8000`, `MAX_CONTEXT_CHARACTERS=24000`, `PAGE_SIZE=20`, `MAX_PAGES=2`, `MAX_ITEMS=80`, `MAX_TOOL_CALLS=16`, `MAX_SELECTED_ROWS=10`, `MAX_EVIDENCE_CALLS=8`, `MAX_ANSWER_CHARACTERS=12000`을 기본으로 한다. 이름 앞에는 모두 `CHAT_QA_`를 붙인다.
 - 독립 `compose.chatbot.prod.yml`이 위 설정과 `LLM_API_KEY`를 명시적으로 전달한다. `deploy/chatbot.env.example`에 예제를 유지한다. QA 활성화 시 key가 없으면 기동을 거절하며, 기본 비활성 상태에서는 provider client를 생성하지 않는다. Spring 기능 flag와 별도여서 명시적 운영 활성화가 필요하다.
 - 질문 해석과 행 선택은 기존 `ChatTextClient`/`Execution.call()`을 사용한다. schema 재시도도 새 호출로 예약·정산하고 자동 transport retry는 하지 않는다. 조회 오류를 빈 결과로 바꾸지 않으며 현재값/이력/출처 범위와 원문 확인 불가 상태를 보존한다.
@@ -234,8 +234,11 @@
 
 ### 챗봇 질문 품질 보완 (#247)
 
-- 새 조회 종류와 factType/valueEquals는 `docs/setting-tools-v1.md`, 양쪽 `setting-tool-fields-v1.json` fixture를 동기화한다. 인물 조건 검색은 실제 현재 scalar의 정확 일치만 지원하며 부정·숫자 범위·복수 조건을 임의 변환하지 않는다.
+- 조회 계약·공통 fixture와 `docs/chat-query-quality-v1.md`를 Java/Python에 동기화한다. collection 조건은 관련 현재 자료에 대한 의미 판정이며, 부정·대소·복수 조건을 구형 valueEquals로 변환하지 않는다. 서버 모집단 대상 수·설정 행 수·확인한 MATCH 수를 구분하고, 부분 인물·UNKNOWN·미검토 대상을 확인한 수에 넣지 않는다. 수집한 COLLECTION은 사실 답변 게시 전에 readToken을 재확인한다.
 - 조회가 완전해도 원문 검색이나 답변 길이가 제한될 수 있다. 경로 목록이 불완전하면 유일한 경로로 확정하지 않고, 필터된 값의 중단은 부분 확인으로 알린다. 도구 예산에 최종 원문 재검증/receipt와 직접 근거 재조회 비용을 남긴다.
 - 본문은 plain text다. 실제 고유명사·저장값을 기술어 regex로 치환하지 않고, Markdown 백슬래시를 삽입하지 않는다. 내부 R/F/E 참조와 처리 enum 대신 현재값·출처 회차·삭제/이력 전용의 의미를 표시한다. 직접 sources 다음 retrievalSources의 원본 순서로 근거 번호를 맞춘다.
-- perItem 질문은 각 등록 항목이 claim.rowRefs 또는 unansweredRowRefs에 포함되어야 한다. 사용 장면은 획득 경위의 증거로 자동 간주하지 않는다. 참조 coverage 검증과 실제 문장의 의미 지지는 다른 평가 대상이다.
+- 새 perItem 질문은 현재값/이력을 논리 항목으로 묶고 모든 itemAnswers에서 requestedFacets를 답변/미확인으로 나눈다. 일반 답변도 answeredFacets/missingFacets를 검사한다. 구형 행 참조 coverage는 기록 호환용이다. UNKNOWN 현재 조건을 원문 설명으로 승격하지 않으며 사용 장면을 획득 경위로 간주하지 않는다. 참조·항목 coverage와 의미적 지지는 별도 평가 대상이다.
 - Spring의 상시 SETTING_BOOK_UNSUPPORTED는 일반 등록 설정 답변의 경고로 반복하지 않는다. 부분 조회·값 절단·근거 확인 실패는 유지하며 원문을 요청하지 않은 질문에 근거 목록 상한 경고를 붙이지 않는다.
+
+- 작품 전체 collection은 실제 FIELD category/scope/key를 보존하고 경로별 DISTINCT를 합치지 않는다. 이름을 지정한 현재 소개·목록·개수도 생성 후 현재 version/name/존재를 재확인한다. HISTORY 집계는 사건 단위이며 현재값과 이력의 혼합 COUNT는 집계 대상을 확인한다.
+- 시점·과정 질문의 eventScope와 원문 답변 eventStatus를 구분한다. 계획·불확실 판정을 실제 발생 완료로 세지 않고 계획 설명도 최종 근거 검증을 거친다. 항목별 검색 후보는 공통 앵커와 인접 문맥을 함께 배분하며 특정 인물·설정명에 맞춘 분기를 추가하지 않는다. 의미 분류 자체의 정답률은 별도 평가 대상이다.
