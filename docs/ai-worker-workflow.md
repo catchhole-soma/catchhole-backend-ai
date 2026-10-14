@@ -32,6 +32,10 @@ Spring claim
 
 Python Worker는 `analysis_jobs.status`, 캐릭터 비교 lifecycle/result와 세계관 테이블을 DB에서 직접 바꾸지 않습니다. 이 상태들은 Spring 내부 API에 보고합니다. 기존 캐릭터 흐름의 `episode_chunks`와 `setting_candidates` 최초 저장만 SQLAlchemy 경계를 유지하며, Python은 후보 생성 시 `comparison_status` 초기값만 함께 기록합니다.
 
+## 동결 비교 근거 claim 계약
+
+기본 `analysis` Worker는 `supportsSemanticCurrentContext=true`와 `supportsFrozenComparisonEvidence=true`를 함께 전송해 순차 Job을 claim합니다. Spring이 반환한 `ORDERED_PROVISIONAL` payload에는 `comparisonEvidenceContract.formatVersion=1`이 필요합니다. Worker는 lease를 가진 payload를 파싱한 뒤, 첫 progress·heartbeat와 모든 원문/청크·저장·provider 작업 전에 계약을 확인합니다. 누락, 배열·문자열 등 객체가 아닌 값, 정수 1 이외의 버전(문자열·불리언 포함)은 기존 fail endpoint로 보고하고 분석을 중단합니다. `CONFIRMED_ONLY`는 계약을 생략할 수 있고 두 hidden 재비교 Worker의 claim 광고는 바꾸지 않습니다.
+
 ## Job 단위 비동기 실행
 
 운영 Worker는 `asyncio` event loop에서 Job 사이만 병렬화합니다. `analysis_jobs`의 `PENDING` row가 대기열이고, 프로세스의 실행 슬롯은 지금 즉시 처리할 수 있는 자리입니다. scheduler는 빈 슬롯을 먼저 확보한 뒤 Spring에서 Job 하나만 claim하고 곧바로 Job Task를 시작합니다. Task는 progress 보고 뒤 전용 heartbeat Task를 유지합니다. 슬롯 없이 Job을 미리 claim해 프로세스 내부에 쌓지 않으므로 처리 시작 전에 lease 시간이 소모되지 않습니다.
