@@ -4,7 +4,11 @@
 선행 계약: [조회 도구](setting-tools-v1.md), [실행·인증·계량](chat-execution-v1.md).
 이 문서는 Java/Python 저장소에 같은 내용으로 보관한다.
 
-## 달라진 동작
+## 2026-10-14 조회 보완
+
+현재 구현은 [조회 완전성·답변 표시 보완](chat-query-quality-v1.md)을 함께 따른다. 유형/실제 항목 필터를 먼저 적용하며, 새 focus 계획에는 아래 초기 2페이지/10행 선택 상한을 적용하지 않는다. 후속 대화는 [GH241 계약](chat-sessions-v1.md), 장면·이유·과정은 [GH240 결합 조회](chat-hybrid-retrieval-v1.md)를 따른다.
+
+## 초기 GH238의 구현 배경
 
 GH236은 8개 읽기 전용 조회 도구, GH237은 질문 접수·실행·정산·복구 기반이다.
 GH238은 그 위에 질문 분류 → 대상 찾기 → 등록 설정/이력 조회 → 관련 행 선택 → 직접 근거 조회 → 응답을 연결한다.
@@ -32,12 +36,13 @@ flowchart TD
 
 ## 질문 유형과 조회 도구는 다르다
 
-AI는 SQL이나 자유로운 도구 호출을 작성하지 않는다. `QuestionPlan`의 8개 intent를 반환한다.
-일반적인 성공 질문은 분류 1회(`CHAT_INTERPRETATION`)와 관련 행 선택 1회(`CHAT_ANSWER`)다.
-미지원·모호성·대상 없음이면 분류 후 코드에서 종료한다. 도구 선택을 위한 별도 모델 호출은 없다.
+AI는 SQL이나 자유로운 도구 호출을 작성하지 않는다. 현재 `QuestionPlan`은 아래 9개 intent와 focus/characterFilter를 반환한다.
+유형이 정해진 조회는 분류 1회 뒤 관련 행을 모두 조립한다. 동적 경로는 실제 FIELD의 의미 선택 호출이 추가될 수 있다. 구형 기록 계획의 관련 행 선택만 기존 `CHAT_ANSWER` 호출을 유지한다.
+미지원·모호성·대상 없음이면 분류 또는 탐색 후 종료한다.
 
 | intent | 의미 | 이후 처리 |
 | --- | --- | --- |
+| CHARACTER_LIST | 한 현재값 조건에 맞는 인물 목록 | 작품 FIELD → 정확 조건 FIND_CHARACTERS |
 | CURRENT | 현재 등록값 | FIND → CURRENT → 필요 시 EVIDENCE |
 | HISTORY | 확정된 변경 이력 | FIND → HISTORY → 필요 시 EVIDENCE |
 | CURRENT_AND_HISTORY | 현재값과 이력 모두 | FIND → CURRENT + HISTORY → 필요 시 EVIDENCE |
@@ -56,14 +61,15 @@ FIND/CURRENT/HISTORY/EVIDENCE는 각각 CHARACTER 또는 WORLD 도구로 연결�
 1. 모델에는 회원·작품·실행 ID, 인증값, SQL, URL, 대상 UUID 입력 필드가 없다.
 2. 질문에 문자 그대로 등장한 이름으로만 FIND를 호출한다. 이름 조회는 서버의 부분 일치다.
 3. 후보가 여러 개면 첫 번째나 정확히 일치하는 하나를 임의 선택하지 않는다. 일부 페이지만 읽었다면 후보가 하나여도 확정하지 않는다.
-4. 서버가 반환한 대상 UUID로 CURRENT/HISTORY를 조회한다. 모델이 저장 key를 추측해 빈 결과를 만드는 일을 피하기 위해 **초기 버전은 key/scope 필터를 보내지 않고 항목을 제한된 페이지로 읽는다**.
-5. 모델에는 DB ID 대신 `R1`, `R2` 같은 요청 내 행 참조와 실제 category/key/표시명/scope/value를 제공한다. 자연어 ‘상위 주문’을 조회된 ‘고급 마법’ 경로와 연결하는 판단은 이 단계다.
-6. `AnswerSelection`은 결과 상태와 `rowRefs`만 반환한다. 없는 참조·중복·임의 문장·인용 필드는 거절한다. 값·인용·회원·작품을 생성할 수 없다.
+4. `focus.factType`으로 유형 전체를 먼저 필터한다. 특정 속성은 값 없는 FIELD 목록을 확인한 뒤 실제 F 참조를 선택해 저장 key/scope로 복원한다. 모델이 key/scope를 생성하지 않는다.
+5. 필터한 현재값/이력을 전역 도구 예산 안에서 끝까지 읽는다. 동적 경로의 모호성·목록 불완전성은 추가 확인으로 끝낸다.
+6. 새 focus 경로는 관련 행 전체를 조립한다. focus가 없던 구형 기록 계획만 `AnswerSelection`의 R 참조 선택과 기존 행/페이지 상한을 사용한다.
 
-설정이 매우 많으면 bounded page 조회 비용과 일부 항목 누락이 생긴다. 현재 범위는 페이지/문맥 한도를 표시하며, 향후 관측한 정확한 key를 사용하는 재조회나 의미 검색으로 확장할 수 있다.
-동일한 이름의 복수 인물은 추가 확인으로 끝낸다. 이 이슈는 다음 메시지에서 UUID 선택을 이어가는 다중 턴 UI를 제공하지 않는다.
+이름은 현재 질문 또는 서버가 선별한 최근 대화에서 관측된 문자열이어야 한다. 동일 이름의 복수 인물은 계속 추가 확인 대상이다. 정확한 전체 흐름과 한도는 [보완 계약](chat-query-quality-v1.md)을 따른다.
 
-## 실제 요청 예시
+## 초기 GH238 요청 예시 (이력 보존)
+
+아래는 focus 도입 전 계약 예시다. 새 계획/조회 순서와 현재 답변 형식은 [보완 계약](chat-query-quality-v1.md#분류와-조회-예시)을 따른다.
 
 아래 값은 검증용 합성 작품의 예다. 실제 사용자 작품이나 실측 모델 예측이 아니다.
 
@@ -163,15 +169,15 @@ Python 환경변수는 `.env`를 자동으로 읽지 않는다. 챗봇 전용 Co
 | CHAT_QA_MAX_OUTPUT_TOKENS | 1500 | provider 호출별 출력 상한 |
 | CHAT_QA_MAX_INPUT_TOKENS | 8000 | 프롬프트+자료+schema 입력 추정 상한 |
 | CHAT_QA_MAX_CONTEXT_CHARACTERS | 24000 | 프롬프트와 자료 문자 상한 |
-| CHAT_QA_PAGE_SIZE / CHAT_QA_MAX_PAGES | 20 / 2 | 조회별 페이지 크기/횟수 |
-| CHAT_QA_MAX_ITEMS | 80 | 조회 수집/모델 문맥 행 상한 |
+| CHAT_QA_PAGE_SIZE / CHAT_QA_MAX_PAGES | 20 / 2 | 페이지 크기 / 이름 탐색·구형 계획의 페이지 상한. 새 focus 조회는 전역 예산까지 순회 |
+| CHAT_QA_MAX_ITEMS | 80 | 구형 계획의 조회 수집/행 선택 문맥 상한 |
 | CHAT_QA_MAX_TOOL_CALLS | 16 | 실행별 조회 상한; Spring 한도와 작은 값 적용 |
-| CHAT_QA_MAX_SELECTED_ROWS | 10 | 답변에 선택할 행 상한 |
+| CHAT_QA_MAX_SELECTED_ROWS | 10 | 구형 계획의 LLM 행 선택 상한; 새 focus 결과에 미적용 |
 | CHAT_QA_MAX_EVIDENCE_CALLS | 8 | 고유 직접 근거 조회 상한 |
 | CHAT_QA_MAX_ANSWER_CHARACTERS | 12000 | 최종 본문 길이 상한 |
 
 페이지·문맥·답변·근거 한도에 도달하면 해당 누락을 limitations로 표시한다. 페이지를 다 보지 않았는데 대상을 하나로 확정하지 않는다.
-실행 전체 도구 호출 상한 초과는 실행 실패로 종료한다. 출력 길이 때문에 인용이 표시되지 않으면 해당 source도 반환하지 않는다.
+새 focus 경로는 남은 도구 예산을 확인하여 일부 결과를 안내한다. 원문 결합은 최종 재검증에 필요한 예산을 남긴다. 최종 본문에서 행 자체가 생략되면 해당 행의 source도 반환하지 않는다. 원문 전문은 근거 창에서 확인한다.
 LLM 요청은 기존 `OpenAIResponsesClient`의 Responses API structured output과 `store=false`를 사용한다.
 [공식 structured output schema 제약](https://developers.openai.com/api/docs/guides/structured-outputs#supported-schemas)에 맞춰 모든 모델 출력 필드를 required, 객체를 additionalProperties=false로 제공하고 로컬에서 재검증한다.
 
