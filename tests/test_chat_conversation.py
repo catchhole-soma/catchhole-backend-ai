@@ -4,6 +4,8 @@ import asyncio
 import copy
 import json
 import socket
+from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -11,7 +13,7 @@ from pydantic import ValidationError
 
 from app.chatbot.replay import load_fixture, replay_case
 from app.schemas.chat_execution import ConversationTurn, ExecutionContext
-from tests.test_chat_hybrid import replay, scenario
+from tests.test_chat_hybrid import replay, scenario, source_chunk
 
 FIXTURE = load_fixture(Path(__file__).parent / "fixtures/chat-qa-v1.json")
 
@@ -36,6 +38,84 @@ def history(spring, *, question="아리아의 능력은?", answer="빙결입니�
 
 def case():
     return copy.deepcopy(next(c for c in FIXTURE["cases"] if c["id"] == "current_ability"))
+
+
+def long_history(spring):
+    spring.context = spring.context.model_copy(
+        update={
+            "conversation": [
+                ConversationTurn(question="past details " * 150, answer="이전 답변"),
+                ConversationTurn(question="아리아의 능력과 반지는?", answer="최근 답변"),
+            ]
+        }
+    )
+
+
+@pytest.mark.parametrize("engine", ["rdb", "hybrid"])
+@pytest.mark.parametrize("budget", [5000, 24000])
+def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, engine, budget):
+    def setup(spring):
+        long_history(spring)
+        spring.catalog[0]["current"][0]["value"] = "화염구 " + "현재 능력 설명 " * 200
+
+    if engine == "rdb":
+        c = case()
+        result = asyncio.run(
+            replay_case(
+                c,
+                FIXTURE["catalogs"][c["catalog"]],
+                spring_setup=setup,
+                config={"max_context_characters": budget},
+            )
+        )
+        requests = result["modelRequests"]
+    else:
+        result = asyncio.run(
+            replay(
+                tmp_path,
+                scenario("mixed_current_and_scene"),
+                spring_setup=setup,
+                config={"max_context_characters": budget},
+            )
+        )
+        requests = result["raw"].requests
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    assert len(requests[0]["input"]["conversation"]) == 2  # Planner alone still fits.
+    selection = next(r["input"] for r in requests if "maxSelectedRows" in r["input"])
+    assert [r["rowRef"] for r in selection["rows"]] == ["R1", "R2"]
+    assert "현재 능력 설명" in selection["rows"][0]["value"]
+    assert selection["conversation"][-1]["answer"] == "최근 답변"
+    assert len(selection["conversation"]) == (1 if budget == 5000 else 2)
+    assert selection["conversationTruncated"] is (budget == 5000)
+    assert selection["partial"] is False
+
+
+@pytest.mark.parametrize("budget", [4000, 24000])
+def test_grounded_answer_preserves_source_before_old_conversation(tmp_path, budget):
+    chunk = source_chunk("ring")
+    text = chunk.text + " 장면 설명 " * 300
+    chunk = replace(
+        chunk, text=text, end_offset=len(text), chunk_hash=sha256(text.encode()).hexdigest()
+    )
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            scenario("lexical_scene"),
+            spring_setup=long_history,
+            search_setup=lambda s: setattr(s, "keyword_chunks", [chunk]),
+            config={"max_context_characters": budget},
+        )
+    )
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    requests = result["raw"].requests
+    assert len(requests[0]["input"]["conversation"]) == 2
+    answer = requests[-1]["input"]
+    assert answer["passages"][0]["text"] == text
+    assert answer["passages"][0]["references"][0]["evidenceRef"] == "E1"
+    assert answer["conversation"][-1]["answer"] == "최근 답변"
+    assert len(answer["conversation"]) == (1 if budget == 4000 else 2)
+    assert any("대화 일부만" in item for item in answer["limitations"]) is (budget == 4000)
+    assert result["finish"]["result"]["retrievalSources"][0]["quote"] == text
 
 
 def test_followup_requeries_current_rows_instead_of_reusing_wrong_historical_answer():

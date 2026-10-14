@@ -90,17 +90,26 @@ class _Session:
 
     def plan_payload(self, prompt, schema):
         ctx = self.execution.context
-        while True:
-            payload = {
+        return self.trim_conversation_to_fit(
+            prompt,
+            lambda: {
                 "question": ctx.question,
                 "sourceRange": {"from": ctx.episode_from, "to": ctx.episode_to},
                 **self.conversation_payload(),
                 "conversationTruncated": "CONVERSATION_LIMIT" in self.codes,
-            }
-            if self.fits(prompt, payload, schema) or not self.conversation:
-                return payload
+            },
+            schema,
+        )
+
+    def trim_conversation_to_fit(self, prompt, payload: Callable[[], dict], schema):
+        # Fresh rows and quotes take precedence over reference-resolution history.
+        while True:
+            current = payload()
+            if self.fits(prompt, current, schema) or not self.conversation:
+                return current
             self.conversation.pop(0)
-            self.codes.append("CONVERSATION_LIMIT")
+            if "CONVERSATION_LIMIT" not in self.codes:
+                self.codes.append("CONVERSATION_LIMIT")
 
     def before_model_call(self, purpose):
         pass
@@ -387,6 +396,7 @@ class _Session:
                         break
                     self.rows.append(AnswerRow(f"R{len(self.rows) + 1}", item, domain))
         schema = response_schema(AnswerSelection)
+        self.trim_conversation_to_fit(SELECT_PROMPT, lambda: self.payload(question, plan), schema)
         while self.rows and not self.fits(SELECT_PROMPT, self.payload(question, plan), schema):
             self.rows.pop()
             self.codes.append("CONTEXT_LIMIT")

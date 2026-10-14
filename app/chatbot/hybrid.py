@@ -363,6 +363,9 @@ class _HybridSession(_Session):
                         break
                     self.rows.append(AnswerRow(f"R{len(self.rows) + 1}", value, subject.domain))
         schema = response_schema(AnswerSelection)
+        self.trim_conversation_to_fit(
+            SELECT_PROMPT, lambda: self.payload(self.execution.context.question, plan), schema
+        )
         while self.rows and not self.fits(
             SELECT_PROMPT, self.payload(self.execution.context.question, plan), schema
         ):
@@ -509,6 +512,7 @@ class _HybridSession(_Session):
 
     async def answer(self, plan):
         schema = response_schema(GroundedAnswer)
+        self.trim_conversation_to_fit(ANSWER_PROMPT, lambda: self.answer_payload(plan), schema)
         while self.evidences and not self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema):
             self.evidences.pop()
             self.codes.append("CONTEXT_LIMIT")
