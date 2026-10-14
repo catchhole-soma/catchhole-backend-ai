@@ -12,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.chatbot.replay import load_fixture, replay_case
+from app.chatbot.qa import encode
 from app.schemas.chat_execution import ConversationTurn, ExecutionContext
 from tests.test_chat_hybrid import replay, scenario, source_chunk
 
@@ -52,24 +53,25 @@ def long_history(spring):
 
 
 @pytest.mark.parametrize("engine", ["rdb", "hybrid"])
-@pytest.mark.parametrize("budget", [5000, 24000])
-def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, engine, budget):
+@pytest.mark.parametrize("bounded", [True, False])
+def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, engine, bounded):
     def setup(spring):
         long_history(spring)
         spring.catalog[0]["current"][0]["value"] = "화염구 " + "현재 능력 설명 " * 200
+        spring.catalog[0]["current"][1]["value"] = "현재 다른 설정 " * 180
 
-    if engine == "rdb":
-        c = case()
-        result = asyncio.run(
-            replay_case(
-                c,
-                FIXTURE["catalogs"][c["catalog"]],
-                spring_setup=setup,
-                config={"max_context_characters": budget},
+    def run(budget):
+        if engine == "rdb":
+            c = case()
+            result = asyncio.run(
+                replay_case(
+                    c,
+                    FIXTURE["catalogs"][c["catalog"]],
+                    spring_setup=setup,
+                    config={"max_context_characters": budget},
+                )
             )
-        )
-        requests = result["modelRequests"]
-    else:
+            return result, result["modelRequests"]
         result = asyncio.run(
             replay(
                 tmp_path,
@@ -78,34 +80,56 @@ def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, 
                 config={"max_context_characters": budget},
             )
         )
-        requests = result["raw"].requests
+        return result, result["raw"].requests
+
+    result, requests = run(24000)
+    if bounded:
+        selection_request = next(r for r in requests if "maxSelectedRows" in r["input"])
+        # Measure the current prompt/payload instead of pinning a character count
+        # which becomes unrelated when the production schema or prompt changes.
+        full = len(selection_request["system"]) + len(encode(selection_request["input"]))
+        budget = full - len(encode(selection_request["input"]["conversation"][0])) // 2
+        assert len(requests[0]["system"]) + len(encode(requests[0]["input"])) < budget
+        result, requests = run(budget)
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert len(requests[0]["input"]["conversation"]) == 2  # Planner alone still fits.
     selection = next(r["input"] for r in requests if "maxSelectedRows" in r["input"])
     assert [r["rowRef"] for r in selection["rows"]] == ["R1", "R2"]
     assert "현재 능력 설명" in selection["rows"][0]["value"]
     assert selection["conversation"][-1]["answer"] == "최근 답변"
-    assert len(selection["conversation"]) == (1 if budget == 5000 else 2)
-    assert selection["conversationTruncated"] is (budget == 5000)
+    assert len(selection["conversation"]) == (1 if bounded else 2)
+    assert selection["conversationTruncated"] is bounded
     assert selection["partial"] is False
 
 
-@pytest.mark.parametrize("budget", [4500, 24000])
-def test_grounded_answer_preserves_source_before_old_conversation(tmp_path, budget):
+@pytest.mark.parametrize("bounded", [True, False])
+def test_grounded_answer_preserves_source_before_old_conversation(tmp_path, bounded):
     chunk = source_chunk("ring")
     text = chunk.text + " 장면 설명 " * 300
     chunk = replace(
         chunk, text=text, end_offset=len(text), chunk_hash=sha256(text.encode()).hexdigest()
     )
-    result = asyncio.run(
-        replay(
-            tmp_path,
-            scenario("lexical_scene"),
-            spring_setup=long_history,
-            search_setup=lambda s: setattr(s, "keyword_chunks", [chunk]),
-            config={"max_context_characters": budget},
+
+    def run(budget):
+        return asyncio.run(
+            replay(
+                tmp_path,
+                scenario("lexical_scene"),
+                spring_setup=long_history,
+                search_setup=lambda s: setattr(s, "keyword_chunks", [chunk]),
+                config={"max_context_characters": budget},
+            )
         )
-    )
+
+    result = run(24000)
+    if bounded:
+        request = result["raw"].requests[-1]
+        budget = (
+            len(request["system"])
+            + len(encode(request["input"]))
+            - len(encode(request["input"]["conversation"][0])) // 2
+        )
+        result = run(budget)
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     requests = result["raw"].requests
     assert len(requests[0]["input"]["conversation"]) == 2
@@ -113,8 +137,8 @@ def test_grounded_answer_preserves_source_before_old_conversation(tmp_path, budg
     assert answer["passages"][0]["text"] == text
     assert answer["passages"][0]["references"][0]["evidenceRef"] == "E1"
     assert answer["conversation"][-1]["answer"] == "최근 답변"
-    assert len(answer["conversation"]) == (1 if budget == 4500 else 2)
-    assert any("대화 일부만" in item for item in answer["limitations"]) is (budget == 4500)
+    assert len(answer["conversation"]) == (1 if bounded else 2)
+    assert any("대화 일부만" in item for item in answer["limitations"]) is bounded
     assert result["finish"]["result"]["retrievalSources"][0]["quote"] == text
 
 

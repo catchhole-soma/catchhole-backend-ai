@@ -19,6 +19,8 @@ class SettingTool(StrEnum):
     WORLD_EVIDENCE = "WORLD_EVIDENCE"
     CHARACTER_FIELDS = "CHARACTER_FIELDS"
     WORLD_FIELDS = "WORLD_FIELDS"
+    CHARACTER_CURRENT_COLLECTION = "CHARACTER_CURRENT_COLLECTION"
+    WORLD_CURRENT_COLLECTION = "WORLD_CURRENT_COLLECTION"
 
 
 class ContractModel(BaseModel):
@@ -41,23 +43,45 @@ class SettingToolQuery(ContractModel):
         Literal["PROFILE", "AGE", "LEVEL", "STAT", "SKILL", "ITEM", "STATUS", "TIME"] | None
     ) = None
     value_equals: str | None = Field(default=None, min_length=1, max_length=200)
+    world_category: (
+        Literal[
+            "RACE",
+            "FACTION",
+            "LOCATION",
+            "MONSTER",
+            "POWER_SYSTEM",
+            "WORLD_RULE_HISTORY",
+            "IMPORTANT_ITEM",
+        ]
+        | None
+    ) = None
+    read_token: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
     @model_validator(mode="after")
     def validate_arguments(self) -> Self:
         find = self.tool in {SettingTool.FIND_CHARACTERS, SettingTool.FIND_WORLD_SETTINGS}
         current = self.tool in {SettingTool.CHARACTER_CURRENT, SettingTool.WORLD_CURRENT}
         evidence = self.tool in {SettingTool.CHARACTER_EVIDENCE, SettingTool.WORLD_EVIDENCE}
-        world_path = self.tool in {SettingTool.WORLD_CURRENT, SettingTool.WORLD_HISTORY}
+        world_path = self.tool in {
+            SettingTool.WORLD_CURRENT,
+            SettingTool.WORLD_HISTORY,
+            SettingTool.WORLD_CURRENT_COLLECTION,
+        }
         fields = self.tool in {SettingTool.CHARACTER_FIELDS, SettingTool.WORLD_FIELDS}
-        work_fields = self.tool == SettingTool.CHARACTER_FIELDS and self.target_id is None
+        work_fields = fields and self.target_id is None
+        collection = self.tool in {
+            SettingTool.CHARACTER_CURRENT_COLLECTION,
+            SettingTool.WORLD_CURRENT_COLLECTION,
+        }
         matching = self.tool == SettingTool.FIND_CHARACTERS and self.value_equals is not None
         if (
-            (not work_fields and find != (self.target_id is None))
+            (not work_fields and not collection and find != (self.target_id is None))
+            or (collection and (self.target_id is not None or self.query is not None))
             or (not find and self.query is not None)
             or ((find and not matching or evidence or fields) and self.setting_key is not None)
             or (self.scope_name is not None and (not world_path or self.setting_key is None))
             or (
-                (current or find or work_fields)
+                (current or find or work_fields or collection)
                 and (self.episode_from is not None or self.episode_to is not None)
             )
             or (
@@ -77,8 +101,20 @@ class SettingToolQuery(ContractModel):
                     SettingTool.CHARACTER_CURRENT,
                     SettingTool.CHARACTER_HISTORY,
                     SettingTool.CHARACTER_FIELDS,
+                    SettingTool.CHARACTER_CURRENT_COLLECTION,
                 }
                 and not matching
+            )
+            or (self.read_token is not None and not collection)
+            or (collection and self.page > 0 and self.read_token is None)
+            or (
+                self.world_category is not None
+                and not (
+                    self.tool
+                    in {SettingTool.FIND_WORLD_SETTINGS, SettingTool.WORLD_CURRENT_COLLECTION}
+                    or self.tool == SettingTool.WORLD_FIELDS
+                    and self.target_id is None
+                )
             )
         ):
             raise ValueError("설정 조회 도구의 인자 조합이 올바르지 않습니다.")
@@ -159,3 +195,26 @@ class SettingToolResponse(ContractModel):
     items: SettingToolPage
     partial: bool
     limitations: list[str]
+    collection: "SettingCollection | None" = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+
+class SettingCollection(ContractModel):
+    population: Literal["ACTIVE_REGISTERED_CHARACTERS", "REGISTERED_WORLD_SETTINGS"]
+    subject_count: int = Field(ge=0)
+    subjects_with_values: int = Field(ge=0)
+    record_count: int = Field(ge=0)
+    read_token: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        if (
+            self.subjects_with_values > self.subject_count
+            or self.subjects_with_values > self.record_count
+        ):
+            raise ValueError("Invalid collection coverage")
+        return self
+
+
+SettingToolResponse.model_rebuild()

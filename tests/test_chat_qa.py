@@ -270,8 +270,8 @@ async def test_full_pages_follow_server_order():
 async def test_context_limit_omits_whole_rows_and_preserves_notice():
     case, catalog = scenario()
     # Large unrelated values exceed the context cap; no value is cut into a made-up fact.
-    catalog[0]["current"][1]["value"] = "큰 값 " * 400
-    result = await replay_case(case, catalog, config={"max_context_characters": 3000})
+    catalog[0]["current"][1]["value"] = "큰 값 " * 490
+    result = await replay_case(case, catalog, config={"max_context_characters": 4200})
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert len(result["modelRequests"][1]["input"]["rows"]) == 1
     assert NOTICES["CONTEXT_LIMIT"] in result["finish"]["result"]["limitations"]
@@ -453,3 +453,158 @@ async def test_no_evidence_is_invented_for_empty_available_quote_list():
     result = await replay_case(case, catalog)
     assert result["finish"]["result"]["sources"] == []
     assert NOTICES["INVALID_QUOTE"] in result["finish"]["result"]["limitations"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("shape", ["COUNT", "LIST"])
+async def test_history_uses_individual_events_without_treating_them_as_current_state(shape):
+    from tests.test_chat_focused_lookup import case, catalog_subject, item, plan
+
+    decision = plan("도윤", intent="HISTORY", fact_type="LEVEL")
+    decision["answerShape"] = shape
+    history = [
+        item(1, "도윤", kind="HISTORY", value=str(n + 10), episode=n, number=100 + n)
+        for n in (1, 2, 3)
+    ]
+    history[1].update(operation="REMOVE", contributesToCurrent=False)
+    history[2].update(historyOnly=True, contributesToCurrent=False)
+    verdicts = {
+        "decisions": [
+            {
+                "itemRef": f"I{n}",
+                "verdict": "MATCH",
+                "rowRefs": [f"R{n}"],
+                "explanation": f"레벨 {n + 10} 변경 기록이에요.",
+            }
+            for n in (1, 2, 3)
+        ]
+    }
+    result = await replay_case(
+        case("도윤의 레벨 변경 이력을 모두 알려줘", decision, verdicts),
+        [catalog_subject(1, "도윤", history=history)],
+    )
+    assert result["finish"]["failure"] is None
+    text = result["finish"]["result"]["text"]
+    assert "조회한 변경 이력 3건" in text and "이력은 3건이에요" in text
+    assert all(f"출처 {n}화" in text for n in (1, 2, 3))
+    if shape == "LIST":
+        assert all(f"레벨 {n + 10} 변경 기록" in text for n in (1, 2, 3))
+    request = result["modelRequests"][1]
+    assert request["prompt_cache_key"] == "chat-history-condition-v1"
+    assert len(request["input"]["items"]) == 3
+    assert all(len(group["rows"]) == 1 for group in request["input"]["items"])
+    assert "현재 등록 자료" not in request["system"]
+    assert "REMOVE·HISTORY_ONLY" in request["system"]
+    assert len(result["reservations"]) == len(result["usageReports"]) == 2
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("shape", ["COUNT", "LIST"])
+async def test_mixed_current_and_history_does_not_add_unlike_counts(shape):
+    from tests.test_chat_focused_lookup import case, catalog_subject, item, plan
+
+    decision = plan("도윤", intent="CURRENT_AND_HISTORY", fact_type="LEVEL")
+    decision["answerShape"] = shape
+    result = await replay_case(
+        case("도윤의 현재 레벨과 변경 이력을 모두 알려줘", decision),
+        [
+            catalog_subject(
+                1,
+                "도윤",
+                current=[item(1, "도윤", value="20")],
+                history=[
+                    item(1, "도윤", kind="HISTORY", value="11", episode=1, number=101),
+                    item(1, "도윤", kind="HISTORY", value="14", episode=2, number=102),
+                ],
+            )
+        ],
+    )
+    assert result["finish"]["failure"] is None
+    answer = result["finish"]["result"]
+    if shape == "COUNT":
+        assert answer["outcome"] == "CLARIFICATION"
+        assert "현재 설정 항목 수와 변경 이력 건수" in answer["text"]
+    else:
+        assert answer["outcome"] == "ANSWER"
+        assert "20 (현재 설정)" in answer["text"]
+        assert "11 (출처 1화)" in answer["text"]
+        assert "14 (출처 2화)" in answer["text"]
+    assert len(result["modelRequests"]) == 1
+
+
+@pytest.mark.anyio
+async def test_history_event_decision_cannot_cite_another_event():
+    from tests.test_chat_focused_lookup import case, catalog_subject, item, plan
+
+    decision = plan("도윤", intent="HISTORY", fact_type="LEVEL")
+    decision["answerShape"] = "COUNT"
+    invalid = {
+        "decisions": [
+            {"itemRef": "I1", "verdict": "MATCH", "rowRefs": ["R2"], "explanation": "변경 기록"},
+            {"itemRef": "I2", "verdict": "MATCH", "rowRefs": ["R2"], "explanation": "변경 기록"},
+        ]
+    }
+    result = await replay_case(
+        case("도윤의 레벨 변경 기록은 몇 건이야?", decision, invalid, invalid),
+        [
+            catalog_subject(
+                1,
+                "도윤",
+                history=[
+                    item(1, "도윤", kind="HISTORY", value="11", episode=1, number=101),
+                    item(1, "도윤", kind="HISTORY", value="14", episode=2, number=102),
+                ],
+            )
+        ],
+    )
+    assert result["finish"]["failure"] == "PROVIDER_FAILURE"
+    assert len(result["reservations"]) == len(result["usageReports"]) == 3
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("intent", ["CURRENT", "HISTORY"])
+async def test_truncated_named_item_is_unknown_without_hiding_other_complete_items(intent):
+    from tests.test_chat_focused_lookup import case, catalog_subject, item, plan
+
+    decision = plan("도윤", intent=intent, fact_type="SKILL")
+    decision["answerShape"] = "COUNT"
+    complete = item(
+        1,
+        "도윤",
+        kind=intent,
+        category="SKILL",
+        key="skill.회복",
+        label="회복",
+        value="사용 가능",
+        episode=1 if intent == "HISTORY" else None,
+        number=101,
+    )
+    truncated = item(
+        1,
+        "도윤",
+        kind=intent,
+        category="SKILL",
+        key="skill.검술",
+        label="검술",
+        value="검술을 사용할 수 ",
+        episode=2 if intent == "HISTORY" else None,
+        number=102,
+    )
+    truncated["valueTruncated"] = True
+    verdict = {
+        "decisions": [
+            {"itemRef": "I1", "verdict": "MATCH", "rowRefs": ["R1"], "explanation": "확인한 항목"}
+        ]
+    }
+    catalog = catalog_subject(
+        1, "도윤", **{"current" if intent == "CURRENT" else "history": [complete, truncated]}
+    )
+    result = await replay_case(case("도윤의 관련 스킬은 몇 개야?", decision, verdict), [catalog])
+    assert result["finish"]["failure"] is None
+    text = result["finish"]["result"]["text"]
+    assert ("항목은 1개예요" if intent == "CURRENT" else "이력은 1건이에요") in text
+    assert "검술" in text and "판단 보류" in text
+    assert "다음 대상은 확인한 수에서 제외했어요:" in text
+    items = result["modelRequests"][1]["input"]["items"]
+    assert [group["itemRef"] for group in items] == ["I1"]
+    assert len(result["modelRequests"]) == 2

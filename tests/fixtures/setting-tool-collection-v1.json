@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "tool": "CHARACTER_CURRENT_COLLECTION",
+  "items": {
+    "content": [
+      {
+        "kind": "CURRENT",
+        "id": null,
+        "subjectId": "00000000-0000-0000-0000-000000000002",
+        "subjectName": "아리아",
+        "category": "STAT",
+        "scopeName": null,
+        "settingKey": "stats.mana",
+        "displayName": "mana",
+        "value": "10",
+        "structuredValueJson": "\"10\"",
+        "valueTruncated": false,
+        "contributesToCurrent": true,
+        "operation": null,
+        "historyOnly": false,
+        "settingVersion": 1,
+        "effectiveFromEpisodeNo": null,
+        "sourceEpisodeId": null,
+        "sourceEpisodeNo": null,
+        "origin": "UNKNOWN",
+        "sources": [],
+        "sourcesTruncated": false,
+        "evidence": null
+      }
+    ],
+    "page": 0,
+    "size": 20,
+    "totalElements": 1,
+    "totalPages": 1,
+    "hasNext": false
+  },
+  "partial": false,
+  "limitations": ["SETTING_BOOK_UNSUPPORTED"],
+  "collection": {
+    "population": "ACTIVE_REGISTERED_CHARACTERS",
+    "subjectCount": 1,
+    "subjectsWithValues": 1,
+    "recordCount": 1,
+    "readToken": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

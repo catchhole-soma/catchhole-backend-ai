@@ -435,8 +435,10 @@ def test_embedding_reservation_failure_is_distinct_and_does_not_call_provider(
 
 def test_model_and_tool_budgets_stop_before_additional_external_work(tmp_path):
     result = asyncio.run(replay(tmp_path, hybrid={"max_model_calls": 1}))
-    assert result["finish"]["failure"] == "EXECUTION_LIMIT_EXCEEDED"
+    assert result["finish"]["failure"] is None
+    assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
     assert len(result["raw"].requests) == 1
+    assert not result["search"].calls and not result["embedding"].inputs
 
 
 def test_schema_retries_share_six_call_cap_across_planning_selection_and_answers(tmp_path):
@@ -445,10 +447,12 @@ def test_schema_retries_share_six_call_cap_across_planning_selection_and_answers
     outputs = [response for valid in case["outputs"] for response in ({}, valid)]
     result = asyncio.run(replay(tmp_path, case, outputs=outputs))
 
-    assert result["finish"]["failure"] == "EXECUTION_LIMIT_EXCEEDED"
+    assert result["finish"]["failure"] is None
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert len(result["raw"].requests) == 6
     assert len(result["spring"].reservations) == len(result["spring"].reports) == 6
     assert not result["embedding"].inputs
+    assert not result["search"].calls  # The last permitted answer remains usable after recheck.
 
 
 def test_no_query_embedding_budget_exposes_insufficient_evidence(tmp_path):

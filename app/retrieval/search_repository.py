@@ -108,8 +108,8 @@ class RetrievalSearchRepository:
         return self._rows(
             f"SELECT {FIELDS},({score})/{len(terms)} AS score {CURRENT_FROM} "
             f"AND ({' OR '.join(matches)}) "
-            "ORDER BY (e.id=ANY(CAST(:preferred AS uuid[]))) DESC,"
-            "score DESC,e.episode_no,c.chunk_index,c.id LIMIT :limit",
+            "ORDER BY score DESC,(e.id=ANY(CAST(:preferred AS uuid[]))) DESC,"
+            "e.episode_no,c.chunk_index,c.id LIMIT :limit",
             {**params, "limit": limit, "preferred": list(dict.fromkeys(preferred_episode_ids))},
             "KEYWORD",
         )

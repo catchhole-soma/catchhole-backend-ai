@@ -17,6 +17,9 @@ class AnswerRow:
 
 
 NOTICES = {
+    "CURRENT_CHANGED": "조회 중 설정이 바뀌어 이전 값으로 답변하지 않았습니다.",
+    "CONDITION_UNCERTAIN": "일부 대상은 현재 설정만으로 조건 충족 여부를 확정하지 못했습니다.",
+    "SCALAR_UNAVAILABLE": "일부 설정은 단일 값으로 확인할 수 없어 종류 집계에서 제외했습니다.",
     "CONVERSATION_LIMIT": "최근 대화 일부만 참고했습니다. 대상이 불분명하면 이름과 항목을 다시 알려주세요.",
     "NARRATIVE_SOURCE_RANGE": "회차는 근거가 서술된 출처이며 사건이 일어난 시점과 다를 수 있습니다.",
     "INDEX_PARTIAL": "검색 데이터가 일부만 준비되어 작품 전체를 검색한 결과가 아닙니다.",
@@ -56,7 +59,7 @@ NOTICES = {
     "INVALID_QUOTE": "원문과 일치하지 않는 인용을 제외했습니다.",
     "STALE_CURRENT_SOURCE": "과거 근거가 현재 설정을 뒷받침하는지 확인되지 않아 인용에서 제외했습니다.",
     "NO_RELATED_SETTING": "조회한 등록 정보에서 질문에 해당하는 항목을 확인하지 못했습니다.",
-    "UNSUPPORTED_REQUEST": "등록 설정과 직접 근거의 읽기 전용 단일 질문만 지원합니다.",
+    "UNSUPPORTED_REQUEST": "현재는 작품 정보를 조회하는 질문에 답할 수 있습니다.",
 }
 
 

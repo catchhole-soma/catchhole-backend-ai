@@ -70,6 +70,7 @@ def skill_case(*, per_item=True):
             "episodeTo": None,
             "characterFilter": None,
             "perItem": per_item,
+            "requestedFacets": ["TIME", "HOW"],
         }
     ]
     return case
@@ -87,6 +88,26 @@ def usage_answer(*, refs=("R1", "R2"), unanswered=("R1", "R2", "R3"), coverage="
         ],
         "conflicts": [],
         "unansweredRowRefs": list(unanswered),
+    }
+
+
+def item_answer(count=3, *, text=None, ref="E1", facet="HOW"):
+    return {
+        "coverage": "PARTIAL" if text else "NONE",
+        "claims": [],
+        "conflicts": [],
+        "itemAnswers": [
+            {
+                "itemRef": f"I{n}",
+                "answers": [{"facet": facet, "text": text, "evidenceRefs": [ref]}]
+                if text and n == 1
+                else [],
+                "missingFacets": [
+                    f for f in ["TIME", "HOW"] if not (text and n == 1 and f == facet)
+                ],
+            }
+            for n in range(1, count + 1)
+        ],
     }
 
 
@@ -120,7 +141,7 @@ def finished(result):
 
 def test_each_skill_is_retained_when_sources_only_prove_use_not_acquisition(tmp_path):
     case = skill_case()
-    case["outputs"].append(usage_answer())
+    case["outputs"].append(item_answer())
     result = asyncio.run(
         replay(
             tmp_path,
@@ -132,24 +153,20 @@ def test_each_skill_is_retained_when_sources_only_prove_use_not_acquisition(tmp_
         )
     )
     actual = finished(result)
-    assert actual["outcome"] == "ANSWER"
+    assert actual["outcome"] == "INSUFFICIENT_EVIDENCE"
     assert all(name in actual["text"] for name in SKILLS)
-    for name in SKILLS:
-        assert (
-            f"세린 · {name}: 이번에 확인한 원문으로는 요청한 경위나 이유를 확인하지 못했습니다."
-            in actual["text"]
-        )
-    assert "획득 경위는 확인되지" in actual["text"]
+    assert actual["text"].count("확정하기 어렵습니다") == 1
+    assert all(actual["text"].count(name) == 1 for name in SKILLS)
     assert "12화에 얻" not in actual["text"]
     assert "R1" not in actual["text"] and "E1" not in actual["text"]
-    assert actual["retrievalSources"][0]["quote"] == USAGE_TEXT
+    assert not actual.get("retrievalSources")
     assert USAGE_TEXT not in actual["text"]
-    assert NOTICES["PARTIAL_ANSWER"] in actual["limitations"]
+    assert NOTICES["NO_SEARCH_EVIDENCE"] in actual["limitations"]
     assert len(result["raw"].requests) == 2  # Planner + grounded answer; no lossy row selector.
     assert [r["rowRef"] for r in result["raw"].requests[1]["input"]["rows"]] == ["R1", "R2", "R3"]
     assert result["spring"].queries[-1]["factType"] == "SKILL"
-    assert result["search"].calls[-1] == "revalidate"
-    assert len(result["spring"].receipts) == 2
+    assert "revalidate" not in result["search"].calls
+    assert len(result["spring"].receipts) == 1
     assert len(result["spring"].reservations) == len(result["spring"].reports) == 2
 
 
@@ -200,7 +217,7 @@ def test_corrected_coverage_retry_preserves_all_skills_and_is_metered(tmp_path):
     case["outputs"].extend(
         [
             usage_answer(refs=("R1",), unanswered=(), coverage="COMPLETE"),
-            usage_answer(),
+            item_answer(),
         ]
     )
     result = asyncio.run(
@@ -251,11 +268,7 @@ def test_oversized_per_item_request_clarifies_before_search_or_answer_generation
 @pytest.mark.parametrize("changed", [False, True])
 def test_focused_pagination_leaves_budget_to_revalidate_partial_answer(tmp_path, changed):
     case = skill_case()
-    draft = usage_answer(
-        refs=("R1",),
-        unanswered=tuple(f"R{n}" for n in range(1, 8)),
-    )
-    draft["claims"][0]["text"] = "합성기술001을 사용한 장면은 있지만 획득 경위는 확인되지 않습니다."
+    draft = item_answer(7, text="스승에게 합성기술001을 배웠습니다.")
     case["outputs"].append(draft)
 
     def after_generation(count, spring, search):
@@ -267,7 +280,9 @@ def test_focused_pagination_leaves_budget_to_revalidate_partial_answer(tmp_path,
             tmp_path,
             case,
             spring_setup=setup_catalog(skills(8)),
-            search_setup=lambda search: set_source_text(search, "세린은 합성기술001을 사용했다."),
+            search_setup=lambda search: set_source_text(
+                search, "세린은 스승에게 합성기술001을 배웠다."
+            ),
             config={"page_size": 1, "max_tool_calls": 12},
             model_hook=after_generation,
         )
@@ -298,19 +313,11 @@ def test_direct_partial_survives_search_budget_stop_and_rechecks_its_original_so
     tmp_path, changed
 ):
     case = skill_case()
-    direct_partial = usage_answer(refs=("R1",))
-    direct_partial["claims"][0]["text"] = (
-        "잔광을 사용한 장면은 있지만 획득 경위는 확인되지 않습니다."
-    )
+    direct_partial = item_answer(text="잔광을 스승에게 배웠습니다.")
     case["outputs"].extend(
         [
             direct_partial,
-            {
-                "coverage": "NONE",
-                "claims": [],
-                "conflicts": [],
-                "unansweredRowRefs": ["R1", "R2", "R3"],
-            },
+            item_answer(),
         ]
     )
 
@@ -320,7 +327,7 @@ def test_direct_partial_survives_search_budget_stop_and_rechecks_its_original_so
         for n, row in enumerate(rows, 1):
             reference = {"tool": "CHARACTER_EVIDENCE", "targetId": uid(800 + n)}
             row["sources"] = [reference]
-            quote = f"세린은 {row['displayName']}을 사용했다."
+            quote = f"세린은 스승에게 {row['displayName']}을 배웠다."
             source = copy.deepcopy(row)
             source.update(
                 kind="EVIDENCE",
@@ -358,7 +365,7 @@ def test_direct_partial_survives_search_budget_stop_and_rechecks_its_original_so
         )
     )
     actual = finished(result)
-    assert result["search"].calls == ["keyword"]
+    assert result["search"].calls == ["keyword", "keyword", "keyword", "neighbors"]
     assert len(result["raw"].requests) == 3 and result["embedding"].inputs == []
     direct_queries = [q for q in result["spring"].queries if q["tool"] == "CHARACTER_EVIDENCE"]
     assert [q["targetId"] for q in direct_queries].count(uid(801)) == 2

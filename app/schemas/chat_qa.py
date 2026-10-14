@@ -8,6 +8,28 @@ from app.schemas.setting_tools import ContractModel
 
 
 CharacterFactType = Literal["PROFILE", "AGE", "LEVEL", "STAT", "SKILL", "ITEM", "STATUS", "TIME"]
+AnswerShape = Literal["FACTS", "LIST", "COUNT", "SUMMARY", "DISTINCT"]
+WorldCategory = Literal[
+    "RACE", "FACTION", "LOCATION", "MONSTER", "POWER_SYSTEM", "WORLD_RULE_HISTORY", "IMPORTANT_ITEM"
+]
+
+
+class WorkCollection(ContractModel):
+    """An information need in the server-owned work, never an authority selector."""
+
+    domain: Literal["CHARACTER", "WORLD"]
+    fact_type: CharacterFactType | None
+    world_category: WorldCategory | None
+    attribute: str | None = Field(min_length=1, max_length=100)
+    predicate: str | None = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        if self.domain == "WORLD" and self.fact_type is not None:
+            raise ValueError("World collections have no character fact type")
+        if self.domain == "CHARACTER" and self.world_category is not None:
+            raise ValueError("Character collections have no world category")
+        return self
 
 
 class SettingFocus(ContractModel):
@@ -58,12 +80,18 @@ class QuestionPlan(ContractModel):
     episode_from: int | None = Field(ge=1, strict=True)
     episode_to: int | None = Field(ge=1, strict=True)
     character_filter: CharacterFilter | None = None
+    collection: WorkCollection | None = None
+    answer_shape: AnswerShape = "FACTS"
 
     @model_validator(mode="after")
     def valid_plan(self) -> Self:
         lookup = self.intent in {"CURRENT", "HISTORY", "CURRENT_AND_HISTORY", "DIRECT_EVIDENCE"}
-        if lookup and not self.subjects:
+        if lookup and not self.subjects and self.collection is None:
             raise ValueError("Lookup requires a named subject")
+        if self.collection is not None and (
+            self.subjects or self.character_filter is not None or self.intent != "CURRENT"
+        ):
+            raise ValueError("Work collections query current registered information")
         if (self.intent == "CHARACTER_LIST") != (self.character_filter is not None):
             raise ValueError("Character lists require one exact current-value condition")
         if self.intent == "CHARACTER_LIST" and (

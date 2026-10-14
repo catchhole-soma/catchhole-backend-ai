@@ -36,6 +36,16 @@ def test_java_field_catalog_contract_round_trips_without_value_or_source_data():
     assert item.sources == [] and item.evidence is None
 
 
+def test_java_collection_contract_round_trips_with_population_and_read_token():
+    payload = json.loads(FIXTURE.with_name("setting-tool-collection-v1.json").read_text())
+    result = SettingToolResponse.model_validate(payload)
+    assert result.model_dump(mode="json", by_alias=True) == payload
+    assert result.collection.subject_count == 1
+    assert result.collection.subjects_with_values == 1
+    assert result.collection.record_count == result.items.total_elements
+    assert len(result.collection.read_token) == 64
+
+
 def test_server_context_is_in_headers_and_not_model_arguments():
     context = SettingToolContext(member_id=42, work_id=uuid4())
     requests = []
@@ -81,7 +91,7 @@ def test_server_context_is_in_headers_and_not_model_arguments():
         {"tool": "WORLD_CURRENT", "targetId": str(uuid4()), "scopeName": "고급"},
         {"tool": "WORLD_HISTORY", "targetId": str(uuid4()), "episodeFrom": 3, "episodeTo": 2},
         {"tool": "CHARACTER_EVIDENCE", "targetId": str(uuid4()), "page": 1},
-        {"tool": "WORLD_FIELDS"},
+        {"tool": "WORLD_FIELDS", "episodeFrom": 3},
         {"tool": "CHARACTER_FIELDS", "episodeFrom": 3},
         {"tool": "CHARACTER_FIELDS", "settingKey": "stats.mana"},
         {"tool": "FIND_CHARACTERS", "factType": "PROFILE"},

@@ -21,16 +21,30 @@ class FocusedLookup:
         observed = self.observed_question_text()
         terms = [s.focus.attribute for s in plan.subjects if s.focus and s.focus.attribute]
         condition = plan.character_filter
+        collection = getattr(plan, "collection", None)
+        if collection:
+            terms.extend(t for t in [collection.attribute, collection.predicate] if t)
         if condition:
             terms.extend([condition.attribute, condition.value])
         if any(not term.strip() or term.strip().casefold() not in observed for term in terms):
             raise ValueError("Lookup vocabulary must occur in this question or conversation")
 
-    async def fields(self, domain, target, focus, *, history=False, reserve=0, condition=False):
+    async def fields(
+        self,
+        domain,
+        target,
+        focus,
+        *,
+        history=False,
+        reserve=0,
+        condition=False,
+        world_category=None,
+    ):
         items, complete = await self.pages(
             f"{domain}_FIELDS",
             target=target,
             fact_type=focus.fact_type,
+            world_category=world_category,
             source_range=history,
             exhaustive=True,
             reserve=reserve + 1,

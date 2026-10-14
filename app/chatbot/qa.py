@@ -10,6 +10,8 @@ from app.chatbot.client import ChatTransportError
 from app.chatbot.providers import ChatTextClient
 from app.chatbot.qa_config import ChatQaSettings
 from app.chatbot.qa_lookup import FocusedLookup
+from app.chatbot.qa_collection import WorkLookup
+from app.chatbot.qa_synthesis import RegisteredSynthesis
 from app.chatbot.qa_prompts import PLAN_PROMPT, PLAN_VERSION, SELECT_PROMPT, SELECT_VERSION
 from app.chatbot.qa_render import AnswerRow, message, render_answer, safe_text
 from app.chatbot.runtime import Execution, ProviderFailure
@@ -69,7 +71,7 @@ class ChatQaHandler:
             return Finish(failure="PROVIDER_FAILURE")
 
 
-class _Session(FocusedLookup):
+class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
     schema = staticmethod(response_schema)
 
     def __init__(self, handler: ChatQaHandler, execution: Execution):
@@ -80,6 +82,9 @@ class _Session(FocusedLookup):
         self.rows: list[AnswerRow] = []
         self.focused_refs: set[str] = set()
         self.snapshot_versions = {}
+        self.last_collection = None
+        self.collection_checks = []
+        self.incomplete_subjects = set()
         self.include_sources = False
         self.source_from = execution.context.episode_from
         self.source_to = execution.context.episode_to
@@ -134,14 +139,28 @@ class _Session(FocusedLookup):
             <= self.cfg.max_input_tokens
         )
 
-    async def model(self, cls, prompt, payload, purpose, version, validate: Callable | None = None):
+    async def model(
+        self,
+        cls,
+        prompt,
+        payload,
+        purpose,
+        version,
+        validate: Callable | None = None,
+        *,
+        max_attempts=None,
+    ):
         schema = response_schema(cls)
         if not self.fits(prompt, payload, schema):
             raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         client = ChatTextClient(
             self.handler.delegate, self.execution, purpose=purpose, default_model=self.cfg.model
         )
-        for attempt in range(self.cfg.max_attempts):
+        for attempt in range(
+            self.cfg.max_attempts
+            if max_attempts is None
+            else min(self.cfg.max_attempts, max_attempts)
+        ):
             # Each schema retry is a separate metered provider invocation. No transport retry.
             retry_prompt = prompt + (
                 "\n이전 출력이 계약 검증에 실패했습니다. schema와 제공된 참조만 사용하세요."
@@ -173,6 +192,14 @@ class _Session(FocusedLookup):
             raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         self.tool_count += 1
         response = await self.tools.query(request)
+        if request.tool.value.endswith("_COLLECTION"):
+            meta = response.collection
+            if (
+                meta is None
+                or meta.record_count != response.items.total_elements
+                or (request.read_token is not None and meta.read_token != request.read_token)
+            ):
+                raise SettingToolClientError("CONTRACT_ERROR")
         # A general capability restriction is not a warning about every character answer.
         response_codes = [c for c in response.limitations if c != "SETTING_BOOK_UNSUPPORTED"]
         self.codes.extend(
@@ -195,12 +222,16 @@ class _Session(FocusedLookup):
         setting_key=None,
         scope_name=None,
         value_equals=None,
+        world_category=None,
         source_range=False,
         exhaustive=False,
         reserve=0,
     ):
         items = []
         complete = True
+        collection = tool.endswith("_COLLECTION")
+        read_token = None
+        self.last_collection = None
         page_limit = 10001 if exhaustive else self.cfg.max_pages
         for page in range(page_limit):
             if (
@@ -221,12 +252,32 @@ class _Session(FocusedLookup):
                     setting_key=setting_key,
                     scope_name=scope_name,
                     value_equals=value_equals,
+                    world_category=world_category,
+                    read_token=read_token,
                     page=page,
                     size=self.cfg.page_size,
                     episode_from=self.source_from if history or source_range else None,
                     episode_to=self.source_to if history or source_range else None,
                 )
             )
+            if collection:
+                self.last_collection = result.collection
+                read_token = result.collection.read_token
+                if page == 0:
+                    self.collection_checks.append(
+                        (
+                            SettingToolQuery(
+                                tool=tool,
+                                fact_type=fact_type,
+                                world_category=world_category,
+                                setting_key=setting_key,
+                                scope_name=scope_name,
+                            ),
+                            result.collection,
+                        )
+                    )
+                if result.partial:
+                    complete = False
             if result.partial and (tool.startswith("FIND_") or fields):
                 complete = False
             if result.items.has_next and not result.items.content:
@@ -238,7 +289,7 @@ class _Session(FocusedLookup):
                     else "HISTORY"
                     if history
                     else "CURRENT"
-                    if tool.endswith("_CURRENT")
+                    if tool.endswith("_CURRENT") or collection
                     else "CHARACTER"
                     if tool == "FIND_CHARACTERS"
                     else "WORLD_SETTING"
@@ -276,6 +327,8 @@ class _Session(FocusedLookup):
                     if version is not None and item.setting_version != version:
                         raise SettingToolClientError("CONCURRENT_UPDATE")
                     self.snapshot_versions[item.subject_id] = item.setting_version
+                    if item.value_truncated:
+                        complete = False
                 if exhaustive or len(items) < self.cfg.max_items:
                     items.append(item)
                 else:
@@ -405,8 +458,8 @@ class _Session(FocusedLookup):
                 ),
                 "CLARIFICATION": (
                     "CLARIFICATION",
-                    "인물·세계관의 이름과 조회할 항목을 구체적으로 알려주세요. 한 번에 최대 3개 대상을 조회합니다.",
-                    "UNSUPPORTED_REQUEST",
+                    "어떤 인물이나 설정을 뜻하는지 조금 더 구체적으로 알려주세요.",
+                    "NEEDS_CLARIFICATION",
                 ),
                 "UNSUPPORTED": (
                     "INSUFFICIENT_EVIDENCE",
@@ -425,6 +478,8 @@ class _Session(FocusedLookup):
             self.codes.append("SOURCE_RANGE")
         if plan.intent == "CHARACTER_LIST":
             return await self.character_list(plan)
+        if plan.collection is not None:
+            return await self.answer_collection(plan)
         targets = []
         for subject in plan.subjects:
             find = "FIND_CHARACTERS" if subject.domain == "CHARACTER" else "FIND_WORLD_SETTINGS"
@@ -445,13 +500,17 @@ class _Session(FocusedLookup):
             if found[0].id is None or found[0].id != found[0].subject_id:
                 raise SettingToolClientError("CONTRACT_ERROR")
             targets.append((subject, found[0].subject_id))
+        synthesis = (
+            plan.answer_shape in {"SUMMARY", "COUNT", "LIST"} and plan.intent != "DIRECT_EVIDENCE"
+        )
+        current_checks = len(targets) if synthesis and plan.intent != "HISTORY" else 0
         for subject, target in targets:
             modes = (
                 ["CURRENT", "HISTORY"]
                 if plan.intent == "CURRENT_AND_HISTORY"
                 else ["HISTORY" if plan.intent == "HISTORY" else "CURRENT"]
             )
-            stop = await self.subject_rows(subject, target, modes)
+            stop = await self.subject_rows(subject, target, modes, reserve=current_checks)
             if stop:
                 return stop
         chosen, stop = await self.select_rows(plan)
@@ -460,13 +519,51 @@ class _Session(FocusedLookup):
         if {row.item.subject_id for row in chosen} != {target for _, target in targets}:
             self.codes.append("NO_RELATED_SETTING")
         if plan.include_evidence or plan.intent == "DIRECT_EVIDENCE":
-            await self.evidence(chosen)
+            await self.evidence(chosen, reserve=current_checks)
+        if synthesis:
+            result = await self.registered_answer(plan, chosen)
+            if current_checks and not await self.current_subjects_unchanged(chosen):
+                return message(
+                    "INSUFFICIENT_EVIDENCE",
+                    "답변을 준비하는 동안 현재 설정이 변경됐어요. 다시 질문하면 최신 설정으로 확인할게요.",
+                    self.codes + ["CURRENT_CHANGED"],
+                )
+            return result
         return render_answer(
             chosen,
             self.codes,
             direct_only=plan.intent == "DIRECT_EVIDENCE",
             maximum=self.cfg.max_answer_characters,
         )
+
+    async def current_subjects_unchanged(self, rows):
+        """Recheck named current subjects after synthesis without sending IDs to the model."""
+        subjects = {
+            (row.domain, row.item.subject_id): row.item
+            for row in rows
+            if row.item.kind == "CURRENT"
+        }
+        for (domain, target), original in subjects.items():
+            try:
+                result = await self.query(
+                    SettingToolQuery(tool=f"{domain}_CURRENT", target_id=target, size=1)
+                )
+            except SettingToolClientError as exc:
+                if exc.status_code in {404, 409} or exc.code == "CONCURRENT_UPDATE":
+                    return False
+                raise
+            if not result.items.content:
+                return False
+            current = result.items.content[0]
+            if (
+                current.kind != "CURRENT"
+                or current.subject_id != target
+                or current.subject_name != original.subject_name
+                or current.setting_version is None
+                or current.setting_version != original.setting_version
+            ):
+                return False
+        return True
 
     async def select_rows(self, plan, *, allow_missing=False):
         question = self.execution.context.question

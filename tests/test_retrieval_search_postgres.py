@@ -250,10 +250,7 @@ def test_neighbors_exclude_seeds_before_limit_and_preserve_current_scope(corpus,
     outside_ids = corpus.chunks(outside, ["context before", "needle outside", "context after"])
     ids = corpus.chunks(
         episode,
-        [
-            f"{'needle' if index % 3 == 1 else 'context'} {index}"
-            for index in range(seed_count * 3)
-        ],
+        [f"{'needle' if index % 3 == 1 else 'context'} {index}" for index in range(seed_count * 3)],
     )
     scope = replace(corpus.scope, episode_from=2, episode_to=2)
     seeds = corpus.read("keyword", "needle", scope=scope, limit=seed_count)
@@ -408,3 +405,11 @@ def test_linked_episode_is_priority_hint_not_an_exclusive_scope(corpus):
             "keyword", "needle", preferred_episode_ids=[linked], scope=limited_scope
         )
     ] == [first_id]
+
+
+def test_matching_item_and_context_outrank_a_generic_linked_episode(corpus):
+    relevant, linked = corpus.episode(1), corpus.episode(2)
+    relevant_id = corpus.chunks(relevant, ["잔광을 스승에게 배운 장면"], ready=True)[0]
+    corpus.chunks(linked, ["스승을 기다리는 장면"], ready=True)
+    found = corpus.read("keyword", "잔광 스승", preferred_episode_ids=[linked], limit=1)
+    assert [chunk.chunk_id for chunk in found] == [relevant_id]

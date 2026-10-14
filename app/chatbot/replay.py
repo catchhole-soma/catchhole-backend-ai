@@ -7,6 +7,7 @@ Scripted model decisions verify plumbing, not production model quality.
 import argparse
 import asyncio
 import copy
+import hashlib
 import json
 import tempfile
 import unicodedata
@@ -119,6 +120,7 @@ class ReplaySpring:
 
     def lookup(self, query):
         tool = query.tool.value
+        collection = None
 
         def matching(item):
             return (query.fact_type is None or item["category"] == query.fact_type) and (
@@ -160,6 +162,9 @@ class ReplaySpring:
                 s["subject"]
                 for s in self.catalog
                 if s["subject"]["kind"] == kind
+                and (
+                    query.world_category is None or s["subject"]["category"] == query.world_category
+                )
                 and (query.query or "").casefold() in s["subject"]["subjectName"].casefold()
                 and (
                     query.value_equals is None
@@ -169,12 +174,53 @@ class ReplaySpring:
                     )
                 )
             ]
+        elif tool.endswith("_COLLECTION"):
+            kind = "CHARACTER" if tool.startswith("CHARACTER") else "WORLD_SETTING"
+            subjects = [
+                s
+                for s in self.catalog
+                if s["subject"]["kind"] == kind
+                and (
+                    query.world_category is None or s["subject"]["category"] == query.world_category
+                )
+            ]
+            items = [i for s in subjects for i in s.get("current", []) if matching(i)]
+            token = hashlib.sha256(
+                json.dumps(
+                    {
+                        "subjects": subjects,
+                        "query": query.model_dump(
+                            mode="json", exclude={"read_token", "page", "size"}
+                        ),
+                    },
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()
+            if query.read_token is not None and query.read_token != token:
+                raise AssertionError("Replay collection changed")
+            collection = {
+                "population": "ACTIVE_REGISTERED_CHARACTERS"
+                if kind == "CHARACTER"
+                else "REGISTERED_WORLD_SETTINGS",
+                "subjectCount": len(subjects),
+                "subjectsWithValues": len({i["subjectId"] for i in items}),
+                "recordCount": len(items),
+                "readToken": token,
+            }
         elif tool.endswith("_FIELDS"):
             domain_kind = "CHARACTER" if tool == "CHARACTER_FIELDS" else "WORLD_SETTING"
             fields = {}
             for subject in self.catalog:
-                if subject["subject"]["kind"] != domain_kind or (
-                    query.target_id is not None and subject["subject"]["id"] != str(query.target_id)
+                if (
+                    subject["subject"]["kind"] != domain_kind
+                    or (
+                        query.target_id is not None
+                        and subject["subject"]["id"] != str(query.target_id)
+                    )
+                    or (
+                        query.world_category is not None
+                        and subject["subject"]["category"] != query.world_category
+                    )
                 ):
                     continue
                 scoped = query.episode_from is not None or query.episode_to is not None
@@ -265,6 +311,7 @@ class ReplaySpring:
                 "tool": tool,
                 "partial": False,
                 "limitations": ["SETTING_BOOK_UNSUPPORTED"],
+                "collection": collection,
                 "items": {
                     "content": content,
                     "page": query.page,

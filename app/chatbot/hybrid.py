@@ -1,5 +1,6 @@
 """Bounded policy for RDB, linked quotations and current-manuscript retrieval."""
 
+from collections import Counter
 from dataclasses import dataclass
 import math
 
@@ -7,6 +8,19 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.chatbot.client import ChatTransportError
 from app.chatbot.hybrid_config import HybridSettings
+from app.chatbot.hybrid_items import (
+    FACET_LABELS,
+    answer_evidence_refs,
+    apply_event_scope,
+    empty_item_answer,
+    event_matches,
+    group_items,
+    merge_item_answers,
+    render_item_answers,
+    requested_facets,
+    select_context_seeds,
+    validate_item_answer,
+)
 from app.chatbot.hybrid_metrics import HybridMetrics, ObservedEmbeddingClient, ObservedTextClient
 from app.chatbot.hybrid_prompts import ANSWER_PROMPT, ANSWER_VERSION, PLAN_PROMPT, PLAN_VERSION
 from app.chatbot.providers import ChatEmbeddingClient
@@ -19,12 +33,13 @@ from app.chatbot.qa_render import (
     safe_text,
     setting_label,
 )
+from app.chatbot.qa_synthesis import logical_groups
 from app.chatbot.runtime import ProviderFailure
 from app.clients.setting_tools_client import SettingToolClientError
 from app.retrieval.evidence import compose_evidence
 from app.retrieval.search_contracts import SearchScope, SearchScopeUnavailable
 from app.schemas.chat_execution import ChatResult, Finish
-from app.schemas.chat_hybrid import GroundedAnswer, HybridPlan
+from app.schemas.chat_hybrid import GroundedAnswer, HybridPlan, ItemAnswer
 from app.schemas.chat_qa import QuestionPlan
 from app.schemas.chat_retrieval import RetrievalReference
 from app.schemas.setting_tools import SettingToolQuery
@@ -161,6 +176,14 @@ class _HybridSession(_Session):
         self.evidences = []
         self.chosen = []
         self.fallback_direct_checks = 0
+        self.logical_items = []
+        self.item_draft = None
+        self.evidence_registry = {}
+        self.item_searches = {}
+        self.event_scope = None
+        self.render_registered_values = False
+        self.collection_conditions = []
+        self.has_collection_condition = False
 
     def before_model_call(self, purpose):
         if self.model_calls >= self.hcfg.max_model_calls:
@@ -218,8 +241,16 @@ class _HybridSession(_Session):
             self.fallback_direct_checks,
             (len({e.direct_ref for e in self.evidences if e.direct_ref}) if direct_checks else 0),
         )
-        return self.tool_count + cost + reserved <= min(
+        return self.tool_count + cost + reserved + len(self.collection_checks) <= min(
             self.cfg.max_tool_calls, self.execution.context.max_tool_calls
+        )
+
+    def models_available(self, *, embedding=False):
+        # Query embeddings share the execution call ledger with text generation.
+        # A search is useful only when at least one answer invocation can follow it.
+        return (
+            self.model_calls < self.hcfg.max_model_calls
+            and self.execution.calls + 1 + int(embedding) <= self.execution.context.max_calls
         )
 
     async def run(self):
@@ -243,8 +274,15 @@ class _HybridSession(_Session):
             PLAN_VERSION,
             valid,
         )
+        # Old saved planner records keep their earlier rendering contract. New
+        # provider schemas always require this explicit presentation decision.
+        self.render_registered_values = (
+            plan.include_registered_values
+            or "include_registered_values" not in plan.model_fields_set
+        )
+        self.event_scope = plan.event_scope
         if plan.disposition != "PROCEED" or plan.source_need == "NONE":
-            # Current/history answers retain the existing extractive renderer and query limits.
+            # Registered-only synthesis and collection queries share the base handler.
             return await self.answer_plan(
                 QuestionPlan(
                     intent=plan.rdb_mode if plan.disposition == "PROCEED" else plan.disposition,
@@ -253,6 +291,8 @@ class _HybridSession(_Session):
                     episode_from=plan.episode_from,
                     episode_to=plan.episode_to,
                     character_filter=plan.character_filter,
+                    collection=plan.collection,
+                    answer_shape=plan.answer_shape,
                 )
             )
         if not self.range_allowed(plan):
@@ -268,11 +308,21 @@ class _HybridSession(_Session):
         stop = await self.collect_rows(plan)
         if stop:
             return stop
+        if not self.models_available():
+            return message(
+                "INSUFFICIENT_EVIDENCE",
+                "관련 자료를 읽었지만 이번 처리 한도 안에서 원문 답변까지 확인하지 못했습니다. 질문 범위를 좁혀 주세요.",
+                self.codes + ["CONTEXT_LIMIT"],
+            )
+        if plan.per_item:
+            self.logical_items = group_items(
+                self.chosen, current_targets=plan.rdb_mode == "CURRENT_AND_HISTORY"
+            )
         answer_schema = response_schema(GroundedAnswer)
         self.trim_conversation_to_fit(
             ANSWER_PROMPT, lambda: self.answer_payload(plan), answer_schema
         )
-        if (plan.per_item and len(self.chosen) > 100) or not self.fits(
+        if (plan.per_item and len(self.logical_items) > 100) or not self.fits(
             ANSWER_PROMPT, self.answer_payload(plan), answer_schema
         ):
             return message(
@@ -280,9 +330,11 @@ class _HybridSession(_Session):
                 "요청한 설정 항목이 많아 각각의 근거를 함께 확인하기 어렵습니다. 조회할 항목이나 유형을 좁혀 주세요.",
                 self.codes + ["CONTEXT_LIMIT"],
             )
+        if self.logical_items:
+            return await self.run_items(plan)
         # A direct lookup also needs a final recheck. Keep room for a minimal
         # search -> receipt -> final revalidation -> final receipt path.
-        await self.evidence(self.chosen, reserve=4, revalidate=True)
+        await self.evidence(self.chosen, reserve=4 + len(self.collection_checks), revalidate=True)
         self.add_direct_evidence()
         draft = None
         partial_snapshot = None
@@ -308,7 +360,7 @@ class _HybridSession(_Session):
             query = query[:1000]
         candidates = []
         for round_no in range(1, self.hcfg.max_rounds + 1):
-            if not self.tools_available(4):
+            if not self.tools_available(4) or not self.models_available(embedding=round_no > 1):
                 self.codes.append("SEARCH_LIMIT")
                 break
             self.rounds = round_no
@@ -330,11 +382,9 @@ class _HybridSession(_Session):
                     break
                 found = await self.search(
                     "vector",
-                    (
-                        " ".join([s.name for s in plan.subjects] + [query])
-                        + " "
-                        + ctx.question
-                    )[:1000],
+                    (" ".join([s.name for s in plan.subjects] + [query]) + " " + ctx.question)[
+                        :1000
+                    ],
                     _QueryEmbedding(self),
                     limit=self.hcfg.vector_top_k,
                     excluded_chunk_ids=tuple(dict.fromkeys(c.chunk_id for c in candidates)),
@@ -366,12 +416,24 @@ class _HybridSession(_Session):
                 self.fallback_direct_checks = len(
                     {e.direct_ref for e in self.evidences if e.direct_ref}
                 )
+            elif draft.coverage == "PARTIAL" and plan.requested_facets:
+                partial_snapshot = self.merge_partial_snapshot(partial_snapshot, draft, plan)
         if partial_snapshot is not None:
             draft, evidence_snapshot = partial_snapshot
             self.evidences = list(evidence_snapshot)
-            self.codes.append("PARTIAL_ANSWER")
+            if draft.coverage != "COMPLETE":
+                self.codes.append("PARTIAL_ANSWER")
             # Finalization still revalidates the restored sources and registers their quotes.
             return await self.finish_answer(draft)
+        if self.has_collection_condition and (
+            self.uncertain_condition_rows() or not self.confirmed_condition_rows()
+        ):
+            await self.revalidate_collection()
+            return message(
+                "INSUFFICIENT_EVIDENCE",
+                "현재 등록 자료로 질문의 조건에 해당하는 대상을 확정하지 못해 관련 원문 설명을 보류했습니다.",
+                self.codes,
+            )
         if plan.per_item and self.chosen:
             names = ", ".join(
                 dict.fromkeys(safe_text(r.item.display_name or "설정") for r in self.chosen)
@@ -390,6 +452,36 @@ class _HybridSession(_Session):
     async def collect_rows(self, plan):
         if plan.rdb_mode == "NONE":
             return None
+        if plan.collection is not None:
+            stop = await self.collection_rows(plan.collection, reserve=4)
+            if stop:
+                return stop
+            if plan.collection.predicate:
+                self.has_collection_condition = True
+                groups = logical_groups(self.rows, by_subject=True)
+                decisions = await self.interpret_condition(
+                    groups, plan.collection.predicate, reserve_models=1
+                )
+                by_ref = {d.item_ref: d for d in decisions}
+                allowed = {
+                    row.ref
+                    for ref, rows in groups.items()
+                    if ref not in by_ref or by_ref[ref].verdict != "NO_MATCH"
+                    for row in rows
+                }
+                self.collection_conditions = [
+                    {
+                        "rowRefs": [r.ref for r in rows],
+                        "verdict": by_ref[ref].verdict if ref in by_ref else "UNKNOWN",
+                    }
+                    for ref, rows in groups.items()
+                ]
+                if any(c["verdict"] == "UNKNOWN" for c in self.collection_conditions):
+                    self.codes.append("CONDITION_UNCERTAIN")
+                self.rows = [row for row in self.rows if row.ref in allowed]
+                self.focused_refs.intersection_update(allowed)
+            self.chosen, stop = await self.select_rows(plan, allow_missing=True)
+            return stop
         targets = set()
         for subject in plan.subjects:
             tool = "FIND_CHARACTERS" if subject.domain == "CHARACTER" else "FIND_WORLD_SETTINGS"
@@ -421,6 +513,264 @@ class _HybridSession(_Session):
         if {(row.domain, row.item.subject_id) for row in self.chosen} != targets:
             self.codes.append("NO_RELATED_SETTING")
         return None
+
+    async def run_items(self, plan):
+        """Search missing information per logical item, sharing the normal execution budget."""
+        facets = requested_facets(plan)
+        self.item_draft = empty_item_answer(self.logical_items, facets)
+        # Do not spend the whole query budget verifying many usage snippets before
+        # any acquisition/context search. Every fetched direct source needs a recheck.
+        originals = [
+            next((r for r in item.rows if r.item.sources), None) for item in self.logical_items
+        ]
+        originals = [r for r in originals if r is not None][:2]
+        direct_rows = [
+            AnswerRow(
+                row.ref, row.item.model_copy(update={"sources": row.item.sources[:1]}), row.domain
+            )
+            for row in originals
+        ]
+        await self.evidence(direct_rows, reserve=4 + len(self.collection_checks), revalidate=True)
+        for original, fetched in zip(originals, direct_rows, strict=True):
+            original.evidence.extend(fetched.evidence)
+        self.add_direct_evidence()
+        self.remember_evidence()
+        if self.evidences:
+            draft = await self.answer(plan)
+            self.item_draft = merge_item_answers(
+                self.item_draft, draft, self.logical_items, facets, event_scope=plan.event_scope
+            )
+            if self.item_draft.coverage == "COMPLETE":
+                return await self.finish_answer(self.item_draft)
+
+        for round_no in range(1, self.hcfg.max_rounds + 1):
+            if not self.models_available():
+                self.codes.append("SEARCH_LIMIT")
+                break
+            self.rounds = round_no
+            used = answer_evidence_refs(self.item_draft)
+            self.evidences = [
+                self.evidence_registry[ref] for ref in self.evidence_registry if ref in used
+            ]
+            self.fallback_direct_checks = len(
+                {e.direct_ref for e in self.evidences if e.direct_ref}
+            )
+            missing = {i.item_ref for i in self.item_draft.item_answers if i.missing_facets}
+            targets = sorted(
+                (i for i in self.logical_items if i.ref in missing),
+                key=lambda i: self.item_searches.get(i.ref, 0),
+            )
+            before = self.evidence_identity()
+            found_by_item = []
+            for item in targets:
+                reserve = 5 if found_by_item and self.hcfg.neighbor_radius else 4
+                if len(self.evidences) >= self.hcfg.max_evidence or not self.tools_available(
+                    reserve
+                ):
+                    self.codes.append("SEARCH_LIMIT")
+                    break
+                row = item.rows[0]
+                query = row.item.display_name or row.item.subject_name
+                if row.item.scope_name:
+                    query = f"{query} {row.item.scope_name}"
+                if len(query) > 1000:
+                    query = query[:1000]
+                    self.codes.append("SEARCH_QUERY_LIMIT")
+                previous_attempts = self.item_searches.get(item.ref, 0)
+                self.item_searches[item.ref] = previous_attempts + 1
+                hints = tuple(
+                    dict.fromkeys(
+                        ev.evidence.episode_id
+                        for r in item.rows
+                        for _, ev in r.evidence
+                        if ev.evidence.episode_id is not None
+                    )
+                )
+                if previous_attempts and self.embedding_calls < self.hcfg.max_query_embeddings:
+                    if not self.models_available(embedding=True):
+                        self.codes.append("SEARCH_LIMIT")
+                        continue
+                    found = await self.search(
+                        "vector",
+                        f"{row.item.subject_name} {query} {self.execution.context.question}"[:1000],
+                        _QueryEmbedding(self),
+                        limit=self.hcfg.vector_top_k,
+                        excluded_chunk_ids=tuple(
+                            e.chunk.chunk_id for e in self.evidences if e.chunk
+                        ),
+                    )
+                elif not previous_attempts:
+                    found = await self.search(
+                        "keyword",
+                        query,
+                        limit=self.hcfg.keyword_top_k,
+                        preferred_episode_ids=hints,
+                    )
+                else:
+                    continue
+                found_by_item.append((item.ref, found))
+            # Allocate context jointly: a common passage can anchor several items.
+            # Filling an early item's entire neighborhood first would starve later
+            # items even when the store returned their exact acquisition scene.
+            seeds = select_context_seeds(
+                found_by_item,
+                maximum=max(0, self.hcfg.max_evidence - len(self.evidences)),
+            )
+            candidates = list(seeds)
+            if seeds and self.hcfg.neighbor_radius and self.tools_available(4):
+                candidates.extend(
+                    await self.search(
+                        "neighbors",
+                        seeds,
+                        radius=self.hcfg.neighbor_radius,
+                        limit=self.hcfg.max_neighbors,
+                    )
+                )
+            elif seeds and self.hcfg.neighbor_radius:
+                self.codes.append("SEARCH_LIMIT")
+            if candidates:
+                self.add_item_evidence(candidates, context_slots=self.hcfg.max_evidence)
+            if self.evidence_identity() == before:
+                continue
+            await self.register([e.chunk for e in self.evidences if e.chunk])
+            draft = await self.answer(plan)
+            self.item_draft = merge_item_answers(
+                self.item_draft, draft, self.logical_items, facets, event_scope=plan.event_scope
+            )
+            if self.item_draft.coverage == "COMPLETE":
+                return await self.finish_answer(self.item_draft)
+        if self.item_draft.coverage != "NONE":
+            return await self.finish_answer(self.item_draft)
+        text = "\n".join(
+            render_item_answers(
+                self.item_draft,
+                self.logical_items,
+                {},
+                blocked_rows=self.uncertain_condition_rows(),
+                event_scope=plan.event_scope,
+            )
+        )
+        if len(text) + 50 > self.cfg.max_answer_characters:
+            return message(
+                "CLARIFICATION",
+                "확인할 항목이나 유형을 좁혀 주세요.",
+                self.codes + ["ANSWER_LIMIT"],
+            )
+        await self.revalidate_collection()
+        return message(
+            "INSUFFICIENT_EVIDENCE",
+            text + "\n작품 전체에 해당 사실이 없다는 뜻은 아닙니다.",
+            self.codes + ["NO_SEARCH_EVIDENCE"],
+        )
+
+    def remember_evidence(self):
+        for evidence in self.evidences:
+            self.evidence_registry[evidence.ref] = evidence
+
+    def merge_partial_snapshot(self, previous, latest, plan):
+        """Combine independent requested facets with a fresh, unambiguous E map."""
+        old_answer, old_evidence = previous
+        old_facets = {f for c in old_answer.claims for f in c.answered_facets}
+        new_facets = {f for c in latest.claims for f in c.answered_facets}
+        # A conflicting interpretation is not an additive fact. Keep the latest
+        # explicit conflict, and never silently combine contradictory narratives.
+        if latest.conflicts:
+            return latest, tuple(self.evidences)
+        if old_answer.conflicts or not new_facets - old_facets:
+            return previous
+        chosen = [
+            c
+            for c in old_answer.claims
+            if not set(c.answered_facets) & new_facets
+            and (plan.event_scope is None or c.answered_facets)
+        ]
+        statements = [(c, old_evidence) for c in chosen] + [
+            (c, self.evidences) for c in latest.claims
+        ]
+        evidence, claims = [], []
+        by_identity = {}
+        for claim, snapshot in statements:
+            refs = []
+            for ref in claim.evidence_refs:
+                source = next(e for e in snapshot if e.ref == ref)
+                identity = (
+                    source.chunk.fingerprint
+                    if source.chunk
+                    else (source.direct_ref, source.text, source.episode)
+                )
+                if identity not in by_identity:
+                    new_ref = f"E{len(evidence) + 1}"
+                    by_identity[identity] = new_ref
+                    evidence.append(
+                        _Evidence(
+                            new_ref,
+                            source.text,
+                            source.episode,
+                            source.chunk,
+                            source.direct_ref,
+                            source.direct_item,
+                        )
+                    )
+                refs.append(by_identity[identity])
+            claims.append(claim.model_copy(update={"evidence_refs": refs}))
+        if len(evidence) > self.hcfg.max_evidence or len(claims) > 8:
+            self.codes.append("EVIDENCE_CONTEXT_LIMIT")
+            return (latest, tuple(self.evidences)) if old_facets <= new_facets else previous
+        answered = {f for c in claims for f in c.answered_facets}
+        missing = [f for f in plan.requested_facets if f not in answered]
+        combined = GroundedAnswer(
+            coverage="PARTIAL" if missing or self.uncertain_condition_rows() else "COMPLETE",
+            claims=claims,
+            conflicts=[],
+            missing_facets=missing,
+        )
+        self.fallback_direct_checks = len({e.direct_ref for e in evidence if e.direct_ref})
+        return combined, tuple(evidence)
+
+    def add_item_evidence(self, candidates, *, context_slots=None):
+        import tiktoken
+
+        encoding = tiktoken.get_encoding("cl100k_base")
+        tokens = sum(len(encoding.encode(e.text, disallowed_special=())) for e in self.evidences)
+        remaining = self.hcfg.max_evidence - len(self.evidences)
+        if remaining < 1 or tokens >= self.hcfg.evidence_tokens:
+            self.codes.append("EVIDENCE_CONTEXT_LIMIT")
+            return
+        known = {e.chunk.fingerprint for e in self.evidences if e.chunk}
+        context_slots = min(context_slots or 1 + 2 * self.hcfg.neighbor_radius, remaining)
+        counts = Counter(e.chunk.episode_id for e in self.evidences if e.chunk)
+        eligible = []
+        for chunk in candidates:
+            if chunk.fingerprint in known:
+                continue
+            if counts[chunk.episode_id] >= self.hcfg.per_episode:
+                self.codes.append("EVIDENCE_CONTEXT_LIMIT")
+                continue
+            counts[chunk.episode_id] += 1
+            eligible.append(chunk)
+        bundle = compose_evidence(
+            eligible,
+            max_items=context_slots,
+            max_tokens=self.hcfg.evidence_tokens - tokens,
+            per_episode=min(self.hcfg.per_episode, context_slots),
+        )
+        for chunk in bundle.chunks:
+            evidence = next(
+                (
+                    e
+                    for e in self.evidence_registry.values()
+                    if e.chunk and e.chunk.fingerprint == chunk.fingerprint
+                ),
+                None,
+            )
+            if evidence is None:
+                evidence = _Evidence(
+                    f"E{len(self.evidence_registry) + 1}", chunk.text, chunk.episode_no, chunk=chunk
+                )
+                self.evidence_registry[evidence.ref] = evidence
+            self.evidences.append(evidence)
+        if bundle.limited:
+            self.codes.append("EVIDENCE_CONTEXT_LIMIT")
 
     def add_direct_evidence(self):
         seen = set()
@@ -481,6 +831,8 @@ class _HybridSession(_Session):
             for r in self.payload(self.execution.context.question, plan)["rows"]
             if r["rowRef"] in selected
         ]
+        for row in rows:
+            row.pop("settingKey", None)
         chunks = [e.chunk for e in self.evidences if e.chunk]
         bundle = compose_evidence(
             chunks,
@@ -526,9 +878,82 @@ class _HybridSession(_Session):
             **self.conversation_payload(),
             "plan": plan.model_dump(by_alias=True),
             "rows": rows,
+            "collectionConditions": [
+                {**condition, "rowRefs": [r for r in condition["rowRefs"] if r in selected]}
+                for condition in self.collection_conditions
+                if set(condition["rowRefs"]) & selected
+            ],
+            "items": [
+                {"itemRef": item.ref, "rowRefs": [r.ref for r in item.rows], "label": item.label}
+                for item in self.logical_items
+            ],
+            "requestedFacets": requested_facets(plan),
+            "previousItemAnswers": []
+            if self.item_draft is None
+            else [i.model_dump(by_alias=True) for i in self.item_draft.item_answers if i.answers],
             "passages": passages,
             "limitations": notices(self.codes),
         }
+
+    def uncertain_condition_rows(self):
+        return {
+            ref
+            for condition in self.collection_conditions
+            if condition["verdict"] == "UNKNOWN"
+            for ref in condition["rowRefs"]
+        }
+
+    def confirmed_condition_rows(self):
+        return {
+            ref
+            for condition in self.collection_conditions
+            if condition["verdict"] == "MATCH"
+            for ref in condition["rowRefs"]
+        }
+
+    def apply_condition_guard(self, answer, plan):
+        """A past source event cannot certify an uncertain current-state predicate.
+
+        The same answer model does not get authority to promote UNKNOWN candidates.
+        Hold their statements until a separate current-condition proof contract exists.
+        """
+        if not self.has_collection_condition:
+            return answer
+        blocked = self.uncertain_condition_rows()
+        confirmed = self.confirmed_condition_rows()
+        facets = requested_facets(plan)
+        conflicts = [c for c in answer.conflicts if not set(c.row_refs) & blocked]
+        if self.logical_items:
+            blocked_items = {
+                i.ref for i in self.logical_items if any(r.ref in blocked for r in i.rows)
+            }
+            results = [
+                ItemAnswer(item_ref=item.item_ref, answers=[], missing_facets=list(facets))
+                if item.item_ref in blocked_items
+                else item
+                for item in answer.item_answers
+            ]
+            supported = bool(conflicts or any(i.answers for i in results))
+            complete = all(not i.missing_facets for i in results) and not conflicts
+            return GroundedAnswer(
+                coverage="COMPLETE" if complete else "PARTIAL" if supported else "NONE",
+                claims=[],
+                conflicts=conflicts,
+                item_answers=results,
+            )
+        # Without row references a condition-scoped statement cannot be assigned
+        # to a confirmed subject, so it cannot be published as a matching result.
+        claims = [c for c in answer.claims if c.row_refs and set(c.row_refs) <= confirmed]
+        covered = {f for c in claims for f in c.answered_facets}
+        missing = [f for f in facets if f not in covered]
+        supported = bool(claims or conflicts)
+        complete = supported and not missing and not conflicts and not blocked
+        return GroundedAnswer(
+            coverage="COMPLETE" if complete else "PARTIAL" if supported else "NONE",
+            claims=claims,
+            conflicts=conflicts,
+            missing_facets=missing,
+        )
 
     async def answer(self, plan):
         schema = response_schema(GroundedAnswer)
@@ -537,24 +962,51 @@ class _HybridSession(_Session):
             self.evidences.pop()
             self.codes.append("CONTEXT_LIMIT")
         if not self.evidences:
-            return GroundedAnswer(coverage="NONE", claims=[], conflicts=[])
+            return (
+                empty_item_answer(self.logical_items, requested_facets(plan))
+                if self.logical_items
+                else GroundedAnswer(coverage="NONE", claims=[], conflicts=[])
+            )
         e_refs, r_refs = {e.ref for e in self.evidences}, {r.ref for r in self.chosen}
 
         def valid(answer):
             if (
-                any(not set(c.evidence_refs) <= e_refs for c in [*answer.claims, *answer.conflicts])
+                not answer_evidence_refs(answer) <= e_refs
                 or any(not set(c.row_refs) <= r_refs for c in [*answer.claims, *answer.conflicts])
                 or not set(answer.unanswered_row_refs) <= r_refs
             ):
                 raise ValueError("Unknown evidence or setting reference")
-            if plan.per_item:
+            if self.logical_items:
+                validate_item_answer(answer, self.logical_items, requested_facets(plan))
+            elif answer.item_answers:
+                raise ValueError("No logical item references were supplied")
+            elif plan.per_item:
                 covered = {r for c in [*answer.claims, *answer.conflicts] for r in c.row_refs}
                 if covered | set(answer.unanswered_row_refs) != r_refs:
                     raise ValueError(
                         "Each requested setting needs an answer or explicit uncertainty"
                     )
+            if not self.logical_items and plan.requested_facets:
+                requested = set(plan.requested_facets)
+                covered = {f for claim in answer.claims for f in claim.answered_facets}
+                missing = set(answer.missing_facets)
+                if (
+                    any(
+                        not c.answered_facets
+                        and (
+                            c.event_status is None
+                            or event_matches(c.event_status, plan.event_scope)
+                        )
+                        for c in answer.claims
+                    )
+                    or covered & missing
+                    or covered | missing != requested
+                ):
+                    raise ValueError("Claims must answer the requested information")
+                if (answer.coverage == "COMPLETE") != (not missing and not answer.conflicts):
+                    raise ValueError("Coverage must describe requested information")
 
-        return await self.model(
+        answer = await self.model(
             GroundedAnswer,
             ANSWER_PROMPT,
             self.answer_payload(plan),
@@ -562,9 +1014,13 @@ class _HybridSession(_Session):
             ANSWER_VERSION,
             valid,
         )
+        answer = apply_event_scope(answer, plan.event_scope, requested_facets(plan))
+        return self.apply_condition_guard(answer, plan)
 
     async def finish_answer(self, answer):
-        used = {ref for claim in [*answer.claims, *answer.conflicts] for ref in claim.evidence_refs}
+        used = answer_evidence_refs(answer)
+        if self.logical_items:
+            self.evidences = [e for ref, e in self.evidence_registry.items() if ref in used]
         evidence = [e for e in self.evidences if e.ref in used]
         if not used or len(evidence) != len(used):
             return message(
@@ -572,6 +1028,7 @@ class _HybridSession(_Session):
                 "답변 근거를 검증할 수 없습니다.",
                 self.codes + ["INVALID_QUOTE"],
             )
+        await self.revalidate_collection()
         chunks = [e.chunk for e in evidence if e.chunk]
         if chunks:
             self.consume("revalidate")
@@ -594,7 +1051,7 @@ class _HybridSession(_Session):
                 )
                 if response.items.content != [ev.direct_item]:
                     raise ChatTransportError(403, "SOURCE_CHANGED")
-        if answer.coverage != "COMPLETE":
+        if answer.coverage != "COMPLETE" or self.uncertain_condition_rows():
             self.codes.append("PARTIAL_ANSWER")
         self.metrics.chunks.labels("used").inc(len(evidence))
         direct_refs = list(dict.fromkeys(e.direct_ref for e in evidence if e.direct_ref))
@@ -605,16 +1062,43 @@ class _HybridSession(_Session):
             else len(direct_refs) + chunk_refs.index(e.chunk.chunk_id) + 1
             for e in evidence
         }
-        parts = []
+        parts = (
+            render_item_answers(
+                answer,
+                self.logical_items,
+                public_numbers,
+                blocked_rows=self.uncertain_condition_rows(),
+                event_scope=self.event_scope,
+            )
+            if self.logical_items
+            else []
+        )
         for claim in answer.claims:
             numbers = ", ".join(
                 str(n) for n in dict.fromkeys(public_numbers[r] for r in claim.evidence_refs)
             )
-            parts.append(f"- {safe_text(claim.text)} (근거 {numbers})")
-        if self.chosen:
+            prefix = (
+                {
+                    "PLANNED": "계획으로 확인된 내용: ",
+                    "UNCERTAIN": "발생 여부가 불확실한 기록: ",
+                    "OCCURRED": "발생 사실로 확인된 내용: ",
+                }[claim.event_status]
+                if claim.event_status and not event_matches(claim.event_status, self.event_scope)
+                else ""
+            )
+            parts.append(f"- {prefix}{safe_text(claim.text)} (근거 {numbers})")
+        if not self.logical_items and answer.missing_facets:
+            needs = "·".join(FACET_LABELS[f] for f in answer.missing_facets)
+            prefix = "실제로 이루어진 " if self.event_scope == "ACTUAL" else ""
+            parts.append(f"{prefix}{needs} 정보는 이번에 확인한 자료만으로 확정하기 어렵습니다.")
+        if self.chosen and not self.logical_items and self.render_registered_values:
             # Render real registered values, independently of model-authored prose.
             registered = render_answer(
-                [AnswerRow(row.ref, row.item, row.domain) for row in self.chosen],
+                [
+                    AnswerRow(row.ref, row.item, row.domain)
+                    for row in self.chosen
+                    if row.ref not in self.uncertain_condition_rows()
+                ],
                 self.codes,
                 direct_only=False,
                 maximum=self.cfg.max_answer_characters,
@@ -652,3 +1136,9 @@ class _HybridSession(_Session):
                 limitations=notices(self.codes),
             )
         )
+
+    async def revalidate_collection(self):
+        for request, metadata in self.collection_checks:
+            await self.query(
+                request.model_copy(update={"page": 0, "size": 1, "read_token": metadata.read_token})
+            )
