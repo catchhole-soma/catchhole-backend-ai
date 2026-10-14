@@ -1,6 +1,7 @@
 """Bounded RDB QA. LLMs classify/select; code owns queries, scope and quotations."""
 
 import json
+import re
 from collections.abc import Callable
 
 from pydantic import BaseModel, ValidationError
@@ -220,6 +221,29 @@ class _Session:
         return items, complete
 
     def range_allowed(self, plan: QuestionPlan) -> bool:
+        # Conversation can resolve names, but cannot authorize an old episode filter.
+        # Accept bounds repeated from this request's trusted UI range, or numbers
+        # attached to an episode expression in the current question (3~5화, 3화부터).
+        question = self.execution.context.question or ""
+        episodes = {
+            int(value)
+            for match in re.finditer(
+                r"(?<![\d.])(?:제\s*)?(\d+)\s*(?:(?:[~～–—-]|부터|에서)\s*(?:제\s*)?(\d+)\s*)?(?:화|회차)"
+                r"|\bepisodes?\s+(\d+)(?:\s*(?:[~–—-]|to|through)\s*(\d+))?",
+                question,
+                re.IGNORECASE,
+            )
+            for value in match.groups()
+            if value is not None
+        }
+        if any(
+            bound is not None and bound != trusted and bound not in episodes
+            for bound, trusted in (
+                (plan.episode_from, self.source_from),
+                (plan.episode_to, self.source_to),
+            )
+        ):
+            return False
         if plan.episode_from is not None:
             if self.source_from is not None and plan.episode_from < self.source_from:
                 return False
@@ -236,6 +260,7 @@ class _Session:
         return {
             "question": question,
             **self.conversation_payload(),
+            "conversationTruncated": "CONVERSATION_LIMIT" in self.codes,
             "plan": plan.model_dump(by_alias=True),
             "maxSelectedRows": self.cfg.max_selected_rows,
             "partial": any(c in self.codes for c in {"PARTIAL_RESULTS", "CONTEXT_LIMIT"}),

@@ -196,7 +196,7 @@
 ### RDB 단일 질의응답 (#238)
 
 - 계약·사례·한계·재현 명령은 `docs/chat-qa-v1.md`를 Java/Python에 동일하게 보관한다. 기존 `ChatResult`/조회 DTO를 재사용하며 현재값 계산과 권한 판정은 Spring이 소유한다.
-- `app/schemas/chat_qa.py`는 질문 유형과 요청 내 행 참조만 받는다. `app/chatbot/qa.py`는 대상 탐색·현재값/이력 조회·관련 행 선택·직접 근거 조회를 조율하며, `qa_render.py`가 실제 서버 값과 검증된 인용만 답변으로 조립한다. `qa_prompts.py`의 버전은 분류 `chat-qa-plan-v2`, 행 선택 `chat-qa-select-v2`이다. 후속 대화 계약은 #241을 따른다.
+- `app/schemas/chat_qa.py`는 질문 유형과 요청 내 행 참조만 받는다. `app/chatbot/qa.py`는 대상 탐색·현재값/이력 조회·관련 행 선택·직접 근거 조회를 조율하며, `qa_render.py`가 실제 서버 값과 검증된 인용만 답변으로 조립한다. `qa_prompts.py`의 버전은 분류 `chat-qa-plan-v2`, 행 선택 `chat-qa-select-v3`이다. 후속 대화 계약은 #241을 따른다.
 - 현재값/이력의 저장 key와 scope를 모델이 추측해 조회하지 않는다. 제한된 페이지로 실제 항목을 읽고 모델이 `R1` 같은 요청 내 참조를 선택한다. 이름은 현재 질문 또는 제한된 서버 대화 문맥에 명시된 문자열만 조회하며 복수 후보·불완전한 탐색 페이지는 추가 확인으로 끝낸다. 모델이 선택한 행의 의미적 적합성은 별도 품질 검증 대상이다.
 - `qa_config.py`의 `CHAT_QA_*` 설정은 `.env`를 읽지 않고 프로세스 환경으로 주입한다. `ENABLED=false`, `MODEL=gpt-5.6-terra`, `REASONING_EFFORT=medium`, `MAX_ATTEMPTS=2`, `MAX_OUTPUT_TOKENS=1500`, `MAX_INPUT_TOKENS=8000`, `MAX_CONTEXT_CHARACTERS=24000`, `PAGE_SIZE=20`, `MAX_PAGES=2`, `MAX_ITEMS=80`, `MAX_TOOL_CALLS=16`, `MAX_SELECTED_ROWS=10`, `MAX_EVIDENCE_CALLS=8`, `MAX_ANSWER_CHARACTERS=12000`을 기본으로 한다. 이름 앞에는 모두 `CHAT_QA_`를 붙인다.
 - 독립 `compose.chatbot.prod.yml`이 위 설정과 `LLM_API_KEY`를 명시적으로 전달한다. `deploy/chatbot.env.example`에 예제를 유지한다. QA 활성화 시 key가 없으면 기동을 거절하며, 기본 비활성 상태에서는 provider client를 생성하지 않는다. Spring 기능 flag와 별도여서 명시적 운영 활성화가 필요하다.
