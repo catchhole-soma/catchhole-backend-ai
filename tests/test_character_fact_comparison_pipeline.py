@@ -23,6 +23,70 @@ LEASE_TOKEN = UUID("00000000-0000-0000-0000-000000000002")
 CANDIDATE_ID = UUID("00000000-0000-0000-0000-000000000003")
 
 
+@pytest.mark.parametrize(
+    ("key", "before", "value", "quote", "operation", "proposal", "reason"),
+    [
+        ("profile.height", "168cm", "178cm", "아린의 키는 178cm이다.",
+         "REVIEW_REQUIRED", None, "같은 인물의 키가 다르지만 변화 과정이 없어 확인이 필요합니다."),
+        ("profile.height", "178cm", "168cm", "기존 178cm는 오류이며 실제 키는 168cm이다.",
+         "REVIEW_REQUIRED", None, "기존 키를 정정하려는 주장으로 작가의 확인이 필요합니다."),
+        ("profile.occupation", "견습 기사", "정식 기사", "견습이던 아린은 임명식을 거쳐 정식 기사가 되었다.",
+         "UPDATE", "정식 기사", "임명식으로 견습 기사에서 정식 기사가 된 과정이 명시되어 있습니다."),
+        ("profile.height", "168cm", "키가 큰 편", "아린은 동료들 사이에서 키가 큰 편이다.",
+         "MERGE", "키는 168cm이며 동료들 사이에서 큰 편이다.", "기존 수치와 동료들 사이의 묘사를 함께 보존합니다."),
+        ("profile.occupation", "정식 기사", "정식 기사로 근무", "아린은 정식 기사로 근무한다.",
+         "EXCLUDE", None, "이미 저장된 직업과 같은 내용입니다."),
+    ],
+    ids=["value_difference", "correction_declaration", "explicit_change", "compatible_description", "paraphrase"],
+)
+def test_pipeline_preserves_fixed_policy_response_without_promoting_review(
+    key, before, value, quote, operation, proposal, reason,
+) -> None:
+    # Fixed provider replies test delivery/protection, not the model's interpretation of the quote.
+    from app.analysis.character_fact_comparator import CharacterFactComparator
+    from tests.test_ordered_analysis_runtime import RecordingClient
+
+    candidate = WorkerCharacterFactComparisonCandidatePayload(
+        candidate_id=CANDIDATE_ID, work_id=UUID(int=20), entity_name="아린",
+        attribute_name=key, attribute_value=value, value_json={"value": value}, value_type="STRING",
+        matched_character_id=UUID(int=10), matched_character_name="아린",
+        canonical_fact_type="PROFILE", canonical_fact_key=key, evidence_spans=[{"quote": quote}],
+    )
+    snapshot = WorkerCharacterSnapshotEntry(
+        fact_type="PROFILE", fact_key=key, fact_value=before, value_json={"value": before},
+    )
+    context = WorkerCharacterFactComparisonContextResponse(
+        candidate=candidate, snapshot_entries=[snapshot], context_token="policy-context",
+    )
+    spring = FakeSpringApi([CANDIDATE_ID])
+
+    async def fixed_context(*args):
+        return context
+
+    spring.get_character_fact_comparison_context = fixed_context
+    provider = RecordingClient({
+        "operation": operation, "target_ref": "P1" if operation in {"UPDATE", "MERGE"} else None,
+        "removed_snapshot_refs": [], "proposed_fact_value": proposal,
+        "proposed_value_json": {"value": proposal} if proposal is not None else None,
+        "temporal_scope": "PRESENT", "comparison_reason": reason,
+    })
+    result = asyncio.run(CharacterFactComparisonPipeline(
+        spring, CharacterFactComparator(llm_client=provider, model="test-model", max_attempts=1),
+    ).process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+
+    assert (result.completed_count, result.failed_count) == (1, 0)
+    request = spring.completions[0]
+    assert request.operation == operation
+    assert request.temporal_scope == "PRESENT"
+    assert request.comparison_reason == reason
+    assert request.proposed_fact_value == proposal
+    assert request.proposed_value_json == ({"value": proposal} if proposal is not None else None)
+    assert request.target_fact_key == (key if operation in {"UPDATE", "MERGE"} else None)
+    assert request.removed_snapshot_entries == []
+    assert request.raw_comparison_json["operation"] == operation
+    assert context.snapshot_entries == [snapshot]
+
+
 def test_pipeline_maps_refs_to_fact_identity_without_source_ids() -> None:
     spring = FakeSpringApi([CANDIDATE_ID])
     comparator = FakeComparator(

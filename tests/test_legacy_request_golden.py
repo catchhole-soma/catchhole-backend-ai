@@ -60,4 +60,8 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     }
     authorized = upstream["gh180Overrides"].get(purpose, {})
     assert set(authorized) <= changing
+    policy_overrides = json.loads((ROOT / "tests/fixtures/pr1_conflict_policy_request_overrides.json").read_text())["overrides"]
+    assert set(policy_overrides) == {"character_batch", "world_batch", "world_singleton"}
+    assert all(set(row) == changing for row in policy_overrides.values())
+    authorized = {**authorized, **policy_overrides.get(purpose, {})}
     assert actual[purpose] == {**expected, **authorized}

@@ -268,6 +268,33 @@ def test_create_text_response_sends_configured_reasoning_effort() -> None:
     assert request_body["reasoning"] == {"effort": "none"}
 
 
+@pytest.mark.parametrize("override", [None, "gpt-6.1-sol"])
+def test_create_text_response_sends_max_reasoning_for_gpt_6_1_sol(override) -> None:
+    requests: list[httpx.Request] = []
+    client = OpenAIResponsesClient(
+        api_key="test-key",
+        model="gpt-6.1-sol" if override is None else "gpt-4.1-mini",
+        reasoning_effort="max",
+        responses_api_url="https://api.openai.test/v1/responses",
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: _response(request, requests))
+        ),
+    )
+
+    async def run() -> None:
+        try:
+            await client.create_text_response("규칙", "원문", model=override)
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+
+    request_body = json.loads(requests[0].content)
+    assert request_body["model"] == "gpt-6.1-sol"
+    assert request_body["reasoning"] == {"effort": "max"}
+    assert "service_tier" not in request_body
+
+
 def test_create_text_response_omits_reasoning_for_non_reasoning_model_override() -> None:
     requests: list[httpx.Request] = []
     client = OpenAIResponsesClient(

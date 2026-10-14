@@ -31,4 +31,7 @@ def test_world_request_keeps_upstream_input_and_transport(purpose, captured):
     if purpose == "world_extraction":
         # Keep the latest main extraction request exactly, including PR65.
         assert overrides == {}
+    policy_overrides = json.loads((ROOT / "tests/fixtures/pr1_conflict_policy_request_overrides.json").read_text())["overrides"]
+    assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in policy_overrides.values())
+    overrides = {**overrides, **policy_overrides.get(purpose, {})}
     assert actual[purpose] == {**expected["requests"][purpose], **overrides}

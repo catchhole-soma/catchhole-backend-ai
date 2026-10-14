@@ -66,7 +66,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "character_fact_comparison_batch.md"
 )
-CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v4"
+CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v5"
 ORDERED_CHARACTER_SLOT_INSTRUCTIONS = (
     "현재 활성인 동일 Fact 유형·동일 resolved key가 있으면 새 내용이어도 ADD는 금지입니다. "
     "예를 들어 profile.attribute의 기존 값과 새 후보의 문장이 다르더라도 같은 slot입니다. "
@@ -262,7 +262,7 @@ class CharacterFactComparator:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="character-fact-comparison:v10" + (":setting-book-time-v2"
+            prompt_cache_key="character-fact-comparison:v11" + (":setting-book-time-v2"
                 if candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
                 else ":book-current-time-v2" if temporal_context else ""),
             operation_name="Character-fact comparison",

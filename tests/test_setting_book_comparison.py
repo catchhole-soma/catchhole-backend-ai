@@ -11,12 +11,114 @@ from app.analysis.world_setting_comparator import (
 )
 from app.schemas.analysis_source import WorkerAnalysisSource
 from app.schemas.worker import (
+    WorkerCharacterFactComparisonBatchCandidate,
+    WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonBatchCandidate,
     WorkerWorldSettingComparisonTarget,
 )
 from tests.test_character_fact_batch import _candidate, _decision_payload
 from tests.test_ordered_analysis_runtime import RecordingClient
 from tests.test_setting_book_source_contract import SOURCE
+
+
+def test_book_character_internal_conflicts_are_not_projected_into_unrelated_candidate():
+    source = WorkerAnalysisSource.model_validate(SOURCE)
+    candidates = [WorkerCharacterFactComparisonBatchCandidate(
+        candidate_ref=ref, projected_snapshot_ref=projected, source=source,
+        raw_fact_key=key, initial_canonical_fact_key=key, canonical_key_resolution="EXACT",
+        attribute_value=str(value), value_json={"value": value}, value_type=value_type,
+        evidence_spans=[{"quote": quote}],
+    ) for ref, projected, key, value, value_type, quote in [
+        ("C1", "Q1", "profile.height", 168, "NUMBER", "인물 소개: 아린의 키는 168cm이다."),
+        ("C2", "Q2", "profile.height", 178, "NUMBER", "외형 정리: 아린의 키는 178cm이다."),
+        ("C3", "Q3", "profile.favorite_food", "사과", "STRING", "아린은 사과를 좋아한다."),
+    ]]
+    reason = "같은 설정집의 키가 서로 달라 두 근거 모두 확인이 필요합니다."
+    provider = RecordingClient({"decisions": [{
+        "candidate_ref": ref, "resolved_canonical_fact_key": "profile.height",
+        "operation": "REVIEW_REQUIRED", "target_ref": None, "removed_snapshot_refs": [],
+        "proposed_fact_value": None, "proposed_value_json": None, "temporal_scope": "PRESENT",
+        "comparison_reason": reason,
+    } for ref in ["C1", "C2"]]}, {"decisions": [{
+        "candidate_ref": "C3", "resolved_canonical_fact_key": "profile.favorite_food",
+        "operation": "ADD", "target_ref": None, "removed_snapshot_refs": [],
+        "proposed_fact_value": "사과", "proposed_value_json": {"value": "사과"},
+        "temporal_scope": "PRESENT", "comparison_reason": "선호 음식은 키와 무관한 새 설정입니다.",
+    }]})
+
+    result = asyncio.run(execute_character_fact_comparison_batch(
+        CharacterFactComparator(llm_client=provider, model="test-model", max_attempts=1, batch_max_candidates=2),
+        matched_character_name="아린", canonical_fact_type="PROFILE", candidates=candidates,
+        snapshot_entries=[], ordered_context=True,
+    ))
+
+    assert result.failures == []
+    assert [decision.operation for decision in result.decisions] == ["REVIEW_REQUIRED", "REVIEW_REQUIRED", "ADD"]
+    assert [decision.dependency_candidate_refs for decision in result.decisions] == [[], [], []]
+    assert [decision.comparison_reason for decision in result.decisions[:2]] == [reason, reason]
+    assert all(decision.proposed_fact_value is None and decision.proposed_value_json is None
+               for decision in result.decisions[:2])
+    assert result.decisions[2].proposed_fact_value == "사과"
+    assert result.provider_segment_count == 2 and result.singleton_fallback_count == 0
+    assert json.loads(provider.requests[1]["user_prompt"])["snapshot_entries"] == []
+
+
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize(
+    ("operation", "before", "value", "proposal", "quote", "reason"),
+    [
+        ("REVIEW_REQUIRED", "모든 마법은 주문이 필요하다.", "모든 마법은 주문 없이 쓸 수 있다.", "임의 선택값",
+         "모든 마법은 주문 없이 쓸 수 있다.", "같은 조건의 주문 규칙이 양립할 수 없어 확인이 필요합니다."),
+        ("REVIEW_REQUIRED", "모든 마법은 주문이 필요하다.", "모든 마법은 주문 없이 쓸 수 있다.", "임의 선택값",
+         "기존 주문 규칙은 오류다. 모든 마법은 주문 없이 쓸 수 있다.", "기존 규칙을 정정하려는 주장으로 작가의 확인이 필요합니다."),
+        ("MERGE", "마법은 주문이 필요하다.", "치유 마법은 주문 없이 쓴다.", "마법은 주문이 필요하되 치유 마법만 명시적 예외로 주문 없이 쓴다.",
+         "치유 마법에만 일반 규칙의 명시적 예외를 적용한다.", "일반 규칙과 치유 마법에만 적용되는 예외를 함께 보존합니다."),
+        ("EXCLUDE", "마법은 주문이 필요하다.", "마법을 쓸 때 주문을 외운다.", "임의 요약값",
+         "마법을 쓸 때 주문을 외운다.", "이미 저장된 주문 규칙과 같은 내용입니다."),
+    ],
+    ids=["value_difference", "correction_declaration", "bounded_exception", "paraphrase"],
+)
+def test_world_book_fixed_policy_response_preserves_review_and_compatible_values(
+    batch, operation, before, value, proposal, quote, reason,
+):
+    # Fixed replies prove DTO propagation and original-value guards; semantic judgement is separate.
+    source = WorkerAnalysisSource.model_validate({**SOURCE, "referenceTimeKind": "EPISODE", "referenceEpisodeNo": 2})
+    target = WorkerWorldSettingComparisonTarget(
+        world_setting_id=uuid4(), subject_name="마법", version=1,
+        properties=[{"setting_name": "주문 필요 여부", "value": before,
+                     "provenance": {"confirmationStatus": "CONFIRMED", "sourceEpisodeNo": 1}}],
+    )
+    candidate_fields = {"subject_name": "마법", "setting_name": "주문 필요 여부", "extracted_value": value,
+        "temporal_scope": "PRESENT", "evidence_spans": [{"quote": quote}],
+        "raw_extraction_json": {"epistemic_status": "ASSERTED"}}
+    payload = {"operation": operation, "consolidation_status": "SINGLE", "target_ref": "T1",
+        "matched_scope_name": None, "matched_property_name": "주문 필요 여부", "proposed_scope_name": None,
+        "proposed_setting_name": "주문 필요 여부", "proposed_value": proposal, "comparison_reason": reason,
+        "review_reason": "GENERAL_UNCERTAINTY" if operation == "REVIEW_REQUIRED" else None}
+    if batch:
+        candidate = WorkerWorldSettingComparisonBatchCandidate(candidate_ref="C1", candidate_id=uuid4(), **candidate_fields)
+        payload.update(source_candidate_refs=["C1"], existing_root_property_names_to_move=[])
+        response = {"decisions": [payload]}
+    else:
+        candidate = WorkerWorldSettingCandidatePayload(candidate_id=uuid4(), work_id=uuid4(), source=source,
+            source_episode_id=None, category="POWER_SYSTEM", **candidate_fields)
+        response = payload
+    provider = RecordingClient(response)
+    comparator = WorldSettingComparator(llm_client=provider, model="test-model", max_attempts=1)
+    result, _ = asyncio.run(comparator.compare_batch("POWER_SYSTEM", [candidate], [target], analysis_source=source)
+        if batch else comparator.compare(candidate, [target]))
+    decision = result.decisions[0] if batch else result
+
+    assert decision.operation == operation
+    assert decision.consolidation_status == "SINGLE"
+    assert decision.review_reason == ("GENERAL_UNCERTAINTY" if operation == "REVIEW_REQUIRED" else None)
+    assert decision.target_ref == "T1" and decision.matched_property_name == "주문 필요 여부"
+    assert decision.proposed_value == (proposal if operation == "MERGE" else value)
+    assert decision.comparison_reason == reason
+    assert target.properties[0].value == before
+    if batch:
+        assert decision.source_candidate_refs == ["C1"]
+        assert decision.existing_root_property_names_to_move == []
 
 
 @pytest.mark.parametrize("batch", [False, True])

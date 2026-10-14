@@ -45,6 +45,8 @@ canonical-subject batch다. 이 batch를 다시 주체별로 나누지 말고, �
   일괄 합치지 않는다.
 - 여러 후보가 같은 canonical 속성을 보완하고 동시에 참일 수 있을 때만 source_candidate_refs 하나로 묶고 consolidation_status를 MERGED로 둔다.
 - 여러 후보가 같은 속성을 말하지만 동시에 참일 수 없으면 하나의 decision으로 묶고 consolidation_status를 CONFLICT로 둔다. 임의로 하나를 고르지 않는다.
+  기존값이 없는 같은 문서 내부의 충돌도 모든 source와 원문값을 검토로 보존한다. 첫 문장·청크·업로드 순서는 우선권이 아니다.
+  충돌과 무관한 다른 속성의 정상 decision은 각각 계속 처리한다.
 - source 후보가 하나면 consolidation_status는 SINGLE이다. 단, 그 후보의 extracted_values 자체가 여러 값이면 MERGED 또는 CONFLICT일 수 있다.
 - 서로 독립적으로 관리할 저장 속성은 별도 decision으로 유지하되, 같은 안정적인 상위 범위에 속하면 동일한
   proposed_scope_name을 재사용해 일관된 canonical 경로로 정리한다. 공통 범위를 공유한다는 이유만으로
@@ -77,6 +79,18 @@ canonical-subject batch다. 이 batch를 다시 주체별로 나누지 말고, �
 - batch의 ADD는 source가 하나여도 위 범위 조건을 충족하는 canonical proposed_scope_name·proposed_setting_name을
   보존한다. source가 하나라는 이유로 제안 경로를 raw 경로로 되돌리지 않는다.
 - UPDATE와 MERGE는 실제 기존 속성을 선택하고 matched 경로와 proposed 경로를 그대로 유지한다.
+- UPDATE는 원문에 변화 과정과 변경 전후 관계가 확인된 현재값 갱신에 사용한다. 값만 다르거나 바뀔 수 있는 속성이라는 이유,
+  문장·업로드·리비전·더 늦은 기준시점만으로 정상 변화를 정하지 않는다. 변화 근거가 없으면 해당 source를
+  REVIEW_REQUIRED + GENERAL_UNCERTAINTY로 남긴다.
+- 새 원문이 기존값의 오류를 명시해도 기존 근거와 충돌하는 정정은 REVIEW_REQUIRED + GENERAL_UNCERTAINTY로 작가의 수동 확인을 받는다.
+  comparison_reason에 정정 의도와 확인할 기존값의 관계를 설명한다.
+- 충돌은 같은 주체·속성·적용 조건에서 명확히 양립할 수 없는 내용에만 사용한다. 표현 차이·요약 정도·양립하는 부연은 충돌이 아니다.
+  ‘168cm’와 ‘키가 큰 편’처럼 다른 수치가 명시되지 않은 설명은 기존 수치를 보존하며 보완이면 MERGE, 실질적 반복이면 EXCLUDE한다.
+- 일반 규칙의 명시적이고 적용 범위가 분명한 예외는 MERGE로 일반 규칙과 함께 보존한다. ‘마법은 주문이 필요하다’에
+  ‘치유 마법만은 이 규칙의 예외로 주문 없이 쓴다’가 명시되면 치유 마법에만 예외를 적용한다. 예외인지 판단할 근거가 부족하면
+  REVIEW_REQUIRED + GENERAL_UNCERTAINTY로 남기고 확정된 충돌이라고 설명하지 않는다.
+- 기존값과 source 하나의 충돌은 SINGLE + REVIEW_REQUIRED로 구분한다. 복수 추출값끼리 명확히 양립할 수 없을 때만 CONFLICT다.
+  CONFLICT는 아래 source 하나씩의 일반 검토와 구분해 모든 source를 보존하며, operation과 관계없이 어떤 값도 자동 확정하지 않는다.
 - 같은 경로의 기존 신체 능력에 새 신체 역량 설명이 양립해 추가되면 MERGE로 기존 정보와 새 정보를 함께
   보존한다. 새 보완 정보가 없는 실질적 반복은 EXCLUDE하고, 명시적 대체 근거 없이 기존 설명을 UPDATE로 지우지 않는다.
 - EXCLUDE는 일시적 사건, 현재 상태, 부적절한 근거, 기존 속성과 실질적으로 같은 내용에 사용한다. 기존 속성과 비교했다면 실제 matched 경로를 포함한다.

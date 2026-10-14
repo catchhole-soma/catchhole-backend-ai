@@ -23,7 +23,7 @@ class OpenAIResponsesClient:
         api_key: str,  # OpenAi 키
         model: str,  # 기본 모델명
         responses_api_url: str,  # OpenAI Responses API 주소
-        reasoning_effort: str | None = None,  # GPT-5.6 추론 강도
+        reasoning_effort: str | None = None,  # 모델 추론 강도
         http_client: httpx.AsyncClient | None = None,  # 실제 HTTP 요청 도구
         *,
         store_responses: bool = False,
@@ -236,7 +236,7 @@ class OpenAIResponsesClient:
 def _supports_reasoning(model: str) -> bool:
     """Responses API에서 reasoning 설정을 받는 현재 사용 모델 계열만 허용한다."""
 
-    return model.startswith(("gpt-5", "o1", "o3", "o4"))
+    return model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4"))
 
 
 def _resolve_reasoning_effort(model: str, configured_effort: str | None) -> str | None:
