@@ -87,7 +87,7 @@ def test_equal_partial_coverage_keeps_first_supported_answer_without_quality_gue
     finished = result["finish"]["result"]
     assert finished["outcome"] == "ANSWER"
     assert [source["sourceEpisodeNo"] for source in finished["retrievalSources"]] == [3]
-    assert "\n- 아리아는 반지를 강물에 던졌다. [E1]" in finished["text"]
+    assert "- 아리아는 반지를 강물에 던졌다. (근거 1)" in finished["text"]
 
 
 def test_saved_partial_is_withheld_when_its_source_changed_during_expansion(tmp_path):
@@ -155,7 +155,7 @@ def test_partial_snapshot_does_not_swallow_later_provider_failure(tmp_path):
     assert "revalidate" not in result["search"].calls
 
 
-def test_partial_snapshot_cannot_skip_revalidation_when_tool_budget_is_exhausted(tmp_path):
+def test_partial_snapshot_reserves_final_revalidation_before_spending_search_budget(tmp_path):
     result = asyncio.run(
         replay(
             tmp_path,
@@ -164,6 +164,8 @@ def test_partial_snapshot_cannot_skip_revalidation_when_tool_budget_is_exhausted
             search_setup=replace_keyword_evidence,
         )
     )
-    assert result["finish"] == {"result": None, "failure": "EXECUTION_LIMIT_EXCEEDED"}
-    assert len(result["raw"].requests) == 3
-    assert "revalidate" not in result["search"].calls
+    assert result["finish"]["failure"] is None
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    assert len(result["raw"].requests) == 2
+    assert result["search"].calls == ["keyword", "neighbors", "revalidate"]
+    assert len(result["spring"].receipts) == 2

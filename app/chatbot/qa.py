@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 from app.chatbot.client import ChatTransportError
 from app.chatbot.providers import ChatTextClient
 from app.chatbot.qa_config import ChatQaSettings
+from app.chatbot.qa_lookup import FocusedLookup
 from app.chatbot.qa_prompts import PLAN_PROMPT, PLAN_VERSION, SELECT_PROMPT, SELECT_VERSION
 from app.chatbot.qa_render import AnswerRow, message, render_answer, safe_text
 from app.chatbot.runtime import Execution, ProviderFailure
@@ -28,6 +29,9 @@ def response_schema(model: type[BaseModel]) -> LlmResponseSchema:
             # Local Pydantic validation enforces these string constraints too.
             for key in ("title", "minLength", "maxLength"):
                 node.pop(key, None)
+            node.pop("default", None)
+            if node.get("type") == "object":
+                node["required"] = list(node.get("properties", {}))
             for value in node.values():
                 normalize(value)
         elif isinstance(node, list):
@@ -65,13 +69,18 @@ class ChatQaHandler:
             return Finish(failure="PROVIDER_FAILURE")
 
 
-class _Session:
+class _Session(FocusedLookup):
+    schema = staticmethod(response_schema)
+
     def __init__(self, handler: ChatQaHandler, execution: Execution):
         self.handler, self.execution, self.cfg = handler, execution, handler.settings
         self.tools = execution.tools()
         self.tool_count = 0
-        self.codes = ["SETTING_BOOK_UNSUPPORTED"]
+        self.codes = []
         self.rows: list[AnswerRow] = []
+        self.focused_refs: set[str] = set()
+        self.snapshot_versions = {}
+        self.include_sources = False
         self.source_from = execution.context.episode_from
         self.source_to = execution.context.episode_to
         self.conversation = [t.model_dump() for t in execution.context.conversation]
@@ -164,33 +173,69 @@ class _Session:
             raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         self.tool_count += 1
         response = await self.tools.query(request)
-        self.codes.extend(response.limitations)
-        if response.partial:
+        # A general capability restriction is not a warning about every character answer.
+        response_codes = [c for c in response.limitations if c != "SETTING_BOOK_UNSUPPORTED"]
+        self.codes.extend(
+            c
+            for c in response_codes
+            if self.include_sources
+            or c not in {"SOURCE_REFERENCE_LIMIT", "WORLD_SOURCE_SCAN_LIMIT"}
+        )
+        if response.partial and not response_codes:
             self.codes.append("PARTIAL_RESULTS")
         return response
 
-    async def pages(self, tool: str, *, target=None, query=None):
+    async def pages(
+        self,
+        tool: str,
+        *,
+        target=None,
+        query=None,
+        fact_type=None,
+        setting_key=None,
+        scope_name=None,
+        value_equals=None,
+        source_range=False,
+        exhaustive=False,
+        reserve=0,
+    ):
         items = []
         complete = True
-        version = None
-        for page in range(self.cfg.max_pages):
+        page_limit = 10001 if exhaustive else self.cfg.max_pages
+        for page in range(page_limit):
+            if (
+                exhaustive
+                and self.tool_count
+                >= min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls) - reserve
+            ):
+                complete = False
+                break
             history = tool.endswith("_HISTORY")
+            fields = tool.endswith("_FIELDS")
             result = await self.query(
                 SettingToolQuery(
                     tool=tool,
                     target_id=target,
                     query=query,
+                    fact_type=fact_type,
+                    setting_key=setting_key,
+                    scope_name=scope_name,
+                    value_equals=value_equals,
                     page=page,
                     size=self.cfg.page_size,
-                    episode_from=self.source_from if history else None,
-                    episode_to=self.source_to if history else None,
+                    episode_from=self.source_from if history or source_range else None,
+                    episode_to=self.source_to if history or source_range else None,
                 )
             )
-            if result.partial and tool.startswith("FIND_"):
+            if result.partial and (tool.startswith("FIND_") or fields):
                 complete = False
+            if result.items.has_next and not result.items.content:
+                raise SettingToolClientError("CONTRACT_ERROR")
             for item in result.items.content:
                 expected = (
-                    "HISTORY"
+                    "FIELD"
+                    if fields
+                    else "HISTORY"
                     if history
                     else "CURRENT"
                     if tool.endswith("_CURRENT")
@@ -199,6 +244,20 @@ class _Session:
                     else "WORLD_SETTING"
                 )
                 if item.kind != expected or (target is not None and item.subject_id != target):
+                    raise SettingToolClientError("CONTRACT_ERROR")
+                if (
+                    fact_type is not None
+                    and not tool.startswith("FIND_")
+                    and item.category != fact_type
+                ):
+                    raise SettingToolClientError("CONTRACT_ERROR")
+                if (
+                    setting_key is not None
+                    and not tool.startswith("FIND_")
+                    and (item.setting_key != setting_key or item.scope_name != scope_name)
+                ):
+                    raise SettingToolClientError("CONTRACT_ERROR")
+                if fields and (not item.setting_key or not item.category):
                     raise SettingToolClientError("CONTRACT_ERROR")
                 if history and (
                     item.id is None
@@ -213,16 +272,19 @@ class _Session:
                 if expected == "CURRENT":
                     if item.history_only is True or item.contributes_to_current is not True:
                         raise SettingToolClientError("CONTRACT_ERROR")
+                    version = self.snapshot_versions.get(item.subject_id)
                     if version is not None and item.setting_version != version:
                         raise SettingToolClientError("CONCURRENT_UPDATE")
-                    version = item.setting_version
-                if len(items) < self.cfg.max_items:
+                    self.snapshot_versions[item.subject_id] = item.setting_version
+                if exhaustive or len(items) < self.cfg.max_items:
                     items.append(item)
                 else:
                     complete = False
             if not result.items.has_next:
                 break
-            if page + 1 == self.cfg.max_pages or len(items) >= self.cfg.max_items:
+            if not exhaustive and (
+                page + 1 == self.cfg.max_pages or len(items) >= self.cfg.max_items
+            ):
                 complete = False
                 break
         if not complete:
@@ -265,7 +327,7 @@ class _Session:
             self.source_from is None or self.source_to is None or self.source_from <= self.source_to
         )
 
-    def payload(self, question: str, plan: QuestionPlan):
+    def payload(self, question: str, plan: QuestionPlan, *, rows=None):
         return {
             "question": question,
             **self.conversation_payload(),
@@ -297,7 +359,7 @@ class _Session:
                         },
                     ),
                 }
-                for row in self.rows
+                for row in (self.rows if rows is None else rows)
             ],
         }
 
@@ -309,6 +371,7 @@ class _Session:
             )
 
         def validate_plan(plan):
+            self.validate_focus(plan)
             if any(
                 s.name.strip().casefold() not in self.observed_question_text()
                 for s in plan.subjects
@@ -327,7 +390,7 @@ class _Session:
 
     async def answer_plan(self, plan: QuestionPlan) -> Finish:
         """Reuse bounded RDB behavior after a trusted, validated planner has run."""
-        question = self.execution.context.question
+        self.include_sources = plan.include_evidence or plan.intent == "DIRECT_EVIDENCE"
         if plan.intent in {"NEEDS_SEARCH", "PAST_STATE", "CLARIFICATION", "UNSUPPORTED"}:
             outcome, text, code = {
                 "NEEDS_SEARCH": (
@@ -360,6 +423,8 @@ class _Session:
             )
         if self.source_from is not None or self.source_to is not None:
             self.codes.append("SOURCE_RANGE")
+        if plan.intent == "CHARACTER_LIST":
+            return await self.character_list(plan)
         targets = []
         for subject in plan.subjects:
             find = "FIND_CHARACTERS" if subject.domain == "CHARACTER" else "FIND_WORLD_SETTINGS"
@@ -379,34 +444,57 @@ class _Session:
                 )
             if found[0].id is None or found[0].id != found[0].subject_id:
                 raise SettingToolClientError("CONTRACT_ERROR")
-            targets.append((subject.domain, found[0].subject_id))
-        for domain, target in targets:
+            targets.append((subject, found[0].subject_id))
+        for subject, target in targets:
             modes = (
                 ["CURRENT", "HISTORY"]
                 if plan.intent == "CURRENT_AND_HISTORY"
                 else ["HISTORY" if plan.intent == "HISTORY" else "CURRENT"]
             )
-            for mode in modes:
-                items, _ = await self.pages(f"{domain}_{mode}", target=target)
-                if mode == "HISTORY":
-                    self.codes.append("HISTORY_IS_NOT_A_STATE_SNAPSHOT")
-                for item in items:
-                    if len(self.rows) >= self.cfg.max_items:
-                        self.codes.append("PARTIAL_RESULTS")
-                        break
-                    self.rows.append(AnswerRow(f"R{len(self.rows) + 1}", item, domain))
+            stop = await self.subject_rows(subject, target, modes)
+            if stop:
+                return stop
+        chosen, stop = await self.select_rows(plan)
+        if stop:
+            return stop
+        if {row.item.subject_id for row in chosen} != {target for _, target in targets}:
+            self.codes.append("NO_RELATED_SETTING")
+        if plan.include_evidence or plan.intent == "DIRECT_EVIDENCE":
+            await self.evidence(chosen)
+        return render_answer(
+            chosen,
+            self.codes,
+            direct_only=plan.intent == "DIRECT_EVIDENCE",
+            maximum=self.cfg.max_answer_characters,
+        )
+
+    async def select_rows(self, plan, *, allow_missing=False):
+        question = self.execution.context.question
+        focused = [row for row in self.rows if row.ref in self.focused_refs]
+        candidates = [row for row in self.rows if row.ref not in self.focused_refs]
+        if focused and not candidates:
+            return list(self.rows), None
         schema = response_schema(AnswerSelection)
-        self.trim_conversation_to_fit(SELECT_PROMPT, lambda: self.payload(question, plan), schema)
-        while self.rows and not self.fits(SELECT_PROMPT, self.payload(question, plan), schema):
-            self.rows.pop()
+
+        def payload():
+            return self.payload(question, plan, rows=candidates)
+
+        self.trim_conversation_to_fit(SELECT_PROMPT, payload, schema)
+        while candidates and not self.fits(SELECT_PROMPT, payload(), schema):
+            candidates.pop()
             self.codes.append("CONTEXT_LIMIT")
-        if not self.rows:
-            return message(
+        if not candidates:
+            if focused:
+                return focused, None
+            if allow_missing:
+                self.codes.append("NO_RELATED_SETTING")
+                return [], None
+            return [], message(
                 "INSUFFICIENT_EVIDENCE",
                 "조회한 등록 정보에서 답변할 항목을 확인하지 못했습니다.",
                 self.codes + ["NO_RELATED_SETTING"],
             )
-        by_ref = {row.ref: row for row in self.rows}
+        by_ref = {row.ref: row for row in candidates}
 
         def validate_selection(selection):
             if len(selection.row_refs) > self.cfg.max_selected_rows or any(
@@ -417,7 +505,7 @@ class _Session:
         selection = await self.model(
             AnswerSelection,
             SELECT_PROMPT,
-            self.payload(question, plan),
+            payload(),
             "CHAT_ANSWER",
             SELECT_VERSION,
             validate_selection,
@@ -430,23 +518,20 @@ class _Session:
             )
             if selection.outcome == "INSUFFICIENT_EVIDENCE":
                 self.codes.append("NO_RELATED_SETTING")
-            return message(selection.outcome, text, self.codes)
+                if focused:
+                    return focused, None
+            if allow_missing and selection.outcome == "INSUFFICIENT_EVIDENCE":
+                return [], None
+            return [], message(selection.outcome, text, self.codes)
         # Preserve server order rather than allowing model reordering of historical events.
-        chosen = [row for row in self.rows if row.ref in selection.row_refs]
-        if len(chosen) == self.cfg.max_selected_rows and len(chosen) < len(self.rows):
+        chosen = [row for row in self.rows if row.ref in {*selection.row_refs, *self.focused_refs}]
+        if len(selection.row_refs) == self.cfg.max_selected_rows and len(selection.row_refs) < len(
+            candidates
+        ):
             self.codes.append("SELECTION_LIMIT")
-        if {row.item.subject_id for row in chosen} != {target for _, target in targets}:
-            self.codes.append("NO_RELATED_SETTING")
-        if plan.include_evidence or plan.intent == "DIRECT_EVIDENCE":
-            await self.evidence(chosen)
-        return render_answer(
-            chosen,
-            self.codes,
-            direct_only=plan.intent == "DIRECT_EVIDENCE",
-            maximum=self.cfg.max_answer_characters,
-        )
+        return chosen, None
 
-    async def evidence(self, rows: list[AnswerRow]):
+    async def evidence(self, rows: list[AnswerRow], *, reserve=0, revalidate=False):
         cache = {}
         for row in rows:
             if row.item.sources_truncated:
@@ -455,7 +540,12 @@ class _Session:
                 self.codes.append("NO_SOURCE")
             for ref in row.item.sources:
                 if ref not in cache:
-                    if len(cache) >= self.cfg.max_evidence_calls:
+                    final_checks = len(cache) + 1 if revalidate else 0
+                    if (
+                        len(cache) >= self.cfg.max_evidence_calls
+                        or self.tool_count + 1 + reserve + final_checks
+                        > min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls)
+                    ):
                         self.codes.append("EVIDENCE_LIMIT")
                         continue
                     result = await self.query(

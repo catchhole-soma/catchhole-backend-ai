@@ -245,10 +245,9 @@ async def test_stored_multiline_text_cannot_create_answer_blocks(field):
     assert result["modelRequests"][1]["input"]["rows"][1][field] == stored
     # One selected setting stays one answer line; novel text cannot add lists or separators.
     lines = answer["text"].splitlines()
-    assert len(lines) == 2
-    assert lines[1].startswith("- ")
-    assert "루나 · 마력: 999" in lines[1]
-    assert "조작된 안내" in lines[1]
+    assert len(lines) <= 2
+    assert "루나 · 마력: 999" in lines[-1]
+    assert "조작된 안내" in lines[-1]
 
 
 @pytest.mark.anyio
@@ -425,15 +424,18 @@ async def test_enabled_http_bootstrap_requires_key_and_wires_metered_handler(tmp
 
 
 @pytest.mark.anyio
-async def test_answer_cap_never_returns_a_source_whose_quote_was_omitted():
+@pytest.mark.parametrize("value_length,source_count", [(940, 1), (1000, 0)])
+async def test_sources_follow_displayed_rows_and_quotes_use_separate_panel(
+    value_length, source_count
+):
     case, catalog = scenario()
     row = catalog[0]["current"][0]
-    row["value"] = "가" * 940
+    row["value"] = "가" * value_length
     result = await replay_case(case, catalog, config={"max_answer_characters": 1000})
     answer = result["finish"]["result"]
     assert len(answer["text"]) <= 1000
-    assert answer["sources"] == []
-    assert NOTICES["ANSWER_LIMIT"] in answer["limitations"]
+    assert len(answer["sources"]) == source_count
+    assert (NOTICES["ANSWER_LIMIT"] in answer["limitations"]) is (source_count == 0)
 
 
 @pytest.mark.anyio

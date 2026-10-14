@@ -270,6 +270,8 @@ def test_authored_offline_replays_through_http_execution_and_sqlite_outbox(tmp_p
     assert result["search"].calls == expected["searches"]
     for value in expected["contains"]:
         assert value in finish["result"]["text"]
+    for value in expected.get("sourceContains", []):
+        assert any(value in s["quote"] for s in finish["result"].get("retrievalSources", []))
     calls = len(result["raw"].requests) + len(result["embedding"].inputs)
     assert len(result["spring"].reservations) == len(result["spring"].reports) == calls
     assert len({r["callId"] for r in result["spring"].reservations}) == calls
@@ -461,9 +463,11 @@ def test_tool_budget_stops_before_receipt_and_answer_generation(tmp_path):
     case = scenario()
     case["maxToolCalls"] = 2
     result = asyncio.run(replay(tmp_path, case))
-    assert result["finish"]["failure"] == "EXECUTION_LIMIT_EXCEEDED"
+    assert result["finish"]["failure"] is None
+    assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert any("검색" in note for note in result["finish"]["result"]["limitations"])
     assert len(result["raw"].requests) == 1
-    assert result["search"].calls == ["keyword", "neighbors"]
+    assert result["search"].calls == []
     assert not result["spring"].receipts
 
 
@@ -492,7 +496,9 @@ def test_conflicting_registered_value_and_source_are_both_preserved(tmp_path):
     result = asyncio.run(replay(tmp_path, case))
     text = result["finish"]["result"]["text"]
     assert result["finish"]["result"]["outcome"] == "ANSWER"
-    assert "[R1]" in text and "[E2]" in text
+    assert "[R1]" not in text and "[E2]" not in text
+    assert "근거 1" in text
+    assert result["finish"]["result"]["retrievalSources"]
     assert "화염구" in text and "다르게 나타납니다" in text
 
 

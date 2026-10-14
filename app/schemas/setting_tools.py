@@ -17,6 +17,8 @@ class SettingTool(StrEnum):
     WORLD_HISTORY = "WORLD_HISTORY"
     CHARACTER_EVIDENCE = "CHARACTER_EVIDENCE"
     WORLD_EVIDENCE = "WORLD_EVIDENCE"
+    CHARACTER_FIELDS = "CHARACTER_FIELDS"
+    WORLD_FIELDS = "WORLD_FIELDS"
 
 
 class ContractModel(BaseModel):
@@ -35,6 +37,10 @@ class SettingToolQuery(ContractModel):
     episode_to: int | None = Field(default=None, ge=1, strict=True)
     page: int = Field(default=0, ge=0, le=10000, strict=True)
     size: int = Field(default=20, ge=1, le=50, strict=True)
+    fact_type: (
+        Literal["PROFILE", "AGE", "LEVEL", "STAT", "SKILL", "ITEM", "STATUS", "TIME"] | None
+    ) = None
+    value_equals: str | None = Field(default=None, min_length=1, max_length=200)
 
     @model_validator(mode="after")
     def validate_arguments(self) -> Self:
@@ -42,13 +48,17 @@ class SettingToolQuery(ContractModel):
         current = self.tool in {SettingTool.CHARACTER_CURRENT, SettingTool.WORLD_CURRENT}
         evidence = self.tool in {SettingTool.CHARACTER_EVIDENCE, SettingTool.WORLD_EVIDENCE}
         world_path = self.tool in {SettingTool.WORLD_CURRENT, SettingTool.WORLD_HISTORY}
+        fields = self.tool in {SettingTool.CHARACTER_FIELDS, SettingTool.WORLD_FIELDS}
+        work_fields = self.tool == SettingTool.CHARACTER_FIELDS and self.target_id is None
+        matching = self.tool == SettingTool.FIND_CHARACTERS and self.value_equals is not None
         if (
-            find != (self.target_id is None)
+            (not work_fields and find != (self.target_id is None))
             or (not find and self.query is not None)
-            or ((find or evidence) and self.setting_key is not None)
+            or ((find and not matching or evidence or fields) and self.setting_key is not None)
             or (self.scope_name is not None and (not world_path or self.setting_key is None))
             or (
-                (current or find) and (self.episode_from is not None or self.episode_to is not None)
+                (current or find or work_fields)
+                and (self.episode_from is not None or self.episode_to is not None)
             )
             or (
                 self.episode_from is not None
@@ -58,6 +68,18 @@ class SettingToolQuery(ContractModel):
             or (evidence and self.page != 0)
             or (self.setting_key is not None and not self.setting_key.strip())
             or (self.scope_name is not None and not self.scope_name.strip())
+            or (self.value_equals is not None and (not matching or not self.value_equals.strip()))
+            or (matching and (self.fact_type is None or self.setting_key is None))
+            or (
+                self.fact_type is not None
+                and self.tool
+                not in {
+                    SettingTool.CHARACTER_CURRENT,
+                    SettingTool.CHARACTER_HISTORY,
+                    SettingTool.CHARACTER_FIELDS,
+                }
+                and not matching
+            )
         ):
             raise ValueError("설정 조회 도구의 인자 조합이 올바르지 않습니다.")
         return self
@@ -98,7 +120,7 @@ class DirectEvidence(ContractModel):
 
 
 class SettingToolItem(ContractModel):
-    kind: Literal["CHARACTER", "WORLD_SETTING", "CURRENT", "HISTORY", "EVIDENCE"]
+    kind: Literal["CHARACTER", "WORLD_SETTING", "CURRENT", "HISTORY", "EVIDENCE", "FIELD"]
     id: UUID | None
     subject_id: UUID
     subject_name: str

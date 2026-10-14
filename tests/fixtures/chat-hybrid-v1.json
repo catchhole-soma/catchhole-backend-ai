@@ -473,7 +473,9 @@
           "revalidate"
         ],
         "contains": [
-          "강물",
+          "강물"
+        ],
+        "sourceContains": [
           "비가 내렸다"
         ]
       }

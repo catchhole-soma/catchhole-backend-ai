@@ -26,6 +26,16 @@ def test_java_http_contract_fixture_round_trips_without_losing_metadata():
     assert result.items.content[0].evidence.source_chunk_id is None
 
 
+def test_java_field_catalog_contract_round_trips_without_value_or_source_data():
+    payload = json.loads(FIXTURE.with_name("setting-tool-fields-v1.json").read_text())
+    result = SettingToolResponse.model_validate(payload)
+    assert result.model_dump(mode="json", by_alias=True) == payload
+    item = result.items.content[0]
+    assert item.kind == "FIELD" and item.setting_key == "stats.mana"
+    assert item.value is None and item.structured_value_json is None
+    assert item.sources == [] and item.evidence is None
+
+
 def test_server_context_is_in_headers_and_not_model_arguments():
     context = SettingToolContext(member_id=42, work_id=uuid4())
     requests = []
@@ -71,6 +81,13 @@ def test_server_context_is_in_headers_and_not_model_arguments():
         {"tool": "WORLD_CURRENT", "targetId": str(uuid4()), "scopeName": "고급"},
         {"tool": "WORLD_HISTORY", "targetId": str(uuid4()), "episodeFrom": 3, "episodeTo": 2},
         {"tool": "CHARACTER_EVIDENCE", "targetId": str(uuid4()), "page": 1},
+        {"tool": "WORLD_FIELDS"},
+        {"tool": "CHARACTER_FIELDS", "episodeFrom": 3},
+        {"tool": "CHARACTER_FIELDS", "settingKey": "stats.mana"},
+        {"tool": "FIND_CHARACTERS", "factType": "PROFILE"},
+        {"tool": "FIND_CHARACTERS", "settingKey": "species", "valueEquals": "요정"},
+        {"tool": "WORLD_CURRENT", "targetId": str(uuid4()), "factType": "LEVEL"},
+        {"tool": "CHARACTER_CURRENT", "targetId": str(uuid4()), "valueEquals": "3"},
     ],
 )
 def test_rejects_unbounded_or_unauthorized_model_arguments(arguments):

@@ -11,15 +11,21 @@ from app.chatbot.hybrid_metrics import HybridMetrics, ObservedEmbeddingClient, O
 from app.chatbot.hybrid_prompts import ANSWER_PROMPT, ANSWER_VERSION, PLAN_PROMPT, PLAN_VERSION
 from app.chatbot.providers import ChatEmbeddingClient
 from app.chatbot.qa import ChatQaHandler, _Session, response_schema
-from app.chatbot.qa_prompts import SELECT_PROMPT, SELECT_VERSION
-from app.chatbot.qa_render import AnswerRow, message, notices, render_answer, safe_text
+from app.chatbot.qa_render import (
+    AnswerRow,
+    message,
+    notices,
+    render_answer,
+    safe_text,
+    setting_label,
+)
 from app.chatbot.runtime import ProviderFailure
 from app.clients.setting_tools_client import SettingToolClientError
 from app.retrieval.evidence import compose_evidence
 from app.retrieval.search_contracts import SearchScope, SearchScopeUnavailable
 from app.schemas.chat_execution import ChatResult, Finish
 from app.schemas.chat_hybrid import GroundedAnswer, HybridPlan
-from app.schemas.chat_qa import AnswerSelection, QuestionPlan
+from app.schemas.chat_qa import QuestionPlan
 from app.schemas.chat_retrieval import RetrievalReference
 from app.schemas.setting_tools import SettingToolQuery
 
@@ -154,6 +160,7 @@ class _HybridSession(_Session):
         self.model_calls = self.embedding_calls = self.rounds = 0
         self.evidences = []
         self.chosen = []
+        self.fallback_direct_checks = 0
 
     def before_model_call(self, purpose):
         if self.model_calls >= self.hcfg.max_model_calls:
@@ -206,12 +213,22 @@ class _HybridSession(_Session):
             self.execution.dispatch, self.execution.runner, [wire_reference(c) for c in chunks]
         )
 
+    def tools_available(self, cost, *, direct_checks=True):
+        reserved = max(
+            self.fallback_direct_checks,
+            (len({e.direct_ref for e in self.evidences if e.direct_ref}) if direct_checks else 0),
+        )
+        return self.tool_count + cost + reserved <= min(
+            self.cfg.max_tool_calls, self.execution.context.max_tool_calls
+        )
+
     async def run(self):
         ctx = self.execution.context
         if ctx.operational or not ctx.question or not ctx.question.strip():
             return message("CLARIFICATION", "조회할 대상과 질문을 알려주세요.", self.codes)
 
         def valid(plan):
+            self.validate_focus(plan)
             explicit = self.observed_question_text()
             if any(s.name.strip().casefold() not in explicit for s in plan.subjects) or any(
                 t.strip().casefold() not in explicit for t in plan.search_terms
@@ -235,6 +252,7 @@ class _HybridSession(_Session):
                     include_evidence=plan.include_evidence,
                     episode_from=plan.episode_from,
                     episode_to=plan.episode_to,
+                    character_filter=plan.character_filter,
                 )
             )
         if not self.range_allowed(plan):
@@ -243,13 +261,28 @@ class _HybridSession(_Session):
                 "허용된 출처 회차 범위 안에서 질문해 주세요.",
                 self.codes + ["OUT_OF_SCOPE"],
             )
+        self.include_sources = True
         self.codes.append("NARRATIVE_SOURCE_RANGE")
         if self.source_from is not None or self.source_to is not None:
             self.codes.append("SOURCE_RANGE")
         stop = await self.collect_rows(plan)
         if stop:
             return stop
-        await self.evidence(self.chosen)
+        answer_schema = response_schema(GroundedAnswer)
+        self.trim_conversation_to_fit(
+            ANSWER_PROMPT, lambda: self.answer_payload(plan), answer_schema
+        )
+        if (plan.per_item and len(self.chosen) > 100) or not self.fits(
+            ANSWER_PROMPT, self.answer_payload(plan), answer_schema
+        ):
+            return message(
+                "CLARIFICATION",
+                "요청한 설정 항목이 많아 각각의 근거를 함께 확인하기 어렵습니다. 조회할 항목이나 유형을 좁혀 주세요.",
+                self.codes + ["CONTEXT_LIMIT"],
+            )
+        # A direct lookup also needs a final recheck. Keep room for a minimal
+        # search -> receipt -> final revalidation -> final receipt path.
+        await self.evidence(self.chosen, reserve=4, revalidate=True)
         self.add_direct_evidence()
         draft = None
         partial_snapshot = None
@@ -260,12 +293,24 @@ class _HybridSession(_Session):
                 return await self.finish_answer(draft)
             if draft.coverage == "PARTIAL":
                 partial_snapshot = (draft, tuple(self.evidences))
+                self.fallback_direct_checks = len(
+                    {e.direct_ref for e in self.evidences if e.direct_ref}
+                )
 
-        query = " ".join(plan.search_terms) or ctx.question[:1000]
-        if len(ctx.question) > 1000 and not plan.search_terms:
+        terms = list(plan.search_terms) or [ctx.question]
+        if plan.per_item:
+            # Actual setting names improve searches such as "각 능력은 어떻게 얻었어?";
+            # no model-authored key or invented synonym is promoted into the query.
+            terms.extend(r.item.display_name for r in self.chosen if r.item.display_name)
+        query = " ".join(dict.fromkeys(terms))
+        if len(query) > 1000:
             self.codes.append("SEARCH_QUERY_LIMIT")
+            query = query[:1000]
         candidates = []
         for round_no in range(1, self.hcfg.max_rounds + 1):
+            if not self.tools_available(4):
+                self.codes.append("SEARCH_LIMIT")
+                break
             self.rounds = round_no
             if round_no == 1:
                 hints = tuple(
@@ -286,7 +331,7 @@ class _HybridSession(_Session):
                 found = await self.search(
                     "vector",
                     (
-                        " ".join([s.name for s in plan.subjects] + plan.search_terms)
+                        " ".join([s.name for s in plan.subjects] + [query])
                         + " "
                         + ctx.question
                     )[:1000],
@@ -295,7 +340,7 @@ class _HybridSession(_Session):
                     excluded_chunk_ids=tuple(dict.fromkeys(c.chunk_id for c in candidates)),
                 )
             candidates.extend(found)
-            if found and self.hcfg.neighbor_radius:
+            if found and self.hcfg.neighbor_radius and self.tools_available(4):
                 candidates.extend(
                     await self.search(
                         "neighbors",
@@ -304,6 +349,8 @@ class _HybridSession(_Session):
                         limit=self.hcfg.max_neighbors,
                     )
                 )
+            elif found and self.hcfg.neighbor_radius:
+                self.codes.append("SEARCH_LIMIT")
             previous = self.evidence_identity()
             self.add_search_evidence(candidates)
             if self.evidence_identity() == previous:
@@ -316,12 +363,24 @@ class _HybridSession(_Session):
             # supported answer and its E-reference mapping, which recomposition can replace.
             if draft.coverage == "PARTIAL" and partial_snapshot is None:
                 partial_snapshot = (draft, tuple(self.evidences))
+                self.fallback_direct_checks = len(
+                    {e.direct_ref for e in self.evidences if e.direct_ref}
+                )
         if partial_snapshot is not None:
             draft, evidence_snapshot = partial_snapshot
             self.evidences = list(evidence_snapshot)
             self.codes.append("PARTIAL_ANSWER")
             # Finalization still revalidates the restored sources and registers their quotes.
             return await self.finish_answer(draft)
+        if plan.per_item and self.chosen:
+            names = ", ".join(
+                dict.fromkeys(safe_text(r.item.display_name or "설정") for r in self.chosen)
+            )
+            return message(
+                "INSUFFICIENT_EVIDENCE",
+                f"{names}: 등록된 항목은 확인했지만, 이번에 조회한 원문으로는 요청한 경위나 이유를 확인하지 못했습니다.",
+                self.codes + ["NO_SEARCH_EVIDENCE"],
+            )
         return message(
             "INSUFFICIENT_EVIDENCE",
             "조회한 원문에서 질문을 뒷받침할 근거를 충분히 찾지 못했습니다. 작품 전체에 해당 사실이 없다는 뜻은 아닙니다.",
@@ -353,51 +412,12 @@ class _HybridSession(_Session):
                 if plan.rdb_mode == "CURRENT_AND_HISTORY"
                 else ["HISTORY" if plan.rdb_mode == "HISTORY" else "CURRENT"]
             )
-            for mode in modes:
-                items, _ = await self.pages(f"{subject.domain}_{mode}", target=item.subject_id)
-                if mode == "HISTORY":
-                    self.codes.append("HISTORY_IS_NOT_A_STATE_SNAPSHOT")
-                for value in items:
-                    if len(self.rows) >= self.cfg.max_items:
-                        self.codes.append("PARTIAL_RESULTS")
-                        break
-                    self.rows.append(AnswerRow(f"R{len(self.rows) + 1}", value, subject.domain))
-        schema = response_schema(AnswerSelection)
-        self.trim_conversation_to_fit(
-            SELECT_PROMPT, lambda: self.payload(self.execution.context.question, plan), schema
-        )
-        while self.rows and not self.fits(
-            SELECT_PROMPT, self.payload(self.execution.context.question, plan), schema
-        ):
-            self.rows.pop()
-            self.codes.append("CONTEXT_LIMIT")
-        if not self.rows:
-            self.codes.append("NO_RELATED_SETTING")
-            return None
-
-        def valid(selection):
-            refs = {r.ref for r in self.rows}
-            if (
-                len(selection.row_refs) > self.cfg.max_selected_rows
-                or not set(selection.row_refs) <= refs
-            ):
-                raise ValueError("Unknown/excessive RDB row references")
-
-        selection = await self.model(
-            AnswerSelection,
-            SELECT_PROMPT,
-            self.payload(self.execution.context.question, plan),
-            "CHAT_ANSWER",
-            SELECT_VERSION,
-            valid,
-        )
-        if selection.outcome == "CLARIFICATION":
-            return message(
-                "CLARIFICATION", "어떤 설정 항목이나 범위인지 구체적으로 알려주세요.", self.codes
-            )
-        self.chosen = [r for r in self.rows if r.ref in selection.row_refs]
-        if len(self.chosen) == self.cfg.max_selected_rows and len(self.chosen) < len(self.rows):
-            self.codes.append("SELECTION_LIMIT")
+            stop = await self.subject_rows(subject, item.subject_id, modes, reserve=4)
+            if stop:
+                return stop
+        self.chosen, stop = await self.select_rows(plan, allow_missing=True)
+        if stop:
+            return stop
         if {(row.domain, row.item.subject_id) for row in self.chosen} != targets:
             self.codes.append("NO_RELATED_SETTING")
         return None
@@ -521,10 +541,18 @@ class _HybridSession(_Session):
         e_refs, r_refs = {e.ref for e in self.evidences}, {r.ref for r in self.chosen}
 
         def valid(answer):
-            if any(
-                not set(c.evidence_refs) <= e_refs for c in [*answer.claims, *answer.conflicts]
-            ) or any(not set(c.row_refs) <= r_refs for c in answer.conflicts):
+            if (
+                any(not set(c.evidence_refs) <= e_refs for c in [*answer.claims, *answer.conflicts])
+                or any(not set(c.row_refs) <= r_refs for c in [*answer.claims, *answer.conflicts])
+                or not set(answer.unanswered_row_refs) <= r_refs
+            ):
                 raise ValueError("Unknown evidence or setting reference")
+            if plan.per_item:
+                covered = {r for c in [*answer.claims, *answer.conflicts] for r in c.row_refs}
+                if covered | set(answer.unanswered_row_refs) != r_refs:
+                    raise ValueError(
+                        "Each requested setting needs an answer or explicit uncertainty"
+                    )
 
         return await self.model(
             GroundedAnswer,
@@ -569,27 +597,45 @@ class _HybridSession(_Session):
         if answer.coverage != "COMPLETE":
             self.codes.append("PARTIAL_ANSWER")
         self.metrics.chunks.labels("used").inc(len(evidence))
-        parts = ["확인한 원문 근거에 따른 답변입니다."]
+        direct_refs = list(dict.fromkeys(e.direct_ref for e in evidence if e.direct_ref))
+        chunk_refs = list(dict.fromkeys(e.chunk.chunk_id for e in evidence if e.chunk))
+        public_numbers = {
+            e.ref: direct_refs.index(e.direct_ref) + 1
+            if e.direct_ref
+            else len(direct_refs) + chunk_refs.index(e.chunk.chunk_id) + 1
+            for e in evidence
+        }
+        parts = []
         for claim in answer.claims:
-            parts.append(f"\n- {safe_text(claim.text)} [{', '.join(claim.evidence_refs)}]")
+            numbers = ", ".join(
+                str(n) for n in dict.fromkeys(public_numbers[r] for r in claim.evidence_refs)
+            )
+            parts.append(f"- {safe_text(claim.text)} (근거 {numbers})")
         if self.chosen:
             # Render real registered values, independently of model-authored prose.
-            for row in self.chosen:
-                registered = render_answer(
-                    [AnswerRow(row.ref, row.item, row.domain)],
-                    self.codes,
-                    direct_only=False,
-                    maximum=self.cfg.max_answer_characters,
+            registered = render_answer(
+                [AnswerRow(row.ref, row.item, row.domain) for row in self.chosen],
+                self.codes,
+                direct_only=False,
+                maximum=self.cfg.max_answer_characters,
+            )
+            parts.append("\n" + registered.result.text)
+        unanswered = set(answer.unanswered_row_refs)
+        for row in self.chosen:
+            if row.ref in unanswered:
+                parts.append(
+                    f"- {safe_text(row.item.subject_name)} · {setting_label(row.item)}: "
+                    "이번에 확인한 원문으로는 요청한 경위나 이유를 확인하지 못했습니다."
                 )
-                parts.append(f"\n\n[{row.ref}] " + registered.result.text)
         for conflict in answer.conflicts:
+            labels = ", ".join(
+                setting_label(r.item) for r in self.chosen if r.ref in conflict.row_refs
+            )
             parts.append(
-                f"\n등록 정보 [{', '.join(conflict.row_refs)}]와 원문 [{', '.join(conflict.evidence_refs)}]가 다르게 나타납니다. 두 내용을 함께 확인해 주세요."
+                f"등록된 {labels} 설정과 원문의 내용이 다르게 나타납니다. 근거에서 두 내용을 함께 확인해 주세요."
             )
             self.codes.append("SETTING_SOURCE_CONFLICT")
-        for ev in evidence:
-            parts.append(f"\n[{ev.ref}] 출처 {ev.episode}화: “{safe_text(ev.text)}”")
-        text = "".join(parts)
+        text = "\n".join(parts)
         if len(text) > self.cfg.max_answer_characters:
             # Never cut away citations while keeping a claim which depends on them.
             return message(
@@ -601,7 +647,7 @@ class _HybridSession(_Session):
             result=ChatResult(
                 outcome="ANSWER",
                 text=text,
-                sources=list(dict.fromkeys(e.direct_ref for e in evidence if e.direct_ref)),
+                sources=direct_refs,
                 retrieval_sources=[wire_reference(c) for c in chunks],
                 limitations=notices(self.codes),
             )

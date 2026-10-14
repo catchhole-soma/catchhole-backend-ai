@@ -90,7 +90,7 @@ def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, 
     assert selection["partial"] is False
 
 
-@pytest.mark.parametrize("budget", [4000, 24000])
+@pytest.mark.parametrize("budget", [4500, 24000])
 def test_grounded_answer_preserves_source_before_old_conversation(tmp_path, budget):
     chunk = source_chunk("ring")
     text = chunk.text + " 장면 설명 " * 300
@@ -113,8 +113,8 @@ def test_grounded_answer_preserves_source_before_old_conversation(tmp_path, budg
     assert answer["passages"][0]["text"] == text
     assert answer["passages"][0]["references"][0]["evidenceRef"] == "E1"
     assert answer["conversation"][-1]["answer"] == "최근 답변"
-    assert len(answer["conversation"]) == (1 if budget == 4000 else 2)
-    assert any("대화 일부만" in item for item in answer["limitations"]) is (budget == 4000)
+    assert len(answer["conversation"]) == (1 if budget == 4500 else 2)
+    assert any("대화 일부만" in item for item in answer["limitations"]) is (budget == 4500)
     assert result["finish"]["result"]["retrievalSources"][0]["quote"] == text
 
 

@@ -61,11 +61,10 @@ NOTICES = {
 
 
 def safe_text(value: str) -> str:
-    # Stored strings may contain Markdown instructions/links; present them as literal data.
-    # Keep each value inline so stored line breaks cannot introduce answer blocks.
+    # The chat UI renders plain text, not Markdown or HTML. Keep data inline without
+    # inserting visible backslashes into names, quotations, or bracketed skill labels.
     value = " ".join(value.splitlines())
-    value = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", value)
-    return re.sub(r"([\\`*_{}\[\]<>()#!|])", r"\\\1", value)
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", value)
 
 
 def notices(codes: list[str]) -> list[str]:
@@ -78,76 +77,126 @@ def message(outcome: str, text: str, codes: list[str]) -> Finish:
     )
 
 
-def render_answer(
-    rows: list[AnswerRow], codes: list[str], *, direct_only: bool, maximum: int
-) -> Finish:
-    parts = ["조회한 등록 정보입니다."]
-    refs: list[SourceReference] = []
-    rendered = 0
-    for row in rows:
-        item = row.item
-        name = item.display_name or item.setting_key or "설정"
-        path = f"{item.scope_name or '루트'} / {name}" if row.domain == "WORLD" else name
-        mode = "현재 등록값" if item.kind == "CURRENT" else "확정 이력"
-        value = item.value if item.value is not None else item.structured_value_json
-        block = f"\n- {safe_text(item.subject_name)} · {safe_text(path)} ({mode}): "
-        block += safe_text(value) if value is not None else "표시값 확인 불가"
-        if item.kind == "HISTORY":
-            block += (
-                f" [출처 {item.source_episode_no}화]"
-                if item.source_episode_no
-                else " [출처 회차 미상]"
-            )
-            if item.operation:
-                block += f" [처리: {safe_text(item.operation)}]"
-            if item.history_only:
-                block += " [과거 기록 전용]"
-            current = {
-                True: "현재 근거에 기여",
-                False: "현재 근거에 기여하지 않음",
-                None: "현재 기여 여부 미상",
-            }
-            block += f" [{current[item.contributes_to_current]}]"
-        if item.origin == "USER_INPUT":
-            block += " [사용자 직접 입력]"
-            codes.append("USER_INPUT")
-        elif item.origin == "UNKNOWN":
-            block += " [출처 미상]"
-            codes.append("UNKNOWN_ORIGIN")
-        if item.value_truncated:
-            block += " [값 일부만 표시]"
+def setting_label(item: SettingToolItem) -> str:
+    name = item.display_name or "설정"
+    return safe_text(f"{item.scope_name} · {name}" if item.scope_name else name)
+
+
+def display_value(item: SettingToolItem) -> str:
+    if item.value is not None:
+        return safe_text(item.value)
+    if item.structured_value_json is None:
+        return "표시할 값 없음"
+    try:
+        value = json.loads(item.structured_value_json)
+    except (ValueError, TypeError):
+        return "표시할 값 확인 필요"
+    labels = {
+        "value": "값",
+        "name": "이름",
+        "level": "레벨",
+        "quantity": "수량",
+        "description": "설명",
+        "effect": "효과",
+        "active": "활성 여부",
+    }
+
+    def human(value):
+        if isinstance(value, dict):
+            return ", ".join(f"{labels.get(k, k)}: {human(v)}" for k, v in value.items())
+        if isinstance(value, list):
+            return ", ".join(human(v) for v in value)
+        if value is True:
+            return "예"
+        if value is False:
+            return "아니요"
+        return "없음" if value is None else str(value)
+
+    return safe_text(human(value))
+
+
+def render_character_list(items, attribute, value, codes, *, maximum):
+    condition = f"‘{safe_text(attribute)}: {safe_text(value)}’ 조건에 맞는"
+    if not items:
+        text = f"현재 등록 설정에서 {condition} 인물을 찾지 못했습니다."
+        return message("INSUFFICIENT_EVIDENCE", text, codes)
+    parts = [f"현재 등록 설정에서 {condition} 인물입니다."]
+    for item in items:
+        block = f"\n- {safe_text(item.subject_name)}"
         if len("".join(parts)) + len(block) > maximum:
             codes.append("ANSWER_LIMIT")
             break
         parts.append(block)
+    return message("ANSWER", "".join(parts), codes)
+
+
+def render_answer(
+    rows: list[AnswerRow], codes: list[str], *, direct_only: bool, maximum: int
+) -> Finish:
+    only_history = all(row.item.kind == "HISTORY" for row in rows)
+    parts = [
+        "등록된 변경 기록을 출처 회차순으로 정리했어요."
+        if only_history
+        else "현재 등록된 설정을 확인했어요."
+    ]
+    refs: list[SourceReference] = []
+    rendered = 0
+    mixed = any(row.item.kind == "HISTORY" for row in rows) and not only_history
+    for row in rows:
+        item = row.item
+        name = setting_label(item)
+        block = f"\n- {safe_text(item.subject_name)} · {name}: {display_value(item)}"
+        if item.kind == "HISTORY":
+            block += (
+                f" (출처 {item.source_episode_no}화)"
+                if item.source_episode_no
+                else " (출처 회차 미상)"
+            )
+            if item.operation == "REMOVE":
+                block += " · 삭제 기록"
+            elif item.history_only:
+                block += " · 현재 설정에 반영하지 않은 기록"
+        elif mixed:
+            block += " (현재 설정)"
+        if item.origin == "USER_INPUT":
+            block += " · 직접 입력"
+        if item.value_truncated:
+            block += " · 값 일부만 확인됨"
+        row_refs = list(dict.fromkeys(ref for ref, _ in row.evidence))
+        next_refs = list(dict.fromkeys([*refs, *row_refs]))
+        if row_refs:
+            numbers = ", ".join(str(next_refs.index(ref) + 1) for ref in row_refs)
+            block += f" · 근거 {numbers}"
+        if len("".join(parts)) + len(block) > maximum:
+            codes.append("ANSWER_LIMIT")
+            break
+        parts.append(block)
+        refs = next_refs
         rendered += 1
-        for ref, evidence_item in row.evidence:
-            evidence = evidence_item.evidence
-            for quote in evidence.quotes:
-                number = refs.index(ref) + 1 if ref in refs else len(refs) + 1
-                episode = (
-                    f"출처 {evidence.source_episode_no}화"
-                    if evidence.source_episode_no
-                    else "출처 회차 미상"
-                )
-                # Copy the verified quotation, never accept a model-authored quotation.
-                quoted = f"\n  [{number}] {episode}: {safe_text(json.dumps(quote.text, ensure_ascii=False))}"
-                if len("".join(parts)) + len(quoted) > maximum:
-                    codes.append("ANSWER_LIMIT")
-                    break
-                parts.append(quoted)
-                if ref not in refs:
-                    refs.append(ref)
     if not rendered:
         return message(
             "INSUFFICIENT_EVIDENCE", "답변 한도 안에서 등록 정보를 표시할 수 없습니다.", codes
         )
+    if len(rows) == 1 and rows[0].item.kind == "CURRENT" and not rows[0].item.value_truncated:
+        item = rows[0].item
+        label = setting_label(item)
+        # Only a scalar answer is made into a sentence; descriptive values retain
+        # their stored wording instead of getting a second sentence ending appended.
+        value = display_value(item)
+        numeric = re.fullmatch(r"[+-]?\d+(?:\.\d+)?", value) is not None
+        if value and len(value) <= 80 and (numeric or not any(c in value for c in ".!?\n")):
+            last = ord(label[-1]) if label else 0
+            particle = "은" if 0xAC00 <= last <= 0xD7A3 and (last - 0xAC00) % 28 else "는"
+            sentence = f"{safe_text(item.subject_name)}의 현재 {label}{particle} {value}입니다."
+            if item.origin == "USER_INPUT":
+                sentence += " (직접 입력한 설정)"
+            if refs:
+                sentence += " 근거 " + ", ".join(str(n) for n in range(1, len(refs) + 1))
+            if len(sentence) <= maximum:
+                parts = [sentence]
     outcome = "INSUFFICIENT_EVIDENCE" if direct_only and not refs else "ANSWER"
     return Finish(
         result=ChatResult(
-            outcome=outcome,
-            text="".join(parts),
-            sources=refs,
-            limitations=notices(codes),
+            outcome=outcome, text="".join(parts), sources=refs, limitations=notices(codes)
         )
     )
