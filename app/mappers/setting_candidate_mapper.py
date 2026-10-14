@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from app.analysis.character_name_resolver import CharacterNameMatch
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.domain.enums import (
+    AnalysisSourceKind,
     CharacterFactComparisonStatus,
     SettingCandidateKind,
     SettingCandidateMatchStatus,
@@ -24,6 +25,9 @@ class SettingCandidateMapper:
         analysis_job_id: UUID,
         candidate: ExtractedSettingCandidate,
         character_match: CharacterNameMatch | None = None,
+        source_kind: AnalysisSourceKind = AnalysisSourceKind.EPISODE,
+        setting_book_id: UUID | None = None,
+        setting_book_revision_id: UUID | None = None,
     ) -> SettingCandidate:
         entity_name = candidate.entity_name.strip()
         if not entity_name:
@@ -44,6 +48,9 @@ class SettingCandidateMapper:
             id=uuid4(),
             work_id=work_id,
             episode_id=episode_id,
+            source_kind=source_kind,
+            source_setting_book_id=setting_book_id,
+            source_setting_book_revision_id=setting_book_revision_id,
             source_chunk_id=candidate.source_chunk_id,
             # 원고 파일이 나중에 교체돼도 근거 조회는 분석 당시 원문을 사용한다.
             source_content_s3_key=source_content_s3_key,

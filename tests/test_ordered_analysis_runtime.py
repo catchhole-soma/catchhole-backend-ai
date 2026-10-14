@@ -61,9 +61,13 @@ def _input_context():
 
 
 def _ordered_payload():
+    from tests.semantic_current_fixtures import semantic_current_fixture
     payload = _payload().model_dump()
     payload.update(analysis_mode="ORDERED_PROVISIONAL", analysis_context=_input_context())
     payload["episode"].update(content_hash="b" * 64, episode_no=2)
+    payload["semantic_current_context"] = semantic_current_fixture(
+        payload["analysis_context"], _payload().known_characters,
+    )
     return payload
 
 

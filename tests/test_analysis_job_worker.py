@@ -945,6 +945,9 @@ class FakeSpringWorkerClient:
         model_name: str | None = None,
         current_step: str | None = None,
         supported_analysis_modes=None,
+        supported_source_kinds=None,
+        supports_setting_book_reference_time=None,
+        supports_semantic_current_context=None,
     ) -> WorkerAnalysisJobPayload | None:
         self.claim_called = True
         self.claim_model_name = model_name

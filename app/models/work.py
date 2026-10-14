@@ -17,3 +17,4 @@ class Work(TimestampMixin, Base):
     genre: Mapped[str | None] = mapped_column(String(50))
     description: Mapped[str | None] = mapped_column(Text)
     latest_episode_no: Mapped[int] = mapped_column(Integer)
+    lifecycle_status: Mapped[str] = mapped_column(String(20), default="ACTIVE")

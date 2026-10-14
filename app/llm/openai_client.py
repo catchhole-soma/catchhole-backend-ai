@@ -1,5 +1,6 @@
 import json
 import logging
+from hashlib import sha256
 
 import httpx
 
@@ -88,7 +89,12 @@ class OpenAIResponsesClient:
         }
         # 같은 정적 prefix를 공유하는 요청만 동일한 key를 사용해 cache routing을 돕는다.
         if prompt_cache_key is not None:
-            request_body["prompt_cache_key"] = prompt_cache_key
+            # Source/mode/schema suffixes can exceed the provider's 64-character limit.
+            # Hash the complete logical key so distinct cache prefixes stay distinct.
+            request_body["prompt_cache_key"] = (
+                prompt_cache_key if len(prompt_cache_key) <= 64
+                else "ch:v1:" + sha256(prompt_cache_key.encode("utf-8")).hexdigest()[:58]
+            )
         if response_schema is not None:
             request_body["text"] = {
                 "format": {

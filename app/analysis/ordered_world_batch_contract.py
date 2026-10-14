@@ -522,7 +522,20 @@ def ordered_world_batch_retry_prompt(original: str, error: Exception) -> str:
             "명시하세요. 모든 C*를 정확히 한 번 포함한 JSON 전체를 다시 반환하세요."
         ),
     }
-    if isinstance(error, OrderedWorldBatchValidationError):
+    if (isinstance(error, OrderedWorldRuleDiagnosticError)
+            and error.diagnostic_rule_code in {"BOOK_TIME_REQUIRES_REVIEW", "BOOK_CLAIM_REQUIRES_REVIEW"}):
+        feedback["reason_code"] = error.diagnostic_rule_code
+        feedback["issues"] = [{"field_path": "decisions[].operation", "error_type": "review_required",
+                               "decision_index": error.decision_index}]
+        feedback["correction"] = (
+            "입력의 이야기 시점과 epistemic_status를 다시 확인하세요. 과거/미래/불명확한 "
+            "시점 또는 미확인 내용은 현재값이 없더라도 ADD/UPDATE/MERGE/EXCLUDE하지 마세요. "
+            "REVIEW_REQUIRED + GENERAL_UNCERTAINTY로 원본 source 하나씩 경로와 값을 보존하고 "
+            "existing_root_property_names_to_move=[]를 유지하세요. 이미 연결된 target_ref는 "
+            "속성이 비어 있어도 유지하며 없는 matched 속성을 만들지 마세요. 모든 후보를 "
+            "정확히 한 번 포함한 전체 JSON을 다시 반환하세요."
+        )
+    elif isinstance(error, OrderedWorldBatchValidationError):
         required_target = _input_required_target(payload, error)
         conflict = _input_conflict(payload, error)
         path_rule = _input_path_rule(payload, error)

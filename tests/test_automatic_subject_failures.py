@@ -11,17 +11,25 @@ import pytest
 from app.analysis.character_subject_resolver import SubjectResolutionChunkContext
 from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
 from app.analysis.ordered_character_subjects import (
-    OrderedSubjectResolutionMetrics, OrderedSubjectTarget, resolve_ordered_character_subjects,
+    OrderedSubjectResolutionMetrics,
+    OrderedSubjectTarget,
+    resolve_ordered_character_subjects,
 )
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.analysis.world_setting_comparator import WorldSettingSubjectResolver
 from app.analysis.world_setting_pipeline import WorldSettingComparisonPipeline
-from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError, WorkerLeaseExpiredError
+from app.clients.exceptions import (
+    AiTokenQuotaExhaustedError,
+    SpringWorkerHttpError,
+    WorkerLeaseExpiredError,
+)
 from app.domain.enums import AnalysisFailureCode
 from app.llm.responses import LlmTextResponse
 from app.schemas.worker import (
-    WorkerWorldSettingSubjectPageResponse, WorkerWorldSettingSubjectResolutionCandidate,
-    WorkerWorldSettingSubjectResolutionPendingResponse, WorkerWorldSettingSubjectResolutionResponse,
+    WorkerWorldSettingSubjectPageResponse,
+    WorkerWorldSettingSubjectResolutionCandidate,
+    WorkerWorldSettingSubjectResolutionPendingResponse,
+    WorkerWorldSettingSubjectResolutionResponse,
 )
 from tests.test_ordered_analysis_runtime import _input_context
 
@@ -200,7 +208,12 @@ def test_automatic_subject_resolution_does_not_hide_execution_or_account_failure
 
 
 def test_character_subject_failure_is_persisted_separately_from_ai_ambiguity(monkeypatch):
-    from app.services.setting_candidate_service import SettingCandidateSaveItem, SettingCandidateService
+    from app.services.ordered_analysis_fence import OrderedCandidateWriteContext
+    from app.services.setting_candidate_service import (
+        SettingCandidateSaveItem,
+        SettingCandidateService,
+    )
+    from tests.test_ordered_analysis_runtime import _input_context
     from tests.test_setting_candidate_service import FakeSession, FakeSettingCandidateRepository
 
     resolved, _, _, _, _ = run_characters([{"resolutions": []}] * 3)
@@ -209,7 +222,8 @@ def test_character_subject_failure_is_persisted_separately_from_ai_ambiguity(mon
     service = SettingCandidateService(lambda: session, lambda unused: repository)
     monkeypatch.setattr("app.services.setting_candidate_service.fence_ordered_candidate_write", lambda *a, **k: None)
     saved = service.replace_candidates_for_analysis_job(
-        work_id=uuid4(), analysis_job_id=uuid4(), known_characters=[], ordered_write_context=object(),
+        work_id=uuid4(), analysis_job_id=uuid4(), known_characters=[],
+        ordered_write_context=OrderedCandidateWriteContext(uuid4(), _input_context(), uuid4(), "local/source", None, 1),
         save_items=[SettingCandidateSaveItem(uuid4(), "local/source", item.candidate, item.binding)
                     for item in resolved],
     )

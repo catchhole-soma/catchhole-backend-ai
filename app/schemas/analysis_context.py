@@ -3,7 +3,14 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.domain.enums import (
+    AnalysisSourceKind,
+    CharacterFactTemporalScope,
+    SettingBookReferenceTimeKind,
+)
+from app.schemas.analysis_source import WorkerAnalysisSource, validate_reference_time
 
 
 class AnalysisReferenceEvidence(BaseModel):
@@ -21,7 +28,8 @@ class WorkerAnalysisReference(BaseModel):
 
     domain: Literal["characters", "worldSettings"]
     subject_name: str | None = Field(default=None, alias="subjectName")
-    source_episode_no: int = Field(alias="sourceEpisodeNo", ge=1)
+    source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo", ge=1)
+    source: WorkerAnalysisSource | None = None
     reason: str = Field(min_length=1)
     setting_name: str | None = Field(default=None, alias="settingName")
     scope_name: str | None = Field(default=None, alias="scopeName", max_length=100)
@@ -31,6 +39,15 @@ class WorkerAnalysisReference(BaseModel):
     evidence_spans: list[AnalysisReferenceEvidence] = Field(
         default_factory=list, alias="evidenceSpans"
     )
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        if self.source is not None and self.source.source_kind == AnalysisSourceKind.SETTING_BOOK:
+            if self.source_episode_no is not None:
+                raise ValueError("Setting-book references cannot have an episode number.")
+        elif self.source_episode_no is None:
+            raise ValueError("Episode references require a source episode number.")
+        return self
 
     def prompt_data(self) -> dict:
         return {
@@ -43,6 +60,7 @@ class WorkerAnalysisReference(BaseModel):
             "evidence": [span.quote for span in self.evidence_spans],
             "confirmation_status": "UNRESOLVED",
             "applied_to_current_state": False,
+            **({"source": self.source.prompt_data()} if self.source is not None else {}),
             **{field: value for field in ("scope_name", "matched_scope_name", "matched_property_name")
                if (value := getattr(self, field)) is not None},
         }
@@ -59,6 +77,40 @@ class WorkerAnalysisContext(BaseModel):
     unresolved_references: list[WorkerAnalysisReference] = Field(
         default_factory=list, alias="unresolvedReferences"
     )
+    reference_time_kind: SettingBookReferenceTimeKind | None = Field(default=None, alias="referenceTimeKind")
+    reference_episode_no: int | None = Field(default=None, alias="referenceEpisodeNo", ge=1, strict=True)
+
+    @model_validator(mode="after")
+    def validate_reference(self):
+        validate_reference_time(self.reference_time_kind, self.reference_episode_no)
+        return self
+
+
+class AnalysisCurrentSourceTime(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="forbid")
+
+    source_kind: AnalysisSourceKind | None = Field(default=None, alias="sourceKind")
+    source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo", ge=1, strict=True)
+    reference_time_kind: SettingBookReferenceTimeKind | None = Field(default=None, alias="referenceTimeKind")
+    reference_episode_no: int | None = Field(default=None, alias="referenceEpisodeNo", ge=1, strict=True)
+    effective_from_episode_no: int | None = Field(default=None, alias="effectiveFromEpisodeNo", ge=1, strict=True)
+    temporal_scope: CharacterFactTemporalScope = Field(alias="temporalScope")
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        validate_reference_time(self.reference_time_kind, self.reference_episode_no)
+        if self.source_kind == AnalysisSourceKind.SETTING_BOOK:
+            if self.source_episode_no is not None or self.reference_time_kind is None:
+                raise ValueError("Book current time requires its frozen reference and no source episode.")
+        elif self.source_kind == AnalysisSourceKind.EPISODE:
+            if self.source_episode_no is None or self.reference_time_kind is not None:
+                raise ValueError("Episode current time requires its source episode and no book reference.")
+        elif self.temporal_scope != CharacterFactTemporalScope.UNKNOWN:
+            raise ValueError("Unknown current origin must retain unknown temporal scope.")
+        return self
+
+    def prompt_data(self):
+        return self.model_dump(mode="json")
 
 
 class AnalysisStateProvenance(BaseModel):
@@ -68,11 +120,81 @@ class AnalysisStateProvenance(BaseModel):
     source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo", ge=1)
     source_candidate_ids: list[UUID] = Field(default_factory=list, alias="sourceCandidateIds")
     review_source: Literal["HUMAN", "AUTOMATIC"] | None = Field(default=None, alias="reviewSource")
+    source_kind: AnalysisSourceKind | None = Field(default=None, alias="sourceKind")
+    source_setting_book_id: UUID | None = Field(default=None, alias="sourceSettingBookId")
+    source_setting_book_name: str | None = Field(default=None, alias="sourceSettingBookName")
+    source_setting_book_revision_id: UUID | None = Field(default=None, alias="sourceSettingBookRevisionId")
+    source_setting_book_revision_no: int | None = Field(default=None, alias="sourceSettingBookRevisionNo", ge=1)
+    source_hash: str | None = Field(default=None, alias="sourceHash", pattern=r"^[0-9a-f]{64}$")
+    source_reference_time_kind: SettingBookReferenceTimeKind | None = Field(default=None, alias="sourceReferenceTimeKind")
+    source_reference_episode_no: int | None = Field(default=None, alias="sourceReferenceEpisodeNo", ge=1, strict=True)
+    current_value_protected: bool | None = Field(default=None, alias="currentValueProtected", strict=True)
+    effective_from_episode_no: int | None = Field(default=None, alias="effectiveFromEpisodeNo", ge=1, strict=True)
+    current_source_times: list[AnalysisCurrentSourceTime] = Field(default_factory=list, alias="currentSourceTimes")
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        validate_reference_time(self.source_reference_time_kind, self.source_reference_episode_no)
+        if self.source_kind == AnalysisSourceKind.SETTING_BOOK:
+            if self.source_episode_no is not None:
+                raise ValueError("Setting-book provenance cannot have an episode number.")
+            if (self.source_setting_book_id is None or self.source_setting_book_revision_id is None
+                    or self.source_setting_book_revision_no is None):
+                raise ValueError("Setting-book provenance requires immutable revision identity.")
+        return self
 
     def prompt_data(self) -> dict:
         # Internal candidate identifiers are transport provenance, never model input.
         return {
             "confirmation_status": self.confirmation_status,
             "source_episode_no": self.source_episode_no,
+            **({"source_kind": self.source_kind} if self.source_kind is not None else {}),
+            **({"source_setting_book_name": self.source_setting_book_name,
+                "source_setting_book_revision_no": self.source_setting_book_revision_no}
+               if self.source_kind == AnalysisSourceKind.SETTING_BOOK else {}),
+            **({"source_reference_time_kind": self.source_reference_time_kind or SettingBookReferenceTimeKind.UNSPECIFIED,
+                "source_reference_episode_no": self.source_reference_episode_no}
+               if self.source_kind == AnalysisSourceKind.SETTING_BOOK else {}),
+            **({"current_value_protected": self.current_value_protected} if self.current_value_protected is not None else {}),
+            **({"effective_from_episode_no": self.effective_from_episode_no} if self.effective_from_episode_no is not None else {}),
+            **({"current_source_times": [item.prompt_data() for item in self.current_source_times]} if self.current_source_times else {}),
             **({"review_source": self.review_source} if self.review_source is not None else {}),
         }
+
+    @classmethod
+    def from_source(cls, *, confirmation_status, source_episode_no=None, source=None, effective_from_episode_no=None):
+        return cls(
+            confirmation_status=confirmation_status, source_episode_no=source_episode_no,
+            effective_from_episode_no=effective_from_episode_no,
+            **({"source_kind": source.source_kind,
+                "source_setting_book_id": source.setting_book_id,
+                "source_setting_book_name": source.setting_book_name,
+                "source_setting_book_revision_id": source.revision_id,
+                "source_setting_book_revision_no": source.revision_no,
+                "source_reference_time_kind": (source.reference_time_kind if source.source_kind == AnalysisSourceKind.SETTING_BOOK else None),
+                "source_reference_episode_no": source.reference_episode_no,
+                "source_hash": source.content_hash} if source is not None else {}),
+        )
+
+    def with_merged_sources(self, previous):
+        """MERGE retains all contributing CURRENT origins; UPDATE replaces them."""
+        return self.model_copy(update={"current_source_times": [
+            *_represented_source_times(previous), *_represented_source_times(self),
+        ]})
+
+
+def _represented_source_times(provenance):
+    if provenance is not None and provenance.current_source_times:
+        return list(provenance.current_source_times)
+    kind = provenance.source_kind if provenance is not None else None
+    if kind is None and provenance is not None and provenance.source_episode_no is not None:
+        kind = AnalysisSourceKind.EPISODE
+    return [AnalysisCurrentSourceTime(
+        source_kind=kind,
+        source_episode_no=(provenance.source_episode_no if kind == AnalysisSourceKind.EPISODE else None),
+        reference_time_kind=((provenance.source_reference_time_kind or SettingBookReferenceTimeKind.UNSPECIFIED)
+                             if kind == AnalysisSourceKind.SETTING_BOOK else None),
+        reference_episode_no=(provenance.source_reference_episode_no if kind == AnalysisSourceKind.SETTING_BOOK else None),
+        effective_from_episode_no=(provenance.effective_from_episode_no if provenance is not None else None),
+        temporal_scope=(CharacterFactTemporalScope.PRESENT if kind is not None else CharacterFactTemporalScope.UNKNOWN),
+    )]

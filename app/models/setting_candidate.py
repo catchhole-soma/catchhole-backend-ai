@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Numeric, String, Text, false
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, Numeric, String, Text, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -27,6 +27,9 @@ class SettingCandidate(TimestampMixin, Base):
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True)
     work_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True))
     episode_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
+    source_kind: Mapped[str] = mapped_column(String(20), default="EPISODE")
+    source_setting_book_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
+    source_setting_book_revision_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
     source_chunk_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
     source_content_s3_key: Mapped[str | None] = mapped_column(String(512))
     analysis_job_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
@@ -62,6 +65,7 @@ class SettingCandidate(TimestampMixin, Base):
         String(30)
     )
     temporal_scope: Mapped[CharacterFactTemporalScope | None] = mapped_column(String(30))
+    effective_from_episode_no: Mapped[int | None] = mapped_column(Integer)
     comparison_target_fact_type: Mapped[str | None] = mapped_column(String(30))
     comparison_target_fact_key: Mapped[str | None] = mapped_column(String(150))
     proposed_fact_value: Mapped[str | None] = mapped_column(Text)

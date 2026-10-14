@@ -4,18 +4,23 @@ Never salvage an unvalidated provider decision. Each recovery group is regenerat
 and overlapping read/write paths are compared together before a mixed completion.
 """
 
-from dataclasses import dataclass, field
 import re
+from dataclasses import dataclass, field
 
 from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.ordered_world_diagnostics import validation_diagnostics
 from app.analysis.ordered_world_rule_diagnostics import VALIDATION_PHASES, VALIDATION_STAGES
 from app.analysis.world_setting_comparator import (
-    ComparisonTargetReference, _backend_duplicate_key, _validate_batch_comparison_result,
+    ComparisonTargetReference,
+    _backend_duplicate_key,
+    _validate_batch_comparison_result,
 )
 from app.analysis.world_setting_schemas import WorldSettingComparisonBatchResult
 from app.domain.enums import AnalysisFailureCode, WorldSettingOperation
-from app.exceptions.failure_classification import comparison_failure_code, is_candidate_comparison_failure
+from app.exceptions.failure_classification import (
+    comparison_failure_code,
+    is_candidate_comparison_failure,
+)
 from app.schemas.worker import (
     WorkerWorldSettingComparisonBatchFailure,
     WorkerWorldSettingComparisonDiagnostic,
@@ -184,7 +189,8 @@ def _failure(group, history):
 
 
 async def recover_world_batch(comparator, category, candidates, targets, initial_error, *,
-                             unresolved_references=(), max_recovery_calls=MAX_RECOVERY_CALLS):
+                             unresolved_references=(), max_recovery_calls=MAX_RECOVERY_CALLS,
+                             analysis_source=None):
     """Regenerate original-path groups, reconcile dependencies, then revalidate union.
 
     Limited to response failures: quota/lease/input/API and unexpected errors escape.
@@ -228,6 +234,7 @@ async def recover_world_batch(comparator, category, candidates, targets, initial
                 category, source, targets, ordered_context=True,
                 max_attempts_override=1, preserve_source_paths=True,
                 **({"unresolved_references": tuple(unresolved_references)} if unresolved_references else {}),
+                **({"analysis_source": analysis_source} if analysis_source is not None else {}),
             )
             group.decisions = result.decisions
             # Protect the fallback boundary even for alternate comparator implementations.

@@ -149,6 +149,68 @@ def test_create_text_response_sends_cache_key_and_logs_cache_usage(caplog) -> No
     assert "cached_tokens=1024" in caplog.text
 
 
+@pytest.mark.parametrize("logical_key", [
+    "k" * 64,
+    "k" * 65,
+    "가" * 64,
+    "가" * 65,
+    "설정집" * 30,
+    "setting-extraction:v10:e9721bfb5d486efc:setting-book-v1:ordered-provisional-v1",
+    "character-fact-comparison-batch:v10:ordered-provisional-v6:setting-book-v1",
+    "world-setting-comparison-batch:v10:ordered-provisional-v6:setting-book-v1",
+    "ordered-character-subject-resolution:v3-adjacent-only:setting-book-v1",
+])
+def test_outbound_cache_keys_fit_provider_limit_and_preserve_valid_keys(logical_key) -> None:
+    requests = []
+
+    def handler(request):
+        key = json.loads(request.content)["prompt_cache_key"]
+        if len(key) > 64:
+            return httpx.Response(400, json={"error": {"param": "prompt_cache_key"}})
+        return _response(request, requests)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as transport:
+            client = OpenAIResponsesClient("test-key", "gpt-5.6-sol",
+                                           "https://api.openai.test/v1/responses",
+                                           http_client=transport)
+            await client.create_text_response("rules", "source", prompt_cache_key=logical_key)
+
+    asyncio.run(run())
+    sent = json.loads(requests[0].content)["prompt_cache_key"]
+    assert len(sent) <= 64
+    if len(logical_key) <= 64:
+        assert sent == logical_key
+    else:
+        assert sent.isascii()
+
+
+def test_overlong_cache_keys_keep_full_source_mode_schema_identity_and_stability() -> None:
+    shared_prefix = "setting-extraction:v10:" + "a" * 60
+    keys = [shared_prefix + suffix for suffix in (
+        ":setting-book:ordered:schema-one", ":episode:ordered:schema-one",
+        ":setting-book:confirmed:schema-one", ":setting-book:ordered:schema-two",
+        ":setting-book:ordered:schema-one",
+    )]
+    requests = []
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: _response(request, requests)
+        )) as transport:
+            client = OpenAIResponsesClient("test-key", "gpt-5.6-sol",
+                                           "https://api.openai.test/v1/responses",
+                                           http_client=transport)
+            for index, key in enumerate(keys):
+                await client.create_text_response("rules", str(index), prompt_cache_key=key)
+
+    asyncio.run(run())
+    sent = [json.loads(request.content)["prompt_cache_key"] for request in requests]
+    assert all(len(key) <= 64 for key in sent)
+    assert len(set(sent[:4])) == 4
+    assert sent[0] == sent[4]
+
+
 def test_create_text_response_sends_optional_strict_json_schema() -> None:
     requests: list[httpx.Request] = []
     client = OpenAIResponsesClient(

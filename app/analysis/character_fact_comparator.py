@@ -19,26 +19,42 @@ from app.analysis.character_fact_projection import (
     validate_resolved_canonical_fact_key,
     validate_status_active_value,
 )
-from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
 from app.analysis.comparison_reason import (
-    USER_FACING_REASON_INSTRUCTIONS, mask_display_names,
+    USER_FACING_REASON_INSTRUCTIONS,
+    mask_display_names,
+)
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.json_response import (
+    compact_error_message,
+    request_validated_model,
+    safe_validation_error_summary,
 )
 from app.analysis.ordered_context import (
-    ORDERED_STATE_INSTRUCTIONS, ordered_provenance_data, ordered_reference_data,
+    CURRENT_CHRONOLOGY_INSTRUCTIONS,
+    SETTING_BOOK_INSTRUCTIONS,
+    ordered_provenance_data,
+    ordered_reference_data,
+    ordered_state_instructions,
 )
-from app.schemas.analysis_context import WorkerAnalysisReference
-from app.analysis.json_response import compact_error_message, request_validated_model, safe_validation_error_summary
+from app.analysis.semantic_current_context import (
+    STATUS_FORECAST_CACHE_SUFFIX,
+    STATUS_FORECAST_REVIEW_INSTRUCTIONS,
+)
+from app.analysis.source_chronology import has_book_current
 from app.core.config import get_settings
+from app.domain.enums import AnalysisSourceKind
 from app.domain.setting_values import normalize_setting_display_value
 from app.exceptions.failure_classification import is_candidate_comparison_failure
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
+from app.schemas.analysis_context import WorkerAnalysisReference
 from app.schemas.worker import (
     WorkerCharacterFactComparisonBatchCandidate,
     WorkerCharacterFactComparisonBatchSnapshotEntry,
     WorkerCharacterFactComparisonCandidatePayload,
     WorkerCharacterPriorFactCandidate,
     WorkerCharacterSnapshotEntry,
+    WorkerProtectedCharacterSlot,
 )
 
 COMPARISON_PROMPT_PATH = (
@@ -150,6 +166,8 @@ class CharacterFactComparator:
         candidate: WorkerCharacterFactComparisonCandidatePayload,
         snapshot_entries: list[WorkerCharacterSnapshotEntry],
         prior_candidates: list[WorkerCharacterPriorFactCandidate] | None = None,
+        *,
+        protected_slots=(),
     ) -> tuple[CharacterFactComparisonDecision, dict]:
         validate_status_active_value(
             candidate.canonical_fact_type,
@@ -214,25 +232,46 @@ class CharacterFactComparator:
             "exact_target_ref": exact_target_ref,
             "allowed_operations": allowed_operations,
             "prior_candidates": [
-                prior_candidate.model_dump(mode="json")
+                {**prior_candidate.model_dump(mode="json", exclude={"source"}),
+                 **({"source": prior_candidate.source.prompt_data()} if prior_candidate.source is not None else {})}
                 for prior_candidate in (prior_candidates or [])
             ],
         }
+        protected_slots = tuple(WorkerProtectedCharacterSlot.model_validate(item) for item in protected_slots)
+        if protected_slots:
+            prompt_payload["protected_slots"] = [item.prompt_data() for item in protected_slots]
+        temporal_context = (
+            candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+        ) or any(has_book_current(entry.provenance) for entry in snapshot_entries)
+        if temporal_context:
+            for item, entry in zip(prompt_payload["snapshot_entries"], snapshot_entries, strict=True):
+                if entry.provenance is not None:
+                    item.update(entry.provenance.prompt_data())
+        system_prompt = self.prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS
+        if temporal_context:
+            system_prompt += "\n\n" + CURRENT_CHRONOLOGY_INSTRUCTIONS
+        if candidate.source is not None:
+            prompt_payload["candidate"]["source"] = candidate.source.prompt_data()
+            if candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK:
+                system_prompt += "\n\n" + SETTING_BOOK_INSTRUCTIONS
         decision = await request_validated_model(
             client=self.llm_client,
             response_model=CharacterFactComparisonDecision,
-            system_prompt=self.prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS,
+            system_prompt=system_prompt,
             user_prompt=json.dumps(prompt_payload, ensure_ascii=False),
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="character-fact-comparison:v10",
+            prompt_cache_key="character-fact-comparison:v10" + (":setting-book-time-v2"
+                if candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+                else ":book-current-time-v2" if temporal_context else ""),
             operation_name="Character-fact comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
                 comparison_decision,
                 candidate,
                 references,
+                protected_slots=protected_slots,
             ),
             retry_user_prompt_builder=_build_retry_user_prompt,
         )
@@ -252,6 +291,7 @@ class CharacterFactComparator:
         ordered_context: bool = False,
         unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
         max_attempts_override: int | None = None,
+        protected_slots=(),
     ) -> tuple[CharacterFactComparisonBatchResult, dict]:
         """Compare ordered candidates while projecting each accepted decision in memory."""
 
@@ -271,7 +311,7 @@ class CharacterFactComparator:
         try:
             _validate_batch_candidates(candidates, canonical_fact_type)
             if ordered_context:
-                CharacterProjectionState(initial_entries)
+                CharacterProjectionState(initial_entries, protected_slots=protected_slots)
                 for entry in initial_entries:
                     ordered_provenance_data(entry.provenance)
         except (TypeError, ValueError, ComparisonValidationError) as error:
@@ -283,10 +323,18 @@ class CharacterFactComparator:
             canonical_fact_type,
             candidates,
             initial_entries,
+            protected_slots=protected_slots,
         )
         system_prompt = self.batch_prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS
+        if not ordered_context and _batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK:
+            system_prompt += "\n\n" + SETTING_BOOK_INSTRUCTIONS
+        if _has_temporal_context(candidates, initial_entries):
+            system_prompt += "\n\n" + CURRENT_CHRONOLOGY_INSTRUCTIONS
+            _add_safe_snapshot_provenance(prompt_payload, initial_entries)
         if ordered_context:
-            system_prompt += "\n\n" + ORDERED_STATE_INSTRUCTIONS + "\n\n" + ORDERED_CHARACTER_SLOT_INSTRUCTIONS
+            system_prompt += "\n\n" + ordered_state_instructions(_batch_source_kind(candidates)) + "\n\n" + ORDERED_CHARACTER_SLOT_INSTRUCTIONS
+            if canonical_fact_type == "STATUS":
+                system_prompt += "\n\n" + STATUS_FORECAST_REVIEW_INSTRUCTIONS
             _add_ordered_snapshot_provenance(prompt_payload, initial_entries)
             prompt_payload["unresolved_references"] = ordered_reference_data(unresolved_references)
         user_prompt = json.dumps(prompt_payload, ensure_ascii=False)
@@ -315,7 +363,10 @@ class CharacterFactComparator:
                 max_output_tokens=self.batch_max_output_tokens,
                 max_attempts=attempts,
                 prompt_cache_key=(CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY
-                                  + (":ordered-provisional-v1" if ordered_context else "")),
+                                  + (":ordered-provisional-v1" if ordered_context else "")
+                                  + (":setting-book-time-v2" if _batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK
+                                     else ":book-current-time-v2" if _has_temporal_context(candidates, initial_entries) else "")
+                                  + (STATUS_FORECAST_CACHE_SUFFIX if ordered_context and canonical_fact_type == "STATUS" else "")),
                 operation_name="Character-fact batch comparison",
                 logger=logger,
                 validate_model=lambda comparison_result: _validate_batch_comparison_result(
@@ -325,6 +376,7 @@ class CharacterFactComparator:
                     initial_entries,
                     ordered_context=ordered_context,
                     display_names=(matched_character_name,),
+                    protected_slots=protected_slots,
                 ),
                 retry_user_prompt_builder=lambda original, exc: _build_bounded_batch_retry_user_prompt(
                     original,
@@ -346,6 +398,7 @@ class CharacterFactComparator:
             retained = _independent_ordered_decisions(
                 last_failed_payload, canonical_fact_type, candidates, initial_entries,
                 display_names=(matched_character_name,),
+                protected_slots=protected_slots,
             )
             raise OrderedCharacterBatchRecoveryError(str(error), retained) from error
         normalized_result = _normalize_batch_comparison_result(
@@ -353,6 +406,7 @@ class CharacterFactComparator:
             canonical_fact_type,
             candidates,
             initial_entries,
+            protected_slots=protected_slots,
         )
         raw = normalized_result.model_dump(mode="json")
         raw["estimated_input_tokens"] = estimated_input_tokens
@@ -369,6 +423,7 @@ class CharacterFactComparator:
         ],
         ordered_context: bool = False,
         unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
+        protected_slots=(),
     ) -> bool:
         if not candidates or len(candidates) > self.batch_max_candidates:
             return False
@@ -382,10 +437,18 @@ class CharacterFactComparator:
             canonical_fact_type,
             candidates,
             initial_entries,
+            protected_slots=protected_slots,
         )
         system_prompt = self.batch_prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS
+        if not ordered_context and _batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK:
+            system_prompt += "\n\n" + SETTING_BOOK_INSTRUCTIONS
+        if _has_temporal_context(candidates, initial_entries):
+            system_prompt += "\n\n" + CURRENT_CHRONOLOGY_INSTRUCTIONS
+            _add_safe_snapshot_provenance(prompt_payload, initial_entries)
         if ordered_context:
-            system_prompt += "\n\n" + ORDERED_STATE_INSTRUCTIONS + "\n\n" + ORDERED_CHARACTER_SLOT_INSTRUCTIONS
+            system_prompt += "\n\n" + ordered_state_instructions(_batch_source_kind(candidates)) + "\n\n" + ORDERED_CHARACTER_SLOT_INSTRUCTIONS
+            if canonical_fact_type == "STATUS":
+                system_prompt += "\n\n" + STATUS_FORECAST_REVIEW_INSTRUCTIONS
             _add_ordered_snapshot_provenance(prompt_payload, initial_entries)
             prompt_payload["unresolved_references"] = ordered_reference_data(unresolved_references)
         return _estimate_prompt_tokens(
@@ -518,6 +581,8 @@ def _validate_comparison_decision(
     decision: CharacterFactComparisonDecision,
     candidate: WorkerCharacterFactComparisonCandidatePayload,
     references: list[CharacterSnapshotReference],
+    *,
+    protected_slots=(),
 ) -> None:
     entries_by_ref = {
         reference.reference: CharacterProjectionEntry(
@@ -526,6 +591,7 @@ def _validate_comparison_decision(
             fact_key=reference.entry.fact_key,
             fact_value=reference.entry.fact_value,
             value_json=reference.entry.value_json,
+            provenance=reference.entry.provenance,
         )
         for reference in references
     }
@@ -536,6 +602,8 @@ def _validate_comparison_decision(
         candidate_value_type=candidate.value_type,
         candidate_value_json=candidate.value_json,
         entries_by_ref=entries_by_ref,
+        source=candidate.source,
+        protected_slots=protected_slots,
     )
     reason_refs = set(SNAPSHOT_REFERENCE_PATTERN.findall(decision.comparison_reason))
     unknown_reason_refs = reason_refs - entries_by_ref.keys()
@@ -690,13 +758,28 @@ def _add_ordered_snapshot_provenance(payload: dict, entries: list[CharacterProje
             raise OrderedInputContextError("Character snapshot provenance is invalid.") from error
 
 
+def _has_temporal_context(candidates, entries):
+    return (_batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK
+            or any(has_book_current(entry.provenance) for entry in entries))
+
+
+def _add_safe_snapshot_provenance(payload, entries):
+    for item, entry in zip(payload["snapshot_entries"], entries, strict=True):
+        if entry.provenance is not None:
+            item.update(entry.provenance.prompt_data())
+
+
 def _batch_prompt_payload(
     matched_character_name: str,
     canonical_fact_type: str,
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
     snapshot_entries: list[CharacterProjectionEntry],
+    *,
+    protected_slots=(),
 ) -> dict:
     return {
+        **({"protected_slots": [WorkerProtectedCharacterSlot.model_validate(item).prompt_data()
+                                for item in protected_slots]} if protected_slots else {}),
         "matched_character_name": matched_character_name,
         "canonical_fact_type": canonical_fact_type,
         "candidates": [
@@ -704,6 +787,7 @@ def _batch_prompt_payload(
                 "candidate_ref": candidate.candidate_ref,
                 "projected_snapshot_ref": candidate.projected_snapshot_ref,
                 "source_episode_no": candidate.source_episode_no,
+                **({"source": candidate.source.prompt_data()} if candidate.source is not None else {}),
                 "raw_fact_key": candidate.raw_fact_key,
                 "initial_canonical_fact_key": candidate.initial_canonical_fact_key,
                 "canonical_key_resolution": candidate.canonical_key_resolution,
@@ -741,6 +825,7 @@ def _validate_batch_comparison_result(
     *,
     ordered_context: bool = False,
     display_names: tuple[str, ...] = (),
+    protected_slots=(),
 ) -> None:
     expected_refs = [candidate.candidate_ref for candidate in candidates]
     actual_refs = [decision.candidate_ref for decision in result.decisions]
@@ -749,7 +834,7 @@ def _validate_batch_comparison_result(
             "Batch decisions must cover every candidate exactly once in input order."
         )
 
-    state = CharacterProjectionState(initial_entries)
+    state = CharacterProjectionState(initial_entries, protected_slots=protected_slots)
     for candidate, decision in zip(candidates, result.decisions, strict=True):
         validate_resolved_canonical_fact_key(
             initial_fact_key=candidate.initial_canonical_fact_key,
@@ -781,6 +866,7 @@ def _validate_batch_comparison_result(
                 value_type=candidate.value_type,
                 candidate_value_json=candidate.value_json,
                 decision=decision,
+                source_episode_no=candidate.source_episode_no, source=candidate.source,
             )
         except ValueError as error:
             # Preserve every validator and all other errors. Only this exact
@@ -799,8 +885,10 @@ def _normalize_batch_comparison_result(
     canonical_fact_type: str,
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
     initial_entries: list[CharacterProjectionEntry],
+    *,
+    protected_slots=(),
 ) -> CharacterFactComparisonBatchResult:
-    state = CharacterProjectionState(initial_entries)
+    state = CharacterProjectionState(initial_entries, protected_slots=protected_slots)
     normalized_decisions: list[CharacterFactComparisonBatchDecision] = []
     for candidate, decision in zip(candidates, result.decisions, strict=True):
         active_entries = state.entries
@@ -814,6 +902,7 @@ def _normalize_batch_comparison_result(
             value_type=candidate.value_type,
             candidate_value_json=candidate.value_json,
             decision=normalized,
+            source_episode_no=candidate.source_episode_no, source=candidate.source,
         )
         normalized_decisions.append(normalized)
     return CharacterFactComparisonBatchResult(decisions=normalized_decisions)
@@ -826,6 +915,7 @@ def _independent_ordered_decisions(
     initial_entries: list[CharacterProjectionEntry],
     *,
     display_names: tuple[str, ...] = (),
+    protected_slots=(),
 ) -> tuple[CharacterFactComparisonBatchDecision | None, ...]:
     """Revalidate only the final response, skipping uncertain writes and their suffix.
 
@@ -841,7 +931,7 @@ def _independent_ordered_decisions(
     if any(not isinstance(row, dict) or row.get("candidate_ref") != candidate.candidate_ref
            for row, candidate in zip(rows, candidates, strict=True)):
         return empty
-    state = CharacterProjectionState(initial_entries)
+    state = CharacterProjectionState(initial_entries, protected_slots=protected_slots)
     blocked_keys: set[str] = set()
     uncertain_status = False
     retained = []
@@ -856,9 +946,11 @@ def _independent_ordered_decisions(
             _validate_batch_comparison_result(
                 result, canonical_fact_type, [candidate], state.entries, ordered_context=True,
                 display_names=display_names,
+                protected_slots=protected_slots,
             )
             normalized = _normalize_batch_comparison_result(
                 result, canonical_fact_type, [candidate], state.entries,
+                protected_slots=protected_slots,
             ).decisions[0]
             state.apply(
                 candidate_ref=candidate.candidate_ref,
@@ -868,6 +960,7 @@ def _independent_ordered_decisions(
                 value_type=candidate.value_type,
                 candidate_value_json=candidate.value_json,
                 decision=normalized,
+                source_episode_no=candidate.source_episode_no, source=candidate.source,
             )
         except (TypeError, ValueError):
             blocked_keys.add(candidate.initial_canonical_fact_key)
@@ -910,3 +1003,15 @@ def _estimate_prompt_tokens(system_prompt: str, user_prompt: str, model: str) ->
         return int(content_tokens * 1.10) + 256
     except Exception:  # noqa: BLE001 - a byte bound keeps splitting deterministic.
         return len(system_prompt.encode("utf-8")) + len(user_prompt.encode("utf-8")) + 512
+
+
+def _batch_source_kind(candidates):
+    books = [item.source for item in candidates if item.source is not None
+             and item.source.source_kind == AnalysisSourceKind.SETTING_BOOK]
+    if not books:
+        return None
+    if len(books) != len(candidates) or any(source != books[0] for source in books):
+        raise OrderedInputContextError("Character batch contains inconsistent setting-book sources.")
+    if any(item.source_episode_no is not None for item in candidates):
+        raise OrderedInputContextError("Setting-book character candidates cannot have episode chronology.")
+    return AnalysisSourceKind.SETTING_BOOK

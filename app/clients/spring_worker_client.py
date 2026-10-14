@@ -14,10 +14,11 @@ from app.clients.exceptions import (
 from app.clients.safe_http_diagnostics import error_message, validation_fields
 from app.core.config import Settings, get_settings
 from app.domain.enums import (
-    AnalysisMode,
     AnalysisFailureCode,
     AnalysisJobCheckpointStage,
     AnalysisJobType,
+    AnalysisMode,
+    AnalysisSourceKind,
     EpisodeProcessingStatus,
     WorldSettingCategory,
     WorldSettingComparisonValidationReason,
@@ -47,10 +48,10 @@ from app.schemas.worker import (
     WorkerWorldSettingComparisonBatchContextRequest,
     WorkerWorldSettingComparisonBatchContextResponse,
     WorkerWorldSettingComparisonBatchPayload,
-    WorkerWorldSettingComparisonDiagnostic,
     WorkerWorldSettingComparisonCompleteRequest,
     WorkerWorldSettingComparisonContextRequest,
     WorkerWorldSettingComparisonContextResponse,
+    WorkerWorldSettingComparisonDiagnostic,
     WorkerWorldSettingComparisonFailRequest,
     WorkerWorldSettingSubjectPageResponse,
     WorkerWorldSettingSubjectResolutionPendingResponse,
@@ -100,6 +101,9 @@ class SpringWorkerClient:
         current_step: str | None = None,
         supported_analysis_modes: list[AnalysisMode] | None = None,
         supports_character_comparison_groups: bool | None = None,
+        supported_source_kinds: list[AnalysisSourceKind] | None = None,
+        supports_setting_book_reference_time: bool | None = None,
+        supports_semantic_current_context: bool | None = None,
     ) -> WorkerAnalysisJobPayload | None:
         request = WorkerAnalysisJobClaimRequest(
             model_name=model_name,
@@ -107,6 +111,9 @@ class SpringWorkerClient:
             allowed_job_types=allowed_job_types,
             supported_analysis_modes=supported_analysis_modes,
             supports_character_comparison_groups=supports_character_comparison_groups,
+            supported_source_kinds=supported_source_kinds,
+            supports_setting_book_reference_time=supports_setting_book_reference_time,
+            supports_semantic_current_context=supports_semantic_current_context,
         )
         response = await self._request(
             "POST",

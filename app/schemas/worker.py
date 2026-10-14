@@ -4,16 +4,19 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.analysis.semantic_current_context import SemanticCurrentContext
 from app.domain.enums import (
-    AnalysisMode,
-    AnalysisReviewMode,
     AnalysisFailureCode,
     AnalysisJobCheckpointStage,
     AnalysisJobType,
+    AnalysisMode,
+    AnalysisReviewMode,
+    AnalysisSourceKind,
     CharacterFactComparisonOperation,
     CharacterFactComparisonStatus,
     CharacterFactTemporalScope,
     EpisodeProcessingStatus,
+    SettingBookReferenceTimeKind,
     SettingValueType,
     WorldSettingCategory,
     WorldSettingComparisonReviewReason,
@@ -23,6 +26,7 @@ from app.domain.enums import (
     WorldSettingSubjectResolutionType,
 )
 from app.schemas.analysis_context import AnalysisStateProvenance, WorkerAnalysisContext
+from app.schemas.analysis_source import SettingBookReferenceTime, WorkerAnalysisSource
 
 # Spring AI 토큰 원장 계약에서 허용하는 호출 목적과 종료 결과
 AiTokenPurpose = Literal[
@@ -72,6 +76,13 @@ class WorkerAnalysisJobClaimRequest(BaseModel):
     supports_character_comparison_groups: bool | None = Field(
         default=None,
         alias="supportsCharacterComparisonGroups",
+    )
+    supported_source_kinds: list[AnalysisSourceKind] | None = Field(default=None, alias="supportedSourceKinds")
+    supports_setting_book_reference_time: bool | None = Field(
+        default=None, alias="supportsSettingBookReferenceTime", strict=True,
+    )
+    supports_semantic_current_context: bool | None = Field(
+        default=None, alias="supportsSemanticCurrentContext", strict=True,
     )
 
 
@@ -158,6 +169,23 @@ class WorkerAnalysisEpisodePayload(BaseModel):
     char_count: int = Field(alias="charCount")
 
 
+class WorkerAnalysisSettingBookPayload(SettingBookReferenceTime):
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    setting_book_id: UUID = Field(alias="settingBookId")
+    original_filename: str = Field(alias="originalFilename", min_length=1)
+    revision_id: UUID = Field(alias="revisionId")
+    revision_no: int = Field(alias="revisionNo", ge=1)
+    content_s3_key: str = Field(alias="contentS3Key", min_length=1)
+    content_s3_version: str | None = Field(default=None, alias="contentS3Version")
+    content_hash: str = Field(alias="contentHash", pattern=r"^[0-9a-f]{64}$")
+    char_count: int = Field(alias="charCount", ge=0)
+
+    def prompt_data(self) -> dict:
+        return {"source_kind": "SETTING_BOOK", "setting_book_name": self.original_filename,
+                "revision_no": self.revision_no, **self.reference_prompt_data()}
+
+
 # Spring이 Worker에게 내려주는 캐릭터별 활성 STATUS 최소 문맥 DTO
 class WorkerEvidenceSpan(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -177,6 +205,16 @@ class WorkerAnalysisActiveCharacterStatusPayload(BaseModel):
 
 
 # Spring이 Worker에게 내려주는 기존 캐릭터 정보 DTO
+class WorkerProtectedCharacterSlot(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    fact_type: str = Field(alias="factType", min_length=1, max_length=30)
+    fact_key: str = Field(alias="factKey", min_length=1, max_length=150)
+
+    def prompt_data(self):
+        return self.model_dump(mode="json")
+
+
 class WorkerAnalysisKnownCharacterPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -189,6 +227,7 @@ class WorkerAnalysisKnownCharacterPayload(BaseModel):
         default_factory=list,
         alias="activeStatuses",
     )
+    protected_slots: list[WorkerProtectedCharacterSlot] = Field(default_factory=list, alias="protectedSlots")
 
 
 class WorkerAnalysisProvisionalCharacterPayload(BaseModel):
@@ -199,13 +238,23 @@ class WorkerAnalysisProvisionalCharacterPayload(BaseModel):
     )
     name: str = Field(min_length=1, max_length=100)
     aliases: list[str] = Field(default_factory=list)
-    source_episode_no: int = Field(alias="sourceEpisodeNo", ge=1)
+    source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo", ge=1)
+    source: WorkerAnalysisSource | None = None
     identity_evidence: list[WorkerEvidenceSpan] = Field(
         default_factory=list, alias="identityEvidence"
     )
     active_statuses: list[WorkerAnalysisActiveCharacterStatusPayload] = Field(
         default_factory=list, alias="activeStatuses"
     )
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        if self.source is not None and self.source.source_kind == AnalysisSourceKind.SETTING_BOOK:
+            if self.source_episode_no is not None:
+                raise ValueError("Book provisional characters cannot have an episode number.")
+        elif self.source_episode_no is None:
+            raise ValueError("Episode provisional characters require their source episode number.")
+        return self
 
 
 # Spring이 Worker에게 내려주는 캐릭터 설정 schema hint DTO
@@ -256,14 +305,31 @@ class WorkerAnalysisJobPayload(BaseModel):
         alias="knownCharacters",
     )
     episode: WorkerAnalysisEpisodePayload | None = None
+    source_kind: AnalysisSourceKind = Field(default=AnalysisSourceKind.EPISODE, alias="sourceKind")
+    setting_book: WorkerAnalysisSettingBookPayload | None = Field(default=None, alias="settingBook")
     analysis_mode: AnalysisMode = Field(
         default=AnalysisMode.CONFIRMED_ONLY, alias="analysisMode"
     )
     review_mode: AnalysisReviewMode = Field(default=AnalysisReviewMode.MANUAL, alias="reviewMode")
     analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
+    semantic_current_context: SemanticCurrentContext | None = Field(
+        default=None, alias="semanticCurrentContext", exclude_if=lambda value: value is None,
+    )
     provisional_characters: list[WorkerAnalysisProvisionalCharacterPayload] = Field(
         default_factory=list, alias="provisionalCharacters"
     )
+
+    def frozen_source(self) -> WorkerAnalysisSource:
+        if self.source_kind == AnalysisSourceKind.SETTING_BOOK:
+            book = self.setting_book
+            return WorkerAnalysisSource(source_kind=self.source_kind, setting_book_id=book.setting_book_id,
+                setting_book_name=book.original_filename, revision_id=book.revision_id,
+                revision_no=book.revision_no, content_hash=book.content_hash,
+                reference_time_kind=book.reference_time_kind, reference_episode_no=book.reference_episode_no)
+        return WorkerAnalysisSource(source_kind=self.source_kind,
+            episode_id=self.episode.episode_id if self.episode else None,
+            episode_no=self.episode.episode_no if self.episode else None,
+            content_hash=self.episode.content_hash if self.episode else None)
 
     @field_validator("review_mode", mode="before")
     @classmethod
@@ -272,6 +338,23 @@ class WorkerAnalysisJobPayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_analysis_mode(self) -> "WorkerAnalysisJobPayload":
+        is_book = self.source_kind == AnalysisSourceKind.SETTING_BOOK
+        if is_book:
+            if self.episode is not None or self.setting_book is None:
+                raise ValueError("Setting-book jobs require a book snapshot and no episode.")
+            if self.analysis_context is not None and (
+                (self.analysis_context.reference_time_kind or SettingBookReferenceTimeKind.UNSPECIFIED)
+                    != self.setting_book.reference_time_kind
+                or self.analysis_context.reference_episode_no != self.setting_book.reference_episode_no
+            ):
+                raise ValueError("Setting-book reference time does not match its frozen input context.")
+            if self.job_type == AnalysisJobType.SETTING_EXTRACTION and (
+                self.analysis_mode != AnalysisMode.ORDERED_PROVISIONAL
+                or self.review_mode != AnalysisReviewMode.AUTOMATIC
+            ):
+                raise ValueError("Setting-book extraction requires automatic ordered analysis.")
+        elif self.setting_book is not None:
+            raise ValueError("Episode jobs cannot include a setting-book snapshot.")
         if self.analysis_mode == AnalysisMode.CONFIRMED_ONLY:
             if self.review_mode == AnalysisReviewMode.AUTOMATIC:
                 raise ValueError("Automatic review requires ordered episode analysis.")
@@ -282,17 +365,24 @@ class WorkerAnalysisJobPayload(BaseModel):
                    for character in self.known_characters for status in character.active_statuses):
                 raise ValueError("Confirmed-only jobs cannot include provisional active statuses.")
         else:
-            if self.analysis_context is None or self.episode is None:
-                raise ValueError("Ordered analysis requires a fixed input context and episode.")
+            if self.analysis_context is None or (not is_book and self.episode is None):
+                raise ValueError("Ordered analysis requires a fixed input context and source.")
             if self.job_type != AnalysisJobType.SETTING_EXTRACTION:
                 raise ValueError("Only episode extraction jobs support ordered analysis.")
-            if self.episode.content_hash != self.analysis_context.source_hash:
-                raise ValueError("Ordered source hash must match the episode snapshot.")
-            if any(item.source_episode_no >= self.episode.episode_no
-                   for item in self.provisional_characters):
+            source = self.setting_book if is_book else self.episode
+            if source.content_hash != self.analysis_context.source_hash:
+                raise ValueError("Ordered source hash must match the source snapshot.")
+            if not is_book and any(
+                item.source_episode_no is not None and item.source_episode_no >= self.episode.episode_no
+                for item in self.provisional_characters
+                if item.source is None or item.source.source_kind == AnalysisSourceKind.EPISODE
+            ):
                 raise ValueError("Provisional character context must precede this episode.")
-            if any(item.source_episode_no >= self.episode.episode_no
-                   for item in self.analysis_context.unresolved_references):
+            if not is_book and any(
+                item.source_episode_no is not None and item.source_episode_no >= self.episode.episode_no
+                for item in self.analysis_context.unresolved_references
+                if item.source is None or item.source.source_kind == AnalysisSourceKind.EPISODE
+            ):
                 raise ValueError("Unresolved reference context must precede this episode.")
         return self
 
@@ -313,18 +403,41 @@ class WorkerWorldSettingCandidatePublishItem(BaseModel):
         default=None,
         alias="rawExtractionJson",
     )
+    temporal_scope: CharacterFactTemporalScope | None = Field(
+        default=None, alias="temporalScope", exclude_if=lambda value: value is None,
+    )
+    effective_from_episode_no: int | None = Field(
+        default=None, alias="effectiveFromEpisodeNo", ge=1, strict=True, exclude_if=lambda value: value is None,
+    )
 
 
 class WorkerWorldSettingCandidatePublishRequest(BaseModel):
     candidates: list[WorkerWorldSettingCandidatePublishItem]
 
 
-class WorkerWorldSettingCandidatePayload(BaseModel):
+class WorkerWorldSourcePayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_episode_id: UUID | None = Field(default=None, alias="sourceEpisodeId")
+    source: WorkerAnalysisSource | None = None
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        if self.source is not None and self.source.source_kind == AnalysisSourceKind.SETTING_BOOK:
+            if self.source_episode_id is not None:
+                raise ValueError("Book world candidates cannot have a source episode.")
+        elif self.source_episode_id is None:
+            raise ValueError("World candidates require a known source.")
+        elif self.source is not None and self.source.episode_id != self.source_episode_id:
+            raise ValueError("World candidate source episode does not match its provenance.")
+        return self
+
+
+class WorkerWorldSettingCandidatePayload(WorkerWorldSourcePayload):
     model_config = ConfigDict(populate_by_name=True)
 
     candidate_id: UUID = Field(alias="candidateId")
     work_id: UUID = Field(alias="workId")
-    source_episode_id: UUID = Field(alias="sourceEpisodeId")
     category: WorldSettingCategory
     subject_name: str = Field(alias="subjectName")
     scope_name: str | None = Field(default=None, alias="scopeName")
@@ -332,6 +445,17 @@ class WorkerWorldSettingCandidatePayload(BaseModel):
     extracted_value: str = Field(alias="extractedValue")
     evidence_spans: list[WorkerEvidenceSpan] = Field(alias="evidenceSpans")
     extraction_confidence: float | None = Field(default=None, alias="extractionConfidence")
+    temporal_scope: CharacterFactTemporalScope | None = Field(default=None, alias="temporalScope")
+    effective_from_episode_no: int | None = Field(default=None, alias="effectiveFromEpisodeNo", ge=1, strict=True)
+    raw_extraction_json: Any = Field(default=None, alias="rawExtractionJson", exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def default_temporal_scope(self):
+        if self.temporal_scope is None:
+            self.temporal_scope = (CharacterFactTemporalScope.UNKNOWN
+                if self.source is not None and self.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+                else CharacterFactTemporalScope.PRESENT)
+        return self
 
 
 class WorkerWorldSettingComparisonBatchCandidate(BaseModel):
@@ -345,17 +469,20 @@ class WorkerWorldSettingComparisonBatchCandidate(BaseModel):
     extracted_value: str = Field(alias="extractedValue", min_length=1)
     evidence_spans: list[WorkerEvidenceSpan] = Field(alias="evidenceSpans", min_length=1)
     extraction_confidence: float | None = Field(default=None, alias="extractionConfidence")
+    temporal_scope: CharacterFactTemporalScope | None = Field(default=None, alias="temporalScope")
+    effective_from_episode_no: int | None = Field(default=None, alias="effectiveFromEpisodeNo", ge=1, strict=True)
+    raw_extraction_json: Any = Field(default=None, alias="rawExtractionJson", exclude_if=lambda value: value is None)
 
 
-class WorkerWorldSettingSubjectResolutionCandidate(BaseModel):
+class WorkerWorldSettingSubjectResolutionCandidate(WorkerWorldSourcePayload):
     model_config = ConfigDict(populate_by_name=True)
 
     candidate_id: UUID = Field(alias="candidateId")
-    source_episode_id: UUID = Field(alias="sourceEpisodeId")
     category: WorldSettingCategory
     subject_name: str = Field(alias="subjectName", min_length=1, max_length=100)
     evidence_spans: list[WorkerEvidenceSpan] = Field(default_factory=list, alias="evidenceSpans")
     source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo", ge=1)
+    raw_extraction_json: Any = Field(default=None, alias="rawExtractionJson", exclude_if=lambda value: value is None)
 
 
 class WorkerWorldSettingSubjectResolutionPendingResponse(BaseModel):
@@ -418,12 +545,11 @@ class WorkerWorldSettingSubjectResolutionResponse(BaseModel):
     resolutions: list[WorkerWorldSettingSubjectResolutionResult]
 
 
-class WorkerWorldSettingComparisonBatchPayload(BaseModel):
+class WorkerWorldSettingComparisonBatchPayload(WorkerWorldSourcePayload):
     model_config = ConfigDict(populate_by_name=True)
 
     comparison_batch_id: UUID = Field(alias="comparisonBatchId")
     work_id: UUID = Field(alias="workId")
-    source_episode_id: UUID = Field(alias="sourceEpisodeId")
     category: WorldSettingCategory
     resolution_type: WorldSettingSubjectResolutionType = Field(alias="resolutionType")
     canonical_subject_key: str = Field(alias="canonicalSubjectKey", min_length=1)
@@ -444,6 +570,15 @@ class WorkerWorldSettingComparisonBatchPayload(BaseModel):
         max_length=20,
     )
 
+    @model_validator(mode="after")
+    def default_candidate_temporal_scope(self):
+        for candidate in self.candidates:
+            if candidate.temporal_scope is None:
+                candidate.temporal_scope = (CharacterFactTemporalScope.UNKNOWN
+                    if self.source is not None and self.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+                    else CharacterFactTemporalScope.PRESENT)
+        return self
+
 
 class WorkerWorldSubjectIdentity(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -461,10 +596,21 @@ class WorkerWorldSubjectIdentity(BaseModel):
         return self.provisional_subject_key or f"world:{self.world_setting_id}"
 
 
+class WorkerProtectedWorldPath(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    scope_name: str | None = Field(default=None, alias="scopeName", max_length=100)
+    setting_name: str = Field(alias="settingName", min_length=1, max_length=100)
+
+    def prompt_data(self):
+        return self.model_dump(mode="json")
+
+
 class WorkerWorldSettingSubject(WorkerWorldSubjectIdentity):
     subject_name: str = Field(alias="subjectName")
     aliases: list[str] = Field(default_factory=list)
     provenance: AnalysisStateProvenance | None = None
+    protected_paths: list[WorkerProtectedWorldPath] = Field(default_factory=list, alias="protectedPaths")
     identity_evidence: list[WorkerEvidenceSpan] = Field(default_factory=list, alias="identityEvidence")
 
 
@@ -510,6 +656,7 @@ class WorkerWorldSettingComparisonTarget(WorkerWorldSubjectIdentity):
     subject_name: str = Field(alias="subjectName")
     properties: list[WorkerWorldSettingProperty]
     version: int = Field(ge=0)
+    protected_paths: list[WorkerProtectedWorldPath] = Field(default_factory=list, alias="protectedPaths")
 
 
 class WorkerWorldSettingComparisonContextResponse(BaseModel):
@@ -735,6 +882,7 @@ class WorkerCharacterFactComparisonBatchCandidate(BaseModel):
         max_length=20,
     )
     source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo", ge=1)
+    source: WorkerAnalysisSource | None = None
     attribute_value: str | None = Field(default=None, alias="attributeValue")
     value_json: Any | None = Field(default=None, alias="valueJson")
     value_type: SettingValueType = Field(alias="valueType")
@@ -753,6 +901,15 @@ class WorkerCharacterFactComparisonBatchCandidate(BaseModel):
     )
     confidence: float | None = Field(default=None, ge=0, le=1)
 
+    @model_validator(mode="after")
+    def validate_source(self):
+        if self.source is not None:
+            if self.source.source_kind == AnalysisSourceKind.SETTING_BOOK and self.source_episode_no is not None:
+                raise ValueError("Book comparison candidates cannot have an episode number.")
+            if self.source.source_kind == AnalysisSourceKind.EPISODE and self.source.episode_no != self.source_episode_no:
+                raise ValueError("Comparison candidate episode does not match its source.")
+        return self
+
 
 class WorkerCharacterFactComparisonBatchPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -760,6 +917,7 @@ class WorkerCharacterFactComparisonBatchPayload(BaseModel):
     comparison_batch_id: UUID = Field(alias="comparisonBatchId")
     work_id: UUID = Field(alias="workId")
     source_episode_id: UUID | None = Field(default=None, alias="sourceEpisodeId")
+    source: WorkerAnalysisSource | None = None
     character_ref: str = Field(alias="characterRef", pattern=r"^K[1-9][0-9]*$")
     matched_character_name: str = Field(alias="matchedCharacterName", min_length=1, max_length=100)
     canonical_fact_type: str = Field(alias="canonicalFactType", min_length=1, max_length=30)
@@ -772,6 +930,19 @@ class WorkerCharacterFactComparisonBatchPayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_group_and_refs(self) -> "WorkerCharacterFactComparisonBatchPayload":
+        if self.source is not None:
+            if self.source.episode_id != self.source_episode_id:
+                raise ValueError("Character batch episode does not match its source.")
+            if any(candidate.source is None or candidate.source.identity() != self.source.identity()
+                   for candidate in self.candidates):
+                raise ValueError("Character batch candidates must share the frozen source.")
+            if self.source.source_kind == AnalysisSourceKind.SETTING_BOOK and self.analysis_context is not None and (
+                self.source.content_hash != self.analysis_context.source_hash
+            ):
+                raise ValueError("Book batch source hash does not match its ordered input.")
+        elif any(candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+                 for candidate in self.candidates):
+            raise ValueError("Book candidates require explicit batch source metadata.")
         for index, candidate in enumerate(self.candidates):
             _validate_status_active_value(
                 self.canonical_fact_type,
@@ -831,6 +1002,7 @@ class WorkerCharacterFactComparisonBatchContextResponse(BaseModel):
     analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
     provisional_subject_key: str | None = Field(default=None, alias="provisionalSubjectKey")
     base_snapshot_version: int = Field(alias="baseSnapshotVersion", ge=0)
+    protected_slots: list[WorkerProtectedCharacterSlot] = Field(default_factory=list, alias="protectedSlots")
     candidates: list[WorkerCharacterFactComparisonBatchCandidate] = Field(
         min_length=1,
         max_length=20,
@@ -900,6 +1072,9 @@ class WorkerCharacterFactComparisonBatchDecision(BaseModel):
     proposed_fact_value: str | None = Field(default=None, alias="proposedFactValue")
     proposed_value_json: Any | None = Field(default=None, alias="proposedValueJson")
     temporal_scope: CharacterFactTemporalScope = Field(alias="temporalScope")
+    effective_from_episode_no: int | None = Field(
+        default=None, alias="effectiveFromEpisodeNo", ge=1, strict=True, exclude_if=lambda value: value is None,
+    )
     comparison_reason: str = Field(
         alias="comparisonReason",
         min_length=1,
@@ -968,6 +1143,7 @@ class WorkerCharacterFactComparisonCandidatePayload(BaseModel):
     work_id: UUID = Field(alias="workId")
     # 마이그레이션 이전 후보나 사용자 입력 후보는 원본 회차가 없을 수 있다.
     source_episode_id: UUID | None = Field(default=None, alias="sourceEpisodeId")
+    source: WorkerAnalysisSource | None = None
     entity_name: str = Field(alias="entityName", min_length=1, max_length=100)
     attribute_name: str = Field(alias="attributeName", min_length=1, max_length=100)
     attribute_value: str | None = Field(default=None, alias="attributeValue")
@@ -991,6 +1167,7 @@ class WorkerCharacterSnapshotEntry(BaseModel):
     fact_key: str = Field(alias="factKey", min_length=1, max_length=150)
     fact_value: str | None = Field(default=None, alias="factValue")
     value_json: Any | None = Field(default=None, alias="valueJson")
+    provenance: AnalysisStateProvenance | None = None
 
 
 class WorkerCharacterPriorFactCandidate(BaseModel):
@@ -999,6 +1176,7 @@ class WorkerCharacterPriorFactCandidate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo")
+    source: WorkerAnalysisSource | None = None
     attribute_name: str = Field(alias="attributeName", min_length=1, max_length=100)
     attribute_value: str | None = Field(default=None, alias="attributeValue")
     value_json: Any | None = Field(default=None, alias="valueJson")
@@ -1020,6 +1198,7 @@ class WorkerCharacterFactComparisonContextResponse(BaseModel):
 
     candidate: WorkerCharacterFactComparisonCandidatePayload
     snapshot_entries: list[WorkerCharacterSnapshotEntry] = Field(alias="snapshotEntries")
+    protected_slots: list[WorkerProtectedCharacterSlot] = Field(default_factory=list, alias="protectedSlots")
     prior_candidates: list[WorkerCharacterPriorFactCandidate] = Field(
         default_factory=list,
         alias="priorCandidates",
@@ -1055,6 +1234,9 @@ class WorkerCharacterFactComparisonCompleteRequest(BaseModel):
         alias="proposedValueJson",
     )
     temporal_scope: CharacterFactTemporalScope = Field(alias="temporalScope")
+    effective_from_episode_no: int | None = Field(
+        default=None, alias="effectiveFromEpisodeNo", ge=1, strict=True, exclude_if=lambda value: value is None,
+    )
     comparison_reason: str = Field(alias="comparisonReason", min_length=1)
     context_token: str = Field(alias="contextToken", min_length=1, max_length=64)
     raw_comparison_json: dict[str, Any] | None = Field(

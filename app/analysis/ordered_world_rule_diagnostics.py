@@ -16,6 +16,8 @@ VALIDATION_PHASES = frozenset({"BATCH", "RECOVERY"})
 # Exact developer-owned literals only. Never inspect arbitrary exception prose,
 # stringify rejected values, or invent a rule for an unknown validator error.
 RULE_CODES = {
+    "Book reference time requires review before changing current state.": "BOOK_TIME_REQUIRES_REVIEW",
+    "Book content uncertainty requires review before changing current state.": "BOOK_CLAIM_REQUIRES_REVIEW",
     "The provider must not classify output-budget overflow.": "PROVIDER_BUDGET_REVIEW_FORBIDDEN",
     "SCOPE_UNRESOLVED must identify compatible ambiguous source candidates.": "SCOPE_UNRESOLVED_SOURCE_INVALID",
     "ADD must not include a matched property path.": "ADD_MATCH_FORBIDDEN",

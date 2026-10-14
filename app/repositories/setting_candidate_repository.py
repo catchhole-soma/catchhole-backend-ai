@@ -22,3 +22,11 @@ class SettingCandidateRepository:
             SettingCandidate.analysis_job_id == analysis_job_id
         )
         self.session.execute(statement)
+
+    def delete_by_setting_book_job(self, analysis_job_id, setting_book_id, revision_id):
+        self.session.execute(delete(SettingCandidate).where(
+            SettingCandidate.analysis_job_id == analysis_job_id,
+            SettingCandidate.source_kind == "SETTING_BOOK",
+            SettingCandidate.source_setting_book_id == setting_book_id,
+            SettingCandidate.source_setting_book_revision_id == revision_id,
+        ))

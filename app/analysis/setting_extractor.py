@@ -12,17 +12,33 @@ from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.json_response import parse_json_object
 from app.analysis.ordered_context import (
-    ORDERED_STATE_INSTRUCTIONS, OrderedExtractionContext, ensure_ordered_prompt_fits,
+    SETTING_BOOK_INSTRUCTIONS,
+    BoundedOrderedClient,
+    OrderedExtractionContext,
+    ordered_state_instructions,
 )
 from app.analysis.schemas import (
     CharacterSettingExtractionResult,
     CharacterSettingProviderResponse,
     character_setting_provider_json_schema,
 )
+from app.analysis.semantic_current_context import (
+    CURRENT_STATUS_FORECAST_INSTRUCTIONS,
+    SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS,
+    STATUS_FORECAST_CACHE_SUFFIX,
+    SemanticCurrentInput,
+)
+from app.analysis.setting_book_evidence import (
+    BOOK_CURRENT_FUNCTION_INSTRUCTIONS,
+    BookEvidenceError,
+    ground_setting_book_evidence,
+)
 from app.core.config import get_settings
+from app.domain.enums import AnalysisSourceKind
 from app.llm.exceptions import LlmOutputTruncatedError
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
+from app.schemas.worker import WorkerAnalysisSettingBookPayload
 
 # 기본 prompt 파일 위치, analysis 패키지 기준으로 app/llm/prompts 아래 파일을 찾는다.
 DEFAULT_PROMPT_PATH = (
@@ -138,6 +154,8 @@ class CharacterSettingExtractor:
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
         known_characters: tuple[KnownCharacter, ...] = (),
         ordered_context: OrderedExtractionContext | None = None,
+        setting_book: WorkerAnalysisSettingBookPayload | None = None,
+        semantic_current_context: SemanticCurrentInput | None = None,
     ) -> CharacterSettingExtractionResult:
         # Schema가 없으면 모든 설정 후보를 제외하라는 prompt가 만들어지므로,
         # 비용이 발생하는 LLM 호출 전에 잘못된 직접 호출을 차단한다.
@@ -154,14 +172,32 @@ class CharacterSettingExtractor:
             known_characters=known_characters,
         )
         prompt_cache_key = _build_schema_cache_key(schema_summary_json)
+        if setting_book is not None:
+            system_prompt += "\n\n" + BOOK_CURRENT_FUNCTION_INSTRUCTIONS
+            if ordered_context is None:
+                system_prompt += "\n\n" + SETTING_BOOK_INSTRUCTIONS
+            metadata = json.dumps(setting_book.prompt_data(), ensure_ascii=False, sort_keys=True)
+            # Keep the schema and name context; replace only source metadata and request label.
+            start = user_prompt.index("metadata:\n")
+            user_prompt = (user_prompt[:start].replace("다음 회차 청크", "다음 설정집 청크")
+                           + f"metadata:\n{metadata}\n\nchunk_text:\n{chunk_text}")
+            prompt_cache_key += ":setting-book-grounded-function-v1"
         if ordered_context is not None:
-            system_prompt += "\n\n" + ORDERED_STATE_INSTRUCTIONS
+            system_prompt += "\n\n" + ordered_state_instructions(
+                AnalysisSourceKind.SETTING_BOOK if setting_book is not None else None
+            )
             user_prompt += "\n\nordered_character_state:\n" + ordered_context.prompt_json()
             user_prompt += (
                 "\n임시 캐릭터 목록의 인물도 식별 문맥으로 사용하세요. 이미 연결된 임시 인물을 "
                 "다시 발견할 필요는 없지만 동명이인의 가능성은 원문 근거로 구분하세요."
             )
             prompt_cache_key += ":ordered-provisional-v1"
+
+        if semantic_current_context is not None:
+            system_prompt += "\n\n" + SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS
+            system_prompt += "\n\n" + CURRENT_STATUS_FORECAST_INSTRUCTIONS
+            user_prompt += "\n\nsemantic_current_state:\n" + semantic_current_context.character_prompt_json()
+            prompt_cache_key += ":semantic-current-v1" + STATUS_FORECAST_CACHE_SUFFIX
 
         # Provider schema와 저장 경계 schema 검증 실패만 안전한 사유와 함께 재시도한다.
         last_feedback: _SafeValidationFeedback | None = None
@@ -171,17 +207,17 @@ class CharacterSettingExtractor:
         truncation_retry_used = False
         for attempt in range(1, self.max_attempts + 1):
             while True:
-                if ordered_context is not None:
-                    ensure_ordered_prompt_fits(system_prompt, current_user_prompt)
                 try:
                     # 예외가 없다면 정상적으로 return
-                    return await self._extract_once(
+                    result = await self._extract_once(
                         system_prompt,
                         current_user_prompt,
                         source_chunk_id,
                         prompt_cache_key,
                         current_max_output_tokens,
+                        requires_ordered_bound=(ordered_context is not None or semantic_current_context is not None),
                     )
+                    return ground_setting_book_evidence(result, chunk_text) if setting_book is not None else result
                 except LlmOutputTruncatedError as exc:
                     can_expand_once = (
                         not truncation_retry_used
@@ -202,7 +238,7 @@ class CharacterSettingExtractor:
                         exc.output_token_count,
                         exc.incomplete_reason,
                     )
-                except (json.JSONDecodeError, TypeError, ValidationError) as exc:
+                except (json.JSONDecodeError, TypeError, ValidationError, BookEvidenceError) as exc:
                     last_feedback = _safe_validation_feedback(exc)
                     repeated_reason_counts[last_feedback.reason_code] += 1
                     logger.warning(
@@ -242,9 +278,11 @@ class CharacterSettingExtractor:
         source_chunk_id: UUID,
         prompt_cache_key: str,
         max_output_tokens: int,
+        requires_ordered_bound: bool = False,
     ) -> CharacterSettingExtractionResult:
         # 시스템 프롬프트 + 사용자 프롬프트를 조합하여 LLM에 요청
-        response = await self.llm_client.create_text_response(
+        client = BoundedOrderedClient(self.llm_client) if requires_ordered_bound else self.llm_client
+        response = await client.create_text_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=self.model,
@@ -259,6 +297,7 @@ class CharacterSettingExtractor:
             for candidate in candidates:
                 if isinstance(candidate, dict):
                     candidate.pop("source_chunk_id", None)
+                    candidate.pop("setting_book_identity_proof", None)
         provider_result = CharacterSettingProviderResponse.model_validate(payload)
         return provider_result.to_extraction_result(source_chunk_id)
 
@@ -305,15 +344,25 @@ def _build_retry_user_prompt(
     feedback: _SafeValidationFeedback,
 ) -> str:
     # 이전 Provider 응답은 절대 재주입하지 않고 최초 입력에 안전한 수정 지시만 붙인다.
+    correction = ("원문은 chunk_text 값만입니다. 모든 quote를 그 원문에서 연속으로 그대로 "
+                  "복사하고, metadata/다른 항목을 이어 붙이지 마세요. 실제 제목은 필요한 경우 "
+                  "별도 근거로 남기며 잘못된 사실 인용을 제목 하나로 대체하지 마세요. "
+                  "모든 필수 필드를 포함한 전체 응답을 다시 생성하세요."
+                  if feedback.reason_code == "BOOK_EVIDENCE_NOT_GROUNDED" else
+                  "위 reasonCode와 fieldLocs만 고쳐 전체 응답을 다시 생성하세요.")
     return (
         f"{original_user_prompt}\n\n"
         "previous_response_correction:\n"
         f"{feedback.prompt_json()}\n"
-        "위 reasonCode와 fieldLocs만 고쳐 전체 응답을 다시 생성하세요."
+        f"{correction}"
     )
 
 
 def _safe_validation_feedback(exc: Exception) -> _SafeValidationFeedback:
+    if isinstance(exc, BookEvidenceError):
+        return _SafeValidationFeedback("BOOK_EVIDENCE_NOT_GROUNDED", (
+            f"candidates[{exc.candidate_index}].evidence_spans[{exc.span_index}].quote",
+        ))
     if isinstance(exc, json.JSONDecodeError):
         return _SafeValidationFeedback("RESPONSE_JSON_INVALID", ("response",))
     if not isinstance(exc, ValidationError):

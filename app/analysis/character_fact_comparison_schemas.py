@@ -21,6 +21,9 @@ class CharacterFactComparisonDecision(BaseModel):
     proposed_fact_value: TrimmedFactValue | None = None
     proposed_value_json: dict[str, Any] | None = None
     temporal_scope: CharacterFactTemporalScope
+    effective_from_episode_no: int | None = Field(
+        default=None, ge=1, strict=True, exclude_if=lambda value: value is None,
+    )
     comparison_reason: TrimmedReason
 
     @model_validator(mode="before")

@@ -1,5 +1,6 @@
 import unicodedata
 
+from app.analysis.book_world_claims import is_asserted_book_claim
 from app.analysis.evidence_span_resolver import resolve_evidence_span_offsets
 from app.analysis.world_setting_schemas import ExtractedWorldSettingCandidate
 from app.models.episode_chunk import EpisodeChunk
@@ -38,7 +39,11 @@ class WorldSettingCandidateMapper:
                 for span in resolved_spans
             ],
             extraction_confidence=candidate.confidence,
-            raw_extraction_json=candidate.model_dump(mode="json"),
+            raw_extraction_json=candidate.model_copy(
+                update={"evidence_spans": resolved_spans},
+            ).model_dump(mode="json"),
+            temporal_scope=candidate.temporal_scope,
+            effective_from_episode_no=candidate.effective_from_episode_no,
         )
 
     @staticmethod
@@ -93,6 +98,10 @@ def _consolidate_candidates(
             },
             "sourceValues": source_values,
             "sourceCandidates": [candidate.raw_extraction_json for candidate in candidates],
+            **({"epistemic_status": "ASSERTED" if all(is_asserted_book_claim(candidate.raw_extraction_json)
+                for candidate in candidates) else "UNRESOLVED_CLAIM"}
+               if any(isinstance(candidate.raw_extraction_json, dict)
+                      and "epistemic_status" in candidate.raw_extraction_json for candidate in candidates) else {}),
         },
     })
 
