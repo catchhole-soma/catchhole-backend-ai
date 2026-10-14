@@ -104,6 +104,7 @@ class SpringWorkerClient:
         supported_source_kinds: list[AnalysisSourceKind] | None = None,
         supports_setting_book_reference_time: bool | None = None,
         supports_semantic_current_context: bool | None = None,
+        supports_frozen_comparison_evidence: bool | None = None,
     ) -> WorkerAnalysisJobPayload | None:
         request = WorkerAnalysisJobClaimRequest(
             model_name=model_name,
@@ -114,6 +115,7 @@ class SpringWorkerClient:
             supported_source_kinds=supported_source_kinds,
             supports_setting_book_reference_time=supports_setting_book_reference_time,
             supports_semantic_current_context=supports_semantic_current_context,
+            supports_frozen_comparison_evidence=supports_frozen_comparison_evidence,
         )
         response = await self._request(
             "POST",

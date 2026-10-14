@@ -1,5 +1,6 @@
 import json
 import logging
+from collections import OrderedDict
 from hashlib import sha256
 
 import httpx
@@ -7,6 +8,7 @@ import httpx
 from app.core.config import Settings, get_settings
 from app.llm.exceptions import (
     LlmIncompleteResponseError,
+    LlmInputTokenCountError,
     LlmOutputTruncatedError,
     LlmResponseValidationError,
 )
@@ -35,6 +37,7 @@ class OpenAIResponsesClient:
         self.responses_api_url = responses_api_url
         self.reasoning_effort = reasoning_effort
         self.store_responses = store_responses
+        self._input_token_counts: OrderedDict[str, int] = OrderedDict()
         # 실제 HTTP 요청을 보내는 도구, 테스트에서는 MockTransport가 들어간 client를 주입
         # 긴 생성 응답을 기다리는 read만 5분으로 늘리고 연결/전송/풀 제한은 유지한다.
         self.http_client = http_client or httpx.AsyncClient(
@@ -70,23 +73,10 @@ class OpenAIResponsesClient:
         # 실제 OpenAi API 요청을 보내는 부분
         # system_prompt는 역할/규칙, user_prompt는 실제 청크 입력을 담음
         effective_model = model or self.model
-        request_body = {
-            # 호출별 model이 있으면 그걸 쓰고, 없으면 Settings의 기본 모델을 쓴다.
-            "model": effective_model,
-            # 기본은 비저장. 사용자 승인 평가 진단에서만 명시적으로 활성화한다.
-            "store": self.store_responses,
-            "input": [
-                {
-                    "role": "system",
-                    "content": [{"type": "input_text", "text": system_prompt}],
-                },
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": user_prompt}],
-                },
-            ],
-            "max_output_tokens": max_output_tokens,
-        }
+        request_body = self._input_request_body(
+            system_prompt, user_prompt, effective_model, response_schema,
+        )
+        request_body.update(store=self.store_responses, max_output_tokens=max_output_tokens)
         # 같은 정적 prefix를 공유하는 요청만 동일한 key를 사용해 cache routing을 돕는다.
         if prompt_cache_key is not None:
             # Source/mode/schema suffixes can exceed the provider's 64-character limit.
@@ -95,22 +85,6 @@ class OpenAIResponsesClient:
                 prompt_cache_key if len(prompt_cache_key) <= 64
                 else "ch:v1:" + sha256(prompt_cache_key.encode("utf-8")).hexdigest()[:58]
             )
-        if response_schema is not None:
-            request_body["text"] = {
-                "format": {
-                    "type": "json_schema",
-                    "name": response_schema.name,
-                    "schema": response_schema.schema,
-                    "strict": response_schema.strict,
-                }
-            }
-        effective_reasoning_effort = _resolve_reasoning_effort(
-            effective_model,
-            self.reasoning_effort,
-        )
-        if effective_reasoning_effort is not None:
-            request_body["reasoning"] = {"effort": effective_reasoning_effort}
-
         response = await self.http_client.post(
             self.responses_api_url,
             headers={
@@ -211,6 +185,66 @@ class OpenAIResponsesClient:
             output_token_count=output_token_count,
             raw_response=payload,
         )
+
+    async def count_input_tokens(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None = None,
+        response_schema: LlmResponseSchema | None = None,
+    ) -> int:
+        """Count the same input sent to generation, including roles and text format."""
+        request_body = self._input_request_body(
+            system_prompt, user_prompt, model or self.model, response_schema,
+        )
+        cache_key = sha256(json.dumps(
+            request_body, ensure_ascii=False, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        if cache_key in self._input_token_counts:
+            self._input_token_counts.move_to_end(cache_key)
+            return self._input_token_counts[cache_key]
+        if not self.api_key:
+            raise LlmInputTokenCountError("LLM_API_KEY is required for exact input counting.")
+        try:
+            response = await self.http_client.post(
+                self.responses_api_url.rstrip("/") + "/input_tokens",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=request_body,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            count = payload.get("input_tokens") if isinstance(payload, dict) else None
+            if type(count) is not int or count < 0:
+                raise LlmInputTokenCountError("OpenAI input token count must be a nonnegative integer.")
+        except LlmInputTokenCountError:
+            raise
+        except Exception as exc:
+            raise LlmInputTokenCountError("OpenAI exact input token counting failed.") from exc
+        self._input_token_counts[cache_key] = count
+        if len(self._input_token_counts) > 128:
+            self._input_token_counts.popitem(last=False)
+        return count
+
+    def _input_request_body(self, system_prompt, user_prompt, model, response_schema):
+        body = {
+            "model": model,
+            "input": [
+                {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
+            ],
+        }
+        if response_schema is not None:
+            body["text"] = {"format": {
+                "type": "json_schema", "name": response_schema.name,
+                "schema": response_schema.schema, "strict": response_schema.strict,
+            }}
+        reasoning_effort = _resolve_reasoning_effort(model, self.reasoning_effort)
+        if reasoning_effort is not None:
+            body["reasoning"] = {"effort": reasoning_effort}
+        return body
 
     async def aclose(self) -> None:
         await self.http_client.aclose()

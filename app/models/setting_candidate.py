@@ -50,6 +50,7 @@ class SettingCandidate(TimestampMixin, Base):
     value_type: Mapped[SettingValueType | None] = mapped_column(String(30))
     value_json: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     evidence_spans: Mapped[list[dict] | None] = mapped_column(JSONB)
+    narrative_time: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
     review_status: Mapped[SettingCandidateReviewStatus] = mapped_column(String(30))
     reviewed_automatically: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())

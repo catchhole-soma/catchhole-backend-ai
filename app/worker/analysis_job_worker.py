@@ -17,7 +17,7 @@ from app.analysis.character_subject_resolver import (
     SubjectResolutionResult,
 )
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
-from app.analysis.exceptions import OrderedAnalysisIncompleteError
+from app.analysis.exceptions import OrderedAnalysisIncompleteError, OrderedInputContextError
 from app.analysis.ordered_character_subjects import (
     OrderedSubjectResolutionMetrics,
     initial_ordered_subjects,
@@ -32,6 +32,7 @@ from app.analysis.semantic_current_context import (
 )
 from app.analysis.setting_book_identity import BookIdentityContext, has_book_identity_collision
 from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
+from app.analysis.narrative_time import NarrativeTimePoint, ground_extraction_narrative_time
 from app.analysis.world_setting_extractor import WorldSettingExtractor
 from app.analysis.world_setting_pipeline import (
     WorldSettingComparisonPipeline,
@@ -132,6 +133,7 @@ class SpringWorkerApi(
         supported_source_kinds: list[AnalysisSourceKind] | None = None,
         supports_setting_book_reference_time: bool | None = None,
         supports_semantic_current_context: bool | None = None,
+        supports_frozen_comparison_evidence: bool | None = None,
     ) -> WorkerAnalysisJobPayload | None: ...
 
     # claim 직후 현재 Worker가 어떤 단계에 진입했는지 Spring에 보고한다.
@@ -202,6 +204,7 @@ class SettingExtractorApi(Protocol):
         schema_hints: tuple[CharacterSettingSchemaHint, ...] = (),
         known_characters: tuple[KnownCharacter, ...] = (),
         ordered_context: OrderedExtractionContext | None = None,
+        time_context: tuple[NarrativeTimePoint, ...] = (),
     ) -> CharacterSettingExtractionResult: ...
 
 
@@ -326,6 +329,7 @@ class AnalysisJobWorker:
             supported_source_kinds=[AnalysisSourceKind.EPISODE, AnalysisSourceKind.SETTING_BOOK],
             supports_setting_book_reference_time=True,
             supports_semantic_current_context=True,
+            supports_frozen_comparison_evidence=True,
         )
 
     async def run_once(self) -> WorkerRunResult:
@@ -345,6 +349,14 @@ class AnalysisJobWorker:
         payload: WorkerAnalysisJobPayload,
     ) -> WorkerRunResult:
         try:
+            if payload.analysis_mode == AnalysisMode.ORDERED_PROVISIONAL:
+                contract = payload.comparison_evidence_contract
+                if (not isinstance(contract, dict)
+                        or type(contract.get("formatVersion")) is not int
+                        or contract["formatVersion"] != 1):
+                    raise OrderedInputContextError(
+                        "Ordered analysis requires comparisonEvidenceContract formatVersion 1."
+                    )
             if payload.job_type != AnalysisJobType.SETTING_EXTRACTION:
                 raise ValueError(f"Unsupported analysis job type: {payload.job_type}")
             if payload.batch_id is None or (
@@ -657,6 +669,7 @@ class AnalysisJobWorker:
             if payload.analysis_mode == AnalysisMode.ORDERED_PROVISIONAL else None
         )
         ordered_subjects = initial_ordered_subjects(ordered_context) if ordered_context else []
+        time_context: list[NarrativeTimePoint] = []
         for index, chunk in enumerate(chunks):
             extraction_result = await setting_extractor.extract_from_chunk(
                 source_chunk_id=chunk.id,
@@ -668,7 +681,14 @@ class AnalysisJobWorker:
                 **({"ordered_context": ordered_context} if ordered_context else {}),
                 **({"semantic_current_context": semantic_current_context}
                    if semantic_current_context is not None else {}),
+                **({"time_context": tuple(time_context)} if time_context else {}),
             )
+            extraction_result = ground_extraction_narrative_time(
+                extraction_result, chunk=chunk, time_context=time_context,
+            )
+            for point in extraction_result.time_context:
+                if point not in time_context:
+                    time_context.append(point)
             resolved_candidates = resolve_candidate_evidence_offsets(
                 candidates=extraction_result.candidates,
                 chunk_text=chunk.chunk_text,

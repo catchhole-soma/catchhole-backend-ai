@@ -82,12 +82,15 @@ def has_book_current(provenance):
 def validate_current_change(
     *, source: WorkerAnalysisSource | None, current: AnalysisStateProvenance | None = None,
     temporal_scope=CharacterFactTemporalScope.PRESENT, effective_from_episode_no=None,
-    changing_existing=False,
+    changing_existing=False, operation=None,
 ):
     """Reject a concrete projection that the server must hold for human review.
 
     Unknown metadata is not reconstructed from IDs, upload order or reviewSource.
-    This validates only the supplied per-slot metadata; Spring rechecks persisted
+    Automatic callers may supply their validated operation: a destination MERGE
+    preserves existing meaning, and a transition may lack an optional BOOK time.
+    The default remains conservative. This validates supplied per-slot metadata;
+    Spring rechecks persisted
     sources, deletion markers, dependencies and target versions before applying.
     """
     incoming_book = source is not None and source.source_kind == AnalysisSourceKind.SETTING_BOOK
@@ -104,7 +107,28 @@ def validate_current_change(
         if changing_existing and current is not None and current.current_value_protected is True:
             raise ValueError("Book cannot change protected current state.")
     if changing_existing and (incoming_book or current_book):
-        incoming_point = _source_point(source, effective_from_episode_no)
-        if incoming_point is None or any(point is None or not incoming_point.is_strictly_after(point)
-                                         for point in _current_points(current)):
+        if temporal_scope != CharacterFactTemporalScope.PRESENT:
             raise ValueError("Book reference time requires review before changing current state.")
+        incoming_point = _source_point(source, effective_from_episode_no)
+        automatic_transition = operation in {"UPDATE", "REMOVE", "MERGE"}
+        optional_incoming = (automatic_transition and incoming_book
+            and source.reference_time_kind == SettingBookReferenceTimeKind.UNSPECIFIED)
+        if incoming_point is None and not optional_incoming:
+            raise ValueError("Book reference time requires review before changing current state.")
+        optional_current = (
+            [item.source_kind == AnalysisSourceKind.SETTING_BOOK
+             and item.reference_time_kind == SettingBookReferenceTimeKind.UNSPECIFIED
+             and item.temporal_scope == CharacterFactTemporalScope.PRESENT
+             for item in current.current_source_times]
+            if current is not None and current.current_source_times else
+            [current is not None and current.source_kind == AnalysisSourceKind.SETTING_BOOK
+             and current.source_reference_time_kind == SettingBookReferenceTimeKind.UNSPECIFIED]
+        )
+        for point, optional in zip(_current_points(current), optional_current, strict=True):
+            if point is None:
+                if automatic_transition and optional:
+                    continue
+                raise ValueError("Book reference time requires review before changing current state.")
+            if (incoming_point is not None and operation != "MERGE"
+                    and not incoming_point.is_strictly_after(point)):
+                raise ValueError("Book reference time requires review before changing current state.")

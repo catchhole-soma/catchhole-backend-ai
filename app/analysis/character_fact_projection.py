@@ -298,7 +298,9 @@ def validate_character_fact_decision(
     if decision.operation == CharacterFactComparisonOperation.ADD and exact_target_ref is not None:
         raise ValueError("ADD is invalid when the canonical Fact slot already exists.")
 
-    if decision.operation == CharacterFactComparisonOperation.EXCLUDE:
+    if decision.operation == CharacterFactComparisonOperation.EXCLUDE or (
+        decision.operation == CharacterFactComparisonOperation.REVIEW_REQUIRED and decision.target_ref is not None
+    ):
         # A source-anchor conflict still requires review even without a CURRENT mutation.
         validate_current_change(source=source, temporal_scope=decision.temporal_scope,
                                 effective_from_episode_no=decision.effective_from_episode_no)
@@ -319,7 +321,8 @@ def validate_character_fact_decision(
         for reference in requested_refs:
             validate_current_change(source=source, current=entries_by_ref[reference].provenance,
                 temporal_scope=decision.temporal_scope,
-                effective_from_episode_no=getattr(decision, "effective_from_episode_no", None), changing_existing=True)
+                effective_from_episode_no=getattr(decision, "effective_from_episode_no", None), changing_existing=True,
+                operation=("REMOVE" if reference in decision.removed_snapshot_refs else decision.operation))
 
     applies_to_snapshot = decision.operation in {
         CharacterFactComparisonOperation.ADD,

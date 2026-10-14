@@ -15,6 +15,7 @@ from app.analysis.character_fact_projection import (
     CharacterProjectionEntry,
     CharacterProjectionState,
 )
+from app.analysis.source_chronology import validate_current_change
 from app.analysis.world_setting_comparator import WorldSettingComparator
 from app.analysis.world_setting_extractor import WorldSettingExtractor
 from app.clients.spring_worker_client import SpringWorkerClient
@@ -180,13 +181,160 @@ def apply_number(state, source, *, operation="UPDATE", target_ref="P1", value=10
             comparison_reason="원문에는 다른 수치가 명시되어 있습니다."))
 
 
-@pytest.mark.parametrize("kind,number", [("WORK_START", None), ("EPISODE", 3), ("UNSPECIFIED", None)])
-def test_later_episode_current_cannot_be_replaced_in_memory_by_earlier_or_unanchored_book(kind, number):
+@pytest.mark.parametrize("operation", ["UPDATE", "MERGE"])
+@pytest.mark.parametrize("incoming_book,current_book", [(True, False), (False, True), (True, True)])
+def test_validated_present_transition_or_complement_allows_only_optional_book_time(operation, incoming_book, current_book):
+    incoming = book_source("UNSPECIFIED") if incoming_book else WorkerAnalysisSource(
+        source_kind="EPISODE", episode_id=uuid4(), episode_no=8,
+    )
+    current_source = book_source("UNSPECIFIED") if current_book else WorkerAnalysisSource(
+        source_kind="EPISODE", episode_id=uuid4(), episode_no=7,
+    )
+    current = CharacterProjectionEntry(reference="P1", fact_type="PROFILE", fact_key="profile.직업",
+        fact_value="견습 기사", value_json={"value": "견습 기사"},
+        provenance=AnalysisStateProvenance.from_source(confirmation_status="CONFIRMED", source=current_source,
+            source_episode_no=current_source.episode_no))
+    state = CharacterProjectionState([current])
+    value = "정식 기사" if operation == "UPDATE" else "견습 기사이며 서예가"
+    result = state.apply(candidate_ref="C1", projected_snapshot_ref="Q1", fact_type="PROFILE",
+        resolved_fact_key="profile.직업", value_type="STRING", candidate_value_json={"value": value}, source=incoming,
+        source_episode_no=incoming.episode_no,
+        decision=CharacterFactComparisonDecision(operation=operation, target_ref="P1", temporal_scope="PRESENT",
+            proposed_fact_value=value, proposed_value_json={"value": value},
+            comparison_reason="임명식 이후 정식 기사가 되었습니다." if operation == "UPDATE" else "견습 기사 신분과 서예가 활동이 함께 유지됩니다."))
+    assert result.projected_entry.fact_value == value
+    assert result.projected_entry.provenance.effective_from_episode_no is None
+    if incoming_book:
+        assert result.projected_entry.provenance.source_reference_time_kind == "UNSPECIFIED"
+        assert result.projected_entry.provenance.source_episode_no is None
+    if operation == "MERGE":
+        assert len(result.projected_entry.provenance.current_source_times) == 2
+        assert any(time.reference_time_kind == "UNSPECIFIED" for time in result.projected_entry.provenance.current_source_times)
+
+
+@pytest.mark.parametrize("kind,number", [("WORK_START", None), ("EPISODE", 7), ("UNSPECIFIED", None)])
+def test_compatible_destination_merge_keeps_existing_meaning_at_same_earlier_or_optional_time(kind, number):
+    current = current_entry()
+    state = CharacterProjectionState([current])
+    result = apply_number(state, book_source(kind, number), operation="MERGE", value=20)
+    assert result.projected_entry.value_json == current.value_json
+    assert len(result.projected_entry.provenance.current_source_times) == 2
+
+
+def test_explicit_recovery_with_optional_book_time_removes_only_its_current_status():
+    injury = CharacterProjectionEntry(reference="P1", fact_type="STATUS", fact_key="status.부상",
+        fact_value="다리 부상", value_json={"active": True}, provenance=current_entry().provenance)
+    other = CharacterProjectionEntry(reference="P2", fact_type="STATUS", fact_key="status.저주",
+        fact_value="저주", value_json={"active": True}, provenance=current_entry().provenance)
+    state = CharacterProjectionState([injury, other])
+    application = state.apply(candidate_ref="C1", projected_snapshot_ref="Q1", fact_type="STATUS",
+        resolved_fact_key="status.부상", value_type="JSON", candidate_value_json={"active": False},
+        source=book_source("UNSPECIFIED"), decision=CharacterFactComparisonDecision(
+            operation="REMOVE", temporal_scope="PRESENT", removed_snapshot_refs=["P1"],
+            comparison_reason="치료 뒤 통증이 사라지고 혼자 걸어 다리 부상이 끝났습니다."))
+    assert application.projected_entry is None
+    assert state.entries == [other]
+
+
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize("operation", ["MERGE", "UPDATE"])
+def test_world_validated_complement_or_transition_keeps_optional_book_time(batch, operation):
+    source = book_source("UNSPECIFIED")
+    target = WorkerWorldSettingComparisonTarget(world_setting_id=uuid4(), subject_name="마법",
+        version=1, properties=[{"settingName": "시전 조건", "value": "주문이 필요하다", "provenance": current_entry().provenance}])
+    fields = {"subject_name": "마법", "setting_name": "시전 조건", "extracted_value": "치유 마법은 주문 없이 쓴다",
+        "temporal_scope": "PRESENT", "evidence_spans": [{"quote": "치유 마법은 명시적 예외로 주문 없이 쓴다"}],
+        "raw_extraction_json": {"epistemic_status": "ASSERTED"}}
+    decision = {"operation": operation, "consolidation_status": "SINGLE", "target_ref": "T1",
+        "matched_property_name": "시전 조건", "proposed_setting_name": "시전 조건",
+        "proposed_value": "일반 마법은 주문이 필요하며 치유 마법은 예외로 주문 없이 쓴다",
+        "comparison_reason": "일반 규칙과 명시적 치유 예외를 함께 보존합니다."}
+    if operation == "UPDATE":
+        fields.update(extracted_value="개편 이후 모든 마법은 주문 없이 쓴다",
+                      evidence_spans=[{"quote": "마법 개편을 거쳐 기존 주문 방식에서 모든 마법의 무주문 방식으로 바뀌었다"}])
+        decision.update(proposed_value="개편 이후 모든 마법은 주문 없이 쓴다",
+                        comparison_reason="마법 개편의 과정과 전후 방식이 명시되어 있습니다.")
+    if batch:
+        candidate = WorkerWorldSettingComparisonBatchCandidate(candidate_ref="C1", candidate_id=uuid4(), **fields)
+        decision["source_candidate_refs"] = ["C1"]
+        response = {"decisions": [decision]}
+    else:
+        candidate = WorkerWorldSettingCandidatePayload(candidate_id=uuid4(), work_id=uuid4(), source=source,
+            source_episode_id=None, category="POWER_SYSTEM", **fields)
+        response = decision
+    provider = RecordingClient(response)
+    comparator = WorldSettingComparator(llm_client=provider, model="test-model", max_attempts=1)
+    result, _ = asyncio.run(comparator.compare_batch("POWER_SYSTEM", [candidate], [target], analysis_source=source)
+                           if batch else comparator.compare(candidate, [target]))
+    resolved = result.decisions[0] if batch else result
+    assert resolved.operation == operation
+    assert len(provider.requests) == 1
+    prompt = json.loads(provider.requests[0]["user_prompt"])
+    metadata = prompt["source"] if batch else prompt["candidate"]["source"]
+    assert metadata["reference_time_kind"] == "UNSPECIFIED"
+    assert candidate.effective_from_episode_no is None
+
+
+@pytest.mark.parametrize("operation", ["UPDATE", "MERGE"])
+@pytest.mark.parametrize("extra", [
+    {"sourceKind": None, "temporalScope": "UNKNOWN"},
+    {"sourceKind": "SETTING_BOOK", "referenceTimeKind": "UNSPECIFIED", "temporalScope": "PAST"},
+])
+def test_automatic_semantic_operation_does_not_waive_legacy_unknown_or_nonpresent_sources(operation, extra):
+    current = current_entry()
+    current = CharacterProjectionEntry(**{**current.__dict__, "provenance": current.provenance.model_copy(update={
+        "current_source_times": AnalysisStateProvenance.model_validate({
+            "confirmationStatus": "CONFIRMED", "currentSourceTimes": [extra],
+        }).current_source_times,
+    })})
+    state = CharacterProjectionState([current])
+    with pytest.raises(ValueError, match="reference time"):
+        apply_number(state, book_source("UNSPECIFIED"), operation=operation)
+    assert state.entries == [current]
+
+
+@pytest.mark.parametrize("operation", ["UPDATE", "MERGE"])
+def test_automatic_semantic_operation_keeps_direct_current_protection(operation):
+    current = current_entry(protected=True)
+    state = CharacterProjectionState([current])
+    with pytest.raises(ValueError, match="protected current"):
+        apply_number(state, book_source("UNSPECIFIED"), operation=operation)
+    assert state.entries == [current]
+
+
+def test_optional_current_book_position_does_not_hide_a_later_known_source():
+    current = current_entry()
+    current = CharacterProjectionEntry(**{**current.__dict__, "provenance": current.provenance.model_copy(update={
+        "current_source_times": AnalysisStateProvenance.model_validate({
+            "confirmationStatus": "CONFIRMED", "currentSourceTimes": [
+                {"sourceKind": "SETTING_BOOK", "referenceTimeKind": "UNSPECIFIED", "temporalScope": "PRESENT"},
+                {"sourceKind": "EPISODE", "sourceEpisodeNo": 9, "temporalScope": "PRESENT"},
+            ],
+        }).current_source_times,
+    })})
+    state = CharacterProjectionState([current])
+    with pytest.raises(ValueError, match="reference time"):
+        apply_number(state, book_source("EPISODE", 8))
+    assert state.entries == [current]
+
+
+@pytest.mark.parametrize("kind,number", [("WORK_START", None), ("EPISODE", 3)])
+def test_later_episode_current_cannot_be_replaced_in_memory_by_known_earlier_book(kind, number):
     current = current_entry()
     state = CharacterProjectionState([current])
     with pytest.raises(ValueError, match="reference time"):
         apply_number(state, book_source(kind, number))
     assert state.entries == [current]
+
+
+@pytest.mark.parametrize("optional_incoming", [True, False])
+def test_chronology_default_stays_strict_when_optional_book_time_is_missing(optional_incoming):
+    incoming = book_source("UNSPECIFIED", None) if optional_incoming else book_source("EPISODE", 8)
+    current = current_entry().provenance if optional_incoming else AnalysisStateProvenance.from_source(
+        confirmation_status="CONFIRMED", source=book_source("UNSPECIFIED", None),
+    )
+    with pytest.raises(ValueError, match="reference time"):
+        validate_current_change(source=incoming, current=current, changing_existing=True)
 
 
 def test_persisted_protection_prevents_book_projection_without_treating_all_human_review_as_protected():
@@ -205,9 +353,9 @@ def test_persisted_protection_prevents_book_projection_without_treating_all_huma
     ("EPISODE", 7, "EPISODE", 8, True),
     ("WORK_START", None, "WORK_START", None, False),
     ("WORK_START", None, "EPISODE", 1, True),
-    ("UNSPECIFIED", None, "EPISODE", 8, False),
+    ("UNSPECIFIED", None, "EPISODE", 8, True),
 ])
-def test_book_to_book_conflicts_require_strictly_later_known_time(current_kind, current_no, incoming_kind, incoming_no, allowed):
+def test_validated_book_changes_preserve_known_order_and_optional_reference_time(current_kind, current_no, incoming_kind, incoming_no, allowed):
     current = current_entry()
     current = CharacterProjectionEntry(**{**current.__dict__, "provenance": AnalysisStateProvenance.from_source(
         confirmation_status="CONFIRMED", source=book_source(current_kind, current_no),

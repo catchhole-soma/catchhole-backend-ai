@@ -2,12 +2,14 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
 from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.world_setting_comparator import WorldSettingSubjectResolver
+from app.domain.enums import WorldSettingCategory
 from app.schemas.analysis_source import WorkerAnalysisSource
 from app.schemas.worker import WorkerWorldSettingSubject, WorkerWorldSettingSubjectResolutionCandidate
 from tests.test_ordered_analysis_runtime import RecordingClient
@@ -98,6 +100,77 @@ def test_same_name_still_requires_model_choice_and_all_book_schema_objects_are_c
     assert selected == [] and ambiguous is False
     from tests.test_book_world_provider_schema import _strict_object_violations
     assert _strict_object_violations(client.requests[0]["response_schema"].schema) == []
+
+
+@pytest.mark.parametrize("raw, is_book, expected_scope", [
+    pytest.param({"epistemic_status": "ASSERTED", "scope_name": "정비반"}, True, "정비반", id="maintenance"),
+    pytest.param({"epistemic_status": "ASSERTED", "scope_name": "조율반"}, True, "조율반", id="tuning"),
+    pytest.param({"epistemic_status": "ASSERTED", "scope_name": "기록실"}, True, "기록실", id="archive"),
+    pytest.param({"epistemic_status": "ASSERTED"}, True, None, id="scope-missing"),
+    pytest.param({"epistemic_status": "ASSERTED", "scope_name": None}, True, None, id="scope-null"),
+    pytest.param({"epistemic_status": "ASSERTED", "scope_name": {}}, True, None, id="scope-object"),
+    pytest.param({"epistemic_status": "ASSERTED", "scope_name": []}, True, None, id="scope-list"),
+    pytest.param({"epistemic_status": "ASSERTED", "scope_name": 42}, True, None, id="scope-number"),
+    pytest.param({"epistemic_status": "ASSERTED", "scope_name": "정비반"}, False, None, id="non-book"),
+])
+def test_ordered_book_scope_input_contract(monkeypatch, raw, is_book, expected_scope):
+    quote = "부서는 시설을 관리한다."
+    item = source_candidate("수로관리청", [quote]).model_copy(update={
+        "category": WorldSettingCategory.FACTION, "raw_extraction_json": raw,
+        **({} if is_book else {"source": None}),
+    })
+    subject = target("수로관리청", ["수로관리청은 세 부서를 둔다."])
+    before = item.model_dump(mode="json")
+    client = RecordingClient()
+
+    class RequestCaptured(BaseException):
+        pass
+
+    async def capture(**kwargs):
+        client.requests.append(kwargs)
+        raise RequestCaptured
+
+    monkeypatch.setattr(client, "create_text_response", capture)
+    monkeypatch.setattr("app.analysis.world_setting_comparator.get_settings", lambda: SimpleNamespace())
+    resolver = WorldSettingSubjectResolver(
+        llm_client=client, model="test-model", max_attempts=1, max_output_tokens=2000,
+    )
+    with pytest.raises(RequestCaptured):
+        asyncio.run(resolver.select_ordered_subjects(item, [subject]))
+    request, = client.requests
+    expected_candidate = {"category": "FACTION", "subject_name": "수로관리청"}
+    if expected_scope is not None:
+        expected_candidate["scope_name"] = expected_scope
+    expected_candidate["evidence"] = [quote]
+    if is_book:
+        expected_candidate["source"] = {
+            "source_kind": "SETTING_BOOK", "setting_book_name": SOURCE["settingBookName"],
+            "revision_no": SOURCE["revisionNo"], "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": None,
+        }
+    expected = json.dumps({
+        "candidate": expected_candidate,
+        "subjects": [{
+            "ref": "S1", "name": "수로관리청", "aliases": [],
+            "identity_evidence": ["수로관리청은 세 부서를 둔다."],
+            "confirmation_status": "PROVISIONAL", "source_episode_no": None,
+        }],
+        "unresolved_references": [],
+    }, ensure_ascii=False)
+    assert request["user_prompt"].encode("utf-8") == expected.encode("utf-8")
+    assert item.model_dump(mode="json") == before
+    assert request["model"] == "test-model" and request["max_output_tokens"] == 2000
+    assert request["prompt_cache_key"] == (
+        "ordered-world-subject-resolution:v4:book-grounded-identity-v1" if is_book
+        else "ordered-world-subject-resolution:v4"
+    )
+    schema = request["response_schema"]
+    assert schema.name == ("book_world_subject_resolution" if is_book else "ordered_world_subject_resolution")
+    assert schema.strict is True
+    assert set(schema.schema["properties"]) == (
+        {"selected_subject_refs", "ambiguous", "identity_proofs"} if is_book
+        else {"selected_subject_refs", "ambiguous"}
+    )
 
 
 def test_parent_conflict_exhaustion_remains_failure_not_a_new_identity():

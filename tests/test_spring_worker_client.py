@@ -939,6 +939,7 @@ def test_character_fact_comparison_calls_match_spring_contract() -> None:
     complete_payload = json.loads(requests[2].content)
     assert complete_payload == {
         "operation": "ADD",
+        "advanceCurrentNarrativeTime": False,
         "removedSnapshotEntries": [{"factType": "STATUS", "factKey": "status.출혈"}],
         "proposedFactValue": "완전히 회복됨",
         "proposedValueJson": {"active": False},

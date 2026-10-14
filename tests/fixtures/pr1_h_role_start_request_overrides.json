@@ -1,0 +1,15 @@
+{
+  "description": "Continuing-attribute start qualifier versus ended prior attribute. Preserve historical and Task1/Task2 captures; override only system/body digest and prompt namespace.",
+  "overrides": {
+    "extraction": {
+      "sha256": "c51f479fd1fe9e77e767f44241e02725029dcd1cbba3f4abf0432eeb3bbd63f0",
+      "prompt_cache_key": "setting-extraction:v11:e9721bfb5d486efc",
+      "system_sha256": "c8941a4e9cf9b14143f6f27d27ab6ace1297317dd63617eed9cb54dd0a34aa0a"
+    },
+    "character_batch": {
+      "sha256": "7fd3620dc1e6fa9a63262abc9a9f7a80c0eace8b047225c2b2c0e8e54b6a4e82",
+      "prompt_cache_key": "character-fact-comparison-batch:v7",
+      "system_sha256": "79a52add39d0379c3efbfd888b04c56185e324cdeaf329eeede92ddcebdcd763"
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections import deque
 from uuid import UUID
 
@@ -85,6 +86,78 @@ def test_pipeline_preserves_fixed_policy_response_without_promoting_review(
     assert request.removed_snapshot_entries == []
     assert request.raw_comparison_json["operation"] == operation
     assert context.snapshot_entries == [snapshot]
+
+
+def test_empty_current_pipeline_delivers_recovery_and_other_status_history_to_real_prompt() -> None:
+    from app.analysis.character_fact_comparator import CharacterFactComparator
+    from tests.test_ordered_analysis_runtime import RecordingClient
+
+    raw = _context(CANDIDATE_ID, "time-context").model_dump(by_alias=True, mode="json")
+    raw["snapshotEntries"] = []
+    raw["candidate"]["canonicalFactKey"] = "status.왼손_화상"
+    raw["advisoryCurrentContext"] = {
+        "currentNarrativeTime": {
+            "description": "장마 첫날", "sourceCandidateId": "10000000-0000-4000-8000-000000000020",
+            "evidenceSpans": [{"quote": "장마 첫날", "startOffset": 3, "endOffset": 8,
+                               "sourceChunkId": "10000000-0000-4000-8000-000000000021"}],
+        },
+        "currentSlots": [],
+        "historyFacts": [
+            {"factId": "10000000-0000-4000-8000-000000000022", "factType": "STATUS",
+             "factKey": "status.검지_경직", "factValue": "검지 경직", "operation": "ADD"},
+            {"factId": "10000000-0000-4000-8000-000000000023", "factType": "STATUS",
+             "factKey": "status.회복", "factValue": "회복", "operation": "REMOVE",
+             "removedSnapshotEntries": [{"factType": "STATUS", "factKey": "status.검지_경직"}]},
+        ],
+    }
+    context = WorkerCharacterFactComparisonContextResponse.model_validate(raw)
+    spring = FakeSpringApi([CANDIDATE_ID])
+
+    async def fixed_context(*args):
+        return context
+
+    spring.get_character_fact_comparison_context = fixed_context
+    provider = RecordingClient({
+        "operation": "HISTORY_ONLY", "target_ref": None, "removed_snapshot_refs": [],
+        "proposed_fact_value": None, "proposed_value_json": None,
+        "temporal_scope": "PAST", "comparison_reason": "회복 이전 기록을 이력으로 보존합니다.",
+    })
+    result = asyncio.run(CharacterFactComparisonPipeline(
+        spring, CharacterFactComparator(llm_client=provider, max_attempts=1),
+    ).process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+
+    assert (result.completed_count, result.failed_count) == (1, 0)
+    prompt = json.loads(provider.requests[0]["user_prompt"])
+    advisory = prompt["advisory_current_context"]
+    assert prompt["snapshot_entries"] == []
+    assert advisory["currentNarrativeTime"]["description"] == "장마 첫날"
+    assert [fact["factKey"] for fact in advisory["historyFacts"]] == ["status.검지_경직", "status.회복"]
+    assert advisory["historyFacts"][1]["operation"] == "REMOVE"
+    assert advisory["historyFacts"][1]["removedSnapshotEntries"][0]["factKey"] == "status.검지_경직"
+    assert "10000000-0000-4000-8000" not in provider.requests[0]["user_prompt"]
+    assert raw["advisoryCurrentContext"]["historyFacts"][0]["factId"] == "10000000-0000-4000-8000-000000000022"
+
+
+@pytest.mark.parametrize("operation", ["EXCLUDE", "HISTORY_ONLY"])
+def test_pipeline_delivers_explicit_present_time_selection_without_snapshot_mutation(operation) -> None:
+    spring = FakeSpringApi([CANDIDATE_ID])
+    decision = CharacterFactComparisonDecision.model_validate({
+        "operation": operation, "target_ref": None, "removed_snapshot_refs": [],
+        "proposed_fact_value": None, "proposed_value_json": None,
+        "temporal_scope": "PRESENT", "comparison_reason": "현재 관측 시점만 확인합니다.",
+        "advance_current_narrative_time": True,
+    })
+    result = asyncio.run(CharacterFactComparisonPipeline(
+        spring, FakeComparator([decision]),
+    ).process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+
+    assert result.completed_count == 1
+    payload = spring.completions[0].model_dump(by_alias=True, mode="json")
+    assert payload.get("advanceCurrentNarrativeTime") is True
+    assert payload["operation"] == operation
+    assert payload["proposedFactValue"] is None
+    assert payload["removedSnapshotEntries"] == []
+    assert "evidenceSpans" not in payload
 
 
 def test_pipeline_maps_refs_to_fact_identity_without_source_ids() -> None:

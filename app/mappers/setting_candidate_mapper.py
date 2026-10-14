@@ -44,6 +44,8 @@ class SettingCandidateMapper:
             else None
         )
         raw_ai_result_json = candidate.model_dump(mode="json")
+        if candidate._raw_narrative_time is not None:
+            raw_ai_result_json["narrative_time"] = candidate._raw_narrative_time
         return SettingCandidate(
             id=uuid4(),
             work_id=work_id,
@@ -71,6 +73,7 @@ class SettingCandidateMapper:
             ),
             value_type=value_type,
             value_json=candidate.value_json,
+            narrative_time=None if candidate.narrative_time is None else candidate.narrative_time.storage_data(),
             evidence_spans=[
                 evidence_span.model_dump(mode="json")
                 for evidence_span in candidate.evidence_spans

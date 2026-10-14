@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.json_response import parse_json_object
+from app.analysis.narrative_time import NarrativeTimePoint, time_context_prompt_data
 from app.analysis.ordered_context import (
     SETTING_BOOK_INSTRUCTIONS,
     BoundedOrderedClient,
@@ -46,7 +47,7 @@ DEFAULT_PROMPT_PATH = (
 )
 # 이 파일 전용 로그 객체를 만든다
 logger = logging.getLogger(__name__)
-SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v10"
+SETTING_EXTRACTION_CACHE_KEY_VERSION = "setting-extraction:v12"
 SETTING_EXTRACTION_RESPONSE_SCHEMA = LlmResponseSchema(
     name="character_setting_extraction",
     schema=character_setting_provider_json_schema(),
@@ -71,6 +72,12 @@ _SAFE_VALIDATION_PATH_FIELDS = frozenset(
         "extra_json",
         "value",
         "active",
+        "narrative_time",
+        "fact_time",
+        "reference_time",
+        "time_context",
+        "context_ref",
+        "description",
     }
 )
 _UNEXPECTED_VALIDATION_PATH_FIELD = "unexpected_field"
@@ -156,6 +163,7 @@ class CharacterSettingExtractor:
         ordered_context: OrderedExtractionContext | None = None,
         setting_book: WorkerAnalysisSettingBookPayload | None = None,
         semantic_current_context: SemanticCurrentInput | None = None,
+        time_context: tuple[NarrativeTimePoint, ...] = (),
     ) -> CharacterSettingExtractionResult:
         # Schema가 없으면 모든 설정 후보를 제외하라는 prompt가 만들어지므로,
         # 비용이 발생하는 LLM 호출 전에 잘못된 직접 호출을 차단한다.
@@ -181,7 +189,7 @@ class CharacterSettingExtractor:
             start = user_prompt.index("metadata:\n")
             user_prompt = (user_prompt[:start].replace("다음 회차 청크", "다음 설정집 청크")
                            + f"metadata:\n{metadata}\n\nchunk_text:\n{chunk_text}")
-            prompt_cache_key += ":setting-book-grounded-function-v1"
+            prompt_cache_key += ":setting-book-grounded-function-v2"
         if ordered_context is not None:
             system_prompt += "\n\n" + ordered_state_instructions(
                 AnalysisSourceKind.SETTING_BOOK if setting_book is not None else None
@@ -199,6 +207,11 @@ class CharacterSettingExtractor:
             user_prompt += "\n\nsemantic_current_state:\n" + semantic_current_context.character_prompt_json()
             prompt_cache_key += ":semantic-current-v1" + STATUS_FORECAST_CACHE_SUFFIX
 
+        if time_context:
+            user_prompt += "\n\nverified_time_context:\n" + json.dumps(
+                time_context_prompt_data(time_context), ensure_ascii=False,
+            )
+
         # Provider schema와 저장 경계 schema 검증 실패만 안전한 사유와 함께 재시도한다.
         last_feedback: _SafeValidationFeedback | None = None
         repeated_reason_counts: Counter[str] = Counter()
@@ -215,7 +228,7 @@ class CharacterSettingExtractor:
                         source_chunk_id,
                         prompt_cache_key,
                         current_max_output_tokens,
-                        requires_ordered_bound=(ordered_context is not None or semantic_current_context is not None),
+                        requires_ordered_bound=(ordered_context is not None or semantic_current_context is not None or bool(time_context)),
                     )
                     return ground_setting_book_evidence(result, chunk_text) if setting_book is not None else result
                 except LlmOutputTruncatedError as exc:
@@ -299,7 +312,10 @@ class CharacterSettingExtractor:
                     candidate.pop("source_chunk_id", None)
                     candidate.pop("setting_book_identity_proof", None)
         provider_result = CharacterSettingProviderResponse.model_validate(payload)
-        return provider_result.to_extraction_result(source_chunk_id)
+        result = provider_result.to_extraction_result(source_chunk_id)
+        for candidate, raw in zip(result.candidates, payload["candidates"], strict=True):
+            candidate._raw_narrative_time = raw.get("narrative_time")
+        return result
 
     def _load_system_prompt(self) -> str:
         return self.prompt_path.read_text(encoding="utf-8")

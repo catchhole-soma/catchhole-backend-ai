@@ -156,7 +156,7 @@ class WorldSettingExtractor:
             max_attempts=self.max_attempts,
             prompt_cache_key=(WORLD_SETTING_EXTRACTION_CACHE_KEY
                               + (":ordered-references-v1" if analysis_context else "")
-                              + (":setting-book-grounded-claims-v1" if setting_book else "")
+                              + (":setting-book-grounded-claims-v2" if setting_book else "")
                               + (":semantic-current-v1" if semantic_current_context is not None else "")),
             operation_name="World-setting extraction",
             logger=logger,

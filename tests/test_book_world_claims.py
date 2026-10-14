@@ -71,9 +71,13 @@ def test_asserted_current_origin_still_allows_new_current_fact_and_ignores_unrel
     assert result.decisions[0].operation == "ADD"
 
 
-def test_book_unresolved_topic_creates_no_selectable_subject_and_never_calls_identity_provider():
+@pytest.mark.parametrize("raw", [
+    pytest.param(None, id="raw-null"),
+    pytest.param([], id="raw-list"),
+    pytest.param({"epistemic_status": "UNRESOLVED_CLAIM"}, id="unresolved"),
+])
+def test_book_unresolved_topic_creates_no_selectable_subject_and_never_calls_identity_provider(raw):
     client = RecordingClient({"selected_subject_refs": [], "ambiguous": False})
-    raw = {"epistemic_status": "UNRESOLVED_CLAIM"}
     item = WorkerWorldSettingSubjectResolutionCandidate(candidate_id=uuid4(), category="WORLD_RULE_HISTORY",
         subject_name="검은 깃", evidence_spans=[{"quote": "검은 깃의 정체는 미확인이다."}],
         source=WorkerAnalysisSource.model_validate(SOURCE), rawExtractionJson=raw)

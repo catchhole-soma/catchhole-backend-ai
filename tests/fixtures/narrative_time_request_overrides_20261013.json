@@ -1,0 +1,16 @@
+{
+  "reason": "Approved same-call narrative time extraction schema and representative-time/history comparison prompt. Historical captures unchanged.",
+  "overrides": {
+    "extraction": {
+      "sha256": "a8affd740a9ab1cb0b498143c8b3566750826e3609d9e3f71359ef12b40f0449",
+      "system_sha256": "9efdaf28315fa77f7b3497e1312db2991f4859b786133d1fcbd953c75cd7c4eb",
+      "prompt_cache_key": "setting-extraction:v12:e9721bfb5d486efc",
+      "schema_sha256": "9d46dfd8e602e5121f1ced85cb70ad745200eb17953e8dfb0dc0c83393c8832a"
+    },
+    "character_batch": {
+      "sha256": "6e66d4138bb0eff19611c62f0087d53e2a2526725f58d227ea1f3ec6f45f5cb8",
+      "system_sha256": "1524def5b2b851d60da7d914251998476cb504dd4420fe9c1f9d8e4d2b8049a2",
+      "prompt_cache_key": "character-fact-comparison-batch:v10"
+    }
+  }
+}

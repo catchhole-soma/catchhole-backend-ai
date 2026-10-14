@@ -30,7 +30,7 @@ def book_payload_data():
     data = _payload().model_dump(by_alias=True, mode="json")
     data.update(
         sourceKind="SETTING_BOOK", episode=None, analysisMode="ORDERED_PROVISIONAL",
-        reviewMode="AUTOMATIC", analysisContext=_input_context().model_dump(by_alias=True, mode="json"),
+        reviewMode="AUTOMATIC", comparisonEvidenceContract={"formatVersion": 1}, analysisContext=_input_context().model_dump(by_alias=True, mode="json"),
         settingBook={
             "settingBookId": str(BOOK_ID), "originalFilename": "인물 설정.docx",
             "revisionId": str(REVISION_ID), "revisionNo": 2,

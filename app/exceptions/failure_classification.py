@@ -14,6 +14,7 @@ from app.clients.exceptions import (
 from app.domain.enums import AnalysisFailureCode
 from app.llm.exceptions import (
     LlmIncompleteResponseError,
+    LlmInputTokenCountError,
     LlmOutputTruncatedError,
     LlmResponseValidationError,
 )
@@ -64,6 +65,7 @@ def is_candidate_comparison_failure(exc: BaseException) -> bool:
     """Only provider/decision errors are isolatable; API/context/lease remain job-scoped."""
     if is_global_provider_failure(exc) or any(_find_exception(exc, error) is not None for error in (
         OrderedInputContextError, OrderedAnalysisIncompleteError,
+        LlmInputTokenCountError,
         SpringWorkerHttpError, SpringWorkerTransportError, AiTokenQuotaExhaustedError,
     )):
         return False
@@ -133,6 +135,8 @@ def _common_failure_code(exc: BaseException) -> AnalysisFailureCode | None:
         return AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED
     if _find_exception(exc, WorkerLeaseExpiredError) is not None:
         return AnalysisFailureCode.WORKER_LEASE_EXPIRED
+    if _find_exception(exc, LlmInputTokenCountError) is not None:
+        return AnalysisFailureCode.UNEXPECTED_ERROR
     if _find_exception(exc, OrderedInputContextError) is not None:
         # The failure endpoint must persist a non-deferrable code too: Python's
         # exception type is no longer available to a later backend claim/finalize.

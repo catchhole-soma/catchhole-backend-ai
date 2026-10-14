@@ -35,7 +35,7 @@ def execute(sources, outputs, *, entries=None, fact_type="PROFILE"):
             return LlmTextResponse(text=json.dumps({"decisions": output}))
     comparator = module.CharacterFactComparator(
         llm_client=Client(), model="offline", max_attempts=3, max_output_tokens=3000,
-        batch_max_output_tokens=16000, batch_max_input_tokens=64000, batch_max_candidates=10,
+        batch_max_output_tokens=16000, batch_max_input_tokens=64000,
     )
     async def run():
         return await execute_character_fact_comparison_batch(

@@ -84,7 +84,10 @@ def property_response_schema(payload: dict) -> LlmResponseSchema:
     """Constrain the provider to the same complete property allowlist used by the decoder."""
     schema = deepcopy(ORDERED_WORLD_BATCH_RESPONSE_SCHEMA.schema)
     refs = list(property_index(payload))
-    field = schema["$defs"]["OrderedWorldPropertyDecision"]["properties"]
+    decision_schema = schema["$defs"]["OrderedWorldPropertyDecision"]
+    field = decision_schema["properties"]
+    field["explicit_root_scope_evidence_index"].pop("default", None)
+    decision_schema["required"] = list(field)
     field["matched_property_ref"] = (
         {"anyOf": [{"type": "string", "enum": refs}, {"type": "null"}]}
         if refs else {"type": "null"}

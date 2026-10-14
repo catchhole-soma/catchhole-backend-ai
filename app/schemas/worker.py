@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.analysis.semantic_current_context import SemanticCurrentContext
+from app.analysis.narrative_time import NarrativeTime
 from app.domain.enums import (
     AnalysisFailureCode,
     AnalysisJobCheckpointStage,
@@ -83,6 +84,9 @@ class WorkerAnalysisJobClaimRequest(BaseModel):
     )
     supports_semantic_current_context: bool | None = Field(
         default=None, alias="supportsSemanticCurrentContext", strict=True,
+    )
+    supports_frozen_comparison_evidence: bool | None = Field(
+        default=None, alias="supportsFrozenComparisonEvidence",
     )
 
 
@@ -228,6 +232,7 @@ class WorkerAnalysisKnownCharacterPayload(BaseModel):
         alias="activeStatuses",
     )
     protected_slots: list[WorkerProtectedCharacterSlot] = Field(default_factory=list, alias="protectedSlots")
+    current_narrative_time: dict[str, Any] | None = Field(default=None, alias="currentNarrativeTime")
 
 
 class WorkerAnalysisProvisionalCharacterPayload(BaseModel):
@@ -246,6 +251,7 @@ class WorkerAnalysisProvisionalCharacterPayload(BaseModel):
     active_statuses: list[WorkerAnalysisActiveCharacterStatusPayload] = Field(
         default_factory=list, alias="activeStatuses"
     )
+    current_narrative_time: dict[str, Any] | None = Field(default=None, alias="currentNarrativeTime")
 
     @model_validator(mode="after")
     def validate_source(self):
@@ -314,6 +320,10 @@ class WorkerAnalysisJobPayload(BaseModel):
     analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
     semantic_current_context: SemanticCurrentContext | None = Field(
         default=None, alias="semanticCurrentContext", exclude_if=lambda value: value is None,
+    )
+    # Keep an unsupported contract until the claimed lease can be failed explicitly.
+    comparison_evidence_contract: Any | None = Field(
+        default=None, alias="comparisonEvidenceContract", exclude_if=lambda value: value is None,
     )
     provisional_characters: list[WorkerAnalysisProvisionalCharacterPayload] = Field(
         default_factory=list, alias="provisionalCharacters"
@@ -900,6 +910,7 @@ class WorkerCharacterFactComparisonBatchCandidate(BaseModel):
         alias="canonicalKeyResolution"
     )
     confidence: float | None = Field(default=None, ge=0, le=1)
+    narrative_time: NarrativeTime | None = Field(default=None, alias="narrativeTime")
 
     @model_validator(mode="after")
     def validate_source(self):
@@ -925,7 +936,6 @@ class WorkerCharacterFactComparisonBatchPayload(BaseModel):
     provisional_subject_key: str | None = Field(default=None, alias="provisionalSubjectKey")
     candidates: list[WorkerCharacterFactComparisonBatchCandidate] = Field(
         min_length=1,
-        max_length=20,
     )
 
     @model_validator(mode="after")
@@ -978,13 +988,13 @@ class WorkerCharacterFactComparisonBatchSnapshotEntry(BaseModel):
         default=None,
         alias="sourceCandidateRef",
         pattern=r"^C[1-9][0-9]*$",
+        max_length=20,
     )
     dependency_candidate_refs: list[
         Annotated[str, Field(pattern=r"^C[1-9][0-9]*$", max_length=20)]
     ] = Field(
         default_factory=list,
         alias="dependencyCandidateRefs",
-        max_length=20,
     )
     fact_type: str = Field(alias="factType", min_length=1, max_length=30)
     fact_key: str = Field(alias="factKey", min_length=1, max_length=150)
@@ -1003,9 +1013,9 @@ class WorkerCharacterFactComparisonBatchContextResponse(BaseModel):
     provisional_subject_key: str | None = Field(default=None, alias="provisionalSubjectKey")
     base_snapshot_version: int = Field(alias="baseSnapshotVersion", ge=0)
     protected_slots: list[WorkerProtectedCharacterSlot] = Field(default_factory=list, alias="protectedSlots")
+    advisory_current_context: dict[str, Any] | None = Field(default=None, alias="advisoryCurrentContext")
     candidates: list[WorkerCharacterFactComparisonBatchCandidate] = Field(
         min_length=1,
-        max_length=20,
     )
     snapshot_entries: list[WorkerCharacterFactComparisonBatchSnapshotEntry] = Field(
         default_factory=list,
@@ -1060,18 +1070,17 @@ class WorkerCharacterFactComparisonBatchDecision(BaseModel):
     ] = Field(
         default_factory=list,
         alias="dependencyCandidateRefs",
-        max_length=20,
     )
     removed_snapshot_refs: list[
         Annotated[str, Field(pattern=r"^(?:P|Q)[1-9][0-9]*$", max_length=20)]
     ] = Field(
         default_factory=list,
         alias="removedSnapshotRefs",
-        max_length=30,
     )
     proposed_fact_value: str | None = Field(default=None, alias="proposedFactValue")
     proposed_value_json: Any | None = Field(default=None, alias="proposedValueJson")
     temporal_scope: CharacterFactTemporalScope = Field(alias="temporalScope")
+    advance_current_narrative_time: bool = Field(default=False, alias="advanceCurrentNarrativeTime", strict=True)
     effective_from_episode_no: int | None = Field(
         default=None, alias="effectiveFromEpisodeNo", ge=1, strict=True, exclude_if=lambda value: value is None,
     )
@@ -1104,11 +1113,9 @@ class WorkerCharacterFactComparisonBatchCompleteRequest(BaseModel):
     context_token: str = Field(alias="contextToken", min_length=64, max_length=64)
     decisions: list[WorkerCharacterFactComparisonBatchDecision] = Field(
         default_factory=list,
-        max_length=20,
     )
     failures: list[WorkerCharacterFactComparisonBatchFailure] = Field(
         default_factory=list,
-        max_length=20,
     )
     raw_comparison_json: dict[str, Any] | None = Field(
         default=None,
@@ -1124,8 +1131,6 @@ class WorkerCharacterFactComparisonBatchCompleteRequest(BaseModel):
             raise ValueError("A character batch candidate may be completed only once.")
         if not refs:
             raise ValueError("A character batch completion must contain a result.")
-        if len(refs) > 20:
-            raise ValueError("A character batch completion may cover at most 20 candidates.")
         return self
 
 
@@ -1158,6 +1163,7 @@ class WorkerCharacterFactComparisonCandidatePayload(BaseModel):
     canonical_fact_type: str = Field(alias="canonicalFactType", min_length=1, max_length=30)
     canonical_fact_key: str = Field(alias="canonicalFactKey", min_length=1, max_length=150)
     confidence: float | None = Field(default=None, ge=0, le=1)
+    narrative_time: NarrativeTime | None = Field(default=None, alias="narrativeTime")
 
 
 class WorkerCharacterSnapshotEntry(BaseModel):
@@ -1199,6 +1205,7 @@ class WorkerCharacterFactComparisonContextResponse(BaseModel):
     candidate: WorkerCharacterFactComparisonCandidatePayload
     snapshot_entries: list[WorkerCharacterSnapshotEntry] = Field(alias="snapshotEntries")
     protected_slots: list[WorkerProtectedCharacterSlot] = Field(default_factory=list, alias="protectedSlots")
+    advisory_current_context: dict[str, Any] | None = Field(default=None, alias="advisoryCurrentContext")
     prior_candidates: list[WorkerCharacterPriorFactCandidate] = Field(
         default_factory=list,
         alias="priorCandidates",
@@ -1234,6 +1241,7 @@ class WorkerCharacterFactComparisonCompleteRequest(BaseModel):
         alias="proposedValueJson",
     )
     temporal_scope: CharacterFactTemporalScope = Field(alias="temporalScope")
+    advance_current_narrative_time: bool = Field(default=False, alias="advanceCurrentNarrativeTime", strict=True)
     effective_from_episode_no: int | None = Field(
         default=None, alias="effectiveFromEpisodeNo", ge=1, strict=True, exclude_if=lambda value: value is None,
     )

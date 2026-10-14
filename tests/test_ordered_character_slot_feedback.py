@@ -74,7 +74,7 @@ def run(responses, sources, *, ordered=True):
     async def execute():
         comparator = module.CharacterFactComparator(
             llm_client=Client(), model="offline", max_attempts=3, max_output_tokens=3000,
-            batch_max_output_tokens=16000, batch_max_input_tokens=64000, batch_max_candidates=10,
+            batch_max_output_tokens=16000, batch_max_input_tokens=64000,
         )
         return await comparator.compare_batch(matched_character_name="비요른", canonical_fact_type="PROFILE",
             candidates=sources, snapshot_entries=initial(), ordered_context=ordered)

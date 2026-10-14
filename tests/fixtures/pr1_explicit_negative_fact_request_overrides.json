@@ -1,0 +1,10 @@
+{
+  "reason": "GH221 PR1 direct current fact independent of a separate unresolved relation: character batch prompt/body SHA and cache key only. Historical captures/probes, user input, schema, model, reasoning, store, limits and all other requests stay unchanged. Offline fixed-response transport verification only.",
+  "overrides": {
+    "character_batch": {
+      "prompt_cache_key": "character-fact-comparison-batch:v9",
+      "sha256": "ca359ecafe4261cd06f250151fb2ef64ae661141f5ef69bd9c7c66c18a5cfc2f",
+      "system_sha256": "d715b874b6a0239945ea1eed4f1cabadc7494d1b05a3d3b6438911b7a108628b"
+    }
+  }
+}

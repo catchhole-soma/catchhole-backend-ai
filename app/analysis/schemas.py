@@ -11,6 +11,7 @@ from pydantic import (
     StrictFloat,
     StrictInt,
     StrictStr,
+    PrivateAttr,
     StringConstraints,
     field_validator,
     model_validator,
@@ -18,6 +19,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from app.domain.setting_values import normalize_setting_display_value
+from app.analysis.narrative_time import NarrativeTime, NarrativeTimePoint
 
 CandidateKind = Literal["SETTING", "CHARACTER_DISCOVERY"]
 SettingValueType = Literal["STRING", "NUMBER", "BOOLEAN", "JSON", "UNKNOWN"]
@@ -58,6 +60,8 @@ class ExtractedSettingCandidate(BaseModel):
     value_json: dict[str, Any] | None = None
     evidence_spans: list[ExtractedEvidenceSpan] = Field(min_length=1)
     confidence: float | None = Field(default=None, ge=0, le=1)
+    narrative_time: NarrativeTime | None = None
+    _raw_narrative_time: Any = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def validate_candidate_payload(self) -> "ExtractedSettingCandidate":
@@ -86,6 +90,7 @@ class ExtractedSettingCandidate(BaseModel):
                 self.attribute_value,
                 self.value_type,
                 self.value_json,
+                self.narrative_time,
             )
         ):
             raise PydanticCustomError(
@@ -128,6 +133,7 @@ class CharacterSettingExtractionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidates: list[ExtractedCharacterCandidate] = Field(default_factory=list)
+    time_context: list[NarrativeTimePoint] = Field(default_factory=list)
 
 
 class _StrictProviderModel(BaseModel):
@@ -138,6 +144,17 @@ class _ProviderEvidenceSpan(_StrictProviderModel):
     quote: str = Field(min_length=1)
     start_offset: int | None = Field(ge=0)
     end_offset: int | None = Field(ge=0)
+
+
+class _ProviderNarrativeTimePoint(_StrictProviderModel):
+    description: str | None = Field(default=None, min_length=1, max_length=2000)
+    evidence_spans: list[_ProviderEvidenceSpan] = Field(default_factory=list)
+    context_ref: str | None = Field(default=None, pattern=r"^T[1-9][0-9]*$")
+
+
+class _ProviderNarrativeTime(_StrictProviderModel):
+    fact_time: _ProviderNarrativeTimePoint | None = None
+    reference_time: _ProviderNarrativeTimePoint | None = None
 
 
 class _ProviderValueJsonBase(_StrictProviderModel):
@@ -197,6 +214,7 @@ class _ProviderSettingCandidateCommon(_ProviderCandidateCommon):
         StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
     ]
     attribute_value: str | None
+    narrative_time: _ProviderNarrativeTime | None = None
 
 
 class _ProviderNumberSettingCandidate(_ProviderSettingCandidateCommon):
@@ -230,6 +248,7 @@ class _ProviderCharacterDiscoveryCandidate(_ProviderCandidateCommon):
     attribute_value: None
     value_type: None
     value_json: None
+    narrative_time: None = None
 
 
 _ProviderSettingCandidate = Annotated[
@@ -250,16 +269,23 @@ class CharacterSettingProviderResponse(_StrictProviderModel):
     """OpenAI structured output과 직접 맞물리는 source_chunk_id 없는 wire model."""
 
     candidates: list[_ProviderCharacterCandidate]
+    time_context: list[_ProviderNarrativeTimePoint] = Field(default_factory=list)
 
     def to_extraction_result(self, source_chunk_id: UUID) -> CharacterSettingExtractionResult:
         payload = {
             "candidates": [
                 _provider_candidate_to_internal_payload(candidate, source_chunk_id)
                 for candidate in self.candidates
-            ]
+            ],
+            "time_context": [point.model_dump() for point in self.time_context],
         }
         # Provider schema 통과 뒤에도 저장 경계의 Pydantic 모델로 한 번 더 검증한다.
-        return CharacterSettingExtractionResult.model_validate(payload)
+        result = CharacterSettingExtractionResult.model_validate(payload)
+        for candidate, raw in zip(result.candidates, self.candidates, strict=True):
+            candidate._raw_narrative_time = getattr(raw, "narrative_time", None)
+            if candidate._raw_narrative_time is not None:
+                candidate._raw_narrative_time = candidate._raw_narrative_time.model_dump()
+        return result
 
 
 @lru_cache(maxsize=1)
@@ -349,4 +375,6 @@ def _to_openai_strict_json_schema(value: Any) -> Any:
             continue
         normalized_key = "anyOf" if key == "oneOf" else key
         normalized[normalized_key] = _to_openai_strict_json_schema(item)
+    if "properties" in normalized:
+        normalized["required"] = list(normalized["properties"])
     return normalized

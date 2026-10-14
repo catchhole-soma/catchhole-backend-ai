@@ -34,4 +34,11 @@ def test_world_request_keeps_upstream_input_and_transport(purpose, captured):
     policy_overrides = json.loads((ROOT / "tests/fixtures/pr1_conflict_policy_request_overrides.json").read_text())["overrides"]
     assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in policy_overrides.values())
     overrides = {**overrides, **policy_overrides.get(purpose, {})}
+    task2_overrides = json.loads((ROOT / "tests/fixtures/pr1_task2_contract_request_overrides.json").read_text())["overrides"]
+    assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in task2_overrides.values())
+    overrides = {**overrides, **task2_overrides.get(purpose, {})}
+    general_rule_overrides = json.loads((ROOT / "tests/fixtures/pr1_explicit_general_rule_request_overrides.json").read_text())["overrides"]
+    assert set(general_rule_overrides) == {"world_batch", "world_singleton"}
+    assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in general_rule_overrides.values())
+    overrides = {**overrides, **general_rule_overrides.get(purpose, {})}
     assert actual[purpose] == {**expected["requests"][purpose], **overrides}

@@ -63,7 +63,7 @@ def test_comparator_hides_database_ids_and_accepts_add() -> None:
     )
     assert "모든 현재 STATUS의 의미 관계를 먼저 검토" in client.requests[0]["system_prompt"]
     assert "기존 장애가 해소됐는지는 독립적으로 판단" in client.requests[0]["system_prompt"]
-    assert client.requests[0]["prompt_cache_key"] == "character-fact-comparison:v11"
+    assert client.requests[0]["prompt_cache_key"] == "character-fact-comparison:v15"
     assert prompt_payload["snapshot_entries"][0]["ref"] == "P1"
     assert prompt_payload["snapshot_entries"][0]["fact_value"] == "출혈 중"
     assert prompt_payload["exact_target_ref"] is None
@@ -207,7 +207,7 @@ def test_comparator_retries_invalid_string_proposal_without_coercion(invalid_jso
     assert len(client.requests) == 2
     assert decision.proposed_value_json == {"value": "바바리안"}
     assert decision.proposed_fact_value == "바바리안 종족"
-    assert raw == valid
+    assert raw == {**valid, "advance_current_narrative_time": False}
     feedback = json.loads(client.requests[1]["user_prompt"])["validation_feedback"]
     assert "STRING" in feedback["reason"]
     assert "STRING" in feedback["correction"]

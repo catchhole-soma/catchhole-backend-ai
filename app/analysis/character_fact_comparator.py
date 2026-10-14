@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import tiktoken
 
 from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonBatchDecision,
@@ -23,12 +22,15 @@ from app.analysis.comparison_reason import (
     USER_FACING_REASON_INSTRUCTIONS,
     mask_display_names,
 )
-from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.exceptions import (
+    CharacterComparisonInputTooLargeError, ComparisonValidationError, OrderedInputContextError,
+)
 from app.analysis.json_response import (
     compact_error_message,
     request_validated_model,
     safe_validation_error_summary,
 )
+from app.analysis.narrative_time import narrative_prompt_data, validate_narrative_time_choice
 from app.analysis.ordered_context import (
     CURRENT_CHRONOLOGY_INSTRUCTIONS,
     SETTING_BOOK_INSTRUCTIONS,
@@ -46,7 +48,9 @@ from app.domain.enums import AnalysisSourceKind
 from app.domain.setting_values import normalize_setting_display_value
 from app.exceptions.failure_classification import is_candidate_comparison_failure
 from app.llm.openai_client import OpenAIResponsesClient
+from app.llm.exceptions import LlmInputTokenCountError
 from app.llm.protocols import TextGenerationClient
+from app.usage.metering import estimate_text_input_tokens
 from app.schemas.analysis_context import WorkerAnalysisReference
 from app.schemas.worker import (
     WorkerCharacterFactComparisonBatchCandidate,
@@ -66,7 +70,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "character_fact_comparison_batch.md"
 )
-CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v5"
+CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY = "character-fact-comparison-batch:v10"
 ORDERED_CHARACTER_SLOT_INSTRUCTIONS = (
     "현재 활성인 동일 Fact 유형·동일 resolved key가 있으면 새 내용이어도 ADD는 금지입니다. "
     "예를 들어 profile.attribute의 기존 값과 새 후보의 문장이 다르더라도 같은 slot입니다. "
@@ -132,7 +136,6 @@ class CharacterFactComparator:
         max_output_tokens: int | None = None,
         batch_max_output_tokens: int | None = None,
         batch_max_input_tokens: int | None = None,
-        batch_max_candidates: int | None = None,
     ) -> None:
         settings = get_settings()
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
@@ -155,11 +158,6 @@ class CharacterFactComparator:
             if batch_max_input_tokens is None
             else batch_max_input_tokens
         )
-        self.batch_max_candidates = (
-            settings.character_fact_comparison_batch_max_candidates
-            if batch_max_candidates is None
-            else batch_max_candidates
-        )
 
     async def compare(
         self,
@@ -168,6 +166,7 @@ class CharacterFactComparator:
         prior_candidates: list[WorkerCharacterPriorFactCandidate] | None = None,
         *,
         protected_slots=(),
+        advisory_current_context=None,
     ) -> tuple[CharacterFactComparisonDecision, dict]:
         validate_status_active_value(
             candidate.canonical_fact_type,
@@ -216,6 +215,8 @@ class CharacterFactComparator:
                 "evidence_spans": [
                     evidence.model_dump(mode="json") for evidence in candidate.evidence_spans
                 ],
+                **({"narrative_time": candidate.narrative_time.storage_data()}
+                   if candidate.narrative_time is not None else {}),
             },
             "snapshot_entries": [
                 {
@@ -238,6 +239,8 @@ class CharacterFactComparator:
             ],
         }
         protected_slots = tuple(WorkerProtectedCharacterSlot.model_validate(item) for item in protected_slots)
+        if advisory_current_context is not None:
+            prompt_payload["advisory_current_context"] = advisory_current_context
         if protected_slots:
             prompt_payload["protected_slots"] = [item.prompt_data() for item in protected_slots]
         temporal_context = (
@@ -254,17 +257,19 @@ class CharacterFactComparator:
             prompt_payload["candidate"]["source"] = candidate.source.prompt_data()
             if candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK:
                 system_prompt += "\n\n" + SETTING_BOOK_INSTRUCTIONS
+        user_prompt = json.dumps(narrative_prompt_data(prompt_payload), ensure_ascii=False)
+        await self._require_input_fits(system_prompt, user_prompt)
         decision = await request_validated_model(
             client=self.llm_client,
             response_model=CharacterFactComparisonDecision,
             system_prompt=system_prompt,
-            user_prompt=json.dumps(prompt_payload, ensure_ascii=False),
+            user_prompt=user_prompt,
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="character-fact-comparison:v11" + (":setting-book-time-v2"
+            prompt_cache_key="character-fact-comparison:v15" + (":setting-book-time-v3"
                 if candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
-                else ":book-current-time-v2" if temporal_context else ""),
+                else ":book-current-time-v3" if temporal_context else ""),
             operation_name="Character-fact comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -274,6 +279,7 @@ class CharacterFactComparator:
                 protected_slots=protected_slots,
             ),
             retry_user_prompt_builder=_build_retry_user_prompt,
+            input_preflight=self._require_input_fits,
         )
         decision = _replace_internal_snapshot_references(decision, references)
         decision = _normalize_scalar_proposal(decision, candidate)
@@ -292,16 +298,13 @@ class CharacterFactComparator:
         unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
         max_attempts_override: int | None = None,
         protected_slots=(),
+        advisory_current_context=None,
     ) -> tuple[CharacterFactComparisonBatchResult, dict]:
         """Compare ordered candidates while projecting each accepted decision in memory."""
 
         if not candidates:
             raise ComparisonValidationError(
                 "Character comparison batch must include candidates."
-            )
-        if len(candidates) > self.batch_max_candidates:
-            raise ComparisonValidationError(
-                "character_batch_candidate_limit_exceeded"
             )
         initial_entries = _projection_entries(snapshot_entries)
         if not ordered_context and any(entry.origin == "PROVISIONAL" for entry in initial_entries):
@@ -318,31 +321,12 @@ class CharacterFactComparator:
             if ordered_context:
                 raise OrderedInputContextError("Character batch source context is invalid.") from error
             raise
-        prompt_payload = _batch_prompt_payload(
-            matched_character_name,
-            canonical_fact_type,
-            candidates,
-            initial_entries,
-            protected_slots=protected_slots,
+        system_prompt, user_prompt = self._batch_prompts(
+            matched_character_name, canonical_fact_type, candidates, initial_entries,
+            ordered_context=ordered_context, unresolved_references=unresolved_references,
+            protected_slots=protected_slots, advisory_current_context=advisory_current_context,
         )
-        system_prompt = self.batch_prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS
-        if not ordered_context and _batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK:
-            system_prompt += "\n\n" + SETTING_BOOK_INSTRUCTIONS
-        if _has_temporal_context(candidates, initial_entries):
-            system_prompt += "\n\n" + CURRENT_CHRONOLOGY_INSTRUCTIONS
-            _add_safe_snapshot_provenance(prompt_payload, initial_entries)
-        if ordered_context:
-            system_prompt += "\n\n" + ordered_state_instructions(_batch_source_kind(candidates)) + "\n\n" + ORDERED_CHARACTER_SLOT_INSTRUCTIONS
-            if canonical_fact_type == "STATUS":
-                system_prompt += "\n\n" + STATUS_FORECAST_REVIEW_INSTRUCTIONS
-            _add_ordered_snapshot_provenance(prompt_payload, initial_entries)
-            prompt_payload["unresolved_references"] = ordered_reference_data(unresolved_references)
-        user_prompt = json.dumps(prompt_payload, ensure_ascii=False)
-        estimated_input_tokens = _estimate_prompt_tokens(system_prompt, user_prompt, self.model)
-        if estimated_input_tokens > self.batch_max_input_tokens:
-            if ordered_context:
-                raise OrderedInputContextError("character_batch_input_limit_exceeded")
-            raise ComparisonValidationError("character_batch_input_limit_exceeded")
+        input_tokens = await self._require_input_fits(system_prompt, user_prompt)
 
         attempts = self.max_attempts if max_attempts_override is None else max_attempts_override
         if type(attempts) is not int or not 1 <= attempts <= self.max_attempts:
@@ -352,6 +336,10 @@ class CharacterFactComparator:
         def remember_validation_failure(attempt, error, payload):
             nonlocal last_failed_payload
             last_failed_payload = payload
+
+        async def preflight(system, user, response_schema):
+            nonlocal input_tokens
+            input_tokens = await self._require_input_fits(system, user, response_schema)
 
         try:
             result = await request_validated_model(
@@ -364,8 +352,8 @@ class CharacterFactComparator:
                 max_attempts=attempts,
                 prompt_cache_key=(CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY
                                   + (":ordered-provisional-v1" if ordered_context else "")
-                                  + (":setting-book-time-v2" if _batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK
-                                     else ":book-current-time-v2" if _has_temporal_context(candidates, initial_entries) else "")
+                                  + (":setting-book-time-v3" if _batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK
+                                     else ":book-current-time-v3" if _has_temporal_context(candidates, initial_entries) else "")
                                   + (STATUS_FORECAST_CACHE_SUFFIX if ordered_context and canonical_fact_type == "STATUS" else "")),
                 operation_name="Character-fact batch comparison",
                 logger=logger,
@@ -378,20 +366,20 @@ class CharacterFactComparator:
                     display_names=(matched_character_name,),
                     protected_slots=protected_slots,
                 ),
-                retry_user_prompt_builder=lambda original, exc: _build_bounded_batch_retry_user_prompt(
+                retry_user_prompt_builder=lambda original, exc: _build_batch_retry_user_prompt(
                     original,
                     exc,
-                    system_prompt=system_prompt,
-                    model=self.model,
-                    max_input_tokens=self.batch_max_input_tokens,
                     ordered_context=ordered_context,
                 ),
+                input_preflight=preflight,
                 **({"validation_failure_callback": remember_validation_failure,
                     "validation_error_summary": lambda error: (
                     "ordered_batch=CANONICAL_SLOT_ALREADY_EXISTS"
                     if isinstance(error, OrderedCharacterSlotConflict) else safe_validation_error_summary(error)
                 )} if ordered_context else {}),
             )
+        except CharacterComparisonInputTooLargeError:
+            raise
         except ComparisonValidationError as error:
             if not ordered_context or not is_candidate_comparison_failure(error):
                 raise
@@ -409,10 +397,14 @@ class CharacterFactComparator:
             protected_slots=protected_slots,
         )
         raw = normalized_result.model_dump(mode="json")
-        raw["estimated_input_tokens"] = estimated_input_tokens
+        if self.model.startswith("gpt-6.1-sol"):
+            raw["input_token_count"] = input_tokens
+            raw["input_token_count_source"] = "openai_input_tokens"
+        else:
+            raw["estimated_input_tokens"] = input_tokens
         return normalized_result, raw
 
-    def batch_fits(
+    async def batch_fits(
         self,
         *,
         matched_character_name: str,
@@ -424,20 +416,69 @@ class CharacterFactComparator:
         ordered_context: bool = False,
         unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
         protected_slots=(),
+        advisory_current_context=None,
     ) -> bool:
-        if not candidates or len(candidates) > self.batch_max_candidates:
+        if not candidates:
             return False
         initial_entries = _projection_entries(snapshot_entries)
         if not ordered_context and any(entry.origin == "PROVISIONAL" for entry in initial_entries):
             return False
         if unresolved_references and not ordered_context:
             return False
+        system_prompt, user_prompt = self._batch_prompts(
+            matched_character_name, canonical_fact_type, candidates, initial_entries,
+            ordered_context=ordered_context, unresolved_references=unresolved_references,
+            protected_slots=protected_slots, advisory_current_context=advisory_current_context,
+        )
+        return await self._input_tokens(system_prompt, user_prompt) <= self.batch_max_input_tokens
+
+    async def mandatory_context_fits(self, **kwargs) -> bool:
+        # Keep original candidates for source/temporal instructions; omit only their data.
+        system_prompt, user_prompt = self._batch_prompts(**kwargs, include_candidates=False)
+        return await self._input_tokens(system_prompt, user_prompt) <= self.batch_max_input_tokens
+
+    async def _input_tokens(self, system_prompt, user_prompt, response_schema=None) -> int:
+        if not self.model.startswith("gpt-6.1-sol"):
+            return _estimate_prompt_tokens(system_prompt, user_prompt, self.model)
+        count = getattr(self.llm_client, "count_input_tokens", None)
+        if not callable(count):
+            raise LlmInputTokenCountError("Character comparison requires exact input token counting.")
+        try:
+            tokens = await count(
+                system_prompt=system_prompt, user_prompt=user_prompt,
+                model=self.model, response_schema=response_schema,
+            )
+        except LlmInputTokenCountError:
+            raise
+        except Exception as exc:
+            raise LlmInputTokenCountError("Character comparison exact input token counting failed.") from exc
+        if type(tokens) is not int or tokens < 0:
+            raise LlmInputTokenCountError("Exact input token count must be a nonnegative integer.")
+        return tokens
+
+    async def _require_input_fits(self, system_prompt, user_prompt, response_schema=None) -> int:
+        tokens = await self._input_tokens(system_prompt, user_prompt, response_schema)
+        if tokens > self.batch_max_input_tokens:
+            raise CharacterComparisonInputTooLargeError("character_batch_input_limit_exceeded")
+        return tokens
+
+    def _batch_prompts(
+        self,
+        matched_character_name,
+        canonical_fact_type,
+        candidates,
+        snapshot_entries,
+        *,
+        ordered_context=False,
+        unresolved_references=(),
+        protected_slots=(),
+        advisory_current_context=None,
+        include_candidates=True,
+    ):
+        initial_entries = _projection_entries(snapshot_entries)
         prompt_payload = _batch_prompt_payload(
-            matched_character_name,
-            canonical_fact_type,
-            candidates,
-            initial_entries,
-            protected_slots=protected_slots,
+            matched_character_name, canonical_fact_type, candidates, initial_entries,
+            protected_slots=protected_slots, advisory_current_context=advisory_current_context,
         )
         system_prompt = self.batch_prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS
         if not ordered_context and _batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK:
@@ -451,11 +492,9 @@ class CharacterFactComparator:
                 system_prompt += "\n\n" + STATUS_FORECAST_REVIEW_INSTRUCTIONS
             _add_ordered_snapshot_provenance(prompt_payload, initial_entries)
             prompt_payload["unresolved_references"] = ordered_reference_data(unresolved_references)
-        return _estimate_prompt_tokens(
-            system_prompt,
-            json.dumps(prompt_payload, ensure_ascii=False),
-            self.model,
-        ) <= self.batch_max_input_tokens
+        if not include_candidates:
+            prompt_payload["candidates"] = []
+        return system_prompt, json.dumps(prompt_payload, ensure_ascii=False)
 
 
 def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
@@ -497,6 +536,9 @@ def _build_batch_retry_user_prompt(
             "STATUS pattern key만 의미가 같은 안정적인 status.* 이름으로 정규화하세요. UPDATE/MERGE는 "
             "현재 활성인 동일 resolved key만 target으로 삼고, REMOVE는 현재 후보를 snapshot에 "
             "남기지 않으면서 관련 STATUS를 한 개 이상 종료할 때만 선택하세요. "
+            "PRESENT 검토에서 같은 Fact 유형·resolved key·조건의 현재값과 명백히 양립할 수 없을 때만 "
+            "활성 target_ref를 읽기 전용으로 남기세요. 일반 불확실성·회복 결과 없는 치료 시도와 "
+            "PAST/HYPOTHETICAL/UNKNOWN 검토는 target_ref=null입니다. 검토 proposal/removal은 비우세요. "
             "각 proposal은 해당 candidate.value_type을 유지하세요. STRING이면 "
             "proposed_value_json.value에 JSON 문자열을 넣으세요. NUMBER는 JSON 숫자, "
             "BOOLEAN은 JSON boolean을 사용하세요."
@@ -553,23 +595,6 @@ def _verified_slot_conflict_context(payload: dict, error: OrderedCharacterSlotCo
     return None
 
 
-def _build_bounded_batch_retry_user_prompt(
-    original_user_prompt: str,
-    exc: Exception,
-    *,
-    system_prompt: str,
-    model: str,
-    max_input_tokens: int,
-    ordered_context: bool = False,
-) -> str:
-    retry_prompt = _build_batch_retry_user_prompt(original_user_prompt, exc, ordered_context=ordered_context)
-    if _estimate_prompt_tokens(system_prompt, retry_prompt, model) > max_input_tokens:
-        if ordered_context:
-            raise OrderedInputContextError("character_batch_input_limit_exceeded")
-        raise ComparisonValidationError("character_batch_input_limit_exceeded")
-    return retry_prompt
-
-
 def _resolve_max_attempts(max_attempts: int | None) -> int:
     resolved = get_settings().llm_extraction_max_attempts if max_attempts is None else max_attempts
     if resolved < 1:
@@ -584,6 +609,7 @@ def _validate_comparison_decision(
     *,
     protected_slots=(),
 ) -> None:
+    validate_narrative_time_choice(decision, candidate)
     entries_by_ref = {
         reference.reference: CharacterProjectionEntry(
             reference=reference.reference,
@@ -776,8 +802,11 @@ def _batch_prompt_payload(
     snapshot_entries: list[CharacterProjectionEntry],
     *,
     protected_slots=(),
+    advisory_current_context=None,
 ) -> dict:
-    return {
+    payload = {
+        **({"advisory_current_context": advisory_current_context}
+           if advisory_current_context is not None else {}),
         **({"protected_slots": [WorkerProtectedCharacterSlot.model_validate(item).prompt_data()
                                 for item in protected_slots]} if protected_slots else {}),
         "matched_character_name": matched_character_name,
@@ -795,6 +824,8 @@ def _batch_prompt_payload(
                 "value_json": candidate.value_json,
                 "value_type": candidate.value_type,
                 "confidence": candidate.confidence,
+                **({"narrative_time": candidate.narrative_time.storage_data()}
+                   if candidate.narrative_time is not None else {}),
                 "evidence_spans": [
                     evidence.model_dump(mode="json")
                     for evidence in candidate.evidence_spans
@@ -815,6 +846,7 @@ def _batch_prompt_payload(
             for entry in snapshot_entries
         ],
     }
+    return narrative_prompt_data(payload)
 
 
 def _validate_batch_comparison_result(
@@ -836,6 +868,7 @@ def _validate_batch_comparison_result(
 
     state = CharacterProjectionState(initial_entries, protected_slots=protected_slots)
     for candidate, decision in zip(candidates, result.decisions, strict=True):
+        validate_narrative_time_choice(decision, candidate)
         validate_resolved_canonical_fact_key(
             initial_fact_key=candidate.initial_canonical_fact_key,
             resolved_fact_key=decision.resolved_canonical_fact_key,
@@ -934,9 +967,10 @@ def _independent_ordered_decisions(
     state = CharacterProjectionState(initial_entries, protected_slots=protected_slots)
     blocked_keys: set[str] = set()
     uncertain_status = False
+    uncertain_narrative_time = False
     retained = []
     for row, candidate in zip(rows, candidates, strict=True):
-        if uncertain_status or candidate.initial_canonical_fact_key in blocked_keys:
+        if uncertain_status or uncertain_narrative_time or candidate.initial_canonical_fact_key in blocked_keys:
             retained.append(None)
             continue
         try:
@@ -965,6 +999,7 @@ def _independent_ordered_decisions(
         except (TypeError, ValueError):
             blocked_keys.add(candidate.initial_canonical_fact_key)
             uncertain_status = canonical_fact_type == "STATUS"
+            uncertain_narrative_time = candidate.narrative_time is not None and candidate.narrative_time.reference_time is not None
             retained.append(None)
         else:
             retained.append(normalized)
@@ -991,18 +1026,7 @@ def _replace_projection_references(
 
 
 def _estimate_prompt_tokens(system_prompt: str, user_prompt: str, model: str) -> int:
-    try:
-        encoding = (
-            tiktoken.get_encoding("o200k_base")
-            if model.startswith("gpt-5.6")
-            else tiktoken.encoding_for_model(model)
-        )
-        content_tokens = len(encoding.encode(system_prompt, disallowed_special=())) + len(
-            encoding.encode(user_prompt, disallowed_special=())
-        )
-        return int(content_tokens * 1.10) + 256
-    except Exception:  # noqa: BLE001 - a byte bound keeps splitting deterministic.
-        return len(system_prompt.encode("utf-8")) + len(user_prompt.encode("utf-8")) + 512
+    return estimate_text_input_tokens(system_prompt, user_prompt, model)
 
 
 def _batch_source_kind(candidates):

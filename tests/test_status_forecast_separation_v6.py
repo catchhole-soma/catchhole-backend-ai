@@ -143,7 +143,7 @@ def test_forecast_guidance_reaches_only_ordered_status_fit_and_request(monkeypat
     monkeypatch.setattr(comparator_module, "_estimate_prompt_tokens", observe)
     args = {"matched_character_name": "백솔", "canonical_fact_type": fact_type, "candidates": [candidate],
             "snapshot_entries": [], "ordered_context": ordered}
-    assert comparator.batch_fits(**args)
+    assert asyncio.run(comparator.batch_fits(**args))
     asyncio.run(comparator.compare_batch(**args))
     guidance = review_instructions()
     assert all((guidance in prompt) == (ordered and fact_type == "STATUS") for prompt in estimated_prompts)

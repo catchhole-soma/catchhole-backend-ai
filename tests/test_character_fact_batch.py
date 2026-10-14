@@ -20,11 +20,12 @@ from app.analysis.character_fact_projection import (
     CharacterProjectionState,
     validate_resolved_canonical_fact_key,
 )
-from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.exceptions import CharacterComparisonInputTooLargeError, ComparisonValidationError, OrderedInputContextError
 from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import Settings
 from app.llm.responses import LlmTextResponse
+from app.schemas.analysis_source import WorkerAnalysisSource
 from app.schemas.worker import (
     WorkerCharacterFactComparisonBatchCandidate,
     WorkerCharacterFactComparisonBatchCompleteRequest,
@@ -39,6 +40,227 @@ BATCH_ID = UUID("00000000-0000-0000-0000-000000000003")
 WORK_ID = UUID("00000000-0000-0000-0000-000000000004")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000005")
 CONTEXT_TOKEN = "a" * 64
+
+
+@pytest.mark.parametrize("mode", ["ordered", "confirmed"])
+@pytest.mark.parametrize("endpoint", ["claim", "context"])
+def test_actual_java_batch_time_reaches_provider(mode, endpoint):
+    import os
+    import re
+    from pathlib import Path
+    from app.analysis.character_fact_comparison_pipeline import execute_character_fact_comparison_batch
+
+    output = os.environ.get("BATCH_TIME_FIX_OUTPUT")
+    if not output:
+        pytest.skip("Run Java batchNarrativeTime tests with BATCH_TIME_FIX_OUTPUT first")
+    raw = json.loads((Path(output) / f"{mode}-{endpoint}.json").read_text())
+    candidates = [WorkerCharacterFactComparisonBatchCandidate.model_validate(row) for row in raw["candidates"]]
+    assert candidates[0].narrative_time is not None
+    assert candidates[1].narrative_time is None
+    legacy = dict(raw["candidates"][1])
+    legacy.pop("narrativeTime")
+    assert WorkerCharacterFactComparisonBatchCandidate.model_validate(legacy).narrative_time is None
+    client = FakeTextClient({"decisions": [
+        _decision_payload(row.candidate_ref, operation="ADD", resolved_key=row.initial_canonical_fact_key,
+                          value=row.attribute_value) for row in candidates]})
+    result = asyncio.run(execute_character_fact_comparison_batch(
+        CharacterFactComparator(llm_client=client, max_attempts=1),
+        matched_character_name=raw["matchedCharacterName"], canonical_fact_type=raw["canonicalFactType"],
+        candidates=candidates, snapshot_entries=[], ordered_context=mode == "ordered"))
+    assert len(result.decisions) == 2
+    assert not result.failures
+    assert len(client.requests) == 1
+    prompt_text = client.requests[0]["user_prompt"]
+    prompt = json.loads(prompt_text)
+    time = prompt["candidates"][0]["narrative_time"]
+    for key in ("factTime", "referenceTime"):
+        expected = raw["candidates"][0]["narrativeTime"][key]
+        assert time[key]["description"] == expected["description"]
+        for actual_span, expected_span in zip(time[key]["evidenceSpans"], expected["evidenceSpans"], strict=True):
+            assert actual_span == {**{k: v for k, v in expected_span.items() if k != "sourceChunkId"},
+                                   "sourceChunkRef": "T1"}
+    assert "narrative_time" not in prompt["candidates"][1]
+    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", prompt_text)
+    (Path(output) / f"{mode}-{endpoint}-provider.json").write_text(prompt_text)
+
+
+@pytest.mark.parametrize("split_kind", ["input_budget", "output_truncated"])
+def test_split_batch_carries_recovery_time_and_ended_history_into_next_empty_status_prompt(monkeypatch, split_kind):
+    monkeypatch.setattr(comparator_module, "_estimate_prompt_tokens",
+        lambda system, user, model: 300 if split_kind == "input_budget" and len(json.loads(user)["candidates"]) > 1 else 100)
+    from app.analysis.character_fact_comparison_pipeline import execute_character_fact_comparison_batch
+    from app.analysis.narrative_time import NarrativeTime
+
+    first = _candidate("C1", "Q1", "회복").model_copy(update={
+        "value_json": {"active": False},
+        "narrative_time": NarrativeTime.model_validate({"factTime": None, "referenceTime": {
+            "description": "장마 첫날", "evidenceSpans": [{"quote": "장마 첫날", "startOffset": 10,
+                "endOffset": 15, "sourceChunkId": "10000000-0000-4000-8000-000000000001"}],
+        }}),
+    })
+    second = _candidate("C2", "Q2", "과거 왼손 화상")
+    remove = _decision_payload("C1", operation="REMOVE", resolved_key="status.다리_상태",
+                               removed_refs=["P1"], value=None)
+    remove["advance_current_narrative_time"] = True
+    past = _decision_payload("C2", operation="HISTORY_ONLY", resolved_key="status.왼손_화상", value=None)
+    past["temporal_scope"] = "PAST"
+    class SplitClient(SequencedTextClient):
+        async def create_text_response(self, **kwargs):
+            if split_kind == "output_truncated" and not self.requests:
+                from app.llm.exceptions import LlmOutputTruncatedError
+                self.requests.append(kwargs)
+                raise LlmOutputTruncatedError("output cap", incomplete_reason="max_output_tokens", max_output_tokens=128000)
+            return await super().create_text_response(**kwargs)
+
+    provider = SplitClient([{"decisions": [remove]}, {"decisions": [past]}])
+    initial = {"currentNarrativeTime": None, "currentSlots": [{
+        "factType": "STATUS", "factKey": "status.검지_경직", "factValue": "경직",
+        "supportingSources": [{"sourceCandidateRef": "old-one"}, {"sourceCandidateRef": "old-two"}],
+    }], "historyFacts": []}
+    result = asyncio.run(execute_character_fact_comparison_batch(
+        CharacterFactComparator(llm_client=provider, batch_max_input_tokens=200, max_attempts=1),
+        matched_character_name="서린", canonical_fact_type="STATUS", candidates=[first, second],
+        snapshot_entries=[_batch_snapshot("P1", "status.검지_경직", "경직")],
+        advisory_current_context=initial,
+    ))
+    assert len(result.decisions) == 2
+    assert result.failures == []
+    assert len(provider.requests) == (3 if split_kind == "output_truncated" else 2)
+    next_prompt = json.loads(provider.requests[-1]["user_prompt"])
+    assert next_prompt["snapshot_entries"] == []
+    advisory = next_prompt["advisory_current_context"]
+    assert advisory["currentNarrativeTime"]["description"] == "장마 첫날"
+    assert advisory["currentSlots"] == []
+    assert [row["operation"] for row in advisory["historyFacts"]] == ["ENDED_BY_PRIOR_DECISION", "REMOVE"]
+    assert advisory["historyFacts"][0]["factKey"] == "status.검지_경직"
+    assert len(advisory["historyFacts"][0]["supportingSources"]) == 2
+    assert "10000000-0000-4000-8000" not in provider.requests[-1]["user_prompt"]
+    assert initial["currentNarrativeTime"] is None
+    assert len(initial["currentSlots"]) == 1
+
+
+@pytest.mark.parametrize("anchor", ["P1", "Q2", None])
+def test_batch_review_anchor_is_read_only_and_uses_actual_contributors(anchor) -> None:
+    state = CharacterProjectionState([_projection_entry("P1", "status.부상", "다리 부상")])
+    if anchor == "Q2":
+        _apply_status_decision(state, "C1", "status.부상", operation="UPDATE", target_ref="P1")
+        _apply_status_decision(state, "C2", "status.부상", operation="MERGE", target_ref="Q1")
+    before = state.entries
+
+    application = state.apply(
+        candidate_ref="C3", projected_snapshot_ref="Q3", fact_type="STATUS",
+        resolved_fact_key="status.부상", value_type="JSON", candidate_value_json={"active": True},
+        decision=_decision("C3", operation="REVIEW_REQUIRED", resolved_key="status.부상",
+                           target_ref=anchor, value=None),
+    )
+
+    assert application.projected_entry is None
+    assert application.dependency_candidate_refs == (("C1", "C2") if anchor == "Q2" else ())
+    assert application.decision.target_ref == anchor
+    assert application.decision.proposed_fact_value is None
+    assert application.decision.proposed_value_json is None
+    assert application.decision.removed_snapshot_refs == []
+    assert state.entries == before
+
+
+@pytest.mark.parametrize("target_type,target_key,anchor,expected", [
+    ("STATUS", "status.다른_부상", "P1", "resolved canonical"),
+    ("PROFILE", "status.부상", "P1", "resolved canonical"),
+    ("STATUS", "status.부상", "Q9", "Unknown snapshot"),
+])
+def test_batch_review_anchor_rejects_wrong_or_missing_current_item(target_type, target_key, anchor, expected) -> None:
+    state = CharacterProjectionState([CharacterProjectionEntry(
+        reference="P1", fact_type=target_type, fact_key=target_key,
+        fact_value="현재 설정", value_json={"active": True},
+    )])
+    decision = _decision("C1", operation="REVIEW_REQUIRED", resolved_key="status.부상",
+                         target_ref=anchor, value=None)
+    before = state.entries
+    with pytest.raises(ValueError, match=expected):
+        state.apply(candidate_ref="C1", projected_snapshot_ref="Q1", fact_type="STATUS",
+            resolved_fact_key="status.부상", value_type="JSON", candidate_value_json={"active": True}, decision=decision)
+    assert state.entries == before
+
+
+def test_batch_review_anchor_rejects_a_ref_replaced_by_a_prior_decision() -> None:
+    state = CharacterProjectionState([_projection_entry("P1", "status.부상", "다리 부상")])
+    _apply_status_decision(state, "C1", "status.부상", operation="UPDATE", target_ref="P1")
+    decision = _decision("C2", operation="REVIEW_REQUIRED", resolved_key="status.부상", target_ref="P1", value=None)
+    with pytest.raises(ValueError, match="Unknown snapshot"):
+        state.apply(candidate_ref="C2", projected_snapshot_ref="Q2", fact_type="STATUS",
+            resolved_fact_key="status.부상", value_type="JSON", candidate_value_json={"active": True}, decision=decision)
+    assert [entry.reference for entry in state.entries] == ["Q1"]
+
+
+@pytest.mark.parametrize("scope", ["PAST", "HYPOTHETICAL", "UNKNOWN"])
+def test_batch_review_anchor_rejects_nonpresent_scope(scope) -> None:
+    payload = _decision_payload("C1", operation="REVIEW_REQUIRED", resolved_key="status.부상", target_ref="P1", value=None)
+    payload["temporal_scope"] = scope
+    with pytest.raises(ValueError, match="PRESENT review anchor"):
+        CharacterFactComparisonBatchDecision.model_validate(payload)
+
+
+@pytest.mark.parametrize("anchor", [None, "P1"])
+@pytest.mark.parametrize("kind,number", [("WORK_START", None), ("EPISODE", 3)])
+def test_batch_review_anchor_rejects_book_anchor_inconsistency_but_keeps_unlinked_review(anchor, kind, number):
+    source = WorkerAnalysisSource.model_validate({
+        "sourceKind": "SETTING_BOOK", "settingBookId": UUID(int=11),
+        "settingBookName": "인물 설정집", "revisionId": UUID(int=12),
+        "revisionNo": 1, "contentHash": "a" * 64,
+        "referenceTimeKind": kind, "referenceEpisodeNo": number,
+    })
+    payload = _decision_payload("C1", operation="REVIEW_REQUIRED", resolved_key="status.부상", target_ref=anchor, value=None)
+    payload["effective_from_episode_no"] = 8
+    state = CharacterProjectionState([_projection_entry("P1", "status.부상", "다리 부상")])
+    before = state.entries
+
+    def apply():
+        return state.apply(candidate_ref="C1", projected_snapshot_ref="Q1", fact_type="STATUS",
+            resolved_fact_key="status.부상", value_type="JSON", candidate_value_json={"active": True},
+            decision=CharacterFactComparisonBatchDecision.model_validate(payload), source=source)
+
+    if anchor is None:
+        assert apply().projected_entry is None
+    else:
+        with pytest.raises(ValueError, match="Book reference time requires review"):
+            apply()
+    assert state.entries == before
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_batch_review_anchor_reaches_completion_with_exact_dependencies(fallback) -> None:
+    candidates = [_candidate(f"C{i}", f"Q{i}", value).model_copy(update={
+        "initial_canonical_fact_key": "status.부상", "canonical_key_resolution": "EXACT",
+    }) for i, value in enumerate(["다리 부상", "부상으로 오래 걷기 어렵다", "다리에 부상이 없다"], 1)]
+    batch = _batch().model_copy(update={"candidates": candidates})
+    spring = FakeBatchSpring(batch, _context(batch))
+    provider_decisions = [
+        _decision_payload("C1", operation="ADD", resolved_key="status.부상", value="다리 부상"),
+        _decision_payload("C2", operation="MERGE", resolved_key="status.부상", target_ref="Q1", value="다리 부상으로 오래 걷기 어렵다"),
+        _decision_payload("C3", operation="REVIEW_REQUIRED", resolved_key="status.부상", target_ref="Q2", value=None,
+                          reason="같은 조건의 다리 부상 여부가 양립하지 않아 확인이 필요합니다."),
+    ]
+    client = SequencedTextClient(
+        [{"decisions": []}, *({"decisions": [decision]} for decision in provider_decisions)]
+        if fallback else [{"decisions": provider_decisions}]
+    )
+
+    result = asyncio.run(CharacterFactComparisonPipeline(spring, CharacterFactComparator(
+        llm_client=client, model="test-model", max_attempts=1,
+    )).process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+
+    assert result.completed_count == 3 and result.failed_count == 0
+    assert len(client.requests) == (4 if fallback else 1)
+    assert result.singleton_fallback_count == (3 if fallback else 0)
+    wire = spring.completions[0].model_dump(by_alias=True)
+    review = wire["decisions"][2]
+    assert review["operation"] == "REVIEW_REQUIRED"
+    assert review["targetSnapshotRef"] == "Q2"
+    assert review["dependencyCandidateRefs"] == ["C1", "C2"]
+    assert review["removedSnapshotRefs"] == []
+    assert review["proposedFactValue"] is None and review["proposedValueJson"] is None
+    assert "comparisonTargetFactType" not in review and "comparisonTargetFactKey" not in review
+    assert [d["dependencyCandidateRefs"] for d in wire["decisions"]] == [[], ["C1"], ["C1", "C2"]]
 
 
 def test_projector_chains_q_refs_and_derives_dependencies() -> None:
@@ -460,7 +682,7 @@ def test_batch_comparator_projects_in_order_and_hides_transport_ids() -> None:
     assert "`matched_character_name`" in request["system_prompt"]
     assert str(WORK_ID) not in serialized
     assert str(EPISODE_ID) not in serialized
-    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v5"
+    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v10"
 
 
 def test_batch_pipeline_falls_back_to_singletons_without_losing_projection() -> None:
@@ -925,7 +1147,7 @@ def test_batch_comparator_rejects_input_limit_before_provider_call(ordered_conte
     )
 
     with pytest.raises(
-        OrderedInputContextError if ordered_context else ComparisonValidationError,
+        CharacterComparisonInputTooLargeError,
         match="character_batch_input_limit_exceeded",
     ):
         asyncio.run(
@@ -956,7 +1178,7 @@ def test_batch_comparator_rechecks_input_limit_before_validation_retry(monkeypat
     )
 
     with pytest.raises(
-        OrderedInputContextError if ordered_context else ComparisonValidationError,
+        CharacterComparisonInputTooLargeError,
         match="character_batch_input_limit_exceeded",
     ):
         asyncio.run(
@@ -1032,9 +1254,8 @@ def test_character_batch_wire_models_reject_non_boolean_status_active() -> None:
 def test_character_batch_config_defaults_and_metrics_are_namespaced() -> None:
     settings = Settings()
 
-    assert settings.llm_character_fact_batch_comparison_max_output_tokens == 16000
-    assert settings.llm_character_fact_batch_comparison_max_input_tokens == 64000
-    assert settings.character_fact_comparison_batch_max_candidates == 10
+    assert settings.llm_character_fact_batch_comparison_max_output_tokens == 128000
+    assert settings.llm_character_fact_batch_comparison_max_input_tokens == 256000
 
 
 def test_oversized_singleton_is_typed_failure_without_provider_or_fallback() -> None:

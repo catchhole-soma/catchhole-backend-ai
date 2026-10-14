@@ -56,6 +56,9 @@ class OrderedWorldPropertyDecision(BaseModel):
     proposed_value: TrimmedValue
     comparison_reason: TrimmedValue
     existing_root_property_names_to_move: list[TrimmedName] = Field(max_length=20)
+    explicit_root_scope_evidence_index: int | None = Field(
+        default=None, strict=True, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def require_existing_property_selection(self):
@@ -153,6 +156,13 @@ EXCLUDE를 반환하지 마세요. 독립된 새 사실은 ADD하고, 일시적 
    SCOPE_MISMATCH의 조건은 그대로이며 잘못된 응답을 임의로 일반 검토로 바꾸지 않습니다.
    이 결과는 자동 반영하지 않습니다. comparison_reason에는 어떤 대상·내용을 확인해야 하는지
    자연스러운 한국어로 설명하세요. 예: '대상이나 내용을 확실히 판단하기 어려워 확인이 필요합니다.'
+
+6. source 하나와 실제 현재 속성의 확정 충돌은 CONFLICT + REVIEW_REQUIRED + review_reason=GENERAL_UNCERTAINTY이다.
+   실제 target_ref와 matched_property_ref를 선택하고 proposed scope/name은 선택한 실제 경로를 유지한다.
+   source의 scope도 그 경로와 같아야 한다. 현재 속성의 current_source_times가 비어 있지 않고 모두 PRESENT이며
+   새 주장도 같은 조건의 확정 PRESENT일 때만 허용한다. BOOK의 미확인 주장이나 기준시점 불일치는 이 연결을 만들지 않는다.
+   proposed_value에 기존 현재값과 새 원문값을 모두 보존하고 이동 목록은 []다. 원본 source ref 하나를 그대로 유지한다.
+   단순 불확실성의 SINGLE/GENERAL_UNCERTAINTY와 구분하며 없는 속성이나 이번 응답의 새 ADD를 현재값으로 참조하지 않는다.
 
 출력 schema의 모든 필드를 명시하세요. 적용되지 않는 nullable 필드는 생략하지 말고
 JSON null로 쓰며, existing_root_property_names_to_move는 이동이 없으면 []입니다.
@@ -280,7 +290,8 @@ _DOMAIN_ERROR_RULES = {
     ),
     "REVIEW_REQUIRED requires a supported review_reason.": (
         "REVIEW_REASON_REQUIRED", "REVIEW_REQUIRED는 명시된 GENERAL_UNCERTAINTY/SCOPE_UNRESOLVED/"
-        "SCOPE_MISMATCH 조건에 맞는 사유를 선택하세요.",
+        "SCOPE_MISMATCH 조건에 맞는 사유를 선택하세요. 실제 PRESENT 현재 속성과의 확정 충돌만 "
+        "CONFLICT + REVIEW_REQUIRED + GENERAL_UNCERTAINTY 사유와 정확한 기존 속성 참조를 사용합니다.",
     ),
     "Scope-mismatch review requires a matched target property and source scope.": (
         "SCOPE_MISMATCH_MATCH_REQUIRED",

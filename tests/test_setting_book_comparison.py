@@ -12,6 +12,7 @@ from app.analysis.world_setting_comparator import (
 from app.schemas.analysis_source import WorkerAnalysisSource
 from app.schemas.worker import (
     WorkerCharacterFactComparisonBatchCandidate,
+    WorkerEvidenceSpan,
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonBatchCandidate,
     WorkerWorldSettingComparisonTarget,
@@ -21,7 +22,92 @@ from tests.test_ordered_analysis_runtime import RecordingClient
 from tests.test_setting_book_source_contract import SOURCE
 
 
-def test_book_character_internal_conflicts_are_not_projected_into_unrelated_candidate():
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize("operation,scope,value,quote", [
+    ("ADD", "PRESENT", "아직 결정되지 않음",
+     "정식 임명 여부는 아직 결정되지 않았으며, 다인은 임시라는 두 글자를 싫어하면서도 동료의 장부에는 그 두 글자를 정확히 남긴다."),
+    ("EXCLUDE", "PRESENT", "아직 결정되지 않음", "정식 임명 여부는 아직 결정되지 않았다."),
+    ("REVIEW_REQUIRED", "UNKNOWN", "정식 임명됐다는 소문",
+     "다인이 정식 임명됐다는 소문만 있고 사실인지, 언제 일인지 알 수 없다."),
+    ("REVIEW_REQUIRED", "HYPOTHETICAL", "정식 임명될 가능성",
+     "다인이 다음 심사를 통과한다면 정식 임명될 수도 있다."),
+], ids=["explicit_current_undecided", "repeated_undecided", "unverified_claim", "future_possibility"])
+def test_book_character_fixed_replies_preserve_undecided_value_and_uncertainty_guards(
+    batch, operation, scope, value, quote,
+):
+    # Fixed replies test typed value/evidence propagation and nonprojection, not model semantics.
+    from app.analysis.character_fact_projection import CharacterProjectionEntry, CharacterProjectionState
+    from app.schemas.analysis_context import AnalysisStateProvenance
+    from app.schemas.worker import WorkerCharacterSnapshotEntry
+    from tests.test_character_fact_comparator import _candidate as single_candidate
+
+    source = WorkerAnalysisSource.model_validate(SOURCE)
+    key = "profile.정식_임명_여부"
+    occupation = "지난겨울 결원 자리를 메운 임시 수문 기록관"
+    snapshots = [CharacterProjectionEntry(
+        reference="P1", fact_type="PROFILE", fact_key="profile.occupation",
+        fact_value=occupation, value_json={"value": occupation},
+        provenance=AnalysisStateProvenance.from_source(confirmation_status="PROVISIONAL", source=source),
+    )]
+    if operation == "EXCLUDE":
+        snapshots.append(CharacterProjectionEntry(
+            reference="P2", fact_type="PROFILE", fact_key=key,
+            fact_value="아직 결정되지 않음", value_json={"value": "아직 결정되지 않음"},
+            provenance=snapshots[0].provenance,
+        ))
+    payload = {"operation": operation, "target_ref": None, "removed_snapshot_refs": [],
+        "proposed_fact_value": value if operation == "ADD" else None,
+        "proposed_value_json": {"value": value} if operation == "ADD" else None,
+        "temporal_scope": scope, "comparison_reason": "현재 상태를 보존하거나 근거가 부족한 주장은 확인합니다."}
+    if batch:
+        candidate = WorkerCharacterFactComparisonBatchCandidate(
+            candidate_ref="C1", projected_snapshot_ref="Q1", source=source,
+            raw_fact_key=key, initial_canonical_fact_key=key, canonical_key_resolution="PATTERN",
+            attribute_value=value, value_json={"value": value}, value_type="STRING", evidence_spans=[{"quote": quote}],
+        )
+        payload.update(candidate_ref="C1", resolved_canonical_fact_key=key)
+        client = RecordingClient({"decisions": [payload]})
+        result, _ = asyncio.run(CharacterFactComparator(llm_client=client, max_attempts=1).compare_batch(
+            matched_character_name="강다인", canonical_fact_type="PROFILE", candidates=[candidate],
+            snapshot_entries=snapshots, ordered_context=True,
+        ))
+        decision = result.decisions[0]
+        input_candidate = json.loads(client.requests[0]["user_prompt"])["candidates"][0]
+    else:
+        candidate = single_candidate().model_copy(update={
+            "source": source, "source_episode_id": None, "entity_name": "강다인", "matched_character_name": "강다인",
+            "canonical_fact_type": "PROFILE", "canonical_fact_key": key, "attribute_name": key,
+            "attribute_value": value, "value_json": {"value": value}, "value_type": "STRING",
+            "evidence_spans": [WorkerEvidenceSpan(quote=quote)],
+        })
+        client = RecordingClient(payload)
+        decision, _ = asyncio.run(CharacterFactComparator(llm_client=client, max_attempts=1).compare(
+            candidate, [WorkerCharacterSnapshotEntry(
+                fact_type=x.fact_type, fact_key=x.fact_key, fact_value=x.fact_value,
+                value_json=x.value_json, provenance=x.provenance,
+            ) for x in snapshots],
+        ))
+        input_candidate = json.loads(client.requests[0]["user_prompt"])["candidate"]
+
+    state = CharacterProjectionState(snapshots)
+    application = state.apply(candidate_ref="C1", projected_snapshot_ref="Q1", fact_type="PROFILE",
+        resolved_fact_key=key, value_type=candidate.value_type, candidate_value_json=candidate.value_json,
+        decision=decision, source=source)
+    assert decision.operation == operation and decision.temporal_scope == scope
+    assert input_candidate["attribute_value"] == value
+    assert input_candidate["evidence_spans"][0]["quote"] == quote
+    assert state.entries_by_ref["P1"].fact_value == occupation
+    assert decision.target_ref is None and decision.removed_snapshot_refs == []
+    assert decision.proposed_value_json == ({"value": "아직 결정되지 않음"} if operation == "ADD" else None)
+    if operation == "ADD":
+        assert application.projected_entry.fact_value == "아직 결정되지 않음"
+    else:
+        assert application.projected_entry is None and state.entries == snapshots
+
+
+def test_book_character_internal_conflicts_are_not_projected_into_unrelated_candidate(monkeypatch):
+    monkeypatch.setattr("app.analysis.character_fact_comparator._estimate_prompt_tokens",
+        lambda system, user, model: 300 if len(json.loads(user)["candidates"]) > 2 else 100)
     source = WorkerAnalysisSource.model_validate(SOURCE)
     candidates = [WorkerCharacterFactComparisonBatchCandidate(
         candidate_ref=ref, projected_snapshot_ref=projected, source=source,
@@ -47,7 +133,7 @@ def test_book_character_internal_conflicts_are_not_projected_into_unrelated_cand
     }]})
 
     result = asyncio.run(execute_character_fact_comparison_batch(
-        CharacterFactComparator(llm_client=provider, model="test-model", max_attempts=1, batch_max_candidates=2),
+        CharacterFactComparator(llm_client=provider, model="test-model", max_attempts=1, batch_max_input_tokens=200),
         matched_character_name="아린", canonical_fact_type="PROFILE", candidates=candidates,
         snapshot_entries=[], ordered_context=True,
     ))
@@ -150,7 +236,9 @@ def test_nonordered_world_book_recomparison_retains_document_context(batch):
     assert str(source.setting_book_id) not in request["user_prompt"]
 
 
-def test_book_character_segments_keep_source_on_projected_slots_and_dependencies():
+def test_book_character_segments_keep_source_on_projected_slots_and_dependencies(monkeypatch):
+    monkeypatch.setattr("app.analysis.character_fact_comparator._estimate_prompt_tokens",
+        lambda system, user, model: 300 if len(json.loads(user)["candidates"]) > 1 else 100)
     source = WorkerAnalysisSource.model_validate(SOURCE)
     candidates = [
         _candidate("C1", "Q1", "다리를 다쳤다").model_copy(update={"source_episode_no": None, "source": source}),
@@ -160,7 +248,7 @@ def test_book_character_segments_keep_source_on_projected_slots_and_dependencies
         {"decisions": [{**_decision_payload("C1", operation="ADD", resolved_key="status.다리_상태", value="다리를 다쳤다"), "effective_from_episode_no": 1}]},
         {"decisions": [{**_decision_payload("C2", operation="UPDATE", resolved_key="status.다리_상태", target_ref="Q1", value="더 크게 다쳤다"), "effective_from_episode_no": 2}]},
     )
-    comparator = CharacterFactComparator(llm_client=provider, model="test-model", batch_max_candidates=1)
+    comparator = CharacterFactComparator(llm_client=provider, model="test-model", batch_max_input_tokens=200)
     result = asyncio.run(execute_character_fact_comparison_batch(comparator,
         matched_character_name="아린", canonical_fact_type="STATUS", candidates=candidates,
         snapshot_entries=[], ordered_context=True))

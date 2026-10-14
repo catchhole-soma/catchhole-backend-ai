@@ -948,6 +948,7 @@ class FakeSpringWorkerClient:
         supported_source_kinds=None,
         supports_setting_book_reference_time=None,
         supports_semantic_current_context=None,
+        supports_frozen_comparison_evidence=None,
     ) -> WorkerAnalysisJobPayload | None:
         self.claim_called = True
         self.claim_model_name = model_name
@@ -1083,6 +1084,12 @@ class FakeSettingExtractor:
 class FakeExtractionResult:
     def __init__(self, candidates: list[ExtractedSettingCandidate]) -> None:
         self.candidates = candidates
+        self.time_context = []
+
+    def model_copy(self, *, update):
+        result = FakeExtractionResult(update.get("candidates", self.candidates))
+        result.time_context = update.get("time_context", self.time_context)
+        return result
 
 
 class FakeWorldSettingExtractor:

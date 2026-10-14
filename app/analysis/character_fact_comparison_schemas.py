@@ -21,6 +21,7 @@ class CharacterFactComparisonDecision(BaseModel):
     proposed_fact_value: TrimmedFactValue | None = None
     proposed_value_json: dict[str, Any] | None = None
     temporal_scope: CharacterFactTemporalScope
+    advance_current_narrative_time: bool = Field(default=False, strict=True)
     effective_from_episode_no: int | None = Field(
         default=None, ge=1, strict=True, exclude_if=lambda value: value is None,
     )
@@ -64,7 +65,15 @@ class CharacterFactComparisonDecision(BaseModel):
         }
         if target_required and self.target_ref is None:
             raise ValueError("UPDATE and MERGE require target_ref.")
-        if not target_required and self.target_ref is not None:
+        # Batch REVIEW may name the incompatible active item without mutating it.
+        # The legacy singleton completion has no read-only reference contract.
+        review_anchor = (
+            isinstance(self, CharacterFactComparisonBatchDecision)
+            and self.operation == CharacterFactComparisonOperation.REVIEW_REQUIRED
+        )
+        if review_anchor and self.target_ref is not None and self.temporal_scope != CharacterFactTemporalScope.PRESENT:
+            raise ValueError("Only a PRESENT review anchor may identify an incompatible current item.")
+        if not target_required and not review_anchor and self.target_ref is not None:
             raise ValueError("Only UPDATE and MERGE may include target_ref.")
 
         if (
@@ -125,6 +134,7 @@ class CharacterFactComparisonDecision(BaseModel):
 class CharacterFactComparisonBatchDecision(CharacterFactComparisonDecision):
     """Provider decision for exactly one source candidate in a character batch."""
 
+    removed_snapshot_refs: list[str] = Field(default_factory=list)
     candidate_ref: str = Field(pattern=r"^C[1-9][0-9]*$")
     resolved_canonical_fact_key: str = Field(
         min_length=1,
@@ -135,7 +145,6 @@ class CharacterFactComparisonBatchDecision(CharacterFactComparisonDecision):
 class CharacterFactComparisonBatchResult(BaseModel):
     decisions: list[CharacterFactComparisonBatchDecision] = Field(
         min_length=1,
-        max_length=20,
     )
 
     @model_validator(mode="after")

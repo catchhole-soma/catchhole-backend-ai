@@ -549,7 +549,7 @@ async def resolve_ordered_character_subjects(
                 max_attempts=max_attempts,
                 truncation_retry_max_output_tokens=truncation_retry_max_output_tokens if book_identity_context else None,
                 prompt_cache_key=("ordered-character-subject-resolution:v4-identity-evidence" if same_name_fallback
-                                  else "ordered-character-subject-resolution:v3-adjacent-only") + (":setting-book-time-v2"
+                                  else "ordered-character-subject-resolution:v3-adjacent-only") + (":setting-book-time-v3"
                     if is_book else "") + (":identity-proof-v2-child-hold" if book_identity_context else ""),
                 operation_name="Ordered character subject resolution",
                 logger=logger,
