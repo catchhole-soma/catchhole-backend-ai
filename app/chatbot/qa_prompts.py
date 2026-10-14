@@ -1,8 +1,19 @@
 """Versioned prompts; source data is never elevated into instructions."""
 
-PLAN_VERSION = "chat-qa-plan-v4"
+PLAN_VERSION = "chat-qa-plan-v5"
 SELECT_VERSION = "chat-qa-select-v3"
 FIELD_VERSION = "chat-qa-field-select-v1"
+
+LINKED_EVIDENCE_INSTRUCTIONS = """
+원문/출처/근거를 함께 요청하면 includeEvidence=true다. 값·변경 이력에 연결된 인용을
+붙이는 요청과, 원문에서 사건의 이유·경위를 해석하는 요청을 구분한다.
+수치가 어떻게 바뀌었는지와 바뀔 때의 원문을 묻는 것은 HISTORY에 직접 근거를 붙이는 요청이다.
+원문을 요청했다는 이유만으로 HISTORY를 현재 설정의 DIRECT_EVIDENCE로 바꾸지 않는다.
+현재값도 함께 명시적으로 요청하면 CURRENT_AND_HISTORY다.
+등록된 값·변경 기록을 전부 보여달라는 요청은 answerShape=FACTS다. '전부'만으로
+조건 목록 LIST나 원인·과정 설명으로 바꾸지 않는다. 별도 조건 선별·집계·요약 요청은 구분한다.
+같은 값의 재기록, 삭제, 현재값에 미반영된 이력은 실제 수치 증감과 구분한다.
+"""
 
 FOCUS_INSTRUCTIONS = """
 등록 설정 조회의 각 subject.focus에는 factType과 attribute를 채운다.
@@ -69,10 +80,11 @@ episodeFrom/episodeTo는 질문이 명시적으로 요청한 '출처 회차' 필
 예: '3~5화에 기록된 마력 변경 이력'은 HISTORY + 3/5.
 '5화 당시 마력이 얼마였어?'는 PAST_STATE다. '현재 마력, 근거는 3~5화에서'는
 CURRENT + includeEvidence=true + 3/5다. 날짜/사건 시점을 출처 번호로 바꾸지 않는다.
-원문/출처/근거를 요청하면 includeEvidence=true. 나머지는 false.
+원문/출처/근거를 요청하지 않으면 includeEvidence=false.
 서버 sourceRange는 허용된 출처 범위이며 현재 snapshot을 해당 시점 상태로 바꾸지 않는다.
 JSON schema만 반환한다. 답변 본문, SQL, 임의 ID, 임의 필드는 출력하지 않는다.
 """
+    + LINKED_EVIDENCE_INSTRUCTIONS
     + FOCUS_INSTRUCTIONS
 )
 

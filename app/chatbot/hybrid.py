@@ -670,20 +670,71 @@ class _HybridSession(_Session):
     def merge_partial_snapshot(self, previous, latest, plan):
         """Combine independent requested facets with a fresh, unambiguous E map."""
         old_answer, old_evidence = previous
+
+        def row_facets(claims):
+            result = {}
+            for claim in claims:
+                for row in claim.row_refs:
+                    result.setdefault(row, set()).update(claim.answered_facets)
+            return result
+
+        before = row_facets(old_answer.claims)
+        current = row_facets(latest.claims)
+        requested = set(plan.requested_facets)
+
+        def unanswered_rows(claims):
+            retained = row_facets(claims)
+            resolved = {
+                row
+                for row, facets in current.items()
+                if requested <= facets
+                and requested <= retained.get(row, set())
+                and row not in latest.unanswered_row_refs
+            }
+            # New evidence for another row cannot resolve an earlier row's gap.
+            # Nor may replacing overlapping claims silently erase a prior row
+            # or a facet that had been answered for that particular row.
+            dropped = [
+                row
+                for row, facets in before.items()
+                if row not in retained or facets - retained[row]
+            ]
+            incomplete = [row for row, facets in retained.items() if not requested <= facets]
+            return list(
+                dict.fromkeys(
+                    [r for r in old_answer.unanswered_row_refs if r not in resolved]
+                    + latest.unanswered_row_refs
+                    + dropped
+                    + incomplete
+                )
+            )
+
         old_facets = {f for c in old_answer.claims for f in c.answered_facets}
         new_facets = {f for c in latest.claims for f in c.answered_facets}
         # A conflicting interpretation is not an additive fact. Keep the latest
         # explicit conflict, and never silently combine contradictory narratives.
         if latest.conflicts:
             return latest, tuple(self.evidences)
-        if old_answer.conflicts or not new_facets - old_facets:
+        row_progress = any(
+            facets - before.get(row, set()) for row, facets in current.items()
+        ) or any(
+            row in current and requested <= current[row] and row not in latest.unanswered_row_refs
+            for row in old_answer.unanswered_row_refs
+        )
+        if old_answer.conflicts or not (new_facets - old_facets or row_progress):
             return previous
-        chosen = [
-            c
-            for c in old_answer.claims
-            if not set(c.answered_facets) & new_facets
-            and (plan.event_scope is None or c.answered_facets)
-        ]
+
+        def superseded(claim):
+            if claim.row_refs:
+                return all(
+                    row in current and set(claim.answered_facets) <= current[row]
+                    for row in claim.row_refs
+                )
+            return bool(set(claim.answered_facets) & new_facets) or (
+                plan.event_scope is not None and not claim.answered_facets
+            )
+
+        chosen = [c for c in old_answer.claims if not superseded(c)]
         statements = [(c, old_evidence) for c in chosen] + [
             (c, self.evidences) for c in latest.claims
         ]
@@ -715,14 +766,25 @@ class _HybridSession(_Session):
             claims.append(claim.model_copy(update={"evidence_refs": refs}))
         if len(evidence) > self.hcfg.max_evidence or len(claims) > 8:
             self.codes.append("EVIDENCE_CONTEXT_LIMIT")
-            return (latest, tuple(self.evidences)) if old_facets <= new_facets else previous
+            if old_facets <= new_facets:
+                return (
+                    latest.model_copy(
+                        update={"unanswered_row_refs": unanswered_rows(latest.claims)}
+                    ),
+                    tuple(self.evidences),
+                )
+            return previous
         answered = {f for c in claims for f in c.answered_facets}
         missing = [f for f in plan.requested_facets if f not in answered]
+        unanswered = unanswered_rows(claims)
         combined = GroundedAnswer(
-            coverage="PARTIAL" if missing or self.uncertain_condition_rows() else "COMPLETE",
+            coverage="PARTIAL"
+            if missing or unanswered or self.uncertain_condition_rows()
+            else "COMPLETE",
             claims=claims,
             conflicts=[],
             missing_facets=missing,
+            unanswered_row_refs=unanswered,
         )
         self.fallback_direct_checks = len({e.direct_ref for e in evidence if e.direct_ref})
         return combined, tuple(evidence)
@@ -947,12 +1009,19 @@ class _HybridSession(_Session):
         covered = {f for c in claims for f in c.answered_facets}
         missing = [f for f in facets if f not in covered]
         supported = bool(claims or conflicts)
-        complete = supported and not missing and not conflicts and not blocked
+        complete = (
+            supported
+            and not missing
+            and not conflicts
+            and not blocked
+            and not answer.unanswered_row_refs
+        )
         return GroundedAnswer(
             coverage="COMPLETE" if complete else "PARTIAL" if supported else "NONE",
             claims=claims,
             conflicts=conflicts,
             missing_facets=missing,
+            unanswered_row_refs=answer.unanswered_row_refs,
         )
 
     async def answer(self, plan):
@@ -1003,7 +1072,8 @@ class _HybridSession(_Session):
                     or covered | missing != requested
                 ):
                     raise ValueError("Claims must answer the requested information")
-                if (answer.coverage == "COMPLETE") != (not missing and not answer.conflicts):
+                complete = not missing and not answer.conflicts and not answer.unanswered_row_refs
+                if (answer.coverage == "COMPLETE") != complete:
                     raise ValueError("Coverage must describe requested information")
 
         answer = await self.model(

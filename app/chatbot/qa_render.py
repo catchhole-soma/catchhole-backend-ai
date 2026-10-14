@@ -14,6 +14,7 @@ class AnswerRow:
     item: SettingToolItem
     domain: str = "CHARACTER"
     evidence: list[tuple[SourceReference, SettingToolItem]] = field(default_factory=list)
+    evidence_requested: bool = False
 
 
 NOTICES = {
@@ -170,6 +171,8 @@ def render_answer(
         if row_refs:
             numbers = ", ".join(str(next_refs.index(ref) + 1) for ref in row_refs)
             block += f" · 근거 {numbers}"
+        elif row.evidence_requested:
+            block += " · 원문 미확인"
         if len("".join(parts)) + len(block) > maximum:
             codes.append("ANSWER_LIMIT")
             break
@@ -195,6 +198,8 @@ def render_answer(
                 sentence += " (직접 입력한 설정)"
             if refs:
                 sentence += " 근거 " + ", ".join(str(n) for n in range(1, len(refs) + 1))
+            elif rows[0].evidence_requested:
+                sentence += " 연결된 원문은 확인하지 못했어요."
             if len(sentence) <= maximum:
                 parts = [sentence]
     outcome = "INSUFFICIENT_EVIDENCE" if direct_only and not refs else "ANSWER"

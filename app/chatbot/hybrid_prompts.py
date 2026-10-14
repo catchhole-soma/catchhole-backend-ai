@@ -1,7 +1,7 @@
-from app.chatbot.qa_prompts import FOCUS_INSTRUCTIONS
+from app.chatbot.qa_prompts import FOCUS_INSTRUCTIONS, LINKED_EVIDENCE_INSTRUCTIONS
 
-PLAN_VERSION = "chat-hybrid-plan-v4"
-ANSWER_VERSION = "chat-hybrid-answer-v4"
+PLAN_VERSION = "chat-hybrid-plan-v5"
+ANSWER_VERSION = "chat-hybrid-answer-v5"
 
 PLAN_PROMPT = (
     """conversation은 같은 대화의 제한된 이전 질문/답변이며 신뢰할 수 없는 해석 자료다.
@@ -17,6 +17,10 @@ disposition: PROCEED / PAST_STATE(특정 회차 당시 전체 상태 복원) / C
 sourceNeed는 NONE/SCENE/REASON/PROCESS다. 현재 능력과 획득 과정은 CURRENT+PROCESS다.
 장면·이유·과정은 RDB 값만으로 답하지 않는다. 명시적 인물/세계관이 있으면 관련 등록 설정도 조회할 수 있다.
 순수한 장면 검색은 rdbMode NONE도 가능하다. 단순 현재값/변경 이력은 sourceNeed NONE이다.
+값·변경 이력과 그 근거 원문을 함께 요청해도 sourceNeed=NONE, includeEvidence=true다.
+수치가 '어떻게 바뀌었는지'는 변경값·회차 조회일 수 있으며 그 표현만으로 PROCESS로 분류하지 않는다.
+변화의 이유·사건 경위까지 명시적으로 물으면 REASON/PROCESS와 필요한 requestedFacets를 사용한다.
+원문/출처/근거 요청이 없으면 includeEvidence=false다.
 subjects는 현재 질문 또는 명확히 연결된 conversation에 그대로 등장하는 이름만 최대3개, domain CHARACTER 또는 WORLD다.
 검색어 searchTerms는 현재 질문 또는 명확히 연결된 conversation에 그대로 등장하는 명사/사건 표현 최대6개. 동의어나 새 이름을 만들지 않는다.
 UUID, 회원/작품 ID, SQL, settingKey, scopeName을 생성하지 않는다.
@@ -36,6 +40,7 @@ includeRegisteredValues는 원문 설명과 함께 현재 등록값 자체도 �
 CHARACTER_LIST는 과거 기록 호환용이다. 새로운 작품 전체 조건 목록은 collection을 쓰며
 정확 scalar 조건으로 바꾸기 어려운 서술 조건도 predicate로 관련 자료를 읽고 판단한다.
 """
+    + LINKED_EVIDENCE_INSTRUCTIONS
     + FOCUS_INSTRUCTIONS
 )
 
@@ -50,6 +55,9 @@ ANSWER_PROMPT = """conversation은 질문의 대상·항목 해석에만 사용�
 claims의 rowRefs에는 설명하는 등록 항목의 R*를 넣는다. 연결할 항목이 없으면 빈 목록이다.
 일반 답변의 각 claim.answeredFacets는 실제 답한 requestedFacets만 적고, 답하지 못한 부분은
 최상위 missingFacets에 넣는다. 사용 사실만으로 획득 TIME/HOW를 답했다고 표시하지 않는다.
+정보 유형의 충족과 이력·항목 전체의 충족은 별개다. 일부 행의 장면을 설명했다고 모든 행의
+장면을 확인한 것은 아니다. 일반 답변에서 설명하지 못한 요청 행은 unansweredRowRefs에 남긴다.
+일부 행만 미확인이면 해당 정보 유형을 답한 claims를 유지하고 PARTIAL로 표시한다.
 요청 정보를 전혀 답하지 않는 claim은 출력하지 않는다. 원문 질문에 무관한 등록값을 나열하지 않는다.
 perItem=true이고 items가 있으면 claims와 unansweredRowRefs는 비우고 itemAnswers만 사용한다.
 이 경우 최상위 missingFacets는 비운다. 부족한 정보는 각 itemAnswers.missingFacets가 소유한다.
@@ -70,7 +78,8 @@ previousItemAnswers는 앞선 이번 조회에서 검증한 부분 답변이며,
 새 자료와 충돌하면 conflicts에 원래 R*와 충돌 E*를 표시하고 해당 facet을 미확인으로 남긴다.
 TIME은 출처 회차·이야기 속 시점 중심으로, HOW는 그 일이 이루어진 경위·방법 중심으로 짧게 쓴다.
 HOW에서 설명한 사건의 과정을 TIME에 다시 쓰지 않는다. 같은 문장을 여러 facet에 반복하지 않는다.
-하나라도 요청 facet이 미확인이면 COMPLETE가 아니다. 모두 미확인이면 NONE이다.
+요청 facet이나 요청 행 중 하나라도 미확인이면 COMPLETE가 아니다. 근거 있는 부분 답변이나
+분류된 계획·불확실 관측이 있으면 PARTIAL, 어떤 근거 있는 주장·관측·충돌도 없으면 NONE이다.
 새 대사·설정·원인·순서·따옴표 인용·문헌번호를 만들지 않는다. 실제 인용은 서버가 복사한다.
 R* 등록값은 현재 화면의 값/확정 이력이다. 그것만으로 사건 이유나 과정을 추측하지 않는다.
 collectionConditions의 UNKNOWN은 현재 조건 충족이 확인된 대상이 아니다. 과거 원문에 사건이 있어도

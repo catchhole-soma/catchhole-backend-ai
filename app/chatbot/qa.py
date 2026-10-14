@@ -1,6 +1,7 @@
 """Bounded RDB QA. LLMs classify/select; code owns queries, scope and quotations."""
 
 import json
+import logging
 import re
 from collections.abc import Callable
 
@@ -21,6 +22,9 @@ from app.schemas.chat_execution import Finish
 from app.schemas.chat_qa import AnswerSelection, QuestionPlan
 from app.schemas.setting_tools import SettingToolQuery, SettingToolResponse
 from app.usage.metering import _estimate_text_token_upper_bound
+
+
+logger = logging.getLogger(__name__)
 
 
 def response_schema(model: type[BaseModel]) -> LlmResponseSchema:
@@ -156,11 +160,12 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         client = ChatTextClient(
             self.handler.delegate, self.execution, purpose=purpose, default_model=self.cfg.model
         )
-        for attempt in range(
+        attempt_limit = (
             self.cfg.max_attempts
             if max_attempts is None
             else min(self.cfg.max_attempts, max_attempts)
-        ):
+        )
+        for attempt in range(attempt_limit):
             # Each schema retry is a separate metered provider invocation. No transport retry.
             retry_prompt = prompt + (
                 "\n이전 출력이 계약 검증에 실패했습니다. schema와 제공된 참조만 사용하세요."
@@ -178,13 +183,49 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                 response_schema=schema,
             )
             self.record_model_response(purpose, response)
+            validation_stage = "RESPONSE_SCHEMA"
             try:
                 parsed = cls.model_validate_json(response.text)
                 if validate:
+                    validation_stage = "RESPONSE_CONTRACT"
                     validate(parsed)
                 return parsed
-            except (ValidationError, ValueError):
-                pass
+            except (ValidationError, ValueError) as exc:
+                # Never log exception text, rejected values, response bodies or IDs.
+                category = (
+                    "SCHEMA_VALIDATION"
+                    if validation_stage == "RESPONSE_SCHEMA"
+                    else "CONTRACT_VALIDATION"
+                )
+                if isinstance(exc, ValidationError) and any(
+                    error["type"] == "json_invalid"
+                    for error in exc.errors(
+                        include_url=False, include_context=False, include_input=False
+                    )
+                ):
+                    category = "JSON_INVALID"
+                origin = "UNKNOWN"
+                trace = exc.__traceback__
+                while trace is not None:
+                    module = trace.tb_frame.f_globals.get("__name__", "")
+                    if module.startswith(("app.chatbot.", "app.schemas.")):
+                        origin = f"{module}.{trace.tb_frame.f_code.co_name}:{trace.tb_lineno}"
+                    trace = trace.tb_next
+                diagnostic = {
+                    "purpose": purpose,
+                    "schema": cls.__name__,
+                    "attempt": attempt + 1,
+                    "max_attempts": attempt_limit,
+                    "validation_stage": validation_stage,
+                    "error_category": category,
+                    "origin": origin,
+                }
+                logger.warning(
+                    "chat_response_validation_failed purpose=%s schema=%s attempt=%d "
+                    "max_attempts=%d stage=%s category=%s origin=%s",
+                    *diagnostic.values(),
+                    extra=diagnostic,
+                )
         raise ProviderFailure()
 
     async def query(self, request: SettingToolQuery) -> SettingToolResponse:
@@ -629,6 +670,8 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         return chosen, None
 
     async def evidence(self, rows: list[AnswerRow], *, reserve=0, revalidate=False):
+        for row in rows:
+            row.evidence_requested = True
         cache = {}
         for row in rows:
             if row.item.sources_truncated:
