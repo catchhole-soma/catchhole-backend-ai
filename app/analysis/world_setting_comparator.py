@@ -80,7 +80,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "world_setting_comparison_batch.md"
 )
-WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY = "world-setting-comparison-batch:v13"
+WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY = "world-setting-comparison-batch:v14"
 logger = logging.getLogger(__name__)
 LOCAL_REFERENCE_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])[CST]\d+(?![A-Za-z0-9_])",
@@ -327,7 +327,7 @@ class WorldSettingSubjectResolver:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="ordered-world-subject-resolution:v4" + (":book-grounded-identity-v1" if is_book else ""),
+            prompt_cache_key="ordered-world-subject-resolution:v4" + (":book-grounded-identity-v2" if is_book else ""),
             operation_name="Ordered world subject resolution", logger=logger,
             validate_model=validate,
             retry_user_prompt_builder=book_world_identity_retry_prompt if is_book else _ordered_world_subject_retry_prompt,
@@ -426,7 +426,7 @@ class WorldSettingComparator:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="world-setting-comparison:v16" + (":setting-book-claims-v2"
+            prompt_cache_key="world-setting-comparison:v17" + (":setting-book-claims-v2"
                 if candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
                 else ":book-current-time-v3" if temporal_context else ""),
             operation_name="World-setting comparison",

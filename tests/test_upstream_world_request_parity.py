@@ -41,4 +41,8 @@ def test_world_request_keeps_upstream_input_and_transport(purpose, captured):
     assert set(general_rule_overrides) == {"world_batch", "world_singleton"}
     assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in general_rule_overrides.values())
     overrides = {**overrides, **general_rule_overrides.get(purpose, {})}
+    transition_overrides = json.loads((ROOT / "tests/fixtures/pr221_world_property_transition_request_overrides.json").read_text())["overrides"]
+    assert set(transition_overrides) == {"world_extraction", "world_singleton", "world_batch"}
+    assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in transition_overrides.values())
+    overrides = {**overrides, **transition_overrides.get(purpose, {})}
     assert actual[purpose] == {**expected["requests"][purpose], **overrides}

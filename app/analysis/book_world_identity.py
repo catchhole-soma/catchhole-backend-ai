@@ -42,8 +42,13 @@ BOOK_WORLD_IDENTITY_INSTRUCTIONS = """
 identity_proofs는 {subject_ref, relation, quote} 객체 목록입니다. relation은 SAME_ENTITY,
 CONTAINS, RELATED, DISTINCT, UNKNOWN 중 하나입니다. 포함/소재/관련 관계는 SAME_ENTITY가
 아닙니다. 선택한 다른 이름의 대상마다 그 대상과 원문 주체가 실제 동일하다는 근거가
-필요합니다. quote는 candidate 또는 그 target의 입력 evidence 연속 원문을 그대로 복사하고
-양쪽 실제 이름/그 target에 공급된 별칭을 포함하세요. 다른 대상의 별칭을 빌리지 마세요.
+필요합니다. 모든 quote는 candidate 또는 그 target의 입력 evidence 연속 원문을 그대로
+복사하세요. 선택한 다른 이름의 대상은 quote에 양쪽 실제 이름/그 target에 공급된 별칭을
+포함하세요. 다른 대상의 별칭이나 evidence를 빌리지 마세요.
+선택한 대상의 proof는 SAME_ENTITY만 허용합니다. 비선택 대상의 proof는 DISTINCT 또는
+RELATED인 설명만 허용하며, 대상 연결을 확정하지 않습니다. 모든 proof의 subject_ref는 입력
+subjects에 있는 대상이어야 하며 중복할 수 없습니다. 설명 proof를 맞추려고 다른 대상을
+선택하지 마세요.
 서로 독립된 주체 제목의 항목을 관계가 있다는 이유로 합치지 마세요. 두 이름이 문서 어딘가에
 나오거나 표식을 SAME_ENTITY라고 쓰는 것만으로 충분하지 않습니다. 제목 문맥과 충돌하면
 새 주체인지 또는 모호한 연결인지 원문으로 다시 판단하세요. 공급된 별칭에 없는 다른 이름을
@@ -96,8 +101,15 @@ def validate_book_world_selection(selection, candidate, references) -> None:
     if len(refs) != len(set(refs)) or any(ref not in references for ref in refs):
         raise BookWorldIdentityError("BOOK_IDENTITY_REFERENCE_INVALID")
     proofs = {proof.subject_ref: proof for proof in selection.identity_proofs}
-    if len(proofs) != len(selection.identity_proofs) or any(ref not in refs for ref in proofs):
+    if len(proofs) != len(selection.identity_proofs) or any(ref not in references for ref in proofs):
         raise BookWorldIdentityError("BOOK_IDENTITY_PROOF_INVALID")
+    for ref, proof in proofs.items():
+        if ref in refs:
+            continue
+        supplied_evidence = [span.quote for span in candidate.evidence_spans + references[ref].identity_evidence]
+        if (proof.relation not in {"DISTINCT", "RELATED"} or not proof.quote.strip()
+                or not any(proof.quote in quote for quote in supplied_evidence)):
+            raise BookWorldIdentityError("BOOK_IDENTITY_PROOF_INVALID")
     if selection.ambiguous:
         return  # Valid refs are discarded by the caller; no identity is established.
     candidate_key = normalize_world_setting_name(candidate.subject_name)
@@ -129,8 +141,12 @@ def book_world_identity_retry_prompt(original: str, error: Exception) -> str:
         "reason_code": error.code if isinstance(error, BookWorldIdentityError) else "BOOK_IDENTITY_RESPONSE_INVALID",
         "correction": (
             "입력의 독립 주체 제목과 선택한 target의 실제 이름/공급 별칭을 다시 확인하세요. "
-            "소재/포함/관련 관계로 연결하지 말고 동일 주체의 실제 연속 원문으로 target별 proof를 "
-            "작성하세요. 근거 없는 선택을 유지하지 말고 명확한 신규 주체 또는 모호한 연결로 "
+            "소재/포함/관련 관계로 연결하지 마세요. 선택한 target의 proof는 SAME_ENTITY, "
+            "비선택 target의 설명 proof는 DISTINCT/RELATED만 허용합니다. 모든 proof는 "
+            "candidate 또는 해당 target의 입력 evidence 연속 원문을 인용하고 입력 ref를 중복 "
+            "없이 사용하세요. 다른 이름의 target을 선택하면 양쪽 실제 이름/공급 별칭을 담은 "
+            "동일 주체 근거를 확인하세요. 설명 proof를 맞추려고 다른 대상을 선택하지 마세요. "
+            "근거 없는 선택을 유지하지 말고 명확한 신규 주체 또는 모호한 연결로 "
             "구분하세요. selected_subject_refs/ambiguous/identity_proofs 전체를 반환하세요."
         ),
     }

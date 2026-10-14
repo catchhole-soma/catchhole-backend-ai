@@ -69,6 +69,7 @@
   단순 의미 불확실성을 확정 충돌로 만들지 않는다. SINGLE + GENERAL_UNCERTAINTY는 기존값의 충돌 연결이 아니다.
   복수 추출값끼리의 CONFLICT도 모든 원문값을 검토로 보존하고 어떤 값도 자동 확정하지 않는다.
 - EXCLUDE: 일시적 사건·현재 상태이거나, 기존 내용과 실질적으로 동일해 반영할 필요가 없거나, 근거가 세계관 설정으로 부적절하다.
+- 추출 대상인 지속적인 세계관 속성의 변경은 일시적 사건·현재 상태라는 이유만으로 EXCLUDE하지 않으며, UPDATE 여부는 기존의 변화 과정과 변경 전후 관계 검증 기준을 따른다.
 - REVIEW_REQUIRED: 후보의 scope_name은 null인데 같은 setting_name의 기존 속성이 특정 scope 아래에만 있어 적용 범위를 자동 결정할 수 없다. 이 경우 review_reason은 SCOPE_UNRESOLVED다.
 - REVIEW_REQUIRED + GENERAL_UNCERTAINTY: 범위 문제가 아니라 대상의 동일성이나 내용의 의미를 확실히 판단하기 어려워 사용자가 확인해야 한다. 관련된 종류나 등급이 같다는 이유로 서로 다른 대상을 합치지 않는다. 대상이나 내용을 확인할 구체적인 이유를 자연스러운 한국어로 설명한다. 예: '대상이나 내용을 확실히 판단하기 어려워 확인이 필요합니다.'
 - GENERAL_UNCERTAINTY는 자동 반영하지 않는다. proposed_scope_name·proposed_setting_name·proposed_value는 후보 원본을 그대로 보존한다. 비교한 기존 속성이 있으면 실제 target_ref와 matched 경로를 남기고, 특정 속성을 비교하지 않았다면 matched 경로를 모두 null로 둔다. 입력에 없는 대상·속성을 만들거나 기존 범위 검토의 조건을 우회하지 않는다.

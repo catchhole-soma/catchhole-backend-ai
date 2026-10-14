@@ -1,0 +1,2094 @@
+[
+  {
+    "id": "recovery-1-F2-2-C-0020",
+    "user": {
+      "candidate": {
+        "category": "FACTION",
+        "subject_name": "등대관리소",
+        "evidence": [
+          "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "01-character-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "수로관리청",
+          "aliases": [],
+          "identity_evidence": [
+            "직업과 소속: 수로관리청 기록실의 임시 수문 기록관.",
+            "직업과 소속: 수로관리청 정비반의 설비기사.",
+            "공식 직급: 수로관리청 조율반의 견습 조율사."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": []
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S1\",\"relation\":\"DISTINCT\",\"quote\":\"등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다.\"}]}",
+    "raw_sha256": "3fda3a333bf5b9eba1fca67055ad8fb68c771035e23f6e58e1dcf041b077ea56"
+  },
+  {
+    "id": "recovery-1-F2-2-C-0021",
+    "user": {
+      "candidate": {
+        "category": "FACTION",
+        "subject_name": "등대관리소",
+        "evidence": [
+          "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "01-character-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "수로관리청",
+          "aliases": [],
+          "identity_evidence": [
+            "직업과 소속: 수로관리청 기록실의 임시 수문 기록관.",
+            "직업과 소속: 수로관리청 정비반의 설비기사.",
+            "공식 직급: 수로관리청 조율반의 견습 조율사."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [],
+      "validation_feedback": {
+        "reason_code": "BOOK_IDENTITY_PROOF_INVALID",
+        "correction": "입력의 독립 주체 제목과 선택한 target의 실제 이름/공급 별칭을 다시 확인하세요. 소재/포함/관련 관계로 연결하지 말고 동일 주체의 실제 연속 원문으로 target별 proof를 작성하세요. 근거 없는 선택을 유지하지 말고 명확한 신규 주체 또는 모호한 연결로 구분하세요. selected_subject_refs/ambiguous/identity_proofs 전체를 반환하세요."
+      }
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S1\",\"relation\":\"DISTINCT\",\"quote\":\"등대관리소는 수로관리청과 별도 기관이므로\"}]}",
+    "raw_sha256": "e1966edf2ae4db21bc24543acdaf0ab12f8dddde8b176e0ace18085a817dfdc9"
+  },
+  {
+    "id": "recovery-1-F2-3-W-0018",
+    "user": {
+      "candidate": {
+        "category": "LOCATION",
+        "subject_name": "유리곶",
+        "evidence": [
+          "마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "02-world-time-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "감람항",
+          "aliases": [],
+          "identity_evidence": [
+            "감람항은 두 강이 합쳐지는 하구의 도시이며 바다 쪽으로 돌물문을 두고 있다.",
+            "감람항의 중앙교각은 동쪽 주거지와 서쪽 창고 지대를 잇는다.",
+            "물길을 따라 이동하는 것이 골목길보다 빠른 도시지만 누구나 배를 소유하지는 않는다.",
+            "부두의 배차표는 주민들이 실제로 시간을 맞추는 기준이고, 등대는 먼 바다에서 들어오는 배가 시간을 확인하는 기준이다."
+          ],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S2",
+          "name": "돌물문",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": 1,
+          "source_kind": "EPISODE",
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S3",
+          "name": "버들마을",
+          "aliases": [],
+          "identity_evidence": [
+            "버들마을은 감람항 하류의 주거 마을이다.",
+            "물때가 낮으면 모래길이 드러나지만 그 길은 공식 통근로가 아니다."
+          ],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S4",
+          "name": "마루섬",
+          "aliases": [],
+          "identity_evidence": [
+            "마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.직급",
+          "value": "견습 조율사",
+          "evidence": [
+            "공식 직급: 수로관리청 조율반의 견습 조율사.",
+            "직급 표기의 기준: 이 문서의 견습 표기는 현재 공식 직급이다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "강다인",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.occupation",
+          "value": "장마 이후 정식 임명 예정",
+          "evidence": [
+            "장마 이후 다인이 정식 임명을 받는 장면은 예정되어 있지만 이 문서의 현재 직급을 그 계획으로 바꾸지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "권이준",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.출생지",
+          "value": "마루섬; 유리곶 표기의 오류를 정정하려는 설정",
+          "evidence": [
+            "출생지: 마루섬. 원고에 적힌 유리곶은 출생지 표기의 오류이며, 확정 설정은 마루섬으로 정정한다.",
+            "이준의 고향에 관한 정정은 작가용 기록의 정정 의도다. 본문 속 다른 출생지 근거가 없어지는 사건이 아니며, 이준이 이 문서를 읽고 자신의 기억을 고치는 장면도 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.업무_권한",
+          "value": "독립 수문 조율 권한 획득은 아직 구상 중인 결말의 조건부 가능성",
+          "evidence": [
+            "소하가 독립적으로 수문을 조율하게 되는 결말은 아직 구상 중이다. 그 구상이 채택된다면 감독 없이 일할 권한을 얻을 수 있지만, 현재의 소하에게 이미 그 권한이 있는 것은 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "등대관리소",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "기관 관계",
+          "value": "수로관리청과 별도 기관이다.",
+          "evidence": [
+            "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        }
+      ]
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S4\",\"relation\":\"DISTINCT\",\"quote\":\"마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다.\"}]}",
+    "raw_sha256": "3500ffd95c1434a7a33b5b46c183d47269b040dde3f98815e513e5e91e9194d2"
+  },
+  {
+    "id": "recovery-1-F2-3-W-0019",
+    "user": {
+      "candidate": {
+        "category": "LOCATION",
+        "subject_name": "유리곶",
+        "evidence": [
+          "마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "02-world-time-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "감람항",
+          "aliases": [],
+          "identity_evidence": [
+            "감람항은 두 강이 합쳐지는 하구의 도시이며 바다 쪽으로 돌물문을 두고 있다.",
+            "감람항의 중앙교각은 동쪽 주거지와 서쪽 창고 지대를 잇는다.",
+            "물길을 따라 이동하는 것이 골목길보다 빠른 도시지만 누구나 배를 소유하지는 않는다.",
+            "부두의 배차표는 주민들이 실제로 시간을 맞추는 기준이고, 등대는 먼 바다에서 들어오는 배가 시간을 확인하는 기준이다."
+          ],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S2",
+          "name": "돌물문",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": 1,
+          "source_kind": "EPISODE",
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S3",
+          "name": "버들마을",
+          "aliases": [],
+          "identity_evidence": [
+            "버들마을은 감람항 하류의 주거 마을이다.",
+            "물때가 낮으면 모래길이 드러나지만 그 길은 공식 통근로가 아니다."
+          ],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S4",
+          "name": "마루섬",
+          "aliases": [],
+          "identity_evidence": [
+            "마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.직급",
+          "value": "견습 조율사",
+          "evidence": [
+            "공식 직급: 수로관리청 조율반의 견습 조율사.",
+            "직급 표기의 기준: 이 문서의 견습 표기는 현재 공식 직급이다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "강다인",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.occupation",
+          "value": "장마 이후 정식 임명 예정",
+          "evidence": [
+            "장마 이후 다인이 정식 임명을 받는 장면은 예정되어 있지만 이 문서의 현재 직급을 그 계획으로 바꾸지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "권이준",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.출생지",
+          "value": "마루섬; 유리곶 표기의 오류를 정정하려는 설정",
+          "evidence": [
+            "출생지: 마루섬. 원고에 적힌 유리곶은 출생지 표기의 오류이며, 확정 설정은 마루섬으로 정정한다.",
+            "이준의 고향에 관한 정정은 작가용 기록의 정정 의도다. 본문 속 다른 출생지 근거가 없어지는 사건이 아니며, 이준이 이 문서를 읽고 자신의 기억을 고치는 장면도 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.업무_권한",
+          "value": "독립 수문 조율 권한 획득은 아직 구상 중인 결말의 조건부 가능성",
+          "evidence": [
+            "소하가 독립적으로 수문을 조율하게 되는 결말은 아직 구상 중이다. 그 구상이 채택된다면 감독 없이 일할 권한을 얻을 수 있지만, 현재의 소하에게 이미 그 권한이 있는 것은 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "등대관리소",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "기관 관계",
+          "value": "수로관리청과 별도 기관이다.",
+          "evidence": [
+            "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        }
+      ],
+      "validation_feedback": {
+        "reason_code": "BOOK_IDENTITY_PROOF_INVALID",
+        "correction": "입력의 독립 주체 제목과 선택한 target의 실제 이름/공급 별칭을 다시 확인하세요. 소재/포함/관련 관계로 연결하지 말고 동일 주체의 실제 연속 원문으로 target별 proof를 작성하세요. 근거 없는 선택을 유지하지 말고 명확한 신규 주체 또는 모호한 연결로 구분하세요. selected_subject_refs/ambiguous/identity_proofs 전체를 반환하세요."
+      }
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S4\",\"relation\":\"DISTINCT\",\"quote\":\"마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다.\"}]}",
+    "raw_sha256": "3500ffd95c1434a7a33b5b46c183d47269b040dde3f98815e513e5e91e9194d2"
+  },
+  {
+    "id": "recovery-1-F2-3-W-0054",
+    "user": {
+      "candidate": {
+        "category": "IMPORTANT_ITEM",
+        "subject_name": "조율판",
+        "evidence": [
+          "도구: 조율판은 진동의 기준을 잡는 금속판이다. 류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "02-world-time-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "방수 기록철",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S2",
+          "name": "붉은 유리 패찰",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": 1,
+          "source_kind": "EPISODE",
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S3",
+          "name": "조율판",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S4",
+          "name": "청류호",
+          "aliases": [],
+          "identity_evidence": [
+            "종류와 용도: 감람항의 공용 화물 나룻배.",
+            "중앙 부두와 서쪽 창고 지대를 하루 두 차례 왕복한다.",
+            "현재 정규 승무 인원: 네 명. 선장 한 명과 선원 세 명을 합친 인원이다. 배에 타는 기술자와 승객은 정규 승무 인원에 포함하지 않는다.",
+            "정규 승무원 채용과 배치가 확인될 때 변화를 기록한다.",
+            "정박지: 감람항 중앙 부두의 세 번째 계류 자리. 바람을 피해 잠깐 다른 곳에 묶는 경우와 정규 정박지를 이전하는 경우를 구분한다.",
+            "배의 구조: 얕은 흘수와 넓은 화물칸을 가진 목선이다.",
+            "조율 장치가 달린 수문을 지날 수 있지만 배 자체는 조율술로 움직이지 않는다.",
+            "물품 운송: 방수 기록철과 공구 가방은 사람이 가져온 물건이다. 청류호의 기본 장비는 노 두 쌍, 닻 하나, 구조용 밧줄 세 벌이다. 개인의 휴대등을 배의 영구 장비로 적지 않는다."
+          ],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": 1,
+          "source_kind": "EPISODE",
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S5",
+          "name": "측정봉",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        }
+      ],
+      "unresolved_references": [
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.직급",
+          "value": "견습 조율사",
+          "evidence": [
+            "공식 직급: 수로관리청 조율반의 견습 조율사.",
+            "직급 표기의 기준: 이 문서의 견습 표기는 현재 공식 직급이다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "강다인",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.occupation",
+          "value": "장마 이후 정식 임명 예정",
+          "evidence": [
+            "장마 이후 다인이 정식 임명을 받는 장면은 예정되어 있지만 이 문서의 현재 직급을 그 계획으로 바꾸지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "권이준",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.출생지",
+          "value": "마루섬; 유리곶 표기의 오류를 정정하려는 설정",
+          "evidence": [
+            "출생지: 마루섬. 원고에 적힌 유리곶은 출생지 표기의 오류이며, 확정 설정은 마루섬으로 정정한다.",
+            "이준의 고향에 관한 정정은 작가용 기록의 정정 의도다. 본문 속 다른 출생지 근거가 없어지는 사건이 아니며, 이준이 이 문서를 읽고 자신의 기억을 고치는 장면도 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.업무_권한",
+          "value": "독립 수문 조율 권한 획득은 아직 구상 중인 결말의 조건부 가능성",
+          "evidence": [
+            "소하가 독립적으로 수문을 조율하게 되는 결말은 아직 구상 중이다. 그 구상이 채택된다면 감독 없이 일할 권한을 얻을 수 있지만, 현재의 소하에게 이미 그 권한이 있는 것은 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "등대관리소",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "기관 관계",
+          "value": "수로관리청과 별도 기관이다.",
+          "evidence": [
+            "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        }
+      ]
+    },
+    "raw": "{\"selected_subject_refs\":[\"S3\"],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S5\",\"relation\":\"DISTINCT\",\"quote\":\"도구: 조율판은 진동의 기준을 잡는 금속판이다. 류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다.\"}]}",
+    "raw_sha256": "6b8fa5fcd1daedd7d830113a5088428426bcedc3e9e355559e890c73acda8199"
+  },
+  {
+    "id": "recovery-1-F2-3-W-0055",
+    "user": {
+      "candidate": {
+        "category": "IMPORTANT_ITEM",
+        "subject_name": "조율판",
+        "evidence": [
+          "도구: 조율판은 진동의 기준을 잡는 금속판이다. 류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "02-world-time-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "방수 기록철",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S2",
+          "name": "붉은 유리 패찰",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": 1,
+          "source_kind": "EPISODE",
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S3",
+          "name": "조율판",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S4",
+          "name": "청류호",
+          "aliases": [],
+          "identity_evidence": [
+            "종류와 용도: 감람항의 공용 화물 나룻배.",
+            "중앙 부두와 서쪽 창고 지대를 하루 두 차례 왕복한다.",
+            "현재 정규 승무 인원: 네 명. 선장 한 명과 선원 세 명을 합친 인원이다. 배에 타는 기술자와 승객은 정규 승무 인원에 포함하지 않는다.",
+            "정규 승무원 채용과 배치가 확인될 때 변화를 기록한다.",
+            "정박지: 감람항 중앙 부두의 세 번째 계류 자리. 바람을 피해 잠깐 다른 곳에 묶는 경우와 정규 정박지를 이전하는 경우를 구분한다.",
+            "배의 구조: 얕은 흘수와 넓은 화물칸을 가진 목선이다.",
+            "조율 장치가 달린 수문을 지날 수 있지만 배 자체는 조율술로 움직이지 않는다.",
+            "물품 운송: 방수 기록철과 공구 가방은 사람이 가져온 물건이다. 청류호의 기본 장비는 노 두 쌍, 닻 하나, 구조용 밧줄 세 벌이다. 개인의 휴대등을 배의 영구 장비로 적지 않는다."
+          ],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": 1,
+          "source_kind": "EPISODE",
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S5",
+          "name": "측정봉",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        }
+      ],
+      "unresolved_references": [
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.직급",
+          "value": "견습 조율사",
+          "evidence": [
+            "공식 직급: 수로관리청 조율반의 견습 조율사.",
+            "직급 표기의 기준: 이 문서의 견습 표기는 현재 공식 직급이다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "강다인",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.occupation",
+          "value": "장마 이후 정식 임명 예정",
+          "evidence": [
+            "장마 이후 다인이 정식 임명을 받는 장면은 예정되어 있지만 이 문서의 현재 직급을 그 계획으로 바꾸지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "권이준",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.출생지",
+          "value": "마루섬; 유리곶 표기의 오류를 정정하려는 설정",
+          "evidence": [
+            "출생지: 마루섬. 원고에 적힌 유리곶은 출생지 표기의 오류이며, 확정 설정은 마루섬으로 정정한다.",
+            "이준의 고향에 관한 정정은 작가용 기록의 정정 의도다. 본문 속 다른 출생지 근거가 없어지는 사건이 아니며, 이준이 이 문서를 읽고 자신의 기억을 고치는 장면도 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.업무_권한",
+          "value": "독립 수문 조율 권한 획득은 아직 구상 중인 결말의 조건부 가능성",
+          "evidence": [
+            "소하가 독립적으로 수문을 조율하게 되는 결말은 아직 구상 중이다. 그 구상이 채택된다면 감독 없이 일할 권한을 얻을 수 있지만, 현재의 소하에게 이미 그 권한이 있는 것은 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "등대관리소",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "기관 관계",
+          "value": "수로관리청과 별도 기관이다.",
+          "evidence": [
+            "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        }
+      ],
+      "validation_feedback": {
+        "reason_code": "BOOK_IDENTITY_PROOF_INVALID",
+        "correction": "입력의 독립 주체 제목과 선택한 target의 실제 이름/공급 별칭을 다시 확인하세요. 소재/포함/관련 관계로 연결하지 말고 동일 주체의 실제 연속 원문으로 target별 proof를 작성하세요. 근거 없는 선택을 유지하지 말고 명확한 신규 주체 또는 모호한 연결로 구분하세요. selected_subject_refs/ambiguous/identity_proofs 전체를 반환하세요."
+      }
+    },
+    "raw": "{\"selected_subject_refs\":[\"S3\"],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S5\",\"relation\":\"DISTINCT\",\"quote\":\"류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다.\"}]}",
+    "raw_sha256": "f12d423190c5be29f57d22a7f06be7393aecc1d804cbea5d50c7b5677a54ae74"
+  },
+  {
+    "id": "f3-recovery-2-F3-1-C-0027",
+    "user": {
+      "candidate": {
+        "category": "LOCATION",
+        "subject_name": "감람항",
+        "scope_name": "북쪽 등대",
+        "evidence": [
+          "거처: 감람항 북쪽 등대의 관리인 숙소."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "01-character-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "버들마을",
+          "aliases": [],
+          "identity_evidence": [
+            "감람항 하류의 버들마을에서 태어났고"
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": []
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S1\",\"relation\":\"DISTINCT\",\"quote\":\"감람항 하류의 버들마을에서 태어났고\"}]}",
+    "raw_sha256": "74b80e39ce5a96fa6f53392bd93bb6cea27baf1672e1553d3a5bea6bb7e6f432"
+  },
+  {
+    "id": "f3-recovery-2-F3-1-C-0028",
+    "user": {
+      "candidate": {
+        "category": "LOCATION",
+        "subject_name": "감람항",
+        "scope_name": "북쪽 등대",
+        "evidence": [
+          "거처: 감람항 북쪽 등대의 관리인 숙소."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "01-character-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "버들마을",
+          "aliases": [],
+          "identity_evidence": [
+            "감람항 하류의 버들마을에서 태어났고"
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [],
+      "validation_feedback": {
+        "reason_code": "BOOK_IDENTITY_PROOF_INVALID",
+        "correction": "입력의 독립 주체 제목과 선택한 target의 실제 이름/공급 별칭을 다시 확인하세요. 소재/포함/관련 관계로 연결하지 말고 동일 주체의 실제 연속 원문으로 target별 proof를 작성하세요. 근거 없는 선택을 유지하지 말고 명확한 신규 주체 또는 모호한 연결로 구분하세요. selected_subject_refs/ambiguous/identity_proofs 전체를 반환하세요."
+      }
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S1\",\"relation\":\"DISTINCT\",\"quote\":\"감람항 하류의 버들마을에서 태어났고\"}]}",
+    "raw_sha256": "74b80e39ce5a96fa6f53392bd93bb6cea27baf1672e1553d3a5bea6bb7e6f432"
+  },
+  {
+    "id": "f3-recovery-2-F3-1-C-0020",
+    "user": {
+      "candidate": {
+        "category": "FACTION",
+        "subject_name": "등대관리소",
+        "evidence": [
+          "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "01-character-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "수로관리청",
+          "aliases": [],
+          "identity_evidence": [
+            "직업과 소속: 수로관리청 기록실의 임시 수문 기록관.",
+            "직업과 소속: 수로관리청 정비반의 설비기사.",
+            "공식 직급: 수로관리청 조율반의 견습 조율사."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": []
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S1\",\"relation\":\"DISTINCT\",\"quote\":\"등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다.\"}]}",
+    "raw_sha256": "3fda3a333bf5b9eba1fca67055ad8fb68c771035e23f6e58e1dcf041b077ea56"
+  },
+  {
+    "id": "f3-recovery-2-F3-1-C-0021",
+    "user": {
+      "candidate": {
+        "category": "FACTION",
+        "subject_name": "등대관리소",
+        "evidence": [
+          "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "01-character-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "수로관리청",
+          "aliases": [],
+          "identity_evidence": [
+            "직업과 소속: 수로관리청 기록실의 임시 수문 기록관.",
+            "직업과 소속: 수로관리청 정비반의 설비기사.",
+            "공식 직급: 수로관리청 조율반의 견습 조율사."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [],
+      "validation_feedback": {
+        "reason_code": "BOOK_IDENTITY_PROOF_INVALID",
+        "correction": "입력의 독립 주체 제목과 선택한 target의 실제 이름/공급 별칭을 다시 확인하세요. 소재/포함/관련 관계로 연결하지 말고 동일 주체의 실제 연속 원문으로 target별 proof를 작성하세요. 근거 없는 선택을 유지하지 말고 명확한 신규 주체 또는 모호한 연결로 구분하세요. selected_subject_refs/ambiguous/identity_proofs 전체를 반환하세요."
+      }
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S1\",\"relation\":\"DISTINCT\",\"quote\":\"등대관리소는 수로관리청과 별도 기관이므로\"}]}",
+    "raw_sha256": "e1966edf2ae4db21bc24543acdaf0ab12f8dddde8b176e0ace18085a817dfdc9"
+  },
+  {
+    "id": "f3-recovery-2-F3-2-W-0056",
+    "user": {
+      "candidate": {
+        "category": "IMPORTANT_ITEM",
+        "subject_name": "조율판",
+        "evidence": [
+          "도구: 조율판은 진동의 기준을 잡는 금속판이다. 류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "02-world-time-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "측정봉",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S2",
+          "name": "청류호",
+          "aliases": [],
+          "identity_evidence": [
+            "종류와 용도: 감람항의 공용 화물 나룻배.",
+            "중앙 부두와 서쪽 창고 지대를 하루 두 차례 왕복한다.",
+            "운항 시각: 첫 운항은 새벽, 두 번째 운항은 오후다. 장마 전의 정규 운항표이며 특별 운항을 했다고 정규 운항 횟수가 늘어난 것으로 쓰지 않는다.",
+            "현재 정규 승무 인원: 네 명. 선장 한 명과 선원 세 명을 합친 인원이다. 배에 타는 기술자와 승객은 정규 승무 인원에 포함하지 않는다.",
+            "승무 인원은 안전 규칙의 숫자라기보다 실제 고용과 배치의 결과다.",
+            "정박지: 감람항 중앙 부두의 세 번째 계류 자리.",
+            "배의 구조: 얕은 흘수와 넓은 화물칸을 가진 목선이다.",
+            "조율 장치가 달린 수문을 지날 수 있지만 배 자체는 조율술로 움직이지 않는다.",
+            "물품 운송: 방수 기록철과 공구 가방은 사람이 가져온 물건이다. 청류호의 기본 장비는 노 두 쌍, 닻 하나, 구조용 밧줄 세 벌이다. 개인의 휴대등을 배의 영구 장비로 적지 않는다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [
+        {
+          "domain": "characters",
+          "subject_name": "강다인",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.occupation",
+          "value": "장마 이후 정식 임명 예정; 현재는 미실현 계획",
+          "evidence": [
+            "장마 이후 다인이 정식 임명을 받는 장면은 예정되어 있지만 이 문서의 현재 직급을 그 계획으로 바꾸지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.권한",
+          "value": "결말 구상 채택 시 감독 없이 일할 권한 취득 가능; 현재 미실현",
+          "evidence": [
+            "소하가 독립적으로 수문을 조율하게 되는 결말은 아직 구상 중이다. 그 구상이 채택된다면 감독 없이 일할 권한을 얻을 수 있지만, 현재의 소하에게 이미 그 권한이 있는 것은 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "감람항",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "부속 시설",
+          "value": "관리인 숙소가 있다.",
+          "evidence": [
+            "거처: 감람항 북쪽 등대의 관리인 숙소."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          },
+          "scope_name": "북쪽 등대"
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "등대관리소",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "기관 독립성",
+          "value": "수로관리청과 별도 기관이다.",
+          "evidence": [
+            "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "봉합 조율",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "효과",
+          "value": "사람의 얕은 상처를 봉합한다.",
+          "evidence": [
+            "현재 익힌 범위에는 사람의 얕은 상처를 봉합하는 봉합 조율이 포함된다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        }
+      ]
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S1\",\"relation\":\"DISTINCT\",\"quote\":\"도구: 조율판은 진동의 기준을 잡는 금속판이다. 류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다.\"}]}",
+    "raw_sha256": "3368dfab7ac4e9b4b19e0756e12c28d84bbd286d33dc631e6830640bf114ab89"
+  },
+  {
+    "id": "f3-recovery-2-F3-2-W-0057",
+    "user": {
+      "candidate": {
+        "category": "IMPORTANT_ITEM",
+        "subject_name": "조율판",
+        "evidence": [
+          "도구: 조율판은 진동의 기준을 잡는 금속판이다. 류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "02-world-time-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "측정봉",
+          "aliases": [],
+          "identity_evidence": [],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S2",
+          "name": "청류호",
+          "aliases": [],
+          "identity_evidence": [
+            "종류와 용도: 감람항의 공용 화물 나룻배.",
+            "중앙 부두와 서쪽 창고 지대를 하루 두 차례 왕복한다.",
+            "운항 시각: 첫 운항은 새벽, 두 번째 운항은 오후다. 장마 전의 정규 운항표이며 특별 운항을 했다고 정규 운항 횟수가 늘어난 것으로 쓰지 않는다.",
+            "현재 정규 승무 인원: 네 명. 선장 한 명과 선원 세 명을 합친 인원이다. 배에 타는 기술자와 승객은 정규 승무 인원에 포함하지 않는다.",
+            "승무 인원은 안전 규칙의 숫자라기보다 실제 고용과 배치의 결과다.",
+            "정박지: 감람항 중앙 부두의 세 번째 계류 자리.",
+            "배의 구조: 얕은 흘수와 넓은 화물칸을 가진 목선이다.",
+            "조율 장치가 달린 수문을 지날 수 있지만 배 자체는 조율술로 움직이지 않는다.",
+            "물품 운송: 방수 기록철과 공구 가방은 사람이 가져온 물건이다. 청류호의 기본 장비는 노 두 쌍, 닻 하나, 구조용 밧줄 세 벌이다. 개인의 휴대등을 배의 영구 장비로 적지 않는다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [
+        {
+          "domain": "characters",
+          "subject_name": "강다인",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.occupation",
+          "value": "장마 이후 정식 임명 예정; 현재는 미실현 계획",
+          "evidence": [
+            "장마 이후 다인이 정식 임명을 받는 장면은 예정되어 있지만 이 문서의 현재 직급을 그 계획으로 바꾸지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.권한",
+          "value": "결말 구상 채택 시 감독 없이 일할 권한 취득 가능; 현재 미실현",
+          "evidence": [
+            "소하가 독립적으로 수문을 조율하게 되는 결말은 아직 구상 중이다. 그 구상이 채택된다면 감독 없이 일할 권한을 얻을 수 있지만, 현재의 소하에게 이미 그 권한이 있는 것은 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "감람항",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "부속 시설",
+          "value": "관리인 숙소가 있다.",
+          "evidence": [
+            "거처: 감람항 북쪽 등대의 관리인 숙소."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          },
+          "scope_name": "북쪽 등대"
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "등대관리소",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "기관 독립성",
+          "value": "수로관리청과 별도 기관이다.",
+          "evidence": [
+            "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "봉합 조율",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "효과",
+          "value": "사람의 얕은 상처를 봉합한다.",
+          "evidence": [
+            "현재 익힌 범위에는 사람의 얕은 상처를 봉합하는 봉합 조율이 포함된다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        }
+      ],
+      "validation_feedback": {
+        "reason_code": "BOOK_IDENTITY_PROOF_INVALID",
+        "correction": "입력의 독립 주체 제목과 선택한 target의 실제 이름/공급 별칭을 다시 확인하세요. 소재/포함/관련 관계로 연결하지 말고 동일 주체의 실제 연속 원문으로 target별 proof를 작성하세요. 근거 없는 선택을 유지하지 말고 명확한 신규 주체 또는 모호한 연결로 구분하세요. selected_subject_refs/ambiguous/identity_proofs 전체를 반환하세요."
+      }
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S1\",\"relation\":\"DISTINCT\",\"quote\":\"도구: 조율판은 진동의 기준을 잡는 금속판이다. 류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다.\"}]}",
+    "raw_sha256": "3368dfab7ac4e9b4b19e0756e12c28d84bbd286d33dc631e6830640bf114ab89"
+  },
+  {
+    "id": "f3-recovery-2-F3-2-W-0078",
+    "user": {
+      "candidate": {
+        "category": "IMPORTANT_ITEM",
+        "subject_name": "조율판",
+        "evidence": [
+          "조율판을 두드리는 소리는 짧고 밝으며"
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "02-world-time-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "측정봉",
+          "aliases": [],
+          "identity_evidence": [
+            "류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다.",
+            "철제 측정봉을 문축에 대었을 때의 떨림은 손끝으로 먼저 전해진다.",
+            "류정우의 철제 측정봉"
+          ],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S2",
+          "name": "청류호",
+          "aliases": [],
+          "identity_evidence": [
+            "종류와 용도: 감람항의 공용 화물 나룻배.",
+            "중앙 부두와 서쪽 창고 지대를 하루 두 차례 왕복한다.",
+            "운항 시각: 첫 운항은 새벽, 두 번째 운항은 오후다. 장마 전의 정규 운항표이며 특별 운항을 했다고 정규 운항 횟수가 늘어난 것으로 쓰지 않는다.",
+            "현재 정규 승무 인원: 네 명. 선장 한 명과 선원 세 명을 합친 인원이다. 배에 타는 기술자와 승객은 정규 승무 인원에 포함하지 않는다.",
+            "승무 인원은 안전 규칙의 숫자라기보다 실제 고용과 배치의 결과다.",
+            "정박지: 감람항 중앙 부두의 세 번째 계류 자리.",
+            "배의 구조: 얕은 흘수와 넓은 화물칸을 가진 목선이다.",
+            "조율 장치가 달린 수문을 지날 수 있지만 배 자체는 조율술로 움직이지 않는다.",
+            "물품 운송: 방수 기록철과 공구 가방은 사람이 가져온 물건이다. 청류호의 기본 장비는 노 두 쌍, 닻 하나, 구조용 밧줄 세 벌이다. 개인의 휴대등을 배의 영구 장비로 적지 않는다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        },
+        {
+          "ref": "S3",
+          "name": "방죽지기 장부",
+          "aliases": [],
+          "identity_evidence": [
+            "방죽지기 장부: 기록실이 보존하는 과거 기록.",
+            "방죽지기 장부: 기록실이 보존하는 과거 기록. 물때를 비교하는 참고 자료로 쓰지만 장부에 적힌 옛 직함과 납부 단위를 현재 규칙으로 적용하지 않는다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [
+        {
+          "domain": "characters",
+          "subject_name": "강다인",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.occupation",
+          "value": "장마 이후 정식 임명 예정; 현재는 미실현 계획",
+          "evidence": [
+            "장마 이후 다인이 정식 임명을 받는 장면은 예정되어 있지만 이 문서의 현재 직급을 그 계획으로 바꾸지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.권한",
+          "value": "결말 구상 채택 시 감독 없이 일할 권한 취득 가능; 현재 미실현",
+          "evidence": [
+            "소하가 독립적으로 수문을 조율하게 되는 결말은 아직 구상 중이다. 그 구상이 채택된다면 감독 없이 일할 권한을 얻을 수 있지만, 현재의 소하에게 이미 그 권한이 있는 것은 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "감람항",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "부속 시설",
+          "value": "관리인 숙소가 있다.",
+          "evidence": [
+            "거처: 감람항 북쪽 등대의 관리인 숙소."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          },
+          "scope_name": "북쪽 등대"
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "등대관리소",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "기관 독립성",
+          "value": "수로관리청과 별도 기관이다.",
+          "evidence": [
+            "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "봉합 조율",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "효과",
+          "value": "사람의 얕은 상처를 봉합한다.",
+          "evidence": [
+            "현재 익힌 범위에는 사람의 얕은 상처를 봉합하는 봉합 조율이 포함된다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        }
+      ]
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S1\",\"relation\":\"DISTINCT\",\"quote\":\"류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다.\"}]}",
+    "raw_sha256": "7ae0a48f8eb8427207cb168d963896a606c151d0957bc480529dc071b5cef48f"
+  },
+  {
+    "id": "f3-recovery-2-F3-2-W-0079",
+    "user": {
+      "candidate": {
+        "category": "IMPORTANT_ITEM",
+        "subject_name": "조율판",
+        "evidence": [
+          "조율판을 두드리는 소리는 짧고 밝으며"
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "02-world-time-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "측정봉",
+          "aliases": [],
+          "identity_evidence": [
+            "류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다.",
+            "철제 측정봉을 문축에 대었을 때의 떨림은 손끝으로 먼저 전해진다.",
+            "류정우의 철제 측정봉"
+          ],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S2",
+          "name": "청류호",
+          "aliases": [],
+          "identity_evidence": [
+            "종류와 용도: 감람항의 공용 화물 나룻배.",
+            "중앙 부두와 서쪽 창고 지대를 하루 두 차례 왕복한다.",
+            "운항 시각: 첫 운항은 새벽, 두 번째 운항은 오후다. 장마 전의 정규 운항표이며 특별 운항을 했다고 정규 운항 횟수가 늘어난 것으로 쓰지 않는다.",
+            "현재 정규 승무 인원: 네 명. 선장 한 명과 선원 세 명을 합친 인원이다. 배에 타는 기술자와 승객은 정규 승무 인원에 포함하지 않는다.",
+            "승무 인원은 안전 규칙의 숫자라기보다 실제 고용과 배치의 결과다.",
+            "정박지: 감람항 중앙 부두의 세 번째 계류 자리.",
+            "배의 구조: 얕은 흘수와 넓은 화물칸을 가진 목선이다.",
+            "조율 장치가 달린 수문을 지날 수 있지만 배 자체는 조율술로 움직이지 않는다.",
+            "물품 운송: 방수 기록철과 공구 가방은 사람이 가져온 물건이다. 청류호의 기본 장비는 노 두 쌍, 닻 하나, 구조용 밧줄 세 벌이다. 개인의 휴대등을 배의 영구 장비로 적지 않는다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        },
+        {
+          "ref": "S3",
+          "name": "방죽지기 장부",
+          "aliases": [],
+          "identity_evidence": [
+            "방죽지기 장부: 기록실이 보존하는 과거 기록.",
+            "방죽지기 장부: 기록실이 보존하는 과거 기록. 물때를 비교하는 참고 자료로 쓰지만 장부에 적힌 옛 직함과 납부 단위를 현재 규칙으로 적용하지 않는다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [
+        {
+          "domain": "characters",
+          "subject_name": "강다인",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.occupation",
+          "value": "장마 이후 정식 임명 예정; 현재는 미실현 계획",
+          "evidence": [
+            "장마 이후 다인이 정식 임명을 받는 장면은 예정되어 있지만 이 문서의 현재 직급을 그 계획으로 바꾸지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.권한",
+          "value": "결말 구상 채택 시 감독 없이 일할 권한 취득 가능; 현재 미실현",
+          "evidence": [
+            "소하가 독립적으로 수문을 조율하게 되는 결말은 아직 구상 중이다. 그 구상이 채택된다면 감독 없이 일할 권한을 얻을 수 있지만, 현재의 소하에게 이미 그 권한이 있는 것은 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "감람항",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "부속 시설",
+          "value": "관리인 숙소가 있다.",
+          "evidence": [
+            "거처: 감람항 북쪽 등대의 관리인 숙소."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          },
+          "scope_name": "북쪽 등대"
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "등대관리소",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "기관 독립성",
+          "value": "수로관리청과 별도 기관이다.",
+          "evidence": [
+            "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "봉합 조율",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "효과",
+          "value": "사람의 얕은 상처를 봉합한다.",
+          "evidence": [
+            "현재 익힌 범위에는 사람의 얕은 상처를 봉합하는 봉합 조율이 포함된다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        }
+      ],
+      "validation_feedback": {
+        "reason_code": "BOOK_IDENTITY_PROOF_INVALID",
+        "correction": "입력의 독립 주체 제목과 선택한 target의 실제 이름/공급 별칭을 다시 확인하세요. 소재/포함/관련 관계로 연결하지 말고 동일 주체의 실제 연속 원문으로 target별 proof를 작성하세요. 근거 없는 선택을 유지하지 말고 명확한 신규 주체 또는 모호한 연결로 구분하세요. selected_subject_refs/ambiguous/identity_proofs 전체를 반환하세요."
+      }
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S1\",\"relation\":\"DISTINCT\",\"quote\":\"류정우의 철제 측정봉은 진동을 측정하는 별도 공구이며 조율판의 다른 이름이 아니다.\"}]}",
+    "raw_sha256": "7ae0a48f8eb8427207cb168d963896a606c151d0957bc480529dc071b5cef48f"
+  },
+  {
+    "id": "f3-recovery-2-F3-2-W-0019",
+    "user": {
+      "candidate": {
+        "category": "LOCATION",
+        "subject_name": "유리곶",
+        "evidence": [
+          "마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "02-world-time-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "버들마을",
+          "aliases": [],
+          "identity_evidence": [
+            "버들마을은 감람항 하류의 주거 마을이다.",
+            "물때가 낮으면 모래길이 드러나지만 그 길은 공식 통근로가 아니다."
+          ],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S2",
+          "name": "감람항",
+          "aliases": [],
+          "identity_evidence": [
+            "감람항은 두 강이 합쳐지는 하구의 도시이며 바다 쪽으로 돌물문을 두고 있다.",
+            "감람항의 중앙교각은 동쪽 주거지와 서쪽 창고 지대를 잇는다.",
+            "물길을 따라 이동하는 것이 골목길보다 빠른 도시지만 누구나 배를 소유하지는 않는다.",
+            "부두의 배차표는 주민들이 실제로 시간을 맞추는 기준이고, 등대는 먼 바다에서 들어오는 배가 시간을 확인하는 기준이다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        },
+        {
+          "ref": "S3",
+          "name": "마루섬",
+          "aliases": [],
+          "identity_evidence": [
+            "마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [
+        {
+          "domain": "characters",
+          "subject_name": "강다인",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.occupation",
+          "value": "장마 이후 정식 임명 예정; 현재는 미실현 계획",
+          "evidence": [
+            "장마 이후 다인이 정식 임명을 받는 장면은 예정되어 있지만 이 문서의 현재 직급을 그 계획으로 바꾸지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.권한",
+          "value": "결말 구상 채택 시 감독 없이 일할 권한 취득 가능; 현재 미실현",
+          "evidence": [
+            "소하가 독립적으로 수문을 조율하게 되는 결말은 아직 구상 중이다. 그 구상이 채택된다면 감독 없이 일할 권한을 얻을 수 있지만, 현재의 소하에게 이미 그 권한이 있는 것은 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "감람항",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "부속 시설",
+          "value": "관리인 숙소가 있다.",
+          "evidence": [
+            "거처: 감람항 북쪽 등대의 관리인 숙소."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          },
+          "scope_name": "북쪽 등대"
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "등대관리소",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "기관 독립성",
+          "value": "수로관리청과 별도 기관이다.",
+          "evidence": [
+            "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "봉합 조율",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "효과",
+          "value": "사람의 얕은 상처를 봉합한다.",
+          "evidence": [
+            "현재 익힌 범위에는 사람의 얕은 상처를 봉합하는 봉합 조율이 포함된다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        }
+      ]
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S3\",\"relation\":\"DISTINCT\",\"quote\":\"마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다.\"}]}",
+    "raw_sha256": "25a59651793d0b995514cfabd0d79cfc691b8ad0cc36c246f5045cf491ea7b99"
+  },
+  {
+    "id": "f3-recovery-2-F3-2-W-0020",
+    "user": {
+      "candidate": {
+        "category": "LOCATION",
+        "subject_name": "유리곶",
+        "evidence": [
+          "마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다."
+        ],
+        "source": {
+          "source_kind": "SETTING_BOOK",
+          "setting_book_name": "02-world-time-book.txt",
+          "revision_no": 1,
+          "reference_time_kind": "UNSPECIFIED",
+          "reference_episode_no": null
+        }
+      },
+      "subjects": [
+        {
+          "ref": "S1",
+          "name": "버들마을",
+          "aliases": [],
+          "identity_evidence": [
+            "버들마을은 감람항 하류의 주거 마을이다.",
+            "물때가 낮으면 모래길이 드러나지만 그 길은 공식 통근로가 아니다."
+          ],
+          "confirmation_status": "CONFIRMED",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "01-character-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null,
+          "review_source": "AUTOMATIC"
+        },
+        {
+          "ref": "S2",
+          "name": "감람항",
+          "aliases": [],
+          "identity_evidence": [
+            "감람항은 두 강이 합쳐지는 하구의 도시이며 바다 쪽으로 돌물문을 두고 있다.",
+            "감람항의 중앙교각은 동쪽 주거지와 서쪽 창고 지대를 잇는다.",
+            "물길을 따라 이동하는 것이 골목길보다 빠른 도시지만 누구나 배를 소유하지는 않는다.",
+            "부두의 배차표는 주민들이 실제로 시간을 맞추는 기준이고, 등대는 먼 바다에서 들어오는 배가 시간을 확인하는 기준이다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        },
+        {
+          "ref": "S3",
+          "name": "마루섬",
+          "aliases": [],
+          "identity_evidence": [
+            "마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다."
+          ],
+          "confirmation_status": "PROVISIONAL",
+          "source_episode_no": null,
+          "source_kind": "SETTING_BOOK",
+          "source_setting_book_name": "02-world-time-book.txt",
+          "source_setting_book_revision_no": 1,
+          "source_reference_time_kind": "UNSPECIFIED",
+          "source_reference_episode_no": null
+        }
+      ],
+      "unresolved_references": [
+        {
+          "domain": "characters",
+          "subject_name": "강다인",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.occupation",
+          "value": "장마 이후 정식 임명 예정; 현재는 미실현 계획",
+          "evidence": [
+            "장마 이후 다인이 정식 임명을 받는 장면은 예정되어 있지만 이 문서의 현재 직급을 그 계획으로 바꾸지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "characters",
+          "subject_name": "윤소하",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "profile.권한",
+          "value": "결말 구상 채택 시 감독 없이 일할 권한 취득 가능; 현재 미실현",
+          "evidence": [
+            "소하가 독립적으로 수문을 조율하게 되는 결말은 아직 구상 중이다. 그 구상이 채택된다면 감독 없이 일할 권한을 얻을 수 있지만, 현재의 소하에게 이미 그 권한이 있는 것은 아니다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "감람항",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "부속 시설",
+          "value": "관리인 숙소가 있다.",
+          "evidence": [
+            "거처: 감람항 북쪽 등대의 관리인 숙소."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          },
+          "scope_name": "북쪽 등대"
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "등대관리소",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "기관 독립성",
+          "value": "수로관리청과 별도 기관이다.",
+          "evidence": [
+            "등대관리소는 수로관리청과 별도 기관이므로 이준을 해림의 정비반 부하로 쓰지 않는다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "subject_name": "봉합 조율",
+          "source_episode_no": null,
+          "reason": "설정집에서 추출했지만 아직 작품 설정에 반영하지 않은 참고 정보입니다.",
+          "setting_name": "효과",
+          "value": "사람의 얕은 상처를 봉합한다.",
+          "evidence": [
+            "현재 익힌 범위에는 사람의 얕은 상처를 봉합하는 봉합 조율이 포함된다."
+          ],
+          "confirmation_status": "UNRESOLVED",
+          "applied_to_current_state": false,
+          "source": {
+            "source_kind": "SETTING_BOOK",
+            "setting_book_name": "01-character-book.txt",
+            "revision_no": 1,
+            "reference_time_kind": "UNSPECIFIED",
+            "reference_episode_no": null
+          }
+        }
+      ],
+      "validation_feedback": {
+        "reason_code": "BOOK_IDENTITY_PROOF_INVALID",
+        "correction": "입력의 독립 주체 제목과 선택한 target의 실제 이름/공급 별칭을 다시 확인하세요. 소재/포함/관련 관계로 연결하지 말고 동일 주체의 실제 연속 원문으로 target별 proof를 작성하세요. 근거 없는 선택을 유지하지 말고 명확한 신규 주체 또는 모호한 연결로 구분하세요. selected_subject_refs/ambiguous/identity_proofs 전체를 반환하세요."
+      }
+    },
+    "raw": "{\"selected_subject_refs\":[],\"ambiguous\":false,\"identity_proofs\":[{\"subject_ref\":\"S3\",\"relation\":\"DISTINCT\",\"quote\":\"마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다.\"},{\"subject_ref\":\"S2\",\"relation\":\"RELATED\",\"quote\":\"마루섬과 유리곶은 별개의 지역이다. 마루섬은 감람항 남동쪽의 작은 섬이고 유리곶은 북쪽 해안의 돌출 지형이다.\"}]}",
+    "raw_sha256": "eb02373355a34c6ee01e6fe461cf90e87445fab079d8b90b446781f3a5eddfdb"
+  }
+]
