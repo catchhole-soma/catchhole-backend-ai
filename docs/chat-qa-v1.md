@@ -12,7 +12,9 @@
 
 직전 명확화에 이름·종류를 보충한 답변은 원래 요청과 함께 해석하고 DB를 다시 조회하도록 계획 프롬프트에 지시한다. 최신 정정·새 주제가 우선이며 과거 답변의 값은 사실 근거로 사용하지 않는다. 보충 질문을 올바르게 연결하는 모델의 의미 품질은 실제 질문으로 별도 검증해야 한다. 조건 목록은 확인된 MATCH를 먼저 보여주고 UNKNOWN은 개수로 요약한다. 일부 자료가 부족해 일치 대상을 확인하지 못한 경우와 전체 등록 모집단을 확인한 뒤 일치 대상이 없는 경우를 구분한다.
 
-최신 검증은 AI `257dfe6cb56cf759047f5e62c0d079ff0d4a64e7`·Java `1166892aa300a8c27c46b40f227df6e69ec3ebcd` 기준이다. Python 전체 2,780 passed/54 skipped/기존 경고 1개(11.50초), 별도 검색 PostgreSQL 26 passed, Java ChatExecution 관련 21 passed와 bootJar 성공을 확인했다. 로컬 실제 Luna·medium은 개발 중 8건·중간 코드 2건·최종 코드 3건에서 실행 오류가 없었지만, 일부 원문 요구는 최종 코드에서도 미답변으로 남았다. 실행 성공을 의미적 정답으로 집계하지 않는다. 코드별 실제 실행과 원문 대조 범위·남은 최초 사건 해석 한계는 [공통 품질 검증 기록](chat-query-quality-v1.md)에 구분한다.
+말투 변경 이전 조회·검색 보완의 검증은 AI `257dfe6cb56cf759047f5e62c0d079ff0d4a64e7`·Java `1166892aa300a8c27c46b40f227df6e69ec3ebcd` 기준이다. Python 전체 2,780 passed/54 skipped/기존 경고 1개(11.50초), 별도 검색 PostgreSQL 26 passed, Java ChatExecution 관련 21 passed와 bootJar 성공을 확인했다. 로컬 실제 Luna·medium은 개발 중 8건·중간 코드 2건·최종 코드 3건에서 실행 오류가 없었지만, 일부 원문 요구는 당시 최종 코드에서도 미답변으로 남았다. 실행 성공을 의미적 정답으로 집계하지 않는다. 코드별 실제 실행과 원문 대조 범위·남은 최초 사건 해석 한계는 [공통 품질 검증 기록](chat-query-quality-v1.md)에 구분한다.
+
+후속 말투 보완은 `qa_prompts.py`의 `ANSWER_STYLE_INSTRUCTIONS`를 등록 설명과 현재/이력 조건 판정에 공통 적용한다. 새 설명과 목록의 `explanation`은 존댓말(`~습니다`·`~요`)로 작성하며, 사용자·이전 대화의 반말이나 원문 서술체를 따라 쓰지 않는다. 실제 고유명사·저장값·정확한 인용은 보존한다. `chat-registered-answer-v2`, `chat-current-condition-v2`, `chat-history-condition-v2`를 각각 prompt cache key로 사용한다. QA plan v6·FIELD select v1·구형 행 select v3는 유지한다. 명확화는 기존 고정 존댓말이며 응답 전체를 정규식으로 변환하거나 추가 모델을 호출하지 않는다. 이력/FACTS에 그대로 표시하는 저장 문장은 원래 말투를 유지할 수 있다. 위 13건은 이 변경의 실제 말투 검증 기록이 아니다.
 
 ## 초기 GH238의 구현 배경
 

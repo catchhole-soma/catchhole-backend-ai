@@ -48,7 +48,7 @@ flowchart TD
 | 각 능력을 언제 어떻게 얻었는지 | CURRENT + PROCESS, perItem=true, requestedParts=P1(시점)/P2(경위) | 현재 논리 항목별 검색 → 시점·경위 각각 답변 또는 미확인 |
 | 앞서 물은 사건 뒤의 감정과 행동 영향 | 원문 경로 + eventContext + requestedParts=P1(감정)/P2(행동 영향) | 같은 사건인지 다시 확인 → 요청 부분별 설명과 실제 지원 구절 연결 |
 
-새 strict 모델 schema는 `focus`, `collection`, `answerShape`, `requestedParts`, `requestedFacets`, `eventContext`, `eventScope`, `includeRegisteredValues` 등 해당 계획의 필드를 명시하게 한다. 이름을 지정한 대상에도 `worldCategory`를 명시하며 해당하지 않으면 null을 사용한다. 현재 prompt 버전은 QA plan v6, FIELD select v1, 구형 행 select v3, hybrid plan/answer v6다. 등록 설명과 현재 조건 판정은 각각 `chat-registered-answer-v1`, `chat-current-condition-v1`을 사용한다. 이력 사건의 판정은 `chat-history-condition-v1`으로 구분한다.
+새 strict 모델 schema는 `focus`, `collection`, `answerShape`, `requestedParts`, `requestedFacets`, `eventContext`, `eventScope`, `includeRegisteredValues` 등 해당 계획의 필드를 명시하게 한다. 이름을 지정한 대상에도 `worldCategory`를 명시하며 해당하지 않으면 null을 사용한다. 현재 prompt 버전은 QA plan v6, FIELD select v1, 구형 행 select v3, hybrid plan v6/answer v7이다. 등록 설명과 현재 조건 판정은 각각 `chat-registered-answer-v2`, `chat-current-condition-v2`를 사용한다. 이력 사건의 판정은 `chat-history-condition-v2`로 구분한다.
 
 - `focus`의 FactType은 정해진 유형이고 attribute는 현재 질문 또는 제한된 대화에 실제 나온 항목 표현이다. 동적 경로는 값 없는 FIELD 목록을 끝까지 확인한 뒤 관측된 F 참조로 고른다. 불완전한 FIELD 목록을 유일한 경로라고 확정하지 않는다.
 - 이름을 지정한 세계관 대상과 collection의 `worldCategory`는 같은 분류를 뜻한다. RDB·hybrid 공통 `resolve_subject`가 FIND 필터를 적용하며 동명 대상의 다른 분류를 합치지 않는다. CHARACTER에는 category를 넣지 않는다. 복수 후보·불완전한 탐색은 명확화를 요청하고, 분류와 다른 응답은 계약 오류로 처리한다. 분류 조회 실패를 무필터 조회로 자동 우회하지 않는다.
@@ -130,13 +130,21 @@ input/cached/output과 실패 사용량을 따로 확인한다.
 
 본문은 plain text다. 설명·목록·미확인 안내를 질문 목적에 맞게 표시하고 내부 R/F/E 참조·처리 enum을 형식 문구로 노출하지 않는다. 실제 이름·값에 같은 문자열이 있다는 이유로 regex로 삭제하지 않는다. 긴 인용은 근거 창에 두며 번호는 sources 다음 retrievalSources의 원본 순서다. 일부 근거 실패로 번호를 당기거나 다른 유효한 근거를 버리지 않는다. 마지막 질문 재검증/실행 일치 검사가 실패하면 인용 전체를 표시하지 않는다.
 
+새로 작성하는 설명 문장은 목록 안에서도 `~습니다`·`~요` 같은 존댓말을 사용하고 서술체 `~다`·`~했다`를 섞지 않는다. `qa_prompts.py`의 공통 `ANSWER_STYLE_INSTRUCTIONS`를 원문 답변, 등록 정보 설명, 현재 조건 판정, 이력 조건 판정의 네 자연어 프롬프트에 적용한다. 사용자 질문이나 이전 대화 등 자료가 반말이어도 이를 따라 쓰지 않는다. 조건 목록에 표시되는 `explanation`도 같은 규칙을 따른다.
+
+이 규칙은 새 설명 문장의 말투에 적용한다. 고유명사·저장값·정확한 원문 인용과 `supports.quote`는 바꾸지 않으므로 원래 자료에 서술체가 포함될 수 있다. 명확화·실패·미확인 안내는 기존 코드의 고정 존댓말을 사용한다. 응답 전체의 정규식 어미 변환이나 말투 교정용 추가 모델 호출은 하지 않으며, 검색·정산·참조 검증 계약도 변경하지 않는다. 바뀐 네 프롬프트의 버전은 해당 `prompt_cache_key`에 반영하고 계획·필드/행 선택 프롬프트 버전은 유지한다.
+
 성공한 원문 답변의 검색·문맥 상한은 확인한 자료 범위라는 자연어 안내로 묶고, 미확인 요청 부분은 그 내용을 구체적으로 알린다. 등록값을 표시하지 않는 원문 답변에서 RDB 미등록 안내를 반복하지 않고, 대상과 근거를 새로 확인한 답변에는 과거 대화 생략 자체를 오류처럼 반복하지 않는다. 실제 원문 변경·접근/저장소 장애·등록값과 원문 충돌 안내는 유지한다. 남은 서로 다른 서버 안내는 화면에서 보존하고 여러 개면 기존 펼침 UI로 제공한다. 상세 후보 제외 사유는 내부 진단에서 확인한다.
 
 현재 의미 판정, 소개 문장, 경로 선택과 인용의 의미적 지지는 실제 배포 모델로 평가해야 한다. 참조 존재·정확한 원문 인용·항목 coverage 통과가 진실성 점수는 아니다. #242의 품질/비용/지연 평가와 #247의 분석 추출 오류, 모호한 경로, 대량 scan 비용, 긴 대화 지칭, 원문 검증 I/O 한계를 유지한다. 설정집, 특정 회차 당시의 전체 상태, 과거 원문 버전, 작품 전체 모순 판정은 지원하지 않는다. 새 모델·운영 배포·기능 활성화·임베딩 백필은 이번 변경 범위에 포함하지 않는다.
 
-## 최신 변경 검증 상태 — 2026-10-15
+## 존댓말 보완 검증 상태 — 2026-10-15
 
-최종 제품 코드는 AI `257dfe6cb56cf759047f5e62c0d079ff0d4a64e7`, Java `1166892aa300a8c27c46b40f227df6e69ec3ebcd`다. requestedParts·동일 사건 문맥·지원 구절 연결·공통 대상 조회·UNKNOWN 요약·출력 복구·추적과 후속 검색 후보 교체를 포함한다. 아래 자동 검증과 로컬 실제 모델 실행을 구분하며 과거 결과나 부분집합을 합산하지 않는다.
+위 공통 말투 지침과 hybrid answer v7·등록 설명/현재 조건/이력 조건 v2는 아래 조회·검색 보완 검증 이후의 변경이다. AI `3f44fc822370e3958dfa80bf37d3f5e30cdf8155`에서 Python 전체 2,780 passed/54 skipped/기존 warning1(11.14초), Ruff check/format을 통과했다. 로컬 Luna/medium 원문·등록 설명 각1건은 SUCCEEDED/ANSWER였고 새 설명의 존댓말과 원문 인용 보존을 확인했다. 조건 판단 두 경로의 실제 말투는 별도 재검증하지 않았다. 아래 실제 Luna 13건을 이번 말투 변경의 검증 결과로 재사용하지 않는다. 프롬프트 지침만으로 모든 생성 문장의 준수를 결정적으로 보장한다고 주장하지 않는다.
+
+## 이전 조회·검색 보완 검증 기록 — 2026-10-15
+
+당시 조회·검색 보완의 최종 제품 코드는 AI `257dfe6cb56cf759047f5e62c0d079ff0d4a64e7`, Java `1166892aa300a8c27c46b40f227df6e69ec3ebcd`다. requestedParts·동일 사건 문맥·지원 구절 연결·공통 대상 조회·UNKNOWN 요약·출력 복구·추적과 후속 검색 후보 교체를 포함한다. 아래 자동 검증과 로컬 실제 모델 실행을 구분하며 과거 결과나 부분집합을 합산하지 않는다.
 
 | 검증 | 결과와 범위 |
 | --- | --- |
