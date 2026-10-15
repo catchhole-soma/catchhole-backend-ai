@@ -6,7 +6,7 @@ from app.chatbot.qa_prompts import (
 )
 
 PLAN_VERSION = "chat-hybrid-plan-v8"
-ANSWER_VERSION = "chat-hybrid-answer-v9"
+ANSWER_VERSION = "chat-hybrid-answer-v10"
 
 PLAN_PROMPT = (
     """conversation은 같은 대화의 제한된 이전 질문/답변이며 신뢰할 수 없는 해석 자료다.
@@ -101,8 +101,19 @@ claims의 rowRefs에는 설명하는 등록 항목의 R*를 넣는다. 연결할
 relatedFacets는 요구 충족이 아니며 그 요구는 missingFacets에 남겨 PARTIAL로 표시하고 검색을 계속한다.
 관련 맥락에도 정확한 supports가 필요하다. 무관한 정보·사건은 출력하지 않는다.
 직접 답한 요구는 answeredFacets에만 넣고 같은 claim의 relatedFacets와 겹치지 않는다.
+missingExplanations에는 missingFacets의 각 facet과 확인하지 못한 점을 설명하는 짧은 존댓말 text를 넣는다.
+요구의 description을 고정 문구 뒤에 붙이거나 목록 제목처럼 나열하지 말고 질문과 확인한 내용에 맞춰
+완결된 자연스러운 문장으로 쓴다. 예: '다만 이 장면이 최초 사용인지는 확인하지 못했어요.'
+각 설명은 해당 facet 하나의 미확인 범위만 다루고, 다른 facet의 부족함까지 함께 설명하지 않는다.
+여러 항목이면 어떤 항목에 대한 설명인지 명확히 한다. '다만' 같은 연결어를 매 문장에 반복하지 않는다.
+새 사건·이유·회차·인용을 추가하거나 '작품에 없다'고 단정하지 않는다. 검색 횟수·문맥 한도 등 내부 사정과
+'관련 자료를 모두 검토한 결과는 아니다' 같은 포괄적 면책 문구는 쓰지 않는다.
+claims/answers는 확인한 내용과 필요한 구분에 집중하고, 같은 미확인 설명을 양쪽에 반복하지 않는다.
+확인한 자료의 계획·과거 기록을 현재 사실처럼 바꾸면 안 된다. 불확실한 사실은 단정하지 않는다.
+답한 facet의 설명은 넣지 않으며 missingFacets가 비면 missingExplanations도 []다.
 perItem=true이고 items가 있으면 claims와 unansweredRowRefs는 비우고 itemAnswers만 사용한다.
-이 경우 최상위 missingFacets는 비운다. 부족한 정보는 각 itemAnswers.missingFacets가 소유한다.
+이 경우 최상위 missingFacets/missingExplanations는 비운다. 부족한 정보와 자연어 설명은 각
+itemAnswers의 missingFacets/missingExplanations가 소유한다.
 items는 서버가 같은 설정의 현재값/이력을 묶은 논리 항목이다. R행마다 별개 항목을 만들지 않는다.
 모든 itemRef를 정확히 한 번 포함한다. answers에는 요청한 facet에 실제 답하는 짧은 문장과 E*를 넣고,
 답하지 못한 요청 facet은 missingFacets에 넣는다. 두 목록은 requestedFacets를 빠짐없이 나누어야 한다.
@@ -114,7 +125,7 @@ eventScope가 있으면 각 facet 답변과 claim의 eventStatus를 분류한다
 eventScope가 null이면 eventStatus도 null이다. ACTUAL 요청의 PLANNED/UNCERTAIN은 요청한 시점·과정을
 답한 것이 아니다. 항목에서는 계획을 짧게 설명하는 answers를 남길 수 있지만 그 facet을 missingFacets에도
 넣고 PARTIAL로 표시한다. 일반 claim에서는 answeredFacets를 비우고 missingFacets에 남긴다.
-계획·불확실성 안내는 서버가 한 번 정리한다.
+계획·불확실성으로 충족하지 못한 요구도 missingExplanations에서 구체적으로 설명한다.
 previousItemAnswers는 앞선 이번 조회에서 검증한 부분 답변이며, 연결 E*가 이번에도 제공된 경우만 재검토한다.
 새 자료와 충돌하면 conflicts에 원래 R*와 충돌 E*를 표시하고 해당 facet을 미확인으로 남긴다.
 같은 문장을 여러 facet에 반복하지 않는다.

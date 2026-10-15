@@ -155,13 +155,32 @@ class FacetAnswer(ContractModel):
         return self
 
 
+class MissingExplanation(ContractModel):
+    facet: RequestedFacet
+    text: str = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def nonempty(self) -> Self:
+        if not self.text.strip():
+            raise ValueError("Missing-information explanation cannot be blank")
+        return self
+
+
+def validate_missing_explanations(explanations, missing_facets):
+    facets = [explanation.facet for explanation in explanations]
+    if len(facets) != len(set(facets)) or not set(facets) <= set(missing_facets):
+        raise ValueError("Explanations must refer to distinct unanswered facets")
+
+
 class ItemAnswer(ContractModel):
     item_ref: str = Field(min_length=1, max_length=10)
     answers: list[FacetAnswer] = Field(max_length=4)
     missing_facets: list[RequestedFacet] = Field(max_length=4)
+    missing_explanations: list[MissingExplanation] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
+        validate_missing_explanations(self.missing_explanations, self.missing_facets)
         facets = [answer.facet for answer in self.answers]
         if (
             len(set(facets)) != len(facets)
@@ -200,9 +219,11 @@ class GroundedAnswer(ContractModel):
     unanswered_row_refs: list[str] = Field(default_factory=list, max_length=100)
     item_answers: list[ItemAnswer] = Field(default_factory=list, max_length=100)
     missing_facets: list[RequestedFacet] = Field(default_factory=list, max_length=4)
+    missing_explanations: list[MissingExplanation] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
+        validate_missing_explanations(self.missing_explanations, self.missing_facets)
         supported = bool(self.claims or self.conflicts or any(i.answers for i in self.item_answers))
         if (self.coverage == "NONE") == supported:
             raise ValueError("Coverage and grounded statements disagree")

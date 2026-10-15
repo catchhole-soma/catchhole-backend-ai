@@ -18,7 +18,9 @@ from app.chatbot.hybrid_items import (
     event_matches,
     group_items,
     merge_item_answers,
+    merge_missing_explanations,
     render_item_answers,
+    render_missing_explanations,
     request_labels,
     requested_facets,
     select_context_seeds,
@@ -937,6 +939,7 @@ class _HybridSession(_Session):
             claims=claims,
             conflicts=[],
             missing_facets=missing,
+            missing_explanations=merge_missing_explanations(missing, old_answer, latest),
             unanswered_row_refs=unanswered,
         )
         self.fallback_direct_checks = len({e.direct_ref for e in evidence if e.direct_ref})
@@ -1252,6 +1255,12 @@ class _HybridSession(_Session):
         # Without row references a condition-scoped statement cannot be assigned
         # to a confirmed subject, so it cannot be published as a matching result.
         claims = [c for c in answer.claims if c.row_refs and set(c.row_refs) <= confirmed]
+        removed_facets = {
+            facet
+            for claim in answer.claims
+            if claim not in claims
+            for facet in [*claim.answered_facets, *claim.related_facets]
+        }
         covered = {f for c in claims for f in c.answered_facets}
         missing = [f for f in facets if f not in covered]
         supported = bool(claims or conflicts)
@@ -1267,6 +1276,9 @@ class _HybridSession(_Session):
             claims=claims,
             conflicts=conflicts,
             missing_facets=missing,
+            missing_explanations=merge_missing_explanations(
+                [f for f in missing if f not in removed_facets], answer
+            ),
             unanswered_row_refs=answer.unanswered_row_refs,
         )
 
@@ -1501,11 +1513,13 @@ class _HybridSession(_Session):
             )
             parts.append(f"- {prefix}{safe_text(claim.text)} (근거 {numbers})")
         if not self.logical_items and answer.missing_facets:
+            explanations, remaining = render_missing_explanations(answer)
+            parts.extend(explanations)
             labels = request_labels(self.plan) if self.plan else FACET_LABELS
-            needs = "·".join(labels[f] for f in answer.missing_facets)
-            if self.plan and self.plan.requested_parts:
+            needs = "·".join(labels[f] for f in remaining)
+            if remaining and self.plan and self.plan.requested_parts:
                 parts.append(f"다만 다음 내용은 확인한 자료만으로 확정하기 어려워요: {needs}.")
-            else:
+            elif remaining:
                 prefix = "실제로 이루어진 " if self.event_scope == "ACTUAL" else ""
                 parts.append(
                     f"{prefix}{needs} 정보는 이번에 확인한 자료만으로 확정하기 어렵습니다."
@@ -1544,19 +1558,15 @@ class _HybridSession(_Session):
         public_codes = [c for c in public_codes if c != "CONVERSATION_LIMIT"]
         if not self.render_registered_values:
             public_codes = [c for c in public_codes if c != "NO_RELATED_SETTING"]
-        # Search limits describe the scope of the answer, not an execution error.
-        # Keep the qualification visible even when the model declares COMPLETE:
-        # that declaration cannot establish an exhaustive manuscript search.
+        # Candidate/context limits remain in internal diagnostics. Explain actual
+        # unanswered requirements above, instead of a blanket search disclaimer.
+        # Index readiness and real source/lookup failures remain public.
         scope_codes = {
             "SEARCH_LIMIT",
             "SEARCH_QUERY_LIMIT",
             "EVIDENCE_CONTEXT_LIMIT",
             "CONTEXT_LIMIT",
         }
-        if scope_codes.intersection(public_codes):
-            parts.insert(
-                0, "확인한 자료를 기준으로 정리했어요. 관련 자료를 모두 검토한 결과는 아니에요.\n"
-            )
         public_codes = [
             c for c in public_codes if c not in scope_codes | {"NARRATIVE_SOURCE_RANGE"}
         ]

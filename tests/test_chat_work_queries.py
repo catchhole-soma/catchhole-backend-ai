@@ -140,7 +140,7 @@ async def test_semantic_condition_keeps_structured_states_and_unknown_population
     )
     text = answer(result)["text"]
     assert "린" in text and "확인한 인물은 1명" in text
-    assert "관련 설정이 없는 1명" in text
+    assert "관련 설정이 없는" not in text
     queries = tool_queries(result, "CHARACTER_CURRENT_COLLECTION")
     assert len(queries) == 2 and queries[-1]["readToken"]
     assert not tool_queries(result, "FIND_CHARACTERS")
@@ -595,7 +595,7 @@ async def test_world_selected_categories_count_population_once_and_exclude_unsel
     )
     text = answer(result)["text"]
     assert "설정 주체 3개" in text and "확인한 항목은 2개" in text
-    assert "관련 설정이 없는 1개" in text and "설정4" not in text
+    assert "관련 설정이 없는" not in text and "설정4" not in text
     assert {q["worldCategory"] for q in tool_queries(result, "WORLD_CURRENT_COLLECTION")} == {
         "FACTION",
         "RACE",

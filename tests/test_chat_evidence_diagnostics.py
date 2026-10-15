@@ -196,7 +196,7 @@ def test_composition_diagnostics_only_log_fixed_reasons_and_aggregate_counts(cap
 
 
 @pytest.mark.parametrize("coverage", ["COMPLETE", "PARTIAL"])
-def test_success_explains_search_scope_in_prose_but_preserves_index_warning(tmp_path, coverage):
+def test_success_omits_blanket_disclaimer_but_preserves_gaps_and_index_warning(tmp_path, coverage):
     case = scenario()
     case["readiness"] = "partial"
     case["outputs"][1]["coverage"] = coverage
@@ -218,7 +218,7 @@ def test_success_explains_search_scope_in_prose_but_preserves_index_warning(tmp_
 
     output = result["finish"]["result"]
     assert output["outcome"] == "ANSWER"
-    assert "관련 자료를 모두 검토한 결과는 아니에요" in output["text"]
+    assert "관련 자료를 모두 검토한 결과는 아니에요" not in output["text"]
     assert ("질문의 일부만 답할 수 있었어요" in output["text"]) == (coverage == "PARTIAL")
     assert "근거 1" in output["text"] and len(output["retrievalSources"]) == 1
     assert notices(["INDEX_PARTIAL"])[0] in output["limitations"]

@@ -359,7 +359,10 @@ class RegisteredSynthesis:
             parts.append(line)
             sources = next_sources
         exclusions = []
-        if missing:
+        # A positive result already states what was confirmed. Do not list
+        # unrelated empty settings, but retain their role in an inconclusive
+        # negative result and keep actual uncertainty/review limits below.
+        if missing and not matched:
             exclusions.append(f"관련 설정이 없는 {missing}{unit}")
         if unknown:
             exclusions.append(f"조건 충족 여부가 불확실한 {len(unknown)}{unit}")

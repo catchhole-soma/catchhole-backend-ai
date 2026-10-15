@@ -107,6 +107,18 @@ def event_matches(status, scope):
     return scope is None or status == {"ACTUAL": "OCCURRED", "PLANNED": "PLANNED"}[scope]
 
 
+def merge_missing_explanations(missing, *answers):
+    """Retain notes for unresolved facets, preferring the latest supplied note.
+
+    Notes describe gaps; they never establish coverage or restore a removed claim.
+    """
+    by_facet = {}
+    for answer in answers:
+        if answer is not None:
+            by_facet.update((note.facet, note) for note in answer.missing_explanations)
+    return [by_facet[facet] for facet in missing if facet in by_facet]
+
+
 def apply_event_scope(answer, scope, facets, *, event_context=None):
     """A planned or uncertain event cannot satisfy a request for an actual event.
 
@@ -125,13 +137,32 @@ def apply_event_scope(answer, scope, facets, *, event_context=None):
             and (event_context is None or a.event_match == "MATCH")
         ]
         covered = {a.facet for a in observations if event_matches(a.event_status, scope)}
+        missing = [f for f in facets if f not in covered]
+        removed_facets = {a.facet for a in item.answers if a not in observations}
         items.append(
             ItemAnswer(
                 item_ref=item.item_ref,
                 answers=observations,
-                missing_facets=[f for f in facets if f not in covered],
+                missing_facets=missing,
+                missing_explanations=merge_missing_explanations(
+                    [f for f in missing if f not in removed_facets], item
+                )
+                if not answer.conflicts
+                else [],
             )
         )
+    retained_claims = [
+        claim
+        for claim in answer.claims
+        if (scope is None or claim.event_status is not None)
+        and (event_context is None or claim.event_match == "MATCH")
+    ]
+    removed_facets = {
+        facet
+        for claim in answer.claims
+        if claim not in retained_claims
+        for facet in [*claim.answered_facets, *claim.related_facets]
+    }
     claims = [
         claim.model_copy(
             update={
@@ -140,9 +171,7 @@ def apply_event_scope(answer, scope, facets, *, event_context=None):
                 else []
             }
         )
-        for claim in answer.claims
-        if (scope is None or claim.event_status is not None)
-        and (event_context is None or claim.event_match == "MATCH")
+        for claim in retained_claims
     ]
     covered = {f for c in claims for f in c.answered_facets}
     missing = [] if items else [f for f in facets if f not in covered]
@@ -166,6 +195,11 @@ def apply_event_scope(answer, scope, facets, *, event_context=None):
         unanswered_row_refs=answer.unanswered_row_refs,
         item_answers=items,
         missing_facets=missing,
+        missing_explanations=merge_missing_explanations(
+            [f for f in missing if f not in removed_facets], answer
+        )
+        if not answer.conflicts
+        else [],
     )
 
 
@@ -209,15 +243,21 @@ def merge_item_answers(previous, latest, items, facets, *, event_scope=None):
                     or not event_matches(prior.event_status, event_scope)
                 ):
                     answers[candidate.facet] = candidate
+        missing = [
+            f
+            for f in facets
+            if f not in answers or not event_matches(answers[f].event_status, event_scope)
+        ]
         merged.append(
             ItemAnswer(
                 item_ref=item.ref,
                 answers=[answers[f] for f in facets if f in answers],
-                missing_facets=[
-                    f
-                    for f in facets
-                    if f not in answers or not event_matches(answers[f].event_status, event_scope)
-                ],
+                missing_facets=missing,
+                missing_explanations=merge_missing_explanations(
+                    missing, old[item.ref], new[item.ref]
+                )
+                if not conflict
+                else [],
             )
         )
     # A previously observed disagreement cannot disappear merely because a later
@@ -245,6 +285,15 @@ def merge_item_answers(previous, latest, items, facets, *, event_scope=None):
 
 
 FACET_LABELS = {"TIME": "시점", "HOW": "경위·방법", "WHY": "이유", "SCENE": "장면"}
+
+
+def render_missing_explanations(result):
+    by_facet = {note.facet: safe_text(note.text) for note in result.missing_explanations}
+    texts = list(dict.fromkeys(by_facet[f] for f in result.missing_facets if f in by_facet))
+    # Legacy responses and server-side guards can leave a gap without model prose.
+    # Keep those gaps visible through the existing fallback; never infer coverage.
+    remaining = [f for f in result.missing_facets if f not in by_facet]
+    return texts, remaining
 
 
 def render_item_answers(
@@ -280,11 +329,15 @@ def render_item_answers(
             statements = [
                 f"{text} (근거 {', '.join(map(str, numbers))})" for text, numbers in cited
             ]
+        explanations, remaining = render_missing_explanations(result)
+        statements.extend(explanations)
         if statements:
-            if result.missing_facets:
-                needs = "·".join(labels[f] for f in result.missing_facets)
-                only_plans = event_scope == "ACTUAL" and all(
-                    a.event_status == "PLANNED" for a in result.answers
+            if remaining:
+                needs = "·".join(labels[f] for f in remaining)
+                only_plans = (
+                    bool(result.answers)
+                    and event_scope == "ACTUAL"
+                    and all(a.event_status == "PLANNED" for a in result.answers)
                 )
                 if only_plans:
                     statements.append(
@@ -293,8 +346,8 @@ def render_item_answers(
                 else:
                     statements.append(f"{needs} 정보는 이번 자료로 확인하지 못했습니다.")
             parts.append(f"- {item.label}: {' '.join(statements)}")
-        elif result.missing_facets:
-            missing.setdefault(tuple(result.missing_facets), []).append(item.label)
+        elif remaining:
+            missing.setdefault(tuple(remaining), []).append(item.label)
     for facets, item_labels in missing.items():
         names = ", ".join(item_labels)
         needs = "·".join(labels[f] for f in facets)

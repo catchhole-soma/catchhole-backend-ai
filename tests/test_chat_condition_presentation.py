@@ -73,6 +73,18 @@ def test_complete_negative_result_is_scoped_to_registered_population():
     assert "아직 확인하지 못했어요" not in result.text
 
 
+@pytest.mark.parametrize("shape", ["LIST", "COUNT"])
+def test_matching_result_omits_missing_setting_count_without_changing_matches(shape):
+    result = render(["MATCH", "NO_MATCH"], missing=30, shape=shape)
+    assert "현재 등록된 인물 32명 중" in result.text
+    assert "확인한 인물은 1명" in result.text
+    assert "대상01" in result.text and "대상02" not in result.text
+    assert "관련 설정이 없는" not in result.text
+    assert "확인한 결과에는 포함하지 않았어요" not in result.text
+    assert result.sources == [SourceReference(tool="CHARACTER_EVIDENCE", target_id=uid(1001))]
+    assert "근거 1" in result.text
+
+
 @pytest.mark.parametrize("unknown_kind", ["missing", "unreviewed", "partial"])
 def test_incomplete_population_never_becomes_a_complete_negative_result(unknown_kind):
     options = {
@@ -91,9 +103,9 @@ def test_incomplete_population_never_becomes_a_complete_negative_result(unknown_
         assert "조회가 끝나지 않아" in result.text
 
 
-def test_scope_counts_distinguish_missing_unknown_and_unreviewed():
+def test_matching_result_retains_unknown_and_unreviewed_limits():
     result = render(["MATCH", "UNKNOWN", "NO_MATCH"], missing=2, unreviewed=3)
     assert "확인한 인물은 1명" in result.text
-    assert "관련 설정이 없는 2명" in result.text
+    assert "관련 설정이 없는" not in result.text
     assert "조건 충족 여부가 불확실한 1명" in result.text
     assert "아직 검토하지 못한 3명" in result.text
