@@ -14,10 +14,12 @@ from app.chatbot.qa_lookup import FocusedLookup
 from app.chatbot.qa_collection import WorkLookup
 from app.chatbot.qa_synthesis import RegisteredSynthesis
 from app.chatbot.qa_prompts import PLAN_PROMPT, PLAN_VERSION, SELECT_PROMPT, SELECT_VERSION
-from app.chatbot.qa_render import AnswerRow, message, render_answer, safe_text
-from app.chatbot.runtime import Execution, ProviderFailure
+from app.chatbot.qa_render import AnswerRow, message, render_answer
+from app.chatbot.qa_validation import RULES, retry_feedback
+from app.chatbot.runtime import Execution, ProviderFailure, ProviderOutputTruncated
 from app.clients.setting_tools_client import SettingToolClientError
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
+from app.llm.responses import LlmTextResponse
 from app.schemas.chat_execution import Finish
 from app.schemas.chat_qa import AnswerSelection, QuestionPlan
 from app.schemas.setting_tools import SettingToolQuery, SettingToolResponse
@@ -165,23 +167,64 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             if max_attempts is None
             else min(self.cfg.max_attempts, max_attempts)
         )
+        feedback = []
+        truncated_retry = False
         for attempt in range(attempt_limit):
-            # Each schema retry is a separate metered provider invocation. No transport retry.
+            # Every recovery call uses the same attempt/call/ledger limits. No transport retry.
             retry_prompt = prompt + (
                 "\n이전 출력이 계약 검증에 실패했습니다. schema와 제공된 참조만 사용하세요."
-                if attempt
+                "\n안전한 검증 피드백: " + encode(feedback)
+                if feedback
                 else ""
             )
             if not self.fits(retry_prompt, payload, schema):
                 raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
             self.before_model_call(purpose)
-            response = await client.create_text_response(
-                retry_prompt,
-                encode(payload),
-                max_output_tokens=self.cfg.max_output_tokens,
-                prompt_cache_key=version,
-                response_schema=schema,
-            )
+            output_cap = self.cfg.output_tokens_for(purpose, truncated_retry=truncated_retry)
+            try:
+                response = await client.create_text_response(
+                    retry_prompt,
+                    encode(payload),
+                    max_output_tokens=output_cap,
+                    prompt_cache_key=version,
+                    response_schema=schema,
+                )
+            except ProviderOutputTruncated as exc:
+                # Execution has already queued FAILURE usage. Include that measured usage in
+                # aggregate metrics too; never reconstruct or publish a partial provider answer.
+                if exc.usage is not None and exc.usage.kind == "SETTLE":
+                    self.record_model_response(
+                        purpose,
+                        LlmTextResponse(
+                            "",
+                            exc.usage.input_tokens,
+                            exc.usage.cached_input_tokens,
+                            exc.usage.output_tokens,
+                        ),
+                    )
+                logger.warning(
+                    "chat_response_output_truncated purpose=%s schema=%s attempt=%d "
+                    "max_attempts=%d max_output_tokens=%d",
+                    purpose,
+                    cls.__name__,
+                    attempt + 1,
+                    attempt_limit,
+                    output_cap,
+                    extra={
+                        "purpose": purpose,
+                        "schema": cls.__name__,
+                        "attempt": attempt + 1,
+                        "max_attempts": attempt_limit,
+                        "validation_stage": "PROVIDER_OUTPUT",
+                        "error_category": "OUTPUT_TRUNCATED",
+                        "origin": "app.chatbot.providers.ChatTextClient",
+                    },
+                )
+                if truncated_retry:
+                    break
+                truncated_retry = True
+                feedback = [{"code": "OUTPUT_TRUNCATED", "rule": RULES["OUTPUT_TRUNCATED"]}]
+                continue
             self.record_model_response(purpose, response)
             validation_stage = "RESPONSE_SCHEMA"
             try:
@@ -191,6 +234,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     validate(parsed)
                 return parsed
             except (ValidationError, ValueError) as exc:
+                feedback = retry_feedback(exc, schema.schema)
                 # Never log exception text, rejected values, response bodies or IDs.
                 category = (
                     "SCHEMA_VALIDATION"
@@ -523,24 +567,10 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             return await self.answer_collection(plan)
         targets = []
         for subject in plan.subjects:
-            find = "FIND_CHARACTERS" if subject.domain == "CHARACTER" else "FIND_WORLD_SETTINGS"
-            found, complete = await self.pages(find, query=subject.name.strip())
-            if not complete or len(found) > 1:
-                names = ", ".join(safe_text(i.subject_name) for i in found[:5])
-                return message(
-                    "CLARIFICATION",
-                    f"'{safe_text(subject.name)}'의 대상을 하나로 정할 수 없습니다. 이름이나 대상을 더 구체적으로 알려주세요. 조회된 후보: {names or '조회 범위 확인 필요'}",
-                    self.codes,
-                )
-            if not found:
-                return message(
-                    "INSUFFICIENT_EVIDENCE",
-                    f"등록 정보에서 '{safe_text(subject.name)}' 대상을 찾지 못했습니다. 작품에 존재하지 않는다는 뜻은 아닙니다.",
-                    self.codes + ["NO_RELATED_SETTING"],
-                )
-            if found[0].id is None or found[0].id != found[0].subject_id:
-                raise SettingToolClientError("CONTRACT_ERROR")
-            targets.append((subject, found[0].subject_id))
+            item, stop = await self.resolve_subject(subject)
+            if stop:
+                return stop
+            targets.append((subject, item.subject_id))
         synthesis = (
             plan.answer_shape in {"SUMMARY", "COUNT", "LIST"} and plan.intent != "DIRECT_EVIDENCE"
         )

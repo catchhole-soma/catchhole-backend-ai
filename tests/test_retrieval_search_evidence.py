@@ -111,6 +111,64 @@ def test_direct_priority_and_episode_diversity_prevent_single_chapter_monopoly()
     assert bundle.input_count == bundle.candidate_count == 7
 
 
+def test_ranked_composition_keeps_second_strong_hit_before_weaker_episode_diversity():
+    episodes = {number: uuid4() for number in (3, 8, 12, 18, 25, 40, 60, 70)}
+    ranked = []
+    for number, index, score in (
+        (40, 0, 1.0),
+        (60, 0, 1.0),
+        (70, 0, 1.0),
+        (3, 0, 0.7),
+        (3, 4, 0.7),
+        (8, 0, 0.7),
+        (12, 0, 0.7),
+        (18, 0, 0.7),
+        (25, 0, 0.7),
+    ):
+        ranked.append(
+            replace(
+                chunk(
+                    f"passage {number}/{index}",
+                    episode=episodes[number],
+                    start=index * 100,
+                    score=score,
+                ),
+                episode_no=number,
+                chunk_index=index,
+            )
+        )
+    options = dict(max_items=8, per_episode=3, max_tokens=6000, count_tokens=len)
+    default = compose_evidence(list(reversed(ranked)), **options)
+    selected = compose_evidence(list(reversed(ranked)), episode_round_robin=False, **options)
+    assert ranked[4] not in default.chunks
+    assert default.chunks[-1] == ranked[-1]
+    assert selected.chunks == tuple(ranked[:8])
+    assert omission_counts(selected) == {"ITEM_LIMIT": 1}
+
+
+def test_ranked_composition_keeps_direct_retained_and_all_capacity_guards():
+    episode = uuid4()
+    candidates = [
+        replace(chunk(f"hit{n}", episode=episode, start=n * 10, score=1 - n / 10), chunk_index=n)
+        for n in range(4)
+    ]
+    direct = chunk("direct", method="DIRECT", score=0)
+    retained = chunk("retained", method="VECTOR", score=0)
+    neighbor = chunk("neighbor", method="NEIGHBOR", score=1)
+    result = compose_evidence(
+        [neighbor, *reversed(candidates), direct, retained],
+        episode_round_robin=False,
+        retained_chunk_ids=[retained.chunk_id],
+        max_items=8,
+        per_episode=3,
+        max_tokens=26,
+        count_tokens=len,
+    )
+    assert result.chunks == (retained, direct, *candidates[:3])
+    assert result.token_count == 26
+    assert omission_counts(result) == {"EPISODE_LIMIT": 1, "TOKEN_LIMIT": 1}
+
+
 def test_context_budget_and_per_episode_budget_are_enforced_without_silent_slicing():
     episode = uuid4()
     first = chunk("first", episode=episode)

@@ -274,7 +274,8 @@ async def test_partial_subject_with_unread_later_status_is_not_a_match():
         config={"max_tool_calls": 2},
     )
     text = answer(result)["text"]
-    assert "판단 보류" in text and "확인한 인물은 0명" in text
+    assert "조건 충족 여부가 불확실한 1명" in text and "아직 확인하지 못했어요" in text
+    assert "인물은 0명" not in text
     assert len(result["modelRequests"]) == 1  # Incomplete subject never reaches the judge.
 
 

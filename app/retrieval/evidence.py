@@ -74,10 +74,12 @@ def compose_evidence(
     per_episode=4,
     count_tokens=None,
     retained_chunk_ids=(),
+    episode_round_robin=True,
 ):
     """Select at most max_items ORIGINAL references, then merge exact touching slices.
 
-    Diversity is round-robin by episode after direct refs, bounded by per_episode.
+    Diversity defaults to round-robin by episode after direct refs. Callers can
+    preserve method/score rank instead; per_episode still bounds both policies.
     Text is never silently cut; skipped references and invalid/contradicting slices
     make the bundle limited. Exact duplicate removal and passage merging are not omissions.
     Each omitted candidate has one first-blocking reason; max_tokens covers passage text
@@ -144,18 +146,21 @@ def compose_evidence(
     ordered = sorted(quotes.values(), key=_rank)
     retained = [c for c in ordered if c.chunk_id in retained_ids]
     ordered = [c for c in ordered if c.chunk_id not in retained_ids]
-    direct = [c for c in ordered if "DIRECT" in c.methods]
-    groups = defaultdict(list)
-    for chunk in ordered:
-        if "DIRECT" not in chunk.methods:
-            groups[chunk.episode_id].append(chunk)
-    # Each episode contributes one candidate per round, so one dense chapter cannot monopolize.
-    candidates = [*retained, *direct]
-    while groups:
-        for episode in list(groups):
-            candidates.append(groups[episode].pop(0))
-            if not groups[episode]:
-                del groups[episode]
+    if episode_round_robin:
+        direct = [c for c in ordered if "DIRECT" in c.methods]
+        groups = defaultdict(list)
+        for chunk in ordered:
+            if "DIRECT" not in chunk.methods:
+                groups[chunk.episode_id].append(chunk)
+        # Item-oriented callers can distribute context across different episodes.
+        candidates = [*retained, *direct]
+        while groups:
+            for episode in list(groups):
+                candidates.append(groups[episode].pop(0))
+                if not groups[episode]:
+                    del groups[episode]
+    else:
+        candidates = [*retained, *ordered]
     chosen, per_source = [], defaultdict(int)
     passages, total = (), 0
     for chunk in candidates:

@@ -6,8 +6,9 @@ pass the analysis Metered* wrappers, which own their own retry/lease lifecycle.
 
 from collections.abc import Callable
 
-from app.chatbot.runtime import Execution, ProviderFailure, ProviderResult
+from app.chatbot.runtime import Execution, ProviderFailure, ProviderOutputTruncated, ProviderResult
 from app.embeddings.responses import EmbeddingBatchResponse
+from app.llm.exceptions import LlmOutputTruncatedError
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.schemas.chat_execution import Usage
 from app.usage.metering import (
@@ -74,6 +75,12 @@ class ChatTextClient:
                     prompt_cache_key=prompt_cache_key,
                     response_schema=response_schema,
                 )
+            except LlmOutputTruncatedError as exc:
+                # Preserve the safe failure type after Execution records actual usage.
+                # Provider text and incomplete_reason are never forwarded to the model.
+                raise ProviderOutputTruncated(
+                    measured_usage(_usage_from_text_error(exc), "FAILURE")
+                ) from None
             except Exception as exc:
                 raise ProviderFailure(
                     measured_usage(_usage_from_text_error(exc), "FAILURE")

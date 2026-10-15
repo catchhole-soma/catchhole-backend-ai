@@ -304,11 +304,20 @@ class RegisteredSynthesis:
             ("인물", "명") if people else ("이력", "건") if history_events else ("항목", "개")
         )
         ending = "예요" if unit == "개" else "이에요"
-        parts = [
-            f"{population} {total}{unit} 중 질문한 조건에 맞는 것으로 확인한 {noun}은 {len(matched)}{unit}{ending}."
-        ]
+        if matched:
+            introduction = (
+                f"{population} {total}{unit} 중 질문한 조건에 맞는 것으로 확인한 "
+                f"{noun}은 {len(matched)}{unit}{ending}."
+            )
+        elif missing or unknown or unreviewed or "PARTIAL_RESULTS" in self.codes:
+            introduction = f"이번에 확인한 자료에서는 조건에 맞는 {noun}을 아직 확인하지 못했어요."
+        else:
+            introduction = f"{population} {total}{unit}에서는 질문한 조건에 맞는 {noun}이 없어요."
+        parts = [introduction]
         sources = []
-        for decision in [*matched, *unknown]:
+        # Unknown candidates explain the scope of the result, not its members.
+        # Keep their aggregate count below instead of drowning matches in a list.
+        for decision in matched:
             row = groups[decision.item_ref][0]
             label = row.item.subject_name
             if population == "등록된 관련 설정 항목" or history_events:
@@ -319,9 +328,8 @@ class RegisteredSynthesis:
                     if row.item.source_episode_no is not None
                     else " (출처 회차 미상)"
                 )
-            status = " (판단 보류)" if decision.verdict == "UNKNOWN" else ""
-            line = f"- {safe_text(label)}{status}"
-            if shape != "COUNT" or decision.verdict == "UNKNOWN":
+            line = f"- {safe_text(label)}"
+            if shape != "COUNT":
                 line += f": {safe_text(decision.explanation)}"
             linked = list(
                 dict.fromkeys(
@@ -343,11 +351,11 @@ class RegisteredSynthesis:
         if missing:
             exclusions.append(f"관련 설정이 없는 {missing}{unit}")
         if unknown:
-            exclusions.append(f"판단을 보류한 {len(unknown)}{unit}")
+            exclusions.append(f"조건 충족 여부가 불확실한 {len(unknown)}{unit}")
         if unreviewed:
             exclusions.append(f"아직 검토하지 못한 {unreviewed}{unit}")
         if exclusions:
-            parts.append("다음 대상은 확인한 수에서 제외했어요: " + ", ".join(exclusions))
+            parts.append("확인한 결과에는 포함하지 않았어요: " + ", ".join(exclusions) + ".")
         if "PARTIAL_RESULTS" in self.codes:
             parts.append("조회가 끝나지 않아 확인한 범위의 결과예요.")
         result = message("ANSWER", "\n".join(parts), self.codes)

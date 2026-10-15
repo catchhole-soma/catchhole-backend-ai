@@ -180,10 +180,10 @@ def test_actual_hybrid_answer_payload_fits_luna_input_with_all_six_passages():
         ANSWER_PROMPT, encode(payload), cfg.model, 0, schema
     )
     reserved = _estimate_text_token_upper_bound(
-        ANSWER_PROMPT, encode(payload), cfg.model, cfg.max_output_tokens, schema
+        ANSWER_PROMPT, encode(payload), cfg.model, cfg.answer_max_output_tokens, schema
     )
     assert estimated <= cfg.max_input_tokens
-    assert reserved == estimated + cfg.max_output_tokens
+    assert reserved == estimated + cfg.answer_max_output_tokens
     assert session.codes == []
 
 
@@ -195,13 +195,14 @@ def test_six_maximum_text_reservations_and_one_embedding_fit_server_budget_contr
     query_upper_bound = "😀" * 1000
     embedding_reservation = _estimate_embedding_token_upper_bound([query_upper_bound])
     assert embedding_reservation == 4256
-    maximum_text_reservation = cfg.max_input_tokens + cfg.max_output_tokens
+    # Includes truncation recovery within the same six text-call limit.
+    maximum_text_reservation = cfg.max_input_tokens + cfg.truncation_retry_max_output_tokens
     maximum_attempt_reservation = (
         hcfg.max_model_calls * maximum_text_reservation
         + hcfg.max_query_embeddings * embedding_reservation
     )
-    assert maximum_text_reservation == 33500
-    assert maximum_attempt_reservation == 205256
+    assert maximum_text_reservation == 38000
+    assert maximum_attempt_reservation == 232256
     # Mirror the explicitly agreed Spring attempt budget, without requiring a sibling checkout.
-    server_attempt_budget = 208000
+    server_attempt_budget = 240000
     assert maximum_attempt_reservation <= server_attempt_budget

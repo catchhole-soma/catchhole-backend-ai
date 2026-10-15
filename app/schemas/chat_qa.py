@@ -48,6 +48,9 @@ class CharacterFilter(ContractModel):
 class QuestionSubject(ContractModel):
     domain: Literal["CHARACTER", "WORLD"]
     name: str = Field(min_length=1, max_length=100)
+    # A classification of the named subject, not a storage path or authority scope.
+    # Keep old recorded plans readable; provider schemas require explicit null.
+    world_category: WorldCategory | None = None
     # New structured-output schemas require a non-null focus. The default only
     # keeps pre-extension recorded plans readable; fields_set identifies those.
     focus: SettingFocus = Field(
@@ -60,6 +63,8 @@ class QuestionSubject(ContractModel):
             raise ValueError("A subject name is required")
         if self.domain == "WORLD" and self.focus and self.focus.fact_type is not None:
             raise ValueError("World settings do not have character fact types")
+        if self.domain == "CHARACTER" and self.world_category is not None:
+            raise ValueError("Characters do not have a world category")
         return self
 
 
@@ -98,7 +103,9 @@ class QuestionPlan(ContractModel):
             self.subjects or self.episode_from is not None or self.episode_to is not None
         ):
             raise ValueError("A character list queries current values across the work")
-        identities = {(s.domain, s.name.strip().casefold()) for s in self.subjects}
+        identities = {
+            (s.domain, s.name.strip().casefold(), s.world_category) for s in self.subjects
+        }
         if len(identities) != len(self.subjects):
             raise ValueError("Duplicate subjects")
         if self.episode_from is not None and self.episode_to is not None:

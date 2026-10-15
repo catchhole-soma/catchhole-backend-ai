@@ -7,7 +7,8 @@ references, but cannot invent a storage key, subject ID, or authority scope.
 import unicodedata
 
 from app.chatbot.qa_prompts import FIELD_PROMPT, FIELD_VERSION
-from app.chatbot.qa_render import AnswerRow, message, render_character_list
+from app.chatbot.qa_collection import CATEGORY_LABELS
+from app.chatbot.qa_render import AnswerRow, message, render_character_list, safe_text
 from app.clients.setting_tools_client import SettingToolClientError
 from app.schemas.chat_qa import FieldSelection, SettingFocus
 
@@ -16,7 +17,89 @@ def normalized(value):
     return unicodedata.normalize("NFC", value.strip()).casefold()
 
 
+WORLD_CATEGORY_NAME_SUFFIXES = {
+    "RACE": ("종족",),
+    "FACTION": ("세력",),
+    "LOCATION": ("지역",),
+    "MONSTER": ("몬스터",),
+    "POWER_SYSTEM": ("능력 체계",),
+    "WORLD_RULE_HISTORY": ("세계 규칙·역사",),
+    "IMPORTANT_ITEM": ("주요 아이템", "주요 물건"),
+}
+
+
+def _world_name_without_category(subject):
+    """Remove only a separated, explicit category label; never infer an alias."""
+    if subject.domain != "WORLD":
+        return None
+    name = subject.name.strip()
+    for suffix in WORLD_CATEGORY_NAME_SUFFIXES.get(subject.world_category, ()):
+        if name.endswith(suffix):
+            prefix = name[: -len(suffix)]
+            if prefix and prefix[-1].isspace() and prefix.strip():
+                return prefix.strip()
+    return None
+
+
 class FocusedLookup:
+    async def resolve_subject(self, subject, *, allow_missing=False):
+        """Resolve the same named-subject contract for RDB and manuscript answers."""
+        tool = "FIND_CHARACTERS" if subject.domain == "CHARACTER" else "FIND_WORLD_SETTINGS"
+        found, complete = await self.pages(
+            tool,
+            query=subject.name.strip(),
+            world_category=subject.world_category,
+        )
+        # A registered full name always wins. Missing pages or multiple matches
+        # must not be reinterpreted as a missing name, nor relax the category.
+        if complete and not found:
+            shorter_name = _world_name_without_category(subject)
+            if shorter_name is not None:
+                found, complete = await self.pages(
+                    tool,
+                    query=shorter_name,
+                    world_category=subject.world_category,
+                )
+        if subject.world_category is not None and any(
+            item.category != subject.world_category for item in found
+        ):
+            raise SettingToolClientError("CONTRACT_ERROR")
+        if not complete or len(found) > 1:
+            labels = []
+            for item in found[:5]:
+                label = safe_text(item.subject_name)
+                if subject.domain == "WORLD" and item.category in CATEGORY_LABELS:
+                    label += f" ({CATEGORY_LABELS[item.category]})"
+                labels.append(label)
+            candidates = ", ".join(labels)
+            detail = (
+                f"확인한 후보는 {candidates}예요. "
+                if candidates
+                else "후보를 모두 확인하지 못했어요. "
+            )
+            return None, message(
+                "CLARIFICATION",
+                f"'{safe_text(subject.name)}'이 어떤 대상을 뜻하는지 구분이 필요해요. "
+                + detail
+                + "이름이나 종류를 더 알려주세요.",
+                self.codes,
+            )
+        if not found:
+            if "NO_RELATED_SETTING" not in self.codes:
+                self.codes.append("NO_RELATED_SETTING")
+            if allow_missing:
+                return None, None
+            return None, message(
+                "INSUFFICIENT_EVIDENCE",
+                f"등록 정보에서 '{safe_text(subject.name)}' 대상을 찾지 못했어요. "
+                "작품에 존재하지 않는다는 뜻은 아니에요.",
+                self.codes,
+            )
+        item = found[0]
+        if item.id is None or item.id != item.subject_id:
+            raise SettingToolClientError("CONTRACT_ERROR")
+        return item, None
+
     def validate_focus(self, plan):
         observed = self.observed_question_text()
         terms = [s.focus.attribute for s in plan.subjects if s.focus and s.focus.attribute]

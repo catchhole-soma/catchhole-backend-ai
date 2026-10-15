@@ -266,6 +266,51 @@ def test_neighbors_exclude_seeds_before_limit_and_preserve_current_scope(corpus,
     assert all(chunk.methods == ("NEIGHBOR",) for chunk in neighbors)
 
 
+def test_neighbors_preserve_search_seed_rank_before_episode_order_and_limit(corpus):
+    early = []
+    for number in range(1, 5):
+        episode = corpus.episode(number)
+        early.append(corpus.chunks(episode, ["before", "needle", "after"]))
+    strongest = corpus.episode(50)
+    strongest_ids = corpus.chunks(strongest, ["before", "needle rare", "after"])
+    seeds = corpus.read("keyword", "needle rare", limit=5)
+    assert seeds[0].chunk_id == strongest_ids[1]
+    neighbors = corpus.read("neighbors", seeds, radius=1, limit=6)
+    assert [c.chunk_id for c in neighbors] == [
+        strongest_ids[0],
+        strongest_ids[2],
+        early[0][0],
+        early[0][2],
+        early[1][0],
+        early[1][2],
+    ]
+
+
+def test_neighbors_use_distance_to_earliest_seed_and_deduplicate_shared_context(corpus):
+    episode = corpus.episode(1)
+    ids = corpus.chunks(episode, [f"context {index}" for index in range(7)])
+    seeds = corpus.read("direct", [ids[4], ids[1]])
+    neighbors = corpus.read("neighbors", [*seeds, seeds[0]], radius=2, limit=6)
+    assert [c.chunk_id for c in neighbors] == [ids[3], ids[5], ids[2], ids[6], ids[0]]
+    assert [c.score for c in neighbors] == pytest.approx([0.5, 0.5, 1 / 3, 1 / 3, 0.5])
+    assert len({c.chunk_id for c in neighbors}) == len(neighbors)
+
+
+def test_neighbors_discard_stale_high_ranked_seed_before_expansion_limit(corpus):
+    stale_episode, current_episode = corpus.episode(50), corpus.episode(60)
+    stale = corpus.chunks(stale_episode, ["before", "seed", "after"])
+    current = corpus.chunks(current_episode, ["before", "seed", "after"])
+    seeds = corpus.read("direct", [stale[1], current[1]])
+    corpus.mutate(
+        "UPDATE episodes SET content_s3_version='replaced' WHERE id=:episode", episode=stale_episode
+    )
+    corpus.mutate(
+        "UPDATE retrieval_chunks SET chunk_hash=repeat('b',64) WHERE id=:id", id=current[0]
+    )
+    neighbors = corpus.read("neighbors", seeds, radius=1, limit=1)
+    assert [c.chunk_id for c in neighbors] == [current[2]]
+
+
 def test_invalid_chunks_are_filtered_before_top_k_and_counted_partial(corpus):
     episode = corpus.episode(1)
     bad, valid = corpus.chunks(episode, ["needle needle", "needle"], ready=True)

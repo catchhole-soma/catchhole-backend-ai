@@ -8,9 +8,19 @@ from app.schemas.chat_qa import AnswerShape, CharacterFilter, QuestionSubject, W
 from app.schemas.setting_tools import ContractModel
 
 
-RequestedFacet = Literal["TIME", "HOW", "WHY", "SCENE"]
+RequestedFacet = Literal["TIME", "HOW", "WHY", "SCENE", "P1", "P2", "P3", "P4"]
 EventScope = Literal["ACTUAL", "PLANNED"]
 EventStatus = Literal["OCCURRED", "PLANNED", "UNCERTAIN"]
+
+
+class RequestedPart(ContractModel):
+    ref: Literal["P1", "P2", "P3", "P4"]
+    description: str = Field(min_length=1, max_length=160)
+
+
+class EvidenceSupport(ContractModel):
+    evidence_ref: str = Field(min_length=1, max_length=10)
+    quote: str = Field(min_length=1, max_length=1000)
 
 
 class HybridPlan(ContractModel):
@@ -31,6 +41,8 @@ class HybridPlan(ContractModel):
     answer_shape: AnswerShape = "FACTS"
     include_registered_values: bool = False
     event_scope: EventScope | None = None
+    requested_parts: list[RequestedPart] = Field(default_factory=list, max_length=4)
+    event_context: str | None = Field(default=None, min_length=1, max_length=200)
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
@@ -38,9 +50,9 @@ class HybridPlan(ContractModel):
             raise ValueError("Invalid episode range")
         if any(not term.strip() or len(term) > 80 for term in self.search_terms):
             raise ValueError("Invalid search terms")
-        if len({(s.domain, s.name.strip().casefold()) for s in self.subjects}) != len(
-            self.subjects
-        ):
+        if len(
+            {(s.domain, s.name.strip().casefold(), s.world_category) for s in self.subjects}
+        ) != len(self.subjects):
             raise ValueError("Duplicate subjects")
         if self.disposition == "PROCEED":
             if (
@@ -66,16 +78,38 @@ class HybridPlan(ContractModel):
             raise ValueError("Work collections query current registered information")
         if len(set(self.requested_facets)) != len(self.requested_facets):
             raise ValueError("Duplicate requested facets")
+        if self.requested_parts:
+            if self.requested_facets or self.source_need == "NONE":
+                raise ValueError("Requested parts replace narrative facets")
+            if [p.ref for p in self.requested_parts] != [
+                f"P{i}" for i in range(1, len(self.requested_parts) + 1)
+            ] or any(not p.description.strip() for p in self.requested_parts):
+                raise ValueError("Requested parts must have ordered unique references")
+        elif (
+            "requested_parts" in self.model_fields_set
+            and self.source_need != "NONE"
+            and self.disposition == "PROCEED"
+        ):
+            raise ValueError("Narrative questions require explicit requested parts")
+        if any(f.startswith("P") for f in self.requested_facets):
+            raise ValueError("Part references belong in requested parts")
+        if self.event_context is not None and (
+            not self.event_context.strip() or self.source_need == "NONE"
+        ):
+            raise ValueError("Event context requires a narrative question")
         if self.source_need == "NONE" and self.requested_facets:
             raise ValueError("Narrative facets require source evidence")
         if self.event_scope is not None and (
-            self.source_need == "NONE" or not set(self.requested_facets) & {"TIME", "HOW"}
+            self.source_need == "NONE"
+            or (not self.requested_parts and not set(self.requested_facets) & {"TIME", "HOW"})
         ):
             raise ValueError("Event scope describes a requested time or process")
         if (
-            self.source_need != "NONE"
+            self.disposition == "PROCEED"
+            and self.source_need != "NONE"
             and "requested_facets" in self.model_fields_set
             and not self.requested_facets
+            and not self.requested_parts
         ):
             raise ValueError("Narrative questions must identify requested information")
         return self
@@ -86,6 +120,8 @@ class FacetAnswer(ContractModel):
     text: str = Field(min_length=1, max_length=800)
     evidence_refs: list[str] = Field(min_length=1, max_length=6)
     event_status: EventStatus | None = None
+    supports: list[EvidenceSupport] = Field(default_factory=list, max_length=6)
+    event_match: Literal["MATCH", "OTHER", "UNCERTAIN"] | None = None
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
@@ -120,11 +156,15 @@ class GroundedClaim(ContractModel):
     row_refs: list[str] = Field(default_factory=list, max_length=50)
     answered_facets: list[RequestedFacet] = Field(default_factory=list, max_length=4)
     event_status: EventStatus | None = None
+    supports: list[EvidenceSupport] = Field(default_factory=list, max_length=6)
+    event_match: Literal["MATCH", "OTHER", "UNCERTAIN"] | None = None
 
 
 class EvidenceConflict(ContractModel):
     row_refs: list[str] = Field(min_length=1, max_length=3)
     evidence_refs: list[str] = Field(min_length=1, max_length=3)
+    supports: list[EvidenceSupport] = Field(default_factory=list, max_length=3)
+    event_match: Literal["MATCH", "OTHER", "UNCERTAIN"] | None = None
 
 
 class GroundedAnswer(ContractModel):

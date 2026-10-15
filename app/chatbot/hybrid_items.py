@@ -69,9 +69,15 @@ def group_items(rows, *, current_targets=False):
 
 
 def requested_facets(plan):
+    if plan.requested_parts:
+        return [part.ref for part in plan.requested_parts]
     return plan.requested_facets or [
         {"PROCESS": "HOW", "REASON": "WHY", "SCENE": "SCENE"}[plan.source_need]
     ]
+
+
+def request_labels(plan):
+    return {**FACET_LABELS, **{p.ref: p.description for p in plan.requested_parts}}
 
 
 def empty_item_answer(items, facets):
@@ -101,18 +107,23 @@ def event_matches(status, scope):
     return scope is None or status == {"ACTUAL": "OCCURRED", "PLANNED": "PLANNED"}[scope]
 
 
-def apply_event_scope(answer, scope, facets):
+def apply_event_scope(answer, scope, facets, *, event_context=None):
     """A planned or uncertain event cannot satisfy a request for an actual event.
 
     This verifies the declared event classification, not the model's semantic
     reading of the source. Keep classified observations to explain the gap once.
     Omitted statuses are compatible only when the recorded plan has no scope.
     """
-    if scope is None:
+    if scope is None and event_context is None:
         return answer
     items = []
     for item in answer.item_answers:
-        observations = [a for a in item.answers if a.event_status is not None]
+        observations = [
+            a
+            for a in item.answers
+            if (scope is None or a.event_status is not None)
+            and (event_context is None or a.event_match == "MATCH")
+        ]
         covered = {a.facet for a in observations if event_matches(a.event_status, scope)}
         items.append(
             ItemAnswer(
@@ -130,14 +141,20 @@ def apply_event_scope(answer, scope, facets):
             }
         )
         for claim in answer.claims
-        if claim.event_status is not None
+        if (scope is None or claim.event_status is not None)
+        and (event_context is None or claim.event_match == "MATCH")
     ]
     covered = {f for c in claims for f in c.answered_facets}
     missing = [] if items else [f for f in facets if f not in covered]
-    supported = bool(claims or answer.conflicts or any(i.answers for i in items))
+    conflicts = [
+        conflict
+        for conflict in answer.conflicts
+        if event_context is None or conflict.event_match == "MATCH"
+    ]
+    supported = bool(claims or conflicts or any(i.answers for i in items))
     complete = (
         supported
-        and not answer.conflicts
+        and not conflicts
         and not answer.unanswered_row_refs
         and not missing
         and all(not i.missing_facets for i in items)
@@ -145,7 +162,7 @@ def apply_event_scope(answer, scope, facets):
     return GroundedAnswer(
         coverage="COMPLETE" if complete else "PARTIAL" if supported else "NONE",
         claims=claims,
-        conflicts=answer.conflicts,
+        conflicts=conflicts,
         unanswered_row_refs=answer.unanswered_row_refs,
         item_answers=items,
         missing_facets=missing,
@@ -231,8 +248,9 @@ FACET_LABELS = {"TIME": "시점", "HOW": "경위·방법", "WHY": "이유", "SCE
 
 
 def render_item_answers(
-    answer, items, public_numbers, *, blocked_rows=frozenset(), event_scope=None
+    answer, items, public_numbers, *, blocked_rows=frozenset(), event_scope=None, labels=None
 ):
+    labels = labels or FACET_LABELS
     by_ref = {i.ref: i for i in items}
     parts, missing, blocked_subjects = [], {}, []
     for result in answer.item_answers:
@@ -264,7 +282,7 @@ def render_item_answers(
             ]
         if statements:
             if result.missing_facets:
-                needs = "·".join(FACET_LABELS[f] for f in result.missing_facets)
+                needs = "·".join(labels[f] for f in result.missing_facets)
                 only_plans = event_scope == "ACTUAL" and all(
                     a.event_status == "PLANNED" for a in result.answers
                 )
@@ -277,9 +295,9 @@ def render_item_answers(
             parts.append(f"- {item.label}: {' '.join(statements)}")
         elif result.missing_facets:
             missing.setdefault(tuple(result.missing_facets), []).append(item.label)
-    for facets, labels in missing.items():
-        names = ", ".join(labels)
-        needs = "·".join(FACET_LABELS[f] for f in facets)
+    for facets, item_labels in missing.items():
+        names = ", ".join(item_labels)
+        needs = "·".join(labels[f] for f in facets)
         parts.append(f"{names}의 {needs} 정보는 이번에 확인한 자료만으로 확정하기 어렵습니다.")
     if blocked_subjects:
         parts.append(

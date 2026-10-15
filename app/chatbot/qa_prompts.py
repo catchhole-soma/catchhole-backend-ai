@@ -1,6 +1,6 @@
 """Versioned prompts; source data is never elevated into instructions."""
 
-PLAN_VERSION = "chat-qa-plan-v5"
+PLAN_VERSION = "chat-qa-plan-v6"
 SELECT_VERSION = "chat-qa-select-v3"
 FIELD_VERSION = "chat-qa-field-select-v1"
 
@@ -16,6 +16,17 @@ LINKED_EVIDENCE_INSTRUCTIONS = """
 """
 
 FOCUS_INSTRUCTIONS = """
+이름을 지정한 각 subject.worldCategory에는 그 세계관 대상의 종류를 명시한 경우만 해당 분류를 넣는다.
+종족=RACE, 세력=FACTION, 지역=LOCATION, 몬스터=MONSTER, 능력 체계=POWER_SYSTEM,
+세계 규칙·역사=WORLD_RULE_HISTORY, 주요 물건=IMPORTANT_ITEM이다. CHARACTER이거나 구분이 없으면 null이다.
+subject.name은 질문에 나온 대상의 고유 이름이며, 이름 뒤에 덧붙인 '종족', '세력', '지역' 같은
+종류 표현은 worldCategory로 분리한다. 종류를 설명하는 단어를 이름에 붙여 조회하지 않는다.
+단, 사용자가 그 단어까지 포함한 고유 이름임을 명시했다면 이름을 그대로 보존한다.
+이 분류는 subject 자체의 종류다. 인물이 쓰는 물건·종족의 무기처럼 관계로 언급된 대상의 종류를
+질문 대상에 옮기지 않는다. 이름만 보고 분류를 추측하거나 기존 분류를 다른 종류로 바꾸지 않는다.
+직전에 대상을 되물었고 이번 질문이 그 대상의 이름·종류를 보충하면 이전 요청과 합쳐 다시 조회한다.
+현재 보충으로 하나의 대상과 요청이 명확해졌다면 같은 명확화 질문을 되풀이하지 않는다.
+현재 질문의 명시적 정정·새 대상·새 요청이 우선이다. 이전 후보나 답변은 사실 근거가 아니며 다시 조회한다.
 등록 설정 조회의 각 subject.focus에는 factType과 attribute를 채운다.
 인물 factType은 PROFILE(종족·성별·소속 등), AGE(나이), LEVEL(레벨), STAT(수치 스탯),
 SKILL(스킬·능력·무공·기술), ITEM(소지품), STATUS(상태), TIME(시간) 중 질문의 유형이다.

@@ -19,12 +19,14 @@ from app.chatbot.hybrid_items import (
     group_items,
     merge_item_answers,
     render_item_answers,
+    request_labels,
     requested_facets,
     select_context_seeds,
     validate_item_answer,
 )
 from app.chatbot.hybrid_metrics import HybridMetrics, ObservedEmbeddingClient, ObservedTextClient
 from app.chatbot.hybrid_prompts import ANSWER_PROMPT, ANSWER_VERSION, PLAN_PROMPT, PLAN_VERSION
+from app.chatbot.hybrid_grounding import resolve_support_references
 from app.chatbot.providers import ChatEmbeddingClient
 from app.chatbot.qa import ChatQaHandler, _Session, response_schema
 from app.chatbot.qa_render import (
@@ -41,7 +43,7 @@ from app.clients.setting_tools_client import SettingToolClientError
 from app.retrieval.evidence import compose_evidence
 from app.retrieval.search_contracts import SearchScope, SearchScopeUnavailable
 from app.schemas.chat_execution import ChatResult, Finish
-from app.schemas.chat_hybrid import GroundedAnswer, HybridPlan, ItemAnswer
+from app.schemas.chat_hybrid import EvidenceConflict, GroundedAnswer, HybridPlan, ItemAnswer
 from app.schemas.chat_qa import QuestionPlan
 from app.schemas.chat_retrieval import RetrievalReference
 from app.schemas.setting_tools import SettingToolQuery
@@ -188,6 +190,16 @@ class _HybridSession(_Session):
         self.render_registered_values = False
         self.collection_conditions = []
         self.has_collection_condition = False
+        self.plan = None
+
+    def trace(self, stage, **data):
+        # No questions, source text, model output, member/work IDs or secrets.
+        logger.info(
+            "Chat retrieval trace attempt=%s stage=%s data=%s",
+            getattr(self.execution.context, "attempt_id", None),
+            stage,
+            data,
+        )
 
     def before_model_call(self, purpose):
         if self.model_calls >= self.hcfg.max_model_calls:
@@ -230,6 +242,22 @@ class _HybridSession(_Session):
         if result.limited:
             self.codes.append("SEARCH_LIMIT")
         self.metrics.chunks.labels("returned").inc(len(result.chunks))
+        self.trace(
+            "search",
+            method=method,
+            round=self.rounds,
+            limited=result.limited,
+            candidates=[
+                {
+                    "ref": str(c.chunk_id),
+                    "rank": n,
+                    "episode": c.episode_no,
+                    "index": c.chunk_index,
+                    "score": round(c.score, 5),
+                }
+                for n, c in enumerate(result.chunks, 1)
+            ],
+        )
         return result.chunks
 
     async def register(self, chunks):
@@ -277,6 +305,14 @@ class _HybridSession(_Session):
             "CHAT_INTERPRETATION",
             PLAN_VERSION,
             valid,
+        )
+        self.plan = plan
+        self.trace(
+            "plan",
+            rdb=plan.rdb_mode,
+            source=plan.source_need,
+            parts=len(plan.requested_parts),
+            event=plan.event_context is not None,
         )
         # Old saved planner records keep their earlier rendering contract. New
         # provider schemas always require this explicit presentation decision.
@@ -386,9 +422,7 @@ class _HybridSession(_Session):
                     break
                 found = await self.search(
                     "vector",
-                    (" ".join([s.name for s in plan.subjects] + [query]) + " " + ctx.question)[
-                        :1000
-                    ],
+                    self.expansion_query(plan, draft, query),
                     _QueryEmbedding(self),
                     limit=self.hcfg.vector_top_k,
                     excluded_chunk_ids=tuple(dict.fromkeys(c.chunk_id for c in candidates)),
@@ -406,7 +440,9 @@ class _HybridSession(_Session):
             elif found and self.hcfg.neighbor_radius:
                 self.codes.append("SEARCH_LIMIT")
             previous = self.evidence_identity()
-            self.add_search_evidence(candidates)
+            self.add_search_evidence(
+                candidates, fresh=found if round_no > 1 and plan.requested_parts else ()
+            )
             if self.evidence_identity() == previous:
                 continue
             await self.register([e.chunk for e in self.evidences if e.chunk])
@@ -420,7 +456,7 @@ class _HybridSession(_Session):
                 self.fallback_direct_checks = len(
                     {e.direct_ref for e in self.evidences if e.direct_ref}
                 )
-            elif draft.coverage == "PARTIAL" and plan.requested_facets:
+            elif draft.coverage == "PARTIAL" and (plan.requested_facets or plan.requested_parts):
                 partial_snapshot = self.merge_partial_snapshot(partial_snapshot, draft, plan)
         if partial_snapshot is not None:
             draft, evidence_snapshot = partial_snapshot
@@ -488,20 +524,11 @@ class _HybridSession(_Session):
             return stop
         targets = set()
         for subject in plan.subjects:
-            tool = "FIND_CHARACTERS" if subject.domain == "CHARACTER" else "FIND_WORLD_SETTINGS"
-            found, complete = await self.pages(tool, query=subject.name.strip())
-            if not complete or len(found) > 1:
-                return message(
-                    "CLARIFICATION",
-                    f"'{safe_text(subject.name)}' 대상을 하나로 정할 수 없습니다. 이름이나 대상을 구체적으로 알려주세요.",
-                    self.codes,
-                )
-            if not found:
-                self.codes.append("NO_RELATED_SETTING")
-                continue  # An unregistered character can still occur in manuscript text.
-            item = found[0]
-            if item.id is None or item.id != item.subject_id:
-                raise SettingToolClientError("CONTRACT_ERROR")
+            item, stop = await self.resolve_subject(subject, allow_missing=True)
+            if stop:
+                return stop
+            if item is None:
+                continue
             targets.add((subject.domain, item.subject_id))
             modes = (
                 ["CURRENT", "HISTORY"]
@@ -596,7 +623,12 @@ class _HybridSession(_Session):
                         continue
                     found = await self.search(
                         "vector",
-                        f"{row.item.subject_name} {query} {self.execution.context.question}"[:1000],
+                        self.expansion_query(
+                            plan,
+                            self.item_draft,
+                            f"{row.item.subject_name} {query}",
+                            item_ref=item.ref,
+                        ),
                         _QueryEmbedding(self),
                         limit=self.hcfg.vector_top_k,
                         excluded_chunk_ids=tuple(
@@ -652,6 +684,7 @@ class _HybridSession(_Session):
                 {},
                 blocked_rows=self.uncertain_condition_rows(),
                 event_scope=plan.event_scope,
+                labels=request_labels(plan),
             )
         )
         if len(text) + 50 > self.cfg.max_answer_characters:
@@ -684,7 +717,7 @@ class _HybridSession(_Session):
 
         before = row_facets(old_answer.claims)
         current = row_facets(latest.claims)
-        requested = set(plan.requested_facets)
+        requested = set(requested_facets(plan))
 
         def unanswered_rows(claims):
             retained = row_facets(claims)
@@ -734,8 +767,12 @@ class _HybridSession(_Session):
                     row in current and set(claim.answered_facets) <= current[row]
                     for row in claim.row_refs
                 )
-            return bool(set(claim.answered_facets) & new_facets) or (
-                plan.event_scope is not None and not claim.answered_facets
+            # One new facet must not erase the other independently answered
+            # parts of a multi-facet claim. Only a complete replacement wins.
+            return (
+                bool(claim.answered_facets)
+                and set(claim.answered_facets) <= new_facets
+                or (plan.event_scope is not None and not claim.answered_facets)
             )
 
         chosen = [c for c in old_answer.claims if not superseded(c)]
@@ -746,6 +783,7 @@ class _HybridSession(_Session):
         by_identity = {}
         for claim, snapshot in statements:
             refs = []
+            remapped = {}
             for ref in claim.evidence_refs:
                 source = next(e for e in snapshot if e.ref == ref)
                 identity = (
@@ -766,8 +804,23 @@ class _HybridSession(_Session):
                             source.direct_item,
                         )
                     )
-                refs.append(by_identity[identity])
-            claims.append(claim.model_copy(update={"evidence_refs": refs}))
+                remapped[ref] = by_identity[identity]
+                refs.append(remapped[ref])
+            # A validated support may have anchored an adjacent chunk in the
+            # original merged passage. Resolve that quote again in its original
+            # snapshot before choosing an anchor in the new citation map.
+            original_passages = self.evidence_passages(snapshot) if claim.supports else []
+            supports = [
+                support.model_copy(
+                    update={
+                        "evidence_ref": remapped[
+                            resolve_support_references([support], original_passages)[0]
+                        ]
+                    }
+                )
+                for support in claim.supports
+            ]
+            claims.append(claim.model_copy(update={"evidence_refs": refs, "supports": supports}))
         if len(evidence) > self.hcfg.max_evidence or len(claims) > 8:
             self.codes.append("EVIDENCE_CONTEXT_LIMIT")
             if old_facets <= new_facets:
@@ -779,7 +832,7 @@ class _HybridSession(_Session):
                 )
             return previous
         answered = {f for c in claims for f in c.answered_facets}
-        missing = [f for f in plan.requested_facets if f not in answered]
+        missing = [f for f in requested_facets(plan) if f not in answered]
         unanswered = unanswered_rows(claims)
         combined = GroundedAnswer(
             coverage="PARTIAL"
@@ -909,7 +962,33 @@ class _HybridSession(_Session):
             for e in self.evidences
         )
 
-    def add_search_evidence(self, candidates):
+    def expansion_query(self, plan, draft, query, *, item_ref=None):
+        if draft is None:
+            missing = set(requested_facets(plan))
+        elif draft.item_answers:
+            missing = {
+                facet
+                for item in draft.item_answers
+                if item_ref is None or item.item_ref == item_ref
+                for facet in item.missing_facets
+            }
+        else:
+            missing = set(draft.missing_facets)
+        descriptions = [p.description for p in plan.requested_parts if p.ref in missing]
+        return " ".join(
+            filter(
+                None,
+                [
+                    plan.event_context,
+                    *[s.name for s in plan.subjects],
+                    *descriptions,
+                    query,
+                    self.execution.context.question,
+                ],
+            )
+        )[:1000]
+
+    def add_search_evidence(self, candidates, *, fresh=()):
         direct = [e for e in self.evidences if e.direct_ref]
         available = self.hcfg.max_evidence - len(direct)
         # Leave room for search evidence when many direct quotes did not explain the question.
@@ -929,6 +1008,13 @@ class _HybridSession(_Session):
             max_items=self.hcfg.max_evidence - len(direct),
             max_tokens=self.hcfg.evidence_tokens - self.evidence_token_count(direct),
             per_episode=min(self.hcfg.per_episode, self.hcfg.max_evidence - len(direct)),
+            # Reserve a bounded share for the expansion's strongest new hits;
+            # lexical and cosine scores are not directly comparable. The prior
+            # supported draft remains separately available as a fallback.
+            retained_chunk_ids=[
+                c.chunk_id for c in fresh[: max(1, (self.hcfg.max_evidence - len(direct)) // 2)]
+            ],
+            episode_round_robin=not bool(self.plan and self.plan.requested_parts),
         )
         self.evidences = [*direct]
         for chunk in bundle.chunks:
@@ -936,24 +1022,26 @@ class _HybridSession(_Session):
                 _Evidence(f"E{len(self.evidences) + 1}", chunk.text, chunk.episode_no, chunk=chunk)
             )
         self.record_composition("search", bundle)
+        self.trace(
+            "selected",
+            round=self.rounds,
+            refs=[
+                {"ref": e.ref, "chunk": str(e.chunk.chunk_id) if e.chunk else None}
+                for e in self.evidences
+            ],
+            omissions={o.reason: o.count for o in bundle.omissions},
+        )
 
-    def answer_payload(self, plan):
-        selected = {r.ref for r in self.chosen}
-        rows = [
-            r
-            for r in self.payload(self.execution.context.question, plan)["rows"]
-            if r["rowRef"] in selected
-        ]
-        for row in rows:
-            row.pop("settingKey", None)
-        chunks = [e.chunk for e in self.evidences if e.chunk]
+    def evidence_passages(self, evidences):
+        """Build the same original citation spans for model input and snapshot remapping."""
+        chunks = [e.chunk for e in evidences if e.chunk]
         bundle = compose_evidence(
             chunks,
             max_items=self.hcfg.max_evidence,
             max_tokens=self.hcfg.evidence_tokens,
             per_episode=self.hcfg.max_evidence,
         )
-        by_id = {e.chunk.chunk_id: e.ref for e in self.evidences if e.chunk}
+        by_id = {e.chunk.chunk_id: e.ref for e in evidences if e.chunk}
         passages = [
             {
                 "text": p.text,
@@ -983,9 +1071,20 @@ class _HybridSession(_Session):
                     }
                 ],
             }
-            for e in self.evidences
+            for e in evidences
             if e.direct_ref
         )
+        return passages
+
+    def answer_payload(self, plan):
+        selected = {r.ref for r in self.chosen}
+        rows = [
+            r
+            for r in self.payload(self.execution.context.question, plan)["rows"]
+            if r["rowRef"] in selected
+        ]
+        for row in rows:
+            row.pop("settingKey", None)
         return {
             "question": self.execution.context.question,
             **self.conversation_payload(),
@@ -1004,7 +1103,7 @@ class _HybridSession(_Session):
             "previousItemAnswers": []
             if self.item_draft is None
             else [i.model_dump(by_alias=True) for i in self.item_draft.item_answers if i.answers],
-            "passages": passages,
+            "passages": self.evidence_passages(self.evidences),
             "limitations": notices(self.codes),
         }
 
@@ -1079,7 +1178,13 @@ class _HybridSession(_Session):
         schema = response_schema(GroundedAnswer)
         self.trim_conversation_to_fit(ANSWER_PROMPT, lambda: self.answer_payload(plan), schema)
         while self.evidences and not self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema):
-            self.evidences.pop()
+            removed = self.evidences.pop()
+            self.trace(
+                "omitted",
+                reason="INPUT_LIMIT",
+                ref=removed.ref,
+                chunk=str(removed.chunk.chunk_id) if removed.chunk else None,
+            )
             self.metrics.evidence_omissions.labels("answer", "INPUT_LIMIT").inc()
             self.codes.append("CONTEXT_LIMIT")
         if not self.evidences:
@@ -1089,8 +1194,55 @@ class _HybridSession(_Session):
                 else GroundedAnswer(coverage="NONE", claims=[], conflicts=[])
             )
         e_refs, r_refs = {e.ref for e in self.evidences}, {r.ref for r in self.chosen}
+        payload = self.answer_payload(plan)
+        self.trace(
+            "answer_input",
+            round=self.rounds,
+            refs=[
+                {"ref": e.ref, "chunk": str(e.chunk.chunk_id) if e.chunk else None}
+                for e in self.evidences
+            ],
+        )
+
+        def ground_statement(statement):
+            refs = statement.evidence_refs
+            supports = statement.supports
+            if statement.supports or plan.requested_parts:
+                refs = resolve_support_references(statement.supports, payload["passages"])
+                if len(refs) > (3 if isinstance(statement, EvidenceConflict) else 6):
+                    raise ValueError("Unknown evidence or setting reference")
+                supports = [
+                    support.model_copy(
+                        update={
+                            "evidence_ref": resolve_support_references(
+                                [support], payload["passages"]
+                            )[0]
+                        }
+                    )
+                    for support in statement.supports
+                ]
+            if plan.event_context is not None and statement.event_match is None:
+                from app.chatbot.qa_validation import ChatResponseContractError
+
+                raise ChatResponseContractError("EVENT_CONTEXT_REQUIRED")
+            return statement.model_copy(update={"evidence_refs": refs, "supports": supports})
+
+        def grounded(answer):
+            return answer.model_copy(
+                update={
+                    "claims": [ground_statement(c) for c in answer.claims],
+                    "conflicts": [ground_statement(c) for c in answer.conflicts],
+                    "item_answers": [
+                        item.model_copy(
+                            update={"answers": [ground_statement(a) for a in item.answers]}
+                        )
+                        for item in answer.item_answers
+                    ],
+                }
+            )
 
         def valid(answer):
+            answer = grounded(answer)
             if (
                 not answer_evidence_refs(answer) <= e_refs
                 or any(not set(c.row_refs) <= r_refs for c in [*answer.claims, *answer.conflicts])
@@ -1107,8 +1259,8 @@ class _HybridSession(_Session):
                     raise ValueError(
                         "Each requested setting needs an answer or explicit uncertainty"
                     )
-            if not self.logical_items and plan.requested_facets:
-                requested = set(plan.requested_facets)
+            if not self.logical_items and (plan.requested_facets or plan.requested_parts):
+                requested = set(requested_facets(plan))
                 covered = {f for claim in answer.claims for f in claim.answered_facets}
                 missing = set(answer.missing_facets)
                 if (
@@ -1123,21 +1275,36 @@ class _HybridSession(_Session):
                     or covered & missing
                     or covered | missing != requested
                 ):
-                    raise ValueError("Claims must answer the requested information")
+                    from app.chatbot.qa_validation import ChatResponseContractError
+
+                    raise ChatResponseContractError("REQUESTED_PARTS_INCOMPLETE")
                 complete = not missing and not answer.conflicts and not answer.unanswered_row_refs
                 if (answer.coverage == "COMPLETE") != complete:
-                    raise ValueError("Coverage must describe requested information")
+                    from app.chatbot.qa_validation import ChatResponseContractError
+
+                    raise ChatResponseContractError("REQUESTED_PARTS_INCOMPLETE")
 
         answer = await self.model(
             GroundedAnswer,
             ANSWER_PROMPT,
-            self.answer_payload(plan),
+            payload,
             "CHAT_ANSWER",
             ANSWER_VERSION,
             valid,
         )
-        answer = apply_event_scope(answer, plan.event_scope, requested_facets(plan))
-        return self.apply_condition_guard(answer, plan)
+        answer = grounded(answer)
+        answer = apply_event_scope(
+            answer, plan.event_scope, requested_facets(plan), event_context=plan.event_context
+        )
+        answer = self.apply_condition_guard(answer, plan)
+        self.trace(
+            "answer",
+            round=self.rounds,
+            coverage=answer.coverage,
+            used=sorted(answer_evidence_refs(answer)),
+            missing=answer.missing_facets,
+        )
+        return answer
 
     async def finish_answer(self, answer):
         used = answer_evidence_refs(answer)
@@ -1191,6 +1358,7 @@ class _HybridSession(_Session):
                 public_numbers,
                 blocked_rows=self.uncertain_condition_rows(),
                 event_scope=self.event_scope,
+                labels=request_labels(self.plan) if self.plan else None,
             )
             if self.logical_items
             else []
@@ -1210,9 +1378,15 @@ class _HybridSession(_Session):
             )
             parts.append(f"- {prefix}{safe_text(claim.text)} (근거 {numbers})")
         if not self.logical_items and answer.missing_facets:
-            needs = "·".join(FACET_LABELS[f] for f in answer.missing_facets)
-            prefix = "실제로 이루어진 " if self.event_scope == "ACTUAL" else ""
-            parts.append(f"{prefix}{needs} 정보는 이번에 확인한 자료만으로 확정하기 어렵습니다.")
+            labels = request_labels(self.plan) if self.plan else FACET_LABELS
+            needs = "·".join(labels[f] for f in answer.missing_facets)
+            if self.plan and self.plan.requested_parts:
+                parts.append(f"다만 {needs}에 대해서는 확인한 자료만으로 확정하기 어려워요.")
+            else:
+                prefix = "실제로 이루어진 " if self.event_scope == "ACTUAL" else ""
+                parts.append(
+                    f"{prefix}{needs} 정보는 이번에 확인한 자료만으로 확정하기 어렵습니다."
+                )
         if self.chosen and not self.logical_items and self.render_registered_values:
             # Render real registered values, independently of model-authored prose.
             registered = render_answer(
@@ -1242,6 +1416,11 @@ class _HybridSession(_Session):
             )
             self.codes.append("SETTING_SOURCE_CONFLICT")
         public_codes = list(self.codes)
+        # History truncation is not itself a defect in an answer whose subjects
+        # and supporting sources have been resolved again for this question.
+        public_codes = [c for c in public_codes if c != "CONVERSATION_LIMIT"]
+        if not self.render_registered_values:
+            public_codes = [c for c in public_codes if c != "NO_RELATED_SETTING"]
         # Search limits describe the scope of the answer, not an execution error.
         # Keep the qualification visible even when the model declares COMPLETE:
         # that declaration cannot establish an exhaustive manuscript search.
@@ -1270,6 +1449,14 @@ class _HybridSession(_Session):
             parts.append("이번에 확인한 자료로는 질문의 일부만 답할 수 있었어요.")
         public_codes = [c for c in public_codes if c != "PARTIAL_ANSWER"]
         text = "\n".join(parts)
+        self.trace(
+            "published",
+            coverage=answer.coverage,
+            refs=[
+                {"ref": e.ref, "chunk": str(e.chunk.chunk_id) if e.chunk else None}
+                for e in evidence
+            ],
+        )
         if len(text) > self.cfg.max_answer_characters:
             # Never cut away citations while keeping a claim which depends on them.
             return message(

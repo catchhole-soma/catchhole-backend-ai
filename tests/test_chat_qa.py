@@ -271,7 +271,7 @@ async def test_context_limit_omits_whole_rows_and_preserves_notice():
     case, catalog = scenario()
     # Large unrelated values exceed the context cap; no value is cut into a made-up fact.
     catalog[0]["current"][1]["value"] = "큰 값 " * 490
-    result = await replay_case(case, catalog, config={"max_context_characters": 4200})
+    result = await replay_case(case, catalog, config={"max_context_characters": 4300})
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert len(result["modelRequests"][1]["input"]["rows"]) == 1
     assert NOTICES["CONTEXT_LIMIT"] in result["finish"]["result"]["limitations"]
@@ -603,8 +603,9 @@ async def test_truncated_named_item_is_unknown_without_hiding_other_complete_ite
     assert result["finish"]["failure"] is None
     text = result["finish"]["result"]["text"]
     assert ("항목은 1개예요" if intent == "CURRENT" else "이력은 1건이에요") in text
-    assert "검술" in text and "판단 보류" in text
-    assert "다음 대상은 확인한 수에서 제외했어요:" in text
+    assert "검술" not in text
+    assert ("불확실한 1개" if intent == "CURRENT" else "불확실한 1건") in text
+    assert "확인한 결과에는 포함하지 않았어요:" in text
     items = result["modelRequests"][1]["input"]["items"]
     assert [group["itemRef"] for group in items] == ["I1"]
     assert len(result["modelRequests"]) == 2
