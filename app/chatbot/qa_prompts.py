@@ -4,6 +4,11 @@ PLAN_VERSION = "chat-qa-plan-v6"
 SELECT_VERSION = "chat-qa-select-v3"
 FIELD_VERSION = "chat-qa-field-select-v1"
 
+ANSWER_STYLE_INSTRUCTIONS = """
+새 설명·판단 이유는 목록도 ~습니다/~요 존댓말로 쓴다. 자료의 반말을 따르지 않는다.
+이름·저장값·원문 인용·supports.quote는 보존한다.
+"""
+
 LINKED_EVIDENCE_INSTRUCTIONS = """
 원문/출처/근거를 함께 요청하면 includeEvidence=true다. 값·변경 이력에 연결된 인용을
 붙이는 요청과, 원문에서 사건의 이유·경위를 해석하는 요청을 구분한다.

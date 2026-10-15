@@ -490,7 +490,7 @@ async def test_history_uses_individual_events_without_treating_them_as_current_s
     if shape == "LIST":
         assert all(f"레벨 {n + 10} 변경 기록" in text for n in (1, 2, 3))
     request = result["modelRequests"][1]
-    assert request["prompt_cache_key"] == "chat-history-condition-v1"
+    assert request["prompt_cache_key"] == "chat-history-condition-v2"
     assert len(request["input"]["items"]) == 3
     assert all(len(group["rows"]) == 1 for group in request["input"]["items"])
     assert "현재 등록 자료" not in request["system"]
