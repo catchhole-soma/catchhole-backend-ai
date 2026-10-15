@@ -164,11 +164,11 @@ Python 환경변수는 `.env`를 자동으로 읽지 않는다. 챗봇 전용 Co
 | --- | --- | --- |
 | CHAT_QA_ENABLED | false | QA handler 활성화 |
 | LLM_API_KEY | 빈 값 | QA 활성화 시 필수; 기존 provider client 사용 |
-| CHAT_QA_MODEL / CHAT_QA_REASONING_EFFORT | gpt-5.6-terra / medium | 기존 모델 명칭을 재사용한 초기 설정; 품질 실측 아님 |
+| CHAT_QA_MODEL / CHAT_QA_REASONING_EFFORT | gpt-6-luna / medium | 챗봇 전용 기본값; 기존 분석 Worker 모델과 독립, 최신 품질 미측정 |
 | CHAT_QA_MAX_ATTEMPTS | 2 | 단계별 schema/참조 검증 시도 수 |
 | CHAT_QA_MAX_OUTPUT_TOKENS | 1500 | provider 호출별 출력 상한 |
-| CHAT_QA_MAX_INPUT_TOKENS | 8000 | 프롬프트+자료+schema 입력 추정 상한 |
-| CHAT_QA_MAX_CONTEXT_CHARACTERS | 24000 | 프롬프트와 자료 문자 상한 |
+| CHAT_QA_MAX_INPUT_TOKENS | 32000 | 프롬프트+자료+schema 입력 추정 상한 |
+| CHAT_QA_MAX_CONTEXT_CHARACTERS | 32000 | 프롬프트와 자료 문자 상한 |
 | CHAT_QA_PAGE_SIZE / CHAT_QA_MAX_PAGES | 20 / 2 | 페이지 크기 / 이름 탐색·구형 계획의 페이지 상한. 새 focus 조회는 전역 예산까지 순회 |
 | CHAT_QA_MAX_ITEMS | 80 | 구형 계획의 조회 수집/행 선택 문맥 상한 |
 | CHAT_QA_MAX_TOOL_CALLS | 16 | 실행별 조회 상한; Spring 한도와 작은 값 적용 |
@@ -176,10 +176,18 @@ Python 환경변수는 `.env`를 자동으로 읽지 않는다. 챗봇 전용 Co
 | CHAT_QA_MAX_EVIDENCE_CALLS | 8 | 고유 직접 근거 조회 상한 |
 | CHAT_QA_MAX_ANSWER_CHARACTERS | 12000 | 최종 본문 길이 상한 |
 
-페이지·문맥·답변·근거 한도에 도달하면 해당 누락을 limitations로 표시한다. 페이지를 다 보지 않았는데 대상을 하나로 확정하지 않는다.
+페이지·문맥·답변·근거 한도에 도달하면 해당 누락을 알린다. RDB 응답은 limitations를 유지하고, 원문 결합 성공 답변은 검색 범위와 미확인 항목을 본문에 설명한다. 페이지를 다 보지 않았는데 대상을 하나로 확정하지 않는다.
 새 focus 경로는 남은 도구 예산을 확인하여 일부 결과를 안내한다. 원문 결합은 최종 재검증에 필요한 예산을 남긴다. 최종 본문에서 행 자체가 생략되면 해당 행의 source도 반환하지 않는다. 원문 전문은 근거 창에서 확인한다.
 LLM 요청은 기존 `OpenAIResponsesClient`의 Responses API structured output과 `store=false`를 사용한다.
 [공식 structured output schema 제약](https://developers.openai.com/api/docs/guides/structured-outputs#supported-schemas)에 맞춰 모든 모델 출력 필드를 required, 객체를 additionalProperties=false로 제공하고 로컬에서 재검증한다.
+
+### Luna 입력 추정과 실행 예산 (2026-10-15)
+
+현재 tiktoken은 `gpt-6-luna`의 tokenizer를 식별하지 못하므로 기존 UTF-8 byte 보수 상한(+512)을 유지한다. 이를 실제 모델 토큰 수나 tokenizer 이름으로 해석하지 않는다. 8,000 입력 상한에서는 짧은 hybrid 계획의 프롬프트·schema도 초과하므로 입력 추정 상한과 문자 상한을 32,000으로 맞췄다. 출력 1,500은 별도이며 모델 자체의 context window를 모두 쓰는 설정이 아니다. 실제 사용량은 provider 응답으로 정산한다.
+
+Spring의 `CHAT_ATTEMPT_TOKEN_BUDGET=208000`과 함께 적용한다. 텍스트 최대 6회 × (입력 추정 32,000 + 출력 1,500) + 검색 임베딩 1회(최대 1,000 Unicode 문자 × 4 bytes + 256) = 205,256의 **누적 예약**을 수용한다. 모델 호출 횟수·도구 횟수·회원 잔액 검증은 유지한다. 예약 예산 증가는 실제 차감량 증가를 뜻하지 않지만, 보수적 예약 때문에 호출 시작에 필요한 회원 잔액은 실제 사용량보다 클 수 있다.
+
+운영 env가 기존 숫자를 명시하면 코드/Compose 기본값보다 우선한다. 챗봇 모델과 위 QA 값, `CHAT_RETRIEVAL_EVIDENCE_TOKENS=6000`, API 서버의 실행 예산을 함께 확인한다. 정확한 사전 토큰 계산은 [OpenAI input token count API](https://developers.openai.com/api/docs/guides/token-counting)를 통한 후속 최적화 대상이며 이번 변경은 추가 네트워크 호출을 만들지 않는다.
 
 ## 재현과 검증의 의미
 

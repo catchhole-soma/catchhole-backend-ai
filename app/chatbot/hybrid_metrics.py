@@ -39,6 +39,12 @@ class HybridMetrics:
             ["reason"],
             registry=self.registry,
         )
+        self.evidence_omissions = Counter(
+            "chat_retrieval_evidence_omissions",
+            "Candidates omitted during composition, by first blocking reason",
+            ["stage", "reason"],
+            registry=self.registry,
+        )
         self.model_latency = Histogram(
             "chat_retrieval_model_seconds",
             "Provider invocation latency excluding reservation",

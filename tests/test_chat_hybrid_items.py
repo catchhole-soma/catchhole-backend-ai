@@ -702,7 +702,7 @@ def test_false_complete_plan_is_downgraded_and_plan_evidence_is_revalidated(tmp_
         assert "실제로 이루어진" in final["text"] and "근거 1" in final["text"]
         assert "경위·방법 정보는" in final["text"]
         assert final["text"].count("(근거 1)") == 1
-        assert final["limitations"]
+        assert not final["limitations"]  # The precise unanswered facets are in the answer text.
     assert result["search"].calls[-1] == "revalidate"
 
 

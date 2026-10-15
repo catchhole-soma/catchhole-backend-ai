@@ -1,8 +1,10 @@
 """Bounded policy for RDB, linked quotations and current-manuscript retrieval."""
 
-from collections import Counter
 from dataclasses import dataclass
+import logging
 import math
+
+import tiktoken
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -43,6 +45,8 @@ from app.schemas.chat_hybrid import GroundedAnswer, HybridPlan, ItemAnswer
 from app.schemas.chat_qa import QuestionPlan
 from app.schemas.chat_retrieval import RetrievalReference
 from app.schemas.setting_tools import SettingToolQuery
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -789,34 +793,70 @@ class _HybridSession(_Session):
         self.fallback_direct_checks = len({e.direct_ref for e in evidence if e.direct_ref})
         return combined, tuple(evidence)
 
-    def add_item_evidence(self, candidates, *, context_slots=None):
-        import tiktoken
-
+    def evidence_token_count(self, evidences):
+        # Count retained passages as they appear in the model payload; overlapping
+        # references already retained must not consume the budget twice.
+        chunks = [e.chunk for e in evidences if e.chunk]
+        merged = compose_evidence(chunks, max_items=100, per_episode=100, max_tokens=10**9)
         encoding = tiktoken.get_encoding("cl100k_base")
-        tokens = sum(len(encoding.encode(e.text, disallowed_special=())) for e in self.evidences)
-        remaining = self.hcfg.max_evidence - len(self.evidences)
-        if remaining < 1 or tokens >= self.hcfg.evidence_tokens:
+        return merged.token_count + sum(
+            len(encoding.encode(e.text, disallowed_special=())) for e in evidences if e.direct_ref
+        )
+
+    def record_evidence_omission(self, stage, reason, count=1):
+        if count:
+            self.metrics.evidence_omissions.labels(stage, reason).inc(count)
             self.codes.append("EVIDENCE_CONTEXT_LIMIT")
-            return
+
+    def record_composition(self, stage, bundle):
+        for omission in bundle.omissions:
+            self.record_evidence_omission(stage, omission.reason, omission.count)
+        logger.info(
+            "Chat evidence composition stage=%s input=%d duplicates=%d selected=%d "
+            "tokens=%d omissions=%s",
+            stage,
+            bundle.input_count,
+            bundle.duplicate_count,
+            len(bundle.chunks),
+            bundle.token_count,
+            {o.reason: o.count for o in bundle.omissions},
+        )
+
+    def add_item_evidence(self, candidates, *, context_slots=None):
+        def quote_identity(chunk):
+            return (
+                chunk.source_fingerprint,
+                chunk.start_offset,
+                chunk.end_offset,
+                chunk.chunk_hash,
+                chunk.text,
+            )
+
         known = {e.chunk.fingerprint for e in self.evidences if e.chunk}
+        known_quotes = {quote_identity(e.chunk) for e in self.evidences if e.chunk}
+        candidates = [c for c in candidates if quote_identity(c) not in known_quotes]
+        if not candidates:
+            return
+        remaining = self.hcfg.max_evidence - len(self.evidences)
+        if remaining < 1:
+            self.record_evidence_omission("item_search", "ITEM_LIMIT", len(candidates))
+            return
         context_slots = min(context_slots or 1 + 2 * self.hcfg.neighbor_radius, remaining)
-        counts = Counter(e.chunk.episode_id for e in self.evidences if e.chunk)
-        eligible = []
-        for chunk in candidates:
-            if chunk.fingerprint in known:
-                continue
-            if counts[chunk.episode_id] >= self.hcfg.per_episode:
-                self.codes.append("EVIDENCE_CONTEXT_LIMIT")
-                continue
-            counts[chunk.episode_id] += 1
-            eligible.append(chunk)
+        retained = [e.chunk for e in self.evidences if e.chunk]
+        direct_tokens = self.evidence_token_count([e for e in self.evidences if e.direct_ref])
+        if direct_tokens >= self.hcfg.evidence_tokens:
+            self.record_evidence_omission("item_search", "TOKEN_LIMIT", len(candidates))
+            return
         bundle = compose_evidence(
-            eligible,
-            max_items=context_slots,
-            max_tokens=self.hcfg.evidence_tokens - tokens,
-            per_episode=min(self.hcfg.per_episode, context_slots),
+            [*retained, *candidates],
+            max_items=len(retained) + context_slots,
+            max_tokens=self.hcfg.evidence_tokens - direct_tokens,
+            per_episode=self.hcfg.per_episode,
+            retained_chunk_ids=[c.chunk_id for c in retained],
         )
         for chunk in bundle.chunks:
+            if chunk.fingerprint in known:
+                continue
             evidence = next(
                 (
                     e
@@ -831,8 +871,7 @@ class _HybridSession(_Session):
                 )
                 self.evidence_registry[evidence.ref] = evidence
             self.evidences.append(evidence)
-        if bundle.limited:
-            self.codes.append("EVIDENCE_CONTEXT_LIMIT")
+        self.record_composition("item_search", bundle)
 
     def add_direct_evidence(self):
         seen = set()
@@ -844,19 +883,25 @@ class _HybridSession(_Session):
                         continue
                     seen.add(identity)
                     if len(self.evidences) >= self.hcfg.max_evidence:
+                        self.record_evidence_omission("direct", "ITEM_LIMIT")
                         self.codes.append("EVIDENCE_LIMIT")
                         continue
                     # Available legacy direct evidence may lack absolute offsets; it retains
                     # its original typed receipt instead of pretending to be a retrieval chunk.
-                    self.evidences.append(
-                        _Evidence(
-                            f"E{len(self.evidences) + 1}",
-                            quote.text,
-                            item.evidence.source_episode_no,
-                            direct_ref=ref,
-                            direct_item=item,
-                        )
+                    candidate = _Evidence(
+                        f"E{len(self.evidences) + 1}",
+                        quote.text,
+                        item.evidence.source_episode_no,
+                        direct_ref=ref,
+                        direct_item=item,
                     )
+                    if (
+                        self.evidence_token_count([*self.evidences, candidate])
+                        > self.hcfg.evidence_tokens
+                    ):
+                        self.record_evidence_omission("direct", "TOKEN_LIMIT")
+                        continue
+                    self.evidences.append(candidate)
 
     def evidence_identity(self):
         return tuple(
@@ -869,22 +914,28 @@ class _HybridSession(_Session):
         available = self.hcfg.max_evidence - len(direct)
         # Leave room for search evidence when many direct quotes did not explain the question.
         if available < 1:
+            self.record_evidence_omission(
+                "search", "ITEM_LIMIT", len(direct) - max(0, self.hcfg.max_evidence // 2)
+            )
             direct = direct[: max(0, self.hcfg.max_evidence // 2)]
-            available = self.hcfg.max_evidence - len(direct)
             self.codes.append("EVIDENCE_LIMIT")
+        # Direct quotes and retrieved passages share one evidence text budget.
+        # Keep at least half for new search when linked quotes did not answer it.
+        while direct and self.evidence_token_count(direct) > self.hcfg.evidence_tokens // 2:
+            direct.pop()
+            self.record_evidence_omission("search", "TOKEN_LIMIT")
         bundle = compose_evidence(
             candidates,
-            max_items=available,
-            max_tokens=self.hcfg.evidence_tokens,
-            per_episode=min(self.hcfg.per_episode, available),
+            max_items=self.hcfg.max_evidence - len(direct),
+            max_tokens=self.hcfg.evidence_tokens - self.evidence_token_count(direct),
+            per_episode=min(self.hcfg.per_episode, self.hcfg.max_evidence - len(direct)),
         )
         self.evidences = [*direct]
         for chunk in bundle.chunks:
             self.evidences.append(
                 _Evidence(f"E{len(self.evidences) + 1}", chunk.text, chunk.episode_no, chunk=chunk)
             )
-        if bundle.limited:
-            self.codes.append("EVIDENCE_CONTEXT_LIMIT")
+        self.record_composition("search", bundle)
 
     def answer_payload(self, plan):
         selected = {r.ref for r in self.chosen}
@@ -1029,6 +1080,7 @@ class _HybridSession(_Session):
         self.trim_conversation_to_fit(ANSWER_PROMPT, lambda: self.answer_payload(plan), schema)
         while self.evidences and not self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema):
             self.evidences.pop()
+            self.metrics.evidence_omissions.labels("answer", "INPUT_LIMIT").inc()
             self.codes.append("CONTEXT_LIMIT")
         if not self.evidences:
             return (
@@ -1189,6 +1241,34 @@ class _HybridSession(_Session):
                 f"등록된 {labels} 설정과 원문의 내용이 다르게 나타납니다. 근거에서 두 내용을 함께 확인해 주세요."
             )
             self.codes.append("SETTING_SOURCE_CONFLICT")
+        public_codes = list(self.codes)
+        # Search limits describe the scope of the answer, not an execution error.
+        # Keep the qualification visible even when the model declares COMPLETE:
+        # that declaration cannot establish an exhaustive manuscript search.
+        scope_codes = {
+            "SEARCH_LIMIT",
+            "SEARCH_QUERY_LIMIT",
+            "EVIDENCE_CONTEXT_LIMIT",
+            "CONTEXT_LIMIT",
+        }
+        if scope_codes.intersection(public_codes):
+            parts.insert(
+                0, "확인한 자료를 기준으로 정리했어요. 관련 자료를 모두 검토한 결과는 아니에요.\n"
+            )
+        public_codes = [
+            c for c in public_codes if c not in scope_codes | {"NARRATIVE_SOURCE_RANGE"}
+        ]
+        # Missing requested facets/rows already have specific sentences above.
+        # A legacy PARTIAL answer without such detail still needs one plain note.
+        explained_gap = bool(
+            answer.missing_facets
+            or answer.unanswered_row_refs
+            or answer.conflicts
+            or any(item.missing_facets for item in answer.item_answers)
+        )
+        if "PARTIAL_ANSWER" in public_codes and not explained_gap:
+            parts.append("이번에 확인한 자료로는 질문의 일부만 답할 수 있었어요.")
+        public_codes = [c for c in public_codes if c != "PARTIAL_ANSWER"]
         text = "\n".join(parts)
         if len(text) > self.cfg.max_answer_characters:
             # Never cut away citations while keeping a claim which depends on them.
@@ -1203,7 +1283,7 @@ class _HybridSession(_Session):
                 text=text,
                 sources=direct_refs,
                 retrieval_sources=[wire_reference(c) for c in chunks],
-                limitations=notices(self.codes),
+                limitations=notices(public_codes),
             )
         )
 

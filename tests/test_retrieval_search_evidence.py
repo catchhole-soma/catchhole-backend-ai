@@ -1,11 +1,11 @@
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 from uuid import uuid4
 
 import pytest
 
 from app.retrieval.chunking import POLICY
-from app.retrieval.evidence import compose_evidence
+from app.retrieval.evidence import EvidenceBundle, compose_evidence
 from app.retrieval.search_contracts import ChunkEvidence
 
 
@@ -29,6 +29,15 @@ def chunk(value="가나다😀라마", *, episode=None, start=0, method="KEYWORD
     )
 
 
+def omission_counts(bundle):
+    counts = {omission.reason: omission.count for omission in bundle.omissions}
+    assert len(counts) == len(bundle.omissions)
+    assert all(count > 0 for count in counts.values())
+    assert bundle.limited == bool(counts)
+    assert bundle.input_count == bundle.duplicate_count + len(bundle.chunks) + sum(counts.values())
+    return counts
+
+
 def test_overlaps_bridged_in_any_rank_order_preserve_unicode_and_original_refs():
     episode = uuid4()
     original = "앞😀부분\r\n가나다뒷부분"
@@ -44,6 +53,9 @@ def test_overlaps_bridged_in_any_rank_order_preserve_unicode_and_original_refs()
     assert passage.end_offset == len(original)
     assert {c.chunk_id for c in passage.chunks} == {first.chunk_id, middle.chunk_id, last.chunk_id}
     assert bundle.token_count == len(original) and not bundle.limited
+    assert omission_counts(bundle) == {}
+    assert bundle.input_count == bundle.candidate_count == 3
+    assert bundle.duplicate_count == 0
 
 
 def test_same_chunk_from_multiple_methods_is_deduplicated_but_provenance_is_preserved():
@@ -54,6 +66,9 @@ def test_same_chunk_from_multiple_methods_is_deduplicated_but_provenance_is_pres
     assert len(bundle.chunks) == 1
     assert bundle.chunks[0].methods == ("KEYWORD", "VECTOR")
     assert not bundle.limited
+    assert omission_counts(bundle) == {}
+    assert bundle.input_count == 2
+    assert bundle.duplicate_count == bundle.candidate_count == 1
 
 
 def test_identical_quote_at_same_position_is_not_repeated_under_different_chunk_ids():
@@ -63,6 +78,9 @@ def test_identical_quote_at_same_position_is_not_repeated_under_different_chunk_
     assert len(bundle.chunks) == 1
     assert set(bundle.chunks[0].methods) == {"KEYWORD", "VECTOR"}
     assert bundle.passages[0].text == first.text and not bundle.limited
+    assert omission_counts(bundle) == {}
+    assert bundle.input_count == 2
+    assert bundle.duplicate_count == bundle.candidate_count == 1
 
 
 def test_quote_above_receipt_character_limit_is_omitted_with_explicit_limitation():
@@ -70,6 +88,8 @@ def test_quote_above_receipt_character_limit_is_omitted_with_explicit_limitation
     normal = chunk("normal")
     bundle = compose_evidence([oversized, normal], max_tokens=10000, count_tokens=len)
     assert bundle.chunks == (normal,) and bundle.limited
+    assert omission_counts(bundle) == {"QUOTE_CHARACTER_LIMIT": 1}
+    assert bundle.rejected_count == 0  # Preserve the existing rejection-count contract.
 
 
 def test_direct_priority_and_episode_diversity_prevent_single_chapter_monopoly():
@@ -87,6 +107,8 @@ def test_direct_priority_and_episode_diversity_prevent_single_chapter_monopoly()
     assert bundle.chunks[0] == direct
     assert {c.episode_id for c in bundle.chunks} == {dominant, other, direct_episode}
     assert bundle.limited
+    assert omission_counts(bundle) == {"ITEM_LIMIT": 4}
+    assert bundle.input_count == bundle.candidate_count == 7
 
 
 def test_context_budget_and_per_episode_budget_are_enforced_without_silent_slicing():
@@ -106,6 +128,9 @@ def test_contained_duplicate_ranges_merge_without_duplicating_text():
     result = compose_evidence([first, nested], count_tokens=len)
     assert result.passages[0].text == first.text
     assert result.token_count == 10
+    assert omission_counts(result) == {}
+    assert len(result.chunks) == 2  # Merging passages never erases original references.
+    assert result.duplicate_count == 0
 
 
 def test_different_versions_or_quote_positions_are_not_deduplicated():
@@ -114,6 +139,8 @@ def test_different_versions_or_quote_positions_are_not_deduplicated():
     other_version = replace(chunk("same", episode=first.episode_id), source_version="v2")
     bundle = compose_evidence([first, other_position, other_version], count_tokens=len)
     assert len(bundle.passages) == len(bundle.chunks) == 3
+    assert omission_counts(bundle) == {}
+    assert bundle.duplicate_count == 0
 
 
 def test_invalid_hash_offsets_and_conflicting_references_are_rejected():
@@ -123,6 +150,8 @@ def test_invalid_hash_offsets_and_conflicting_references_are_rejected():
     conflict = replace(first, source_hash="c" * 64)
     bundle = compose_evidence([first, bad_hash, bad_offset, conflict], count_tokens=len)
     assert not bundle.chunks and bundle.limited and bundle.rejected_count == 4
+    assert omission_counts(bundle) == {"INVALID_CHUNK": 2, "CONFLICTING_REFERENCE": 2}
+    assert bundle.candidate_count == 0
 
 
 def test_conflicting_overlap_never_creates_a_fabricated_passage():
@@ -132,9 +161,89 @@ def test_conflicting_overlap_never_creates_a_fabricated_passage():
     assert bundle.chunks == (first,)
     assert bundle.passages[0].text == "abcdef"
     assert bundle.rejected_count == 1 and bundle.limited
+    assert omission_counts(bundle) == {"CONFLICTING_OVERLAP": 1}
+    assert bundle.candidate_count == 2
 
 
-@pytest.mark.parametrize("settings", [dict(max_items=0), dict(max_tokens=0), dict(per_episode=13)])
+@pytest.mark.parametrize(
+    ("maximum", "per_episode", "reason"),
+    [(1, 1, "ITEM_LIMIT"), (2, 1, "EPISODE_LIMIT")],
+)
+def test_only_first_blocking_limit_is_counted_per_candidate(maximum, per_episode, reason):
+    episode = uuid4()
+    first = chunk("first", episode=episode, score=1)
+    second = chunk("second", episode=episode, start=10, score=0.5)
+    bundle = compose_evidence(
+        [first, second], max_items=maximum, per_episode=per_episode, count_tokens=len
+    )
+    assert bundle.chunks == (first,)
+    assert omission_counts(bundle) == {reason: 1}
+    assert bundle.rejected_count == 0
+
+
+def test_token_limit_omits_whole_candidate_but_keeps_later_fitting_candidate():
+    episode = uuid4()
+    first = chunk("first", episode=episode, score=1)
+    too_long = chunk("too long", episode=episode, start=20, score=0.9)
+    fitting = chunk("!", episode=episode, start=40, score=0.8)
+    bundle = compose_evidence(
+        [first, too_long, fitting], max_tokens=6, per_episode=3, count_tokens=len
+    )
+    assert bundle.chunks == (first, fitting)
+    assert bundle.token_count == 6
+    assert [passage.text for passage in bundle.passages] == ["first", "!"]
+    assert omission_counts(bundle) == {"TOKEN_LIMIT": 1}
+    assert bundle.rejected_count == 0
+
+
+def test_exact_duplicates_do_not_consume_reference_or_episode_budget():
+    original = chunk("same source")
+    same_id = replace(original, methods=("VECTOR",))
+    same_position = replace(original, chunk_id=uuid4(), methods=("NEIGHBOR",))
+    bundle = compose_evidence(
+        [original, same_id, same_position],
+        max_items=1,
+        per_episode=1,
+        max_tokens=len(original.text),
+        count_tokens=len,
+    )
+    assert omission_counts(bundle) == {}
+    assert bundle.input_count == 3 and bundle.duplicate_count == 2
+    assert bundle.candidate_count == len(bundle.chunks) == len(bundle.passages) == 1
+    assert set(bundle.chunks[0].methods) == {"KEYWORD", "VECTOR", "NEIGHBOR"}
+
+
+def test_conflicting_reference_diagnostics_include_later_reappearances():
+    original = chunk("first")
+    duplicate = replace(original, methods=("VECTOR",))
+    conflicting = replace(original, source_hash="c" * 64)
+    bundle = compose_evidence([original, duplicate, conflicting, original], count_tokens=len)
+    assert not bundle.chunks
+    assert bundle.input_count == 4 and bundle.duplicate_count == 1
+    assert bundle.rejected_count == 3
+    assert omission_counts(bundle) == {"CONFLICTING_REFERENCE": 3}
+
+
+def test_omission_diagnostics_contain_only_fixed_codes_and_aggregate_counts():
+    secret = "private-source-text"
+    invalid = replace(chunk(secret), chunk_hash="b" * 64)
+    bundle = compose_evidence([invalid], count_tokens=len)
+    assert [asdict(omission) for omission in bundle.omissions] == [
+        {"reason": "INVALID_CHUNK", "count": 1}
+    ]
+    assert secret not in repr(bundle.omissions)
+    assert str(invalid.chunk_id) not in repr(bundle.omissions)
+    assert invalid.source_key not in repr(bundle.omissions)
+    assert omission_counts(bundle) == {"INVALID_CHUNK": 1}
+
+
+def test_existing_positional_bundle_constructor_remains_compatible():
+    bundle = EvidenceBundle((), (), 0, False, 0)
+    assert bundle.omissions == ()
+    assert bundle.input_count == bundle.duplicate_count == bundle.candidate_count == 0
+
+
+@pytest.mark.parametrize("settings", [dict(max_items=0), dict(max_tokens=0), dict(per_episode=101)])
 def test_invalid_budgets_are_rejected(settings):
     with pytest.raises(ValueError):
         compose_evidence([], **settings)

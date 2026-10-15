@@ -491,7 +491,7 @@ def test_partial_answer_stays_explicit_when_search_round_budget_ends(tmp_path):
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert not result["embedding"].inputs
     assert result["search"].calls == ["keyword", "neighbors", "revalidate"]
-    assert any("일부" in value for value in result["finish"]["result"]["limitations"])
+    assert "질문의 일부만 답할 수 있었어요" in result["finish"]["result"]["text"]
 
 
 def test_conflicting_registered_value_and_source_are_both_preserved(tmp_path):

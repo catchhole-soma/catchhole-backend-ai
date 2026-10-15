@@ -381,7 +381,7 @@ def test_offline_settings_do_not_inherit_live_activation(monkeypatch):
     monkeypatch.setenv("CHAT_QA_ENABLED", "true")
     monkeypatch.setenv("CHAT_QA_MODEL", "unexpected-production-model")
     assert offline_settings().enabled is False
-    assert offline_settings().model == "gpt-5.6-terra"
+    assert offline_settings().model == "gpt-6-luna"
 
 
 @pytest.mark.anyio

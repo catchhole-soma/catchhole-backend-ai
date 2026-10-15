@@ -302,8 +302,9 @@ def test_focused_pagination_leaves_budget_to_revalidate_partial_answer(tmp_path,
         assert actual["outcome"] == "ANSWER"
         assert "합성기술007" in actual["text"] and "합성기술008" not in actual["text"]
         assert NOTICES["PARTIAL_RESULTS"] in actual["limitations"]
-        assert NOTICES["PARTIAL_ANSWER"] in actual["limitations"]
-        assert NOTICES["SEARCH_LIMIT"] in actual["limitations"]
+        assert NOTICES["PARTIAL_ANSWER"] not in actual["limitations"]
+        assert "관련 자료를 모두 검토한 결과는 아니에요" in actual["text"]
+        assert "확인하지 못" in actual["text"]
         assert len(result["spring"].receipts) == 2
         assert result["spring"].receipts[0]["sources"] == result["spring"].receipts[1]["sources"]
 
@@ -378,8 +379,9 @@ def test_direct_partial_survives_search_budget_stop_and_rechecks_its_original_so
         assert actual["outcome"] == "ANSWER"
         assert actual["sources"] == [{"tool": "CHARACTER_EVIDENCE", "targetId": uid(801)}]
         assert not actual.get("retrievalSources", [])
-        assert NOTICES["PARTIAL_ANSWER"] in actual["limitations"]
-        assert NOTICES["SEARCH_LIMIT"] in actual["limitations"]
+        assert NOTICES["PARTIAL_ANSWER"] not in actual["limitations"]
+        assert "관련 자료를 모두 검토한 결과는 아니에요" in actual["text"]
+        assert "확인하지 못" in actual["text"]
 
 
 @pytest.mark.parametrize("model", [HybridPlan, GroundedAnswer, FieldSelection])

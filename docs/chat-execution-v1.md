@@ -131,7 +131,7 @@ Python outbox는 SQLite 파일과 전용 볼륨을 사용한다. provider 호출
 | CHAT_MAX_ACTIVE_PER_MEMBER | 3 | 사용자별 대기/실행/정산 대기 합계 |
 | CHAT_MAX_CALLS | 8 | 실행별 provider 호출 수 |
 | CHAT_MAX_TOOL_CALLS | 20 | 실행별 조회 수 |
-| CHAT_ATTEMPT_TOKEN_BUDGET | 32000 | 실행별 누적 예약 상한 |
+| CHAT_ATTEMPT_TOKEN_BUDGET | 208000 | 실행별 누적 예약 상한; 실제 차감은 provider 측정량 정산 |
 | CHAT_EXECUTION_TIMEOUT | 120s | 대기 시간을 포함한 시도 deadline |
 | CHAT_USAGE_GRACE | 10m | 미정산 예약 보류 시간 |
 | CHAT_RECOVERY_DELAY_MS | 5000 | Spring 복구 간격 |

@@ -49,7 +49,8 @@ def test_later_none_restores_partial_answer_with_its_original_evidence(tmp_path)
     result = asyncio.run(replay(tmp_path, partial_case(), search_setup=replace_keyword_evidence))
     finished = result["finish"]["result"]
     assert finished["outcome"] == "ANSWER"
-    assert notices(["PARTIAL_ANSWER"])[0] in finished["limitations"]
+    assert "질문의 일부만 답할 수 있었어요" in finished["text"]
+    assert notices(["PARTIAL_ANSWER"])[0] not in finished["limitations"]
     assert [source["sourceEpisodeNo"] for source in finished["retrievalSources"]] == [3]
     assert "반지" in finished["retrievalSources"][0]["quote"]
     assert "비가 내렸다" not in finished["text"]
@@ -144,7 +145,8 @@ def test_direct_partial_snapshot_is_restored_and_requeried(tmp_path, changed):
         assert finished["outcome"] == "ANSWER"
         assert "화염구" in finished["text"]
         assert finished["sources"] and not finished.get("retrievalSources")
-        assert notices(["PARTIAL_ANSWER"])[0] in finished["limitations"]
+        assert "질문의 일부만 답할 수 있었어요" in finished["text"]
+        assert notices(["PARTIAL_ANSWER"])[0] not in finished["limitations"]
 
 
 def test_partial_snapshot_does_not_swallow_later_provider_failure(tmp_path):

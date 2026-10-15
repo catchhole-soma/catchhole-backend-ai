@@ -29,7 +29,7 @@ NOTICES = {
     "VECTOR_INDEX_PARTIAL": "일부 회차의 임베딩이 없거나 모델·버전이 달라 의미 검색에서 제외됐습니다.",
     "SEARCH_LIMIT": "검색 후보·검색 라운드 상한이 적용되어 모든 관련 원문을 확인한 것은 아닙니다.",
     "SEARCH_QUERY_LIMIT": "검색어 길이 한도로 질문의 일부만 검색에 사용했습니다.",
-    "EVIDENCE_CONTEXT_LIMIT": "중복·근거 수·회차별 수·문맥 한도로 일부 검색 후보를 답변에서 제외했습니다.",
+    "EVIDENCE_CONTEXT_LIMIT": "답변에 참고할 원문 분량을 제한해 일부 검색 후보를 검토하지 못했습니다.",
     "PARTIAL_ANSWER": "확인한 근거로 질문의 일부만 답변했습니다.",
     "SETTING_SOURCE_CONFLICT": "등록 설정과 원문을 함께 표시했습니다. 어느 쪽이 옳은지 자동 확정하거나 수정하지 않았습니다.",
     "SEARCH_UNAVAILABLE": "검색 범위나 저장소 확인에 실패했습니다. 근거가 없다는 뜻은 아닙니다.",

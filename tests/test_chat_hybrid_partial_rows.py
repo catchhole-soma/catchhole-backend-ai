@@ -135,7 +135,7 @@ def test_partial_history_with_four_quotes_and_five_rows_is_published_without_ret
     assert len(result["raw"].requests) == 2  # One plan and one valid answer; no schema retry.
     assert len(result["spring"].reservations) == len(result["spring"].reports) == 2
     assert len(final["sources"]) == 4
-    assert NOTICES["PARTIAL_ANSWER"] in final["limitations"]
+    assert NOTICES["PARTIAL_ANSWER"] not in final["limitations"]
     assert "확인하지 못했습니다" in final["text"]
     if missing_facet:
         assert "경위·방법 정보는" in final["text"]

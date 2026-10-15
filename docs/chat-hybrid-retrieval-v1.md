@@ -144,12 +144,12 @@ Python의 `RetrievalSearchService`는 `readiness`, `keyword`, `direct`, `neighbo
 | `CHAT_RETRIEVAL_KEYWORD_TOP_K` / `VECTOR_TOP_K` | `12` / `12` | 라운드별 검색 결과 상한 |
 | `CHAT_RETRIEVAL_NEIGHBOR_RADIUS` / `MAX_NEIGHBORS` | `1` / `6` | 인접 범위와 반환 수 상한 |
 | `CHAT_RETRIEVAL_MAX_EVIDENCE` / `PER_EPISODE` | `8` / `3` | 최종 자료 수와 검색 회차별 상한; 직접 근거도 전체 개수에 포함 |
-| `CHAT_RETRIEVAL_EVIDENCE_TOKENS` | `3000` | 검색 문맥 본문 토큰 상한; 전체 모델 입력 상한도 별도 적용 |
+| `CHAT_RETRIEVAL_EVIDENCE_TOKENS` | `6000` | 직접 인용과 검색 문맥의 본문 토큰 상한; 겹친 검색 slice는 병합 후 계산 |
 | `CHAT_RETRIEVAL_MAX_ROUNDS` | `2` | 키워드 다음 벡터까지의 최대 검색 라운드 |
 | `CHAT_RETRIEVAL_MAX_MODEL_CALLS` | `6` | 계획·선택·답변과 schema 재시도를 포함한 모델 호출 상한 |
 | `CHAT_RETRIEVAL_MAX_QUERY_EMBEDDINGS` | `1` | 질문 embedding 호출 상한; 0이면 벡터 단계를 생략 |
 
-표의 `VECTOR_TOP_K` 같은 축약된 두 번째 변수에도 `CHAT_RETRIEVAL_` prefix가 붙는다. 기존 `CHAT_QA_MAX_TOOL_CALLS=16`과 서버 실행의 도구 한도 중 작은 값을 적용하고, 검색·인접·receipt·재검증도 예산에 포함한다. 모델/embedding 호출은 실행의 전체 호출·누적 예약 토큰 한도 안에서도 제한된다. 직접 인용은 검색 본문 토큰 상한 밖에서 전달될 수 있으므로 전체 `CHAT_QA_MAX_INPUT_TOKENS`와 문자 상한 검사를 유지한다. 위 값은 초기 설정이며 품질/비용의 실측 최적값이 아니다.
+표의 `VECTOR_TOP_K` 같은 축약된 두 번째 변수에도 `CHAT_RETRIEVAL_` prefix가 붙는다. 기존 `CHAT_QA_MAX_TOOL_CALLS=16`과 서버 실행의 도구 한도 중 작은 값을 적용하고, 검색·인접·receipt·재검증도 예산에 포함한다. 모델/embedding 호출은 실행의 전체 호출·누적 예약 토큰 한도 안에서도 제한된다. 직접 인용과 검색 본문은 같은 6,000토큰 상한을 사용한다. prompt·질문·행·schema는 별도이므로 전체 `CHAT_QA_MAX_INPUT_TOKENS=32000`와 문자 상한도 검사한다. 이전에 유지한 검색 청크와 새 후보도 함께 병합해 겹침을 두 번 세지 않는다. 위 값은 초기 설정이며 품질/비용의 실측 최적값이 아니다.
 
 ## 운영 상태와 후속 작업
 
@@ -179,3 +179,12 @@ Python 전체 명령은 AI checkout의 `.venv/bin/pytest -q`다. `GH239_TEST_DAT
 Java 전체 명령은 `./gradlew test bootJar`이며, 격리 Testcontainers PostgreSQL과 명시한 AI checkout으로 기존 실제 HTTP 검증을 실행했다. 추가 검증은 `GH240_AI_CHECKOUT`을 현재 AI checkout으로 설정하고 `./gradlew test --tests '*ChatRetrievalSourcesPostgresIntegrationTest'`를 실행했다. 새 실제 HTTP 검증은 Python `ChatExecutionClient.start → retrieval-sources → finish`와 Spring 결과 저장을 연결한다. 실제 localhost HTTP와 PostgreSQL을 사용하지만 원문 저장소는 mock이며 모델/embedding provider 호출은 없다.
 
 원본 로컬 실행 로그는 상위 작업 디렉터리의 `.codex-artifacts/gh240/`에 보관했다. `python-full.log`와 `python-final.log`를 구분하고, Java 전체 `java-full.log`/`java-full-counts.json`과 추가 `java-retrieval-http.log`를 구분한다. 로그를 합성 모델 품질이나 실제 운영 부하 측정으로 재해석하지 않는다. 격리 DB의 실제 쿼리 검증, HTTP 직렬화/저장 계약, 작성된 의미 사례 검토는 서로 다른 검증층이다.
+
+## 근거 예산·진단·답변 안내 보완 (2026-10-15)
+
+- 기존 3,000토큰 한도를 6,000으로 늘린다. 근거 8개, 회차당 3개, 검색 2라운드, 텍스트 6회·임베딩 1회는 유지한다. 임베딩 모델·청크 정책 변경이나 재백필은 필요 없다.
+- 조립 결과는 정상 중복 제거 수와 실제 후보 제외를 구분한다. 제외는 최초 차단 사유 하나(`ITEM_LIMIT`, `EPISODE_LIMIT`, `TOKEN_LIMIT`, `QUOTE_CHARACTER_LIMIT`, `INVALID_CHUNK`, `CONFLICTING_REFERENCE`, `CONFLICTING_OVERLAP`)로 집계한다. 정상 중복 제거/인접 병합만으로 limited를 만들지 않으며 이는 기존 동작도 동일했다.
+- `chat_retrieval_evidence_omissions_total{stage,reason}`와 조립 요약 로그로 사유·수·선택 토큰을 확인한다. 모델 전체 입력에서 탈락한 근거는 `stage=answer, reason=INPUT_LIMIT`로 별도 집계한다. 원문·질문·회원/작품/청크 ID·예외 본문은 기록하지 않는다. 이 수는 조립 시도별 관측이며 고유 원문 누락 수나 의미 정답률이 아니다.
+- 성공 답변의 검색/문맥 제한은 한 번의 자연어 범위 안내로 본문에 표시한다. 모델이 COMPLETE라고 해도 작품 전체를 검토했다고 간주하지 않는다. 미확인 시점/방법/행은 해당 항목의 문장으로 설명하며, 구형 PARTIAL에 구체 설명이 없으면 짧은 부분 답변 안내를 붙인다. 출처 회차와 사건 시점의 차이는 근거 창의 공통 안내를 사용한다.
+- 검색 준비 누락·현재값 변경·원문 파기/불일치·RDB 부분 조회의 경고와 실패 처리는 유지한다. 의미적 지지와 전체 원고 회수율은 별도 평가 대상이다.
+- 실제 저장 receipt와 현재 검색을 읽기 전용으로 대조했으며, 중간 모델 응답과 후보 전체가 저장되지 않아 원래 실행을 완전히 복원한 것은 아니다. 한 재생 사례는 3,000에서 인접 문맥 일부를 제외하고 6,000에서 초기 후보 전체를 수용했다. 공개 회귀는 별도의 한국어 합성 6청크(4,086토큰)를 사용한다. 이를 실제 모델 답변 개선율로 보고하지 않는다.
