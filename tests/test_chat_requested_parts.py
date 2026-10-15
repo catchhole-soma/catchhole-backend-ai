@@ -183,6 +183,56 @@ def test_general_event_keeps_both_high_ranked_parts_from_one_episode(tmp_path):
     assert result["embedding"].inputs == []
 
 
+@pytest.mark.parametrize("keyword_count", [8, 12])
+def test_no_answer_keyword_round_yields_context_to_lower_scored_vector_hits(
+    tmp_path, keyword_count
+):
+    case = parts_case()
+    keyword = [
+        replace(passage(f"무관한 축제 기록 {rank}", 200 + rank, episode=100 + rank), score=1.0)
+        for rank in range(keyword_count)
+    ]
+    supported = f"{EMOTION} {BEHAVIOR}"
+    vector = [
+        replace(
+            passage(
+                supported if rank == 4 else f"다른 경비대의 기록 {rank}",
+                300 + rank,
+                episode=200 + rank,
+                method="VECTOR",
+            ),
+            score=0.7 - rank / 100,
+        )
+        for rank in range(12)
+    ]
+    case["outputs"] += [
+        answer(missing=("P1", "P2"), coverage="NONE"),
+        answer(claim(supported, supported, ref="E5")),
+    ]
+
+    result = asyncio.run(
+        replay(tmp_path, case, search_setup=search_with(keyword=keyword, vector=vector))
+    )
+
+    response = assert_answer(result)
+    assert len(result["raw"].requests) == 3  # plan, unsuccessful keyword answer, vector answer
+    first_input = result["raw"].requests[1]["input"]["passages"]
+    final_input = result["raw"].requests[2]["input"]["passages"]
+    assert {p["text"] for p in first_input} == {c.text for c in keyword[:8]}
+    assert {p["text"] for p in final_input} == {c.text for c in vector[:8]}
+    assert all(c.text not in {p["text"] for p in final_input} for c in keyword)
+    assert (
+        next(p for p in final_input if p["text"] == supported)["references"][0]["evidenceRef"]
+        == "E5"
+    )
+    assert len(result["embedding"].inputs) == 1
+    assert set(result["search"].vector_exclusions[0]) == {c.chunk_id for c in keyword}
+    assert [source["chunkId"] for source in response["retrievalSources"]] == [
+        str(vector[4].chunk_id)
+    ]
+    assert supported in response["text"]
+
+
 def test_unreported_second_request_is_rejected_and_retried_before_publish(tmp_path):
     case = parts_case()
     text = f"{EMOTION} {BEHAVIOR}"

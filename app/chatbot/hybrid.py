@@ -427,7 +427,17 @@ class _HybridSession(_Session):
                     limit=self.hcfg.vector_top_k,
                     excluded_chunk_ids=tuple(dict.fromkeys(c.chunk_id for c in candidates)),
                 )
-            candidates.extend(found)
+            if (
+                round_no > 1
+                and plan.requested_parts
+                and draft is not None
+                and draft.coverage == "NONE"
+            ):
+                # The previous context answered none of the requested parts. Do not
+                # let its incomparable lexical scores crowd out the new vector hits.
+                candidates = list(found)
+            else:
+                candidates.extend(found)
             if found and self.hcfg.neighbor_radius and self.tools_available(4):
                 candidates.extend(
                     await self.search(
