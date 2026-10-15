@@ -4,6 +4,22 @@
 선행 계약: [조회 도구](setting-tools-v1.md), [실행·인증·계량](chat-execution-v1.md).
 이 문서는 Java/Python 저장소에 같은 내용으로 보관한다.
 
+## OPT-31 후속 대화·조회 계약
+
+[#247 OPT-31](https://github.com/catchhole-soma/catchhole-backend-java/issues/247) 진단 뒤 추가한 보완이다. 현재 QA 계획은 `chat-qa-plan-v7`, 결합 계획/원문 답변은 v8/v9이며 FIELD select v1·구형 행 select v3·등록 설명/현재 조건/이력 조건 v2는 유지한다. 후속 실제 모델 검증은 [최종 코드·결과별 기록](chat-query-quality-v1.md#opt-31-후속-구현-검증--2026-10-15)에 구분한다. 아래 이전 검증 수치를 이번 변경의 결과로 재사용하지 않는다.
+
+- `GREETING`·`THANKS`·`HELP`는 작품 사실 질문이 없는 인사·감사·이 챗봇의 사용법을 planner가 구분한 경우다. 조회 필드를 비운 계획만 허용하고 고정 존댓말을 기존 `ANSWER`/빈 sources로 반환한다. 해석 호출은 계량하고 추가 조회나 답변 모델을 호출하지 않는다. 인사 문자열을 코드로 선별하지 않으며 사실 질문이 섞이면 일반 조회를 계획한다.
+- 대화 생략 정보는 내부 모델에 유지한다. 공개 `CONVERSATION_LIMIT`는 `CLARIFICATION`에서만 보여 주고 정상 답변·등록 정보 부족 결과에 무관한 경고로 붙이지 않는다. 실제 부분 조회·원문/저장소 오류와 값 절단 안내는 유지한다.
+- 세계관은 전체 이름과 지정 분류의 완전한 빈 조회에 한해서만 공백으로 분리된 분류 표시어를 이름 끝에서 한 번 제거해 같은 분류로 재조회한다. 기존 전체 이름 후보, 모호성·불완전한 페이지·오류를 우회하거나 임의 별칭을 생성하지 않는다.
+- 등록 대상·관련 FIELD·관련 값/행의 부족은 조회 지점에서 typed gap으로 남긴다. RDB 전용 handler는 확인하지 못한 범위를 답하며 작품 전체 부재를 단정하지 않는다. hybrid가 활성화되면 `sourceFallback=true`와 정상 `INSUFFICIENT_EVIDENCE`, 명시한 대상, 완전한 조회 및 남은 실행 예산을 함께 확인해 기존 원문 흐름을 재사용할 수 있다. 정상 현재값/명시적 부정 답변, collection/characterFilter·COUNT/DISTINCT, 명확화·부분/절단·자료 변경/원문 오류·실행 실패는 자동 보완 대상이 아니다. 상세 조건과 원문 인용 재검증은 [결합 조회](chat-hybrid-retrieval-v1.md#opt-31-후속-대화원문-보완)를 따른다.
+- 검증 재시도는 schema 필드 경로와 고정 규칙으로 요청 부분·정보 필요·사건 문맥을 교정하도록 안내한다. 형식·계약·JSON 오류와 provider 출력 절단을 구분하고 실제 질문·모델 출력·거절값·임의 예외 본문을 피드백이나 로그에 복사하지 않는다. 최초 포함 두 번과 기존 예약·정산 경계를 유지하며 검증 완화나 무한 재시도를 하지 않는다.
+
+hybrid 계획 v8은 최초 습득 항목을 HISTORY와 원문 PROCESS로 확인하고 현재 보유 목록의 CURRENT와 구분하도록 지시한다. 최초 등록·사용 기록을 실제 최초 획득이라고 단정하지 않는다. 일반 원문 경로는 직접 근거 조회에서 `3 * max_rounds + 2`와 collection 검사 수만큼 도구 여유를 남긴다. 기본 검색 두 라운드의 8회분은 검색·최종 검사 여유이며 기존 전체 상한을 늘리는 설정은 아니다. 후속 실제 검증에서는 두 검색 라운드까지 진행했지만 실제 최초를 입증하지 못해 미확인으로 남았다.
+
+원문 결합의 초기 답변 v8 뒤 현재 v9은 일반 claim의 `relatedFacets`로 관련 맥락과 요구 충족을 분리한다. related만 확인한 요구는 missingFacets에 남고 PARTIAL로 표시하며 실제 지원 구절과 최종 인용 검사를 계속 적용한다. 원문 답변의 schema/계약 복구 소진(`ResponseValidationFailure`)은 미검증 문장을 버리고 남은 검색·기존 검증된 부분 답변으로 이어 갈 수 있다. 전송·provider·출력 절단 복구·권한 실패를 정상 미확인으로 바꾸지 않으며 RDB 전용/계획 호출부의 기존 실패 경계는 유지한다. 후속 실제 검증은 `77dc74e1df125dfec34fe609481d5881fbe45b57`의 Luna/medium 6건으로, SUCCEEDED 6건·ANSWER 4건/INSUFFICIENT_EVIDENCE 2건이다. 관련 원문 맥락의 ANSWER는 PARTIAL이며 정답률이 아니다. 중간 `d1c8f6865e255a7a785c4020e3b0bfcede7b8a13`의 4건 중 성공 3건·실패 1건은 별도 보존한다. 최종 `265fc683d0f6d026c5ce860c9bb90afe06d24d83`는 모델 호출 없는 안내 표현 보완만 추가했고 Python 2,853 passed/54 skipped/기존 warning 1(11.99초), Ruff를 통과했다. 실제 호출량·확인 범위·남은 최초 입증 한계는 [공통 검증 기록](chat-query-quality-v1.md#opt-31-후속-구현-검증--2026-10-15)을 따른다.
+
+실제 후속 6건에서는 관련 맥락 경로를 확인했으나 자연 발생한 모델 응답 검증 실패는 없었다. typed 검증 실패의 NONE 복구·기존 PARTIAL 보존은 합성 회귀로 검증했다. 최종 265fc68의 표시 변경은 전체 자동 테스트와 로컬 기동으로 확인했고 실제 모델 6건은 동일한 프롬프트·검색·검증 경로의 77dc74e에서 실행했다.
+
 ## 2026-10-15 조회 보완
 
 현재 구현은 [조회 완전성·답변 표시 보완](chat-query-quality-v1.md)을 함께 따른다. 유형/실제 항목 필터를 먼저 적용하며, 새 focus 계획에는 아래 초기 2페이지/10행 선택 상한을 적용하지 않는다. 후속 대화는 [GH241 계약](chat-sessions-v1.md), 장면·이유·과정은 [GH240 결합 조회](chat-hybrid-retrieval-v1.md)를 따른다.
@@ -14,7 +30,7 @@
 
 말투 변경 이전 조회·검색 보완의 검증은 AI `257dfe6cb56cf759047f5e62c0d079ff0d4a64e7`·Java `1166892aa300a8c27c46b40f227df6e69ec3ebcd` 기준이다. Python 전체 2,780 passed/54 skipped/기존 경고 1개(11.50초), 별도 검색 PostgreSQL 26 passed, Java ChatExecution 관련 21 passed와 bootJar 성공을 확인했다. 로컬 실제 Luna·medium은 개발 중 8건·중간 코드 2건·최종 코드 3건에서 실행 오류가 없었지만, 일부 원문 요구는 당시 최종 코드에서도 미답변으로 남았다. 실행 성공을 의미적 정답으로 집계하지 않는다. 코드별 실제 실행과 원문 대조 범위·남은 최초 사건 해석 한계는 [공통 품질 검증 기록](chat-query-quality-v1.md)에 구분한다.
 
-후속 말투 보완은 `qa_prompts.py`의 `ANSWER_STYLE_INSTRUCTIONS`를 등록 설명과 현재/이력 조건 판정에 공통 적용한다. 새 설명과 목록의 `explanation`은 존댓말(`~습니다`·`~요`)로 작성하며, 사용자·이전 대화의 반말이나 원문 서술체를 따라 쓰지 않는다. 실제 고유명사·저장값·정확한 인용은 보존한다. `chat-registered-answer-v2`, `chat-current-condition-v2`, `chat-history-condition-v2`를 각각 prompt cache key로 사용한다. QA plan v6·FIELD select v1·구형 행 select v3는 유지한다. 명확화는 기존 고정 존댓말이며 응답 전체를 정규식으로 변환하거나 추가 모델을 호출하지 않는다. 이력/FACTS에 그대로 표시하는 저장 문장은 원래 말투를 유지할 수 있다. 위 13건은 이 변경의 실제 말투 검증 기록이 아니다.
+후속 말투 보완은 `qa_prompts.py`의 `ANSWER_STYLE_INSTRUCTIONS`를 등록 설명과 현재/이력 조건 판정에 공통 적용한다. 새 설명과 목록의 `explanation`은 존댓말(`~습니다`·`~요`)로 작성하며, 사용자·이전 대화의 반말이나 원문 서술체를 따라 쓰지 않는다. 실제 고유명사·저장값·정확한 인용은 보존한다. `chat-registered-answer-v2`, `chat-current-condition-v2`, `chat-history-condition-v2`를 각각 prompt cache key로 사용한다. 말투 보완 당시 QA plan v6·FIELD select v1·구형 행 select v3는 유지했으며, 이후 OPT-31의 현재 QA 계획은 v7이다. 명확화는 기존 고정 존댓말이며 응답 전체를 정규식으로 변환하거나 추가 모델을 호출하지 않는다. 이력/FACTS에 그대로 표시하는 저장 문장은 원래 말투를 유지할 수 있다. 위 13건은 이 변경의 실제 말투 검증 기록이 아니다.
 
 ## 초기 GH238의 구현 배경
 
@@ -44,12 +60,13 @@ flowchart TD
 
 ## 질문 유형과 조회 도구는 다르다
 
-AI는 SQL이나 자유로운 도구 호출을 작성하지 않는다. 현재 `QuestionPlan`은 아래 9개 intent와 focus/characterFilter를 반환한다.
+AI는 SQL이나 자유로운 도구 호출을 작성하지 않는다. 현재 `QuestionPlan`은 아래 12개 intent와 focus/characterFilter를 반환한다.
 유형이 정해진 조회는 분류 1회 뒤 관련 행을 모두 조립한다. 동적 경로는 실제 FIELD의 의미 선택 호출이 추가될 수 있다. 구형 기록 계획의 관련 행 선택만 기존 `CHAT_ANSWER` 호출을 유지한다.
 미지원·모호성·대상 없음이면 분류 또는 탐색 후 종료한다.
 
 | intent | 의미 | 이후 처리 |
 | --- | --- | --- |
+| GREETING / THANKS / HELP | 인사 / 감사 / 이 챗봇의 사용법만 요청 | 조회 없이 고정 존댓말 ANSWER; 사실 질문이 함께 있으면 일반 조회 |
 | CHARACTER_LIST | 한 현재값 조건에 맞는 인물 목록 | 작품 FIELD → 정확 조건 FIND_CHARACTERS |
 | CURRENT | 현재 등록값 | FIND → CURRENT → 필요 시 EVIDENCE |
 | HISTORY | 확정된 변경 이력 | FIND → HISTORY → 필요 시 EVIDENCE |
