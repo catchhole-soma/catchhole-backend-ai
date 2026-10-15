@@ -1,0 +1,20 @@
+{
+  "reason": "GH221 PR1 Task2 final PG-compatible typed CONFLICT/REVIEW_REQUIRED/GENERAL_UNCERTAINTY and character read-only anchors: intended prompt/body SHA/cache only. Task1/upstream goldens immutable; pre-PG Task2 fixture byte-preserved separately.",
+  "overrides": {
+    "character_batch": {
+      "prompt_cache_key": "character-fact-comparison-batch:v6",
+      "sha256": "9d40015beea8e64b1daf5d1af3813138a71c5508a846d38d8a2d1106a60d290f",
+      "system_sha256": "84125016be4962890ec315d1da511a8623fd86638bca2d65558ace983ec325de"
+    },
+    "world_batch": {
+      "prompt_cache_key": "world-setting-comparison-batch:v12",
+      "sha256": "dba60d31ff0d944dea6f2bcbe37814dade7db8091f22785679770b0428e95abe",
+      "system_sha256": "138a7a889dd2b2061db6d3a4d3bfdcf139dca8cdcb4c2eb1b49151ea9c41986b"
+    },
+    "world_singleton": {
+      "prompt_cache_key": "world-setting-comparison:v15",
+      "sha256": "ed94f0d161e9acc39cc16e702da241c32f6aacafd8c6ea3e1eef4659c0fb7ea1",
+      "system_sha256": "a08ec7aa2a62585965a5b5205c32e931fa51448e4576f98e60dec85eaa9ff535"
+    }
+  }
+}

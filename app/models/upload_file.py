@@ -1,6 +1,7 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Integer, String
+from sqlalchemy import BigInteger, DateTime, Integer, String
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,3 +23,5 @@ class UploadFile(TimestampMixin, Base):
     detected_episode_end_no: Mapped[int | None] = mapped_column(Integer)
     detected_episode_count: Mapped[int | None] = mapped_column(Integer)
     parse_status: Mapped[str] = mapped_column(String(20))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    current_setting_book_revision_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))

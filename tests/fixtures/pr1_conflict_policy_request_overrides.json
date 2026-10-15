@@ -1,0 +1,20 @@
+{
+  "reason": "GH221 PR1 conflict policy: approved comparison prompt and existing cache-key changes only; immutable upstream captures remain intact",
+  "overrides": {
+    "character_batch": {
+      "sha256": "83303fbfbf241c41462786d9ddebcbeb63fd12f212b27126e06a25387fd57ad1",
+      "system_sha256": "42837d0f4eea05e6368ebd028942cf9a27bbb09812c8860d042d103038ba37ed",
+      "prompt_cache_key": "character-fact-comparison-batch:v5"
+    },
+    "world_batch": {
+      "sha256": "c842e295b2045f6fb9e1c0b5574cff5d3d58939d8bf452e776c8310ef7ac2ba6",
+      "system_sha256": "4c3fc2c9fda2fc011ea22fd01929742ef2c0a568d97a5ce26e01c125f56e5a07",
+      "prompt_cache_key": "world-setting-comparison-batch:v11"
+    },
+    "world_singleton": {
+      "sha256": "e850fe6dd2188d15cf54d52c1a56ee508b1ac12abddcfda92f83883bb1287519",
+      "system_sha256": "efbbea747343b969b016ede4b2e5119e46bb903547d7375801ea7668fec41e54",
+      "prompt_cache_key": "world-setting-comparison:v14"
+    }
+  }
+}

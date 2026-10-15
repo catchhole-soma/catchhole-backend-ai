@@ -157,13 +157,19 @@ def test_replace_candidates_skips_ambiguous_discovery_for_existing_characters() 
     assert session.committed is True
 
 
-def test_replace_candidates_deduplicates_new_character_discoveries_by_name() -> None:
+def test_replace_candidates_deduplicates_the_same_located_discovery() -> None:
     session = FakeSession()
     repository = FakeSettingCandidateRepository(session)
     service = SettingCandidateService(
         session_factory=lambda: session,
         repository_factory=lambda session: repository,
     )
+
+    first = _discovery_candidate("세룸", "케닉의 넷째 아들 세룸")
+    second = _discovery_candidate(" 세룸 ", "세룸")
+    for candidate in (first, second):
+        candidate.evidence_spans[0].start_offset = 10
+        candidate.evidence_spans[0].end_offset = 10 + len(candidate.evidence_spans[0].quote)
 
     saved_candidates = service.replace_candidates_for_analysis_job(
         work_id=WORK_ID,
@@ -172,12 +178,12 @@ def test_replace_candidates_deduplicates_new_character_discoveries_by_name() -> 
             SettingCandidateSaveItem(
                 episode_id=EPISODE_ID,
                 source_content_s3_key=SOURCE_CONTENT_S3_KEY,
-                candidate=_discovery_candidate("세룸", "케닉의 넷째 아들 세룸"),
+                candidate=first,
             ),
             SettingCandidateSaveItem(
                 episode_id=EPISODE_ID,
                 source_content_s3_key=SOURCE_CONTENT_S3_KEY,
-                candidate=_discovery_candidate(" 세룸 ", "세룸"),
+                candidate=second,
             ),
         ],
         known_characters=[

@@ -2,6 +2,8 @@ from app.models.analysis_job import AnalysisJob
 from app.models.base import Base
 from app.models.episode import Episode
 from app.models.episode_chunk import EpisodeChunk
+from app.models.setting_book_chunk import SettingBookChunk
+from app.models.setting_book_revision import SettingBookRevision
 from app.models.setting_candidate import SettingCandidate
 from app.models.upload_batch import UploadBatch
 from app.models.upload_file import UploadFile
@@ -13,6 +15,8 @@ __all__ = [
     "Episode",
     "EpisodeChunk",
     "SettingCandidate",
+    "SettingBookChunk",
+    "SettingBookRevision",
     "UploadBatch",
     "UploadFile",
     "Work",

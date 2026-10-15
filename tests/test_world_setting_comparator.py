@@ -2367,3 +2367,35 @@ def _english_internal_token_target() -> WorkerWorldSettingComparisonTarget:
         ],
         version=3,
     )
+
+
+def test_retry_does_not_turn_missing_scope_and_same_name_into_automatic_review():
+    candidate = _candidate("광원", "벽의 수정들이 주변을 밝힌다.")
+    target = WorkerWorldSettingComparisonTarget(
+        world_setting_id=TARGET_ID, subject_name=candidate.subject_name, version=2,
+        properties=[WorkerWorldSettingProperty(scope_name="1층", setting_name="광원",
+            value="벽의 수정들이 광원 역할을 한다.")],
+    )
+    corrected = {
+        "consolidation_status": "SINGLE", "operation": "UPDATE", "target_ref": "T1",
+        "matched_scope_name": "1층", "matched_property_name": "광원",
+        "proposed_scope_name": "1층", "proposed_setting_name": "광원",
+        "proposed_value": candidate.extracted_value,
+        "comparison_reason": "같은 벽의 수정에 관한 기존 광원 설명을 갱신합니다.",
+    }
+    client = FakeTextClient([{**corrected, "matched_property_name": "없는 속성"}, corrected])
+    before = candidate.model_dump(), target.model_dump()
+    result, _ = asyncio.run(WorldSettingComparator(llm_client=client, max_attempts=2)
+        .compare(candidate, [target]))
+
+    assert result.operation == "UPDATE" and result.review_reason is None
+    assert (result.matched_scope_name, result.matched_property_name) == ("1층", "광원")
+    assert len(client.requests) == 2
+    initial, retry = [json.loads(request["user_prompt"]) for request in client.requests]
+    assert initial["candidate"] == retry["candidate"]
+    assert initial["targets"] == retry["targets"]
+    correction = retry["validation_feedback"]["correction"]
+    assert "범위 누락이나 동명 속성 자체만으로 검토로 바꾸지 말고" in correction
+    assert "실제 적용 대상·조건이 불명확할 때만" in correction
+    assert "REVIEW_REQUIRED" in correction and "SCOPE_UNRESOLVED" in correction
+    assert (candidate.model_dump(), target.model_dump()) == before

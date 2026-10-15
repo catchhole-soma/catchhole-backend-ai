@@ -115,7 +115,8 @@ class FakeSpringApi:
         self.complete_summaries = []
         self.fail_calls = []
 
-    async def claim(self, allowed_job_types, model_name=None, current_step=None):
+    async def claim(self, allowed_job_types, model_name=None, current_step=None, supported_source_kinds=None,
+                    supports_setting_book_reference_time=None):
         self.allowed_job_types = allowed_job_types
         self.claim_model_name = model_name
         return self.payload

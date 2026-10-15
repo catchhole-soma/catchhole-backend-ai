@@ -61,7 +61,7 @@ from app.domain.enums import (
 )
 from app.domain.setting_values import normalize_setting_display_value
 from app.exceptions.failure_classification import is_candidate_comparison_failure
-from app.llm.exceptions import LlmIncompleteResponseError, LlmResponseValidationError
+from app.llm.exceptions import LlmIncompleteResponseError, LlmInputTokenCountError, LlmResponseValidationError
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.llm.responses import LlmTextResponse
@@ -181,6 +181,13 @@ class UsageRecordingTextGenerationClient:
     ) -> None:
         self.client = client
         self.usage = usage
+
+    async def count_input_tokens(self, system_prompt, user_prompt, model=None, response_schema=None) -> int:
+        count = getattr(self.client, "count_input_tokens", None)
+        if not callable(count):
+            raise LlmInputTokenCountError("Evaluation text provider does not support exact input token counting.")
+        return await count(system_prompt=system_prompt, user_prompt=user_prompt,
+                           model=model, response_schema=response_schema)
 
     async def create_text_response(
         self,
@@ -1079,7 +1086,7 @@ async def _run_character_batches(
     predictions: list[CharacterStage2Prediction] = []
     failures: list[RuntimeFailure] = []
     for (entity_ref, fact_type), group in grouped.items():
-        batch_size = _character_batch_candidate_limit(comparator)
+        batch_size = len(group)
         for offset in range(0, len(group), batch_size):
             batch_group = group[offset : offset + batch_size]
             ids = [_character_batch_source_id(item.source) for item in batch_group]
@@ -1089,7 +1096,7 @@ async def _run_character_batches(
                     _worker_character_batch_candidate(scenario, item, index)
                     for index, item in enumerate(batch_group, start=1)
                 ]
-                # Spring claims each bounded group as a separate comparison batch. Request
+                # Spring claims each logical group as a separate comparison batch. Request
                 # refs and projected state restart at that boundary; only provider segments
                 # inside one claimed batch share projection state.
                 snapshots, stable_ref_by_request_ref = _character_batch_snapshots(
@@ -1167,11 +1174,6 @@ async def _run_character_batches(
                     for item in batch_group
                 )
     return predictions, failures
-
-
-def _character_batch_candidate_limit(comparator: CharacterFactBatchComparator) -> int:
-    configured = getattr(comparator, "batch_max_candidates", 10)
-    return min(20, max(1, int(configured)))
 
 
 def _worker_character_batch_candidate(

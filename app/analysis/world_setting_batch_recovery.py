@@ -196,10 +196,11 @@ def _response_rows(error):
     return rows if isinstance(rows, list) and 1 <= len(rows) <= 20 else None
 
 
-def _validate_group(result, source, references, ordered_context, *, complete_scope_plan=False):
+def _validate_group(result, source, references, ordered_context, *, complete_scope_plan=False,
+                    analysis_source=None):
     _validate_batch_comparison_result(
         result, source, references, ordered_context=ordered_context,
-        require_generated_scope_siblings=complete_scope_plan,
+        require_generated_scope_siblings=complete_scope_plan, analysis_source=analysis_source,
     )
     return _project_batch_comparison_result(result, source, references)
 
@@ -262,7 +263,7 @@ def _record_rejected_dependencies(group, row, request, references):
 async def compare_world_batch_with_recovery(comparator, category, candidates, targets, *,
                                           ordered_context=False, unresolved_references=(),
                                           max_recovery_calls=MAX_RECOVERY_CALLS,
-                                          evaluation_failure_callback=None):
+                                          evaluation_failure_callback=None, analysis_source=None):
     """Shared production and FIXED comparison boundary for every review mode.
 
     Returns (WorldBatchRecoveryResult, raw_result). Successful sources occur once
@@ -270,6 +271,8 @@ async def compare_world_batch_with_recovery(comparator, category, candidates, ta
     remain request-local and unchanged across every bounded retry.
     """
     kwargs = {"ordered_context": ordered_context, "max_attempts_override": 1}
+    if analysis_source is not None:
+        kwargs["analysis_source"] = analysis_source
     if unresolved_references:
         kwargs["unresolved_references"] = tuple(unresolved_references)
     if evaluation_failure_callback is not None:
@@ -288,7 +291,7 @@ async def compare_world_batch_with_recovery(comparator, category, candidates, ta
             comparator, category, candidates, targets, initial_error,
             ordered_context=ordered_context, unresolved_references=unresolved_references,
             max_recovery_calls=max_recovery_calls,
-            evaluation_failure_callback=evaluation_failure_callback,
+            evaluation_failure_callback=evaluation_failure_callback, analysis_source=analysis_source,
         )
         return recovered, {
             "recoveryMode": "VALIDATED_INDEPENDENT_DECISIONS",
@@ -305,7 +308,7 @@ async def compare_world_batch_with_recovery(comparator, category, candidates, ta
 async def recover_world_batch(comparator, category, candidates, targets, initial_error, *,
                              ordered_context=True, unresolved_references=(),
                              max_recovery_calls=MAX_RECOVERY_CALLS,
-                             evaluation_failure_callback=None):
+                             evaluation_failure_callback=None, analysis_source=None):
     """Preserve independently validated decisions; retry each affected component once.
 
     Rejected proposals are used only to find conservative dependencies. They never
@@ -343,6 +346,8 @@ async def recover_world_batch(comparator, category, candidates, targets, initial
         offset = initial_attempts + calls - 1
         kwargs = {"ordered_context": ordered_context, "max_attempts_override": 1,
                   "defer_generated_scope_validation": True}
+        if analysis_source is not None:
+            kwargs["analysis_source"] = analysis_source
         if unresolved_references:
             kwargs["unresolved_references"] = tuple(unresolved_references)
         if evaluation_failure_callback is not None:
@@ -353,7 +358,8 @@ async def recover_world_batch(comparator, category, candidates, targets, initial
             kwargs["evaluation_failure_callback"] = callback
         try:
             result, raw = await comparator.compare_batch(category, group.candidates, targets, **kwargs)
-            group.decisions = _validate_group(result, group.candidates, references, ordered_context).decisions
+            group.decisions = _validate_group(result, group.candidates, references, ordered_context,
+                                               analysis_source=analysis_source).decisions
             group.failure_code = None
             group.dependency_reads.clear()
             group.dependency_writes.clear()
@@ -403,7 +409,8 @@ async def recover_world_batch(comparator, category, candidates, targets, initial
                 # Retain typed paths for dependency analysis even if domain validation
                 # rejects the decision. These are never returned as successful data.
                 group.decisions = result.decisions
-                group.decisions = _validate_group(result, source, references, ordered_context).decisions
+                group.decisions = _validate_group(result, source, references, ordered_context,
+                                                   analysis_source=analysis_source).decisions
             except (TypeError, ValueError, ComparisonValidationError):
                 fail(group, "RECOVERY_DECISION_INVALID")
             _mark_generated_scopes(group, targets)
@@ -433,7 +440,7 @@ async def recover_world_batch(comparator, category, candidates, targets, initial
                 _validate_batch_comparison_result(
                     WorldSettingComparisonBatchResult(decisions=[d for group in successful for d in group.decisions]),
                     [item for item in candidates if item.candidate_ref in refs], references,
-                    ordered_context=ordered_context,
+                    ordered_context=ordered_context, analysis_source=analysis_source,
                     validation_observer=lambda error, stage, index, source_refs: observed.extend(source_refs),
                 )
                 return []
@@ -485,7 +492,7 @@ async def recover_world_batch(comparator, category, candidates, targets, initial
             _validate_batch_comparison_result(
                 WorldSettingComparisonBatchResult(decisions=[d for group in successful for d in group.decisions]),
                 [item for item in candidates if item.candidate_ref in refs], references,
-                ordered_context=ordered_context,
+                ordered_context=ordered_context, analysis_source=analysis_source,
                 validation_observer=lambda error, stage, index, source_refs: observed.extend(source_refs),
             )
             break

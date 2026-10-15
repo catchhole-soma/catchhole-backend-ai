@@ -70,4 +70,43 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
         **json.loads((ROOT / "tests/fixtures/world_semantic_scope_request_overrides.json").read_text())["overrides"].get(purpose, {}),
     }
     assert set(authorized) <= changing
+    policy_overrides = json.loads((ROOT / "tests/fixtures/pr1_conflict_policy_request_overrides.json").read_text())["overrides"]
+    assert set(policy_overrides) == {"character_batch", "world_batch", "world_singleton"}
+    assert all(set(row) == changing for row in policy_overrides.values())
+    authorized = {**authorized, **policy_overrides.get(purpose, {})}
+    task2_overrides = json.loads((ROOT / "tests/fixtures/pr1_task2_contract_request_overrides.json").read_text())["overrides"]
+    assert set(task2_overrides) == set(policy_overrides)
+    assert all(set(row) == changing for row in task2_overrides.values())
+    authorized = {**authorized, **task2_overrides.get(purpose, {})}
+    qualifier_overrides = json.loads((ROOT / "tests/fixtures/pr1_h_role_start_request_overrides.json").read_text())["overrides"]
+    assert set(qualifier_overrides) == {"extraction", "character_batch"}
+    assert all(set(row) == changing for row in qualifier_overrides.values())
+    authorized = {**authorized, **qualifier_overrides.get(purpose, {})}
+    undecided_overrides = json.loads((ROOT / "tests/fixtures/pr1_undecided_state_request_overrides.json").read_text())["overrides"]
+    assert set(undecided_overrides) == {"character_batch"}
+    assert all(set(row) == changing for row in undecided_overrides.values())
+    authorized = {**authorized, **undecided_overrides.get(purpose, {})}
+    general_rule_overrides = json.loads((ROOT / "tests/fixtures/pr1_explicit_general_rule_request_overrides.json").read_text())["overrides"]
+    assert set(general_rule_overrides) == {"world_batch", "world_singleton"}
+    assert all(set(row) == changing for row in general_rule_overrides.values())
+    authorized = {**authorized, **general_rule_overrides.get(purpose, {})}
+    negative_fact_overrides = json.loads((ROOT / "tests/fixtures/pr1_explicit_negative_fact_request_overrides.json").read_text())["overrides"]
+    assert set(negative_fact_overrides) == {"character_batch"}
+    assert all(set(row) == changing for row in negative_fact_overrides.values())
+    authorized = {**authorized, **negative_fact_overrides.get(purpose, {})}
+    narrative_overrides = json.loads((ROOT / "tests/fixtures/narrative_time_request_overrides_20261013.json").read_text())["overrides"]
+    assert set(narrative_overrides) == {"extraction", "character_batch"}
+    assert set(narrative_overrides["extraction"]) == changing | {"schema_sha256"}
+    assert set(narrative_overrides["character_batch"]) == changing
+    authorized = {**authorized, **narrative_overrides.get(purpose, {})}
+    # Preserve historical captures; this task authorizes only the batch output budget.
+    budget_overrides = json.loads((ROOT / "tests/fixtures/character_token_budget_request_overrides_20261014.json").read_text())["overrides"]
+    assert set(budget_overrides) == {"character_batch"}
+    assert set(budget_overrides["character_batch"]) == {"sha256", "max_output_tokens"}
+    authorized = {**authorized, **budget_overrides.get(purpose, {})}
+    integration_overrides = json.loads((ROOT / "tests/fixtures/pr221_main_integration_request_overrides_20261015.json").read_text())["overrides"]
+    assert set(integration_overrides) == {"extraction", "world_batch", "world_singleton"}
+    assert set(integration_overrides["extraction"]) == {"sha256", "system_sha256"}
+    assert all(set(integration_overrides[key]) == changing for key in ("world_batch", "world_singleton"))
+    authorized = {**authorized, **integration_overrides.get(purpose, {})}
     assert actual[purpose] == {**expected, **authorized}

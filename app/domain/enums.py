@@ -1,6 +1,17 @@
 from enum import StrEnum
 
 
+class AnalysisSourceKind(StrEnum):
+    EPISODE = "EPISODE"
+    SETTING_BOOK = "SETTING_BOOK"
+
+
+class SettingBookReferenceTimeKind(StrEnum):
+    UNSPECIFIED = "UNSPECIFIED"
+    WORK_START = "WORK_START"
+    EPISODE = "EPISODE"
+
+
 class AnalysisMode(StrEnum):
     CONFIRMED_ONLY = "CONFIRMED_ONLY"
     ORDERED_PROVISIONAL = "ORDERED_PROVISIONAL"

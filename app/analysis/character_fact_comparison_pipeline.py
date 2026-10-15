@@ -1,39 +1,53 @@
 import logging
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
+from inspect import isawaitable
 from typing import Protocol
 from uuid import UUID
 
-from app.analysis.character_fact_comparison_schemas import (
-    CharacterFactComparisonBatchDecision,
-    CharacterFactComparisonBatchResult,
-)
 from app.analysis.character_fact_comparator import (
     CharacterFactComparator,
     OrderedCharacterBatchRecoveryError,
+)
+from app.analysis.character_fact_comparison_schemas import (
+    CharacterFactComparisonBatchDecision,
+    CharacterFactComparisonBatchResult,
 )
 from app.analysis.character_fact_projection import (
     CharacterProjectionEntry,
     CharacterProjectionState,
 )
-from app.analysis.exceptions import ComparisonValidationError, OrderedAnalysisIncompleteError, OrderedInputContextError
-from app.schemas.analysis_context import WorkerAnalysisContext, WorkerAnalysisReference
+from app.analysis.exceptions import (
+    CharacterComparisonInputTooLargeError,
+    ComparisonValidationError,
+    OrderedAnalysisIncompleteError,
+    OrderedInputContextError,
+)
+from app.analysis.ordered_context import validate_comparison_source
+from app.analysis.narrative_time import project_advisory_narrative_time
 from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
 from app.domain.enums import AnalysisFailureCode, CharacterFactComparisonOperation
 from app.domain.setting_values import normalize_setting_display_value
-from app.exceptions.failure_classification import comparison_failure_code, is_candidate_comparison_failure
+from app.exceptions.failure_classification import (
+    comparison_failure_code,
+    is_candidate_comparison_failure,
+)
+from app.schemas.analysis_context import WorkerAnalysisContext, WorkerAnalysisReference
+from app.schemas.analysis_source import WorkerAnalysisSource
 from app.schemas.worker import (
-    WorkerCharacterFactComparisonClaimPayload,
-    WorkerCharacterFactComparisonBatchCompleteRequest,
     WorkerCharacterFactComparisonBatchCandidate,
+    WorkerCharacterFactComparisonBatchCompleteRequest,
     WorkerCharacterFactComparisonBatchContextResponse,
     WorkerCharacterFactComparisonBatchDecision,
     WorkerCharacterFactComparisonBatchFailure,
     WorkerCharacterFactComparisonBatchPayload,
     WorkerCharacterFactComparisonBatchSnapshotEntry,
+    WorkerCharacterFactComparisonClaimPayload,
     WorkerCharacterFactComparisonCompleteRequest,
     WorkerCharacterFactComparisonContextResponse,
     WorkerRemovedSnapshotEntry,
 )
+from app.llm.exceptions import LlmInputTokenCountError, LlmOutputTruncatedError
 from app.usage.metering import TextGenerationUsageSnapshot
 
 logger = logging.getLogger(__name__)
@@ -123,7 +137,9 @@ class CharacterFactBatchComparator(Protocol):
         snapshot_entries: list[CharacterProjectionEntry],
         ordered_context: bool = False,
         unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
-    ) -> bool: ...
+        protected_slots=(),
+        advisory_current_context=None,
+    ) -> bool | Awaitable[bool]: ...
 
     async def compare_batch(
         self,
@@ -135,6 +151,8 @@ class CharacterFactBatchComparator(Protocol):
         ordered_context: bool = False,
         unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
         max_attempts_override: int | None = None,
+        protected_slots=(),
+        advisory_current_context=None,
     ) -> tuple[CharacterFactComparisonBatchResult, dict]: ...
 
 
@@ -225,6 +243,8 @@ async def execute_character_fact_comparison_batch(
     ],
     ordered_context: bool = False,
     unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
+    protected_slots=(),
+    advisory_current_context=None,
 ) -> CharacterFactBatchExecutionResult:
     """Split, compare, and project one ordered character+FactType batch.
 
@@ -234,7 +254,8 @@ async def execute_character_fact_comparison_batch(
     """
 
     state = CharacterProjectionState(
-        [_to_projection_entry(entry) for entry in snapshot_entries]
+        [_to_projection_entry(entry) for entry in snapshot_entries],
+        protected_slots=protected_slots,
     )
     decisions: list[WorkerCharacterFactComparisonBatchDecision] = []
     failures: list[WorkerCharacterFactComparisonBatchFailure] = []
@@ -242,31 +263,37 @@ async def execute_character_fact_comparison_batch(
     singleton_fallback_count = 0
     validation_failure_count = 0
     cursor = 0
+    segment_ends: list[int] = []
     while cursor < len(candidates):
-        segment = _largest_fitting_segment(
+        while segment_ends and cursor >= segment_ends[0]:
+            segment_ends.pop(0)
+        segment = await _largest_fitting_segment(
             comparator,
             matched_character_name=matched_character_name,
             canonical_fact_type=canonical_fact_type,
-            candidates=candidates,
+            candidates=candidates[:segment_ends[0]] if segment_ends else candidates,
             state=state,
             start=cursor,
             ordered_context=ordered_context,
             unresolved_references=unresolved_references,
+            advisory_current_context=advisory_current_context,
         )
         if not segment:
-            if ordered_context:
-                raise OrderedInputContextError("character_batch_input_limit_exceeded")
-            # Spring도 문자 수로 batch를 자르지만 tokenizer 기준으로 단일 후보가
-            # 여전히 너무 클 수 있다. Provider나 의미 없는 singleton fallback을
-            # 호출하지 않고 typed candidate failure로 원자적 complete에 포함한다.
-            failures.append(
-                _candidate_failure(
-                    candidates[cursor].candidate_ref,
-                    ComparisonValidationError("character_batch_input_limit_exceeded"),
-                )
+            shared_overflow = not await _mandatory_context_fits(
+                comparator, matched_character_name=matched_character_name,
+                canonical_fact_type=canonical_fact_type, candidates=candidates[cursor:],
+                state=state, ordered_context=ordered_context,
+                unresolved_references=unresolved_references,
+                advisory_current_context=advisory_current_context,
             )
+            affected = candidates[cursor:] if shared_overflow else candidates[cursor:cursor + 1]
+            error = CharacterComparisonInputTooLargeError(
+                "character_batch_required_context_input_limit_exceeded" if shared_overflow
+                else "character_batch_input_limit_exceeded"
+            )
+            failures.extend(_candidate_failure(candidate.candidate_ref, error) for candidate in affected)
             validation_failure_count += 1
-            cursor += 1
+            cursor += len(affected)
             continue
         provider_segment_count += 1
         try:
@@ -277,24 +304,41 @@ async def execute_character_fact_comparison_batch(
                 snapshot_entries=state.entries,
                 **({"ordered_context": True} if ordered_context else {}),
                 **({"unresolved_references": unresolved_references} if unresolved_references else {}),
+                **({"protected_slots": state.protected_slots} if state.protected_slots else {}),
+                **({"advisory_current_context": advisory_current_context} if advisory_current_context is not None else {}),
             )
+        except LlmOutputTruncatedError as exc:
+            if not is_candidate_comparison_failure(exc):
+                raise
+            if len(segment) == 1:
+                failures.append(_candidate_failure(segment[0].candidate_ref, exc))
+                cursor += 1
+            else:
+                # Retry only this segment's ordered halves against each preceding projection.
+                segment_ends[:0] = [cursor + len(segment) // 2, cursor + len(segment)]
+            continue
         except ComparisonValidationError as exc:
             if ordered_context and not is_candidate_comparison_failure(exc):
                 raise
             validation_failure_count += 1
             if len(segment) == 1:
-                failures.append(_candidate_failure(segment[0].candidate_ref))
+                failures.append(_candidate_failure(segment[0].candidate_ref, exc))
                 cursor += 1
                 continue
             retained = (exc.retained_decisions
                         if ordered_context and isinstance(exc, OrderedCharacterBatchRecoveryError)
                         else (None,) * len(segment))
             singleton_fallback_count += sum(decision is None for decision in retained)
-            for candidate, retained_decision in zip(segment, retained, strict=True):
+            for index, (candidate, retained_decision) in enumerate(zip(segment, retained, strict=True)):
                 if retained_decision is not None:
+                    previous_entries = state.entries
                     decisions.append(_apply_and_map_decision(
                         state, canonical_fact_type, candidate, retained_decision,
                     ))
+                    advisory_current_context = project_advisory_narrative_time(
+                        advisory_current_context, candidate, retained_decision,
+                        fact_type=canonical_fact_type, previous_entries=previous_entries,
+                    )
                     continue
                 provider_segment_count += 1
                 try:
@@ -306,7 +350,10 @@ async def execute_character_fact_comparison_batch(
                         **({"ordered_context": True} if ordered_context else {}),
                         **({"max_attempts_override": 1} if ordered_context else {}),
                         **({"unresolved_references": unresolved_references} if unresolved_references else {}),
+                        **({"protected_slots": state.protected_slots} if state.protected_slots else {}),
+                        **({"advisory_current_context": advisory_current_context} if advisory_current_context is not None else {}),
                     )
+                    previous_entries = state.entries
                     decisions.append(
                         _apply_and_map_decision(
                             state,
@@ -314,6 +361,10 @@ async def execute_character_fact_comparison_batch(
                             candidate,
                             singleton_result.decisions[0],
                         )
+                    )
+                    advisory_current_context = project_advisory_narrative_time(
+                        advisory_current_context, candidate, singleton_result.decisions[0],
+                        fact_type=canonical_fact_type, previous_entries=previous_entries,
                     )
                 except AiTokenQuotaExhaustedError:
                     # Quota exhaustion is job-scoped. Continuing with later singletons would
@@ -327,12 +378,27 @@ async def execute_character_fact_comparison_batch(
                         # Lease/context/transport invariants are not candidate-local provider
                         # failures and must remain visible to the outer batch/job boundary.
                         raise
+                    if isinstance(exc, CharacterComparisonInputTooLargeError) and not await _mandatory_context_fits(
+                        comparator, matched_character_name=matched_character_name,
+                        canonical_fact_type=canonical_fact_type, candidates=candidates[cursor + index:],
+                        state=state, ordered_context=ordered_context,
+                        unresolved_references=unresolved_references,
+                        advisory_current_context=advisory_current_context,
+                    ):
+                        error = CharacterComparisonInputTooLargeError(
+                            "character_batch_required_context_input_limit_exceeded"
+                        )
+                        failures.extend(_candidate_failure(item.candidate_ref, error)
+                                        for item in candidates[cursor + index:])
+                        cursor = len(candidates)
+                        break
                     failures.append(_candidate_failure(candidate.candidate_ref, exc))
             cursor += len(segment)
             continue
 
         by_ref = {decision.candidate_ref: decision for decision in result.decisions}
         for candidate in segment:
+            previous_entries = state.entries
             decisions.append(
                 _apply_and_map_decision(
                     state,
@@ -340,6 +406,10 @@ async def execute_character_fact_comparison_batch(
                     candidate,
                     by_ref[candidate.candidate_ref],
                 )
+            )
+            advisory_current_context = project_advisory_narrative_time(
+                advisory_current_context, candidate, by_ref[candidate.candidate_ref],
+                fact_type=canonical_fact_type, previous_entries=previous_entries,
             )
         cursor += len(segment)
     return CharacterFactBatchExecutionResult(
@@ -370,21 +440,23 @@ class CharacterFactComparisonPipeline:
         lease_token: UUID,
         analysis_context: WorkerAnalysisContext | None = None,
         continue_on_candidate_failure: bool = False,
+        analysis_source: WorkerAnalysisSource | None = None,
     ) -> CharacterFactComparisonRunResult:
         """Prefer atomic ordered batches, retaining the legacy endpoint for rollout."""
 
         if hasattr(self.spring_client, "claim_next_character_fact_comparison_batch"):
             return await self._process_all_batches(
-                analysis_job_id, lease_token, analysis_context, continue_on_candidate_failure,
+                analysis_job_id, lease_token, analysis_context, continue_on_candidate_failure, analysis_source,
             )
         if analysis_context is not None:
             raise ComparisonValidationError("Ordered analysis requires the character batch API.")
-        return await self._process_all_legacy_candidates(analysis_job_id, lease_token)
+        return await self._process_all_legacy_candidates(analysis_job_id, lease_token, analysis_source)
 
     async def _process_all_legacy_candidates(
         self,
         analysis_job_id: UUID,
         lease_token: UUID,
+        analysis_source: WorkerAnalysisSource | None = None,
     ) -> CharacterFactComparisonRunResult:
 
         completed_count = 0
@@ -404,7 +476,7 @@ class CharacterFactComparisonPipeline:
             failure_code = await self._process_claimed_candidate(
                 analysis_job_id,
                 lease_token,
-                claimed.candidate_id,
+                claimed.candidate_id, analysis_source,
             )
             if failure_code is None:
                 completed_count += 1
@@ -419,6 +491,7 @@ class CharacterFactComparisonPipeline:
         lease_token: UUID,
         analysis_context: WorkerAnalysisContext | None = None,
         continue_on_candidate_failure: bool = False,
+        analysis_source: WorkerAnalysisSource | None = None,
     ) -> CharacterFactComparisonRunResult:
         completed_count = 0
         failed_count = 0
@@ -451,6 +524,7 @@ class CharacterFactComparisonPipeline:
             batch_count += 1
             if batch.analysis_context != analysis_context:
                 raise ComparisonValidationError("Character batch does not match the claimed input state.")
+            validate_comparison_source(batch.source, analysis_context, analysis_source)
             max_candidates_per_batch = max(max_candidates_per_batch, len(batch.candidates))
             try:
                 stats = await self._compare_batch_with_fresh_context(
@@ -488,9 +562,9 @@ class CharacterFactComparisonPipeline:
                     batch.comparison_batch_id,
                     len(batch.candidates),
                 )
-                if analysis_context is not None and not (
+                if isinstance(exc, LlmInputTokenCountError) or (analysis_context is not None and not (
                     continue_on_candidate_failure and is_candidate_comparison_failure(exc)
-                ):
+                )):
                     raise
                 continue
 
@@ -540,6 +614,8 @@ class CharacterFactComparisonPipeline:
                 ordered_context=context.analysis_context is not None,
                 unresolved_references=(tuple(context.analysis_context.unresolved_references)
                                        if context.analysis_context else ()),
+                protected_slots=context.protected_slots,
+                advisory_current_context=context.advisory_current_context,
             )
             decisions = execution.decisions
             failures = execution.failures
@@ -601,12 +677,13 @@ class CharacterFactComparisonPipeline:
         analysis_job_id: UUID,
         lease_token: UUID,
         candidate_id: UUID,
+        analysis_source: WorkerAnalysisSource | None = None,
     ) -> AnalysisFailureCode | None:
         try:
             await self._compare_with_fresh_context(
                 analysis_job_id,
                 lease_token,
-                candidate_id,
+                candidate_id, analysis_source,
             )
             return None
         except AiTokenQuotaExhaustedError as exc:
@@ -617,6 +694,8 @@ class CharacterFactComparisonPipeline:
                 (str(exc) or exc.__class__.__name__)[:1000],
                 AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
             )
+            raise
+        except OrderedInputContextError:
             raise
         except Exception as exc:
             error_message = (str(exc) or exc.__class__.__name__)[:1000]
@@ -633,6 +712,8 @@ class CharacterFactComparisonPipeline:
                 analysis_job_id,
                 candidate_id,
             )
+            if isinstance(exc, LlmInputTokenCountError):
+                raise
             return failure_code
 
     async def _compare_with_fresh_context(
@@ -640,6 +721,7 @@ class CharacterFactComparisonPipeline:
         analysis_job_id: UUID,
         lease_token: UUID,
         candidate_id: UUID,
+        analysis_source: WorkerAnalysisSource | None = None,
     ) -> None:
         for attempt in range(1, self.max_context_attempts + 1):
             context = await self.spring_client.get_character_fact_comparison_context(
@@ -647,10 +729,14 @@ class CharacterFactComparisonPipeline:
                 candidate_id,
                 lease_token,
             )
+            validate_comparison_source(context.candidate.source, None, analysis_source)
             decision, raw_comparison_json = await self.comparator.compare(
                 context.candidate,
                 context.snapshot_entries,
                 context.prior_candidates,
+                **({"protected_slots": context.protected_slots} if context.protected_slots else {}),
+                **({"advisory_current_context": context.advisory_current_context}
+                   if context.advisory_current_context is not None else {}),
             )
             entries_by_ref = {
                 f"P{index}": entry for index, entry in enumerate(context.snapshot_entries, start=1)
@@ -681,6 +767,8 @@ class CharacterFactComparisonPipeline:
                 proposed_fact_value=proposed_fact_value,
                 proposed_value_json=decision.proposed_value_json,
                 temporal_scope=decision.temporal_scope,
+                advance_current_narrative_time=decision.advance_current_narrative_time,
+                effective_from_episode_no=decision.effective_from_episode_no,
                 comparison_reason=decision.comparison_reason,
                 context_token=context.context_token,
                 # P1/P2는 한 번의 provider 요청에서만 유효한 임시 참조다. DB 감사 원문에는
@@ -770,7 +858,7 @@ def _to_projection_entry(
     )
 
 
-def _largest_fitting_segment(
+async def _largest_fitting_segment(
     comparator: CharacterFactBatchComparator,
     *,
     matched_character_name: str,
@@ -780,21 +868,40 @@ def _largest_fitting_segment(
     start: int,
     ordered_context: bool = False,
     unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
+    advisory_current_context=None,
 ) -> list[WorkerCharacterFactComparisonBatchCandidate]:
-    segment: list[WorkerCharacterFactComparisonBatchCandidate] = []
-    for candidate in candidates[start:]:
-        proposed = [*segment, candidate]
-        if not comparator.batch_fits(
+    async def fits(segment):
+        result = comparator.batch_fits(
             matched_character_name=matched_character_name,
             canonical_fact_type=canonical_fact_type,
-            candidates=proposed,
+            candidates=segment,
             snapshot_entries=state.entries,
             **({"ordered_context": True} if ordered_context else {}),
             **({"unresolved_references": unresolved_references} if unresolved_references else {}),
-        ):
-            break
-        segment = proposed
-    return segment
+            **({"protected_slots": state.protected_slots} if state.protected_slots else {}),
+            **({"advisory_current_context": advisory_current_context} if advisory_current_context is not None else {}),
+        )
+        return await result if isawaitable(result) else result
+
+    remaining = candidates[start:]
+    if await fits(remaining):
+        return remaining
+    # Prefix payloads grow in source order; count only logarithmically many on overflow.
+    low, high = 0, len(remaining) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if await fits(remaining[:middle]):
+            low = middle
+        else:
+            high = middle - 1
+    return remaining[:low]
+
+
+async def _mandatory_context_fits(comparator, *, state, **kwargs) -> bool:
+    check = getattr(comparator, "mandatory_context_fits", None)
+    # Existing injected comparators may only expose batch_fits; no shared-context guess.
+    result = check(snapshot_entries=state.entries, protected_slots=state.protected_slots, **kwargs) if check else True
+    return await result if isawaitable(result) else result
 
 
 def _apply_and_map_decision(
@@ -812,6 +919,7 @@ def _apply_and_map_decision(
         candidate_value_json=candidate.value_json,
         decision=decision,
         source_episode_no=candidate.source_episode_no,
+        source=candidate.source,
     )
     return WorkerCharacterFactComparisonBatchDecision(
         candidate_ref=candidate.candidate_ref,
@@ -823,6 +931,8 @@ def _apply_and_map_decision(
         proposed_fact_value=decision.proposed_fact_value,
         proposed_value_json=decision.proposed_value_json,
         temporal_scope=decision.temporal_scope,
+        advance_current_narrative_time=decision.advance_current_narrative_time,
+        effective_from_episode_no=decision.effective_from_episode_no,
         comparison_reason=decision.comparison_reason,
         raw_comparison_json=_without_request_local_refs(
             decision.model_dump(mode="json")

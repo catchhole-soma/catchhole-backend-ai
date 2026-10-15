@@ -557,9 +557,9 @@ def test_fixed_runtime_reuses_character_dedupe_and_world_consolidation() -> None
     assert bundle.comparison_model == "comparison-model"
     assert bundle.character_schema_hash is not None
     assert bundle.prompt_versions["characterExtraction"] == "setting-extraction:v12"
-    assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v4"
+    assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v10"
     assert bundle.prompt_versions["worldExtraction"] == "world-setting-extraction:v4"
-    assert bundle.prompt_versions["worldComparison"] == "world-setting-comparison-batch:v11"
+    assert bundle.prompt_versions["worldComparison"] == "world-setting-comparison-batch:v15"
 
 
 @pytest.mark.parametrize("retry_succeeds", [True, False])
@@ -1515,7 +1515,7 @@ def test_fixed_runtime_orders_batch_by_evidence_and_maps_q_refs() -> None:
     ]
 
 
-def test_oracle_runtime_restarts_projection_at_spring_candidate_batch_boundary() -> None:
+def test_oracle_runtime_keeps_full_logical_group_without_candidate_count_cap() -> None:
     scenario = ScenarioGold(
         scenario_id="S1",
         episode_no=1,
@@ -1570,7 +1570,7 @@ def test_oracle_runtime_restarts_projection_at_spring_candidate_batch_boundary()
         run_multi_stage_predictions(
             GoldSnapshotV3(
                 dataset_version="v3",
-                name="bounded character batches",
+                name="unbounded character logical group",
                 scenarios=[scenario],
                 stage1=stage1,
                 stage2=stage2,
@@ -1584,10 +1584,7 @@ def test_oracle_runtime_restarts_projection_at_spring_candidate_batch_boundary()
         )
     )
 
-    assert comparator.calls == [
-        ([f"C{index}" for index in range(1, 11)], []),
-        (["C1"], []),
-    ]
+    assert comparator.calls == [([f"C{index}" for index in range(1, 12)], [])]
     assert len(bundle.scenarios[0].stage2) == 11
 
 
@@ -2318,7 +2315,6 @@ class _OracleCharacterComparator:
 
 
 class _OraclePatternKeyComparator:
-    batch_max_candidates = 10
 
     def __init__(self) -> None:
         self.seen_key_handoff = None
@@ -2856,7 +2852,6 @@ class _CanonicalKeyCapturingComparator(_AddCharacterComparator):
 
 
 class _BatchCapturingCharacterComparator(_AddCharacterComparator):
-    batch_max_candidates = 10
 
     def __init__(self) -> None:
         self.calls: list[tuple[list[str], list[str]]] = []

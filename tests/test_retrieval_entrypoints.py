@@ -42,7 +42,7 @@ def test_new_and_resumed_analysis_prepares_without_replacing_analysis_chunks(
         retrieval_preparation_enabled=enabled,
         retrieval_preparer=SimpleNamespace(prepare=prepare),
     )
-    payload = SimpleNamespace(work_id=uuid4(), episode=SimpleNamespace(episode_id=uuid4()))
+    payload = SimpleNamespace(source_kind="EPISODE", work_id=uuid4(), episode=SimpleNamespace(episode_id=uuid4()))
     result, metrics = asyncio.run(
         worker._run_chunk_stage(payload, AnalysisJobCheckpointStage.CHUNKS_READY)
     )

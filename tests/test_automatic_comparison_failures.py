@@ -171,21 +171,26 @@ def test_automatic_world_rejects_frozen_context_change_with_non_deferrable_failu
 
 
 @pytest.mark.parametrize("automatic", [False, True])
-def test_ordered_oversized_singleton_reports_blocking_failure_without_next_claim(automatic):
+def test_ordered_oversized_candidates_complete_with_exact_typed_failure_coverage(automatic):
     context = _input_context()
     first = _batch().model_copy(update={"analysis_context": context})
     spring = FakeBatchSpring(first, _context(first).model_copy(update={"analysis_context": context}))
-    spring.batches.append(first.model_copy(update={"comparison_batch_id": uuid4()}))
     comparator = FakeBatchComparator([], max_candidates_per_call=0)
-    with pytest.raises(OrderedInputContextError, match="character_batch_input_limit_exceeded"):
-        asyncio.run(CharacterFactComparisonPipeline(spring, comparator).process_all(
-            uuid4(), uuid4(), analysis_context=context, continue_on_candidate_failure=automatic,
-        ))
+    async def run():
+        return await CharacterFactComparisonPipeline(spring, comparator).process_all(
+            uuid4(), uuid4(), analysis_context=context, continue_on_candidate_failure=automatic)
+    if automatic:
+        result = asyncio.run(run())
+        assert result.completed_count == 0 and result.failed_count == 2
+    else:
+        with pytest.raises(OrderedAnalysisIncompleteError):
+            asyncio.run(run())
     assert comparator.calls == []
-    assert spring.completions == []
-    assert len(spring.batches) == 1
-    assert len(spring.failures) == 1
-    assert spring.failures[0][-1] == "UNEXPECTED_ERROR"
+    assert len(spring.completions) == 1
+    assert spring.completions[0].decisions == []
+    assert [row.candidate_ref for row in spring.completions[0].failures] == ["C1", "C2"]
+    assert all(row.failure_code == "COMPARISON_VALIDATION_FAILED" for row in spring.completions[0].failures)
+    assert spring.failures == []
 
 
 def test_automatic_character_does_not_fallback_after_wrapped_lease_failure():

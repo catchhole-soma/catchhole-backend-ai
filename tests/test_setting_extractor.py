@@ -78,6 +78,29 @@ def _valid_discovery_payload(*, provider_payload: bool = False) -> dict:
     return payload
 
 
+def test_same_call_extraction_preserves_distinct_fact_and_reference_time() -> None:
+    payload = _valid_setting_payload(provider_payload=True)
+    payload["narrative_time"] = {
+        "fact_time": {"description": "208년 사고", "evidence_spans": [
+            {"quote": "208년 사고", "start_offset": 0, "end_offset": 7}]},
+        "reference_time": {"description": "장마 첫날 관측", "evidence_spans": [
+            {"quote": "장마 첫날", "start_offset": 9, "end_offset": 14}]},
+    }
+    client = InvalidPayloadThenEmptyClient(payload)
+    extractor = CharacterSettingExtractor(llm_client=client, max_attempts=2)
+    result = _extract(extractor, source_chunk_id=CHUNK_ID,
+                      chunk_text="208년 사고. 장마 첫날 Synthetic Character reached level 12.",
+                      schema_hints=DEFAULT_SCHEMA_HINTS)
+
+    # Dropping the optional timing metadata must not silently discard the setting.
+    assert len(result.candidates) == 1
+    time = result.candidates[0].model_dump()["narrative_time"]
+    assert time["fact_time"]["description"] == "208년 사고"
+    assert time["reference_time"]["description"] == "장마 첫날 관측"
+    assert time["reference_time"]["evidence_spans"][0]["start_offset"] == 9
+    assert client.call_count == 1
+
+
 def test_extract_from_chunk_parses_llm_json_result(tmp_path) -> None:
     # Provider 출력에 없는 source_chunk_id를 Worker 입력 ID로 결합한다.
     prompt_path = tmp_path / "prompt.md"

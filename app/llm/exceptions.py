@@ -1,6 +1,10 @@
 from httpx import Response
 
 
+class LlmInputTokenCountError(RuntimeError):
+    """An exact input count could not be verified; generation must not proceed."""
+
+
 class LlmResponseValidationError(ValueError):
     """사용량이 포함된 성공 응답의 텍스트 구조가 계약을 위반한 경우다."""
 
