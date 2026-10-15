@@ -31,6 +31,7 @@ from app.chatbot.hybrid_prompts import ANSWER_PROMPT, ANSWER_VERSION, PLAN_PROMP
 from app.chatbot.hybrid_grounding import resolve_support_references
 from app.chatbot.providers import ChatEmbeddingClient
 from app.chatbot.qa import ChatQaHandler, _Session, response_schema
+from app.chatbot.qa_prompts import FIELD_VERSION
 from app.chatbot.qa_render import (
     AnswerRow,
     current_changed,
@@ -123,7 +124,9 @@ class _QueryEmbedding:
 class HybridQaHandler(ChatQaHandler):
     def __init__(self, delegate, search, embedding, settings=None, hybrid=None, metrics=None):
         self.metrics = metrics or HybridMetrics()
-        super().__init__(ObservedTextClient(delegate, self.metrics, PLAN_VERSION), settings)
+        super().__init__(
+            ObservedTextClient(delegate, self.metrics, (PLAN_VERSION, FIELD_VERSION)), settings
+        )
         self.search, self.embedding = search, embedding
         self.hybrid = hybrid or HybridSettings()
 

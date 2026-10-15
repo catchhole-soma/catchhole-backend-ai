@@ -509,7 +509,12 @@ def test_condition_batches_leave_one_call_for_grounded_answer(
         ]
 
     result = asyncio.run(
-        replay(tmp_path, case, spring_setup=setup, config={"max_output_tokens": 128})
+        replay(
+            tmp_path,
+            case,
+            spring_setup=setup,
+            config={"max_output_tokens": 128, "answer_max_output_tokens": 128},
+        )
     )
     assert result["finish"]["failure"] is None
     assert result["finish"]["result"]["outcome"] == "ANSWER"

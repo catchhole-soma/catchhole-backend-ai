@@ -158,7 +158,7 @@ class RegisteredSynthesis:
                 batch[ref] = rows
                 # Leave room for a short verdict, references and explanation per item.
                 if not self.fits(prompt, payload(), schema) or (
-                    len(batch) > 1 and len(batch) * 100 > self.cfg.max_output_tokens
+                    len(batch) > 1 and len(batch) * 100 > self.cfg.output_tokens_for("CHAT_ANSWER")
                 ):
                     del batch[ref]
                     break

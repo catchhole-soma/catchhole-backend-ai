@@ -8,13 +8,23 @@ import unicodedata
 
 from app.chatbot.qa_prompts import FIELD_PROMPT, FIELD_VERSION
 from app.chatbot.qa_collection import CATEGORY_LABELS
-from app.chatbot.qa_render import AnswerRow, message, render_character_list, safe_text
+from app.chatbot.qa_render import (
+    AnswerRow,
+    current_changed,
+    message,
+    render_character_list,
+    safe_text,
+)
 from app.clients.setting_tools_client import SettingToolClientError
 from app.schemas.chat_qa import FieldSelection, SettingFocus
 
 
 def normalized(value):
     return unicodedata.normalize("NFC", value.strip()).casefold()
+
+
+def _field_key(item):
+    return item.category, item.scope_name, item.setting_key
 
 
 WORLD_CATEGORY_NAME_SUFFIXES = {
@@ -123,6 +133,7 @@ class FocusedLookup:
         reserve=0,
         condition=False,
         world_category=None,
+        current_items=(),
     ):
         items, complete = await self.pages(
             f"{domain}_FIELDS",
@@ -139,6 +150,17 @@ class FocusedLookup:
                 "설정 항목을 모두 확인하지 못했습니다. 조회할 유형이나 항목을 좁혀 주세요.",
                 self.codes,
             )
+        if current_items:
+            # Bounded FIELD responses contain only historical paths. Add the
+            # already-read current paths, projecting metadata only in payload().
+            merged = {_field_key(item): item for item in items}
+            for item in current_items:
+                if not item.category or not item.setting_key:
+                    raise SettingToolClientError("CONTRACT_ERROR")
+                merged[_field_key(item)] = item
+            items = [
+                merged[key] for key in sorted(merged, key=lambda key: tuple(v or "" for v in key))
+            ]
         if not items:
             self.lookup_gaps.add("NO_FIELDS")
             return [], None
@@ -207,18 +229,49 @@ class FocusedLookup:
     async def subject_rows(self, subject, target, modes, *, reserve=0):
         focus = subject.focus if "focus" in subject.model_fields_set else None
         filters = [{}]
+        cached_current = None
+        current_check_rows = []
+        guard_reserve = 0
         if focus:
             filters = [{"fact_type": focus.fact_type}]
             if focus.attribute:
+                mixed_range = (
+                    "CURRENT" in modes
+                    and "HISTORY" in modes
+                    and (self.source_from is not None or self.source_to is not None)
+                )
+                if mixed_range:
+                    # Keep room for bounded field discovery, one history page,
+                    # and a current-version check after field interpretation.
+                    cached_current, complete = await self.pages(
+                        f"{subject.domain}_CURRENT",
+                        target=target,
+                        fact_type=focus.fact_type,
+                        exhaustive=True,
+                        reserve=reserve + 3,
+                    )
+                    if not complete:
+                        return message(
+                            "CLARIFICATION",
+                            "설정 항목을 모두 확인하지 못했습니다. 조회할 유형이나 항목을 좁혀 주세요.",
+                            self.codes,
+                        )
+                    guard_reserve = 1
                 fields, stop = await self.fields(
                     subject.domain,
                     target,
                     focus,
-                    history=modes == ["HISTORY"],
-                    reserve=reserve,
+                    history=modes == ["HISTORY"] or mixed_range,
+                    reserve=reserve + guard_reserve,
+                    current_items=cached_current or (),
                 )
                 if stop:
                     return stop
+                if cached_current is not None:
+                    selected_paths = {_field_key(item) for item in fields}
+                    cached_current = [
+                        item for item in cached_current if _field_key(item) in selected_paths
+                    ]
                 filters = [
                     {
                         "fact_type": item.category if subject.domain == "CHARACTER" else None,
@@ -230,16 +283,19 @@ class FocusedLookup:
         for mode in modes:
             collected = []
             complete = True
-            for arguments in filters:
-                items, page_complete = await self.pages(
-                    f"{subject.domain}_{mode}",
-                    target=target,
-                    exhaustive=focus is not None,
-                    reserve=reserve,
-                    **arguments,
-                )
-                complete = complete and page_complete
-                collected.extend(items)
+            if mode == "CURRENT" and cached_current is not None:
+                collected = cached_current
+            else:
+                for arguments in filters:
+                    items, page_complete = await self.pages(
+                        f"{subject.domain}_{mode}",
+                        target=target,
+                        exhaustive=focus is not None,
+                        reserve=reserve + guard_reserve,
+                        **arguments,
+                    )
+                    complete = complete and page_complete
+                    collected.extend(items)
             if filters and not collected and complete:
                 self.lookup_gaps.add("NO_VALUES")
             if mode == "HISTORY":
@@ -253,9 +309,16 @@ class FocusedLookup:
                 if focus is None and len(self.rows) >= self.cfg.max_items:
                     self.codes.append("PARTIAL_RESULTS")
                     break
-                self.rows.append(AnswerRow(f"R{len(self.rows) + 1}", item, subject.domain))
+                row = AnswerRow(f"R{len(self.rows) + 1}", item, subject.domain)
+                self.rows.append(row)
+                if mode == "CURRENT" and cached_current is not None:
+                    current_check_rows.append(row)
                 if focus is not None:
                     self.focused_refs.add(self.rows[-1].ref)
+        # Cached rows were fetched before the FIELD model call. Protect FACTS
+        # rendering too; summary/hybrid synthesis keeps its later final check.
+        if current_check_rows and not await self.current_subjects_unchanged(current_check_rows):
+            return current_changed(self.codes)
         return None
 
     async def character_list(self, plan):

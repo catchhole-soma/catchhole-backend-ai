@@ -63,14 +63,15 @@ class HybridMetrics:
 
 
 class ObservedTextClient:
-    def __init__(self, delegate, metrics, plan_version):
-        self.delegate, self.metrics, self.plan_version = delegate, metrics, plan_version
+    def __init__(self, delegate, metrics, interpretation_versions):
+        self.delegate, self.metrics = delegate, metrics
+        self.interpretation_versions = frozenset(interpretation_versions)
 
     async def create_text_response(self, *args, **kwargs):
         # Called by ChatTextClient only after Execution.call reserved the invocation.
         purpose = (
             "CHAT_INTERPRETATION"
-            if kwargs.get("prompt_cache_key") == self.plan_version
+            if kwargs.get("prompt_cache_key") in self.interpretation_versions
             else "CHAT_ANSWER"
         )
         self.metrics.model_calls.labels(purpose).inc()
