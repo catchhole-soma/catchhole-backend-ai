@@ -33,6 +33,7 @@ from app.chatbot.providers import ChatEmbeddingClient
 from app.chatbot.qa import ChatQaHandler, _Session, response_schema
 from app.chatbot.qa_render import (
     AnswerRow,
+    current_changed,
     message,
     notices,
     render_answer,
@@ -152,9 +153,14 @@ class HybridQaHandler(ChatQaHandler):
                     else "NETWORK_FAILURE"
                 )
         except SettingToolClientError as exc:
-            result = Finish(
-                failure="EXECUTION_LIMIT_EXCEEDED" if exc.status_code == 429 else "NETWORK_FAILURE"
-            )
+            if exc.code == "CONCURRENT_UPDATE" or exc.status_code == 409:
+                result = current_changed(session.codes)
+            else:
+                result = Finish(
+                    failure="EXECUTION_LIMIT_EXCEEDED"
+                    if exc.status_code == 429
+                    else "NETWORK_FAILURE"
+                )
         except ProviderFailure:
             result = Finish(failure="PROVIDER_FAILURE")
         finally:
@@ -276,8 +282,17 @@ class _HybridSession(_Session):
             self.fallback_direct_checks,
             (len({e.direct_ref for e in self.evidences if e.direct_ref}) if direct_checks else 0),
         )
-        return self.tool_count + cost + reserved + len(self.collection_checks) <= min(
+        reserved += len(self.collection_checks) + self.current_check_count()
+        return self.tool_count + cost + reserved <= min(
             self.cfg.max_tool_calls, self.execution.context.max_tool_calls
+        )
+
+    def current_check_count(self):
+        # Collection read tokens already protect all selected subjects together.
+        if self.plan is not None and self.plan.collection is not None:
+            return 0
+        return len(
+            {(row.domain, row.item.subject_id) for row in self.chosen if row.item.kind == "CURRENT"}
         )
 
     def models_available(self, *, embedding=False):
@@ -427,7 +442,10 @@ class _HybridSession(_Session):
         # search -> receipt -> final revalidation -> final receipt path.
         await self.evidence(
             self.chosen,
-            reserve=3 * self.hcfg.max_rounds + 2 + len(self.collection_checks),
+            reserve=3 * self.hcfg.max_rounds
+            + 2
+            + len(self.collection_checks)
+            + self.current_check_count(),
             revalidate=True,
         )
         self.add_direct_evidence()
@@ -533,13 +551,14 @@ class _HybridSession(_Session):
         if self.has_collection_condition and (
             self.uncertain_condition_rows() or not self.confirmed_condition_rows()
         ):
-            await self.revalidate_collection()
+            await self.revalidate_settings()
             return message(
                 "INSUFFICIENT_EVIDENCE",
                 "현재 등록 자료로 질문의 조건에 해당하는 대상을 확정하지 못해 관련 원문 설명을 보류했습니다.",
                 self.codes,
             )
         if plan.per_item and self.chosen:
+            await self.revalidate_settings()
             names = ", ".join(
                 dict.fromkeys(safe_text(r.item.display_name or "설정") for r in self.chosen)
             )
@@ -633,7 +652,12 @@ class _HybridSession(_Session):
                 if plan.rdb_mode == "CURRENT_AND_HISTORY"
                 else ["HISTORY" if plan.rdb_mode == "HISTORY" else "CURRENT"]
             )
-            stop = await self.subject_rows(subject, item.subject_id, modes, reserve=4)
+            stop = await self.subject_rows(
+                subject,
+                item.subject_id,
+                modes,
+                reserve=4 + (len(plan.subjects) if "CURRENT" in modes else 0),
+            )
             if stop:
                 return stop
         self.chosen, stop = await self.select_rows(plan, allow_missing=True)
@@ -659,7 +683,11 @@ class _HybridSession(_Session):
             )
             for row in originals
         ]
-        await self.evidence(direct_rows, reserve=4 + len(self.collection_checks), revalidate=True)
+        await self.evidence(
+            direct_rows,
+            reserve=4 + len(self.collection_checks) + self.current_check_count(),
+            revalidate=True,
+        )
         for original, fetched in zip(originals, direct_rows, strict=True):
             original.evidence.extend(fetched.evidence)
         self.add_direct_evidence()
@@ -791,7 +819,7 @@ class _HybridSession(_Session):
                 "확인할 항목이나 유형을 좁혀 주세요.",
                 self.codes + ["ANSWER_LIMIT"],
             )
-        await self.revalidate_collection()
+        await self.revalidate_settings()
         return message(
             "INSUFFICIENT_EVIDENCE",
             text + "\n작품 전체에 해당 사실이 없다는 뜻은 아닙니다.",
@@ -1452,7 +1480,7 @@ class _HybridSession(_Session):
                 "답변 근거를 검증할 수 없습니다.",
                 self.codes + ["INVALID_QUOTE"],
             )
-        await self.revalidate_collection()
+        await self.revalidate_settings()
         chunks = [e.chunk for e in evidence if e.chunk]
         if chunks:
             self.consume("revalidate")
@@ -1607,8 +1635,7 @@ class _HybridSession(_Session):
             )
         )
 
-    async def revalidate_collection(self):
-        for request, metadata in self.collection_checks:
-            await self.query(
-                request.model_copy(update={"page": 0, "size": 1, "read_token": metadata.read_token})
-            )
+    async def revalidate_settings(self):
+        await self.revalidate_collections()
+        if self.current_check_count() and not await self.current_subjects_unchanged(self.chosen):
+            raise SettingToolClientError("CONCURRENT_UPDATE")

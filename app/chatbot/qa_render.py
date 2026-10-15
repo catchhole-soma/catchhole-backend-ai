@@ -94,6 +94,14 @@ def message(outcome: str, text: str, codes: list[str]) -> Finish:
     )
 
 
+def current_changed(codes: list[str]) -> Finish:
+    return message(
+        "INSUFFICIENT_EVIDENCE",
+        "조회 도중 현재 설정이 변경돼 결과를 확정하지 못했어요. 다시 질문하면 최신 설정으로 확인할게요.",
+        codes + ["CURRENT_CHANGED"],
+    )
+
+
 def setting_label(item: SettingToolItem) -> str:
     name = item.display_name or "설정"
     return safe_text(f"{item.scope_name} · {name}" if item.scope_name else name)

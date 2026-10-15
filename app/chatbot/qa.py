@@ -14,7 +14,7 @@ from app.chatbot.qa_lookup import FocusedLookup
 from app.chatbot.qa_collection import WorkLookup
 from app.chatbot.qa_synthesis import RegisteredSynthesis
 from app.chatbot.qa_prompts import PLAN_PROMPT, PLAN_VERSION, SELECT_PROMPT, SELECT_VERSION
-from app.chatbot.qa_render import AnswerRow, message, render_answer
+from app.chatbot.qa_render import AnswerRow, current_changed, message, render_answer
 from app.chatbot.qa_validation import RULES, ResponseValidationFailure, retry_feedback
 from app.chatbot.runtime import Execution, ProviderFailure, ProviderOutputTruncated
 from app.clients.setting_tools_client import SettingToolClientError
@@ -614,11 +614,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             result = await self.registered_answer(plan, chosen)
             if current_checks and not await self.current_subjects_unchanged(chosen):
                 self.codes.append("CURRENT_CHANGED")
-                return message(
-                    "INSUFFICIENT_EVIDENCE",
-                    "답변을 준비하는 동안 현재 설정이 변경됐어요. 다시 질문하면 최신 설정으로 확인할게요.",
-                    self.codes + ["CURRENT_CHANGED"],
-                )
+                return current_changed(self.codes)
             return result
         return render_answer(
             chosen,

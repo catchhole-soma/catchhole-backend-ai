@@ -2,7 +2,7 @@
 
 import json
 
-from app.chatbot.qa_render import AnswerRow, message, safe_text, setting_label
+from app.chatbot.qa_render import AnswerRow, current_changed, message, safe_text, setting_label
 from app.chatbot.qa_synthesis import logical_groups
 from app.clients.setting_tools_client import SettingToolClientError
 from app.schemas.chat_qa import SettingFocus
@@ -113,11 +113,7 @@ class WorkLookup:
             return result
         except SettingToolClientError as exc:
             if exc.code == "CONCURRENT_UPDATE" or exc.status_code == 409:
-                return message(
-                    "INSUFFICIENT_EVIDENCE",
-                    "조회 도중 설정이 변경돼 결과를 확정하지 못했어요. 다시 질문하면 최신 설정으로 확인할게요.",
-                    self.codes + ["CURRENT_CHANGED"],
-                )
+                return current_changed(self.codes)
             raise
 
     async def _answer_collection(self, plan):

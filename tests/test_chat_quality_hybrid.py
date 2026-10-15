@@ -164,7 +164,11 @@ def test_each_skill_is_retained_when_sources_only_prove_use_not_acquisition(tmp_
     assert NOTICES["NO_SEARCH_EVIDENCE"] in actual["limitations"]
     assert len(result["raw"].requests) == 2  # Planner + grounded answer; no lossy row selector.
     assert [r["rowRef"] for r in result["raw"].requests[1]["input"]["rows"]] == ["R1", "R2", "R3"]
-    assert result["spring"].queries[-1]["factType"] == "SKILL"
+    current = [q for q in result["spring"].queries if q["tool"] == "CHARACTER_CURRENT"]
+    assert len(current) == 2
+    assert current[0]["factType"] == "SKILL"
+    assert current[1]["targetId"] == current[0]["targetId"]
+    assert current[1]["factType"] is None and current[1]["size"] == 1
     assert "revalidate" not in result["search"].calls
     assert len(result["spring"].receipts) == 1
     assert len(result["spring"].reservations) == len(result["spring"].reports) == 2
@@ -279,7 +283,7 @@ def test_oversized_per_item_request_clarifies_before_search_or_answer_generation
 @pytest.mark.parametrize("changed", [False, True])
 def test_focused_pagination_leaves_budget_to_revalidate_partial_answer(tmp_path, changed):
     case = skill_case()
-    draft = item_answer(7, text="스승에게 합성기술001을 배웠습니다.")
+    draft = item_answer(6, text="스승에게 합성기술001을 배웠습니다.")
     case["outputs"].append(draft)
 
     def after_generation(count, spring, search):
@@ -300,9 +304,18 @@ def test_focused_pagination_leaves_budget_to_revalidate_partial_answer(tmp_path,
     )
     actual = finished(result)
     assert result["search"].calls == ["keyword", "revalidate"]
+    # Find + six pages + final current check; the same 12-call budget also
+    # preserves search, receipt, source revalidation and the final receipt.
+    assert len(result["spring"].queries) == 8
+    current = [q for q in result["spring"].queries if q["tool"] == "CHARACTER_CURRENT"]
+    assert [q["page"] for q in current[:-1]] == list(range(6))
+    assert all(q["factType"] == "SKILL" for q in current[:-1])
+    assert current[-1]["targetId"] == current[0]["targetId"]
+    assert current[-1]["factType"] is None and current[-1]["size"] == 1
+    assert len(result["raw"].requests[-1]["input"]["items"]) == 6
     assert (
-        len(result["spring"].queries) == 8
-    )  # Find + seven pages; four final-source operations remain.
+        len(result["spring"].queries) + len(result["search"].calls) + len(result["spring"].receipts)
+    ) <= 12
     assert len(result["raw"].requests) == 2
     assert result["embedding"].inputs == []
     if changed:
@@ -311,7 +324,8 @@ def test_focused_pagination_leaves_budget_to_revalidate_partial_answer(tmp_path,
         assert len(result["spring"].receipts) == 1
     else:
         assert actual["outcome"] == "ANSWER"
-        assert "합성기술007" in actual["text"] and "합성기술008" not in actual["text"]
+        assert "합성기술006" in actual["text"]
+        assert "합성기술007" not in actual["text"] and "합성기술008" not in actual["text"]
         assert NOTICES["PARTIAL_RESULTS"] in actual["limitations"]
         assert NOTICES["PARTIAL_ANSWER"] not in actual["limitations"]
         assert "관련 자료를 모두 검토한 결과는 아니에요" not in actual["text"]
@@ -377,11 +391,18 @@ def test_direct_partial_survives_search_budget_stop_and_rechecks_its_original_so
         )
     )
     actual = finished(result)
-    assert result["search"].calls == ["keyword", "keyword", "keyword", "neighbors"]
+    assert result["search"].calls == ["keyword", "keyword", "neighbors"]
     assert len(result["raw"].requests) == 3 and result["embedding"].inputs == []
     direct_queries = [q for q in result["spring"].queries if q["tool"] == "CHARACTER_EVIDENCE"]
     assert [q["targetId"] for q in direct_queries].count(uid(801)) == 2
     assert direct_queries[-1]["targetId"] == uid(801)
+    current = [q for q in result["spring"].queries if q["tool"] == "CHARACTER_CURRENT"]
+    assert len(current) == 2
+    assert current[-1]["targetId"] == current[0]["targetId"]
+    assert current[-1]["size"] == 1 and current[-1]["factType"] is None
+    assert (
+        len(result["spring"].queries) + len(result["search"].calls) + len(result["spring"].receipts)
+    ) <= 12
     assert len(result["spring"].receipts) == 1  # Discarded search evidence is never published.
     if changed:
         assert actual["outcome"] == "INSUFFICIENT_EVIDENCE"
