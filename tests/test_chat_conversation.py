@@ -59,6 +59,9 @@ def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, 
         long_history(spring)
         spring.catalog[0]["current"][0]["value"] = "화염구 " + "현재 능력 설명 " * 200
         spring.catalog[0]["current"][1]["value"] = "현재 다른 설정 " * 180
+        spring.catalog[0]["current"][1]["structuredValueJson"] = json.dumps(
+            {"description": "추가 현재 설명 " * 100}, ensure_ascii=False
+        )
 
     def run(budget):
         if engine == "rdb":
@@ -219,14 +222,14 @@ def test_history_cannot_widen_server_episode_range():
     assert not result["queries"]
 
 
-def test_truncated_history_is_disclosed():
+def test_truncated_history_is_disclosed_to_model_without_unrelated_success_notice():
     c = case()
     result = asyncio.run(
         replay_case(
             c, FIXTURE["catalogs"][c["catalog"]], spring_setup=lambda s: history(s, truncated=True)
         )
     )
-    assert any("대화 일부만" in x for x in result["finish"]["result"]["limitations"])
+    assert not any("대화 일부만" in x for x in result["finish"]["result"]["limitations"])
     assert result["modelRequests"][1]["input"]["conversationTruncated"] is True
 
 

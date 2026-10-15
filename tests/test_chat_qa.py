@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.chatbot.qa import response_schema
+from app.chatbot.qa import encode, response_schema
 from app.chatbot.qa_render import NOTICES
 from app.chatbot.replay import check_expected, load_fixture, offline_settings, replay_case
 from app.schemas.chat_qa import AnswerSelection, QuestionPlan
@@ -271,7 +271,17 @@ async def test_context_limit_omits_whole_rows_and_preserves_notice():
     case, catalog = scenario()
     # Large unrelated values exceed the context cap; no value is cut into a made-up fact.
     catalog[0]["current"][1]["value"] = "큰 값 " * 490
-    result = await replay_case(case, catalog, config={"max_context_characters": 4300})
+    catalog[0]["current"][1]["structuredValueJson"] = json.dumps(
+        {"description": "추가 현재 설명 " * 100}, ensure_ascii=False
+    )
+    full = await replay_case(case, catalog)
+    plan, selection = full["modelRequests"][:2]
+    plan_size = len(plan["system"]) + len(encode(plan["input"]))
+    selection_size = len(selection["system"]) + len(encode(selection["input"]))
+    # Keep the planner intact while testing row omission independently of prompt growth.
+    assert plan_size < selection_size
+    budget = (plan_size + selection_size) // 2
+    result = await replay_case(case, catalog, config={"max_context_characters": budget})
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert len(result["modelRequests"][1]["input"]["rows"]) == 1
     assert NOTICES["CONTEXT_LIMIT"] in result["finish"]["result"]["limitations"]

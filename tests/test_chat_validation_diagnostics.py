@@ -46,6 +46,10 @@ def diagnostics(caplog):
         assert record.stack_info is None
         assert record.origin.startswith("app.chatbot.")
         assert "/" not in record.origin
+        assert 1 <= len(record.validation_errors) <= 6
+        for error in record.validation_errors:
+            assert set(error) == {"code", "path"}
+            assert error["path"].startswith("$")
     return records
 
 
@@ -72,6 +76,10 @@ async def test_schema_retry_logs_only_safe_metadata_and_preserves_metering(
     assert record.validation_stage == "RESPONSE_SCHEMA"
     assert record.error_category == category
     assert (record.attempt, record.max_attempts) == (1, 2)
+    if category == "JSON_INVALID":
+        assert record.validation_errors == [{"code": "json_invalid", "path": "$"}]
+    else:
+        assert {"code": "literal_error", "path": "$.intent"} in record.validation_errors
     assert case["question"] not in record.getMessage()
     assert len(result["reservations"]) == len(result["usageReports"]) == 3
     assert all(report["outcome"] == "SUCCESS" for report in result["usageReports"])
@@ -92,7 +100,37 @@ async def test_contract_retry_is_distinct_from_schema_failure(caplog):
     assert records[0].validation_stage == "RESPONSE_CONTRACT"
     assert records[0].error_category == "CONTRACT_VALIDATION"
     assert records[0].origin.startswith("app.chatbot.qa.validate_plan:")
+    assert records[0].validation_errors == [{"code": "UNOBSERVED_LOOKUP_TERM", "path": "$"}]
     assert len(result["reservations"]) == len(result["usageReports"]) == 3
+
+
+@pytest.mark.anyio
+async def test_nested_schema_failure_logs_safe_field_paths_without_rejected_values(caplog):
+    case, catalog = scenario()
+    invalid = copy.deepcopy(case["modelOutputs"][0])
+    invalid["subjects"][0]["domain"] = PRIVATE
+    invalid["subjects"][0][PRIVATE] = PRIVATE
+    with caplog.at_level(logging.WARNING, logger="app.chatbot.qa"):
+        result = await replay_case(case, catalog, outputs=[invalid, *case["modelOutputs"]])
+    check_expected(case, result)
+    record = diagnostics(caplog)[0]
+    assert {"code": "literal_error", "path": "$.subjects[].domain"} in record.validation_errors
+    assert {"code": "extra_forbidden", "path": "$.subjects[]"} in record.validation_errors
+    assert "$.subjects[].domain" in record.getMessage()
+    assert PRIVATE not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_conversational_plan_with_factual_lookup_gets_specific_safe_feedback(caplog):
+    case, catalog = scenario()
+    invalid = copy.deepcopy(case["modelOutputs"][0])
+    invalid["intent"] = "GREETING"
+    with caplog.at_level(logging.WARNING, logger="app.chatbot.qa"):
+        result = await replay_case(case, catalog, outputs=[invalid, *case["modelOutputs"]])
+    check_expected(case, result)
+    record = diagnostics(caplog)[0]
+    assert record.validation_errors == [{"code": "PLAN_CONVERSATION_ONLY", "path": "$"}]
+    assert "PLAN_CONVERSATION_ONLY" in result["modelRequests"][1]["system"]
 
 
 @pytest.mark.anyio

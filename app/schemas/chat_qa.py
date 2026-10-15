@@ -79,6 +79,9 @@ class QuestionPlan(ContractModel):
         "PAST_STATE",
         "CLARIFICATION",
         "UNSUPPORTED",
+        "GREETING",
+        "THANKS",
+        "HELP",
     ]
     subjects: list[QuestionSubject] = Field(max_length=3)
     include_evidence: bool
@@ -90,6 +93,16 @@ class QuestionPlan(ContractModel):
 
     @model_validator(mode="after")
     def valid_plan(self) -> Self:
+        if self.intent in {"GREETING", "THANKS", "HELP"} and (
+            self.subjects
+            or self.include_evidence
+            or self.episode_from is not None
+            or self.episode_to is not None
+            or self.character_filter is not None
+            or self.collection is not None
+            or self.answer_shape != "FACTS"
+        ):
+            raise ValueError("Conversational requests do not query work information")
         lookup = self.intent in {"CURRENT", "HISTORY", "CURRENT_AND_HISTORY", "DIRECT_EVIDENCE"}
         if lookup and not self.subjects and self.collection is None:
             raise ValueError("Lookup requires a named subject")

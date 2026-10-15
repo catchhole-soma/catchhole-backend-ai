@@ -86,6 +86,9 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         self.tool_count = 0
         self.codes = []
         self.rows: list[AnswerRow] = []
+        self.selected_rows: list[AnswerRow] = []
+        # Internal lookup outcomes, never inferred from public warning strings.
+        self.lookup_gaps: set[str] = set()
         self.focused_refs: set[str] = set()
         self.snapshot_versions = {}
         self.last_collection = None
@@ -263,10 +266,14 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     "validation_stage": validation_stage,
                     "error_category": category,
                     "origin": origin,
+                    "validation_errors": [
+                        {"code": item["code"], "path": item.get("path", "$")}
+                        for item in feedback
+                    ],
                 }
                 logger.warning(
                     "chat_response_validation_failed purpose=%s schema=%s attempt=%d "
-                    "max_attempts=%d stage=%s category=%s origin=%s",
+                    "max_attempts=%d stage=%s category=%s origin=%s errors=%s",
                     *diagnostic.values(),
                     extra=diagnostic,
                 )
@@ -528,6 +535,13 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
 
     async def answer_plan(self, plan: QuestionPlan) -> Finish:
         """Reuse bounded RDB behavior after a trusted, validated planner has run."""
+        if plan.intent in {"GREETING", "THANKS", "HELP"}:
+            text = {
+                "GREETING": "안녕하세요! 작품에서 궁금한 내용을 물어보세요.",
+                "THANKS": "천만에요. 더 궁금한 내용이 있으면 말씀해 주세요.",
+                "HELP": "작품의 인물이나 세계관 설정에 대해 물어보세요. 확인할 대상과 궁금한 내용을 함께 알려주시면 도움이 돼요.",
+            }[plan.intent]
+            return message("ANSWER", text, [])
         self.include_sources = plan.include_evidence or plan.intent == "DIRECT_EVIDENCE"
         if plan.intent in {"NEEDS_SEARCH", "PAST_STATE", "CLARIFICATION", "UNSUPPORTED"}:
             outcome, text, code = {
@@ -585,6 +599,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             if stop:
                 return stop
         chosen, stop = await self.select_rows(plan)
+        self.selected_rows = chosen
         if stop:
             return stop
         if {row.item.subject_id for row in chosen} != {target for _, target in targets}:
@@ -594,6 +609,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         if synthesis:
             result = await self.registered_answer(plan, chosen)
             if current_checks and not await self.current_subjects_unchanged(chosen):
+                self.codes.append("CURRENT_CHANGED")
                 return message(
                     "INSUFFICIENT_EVIDENCE",
                     "답변을 준비하는 동안 현재 설정이 변경됐어요. 다시 질문하면 최신 설정으로 확인할게요.",
@@ -657,6 +673,8 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             if allow_missing:
                 self.codes.append("NO_RELATED_SETTING")
                 return [], None
+            if not self.rows:
+                self.lookup_gaps.add("NO_ROWS")
             return [], message(
                 "INSUFFICIENT_EVIDENCE",
                 "조회한 등록 정보에서 답변할 항목을 확인하지 못했습니다.",
@@ -685,6 +703,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                 else "조회한 등록 정보만으로 질문에 답할 수 없습니다. 작품 전체에서 사실이 없다는 뜻은 아닙니다."
             )
             if selection.outcome == "INSUFFICIENT_EVIDENCE":
+                self.lookup_gaps.add("NO_RELEVANT_ROWS")
                 self.codes.append("NO_RELATED_SETTING")
                 if focused:
                     return focused, None

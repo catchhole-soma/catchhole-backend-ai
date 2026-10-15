@@ -71,13 +71,26 @@ def safe_text(value: str) -> str:
     return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", value)
 
 
-def notices(codes: list[str]) -> list[str]:
-    return list(dict.fromkeys(NOTICES[c] for c in codes if c in NOTICES))[:20]
+def notices(codes: list[str], *, include_conversation_limit: bool = False) -> list[str]:
+    # Trimming old turns is a planner constraint, not a failure of current evidence.
+    # Only a clarification needs to explain why the user may have to name a target again.
+    return list(
+        dict.fromkeys(
+            NOTICES[c]
+            for c in codes
+            if c in NOTICES and (include_conversation_limit or c != "CONVERSATION_LIMIT")
+        )
+    )[:20]
 
 
 def message(outcome: str, text: str, codes: list[str]) -> Finish:
     return Finish(
-        result=ChatResult(outcome=outcome, text=text, sources=[], limitations=notices(codes))
+        result=ChatResult(
+            outcome=outcome,
+            text=text,
+            sources=[],
+            limitations=notices(codes, include_conversation_limit=outcome == "CLARIFICATION"),
+        )
     )
 
 

@@ -270,6 +270,7 @@ class RegisteredSynthesis:
             validate,
         )
         if not answer.claims:
+            self.lookup_gaps.add("NO_SUPPORTED_ANSWER")
             return message(
                 "INSUFFICIENT_EVIDENCE", "확인한 설정만으로는 질문에 답하기 어려워요.", self.codes
             )

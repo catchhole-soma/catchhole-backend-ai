@@ -91,7 +91,7 @@ async def test_category_is_never_guessed_or_removed_inside_proper_name(category,
 
 @pytest.mark.anyio
 async def test_character_name_is_not_reinterpreted_as_a_world_category():
-    lookup = SimpleNamespace(pages=AsyncMock(return_value=([], True)), codes=[])
+    lookup = SimpleNamespace(pages=AsyncMock(return_value=([], True)), codes=[], lookup_gaps=set())
     subject = QuestionSubject.model_validate(plan("서리꽃 종족")["subjects"][0])
     _, stop = await FocusedLookup.resolve_subject(lookup, subject)
     assert stop.result.outcome == "INSUFFICIENT_EVIDENCE"
@@ -102,7 +102,7 @@ async def test_character_name_is_not_reinterpreted_as_a_world_category():
 
 @pytest.mark.anyio
 async def test_empty_incomplete_first_search_cannot_start_suffix_fallback():
-    lookup = SimpleNamespace(pages=AsyncMock(return_value=([], False)), codes=[])
+    lookup = SimpleNamespace(pages=AsyncMock(return_value=([], False)), codes=[], lookup_gaps=set())
     subject = QuestionSubject.model_validate(world_plan("RACE", name="서리꽃 종족")["subjects"][0])
     _, stop = await FocusedLookup.resolve_subject(lookup, subject)
     assert stop.result.outcome == "CLARIFICATION"
@@ -141,7 +141,7 @@ async def test_suffix_fallback_preserves_ambiguity_and_page_completeness(partial
 
 @pytest.mark.anyio
 async def test_missing_fallback_keeps_category_and_manuscript_missing_behavior():
-    lookup = SimpleNamespace(pages=AsyncMock(return_value=([], True)), codes=[])
+    lookup = SimpleNamespace(pages=AsyncMock(return_value=([], True)), codes=[], lookup_gaps=set())
     subject = QuestionSubject.model_validate(world_plan("RACE", name="서리꽃 종족")["subjects"][0])
     resolved, stop = await FocusedLookup.resolve_subject(lookup, subject, allow_missing=True)
     assert resolved is None and stop is None

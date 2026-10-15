@@ -85,6 +85,7 @@ class FocusedLookup:
                 self.codes,
             )
         if not found:
+            self.lookup_gaps.add("SUBJECT_NOT_REGISTERED")
             if "NO_RELATED_SETTING" not in self.codes:
                 self.codes.append("NO_RELATED_SETTING")
             if allow_missing:
@@ -139,6 +140,7 @@ class FocusedLookup:
                 self.codes,
             )
         if not items:
+            self.lookup_gaps.add("NO_FIELDS")
             return [], None
         # Exact unique display names require no semantic interpretation. World paths
         # with identical labels remain ambiguous, including root versus named scopes.
@@ -198,6 +200,8 @@ class FocusedLookup:
                 "같은 이름의 항목이나 범위가 있습니다. 어떤 설정을 뜻하는지 알려주세요.",
                 self.codes,
             )
+        if selected.outcome == "INSUFFICIENT_EVIDENCE":
+            self.lookup_gaps.add("NO_RELEVANT_FIELDS")
         return [item for ref, item in candidates.items() if ref in selected.field_refs], None
 
     async def subject_rows(self, subject, target, modes, *, reserve=0):
@@ -225,15 +229,19 @@ class FocusedLookup:
                 ]
         for mode in modes:
             collected = []
+            complete = True
             for arguments in filters:
-                items, _ = await self.pages(
+                items, page_complete = await self.pages(
                     f"{subject.domain}_{mode}",
                     target=target,
                     exhaustive=focus is not None,
                     reserve=reserve,
                     **arguments,
                 )
+                complete = complete and page_complete
                 collected.extend(items)
+            if filters and not collected and complete:
+                self.lookup_gaps.add("NO_VALUES")
             if mode == "HISTORY":
                 self.codes.append("HISTORY_IS_NOT_A_STATE_SNAPSHOT")
                 # Each field is already server ordered. Merge different fields by source

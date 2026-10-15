@@ -24,7 +24,9 @@ class EvidenceSupport(ContractModel):
 
 
 class HybridPlan(ContractModel):
-    disposition: Literal["PROCEED", "PAST_STATE", "CLARIFICATION", "UNSUPPORTED"]
+    disposition: Literal[
+        "PROCEED", "PAST_STATE", "CLARIFICATION", "UNSUPPORTED", "GREETING", "THANKS", "HELP"
+    ]
     rdb_mode: Literal[
         "NONE", "CURRENT", "HISTORY", "CURRENT_AND_HISTORY", "DIRECT_EVIDENCE", "CHARACTER_LIST"
     ]
@@ -43,9 +45,30 @@ class HybridPlan(ContractModel):
     event_scope: EventScope | None = None
     requested_parts: list[RequestedPart] = Field(default_factory=list, max_length=4)
     event_context: str | None = Field(default=None, min_length=1, max_length=200)
+    source_fallback: bool = False
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
+        if self.disposition in {"GREETING", "THANKS", "HELP"} and (
+            self.rdb_mode != "NONE"
+            or self.source_need != "NONE"
+            or self.subjects
+            or self.search_terms
+            or self.include_evidence
+            or self.episode_from is not None
+            or self.episode_to is not None
+            or self.character_filter is not None
+            or self.collection is not None
+            or self.requested_parts
+            or self.requested_facets
+            or self.event_context is not None
+            or self.event_scope is not None
+            or self.source_fallback
+            or self.per_item
+            or self.include_registered_values
+            or self.answer_shape != "FACTS"
+        ):
+            raise ValueError("Conversation replies cannot request factual lookups")
         if self.episode_from and self.episode_to and self.episode_from > self.episode_to:
             raise ValueError("Invalid episode range")
         if any(not term.strip() or len(term) > 80 for term in self.search_terms):
@@ -79,7 +102,7 @@ class HybridPlan(ContractModel):
         if len(set(self.requested_facets)) != len(self.requested_facets):
             raise ValueError("Duplicate requested facets")
         if self.requested_parts:
-            if self.requested_facets or self.source_need == "NONE":
+            if self.requested_facets or (self.source_need == "NONE" and not self.source_fallback):
                 raise ValueError("Requested parts replace narrative facets")
             if [p.ref for p in self.requested_parts] != [
                 f"P{i}" for i in range(1, len(self.requested_parts) + 1)
@@ -91,6 +114,8 @@ class HybridPlan(ContractModel):
             and self.disposition == "PROCEED"
         ):
             raise ValueError("Narrative questions require explicit requested parts")
+        if self.source_fallback and not self.requested_parts:
+            raise ValueError("Source fallback requires requested parts")
         if any(f.startswith("P") for f in self.requested_facets):
             raise ValueError("Part references belong in requested parts")
         if self.event_context is not None and (

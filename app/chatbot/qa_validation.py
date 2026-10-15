@@ -9,6 +9,13 @@ RULES = {
     "UNKNOWN_REFERENCE": "참조는 이번 입력에 제공된 목록에서만 선택하고 중복 없이 사용하세요.",
     "UNOBSERVED_LOOKUP_TERM": "조회 이름과 항목 표현은 이번 질문 또는 제공된 대화에 실제로 있는 표현만 사용하세요.",
     "INVALID_PLAN": "조회 범위·대상·정보 필요·질문 유형에 따른 필드 조건을 schema와 원래 지침에 맞추세요.",
+    "PLAN_PARTS_MODE": "requestedParts를 사용하면 requestedFacets는 비우세요. sourceNeed=NONE에서는 sourceFallback=true일 때만 requestedParts를 사용하고, 둘 다 원문 조회가 필요 없으면 비우세요.",
+    "PLAN_PARTS_REQUIRED": "PROCEED인 원문 질문에는 실제 질문의 독립된 요구를 requestedParts에 하나 이상 넣으세요. 요구를 없애려고 sourceNeed를 바꾸지 마세요.",
+    "PLAN_PARTS_REFERENCES": "requestedParts의 ref는 중복 없이 P1부터 P4까지 순서대로 쓰고 각 description은 실제 질문의 요구를 빈칸 없이 설명하세요.",
+    "PLAN_PARTS_FIELD": "P1~P4 참조는 requestedParts의 ref에만 넣고 requestedFacets는 비우세요.",
+    "PLAN_EVENT_CONTEXT": "특정 사건의 원문 질문에만 비어 있지 않은 eventContext를 쓰세요. sourceNeed=NONE이거나 특정 사건 질문이 아니면 null로 두세요.",
+    "PLAN_FALLBACK_PARTS_REQUIRED": "sourceFallback=true이면 원문에서 보완할 실제 질문의 요구를 requestedParts에 하나 이상 넣으세요. 요구를 없애려고 sourceFallback을 끄지 마세요.",
+    "PLAN_CONVERSATION_ONLY": "인사·감사·챗봇 도움말만 있으면 조회 필드를 비우고, 실제 작품 질문이 함께 있으면 일반 조회로 분류하세요.",
     "INVALID_SELECTION": "선택 결과 상태에 허용된 참조만 포함하고 개수·중복 제한을 지키세요.",
     "INCOMPLETE_EVIDENCE": "제공된 완전한 자료로만 판정하고 확인되지 않은 항목은 UNKNOWN으로 남기세요.",
     "RESPONSE_CONTRACT": "제공된 참조·조회 범위·항목별 답변 조건을 원래 지침과 다시 대조하세요.",
@@ -88,10 +95,29 @@ _MESSAGES = {
         "Character collections have no world category",
         "A subject name is required",
         "World settings do not have character fact types",
+        "Characters do not have a world category",
+    ),
+    "PLAN_PARTS_MODE": ("Requested parts replace narrative facets",),
+    "PLAN_PARTS_REQUIRED": ("Narrative questions require explicit requested parts",),
+    "PLAN_PARTS_REFERENCES": ("Requested parts must have ordered unique references",),
+    "PLAN_PARTS_FIELD": ("Part references belong in requested parts",),
+    "PLAN_EVENT_CONTEXT": ("Event context requires a narrative question",),
+    "PLAN_FALLBACK_PARTS_REQUIRED": ("Source fallback requires requested parts",),
+    "PLAN_CONVERSATION_ONLY": (
+        "Conversational requests do not query work information",
+        "Conversation replies cannot request factual lookups",
     ),
 }
 _MESSAGE_CODES = {message: code for code, messages in _MESSAGES.items() for message in messages}
 _MESSAGE_CODES.update({code: code for code in RULES})
+_RULE_FIELDS = {
+    "PLAN_PARTS_MODE": "requestedParts",
+    "PLAN_PARTS_REQUIRED": "requestedParts",
+    "PLAN_PARTS_REFERENCES": "requestedParts",
+    "PLAN_PARTS_FIELD": "requestedFacets",
+    "PLAN_EVENT_CONTEXT": "eventContext",
+    "PLAN_FALLBACK_PARTS_REQUIRED": "requestedParts",
+}
 _SCHEMA_TYPES = frozenset(
     {
         "missing",
@@ -165,6 +191,11 @@ def retry_feedback(exc: ValueError, schema: dict) -> list[dict[str, str]]:
             code = _MESSAGE_CODES.get(message[len("Value error, ") :])
             if code:
                 entry.update(code=code, rule=RULES[code])
+                # Model-level cross-field errors have an empty Pydantic location.
+                # Expose only their fixed schema field, never rejected values.
+                field = _RULE_FIELDS.get(code)
+                if entry["path"] == "$" and field in fields:
+                    entry["path"] = f"$.{field}"
         if entry not in feedback:
             feedback.append(entry)
         if len(feedback) == 6:

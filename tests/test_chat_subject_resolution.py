@@ -167,7 +167,7 @@ async def test_no_category_match_does_not_retry_as_unfiltered_subject():
 
 @pytest.mark.anyio
 async def test_manuscript_caller_can_continue_after_missing_registered_subject():
-    lookup = SimpleNamespace(pages=AsyncMock(return_value=([], True)), codes=[])
+    lookup = SimpleNamespace(pages=AsyncMock(return_value=([], True)), codes=[], lookup_gaps=set())
     subject = QuestionSubject.model_validate(world_plan("RACE")["subjects"][0])
     resolved, stop = await FocusedLookup.resolve_subject(lookup, subject, allow_missing=True)
     assert resolved is None and stop is None

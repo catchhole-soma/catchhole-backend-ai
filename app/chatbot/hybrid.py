@@ -323,7 +323,7 @@ class _HybridSession(_Session):
         self.event_scope = plan.event_scope
         if plan.disposition != "PROCEED" or plan.source_need == "NONE":
             # Registered-only synthesis and collection queries share the base handler.
-            return await self.answer_plan(
+            registered = await self.answer_plan(
                 QuestionPlan(
                     intent=plan.rdb_mode if plan.disposition == "PROCEED" else plan.disposition,
                     subjects=plan.subjects,
@@ -335,6 +335,53 @@ class _HybridSession(_Session):
                     answer_shape=plan.answer_shape,
                 )
             )
+            if not self.can_supplement_registered(plan, registered):
+                return registered
+            if not self.models_available() or not self.tools_available(4):
+                return registered
+            self.chosen = list(self.selected_rows)
+            plan = HybridPlan.model_validate(
+                {**plan.model_dump(), "source_need": "SCENE", "source_fallback": False}
+            )
+            self.plan = plan
+            self.trace("registered_fallback", reasons=sorted(self.lookup_gaps))
+            return await self.run_source(plan, collect=False)
+        return await self.run_source(plan)
+
+    def can_supplement_registered(self, plan, registered):
+        # Absence is recorded where it is observed. Public warnings/empty text
+        # cannot distinguish missing information from a failed or truncated read.
+        blocked = {
+            "PARTIAL_RESULTS",
+            "CONTEXT_LIMIT",
+            "VALUE_LIMIT",
+            "SELECTION_LIMIT",
+            "ANSWER_LIMIT",
+            "CURRENT_CHANGED",
+            "SOURCE_CHANGED",
+            "STORAGE_UNAVAILABLE",
+            "INVALID_QUOTE",
+            "OUT_OF_SCOPE",
+            "SOURCE_PURGED",
+            "SOURCE_MISSING",
+        }
+        return bool(
+            plan.disposition == "PROCEED"
+            and plan.source_fallback
+            and plan.source_need == "NONE"
+            and plan.subjects
+            and plan.collection is None
+            and plan.character_filter is None
+            and plan.answer_shape not in {"COUNT", "DISTINCT"}
+            and registered.result is not None
+            and registered.result.outcome == "INSUFFICIENT_EVIDENCE"
+            and self.lookup_gaps
+            and not blocked.intersection(self.codes)
+        )
+
+    async def run_source(self, plan, *, collect=True):
+        """Reuse the same scoped execution, selected rows and remaining budgets."""
+        ctx = self.execution.context
         if not self.range_allowed(plan):
             return message(
                 "CLARIFICATION",
@@ -345,9 +392,10 @@ class _HybridSession(_Session):
         self.codes.append("NARRATIVE_SOURCE_RANGE")
         if self.source_from is not None or self.source_to is not None:
             self.codes.append("SOURCE_RANGE")
-        stop = await self.collect_rows(plan)
-        if stop:
-            return stop
+        if collect:
+            stop = await self.collect_rows(plan)
+            if stop:
+                return stop
         if not self.models_available():
             return message(
                 "INSUFFICIENT_EVIDENCE",
@@ -1114,7 +1162,7 @@ class _HybridSession(_Session):
             if self.item_draft is None
             else [i.model_dump(by_alias=True) for i in self.item_draft.item_answers if i.answers],
             "passages": self.evidence_passages(self.evidences),
-            "limitations": notices(self.codes),
+            "limitations": notices(self.codes, include_conversation_limit=True),
         }
 
     def uncertain_condition_rows(self):
