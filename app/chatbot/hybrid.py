@@ -549,17 +549,20 @@ class _HybridSession(_Session):
         if plan.requested_parts:
             needs = "·".join(safe_text(p.description) for p in plan.requested_parts)
             text = (
-                f"확인한 자료만으로는 {needs}에 대해 확정해서 답하기 어렵습니다. "
+                f"확인한 자료만으로 확정해서 답하기 어려운 내용입니다: {needs}. "
                 "해당 사실이 없다고 단정한 것은 아닙니다."
             )
             scope_codes = {
                 "SEARCH_LIMIT",
                 "SEARCH_QUERY_LIMIT",
                 "EVIDENCE_CONTEXT_LIMIT",
+                "EVIDENCE_LIMIT",
                 "CONTEXT_LIMIT",
             }
             if scope_codes.intersection(self.codes):
-                text += " 관련 원문을 모두 살펴본 결과는 아니므로 추가 근거가 있을 수 있습니다."
+                text += (
+                    " 관련 자료와 원문을 모두 살펴본 결과는 아니므로 추가 근거가 있을 수 있습니다."
+                )
             return message(
                 "INSUFFICIENT_EVIDENCE",
                 text,
@@ -1501,7 +1504,7 @@ class _HybridSession(_Session):
             labels = request_labels(self.plan) if self.plan else FACET_LABELS
             needs = "·".join(labels[f] for f in answer.missing_facets)
             if self.plan and self.plan.requested_parts:
-                parts.append(f"다만 {needs}에 대해서는 확인한 자료만으로 확정하기 어려워요.")
+                parts.append(f"다만 다음 내용은 확인한 자료만으로 확정하기 어려워요: {needs}.")
             else:
                 prefix = "실제로 이루어진 " if self.event_scope == "ACTUAL" else ""
                 parts.append(
