@@ -111,7 +111,7 @@ def test_property_ref_restores_existing_matched_and_proposed_paths(operation, pr
 
 
 @pytest.mark.parametrize("operation", ["UPDATE", "MERGE", "EXCLUDE"])
-def test_unscoped_different_name_requires_explicit_review_and_preserves_original(operation):
+def test_unscoped_different_name_preserves_concrete_semantic_choice(operation):
     source, stored = candidate(), target()
     invalid = decision(source, operation=operation, matched_ref="T1.P1")
     valid = decision(source, operation="REVIEW_REQUIRED", matched_ref="T1.P1",
@@ -121,20 +121,16 @@ def test_unscoped_different_name_requires_explicit_review_and_preserves_original
     result, requests = run([{"decisions": [invalid]}, {"decisions": [valid]}], [source], [stored],
                            ordered_context=True)
     assert not isinstance(result, Exception), result
-    assert len(requests) == 2
+    assert len(requests) == 1
     row = result[0].decisions[0]
-    assert row.operation == "REVIEW_REQUIRED" and row.review_reason == "SCOPE_UNRESOLVED"
-    assert (row.proposed_scope_name, row.proposed_setting_name) == (None, source.setting_name)
+    assert row.operation == operation and row.review_reason is None
+    assert (row.matched_scope_name, row.matched_property_name) == (stored.properties[0].scope_name, "함정 사용")
+    if operation in {"UPDATE", "MERGE"}:
+        assert (row.proposed_scope_name, row.proposed_setting_name) == (stored.properties[0].scope_name, "함정 사용")
     assert row.proposed_value == source.extracted_value
-    assert row.comparison_reason == valid["comparison_reason"]
+    assert row.comparison_reason == invalid["comparison_reason"]
     assert source.model_dump() == before
-    diagnostic = result[1]["validation_diagnostics"][0]
-    assert diagnostic["rule_code"] == "SOURCE_SCOPE_MISMATCH"
-    assert diagnostic["candidate_refs"] == ["C1"]
-    assert diagnostic["selected_properties"] == [
-        {"ref": "T1.P1", "target_ref": "T1", "scope_name": stored.properties[0].scope_name,
-         "setting_name": stored.properties[0].setting_name},
-    ]
+    assert result[1]["validation_diagnostics"] == []
 
 
 @pytest.mark.parametrize("kind", ["source_scope", "proposed_scope", "proposed_name", "root", "multiple"])
@@ -160,17 +156,17 @@ def test_explicit_unscoped_review_rejects_incompatible_input_or_path(kind):
     assert [entry["attempt_number"] for entry in result.validation_diagnostics] == [1, 2, 3]
 
 
-def test_same_name_automatic_scope_review_is_preserved():
+def test_same_name_concrete_choice_is_preserved_without_automatic_scope_review():
     source = candidate(name="함정 사용")
     result, _ = run([{"decisions": [decision(source, operation="UPDATE", matched_ref="T1.P1")]}],
                     [source], [target()], ordered_context=True)
     assert not isinstance(result, Exception), result
-    assert result[0].decisions[0].review_reason == "SCOPE_UNRESOLVED"
+    assert result[0].decisions[0].operation == "UPDATE"
+    assert result[0].decisions[0].review_reason is None
 
 
 @pytest.mark.parametrize("selected_ref", ["T1.P1", "T1.P2"])
-def test_null_scope_retry_explains_review_reason_and_keeps_original_episode_19_path(selected_ref, caplog):
-    """The live rejected-response history is reproduced with offline responses."""
+def test_null_scope_retry_corrects_invalid_explicit_review_and_keeps_source_path(selected_ref, caplog):
     source = candidate(name="근접 무기 효과").model_copy(update={
         "extracted_value": "근접 무기 사용 시 마비독을 상시 부여한다.",
     })
@@ -187,10 +183,10 @@ def test_null_scope_retry_explains_review_reason_and_keeps_original_episode_19_p
                     "comparison_reason": "근접 무기에 부여되는 마비독과 기존 전투 능력의 관련성 및 적용 범위 확인이 필요하다."}
     before = source.model_dump()
     with caplog.at_level(logging.WARNING):
-        result, requests = run([{"decisions": [row]} for row in (concrete, wrong_review, valid_review)],
+        result, requests = run([{"decisions": [row]} for row in (wrong_review, valid_review)],
                                [source], [stored], ordered_context=True)
     assert not isinstance(result, Exception), result
-    assert len(requests) == 3
+    assert len(requests) == 2
     for request in requests[1:]:
         feedback = json.loads(request["user_prompt"])["validation_feedback"]
         correction = json.dumps(feedback, ensure_ascii=False)
@@ -198,7 +194,7 @@ def test_null_scope_retry_explains_review_reason_and_keeps_original_episode_19_p
         assert "원본" in correction and "null" in correction
         assert "복사" in correction
         assert "SECRET_" not in correction
-    schema_issue = json.loads(requests[2]["user_prompt"])["validation_feedback"]["issues"][0]
+    schema_issue = json.loads(requests[1]["user_prompt"])["validation_feedback"]["issues"][0]
     assert schema_issue["reason_code"] == "SCOPE_MISMATCH_MATCH_REQUIRED"
     row = result[0].decisions[0]
     assert (row.operation, row.review_reason) == ("REVIEW_REQUIRED", "SCOPE_UNRESOLVED")
@@ -210,7 +206,7 @@ def test_null_scope_retry_explains_review_reason_and_keeps_original_episode_19_p
     assert row.existing_root_property_names_to_move == []
     assert source.model_dump() == before
     assert [entry["rule_code"] for entry in result[1]["validation_diagnostics"]] == [
-        "SOURCE_SCOPE_MISMATCH", "SCOPE_MISMATCH_MATCH_REQUIRED",
+        "SCOPE_MISMATCH_MATCH_REQUIRED",
     ]
     assert "SECRET_" not in caplog.text
 
@@ -230,13 +226,15 @@ def test_null_scope_mismatch_remains_invalid_without_an_explicit_valid_review(pr
     assert source.model_dump() == before
 
 
-def test_legacy_different_name_scope_review_still_rejected():
+def test_standard_different_name_explicit_scope_review_is_accepted():
     source = candidate()
     row = decision(source, operation="REVIEW_REQUIRED", review_reason="SCOPE_UNRESOLVED")
     row.pop("matched_property_ref")
     row.update(matched_scope_name="행동 및 사냥 방식", matched_property_name="함정 사용")
     result, requests = run([{"decisions": [row]}], [source], [target()], ordered_context=False)
-    assert isinstance(result, ComparisonValidationError)
+    assert not isinstance(result, Exception), result
+    assert len(requests) == 1
+    assert result[0].decisions[0].review_reason == "SCOPE_UNRESOLVED"
     assert all("response_schema" not in request for request in requests)
     assert all("validation_failure_callback" not in request for request in requests)
 

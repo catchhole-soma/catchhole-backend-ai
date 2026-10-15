@@ -86,7 +86,6 @@ def property_response_schema(payload: dict) -> LlmResponseSchema:
     refs = list(property_index(payload))
     decision_schema = schema["$defs"]["OrderedWorldPropertyDecision"]
     field = decision_schema["properties"]
-    field["explicit_root_scope_evidence_index"].pop("default", None)
     decision_schema["required"] = list(field)
     field["matched_property_ref"] = (
         {"anyOf": [{"type": "string", "enum": refs}, {"type": "null"}]}

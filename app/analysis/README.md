@@ -164,9 +164,9 @@ CONFIRMED_ONLY는 공통 자연어 이유 지침 외 기존 prompt·schema 생�
 같은 배치의 다른 후보와 이번 응답에서 ADD할 속성도 기존 문맥이 아닙니다. 신규 사실끼리 중복되면 source를
 보존해 하나의 decision으로 통합하고, 의미가 독립적이면 별도 경로로 ADD합니다.
 
-기존 `SCOPE_UNRESOLVED` 자동 정규화는 범위가 없는 후보와 기존 scoped 동명 속성에만 적용합니다.
-ordered에서는 이름이 다른 경우도 모델이 `REVIEW_REQUIRED + SCOPE_UNRESOLVED`를 명시적으로 제안하면
-검토할 수 있습니다. 예를 들어 root 후보 `전투 특징`과 기존 `행동 및 사냥 방식 › 함정 사용`의 관련성이
+범위 누락이나 기존 scoped 속성과 이름이 같다는 이유만으로 모델의 정상 판단을 자동 검토로 바꾸지 않습니다.
+실제 적용 대상·조건이 불명확하면 모델이 `REVIEW_REQUIRED + SCOPE_UNRESOLVED`를 명시적으로 선택합니다.
+이름이 다른 실제 scoped 속성과의 관계도 같은 계약으로 검토할 수 있습니다. 예를 들어 root 후보 `전투 특징`과 기존 `행동 및 사냥 방식 › 함정 사용`의 관련성이
 불분명하면 원본 root 경로를 보존한 검토로 남깁니다. 단일 null-scope source와 실제 scoped 속성만 허용하며,
 proposed scope는 null, proposed 이름은 원본 그대로, 이동 목록은 []입니다. 원본 값과 근거, 모델의 구체적인
 관련성 설명을 보존하고 자동 반영하지 않습니다. 이름이 다른 concrete 연산의 실패를 자동 검토로 바꾸지는 않습니다.

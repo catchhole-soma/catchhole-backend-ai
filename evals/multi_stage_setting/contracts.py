@@ -864,20 +864,6 @@ class GoldSnapshotV3(StrictModel):
             elif isinstance(decision, WorldStage2Gold):
                 primary = sources[0]
                 assert isinstance(primary, WorldStage1Gold)
-                compares_existing_property = decision.operation in {
-                    WorldSettingOperation.UPDATE,
-                    WorldSettingOperation.MERGE,
-                } or (
-                    decision.operation == WorldSettingOperation.EXCLUDE
-                    and decision.matched_property_name is not None
-                )
-                if compares_existing_property and normalize_world_setting_name(
-                    primary.scope_name or ""
-                ) != normalize_world_setting_name(decision.matched_scope_name or ""):
-                    raise ValueError(
-                        "World UPDATE/MERGE or matched EXCLUDE must use the "
-                        "extracted scope as matchedScopeName."
-                    )
                 if decision.operation == WorldSettingOperation.EXCLUDE and (
                     normalize_world_setting_name(decision.proposed_scope_name or "")
                     != normalize_world_setting_name(primary.scope_name or "")
@@ -1137,11 +1123,41 @@ def stage2_source_candidate_ids(prediction: Stage2Prediction) -> list[str]:
     return [prediction.source_candidate_id]
 
 
+class ComparisonDecisionDiagnostic(StrictModel):
+    """Bounded model explanation, with source/target identity checked against the request."""
+
+    decision_index: int = Field(ge=0)
+    source_candidate_ids: list[str] = Field(default_factory=list, max_length=20)
+    operation: WorldSettingOperation | None = None
+    review_reason: str | None = Field(default=None, max_length=100)
+    comparison_reason: str | None = Field(default=None, max_length=4000)
+    target: str | None = Field(default=None, max_length=500)
+    proposed_scope_name: str | None = Field(default=None, max_length=500)
+    proposed_setting_name: str | None = Field(default=None, max_length=500)
+    proposed_value: str | None = Field(default=None, max_length=4000)
+    matched_scope_name: str | None = Field(default=None, max_length=500)
+    matched_property_name: str | None = Field(default=None, max_length=500)
+    matched_path_verified: bool = False
+
+
+class ComparisonAttemptDiagnostic(StrictModel):
+    attempt_number: int = Field(ge=1)
+    rule_code: str = Field(min_length=1, max_length=100)
+    stage: str = Field(min_length=1, max_length=100)
+    attribution: Literal["IDENTIFIED", "UNKNOWN"] = "UNKNOWN"
+    batch_source_ids: list[str] = Field(default_factory=list)
+    rejected_source_ids: list[str] = Field(default_factory=list)
+    decisions: list[ComparisonDecisionDiagnostic] = Field(default_factory=list, max_length=20)
+
+
 class RuntimeFailure(StrictModel):
     stage: Literal["CHARACTER_STAGE1", "WORLD_STAGE1", "CHARACTER_STAGE2", "WORLD_STAGE2"]
     source_id: str | None = None
     error_type: str = Field(min_length=1)
     message: str = Field(min_length=1, max_length=500)
+    comparison_attempts: list[ComparisonAttemptDiagnostic] = Field(
+        default_factory=list, exclude_if=lambda value: not value,
+    )
 
 
 class RuntimeStateTrace(StrictModel):

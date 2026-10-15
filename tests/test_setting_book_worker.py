@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+import pytest
+
 from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonRunResult
 from app.analysis.character_subject_resolver import CharacterSubjectResolver
 from app.analysis.setting_extractor import CharacterSettingExtractor
@@ -50,7 +52,8 @@ class ComparisonStage:
         return WorldSettingComparisonRunResult(0, 0) if self.world else CharacterFactComparisonRunResult(0, 0)
 
 
-def test_book_run_shares_stages_and_restarts_with_stable_chunks(book_database):
+@pytest.mark.parametrize("retrieval_enabled", [False, True])
+def test_book_run_shares_stages_and_restarts_with_stable_chunks(book_database, retrieval_enabled):
     from app.services.setting_book_s3_chunking_service import SettingBookS3ChunkingService
     factory, chunks, write, work_id, job_id, text = book_database
     data = book_payload_data()
@@ -84,11 +87,15 @@ def test_book_run_shares_stages_and_restarts_with_stable_chunks(book_database):
             setting_candidate_service=SettingCandidateService(factory),
             character_fact_comparison_pipeline=character, world_setting_comparison_pipeline=world,
             embedding_generation_enabled=True,
+            retrieval_preparation_enabled=retrieval_enabled,
         )
         # Use a synchronous runner for the one-thread local SQLite fixture.
         class LocalIo:
             async def run(self, operation, *args, **kwargs):
                 return operation(*args, **kwargs)
+        async def unexpected_retrieval(_payload):
+            pytest.fail("setting-book chunks must not enter episode search preparation")
+        worker._prepare_retrieval = unexpected_retrieval
         worker._blocking_io_executor = LocalIo()
         worker._owns_blocking_io_executor = False
         try:

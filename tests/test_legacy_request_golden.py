@@ -46,8 +46,14 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     assert set(identity_overrides) == {"world_subject"}
     overrides = {**overrides, **identity_overrides}
     assert all(set(row) == {"sha256", "system_sha256"} for row in overrides.values())
-    # The immutable historical capture stays intact. Only the explicitly requested
-    # plain-language and subject-identity instructions have a separate expectation.
+    state_scope_overrides = json.loads(
+        (ROOT / "tests/fixtures/character_state_scope_request_overrides.json").read_text()
+    )["overrides"]
+    assert set(state_scope_overrides) == {"extraction"}
+    assert set(state_scope_overrides["extraction"]) == {
+        "sha256", "system_sha256", "prompt_cache_key"
+    }
+    # Historical captures stay intact; authorized prompt changes are separate.
     upstream = json.loads((ROOT / "tests/fixtures/upstream_requests_main_4ed7e55.json").read_text())
     assert upstream["baselineCommit"] == "4ed7e5556a91641c320c9e55dc646d4f17b0648d"
     assert upstream["probeHashes"][PROBE.name] == sha256(PROBE.read_bytes()).hexdigest()
@@ -58,7 +64,11 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     assert {k:v for k,v in expected.items() if k not in changing} == {
         k:v for k,v in baseline[purpose].items() if k not in changing
     }
-    authorized = upstream["gh180Overrides"].get(purpose, {})
+    authorized = {
+        **upstream["gh180Overrides"].get(purpose, {}),
+        **state_scope_overrides.get(purpose, {}),
+        **json.loads((ROOT / "tests/fixtures/world_semantic_scope_request_overrides.json").read_text())["overrides"].get(purpose, {}),
+    }
     assert set(authorized) <= changing
     policy_overrides = json.loads((ROOT / "tests/fixtures/pr1_conflict_policy_request_overrides.json").read_text())["overrides"]
     assert set(policy_overrides) == {"character_batch", "world_batch", "world_singleton"}
@@ -98,4 +108,13 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     assert set(transition_overrides) == {"world_extraction", "world_singleton", "world_batch"}
     assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in transition_overrides.values())
     authorized = {**authorized, **transition_overrides.get(purpose, {})}
+    integration_overrides = json.loads((ROOT / "tests/fixtures/pr221_main_integration_request_overrides_20261015.json").read_text())["overrides"]
+    assert set(integration_overrides) == {"extraction", "world_batch", "world_singleton"}
+    assert set(integration_overrides["extraction"]) == {"sha256", "system_sha256"}
+    assert all(set(integration_overrides[key]) == changing for key in ("world_batch", "world_singleton"))
+    authorized = {**authorized, **integration_overrides.get(purpose, {})}
+    final_integration = json.loads((ROOT / "tests/fixtures/pr221_final_main_integration_request_overrides_20261015.json").read_text())["overrides"]
+    assert set(final_integration) == {"world_extraction", "world_singleton", "world_batch"}
+    assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in final_integration.values())
+    authorized = {**authorized, **final_integration.get(purpose, {})}
     assert actual[purpose] == {**expected, **authorized}

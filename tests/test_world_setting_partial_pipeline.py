@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.analysis.exceptions import ComparisonValidationError
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
 from app.analysis.world_setting_pipeline import WorldSettingComparisonPipeline
 from app.analysis.world_setting_schemas import WorldSettingComparisonBatchResult
 from app.clients.exceptions import AiTokenQuotaExhaustedError
@@ -77,6 +77,16 @@ class RecoveringComparator:
         self.llm_client.record(input_tokens=20, output_tokens=4)
         output = self.action(candidates, targets[0].version)
         if isinstance(output, Exception):
+            if isinstance(output, ComparisonValidationError) and len(candidates) > 1:
+                rows = []
+                for candidate in candidates:
+                    row = {**_decision(candidate, targets[0].version), "consolidation_status": "invalid"}
+                    if kwargs.get("ordered_context"):
+                        row.update(review_reason=None, matched_property_ref=None,
+                                   existing_root_property_names_to_move=[])
+                    rows.append(row)
+                    output.world_batch_response_payload = {"decisions": rows}
+                    output.world_batch_request_payload = {"targets": []}
             raise output
         result = WorldSettingComparisonBatchResult(decisions=output)
         return result, result.model_dump(mode="json")
@@ -130,9 +140,9 @@ def test_automatic_partial_completion_covers_every_source_and_counts_only_valid_
     assert [call["refs"] for call in comparator.calls] == [["C1", "C2"], ["C1"], ["C2"]]
     assert all(call["version"] == 7 for call in comparator.calls)
     assert all(call["target_values"] == ["기존 무기 정보 v7"] for call in comparator.calls)
-    assert comparator.calls[0]["options"] == {"ordered_context": True}
+    assert comparator.calls[0]["options"] == {"ordered_context": True, "max_attempts_override": 1}
     assert all(call["options"] == {
-        "ordered_context": True, "max_attempts_override": 1, "preserve_source_paths": True,
+        "ordered_context": True, "max_attempts_override": 1, "defer_generated_scope_validation": True,
     } for call in comparator.calls[1:])
     assert next(iter(spring.all_batches.values())).model_dump(mode="json")["candidates"] == original_sources
     assert result.batch_usages[0].provider_request_count == 3
@@ -157,22 +167,16 @@ def test_all_recovery_groups_can_finish_as_typed_failures_without_any_decision()
 
 
 @pytest.mark.parametrize("ordered", [True, False], ids=["ordered-manual", "legacy"])
-def test_manual_and_legacy_do_not_attempt_partial_recovery(ordered):
+def test_manual_and_standard_preserve_partial_results_without_automatic_apply(ordered):
     spring, context = _spring(ordered=ordered)
     comparator = RecoveringComparator(_mixed_action)
-    # Even the continuation flag alone cannot enable recovery without ordered input.
-    call = _process(spring, comparator, context, automatic=not ordered)
-    if ordered:
-        with pytest.raises(ComparisonValidationError):
-            asyncio.run(call)
-    else:
-        result = asyncio.run(call)
-        assert (result.completed_count, result.failed_count) == (0, 2)
-    assert len(comparator.calls) == 1
-    assert "preserve_source_paths" not in comparator.calls[0]["options"]
-    assert spring.completions == []
-    assert len(spring.failures) == 1
-    assert spring.failures[0][2] == "COMPARISON_VALIDATION_FAILED"
+    result = asyncio.run(_process(spring, comparator, context, automatic=False))
+    assert (result.completed_count, result.failed_count) == (1, 1)
+    assert len(comparator.calls) == 3
+    assert len(spring.completions) == 1
+    assert [row.source_candidate_refs for row in spring.completions[0].decisions] == [["C1"]]
+    assert [row.source_candidate_refs for row in spring.completions[0].failures] == [["C2"]]
+    assert spring.failures == []
 
 
 @pytest.mark.parametrize("during_recovery", [False, True], ids=["initial-call", "after-valid-group"])
@@ -219,12 +223,27 @@ def test_stale_partial_completion_regenerates_both_decisions_and_failures_from_n
     assert [item.source_candidate_refs for item in stale.failures] == [["C2"]]
     assert accepted.failures is None
     assert [item.source_candidate_refs for item in accepted.decisions] == [["C1"], ["C2"]]
-    assert all(item.proposed_value.endswith("(비교 기준 8)") for item in accepted.decisions)
+    assert [item.proposed_value for item in accepted.decisions] == [
+        item.extracted_value for item in _batch().candidates
+    ]
     assert [request.context_token for request in spring.completions] == [f"{7:064x}", f"{8:064x}"]
     assert [request.context_versions[0].version for request in spring.completions] == [7, 8]
     assert [call["version"] for call in comparator.calls] == [7, 7, 7, 8, 8, 8]
     assert result.batch_usages[0].provider_request_count == 6
     assert sum(item.provider_request_count for item in result.cluster_usages) == 6
+
+
+@pytest.mark.parametrize("ordered", [False, True])
+@pytest.mark.parametrize("automatic", [False, True])
+def test_non_candidate_fault_stops_every_world_pipeline_mode_before_next_batch(ordered, automatic):
+    spring, context = _spring(ordered=ordered, queued_batch=True)
+    error = OrderedInputContextError("invalid frozen context")
+    comparator = RecoveringComparator(lambda *args: error)
+    with pytest.raises(OrderedInputContextError) as caught:
+        asyncio.run(_process(spring, comparator, context, automatic=automatic))
+    assert caught.value is error
+    assert spring.claim_count == 1
+    assert len(comparator.calls) == 1
 
 
 def test_stale_context_does_not_reset_batch_recovery_call_budget(monkeypatch):

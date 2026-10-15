@@ -4,6 +4,34 @@ from pydantic import ValidationError
 from app.core.config import Settings
 
 
+def test_reasoning_effort_defaults_to_medium_when_environment_value_is_missing(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_REASONING_EFFORT", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_reasoning_effort == "medium"
+
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "none"])
+def test_reasoning_effort_uses_explicit_environment_value(monkeypatch, effort: str) -> None:
+    monkeypatch.setenv("LLM_REASONING_EFFORT", effort)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_reasoning_effort == effort
+
+
+def test_reasoning_effort_loads_dotenv_value_and_prioritizes_environment(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("LLM_REASONING_EFFORT", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_REASONING_EFFORT=low\n", encoding="utf-8")
+
+    assert Settings(_env_file=env_file).llm_reasoning_effort == "low"
+
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "high")
+    assert Settings(_env_file=env_file).llm_reasoning_effort == "high"
+
+
 def test_purpose_output_caps_use_operational_defaults() -> None:
     defaults = Settings.model_fields
 

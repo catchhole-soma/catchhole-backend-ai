@@ -1,0 +1,482 @@
+{
+  "schemaVersion": 1,
+  "datasetKind": "SYNTHETIC_OFFLINE_CONTRACT",
+  "modelQuality": "NOT_MEASURED",
+  "negativeControlPolicy": "A structurally valid citation is not semantic correctness. The authored unrelated-claim case must remain an explicitly known negative control, never a quality pass.",
+  "catalogFixture": "chat-qa-v1.json",
+  "sources": {
+    "ring": {
+      "episodeNo": 3,
+      "text": "아리아는 반지의 추적 마법을 알아챘다. 추적을 피하려고 반지를 강물에 던졌다.😀"
+    },
+    "raon": {
+      "episodeNo": 3,
+      "text": "라온은 반지의 추적 마법을 알아챘다. 추적을 피하려고 반지를 강물에 던졌다."
+    },
+    "weather": {
+      "episodeNo": 1,
+      "text": "그날 아침에는 비가 내렸다."
+    }
+  },
+  "cases": [
+    {
+      "id": "rdb_current_no_embedding",
+      "question": "아리아의 현재 능력과 근거는?",
+      "catalog": "base",
+      "outputs": [
+        {
+          "disposition": "PROCEED",
+          "rdbMode": "CURRENT",
+          "sourceNeed": "NONE",
+          "subjects": [
+            {
+              "domain": "CHARACTER",
+              "name": "아리아"
+            }
+          ],
+          "searchTerms": [],
+          "includeEvidence": true,
+          "episodeFrom": null,
+          "episodeTo": null
+        },
+        {
+          "outcome": "ANSWER",
+          "rowRefs": [
+            "R1"
+          ]
+        }
+      ],
+      "expected": {
+        "outcome": "ANSWER",
+        "embeddings": 0,
+        "searches": [],
+        "contains": [
+          "화염구"
+        ]
+      }
+    },
+    {
+      "id": "direct_quote_sufficient",
+      "question": "아리아가 화염구를 사용할 수 있다는 근거는?",
+      "catalog": "base",
+      "outputs": [
+        {
+          "disposition": "PROCEED",
+          "rdbMode": "DIRECT_EVIDENCE",
+          "sourceNeed": "SCENE",
+          "subjects": [
+            {
+              "domain": "CHARACTER",
+              "name": "아리아"
+            }
+          ],
+          "searchTerms": [],
+          "includeEvidence": true,
+          "episodeFrom": null,
+          "episodeTo": null
+        },
+        {
+          "outcome": "ANSWER",
+          "rowRefs": [
+            "R1"
+          ]
+        },
+        {
+          "coverage": "COMPLETE",
+          "claims": [
+            {
+              "text": "아리아는 화염구를 사용할 수 있다.",
+              "evidenceRefs": [
+                "E1"
+              ]
+            }
+          ],
+          "conflicts": []
+        }
+      ],
+      "expected": {
+        "outcome": "ANSWER",
+        "embeddings": 0,
+        "searches": [],
+        "contains": [
+          "화염구"
+        ]
+      }
+    },
+    {
+      "id": "lexical_scene",
+      "question": "아리아가 반지를 버린 장면은?",
+      "catalog": "base",
+      "keyword": [
+        "ring"
+      ],
+      "outputs": [
+        {
+          "disposition": "PROCEED",
+          "rdbMode": "NONE",
+          "sourceNeed": "SCENE",
+          "subjects": [],
+          "searchTerms": [
+            "반지"
+          ],
+          "includeEvidence": true,
+          "episodeFrom": null,
+          "episodeTo": null
+        },
+        {
+          "coverage": "COMPLETE",
+          "claims": [
+            {
+              "text": "아리아는 추적을 피하려고 반지를 강물에 던졌다.",
+              "evidenceRefs": [
+                "E1"
+              ]
+            }
+          ],
+          "conflicts": []
+        }
+      ],
+      "expected": {
+        "outcome": "ANSWER",
+        "embeddings": 0,
+        "searches": [
+          "keyword",
+          "neighbors",
+          "revalidate"
+        ],
+        "contains": [
+          "강물"
+        ]
+      }
+    },
+    {
+      "id": "missing_rdb_continues_search",
+      "question": "라온이 반지를 버린 장면은?",
+      "catalog": "base",
+      "keyword": [
+        "raon"
+      ],
+      "outputs": [
+        {
+          "disposition": "PROCEED",
+          "rdbMode": "CURRENT",
+          "sourceNeed": "SCENE",
+          "subjects": [
+            {
+              "domain": "CHARACTER",
+              "name": "라온"
+            }
+          ],
+          "searchTerms": [
+            "반지"
+          ],
+          "includeEvidence": true,
+          "episodeFrom": null,
+          "episodeTo": null
+        },
+        {
+          "coverage": "COMPLETE",
+          "claims": [
+            {
+              "text": "라온은 추적을 피하려고 반지를 강물에 던졌다.",
+              "evidenceRefs": [
+                "E1"
+              ]
+            }
+          ],
+          "conflicts": []
+        }
+      ],
+      "expected": {
+        "outcome": "ANSWER",
+        "embeddings": 0,
+        "searches": [
+          "keyword",
+          "neighbors",
+          "revalidate"
+        ],
+        "contains": [
+          "라온"
+        ]
+      }
+    },
+    {
+      "id": "mixed_current_and_scene",
+      "question": "아리아의 현재 능력과 반지를 버린 이유는?",
+      "catalog": "base",
+      "keyword": [
+        "ring"
+      ],
+      "outputs": [
+        {
+          "disposition": "PROCEED",
+          "rdbMode": "CURRENT",
+          "sourceNeed": "REASON",
+          "subjects": [
+            {
+              "domain": "CHARACTER",
+              "name": "아리아"
+            }
+          ],
+          "searchTerms": [
+            "반지"
+          ],
+          "includeEvidence": true,
+          "episodeFrom": null,
+          "episodeTo": null
+        },
+        {
+          "outcome": "ANSWER",
+          "rowRefs": [
+            "R1"
+          ]
+        },
+        {
+          "coverage": "PARTIAL",
+          "claims": [
+            {
+              "text": "아리아는 화염구를 사용할 수 있다.",
+              "evidenceRefs": [
+                "E1"
+              ]
+            }
+          ],
+          "conflicts": []
+        },
+        {
+          "coverage": "COMPLETE",
+          "claims": [
+            {
+              "text": "아리아는 추적을 피하려고 반지를 강물에 던졌다.",
+              "evidenceRefs": [
+                "E2"
+              ]
+            }
+          ],
+          "conflicts": []
+        }
+      ],
+      "expected": {
+        "outcome": "ANSWER",
+        "embeddings": 0,
+        "searches": [
+          "keyword",
+          "neighbors",
+          "revalidate"
+        ],
+        "contains": [
+          "화염구",
+          "강물"
+        ]
+      }
+    },
+    {
+      "id": "vector_after_empty_keyword",
+      "question": "아리아가 반지를 버린 장면은?",
+      "catalog": "base",
+      "vector": [
+        "ring"
+      ],
+      "outputs": [
+        {
+          "disposition": "PROCEED",
+          "rdbMode": "NONE",
+          "sourceNeed": "SCENE",
+          "subjects": [],
+          "searchTerms": [
+            "반지"
+          ],
+          "includeEvidence": true,
+          "episodeFrom": null,
+          "episodeTo": null
+        },
+        {
+          "coverage": "COMPLETE",
+          "claims": [
+            {
+              "text": "아리아는 추적을 피하려고 반지를 강물에 던졌다.",
+              "evidenceRefs": [
+                "E1"
+              ]
+            }
+          ],
+          "conflicts": []
+        }
+      ],
+      "expected": {
+        "outcome": "ANSWER",
+        "embeddings": 1,
+        "searches": [
+          "keyword",
+          "vector",
+          "neighbors",
+          "revalidate"
+        ],
+        "contains": [
+          "강물"
+        ]
+      }
+    },
+    {
+      "id": "vector_after_unhelpful_keyword",
+      "question": "아리아가 반지를 버린 장면은?",
+      "catalog": "base",
+      "keyword": [
+        "weather"
+      ],
+      "vector": [
+        "ring"
+      ],
+      "outputs": [
+        {
+          "disposition": "PROCEED",
+          "rdbMode": "NONE",
+          "sourceNeed": "SCENE",
+          "subjects": [],
+          "searchTerms": [
+            "반지"
+          ],
+          "includeEvidence": true,
+          "episodeFrom": null,
+          "episodeTo": null
+        },
+        {
+          "coverage": "NONE",
+          "claims": [],
+          "conflicts": []
+        },
+        {
+          "coverage": "COMPLETE",
+          "claims": [
+            {
+              "text": "아리아는 추적을 피하려고 반지를 강물에 던졌다.",
+              "evidenceRefs": [
+                "E2"
+              ]
+            }
+          ],
+          "conflicts": []
+        }
+      ],
+      "expected": {
+        "outcome": "ANSWER",
+        "embeddings": 1,
+        "searches": [
+          "keyword",
+          "neighbors",
+          "vector",
+          "neighbors",
+          "revalidate"
+        ],
+        "contains": [
+          "강물"
+        ]
+      }
+    },
+    {
+      "id": "no_prepared_evidence",
+      "question": "아리아가 반지를 버린 장면은?",
+      "catalog": "base",
+      "readiness": "partial",
+      "outputs": [
+        {
+          "disposition": "PROCEED",
+          "rdbMode": "NONE",
+          "sourceNeed": "SCENE",
+          "subjects": [],
+          "searchTerms": [
+            "반지"
+          ],
+          "includeEvidence": true,
+          "episodeFrom": null,
+          "episodeTo": null
+        }
+      ],
+      "expected": {
+        "outcome": "INSUFFICIENT_EVIDENCE",
+        "embeddings": 0,
+        "searches": [
+          "keyword",
+          "vector"
+        ],
+        "contains": [
+          "작품 전체"
+        ]
+      }
+    },
+    {
+      "id": "past_state_unsupported",
+      "question": "10화 당시 아리아의 상태를 모두 복원해줘",
+      "catalog": "base",
+      "outputs": [
+        {
+          "disposition": "PAST_STATE",
+          "rdbMode": "NONE",
+          "sourceNeed": "SCENE",
+          "subjects": [],
+          "searchTerms": [],
+          "includeEvidence": true,
+          "episodeFrom": null,
+          "episodeTo": null
+        }
+      ],
+      "expected": {
+        "outcome": "INSUFFICIENT_EVIDENCE",
+        "embeddings": 0,
+        "searches": [],
+        "contains": [
+          "복원"
+        ]
+      }
+    },
+    {
+      "id": "valid_id_unrelated_claim_negative_control",
+      "question": "아리아가 반지를 버린 장면은?",
+      "catalog": "base",
+      "keyword": [
+        "weather"
+      ],
+      "outputs": [
+        {
+          "disposition": "PROCEED",
+          "rdbMode": "NONE",
+          "sourceNeed": "SCENE",
+          "subjects": [],
+          "searchTerms": [
+            "반지"
+          ],
+          "includeEvidence": true,
+          "episodeFrom": null,
+          "episodeTo": null
+        },
+        {
+          "coverage": "COMPLETE",
+          "claims": [
+            {
+              "text": "아리아는 반지를 강물에 던졌다.",
+              "evidenceRefs": [
+                "E1"
+              ]
+            }
+          ],
+          "conflicts": []
+        }
+      ],
+      "semanticExpected": "UNSUPPORTED_CLAIM",
+      "qualityMeasurement": false,
+      "expected": {
+        "outcome": "ANSWER",
+        "embeddings": 0,
+        "searches": [
+          "keyword",
+          "neighbors",
+          "revalidate"
+        ],
+        "contains": [
+          "강물",
+          "비가 내렸다"
+        ]
+      }
+    }
+  ]
+}

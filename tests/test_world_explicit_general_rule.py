@@ -23,7 +23,7 @@ from tests.test_ordered_analysis_runtime import RecordingClient
 GENERAL_QUOTE = "돌물문의 야간 통행 금지는 계속 적용합니다. 단, 수로관리청 야간 점검반은 이 규칙의 예외입니다."
 GENERAL_VALUE = "야간 통행이 금지되며, 수로관리청 야간 점검반에는 예외가 적용된다. 다른 주민의 통행은 허가되지 않는다."
 NARROW_VALUE = "붉은 유리 패찰을 소지한 수로관리청 야간 점검반만 야간에 통행할 수 있다."
-PROOF_FIELD = "explicit_root_scope_evidence_index"
+OBSOLETE_PROOF_FIELD = "explicit_root_scope_evidence_index"
 
 
 @pytest.fixture(autouse=True)
@@ -85,7 +85,6 @@ def _reply(mode, **changes):
         }),
         **({"source_candidate_refs": ["C1"], "existing_root_property_names_to_move": []}
            if mode != "single" else {}),
-        PROOF_FIELD: 0,
         **changes,
     }
 
@@ -132,41 +131,36 @@ def test_explicit_general_root_add_preserves_existing_narrow_exception(mode, boo
     assert result.proposed_value == GENERAL_VALUE
     assert target.model_dump(mode="json") == before
     assert target.properties[0].value == NARROW_VALUE
-    assert PROOF_FIELD not in json.dumps(raw)
+    assert OBSOLETE_PROOF_FIELD not in json.dumps(raw)
     assert len(client.requests) == 1
 
 
 @pytest.mark.parametrize("mode", ["single", "batch", "ordered"])
-@pytest.mark.parametrize("proof", ["absent", "null", "negative", "out_of_bounds", "unlocated", "bad_length"])
-def test_unproved_general_scope_keeps_existing_scope_review(mode, proof):
-    reply = _reply(mode)
+@pytest.mark.parametrize("offsets", [None, "unlocated", "bad_length"])
+def test_model_root_add_is_not_overridden_by_scope_or_missing_evidence_offsets(mode, offsets):
     candidate = _candidate()
-    if proof == "absent":
-        reply.pop(PROOF_FIELD)
-    elif proof == "null":
-        reply[PROOF_FIELD] = None
-    elif proof in {"negative", "out_of_bounds"}:
-        reply[PROOF_FIELD] = -1 if proof == "negative" else 2
-    else:
+    if offsets is not None:
         candidate = _candidate(evidenceSpans=[{
             "quote": GENERAL_QUOTE,
-            "startOffset": None if proof == "unlocated" else 3987,
-            "endOffset": None if proof == "unlocated" else 4040,
+            "startOffset": None if offsets == "unlocated" else 3987,
+            "endOffset": None if offsets == "unlocated" else 4040,
         }])
-    result, raw, _ = _compare(mode, candidate=candidate, reply=reply)
+    target = _target()
+    before = target.model_dump(mode="json")
+    result, raw, _ = _compare(mode, candidate=candidate, target=target, reply=_reply(mode))
 
-    assert result.operation == "REVIEW_REQUIRED"
-    assert result.review_reason == "SCOPE_UNRESOLVED"
-    assert result.matched_scope_name == "남쪽 점검로"
-    assert result.matched_property_name == "야간 통행 규정"
+    assert result.operation == "ADD"
+    assert result.review_reason is None
+    assert result.matched_scope_name is None and result.matched_property_name is None
     assert result.proposed_scope_name is None
     assert result.proposed_value == GENERAL_VALUE
-    assert PROOF_FIELD not in json.dumps(raw)
+    assert target.model_dump(mode="json") == before
+    assert OBSOLETE_PROOF_FIELD not in json.dumps(raw)
 
 
 @pytest.mark.parametrize("mode", ["single", "batch", "ordered"])
 @pytest.mark.parametrize("operation", ["UPDATE", "MERGE", "EXCLUDE", "REVIEW_REQUIRED"])
-def test_general_scope_proof_cannot_upgrade_review_or_cross_scope_mutation(mode, operation):
+def test_model_same_name_scope_connection_preserves_operation_and_explicit_review(mode, operation):
     changes = {
         "operation": operation,
         "review_reason": "SCOPE_UNRESOLVED" if operation == "REVIEW_REQUIRED" else None,
@@ -181,36 +175,42 @@ def test_general_scope_proof_cannot_upgrade_review_or_cross_scope_mutation(mode,
     before = target.model_dump(mode="json")
     result, _, _ = _compare(mode, target=target, reply=_reply(mode, **changes))
 
-    assert result.operation == "REVIEW_REQUIRED"
-    assert result.review_reason == "SCOPE_UNRESOLVED"
-    assert result.proposed_scope_name is None
+    assert result.operation == operation
+    assert result.review_reason == ("SCOPE_UNRESOLVED" if operation == "REVIEW_REQUIRED" else None)
+    assert result.matched_scope_name == "남쪽 점검로"
+    assert result.matched_property_name == "야간 통행 규정"
+    assert result.proposed_scope_name == ("남쪽 점검로" if operation in {"UPDATE", "MERGE"} else None)
     assert target.model_dump(mode="json") == before
 
 
-def test_one_evidence_selection_does_not_prove_multiple_sources():
+def test_model_merged_root_add_preserves_every_source_and_existing_narrow_rule():
     candidates = [_candidate(), _candidate(candidateRef="C2", candidateId=UUID(int=4))]
     result, _, _ = _compare("ordered", candidates=candidates, reply=_reply(
         "ordered", source_candidate_refs=["C1", "C2"], consolidation_status="MERGED",
     ))
 
-    assert result.operation == "REVIEW_REQUIRED"
-    assert result.review_reason == "SCOPE_UNRESOLVED"
+    assert result.operation == "ADD"
+    assert result.review_reason is None
     assert result.source_candidate_refs == ["C1", "C2"]
 
 
-def test_general_scope_proof_does_not_project_conflicting_values():
-    candidate = _candidate(extractedValue=GENERAL_VALUE + "\n야간 통행은 모두에게 허용된다.")
-    result, _, _ = _compare("ordered", candidate=candidate, reply=_reply(
-        "ordered", consolidation_status="CONFLICT", proposed_value=candidate.extracted_value,
+def test_explicit_uncertainty_review_keeps_competing_source_values_without_projection():
+    candidate = _candidate(extractedValue=GENERAL_VALUE + " 야간 통행은 모두에게 허용된다는 주장도 있다.")
+    target = _target()
+    before = target.model_dump(mode="json")
+    result, _, _ = _compare("ordered", candidate=candidate, target=target, reply=_reply(
+        "ordered", operation="REVIEW_REQUIRED", review_reason="GENERAL_UNCERTAINTY",
+        proposed_value=candidate.extracted_value,
     ))
-
     assert result.operation == "REVIEW_REQUIRED"
-    assert result.consolidation_status == "CONFLICT"
+    assert result.review_reason == "GENERAL_UNCERTAINTY"
     assert result.proposed_value == candidate.extracted_value
+    assert target.model_dump(mode="json") == before
+    assert target.properties[0].value == NARROW_VALUE
 
 
 @pytest.mark.parametrize("guard", ["nonasserted", "PAST", "HYPOTHETICAL", "UNKNOWN", "protected_root"])
-def test_general_scope_proof_cannot_bypass_book_current_guards(guard):
+def test_model_root_add_cannot_bypass_book_current_guards(guard):
     changes = {}
     if guard == "nonasserted":
         changes["rawExtractionJson"] = {"epistemic_status": "UNRESOLVED_CLAIM"}
@@ -223,7 +223,40 @@ def test_general_scope_proof_cannot_bypass_book_current_guards(guard):
                  target=_target(protected_paths=protected), reply=_reply("ordered"))
 
 
-@pytest.mark.parametrize("proof", [True, "0", 0.0])
-def test_evidence_selection_rejects_coerced_index_types(proof):
-    with pytest.raises(ComparisonValidationError):
-        _compare("ordered", reply=_reply("ordered", **{PROOF_FIELD: proof}))
+def test_ordered_response_schema_has_no_obsolete_scope_proof_field():
+    _, _, client = _compare("ordered", reply=_reply("ordered"))
+    assert OBSOLETE_PROOF_FIELD not in json.dumps(client.requests[0]["response_schema"].schema)
+
+
+@pytest.mark.parametrize("ordered", [False, True])
+@pytest.mark.parametrize("book", [False, True])
+def test_atomic_recovery_retains_model_general_root_add_and_narrow_exception(ordered, book):
+    from app.analysis.world_setting_batch_recovery import compare_world_batch_with_recovery
+
+    mode = "ordered" if ordered else "batch"
+    source, target = _source(book), _target()
+    candidates = [_candidate(), _candidate(candidateRef="C2", candidateId=UUID(int=4),
+        settingName="교육", extractedValue="점검반을 교육한다",
+        evidenceSpans=[{"quote": "점검반을 교육한다"}])]
+    general = _reply(mode)
+    independent = _reply(mode, source_candidate_refs=["C2"], proposed_setting_name="교육",
+        proposed_value="점검반을 교육한다")
+    invalid = {**independent, "operation": "EXCLUDE", **(
+        {"matched_property_ref": "T1.P99"} if ordered else {"matched_property_name": "없는 속성"})}
+    client = RecordingClient({"decisions": [general, invalid]}, {"decisions": [independent]})
+    before = target.model_dump(mode="json")
+    result, raw = asyncio.run(compare_world_batch_with_recovery(
+        WorldSettingComparator(llm_client=client, model="test-model", max_attempts=1,
+            max_output_tokens=3000, batch_max_output_tokens=16000),
+        "LOCATION", candidates, [target], ordered_context=ordered, analysis_source=source))
+
+    assert result.failures == []
+    assert [row.source_candidate_refs for row in result.decisions] == [["C1"], ["C2"]]
+    assert [row.operation for row in result.decisions] == ["ADD", "ADD"]
+    assert result.decisions[0].proposed_scope_name is None
+    assert result.decisions[0].proposed_value == GENERAL_VALUE
+    assert len(client.requests) == 2
+    assert [row["ref"] for row in json.loads(client.requests[1]["user_prompt"])["candidates"]] == ["C2"]
+    assert target.model_dump(mode="json") == before
+    assert target.properties[0].value == NARROW_VALUE
+    assert OBSOLETE_PROOF_FIELD not in json.dumps(raw)

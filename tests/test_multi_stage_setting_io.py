@@ -343,7 +343,7 @@ def test_public_report_allowlists_diagnostics_and_keeps_score_json_aggregate_onl
                             "value": "빠르게 회복 중",
                             "temporalScope": "PRESENT",
                             "removedCount": 0,
-                            "comparisonReason": "SECRET_REASON",
+                            "comparisonReason": "실제 비교 모델이 기록한 합성 판단 이유입니다.",
                         },
                         "fields": {
                             "operation": "MISMATCH",
@@ -395,9 +395,10 @@ def test_public_report_allowlists_diagnostics_and_keeps_score_json_aggregate_onl
     assert "| ↳ 오답 중 2차 결과가 없는 경우 | 0개 | 미평가 |" in markdown
     assert "판단 불일치 (처리 방식이나 반영할 정보 등이 답지와 다름)" in markdown
     assert "답지: 비요른<br>모델: 비요른" in markdown
-    assert "PROFILE (기본 정보) › profile.species (종족)" in markdown
-    assert "처리 방식: REMOVE (기존 상태 종료)" in markdown
-    assert "종료할 상태: 비요른 · STATUS (상태) › status.마비독" in markdown
+    assert "기본 정보 › 종족" in markdown
+    assert "처리 방식: 기존 상태 종료" in markdown
+    assert "종료할 상태: 비요른 · 상태 › status.마비독" in markdown
+    assert "AI 판단 이유: 실제 비교 모델이 기록한 합성 판단 이유입니다." in markdown
     assert "2차 답지: D1<br>1차 답지: C1<br>모델 추출: P1" in markdown
     assert "이 답지 항목에 대응하는 모델 추출 결과를 찾지 못했습니다." in markdown
     assert "누락 Gold" not in markdown

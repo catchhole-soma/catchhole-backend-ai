@@ -34,7 +34,12 @@ def main() -> None:
             model=args.judge_model,
             reasoning_effort=args.judge_reasoning_effort,
         )
-    report = asyncio.run(evaluate_multi_stage(gold, predictions, semantic_judge=semantic_judge))
+    scoring_options = {"semantic_judge": semantic_judge}
+    if args.character_repeat_provenance is not None:
+        scoring_options["character_repeat_provenance"] = json.loads(
+            args.character_repeat_provenance.read_text(encoding="utf-8")
+        )
+    report = asyncio.run(evaluate_multi_stage(gold, predictions, **scoring_options))
     serialized = json.dumps(report, ensure_ascii=False, indent=2)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(serialized, encoding="utf-8")
@@ -51,6 +56,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--source-root", type=Path, default=None)
     parser.add_argument("--source-file-pattern", default="{episode_no:02d}화.txt")
     parser.add_argument("--state-root", type=Path, default=None)
+    parser.add_argument(
+        "--character-repeat-provenance", type=Path, default=None,
+        help="Hash-bound source/chunk plan and independently reviewed PROFILE repeat groups.",
+    )
     parser.add_argument(
         "--semantic-judge",
         choices=("none", "openai"),

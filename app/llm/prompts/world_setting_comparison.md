@@ -13,15 +13,14 @@
   "proposed_scope_name": "최종 선택 범위명 또는 null",
   "proposed_setting_name": "최종 속성명",
   "proposed_value": "최종 문자열 값",
-  "comparison_reason": "사용자가 변경 전후와 판단 근거를 이해할 수 있는 짧고 구체적인 설명",
-  "explicit_root_scope_evidence_index": null
+  "comparison_reason": "사용자가 변경 전후와 판단 근거를 이해할 수 있는 짧고 구체적인 설명"
 }
 
 판단 기준:
 - candidate.evidence_spans는 1차 추출 단계에서 원문과 대조해 저장한 불변 근거다. extracted_value를 해석하고 기존값과 비교할 때 이 인용문을 우선 근거로 사용한다.
-- 세계관 속성의 식별 경로는 `subject_name / scope_name(선택) / setting_name`이다. 같은 setting_name이라도 scope_name이 다르면 서로 다른 속성이다.
+- 저장 속성의 실제 경로는 `subject_name / scope_name(선택) / setting_name`이다. 범위명이나 설정명 차이만으로 의미가 다른 사실이라고 단정하지 않는다.
 - 입력 category와 주체를 유지하며 다른 분류·대상의 유사 속성과 합치지 않는다. UPDATE·MERGE·기존 속성과
-  중복되어 EXCLUDE하는 판단은 후보의 원본 scope_name과 같은 범위에서만 한다.
+  중복되어 EXCLUDE하는 판단은 아래 의미 비교 기준을 따른다.
 - 기존 targets.properties는 `scope_name`, `setting_name`, `value`로 구성된 경로 목록이다. matched_scope_name과 matched_property_name은 반드시 같은 목록 항목의 실제 값을 함께 사용한다.
 - 비교 단위는 저장 속성 하나다. 문장·절·수식어가 여럿이라는 이유로 같은 속성을 설명하는 서술을 조각내지 않는다.
   종족(RACE)의 `전투 특성` 범위에서는 마법 적성인 `마법 재능`, 몸의 역량인 `신체 능력`, 특정 전투 방식·상황에서의
@@ -54,11 +53,8 @@
   ‘치유 마법만은 이 규칙의 예외로 주문 없이 쓴다’가 명시되면 치유 마법에만 예외를 적용한다. 예외인지 판단할 근거가 부족하면
   REVIEW_REQUIRED + GENERAL_UNCERTAINTY로 남기고, 확정된 충돌이라고 설명하지 않는다.
 - 원문이 주체 전체의 일반 규칙과 범위가 분명한 예외를 함께 명시하고 기존 속성은 좁은 범위의 예외만 담고 있다면,
-  일반 규칙을 원본 root 경로에 ADD하고 기존 예외의 범위·조건은 유지한다. 이 경우에만 explicit_root_scope_evidence_index에
-  그 관계를 직접 명시한 candidate.evidence_spans의 0부터 시작하는 index를 반환한다. 선택한 근거는 유효한 원문 offset이
-  있어야 한다. 원본 scope=null, PRESENT, 단일 추출값, 연결된 target, matched 경로=null, 원본 proposed 경로를 유지한다.
-  범위를 생략한 표현·이름의 일치·값의 차이만으로 일반 규칙을 추론하지 않는다. 관계가 불명확하면 기존 검토를 사용한다.
-  다른 모든 판단에서는 이 필드를 null로 반환하며 REVIEW_REQUIRED를 ADD로 바꾸는 표식으로 사용하지 않는다.
+  일반 규칙을 원본 root 경로에 ADD하고 기존 예외의 범위·조건은 유지한다.
+  원문 근거로 그 관계를 확인하며, 관계가 불명확하면 REVIEW_REQUIRED로 확인한다.
 - 추출값 하나가 같은 대상·현재 시점·적용 조건의 실제 현재 속성과 명확히 양립할 수 없으면
   CONFLICT + REVIEW_REQUIRED + review_reason=GENERAL_UNCERTAINTY로 반환한다. 다른 주장은 입력 targets.properties의 실제 현재값이다.
   실제 target_ref와 matched 경로를 남기고 proposed 경로도 그 실제 canonical 경로와 같아야 한다.
@@ -70,14 +66,14 @@
   복수 추출값끼리의 CONFLICT도 모든 원문값을 검토로 보존하고 어떤 값도 자동 확정하지 않는다.
 - EXCLUDE: 일시적 사건·현재 상태이거나, 기존 내용과 실질적으로 동일해 반영할 필요가 없거나, 근거가 세계관 설정으로 부적절하다.
 - 추출 대상인 지속적인 세계관 속성의 변경은 일시적 사건·현재 상태라는 이유만으로 EXCLUDE하지 않으며, UPDATE 여부는 기존의 변화 과정과 변경 전후 관계 검증 기준을 따른다.
-- REVIEW_REQUIRED: 후보의 scope_name은 null인데 같은 setting_name의 기존 속성이 특정 scope 아래에만 있어 적용 범위를 자동 결정할 수 없다. 이 경우 review_reason은 SCOPE_UNRESOLVED다.
+- REVIEW_REQUIRED: 범위가 없는 후보와 같은 주체의 실제 scoped 속성이 의미상 관련되지만 적용 대상을 확실히 판단할 수 없을 때 SCOPE_UNRESOLVED를 명시적으로 선택한다. 이름이 달라도 관련성과 확인할 내용을 구체적으로 설명할 수 있으면 허용한다. scope_name이 null이라는 이유만으로 검토하지 않는다.
 - REVIEW_REQUIRED + GENERAL_UNCERTAINTY: 범위 문제가 아니라 대상의 동일성이나 내용의 의미를 확실히 판단하기 어려워 사용자가 확인해야 한다. 관련된 종류나 등급이 같다는 이유로 서로 다른 대상을 합치지 않는다. 대상이나 내용을 확인할 구체적인 이유를 자연스러운 한국어로 설명한다. 예: '대상이나 내용을 확실히 판단하기 어려워 확인이 필요합니다.'
 - GENERAL_UNCERTAINTY는 자동 반영하지 않는다. proposed_scope_name·proposed_setting_name·proposed_value는 후보 원본을 그대로 보존한다. 비교한 기존 속성이 있으면 실제 target_ref와 matched 경로를 남기고, 특정 속성을 비교하지 않았다면 matched 경로를 모두 null로 둔다. 입력에 없는 대상·속성을 만들거나 기존 범위 검토의 조건을 우회하지 않는다.
 - UPDATE와 MERGE는 target_ref와 기존 properties에 실제 존재하는 matched_scope_name(없으면 null)·matched_property_name을 반드시 반환한다.
 - ADD는 matched_scope_name과 matched_property_name을 모두 null로 반환한다.
 - 기존 속성과 실질적으로 중복되어 EXCLUDE한다면 target_ref와 기존 properties에 실제 존재하는 matched_scope_name(없으면 null)·matched_property_name을 반드시 반환한다. comparison_reason에서 특정 기존 속성을 비교 대상으로 언급할 때도 이 경로를 생략하지 않는다.
 - 일시적 사건·현재 상태·세계관 설정으로 부적절한 근거처럼 특정 기존 속성과 비교하지 않고 EXCLUDE한다면 matched_scope_name과 matched_property_name은 null로 반환한다.
-- SCOPE_UNRESOLVED 검토는 candidate와 setting_name이 같은 기존 scoped 속성의 target_ref·matched_scope_name·matched_property_name을 반환한다. candidate의 scope_name을 기존 scope로 자동 상속하지 않는다.
+- SCOPE_UNRESOLVED 검토는 같은 주체의 실제 scoped 속성 target_ref·matched_scope_name·matched_property_name을 반환하고 후보 원본 경로를 제안에 보존한다. 기존 경로를 선택했다고 범위 모호성이 해소된 것으로 단정하지 않는다.
 - REVIEW_REQUIRED가 아니면 review_reason은 null이다.
 - ADD와 EXCLUDE의 proposed_scope_name·proposed_setting_name은 후보의 scope_name·setting_name을 그대로 유지한다. UPDATE와 MERGE는 선택한 기존 속성의 scope_name·setting_name을 그대로 유지한다.
 - EXCLUDE도 검토 화면에서 추출값을 보존한다. extracted_values가 하나면 proposed_value를 그대로 유지하고, 여러 개면 MERGED일 때 모든 보완 정보를 자연스럽게 합치며 CONFLICT일 때 candidate.extracted_value를 그대로 유지한다.
@@ -87,3 +83,10 @@
 - `validation_feedback`은 이전 응답이 계약 검증에서 거절된 재시도에만 존재한다. 같은 오류를 반복하지 말고 `correction`을 반영해 JSON 전체를 다시 반환한다.
 - 단일 추출값의 `consolidation_status`와 ADD/EXCLUDE의 범위명·설정명·제안값은 Backend가 원본 후보로 최종 보정한다. 이 필드의 문장 표현을 다듬는 대신 operation과 실제 비교 대상 선택에 집중한다.
 - 입력에 없는 ref, UUID, version을 만들거나 반환하지 않는다.
+
+의미 비교 기준:
+- 같은 category와 해소된 canonical 주체 안에서 기존의 전체 경로·값과 후보 원문 근거를 함께 읽고 같은 사실인지 판단한다. 경로가 달라도 단순 정리용 범위나 이름 차이이고 적용 대상·조건이 같으면 EXCLUDE/MERGE/UPDATE를 사용할 수 있다.
+- 지역·시점·조건·특정 하위 집단·확실성의 차이는 내용의 일부다. 같은 단어가 있거나 관련된 사실이라는 이유만으로 서로 다른 맥락을 합치지 않는다. 하나의 실제 기존 속성이 같은 사실을 담는지 확인하고 comparison_reason에 적용 대상과 조건이 같은 이유를 설명한다.
+- 후보가 기존 상세 설명에 이미 포함되고 보완 정보가 없으면 실제 기존 경로를 선택해 EXCLUDE한다. 예를 들어 root '서고 출입'의 '인증 문장을 아는 자만 입장할 수 있다'가 기존 '출입 규칙 / 인증 조건'의 상세 값에 포함되면 EXCLUDE한다. 기존 상세 값은 그대로 남는다.
+- 양립 가능한 새 정보는 조건과 기존 정보를 빠짐없이 보존해 MERGE한다. 명시적 대체·변화 근거가 있을 때만 UPDATE한다. 범위가 없는 것만으로 불확실하다고 판단하지 않는다. 실제 포함 관계나 적용 맥락이 불분명하면 정상 REVIEW_REQUIRED를 선택한다.
+- 실제 matched 경로와 주체 참조를 그대로 사용하고 UPDATE/MERGE의 proposed 경로는 선택한 저장 경로를 유지한다. 원본 후보값과 원문 근거는 불변이다.

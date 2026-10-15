@@ -1,0 +1,76 @@
+{
+  "files": [
+    {
+      "sourceCommit": "3686f312623302281a92e23454184eb9e61bfa06",
+      "sourcePath": "docs/ai-logic-versions/README.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/README.md",
+      "sha256": "bb0b4c9de79b2ef3a7bed6059be17e6c2ec0e174cd57e09a166a893600769b63"
+    },
+    {
+      "sourceCommit": "3686f312623302281a92e23454184eb9e61bfa06",
+      "sourcePath": "docs/ai-logic-versions/v0006.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/v0006.md",
+      "sha256": "4c1f544f28b1db8ed1951ef7e4f63e53b8f1965d20f5b386d1d31364be5bbe6b"
+    },
+    {
+      "sourceCommit": "3686f312623302281a92e23454184eb9e61bfa06",
+      "sourcePath": "docs/ai-logic-versions/v0007.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/v0007.md",
+      "sha256": "0aa654c1b6b54eb63f3d5ab2882e60600fa31ee1bdcd255bfe9c4114855683d2"
+    },
+    {
+      "sourceCommit": "3686f312623302281a92e23454184eb9e61bfa06",
+      "sourcePath": "docs/ai-logic-versions/v0008.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/v0008.md",
+      "sha256": "ce064f3665866cf8f545c685e8a3dfa61acd5b6f83645d44aa6d2dd8ea78c715"
+    },
+    {
+      "sourceCommit": "3686f312623302281a92e23454184eb9e61bfa06",
+      "sourcePath": "docs/ai-logic-versions/v0009.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/v0009.md",
+      "sha256": "c062a5de74da925a887e2173afc4f14da616d945b93741ba0deaf256eb37a77e"
+    },
+    {
+      "sourceCommit": "3686f312623302281a92e23454184eb9e61bfa06",
+      "sourcePath": "docs/ai-logic-versions/details/v0006.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/details/v0006.md",
+      "sha256": "a41f0104492fb58411f78763ca0c26461a5e4f171e19a1e4a0f0cefbe6ca1d7e"
+    },
+    {
+      "sourceCommit": "3686f312623302281a92e23454184eb9e61bfa06",
+      "sourcePath": "docs/ai-logic-versions/details/v0007.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/details/v0007.md",
+      "sha256": "bcfb1ef8c40f41b402a0b0bbaf8f5a10b43230ad37559606ab27fbbfa72a8e2e"
+    },
+    {
+      "sourceCommit": "3686f312623302281a92e23454184eb9e61bfa06",
+      "sourcePath": "docs/ai-logic-versions/details/v0008.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/details/v0008.md",
+      "sha256": "1f08a58807e7fe5d86ba31b79f8542b5c6fe3f226e5157b3bb05986435910ecf"
+    },
+    {
+      "sourceCommit": "3686f312623302281a92e23454184eb9e61bfa06",
+      "sourcePath": "docs/ai-logic-versions/details/v0009.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/details/v0009.md",
+      "sha256": "c23aabc4407978bb0f1519f8bc63667de07c67b2e04d6e63da0fd51f87e3acaa"
+    },
+    {
+      "sourceCommit": "fccde4aa9d53ce5050644e5a01476b82257cc303",
+      "sourcePath": "docs/ai-logic-versions/v0010.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/v0010.md",
+      "sha256": "bc0a42947489825bf0b1bba5506c22b8dd438f4ff361655346e7253ebc4164ed"
+    },
+    {
+      "sourceCommit": "fccde4aa9d53ce5050644e5a01476b82257cc303",
+      "sourcePath": "docs/ai-logic-versions/details/v0010.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/details/v0010.md",
+      "sha256": "809871dbcdf92626e83d54ddef55770f3217c53488d29bcee4d4748879896eab"
+    },
+    {
+      "sourceCommit": "fccde4aa9d53ce5050644e5a01476b82257cc303",
+      "sourcePath": "docs/ai-logic-versions/README.md",
+      "archivePath": "docs/ai-logic-versions/branches/gh-221/README-pr82.md",
+      "sha256": "87186b82a2ab6c1273412b3de212e8fe13f2f824f11448941b5ab246e4696af4"
+    }
+  ]
+}

@@ -231,7 +231,7 @@ def test_world_reducer_rejects_property_scope_tree_shape_collision() -> None:
         apply_gold_decision(state, _scenario(state), [source], decision)
 
 
-def test_world_gold_rejects_scope_mismatch_the_production_comparator_cannot_emit() -> None:
+def test_world_gold_accepts_semantic_scope_match_and_keeps_actual_target_path() -> None:
     target_ref = world_state_ref("RACE", "고블린", "일반", "체격")
     state = EvaluationState(
         world_facts=[_world_entry(scope="일반", setting="체격", value="평균 140cm")]
@@ -255,14 +255,16 @@ def test_world_gold_rejects_scope_mismatch_the_production_comparator_cannot_emit
         review_status="FINAL",
     )
 
-    with pytest.raises(ValidationError, match="extracted scope as matchedScopeName"):
-        GoldSnapshotV3(
+    snapshot = GoldSnapshotV3(
             dataset_version="v3",
             name="invalid-world-scope",
             scenarios=[_scenario(state)],
             stage1=[source],
             stage2=[decision],
-        )
+    )
+    assert snapshot.stage2[0].matched_scope_name == "일반"
+    after, _ = apply_gold_decision(state, _scenario(state), [source], decision)
+    assert after.world_facts[0].scope_name == "일반"
 
 
 def test_same_world_path_in_later_episode_uses_its_own_stage2_decision() -> None:

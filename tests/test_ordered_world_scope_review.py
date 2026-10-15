@@ -150,7 +150,7 @@ def test_empty_target_retries_specific_path_error_then_preserves_all_new_sources
 
 @pytest.mark.parametrize("operation", ["UPDATE", "MERGE"])
 @pytest.mark.parametrize("matched_scope", [None, "1층"])
-def test_wrong_scope_update_retries_into_explicit_review_preserving_both_paths(
+def test_explicit_scope_review_preserves_substantive_region_difference(
     operation, matched_scope,
 ):
     candidate = _candidate()
@@ -159,7 +159,7 @@ def test_wrong_scope_update_retries_into_explicit_review_preserving_both_paths(
     invalid = {**review, "operation": operation, "review_reason": None,
                "proposed_scope_name": None, "proposed_setting_name": None}
     source_before = candidate.model_dump()
-    result, requests = _run([candidate], target, [{"decisions": [invalid]}, {"decisions": [review]}])
+    result, requests = _run([candidate], target, [{"decisions": [review]}])
 
     assert not isinstance(result, Exception), result
     decision = result[0].decisions[0]
@@ -170,16 +170,8 @@ def test_wrong_scope_update_retries_into_explicit_review_preserving_both_paths(
     assert decision.proposed_value == candidate.extracted_value
     assert decision.comparison_reason == review["comparison_reason"]
     assert candidate.model_dump() == source_before
-    assert requests[0]["response_schema"] is requests[1]["response_schema"]
-    feedback = json.loads(requests[1]["user_prompt"])["validation_feedback"]
-    assert feedback["reason_code"] == "SOURCE_SCOPE_MISMATCH"
-    assert feedback["input_paths"]["source_paths"][0]["scope_name"] == "외곽 지역"
-    assert feedback["input_paths"]["existing_paths"] == [
-        {"property_ref": "T1.P1", "property_index": 0,
-         "scope_name": matched_scope, "setting_name": "광원"},
-    ]
-    assert "SCOPE_MISMATCH" in feedback["correction"]
-    assert "SCOPE_MISMATCH" in json.dumps(ORDERED_WORLD_BATCH_RESPONSE_SCHEMA.schema)
+    assert len(requests) == 1
+
 
 
 @pytest.mark.parametrize("invalid_case", [

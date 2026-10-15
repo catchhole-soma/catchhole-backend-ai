@@ -84,7 +84,7 @@ cache를 반영한 추정 비용:  약 $0.0202156
 
 공통 prefix가 cache 가능 최소 길이에 도달하기 전에 동적 내용이 시작될 수 있으므로 `prompt_cache_key`가 같아도 exact prefix cache hit가 발생하기 어렵습니다. 캐시 적중을 위해 의미 없는 padding을 추가하면 input 자체가 늘어나므로 현재는 최적화 대상으로 삼지 않습니다.
 
-위 수치는 `gpt-4.1-mini`로 측정한 역사적 결과입니다. 현재 운영 기본값은 `gpt-5.6-terra`, `reasoning.effort=none`이며 코드는 안정적인 `prompt_cache_key`만 전달합니다.
+위 수치는 `gpt-4.1-mini`로 측정한 역사적 결과입니다. 현재 모델 fallback은 `gpt-5.6-terra`이며 공통 `reasoning.effort`는 환경변수를 생략하면 `medium`입니다. 코드는 안정적인 `prompt_cache_key`만 전달합니다.
 
 GPT-5.6의 implicit caching은 가장 최근 user/tool 경계만 기본 breakpoint로 사용하므로, 같은 key만으로 cache hit를 강제할 수 없습니다. 현행 prompt는 정적 시스템 지침과 schema를 앞에, 동적 회차·청크를 뒤에 배치해 implicit cache가 재사용되기 쉬운 구조를 유지합니다. explicit `prompt_cache_breakpoint`와 `prompt_cache_options.mode=explicit`은 아직 적용하지 않았으며, 도입할 경우 cache write 비용과 실제 적중률을 별도로 재검증합니다. 최소 cache 가능 prefix와 최신 동작은 [OpenAI Prompt Caching](https://developers.openai.com/api/docs/guides/prompt-caching)을 기준으로 확인합니다.
 

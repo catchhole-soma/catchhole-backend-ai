@@ -252,6 +252,8 @@ class AnalysisJobWorker:
         heartbeat_interval_seconds: float = 60.0,
         setting_book_chunk_service: SettingBookChunkService | None = None,
         setting_book_chunking_service: SettingBookS3ChunkingService | None = None,
+        retrieval_preparer=None,
+        retrieval_preparation_enabled: bool = False,
     ) -> None:
         settings = get_settings()
         self.spring_client = spring_client or SpringWorkerClient.from_settings()
@@ -277,6 +279,8 @@ class AnalysisJobWorker:
             comparison_model_name or settings.effective_llm_comparison_model
         )
         self.embedding_generation_enabled = embedding_generation_enabled
+        self._retrieval_preparer = retrieval_preparer
+        self._retrieval_preparation_enabled = retrieval_preparation_enabled
         self._llm_provider_client = llm_provider_client
         self._owns_llm_provider_client = llm_provider_client is None
         self._embedding_provider_client = None
@@ -548,6 +552,10 @@ class AnalysisJobWorker:
             return chunks, {"embeddedChunkCount": 0, "embeddingFailedChunkCount": 0,
                             "embeddingSkippedChunkCount": skipped}
         episode = payload.episode
+        # Search preparation has its own durable MISSING/READY state, so it also
+        # repairs a resumed analysis without deleting its existing analysis chunks.
+        if self._retrieval_preparation_enabled:
+            await self._prepare_retrieval(payload)
         if _checkpoint_reached(checkpoint, AnalysisJobCheckpointStage.CHUNKS_READY):
             chunks = await self._blocking_io_executor.run(
                 self._get_episode_chunk_service().get_episode_chunks,
@@ -611,6 +619,27 @@ class AnalysisJobWorker:
             "embeddingFailedChunkCount": failed_count,
             "embeddingSkippedChunkCount": skipped_count,
         }
+
+    async def _prepare_retrieval(self, payload):
+        from app.retrieval.contracts import IndexSpec, Scope
+        from app.retrieval.service import RetrievalIndexService
+        from app.retrieval.store import RetrievalStore
+
+        try:
+            if self._retrieval_preparer is None:
+                settings = get_settings()
+                self._retrieval_preparer = RetrievalIndexService(
+                    RetrievalStore(get_session_maker()), S3TextObjectStorage.from_settings(settings),
+                    IndexSpec(settings.embedding_model, settings.embedding_version, settings.embedding_dimensions),
+                )
+            await self._blocking_io_executor.run(
+                self._retrieval_preparer.prepare,
+                Scope(payload.work_id, (payload.episode.episode_id,), max_sources=1),
+            )
+        except Exception:
+            # Search preparation does not change analysis checkpoints or billing.
+            # Operator readiness/dry-run observes the missing/stale source for retry.
+            logger.warning("Retrieval preparation failed; bounded index execution can retry")
 
     async def _run_character_stage(
         self,

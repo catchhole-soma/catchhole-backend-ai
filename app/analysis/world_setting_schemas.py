@@ -68,9 +68,6 @@ class WorldSettingComparisonDecision(BaseModel):
     proposed_setting_name: TrimmedName
     proposed_value: TrimmedValue
     comparison_reason: TrimmedValue
-    explicit_root_scope_evidence_index: int | None = Field(
-        default=None, strict=True, exclude_if=lambda value: value is None,
-    )
 
     @model_validator(mode="after")
     def validate_operation_payload(self) -> "WorldSettingComparisonDecision":

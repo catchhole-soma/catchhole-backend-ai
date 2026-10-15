@@ -1,0 +1,19 @@
+{
+  "policy": "Authorized integration of main 36bd355 semantic scope/extraction prompts with PR81 BOOK safeguards. Immutable historical captures retained; only full request/system prompt digests and world cache versions change. User data, schema, models, reasoning, keys and output limits remain checked by historical parity tests. User-approved final scope policy retains main model-selected concrete paths and removes the obsolete root-scope proof field; BOOK source/time/current-protection guards remain.",
+  "overrides": {
+    "extraction": {
+      "sha256": "d55e38522b423f8f7475317c129d871a8ef09609b867f819011fa68e11f62301",
+      "system_sha256": "a24fcfccfae6e03f03d69fcfc5fe97fc171ba16ade55a134b8dfb00f49429b2e"
+    },
+    "world_batch": {
+      "sha256": "7803772bbcf2ac8fce22990c3f8562a5844979a71c56381dd9b28f86ebc3fac0",
+      "system_sha256": "373f9ab14bb2759ac184bc539ccc02ec810bc6f76eac66f6ebaf210ecb9bec17",
+      "prompt_cache_key": "world-setting-comparison-batch:v15"
+    },
+    "world_singleton": {
+      "sha256": "273d87c81b381210d4e1bb89b7a0b55bf56c458f97c7a64f0d928aa9984b091f",
+      "system_sha256": "4f815b6933be432bcaaae42a2214af6c4dc1d745b06534a05cfb7d921e8520e0",
+      "prompt_cache_key": "world-setting-comparison:v18"
+    }
+  }
+}

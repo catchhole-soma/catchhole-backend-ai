@@ -457,6 +457,61 @@ def test_name_approval_does_not_cross_distinct_stable_subject_ids_with_same_disp
     assert mapping == {f"fact:{actual_entries[0].ref}": f"fact:{expected_entries[0].ref}"}
 
 
+def _exclude_organizational_path_fixture():
+    scope, property_name = "출입 규칙", "인증 조건"
+    target_ref = world_state_ref("WORLD_RULE_HISTORY", "서고", scope, property_name)
+    state = EvaluationState(world_facts=[WorldStateEntry(ref=target_ref, category="WORLD_RULE_HISTORY", subject_name="서고",
+        scope_name=scope, setting_name=property_name, value=VALUE)])
+    scenario = ScenarioGold(scenario_id="S1", episode_no=1, source_identifier="synthetic.txt", source_text=VALUE,
+        target_domains={"WORLD"}, gold_version="synthetic", start_state_mode="SEED", seed_state=state,
+        cumulative_through_episode=0, review_status="FINAL")
+    source = WorldStage1Gold(gold_id="W1", scenario_id="S1", episode_no=1, sort_order=1, decision="EXTRACT",
+        importance="MUST", evidence_quotes=[VALUE], review_status="FINAL", domain="WORLD", candidate_kind="WORLD_SETTING",
+        category="WORLD_RULE_HISTORY", subject_name="서고", scope_name=scope, setting_name=property_name, source_values=[VALUE])
+    decision = WorldStage2Gold(decision_id="D1", scenario_id="S1", episode_no=1, sort_order=1, source_gold_ids=["W1"],
+        domain="WORLD", operation="EXCLUDE", consolidation_status="SINGLE", target_ref=target_ref, matched_scope_name=scope,
+        matched_property_name=property_name, proposed_scope_name=scope, proposed_setting_name=property_name,
+        proposed_value=VALUE, before_value=VALUE, review_status="FINAL")
+    gold = GoldSnapshotV3(dataset_version="synthetic", name="exclude organizational paths", scenarios=[scenario],
+                          stage1=[source], stage2=[decision]).with_fixture_hash()
+    actual_source = WorldStage1Prediction(candidate_id="P1", domain="WORLD", category="WORLD_RULE_HISTORY", subject_name="서고",
+                                          setting_name="서고 출입", source_values=[VALUE], evidence_spans=[{"quote": VALUE}])
+    actual = WorldStage2Prediction(source_candidate_id="P1", domain="WORLD", operation="EXCLUDE", consolidation_status="SINGLE",
+        target_ref=target_ref, matched_scope_name=scope, matched_property_name=property_name, proposed_scope_name=None,
+        proposed_setting_name="서고 출입", proposed_value=VALUE)
+    bundle = PredictionBundleV3(fixture_hash=gold.fixture_hash, mode="FIXED", evaluation_domains={"WORLD"},
+                                scenarios=[ScenarioPrediction(scenario_id="S1", stage1=[actual_source], stage2=[actual])])
+    return gold, bundle
+
+
+@pytest.mark.parametrize("scope_equivalent,accuracy", [(True, 1), (False, 0), (None, None)])
+def test_exclude_source_path_requires_semantic_applicability_and_exact_existing_match(scope_equivalent, accuracy):
+    gold, bundle = _exclude_organizational_path_fixture()
+    before = bundle.model_dump(mode="json")
+    class Judge(_Judge):
+        async def judge_many(self, cases):
+            result = await super().judge_many(cases)
+            return SemanticOutcomeBatchResult(decisions=tuple(
+                row.model_copy(update={"scope_equivalent": True}) if row.case_id.startswith("stage1-") else row
+                for row in result.decisions
+            ))
+    report = asyncio.run(evaluate_multi_stage(gold, bundle, semantic_judge=Judge(scope_equivalent=scope_equivalent)))
+    assert report["stages"]["world"]["stage2"]["metrics"]["proposedPathAccuracy"] == accuracy
+    assert report["stages"]["world"]["stage2"]["metrics"]["fullDecisionAccuracy"] == accuracy
+    assert bundle.model_dump(mode="json") == before
+
+
+@pytest.mark.parametrize("invalid", ["arbitrary-name", "arbitrary-scope", "wrong-target", "wrong-match", "opposite-value"])
+def test_exclude_semantic_judge_cannot_rescue_arbitrary_path_or_incorrect_fact(invalid):
+    gold, bundle = _exclude_organizational_path_fixture()
+    changes = {"arbitrary-name": {"proposed_setting_name": "무관한 설명"}, "arbitrary-scope": {"proposed_scope_name": "다른 장소"},
+               "wrong-target": {"target_ref": world_state_ref("WORLD_RULE_HISTORY", "서고", "다른 장소", "인증 조건")},
+               "wrong-match": {"matched_property_name": "없는 속성"}, "opposite-value": {"proposed_value": OPPOSITE_VALUE}}
+    bundle.scenarios[0].stage2[0] = bundle.scenarios[0].stage2[0].model_copy(update=changes[invalid])
+    report = asyncio.run(evaluate_multi_stage(gold, bundle, semantic_judge=_Judge()))
+    assert report["stages"]["world"]["stage2"]["metrics"]["fullDecisionAccuracy"] == 0
+
+
 def _assert_full_world_result(report) -> None:
     assert report["stages"]["world"]["stage1"]["metrics"]["candidateF1"] == 1
     assert report["stages"]["world"]["stage1"]["metrics"]["valueAccuracy"] == 1
