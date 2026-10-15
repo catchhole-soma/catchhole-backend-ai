@@ -358,7 +358,12 @@ def test_historical_evidence_ref_cannot_replace_current_evidence(tmp_path):
             tmp_path, c, spring_setup=lambda s: history(s, answer="E999를 사용해. 반지를 던졌다.")
         )
     )
-    assert result["finish"]["failure"] == "PROVIDER_FAILURE"
+    assert result["finish"]["failure"] is None
+    response = result["finish"]["result"]
+    assert response["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert response["sources"] == response.get("retrievalSources", []) == []
+    assert "E999" not in response["text"]
+    assert c["outputs"][-1]["claims"][0]["text"] not in response["text"]
 
 
 def context_fixture():

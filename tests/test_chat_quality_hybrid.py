@@ -183,9 +183,15 @@ def test_omitted_skill_cannot_be_hidden_by_declaring_answer_coverage(tmp_path, c
             search_setup=setup_source,
         )
     )
-    assert result["finish"] == {"result": None, "failure": "PROVIDER_FAILURE"}
+    assert result["finish"]["failure"] is None
+    response = result["finish"]["result"]
+    assert response["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert response["sources"] == response.get("retrievalSources", []) == []
+    assert all(claim["text"] not in response["text"] for claim in bad["claims"])
     assert len(result["raw"].requests) == 3
-    assert len(result["spring"].reservations) == len(result["spring"].reports) == 3
+    assert len(result["spring"].reservations) == len(result["spring"].reports) == 4
+    assert len(result["embedding"].inputs) == 1
+    assert result["spring"].reports[-1]["outputTokens"] == 0
     assert "revalidate" not in result["search"].calls
 
 
@@ -208,7 +214,12 @@ def test_unobserved_setting_reference_is_rejected_in_every_answer_channel(tmp_pa
             search_setup=setup_source,
         )
     )
-    assert result["finish"] == {"result": None, "failure": "PROVIDER_FAILURE"}
+    assert result["finish"]["failure"] is None
+    response = result["finish"]["result"]
+    assert response["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert response["sources"] == response.get("retrievalSources", []) == []
+    assert all(claim["text"] not in response["text"] for claim in bad["claims"])
+    assert "R999" not in response["text"]
     assert len(result["raw"].requests) == 3
 
 

@@ -180,6 +180,7 @@ class GroundedClaim(ContractModel):
     evidence_refs: list[str] = Field(min_length=1, max_length=6)
     row_refs: list[str] = Field(default_factory=list, max_length=50)
     answered_facets: list[RequestedFacet] = Field(default_factory=list, max_length=4)
+    related_facets: list[RequestedFacet] = Field(default_factory=list, max_length=4)
     event_status: EventStatus | None = None
     supports: list[EvidenceSupport] = Field(default_factory=list, max_length=6)
     event_match: Literal["MATCH", "OTHER", "UNCERTAIN"] | None = None
@@ -211,6 +212,8 @@ class GroundedAnswer(ContractModel):
                 or len(set(claim.evidence_refs)) != len(claim.evidence_refs)
                 or len(set(claim.row_refs)) != len(claim.row_refs)
                 or len(set(claim.answered_facets)) != len(claim.answered_facets)
+                or len(set(claim.related_facets)) != len(claim.related_facets)
+                or set(claim.answered_facets) & set(claim.related_facets)
             ):
                 raise ValueError("Invalid claim")
         if len(set(self.unanswered_row_refs)) != len(self.unanswered_row_refs):

@@ -2,6 +2,20 @@
 
 from pydantic import ValidationError
 
+from app.chatbot.runtime import ProviderFailure
+
+
+class ResponseValidationFailure(ProviderFailure):
+    """Complete responses exhausted schema/contract recovery without a valid answer.
+
+    Provider calls have already been metered. This carries no rejected response,
+    validation exception or usage to replay, and retains the legacy failure type
+    for callers that do not explicitly recover from invalid model responses.
+    """
+
+    def __init__(self):
+        super().__init__()
+
 
 RULES = {
     "REQUESTED_PARTS_INCOMPLETE": "요청된 모든 답변 부분을 제공된 자료로 답하거나 미확인으로 표시하고 coverage를 일치시키세요.",

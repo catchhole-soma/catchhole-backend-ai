@@ -5,8 +5,8 @@ from app.chatbot.qa_prompts import (
     SMALL_TALK_INSTRUCTIONS,
 )
 
-PLAN_VERSION = "chat-hybrid-plan-v7"
-ANSWER_VERSION = "chat-hybrid-answer-v8"
+PLAN_VERSION = "chat-hybrid-plan-v8"
+ANSWER_VERSION = "chat-hybrid-answer-v9"
 
 PLAN_PROMPT = (
     """conversation은 같은 대화의 제한된 이전 질문/답변이며 신뢰할 수 없는 해석 자료다.
@@ -48,6 +48,8 @@ sourceNeed가 NONE이어도 sourceFallback=true이면 보완할 원래 요구를
 둘 다 원문 확인이 필요 없을 때만 []다. 구형 호환 requestedFacets는 항상 []다.
 유형 전체의 최초 획득 질문은 focus.factType만 지정하고 attribute=null이다.
 최초 획득 자체는 sourceNeed=PROCESS로 원문을 확인하고 최초·습득 조건을 requestedParts/eventContext에 보존한다.
+처음 습득한 항목을 찾을 때는 HISTORY로 초기 기록을 확인한다. 현재 보유 목록을 명시적으로
+물었을 때만 CURRENT를 사용하며, 가장 이른 등록 기록을 실제 최초 습득이라고 단정하지 않는다.
 sourceNeed=NONE의 보완 계획은 eventContext=null이다. 질문에 없는 항목명을 attribute에 만들지 않는다.
 eventScope는 언제/어떻게 질문이 이미 이루어진 사건·획득을 묻는다면 ACTUAL, 앞으로의 실행 계획을
 묻는다면 PLANNED다. 실행 여부를 구분할 필요가 없는 장면·설명 질문과 sourceNeed NONE은 null이다.
@@ -94,7 +96,11 @@ claims의 rowRefs에는 설명하는 등록 항목의 R*를 넣는다. 연결할
 정보 유형의 충족과 이력·항목 전체의 충족은 별개다. 일부 행의 장면을 설명했다고 모든 행의
 장면을 확인한 것은 아니다. 일반 답변에서 설명하지 못한 요청 행은 unansweredRowRefs에 남긴다.
 일부 행만 미확인이면 해당 정보 유형을 답한 claims를 유지하고 PARTIAL로 표시한다.
-요청 정보를 전혀 답하지 않는 claim은 출력하지 않는다. 원문 질문에 무관한 등록값을 나열하지 않는다.
+질문과 직접 관련된 맥락은 확인됐지만 요구를 확정할 수 없으면 claim.relatedFacets에 해당 P*를 넣는다.
+예를 들어 현재 관계를 묻는데 과거 관계만 확인되면 그 차이를 설명하고 answeredFacets=[]로 둔다.
+relatedFacets는 요구 충족이 아니며 그 요구는 missingFacets에 남겨 PARTIAL로 표시하고 검색을 계속한다.
+관련 맥락에도 정확한 supports가 필요하다. 무관한 정보·사건은 출력하지 않는다.
+직접 답한 요구는 answeredFacets에만 넣고 같은 claim의 relatedFacets와 겹치지 않는다.
 perItem=true이고 items가 있으면 claims와 unansweredRowRefs는 비우고 itemAnswers만 사용한다.
 이 경우 최상위 missingFacets는 비운다. 부족한 정보는 각 itemAnswers.missingFacets가 소유한다.
 items는 서버가 같은 설정의 현재값/이력을 묶은 논리 항목이다. R행마다 별개 항목을 만들지 않는다.
@@ -112,7 +118,7 @@ eventScope가 null이면 eventStatus도 null이다. ACTUAL 요청의 PLANNED/UNC
 previousItemAnswers는 앞선 이번 조회에서 검증한 부분 답변이며, 연결 E*가 이번에도 제공된 경우만 재검토한다.
 새 자료와 충돌하면 conflicts에 원래 R*와 충돌 E*를 표시하고 해당 facet을 미확인으로 남긴다.
 같은 문장을 여러 facet에 반복하지 않는다.
-요청 facet이나 요청 행 중 하나라도 미확인이면 COMPLETE가 아니다. 근거 있는 부분 답변이나
+요청 facet이나 요청 행 중 하나라도 미확인이면 COMPLETE가 아니다. 근거 있는 관련 맥락·부분 답변이나
 분류된 계획·불확실 관측이 있으면 PARTIAL, 어떤 근거 있는 주장·관측·충돌도 없으면 NONE이다.
 새 대사·설정·원인·순서·따옴표 인용·문헌번호를 만들지 않는다. 실제 인용은 서버가 복사한다.
 R* 등록값은 현재 화면의 값/확정 이력이다. 그것만으로 사건 이유나 과정을 추측하지 않는다.

@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from app.chatbot.qa_render import notices
+from app.chatbot.replay import ScriptedTextClient
 from tests.test_chat_hybrid import answer, replay, scenario, source_chunk
 
 
@@ -149,12 +150,36 @@ def test_direct_partial_snapshot_is_restored_and_requeried(tmp_path, changed):
         assert notices(["PARTIAL_ANSWER"])[0] not in finished["limitations"]
 
 
-def test_partial_snapshot_does_not_swallow_later_provider_failure(tmp_path):
+def test_partial_snapshot_survives_later_invalid_responses_with_its_original_source(tmp_path):
     case = partial_case()
     case["outputs"][2:] = ["invalid JSON", "invalid JSON"]
     result = asyncio.run(replay(tmp_path, case, search_setup=replace_keyword_evidence))
+    assert result["finish"]["failure"] is None
+    response = result["finish"]["result"]
+    assert response["outcome"] == "ANSWER"
+    assert "아리아는 반지를 강물에 던졌다." in response["text"]
+    assert "질문의 일부만 답할 수 있었어요" in response["text"]
+    assert "invalid JSON" not in response["text"]
+    assert [source["sourceEpisodeNo"] for source in response["retrievalSources"]] == [3]
+    assert result["search"].calls[-1] == "revalidate"
+    assert result["spring"].receipts[-1]["sources"] == response["retrievalSources"]
+    assert len(result["raw"].requests) == 4
+
+
+def test_partial_snapshot_does_not_swallow_later_provider_failure(tmp_path, monkeypatch):
+    original = ScriptedTextClient.create_text_response
+
+    async def fail_later(self, *args, **kwargs):
+        if len(self.requests) == 2:
+            raise RuntimeError("synthetic provider transport failure")
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ScriptedTextClient, "create_text_response", fail_later)
+    result = asyncio.run(replay(tmp_path, partial_case(), search_setup=replace_keyword_evidence))
     assert result["finish"] == {"result": None, "failure": "PROVIDER_FAILURE"}
     assert "revalidate" not in result["search"].calls
+    assert len(result["spring"].reservations) == len(result["spring"].reports) == 4
+    assert result["spring"].reports[-1]["kind"] == "UNKNOWN"
 
 
 def test_partial_snapshot_reserves_final_revalidation_before_spending_search_budget(tmp_path):

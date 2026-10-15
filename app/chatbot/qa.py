@@ -15,7 +15,7 @@ from app.chatbot.qa_collection import WorkLookup
 from app.chatbot.qa_synthesis import RegisteredSynthesis
 from app.chatbot.qa_prompts import PLAN_PROMPT, PLAN_VERSION, SELECT_PROMPT, SELECT_VERSION
 from app.chatbot.qa_render import AnswerRow, message, render_answer
-from app.chatbot.qa_validation import RULES, retry_feedback
+from app.chatbot.qa_validation import RULES, ResponseValidationFailure, retry_feedback
 from app.chatbot.runtime import Execution, ProviderFailure, ProviderOutputTruncated
 from app.clients.setting_tools_client import SettingToolClientError
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
@@ -172,6 +172,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         )
         feedback = []
         truncated_retry = False
+        validation_failed = False
         for attempt in range(attempt_limit):
             # Every recovery call uses the same attempt/call/ledger limits. No transport retry.
             retry_prompt = prompt + (
@@ -184,6 +185,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                 raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
             self.before_model_call(purpose)
             output_cap = self.cfg.output_tokens_for(purpose, truncated_retry=truncated_retry)
+            validation_failed = False
             try:
                 response = await client.create_text_response(
                     retry_prompt,
@@ -237,6 +239,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     validate(parsed)
                 return parsed
             except (ValidationError, ValueError) as exc:
+                validation_failed = True
                 feedback = retry_feedback(exc, schema.schema)
                 # Never log exception text, rejected values, response bodies or IDs.
                 category = (
@@ -267,8 +270,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     "error_category": category,
                     "origin": origin,
                     "validation_errors": [
-                        {"code": item["code"], "path": item.get("path", "$")}
-                        for item in feedback
+                        {"code": item["code"], "path": item.get("path", "$")} for item in feedback
                     ],
                 }
                 logger.warning(
@@ -277,6 +279,8 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     *diagnostic.values(),
                     extra=diagnostic,
                 )
+        if validation_failed:
+            raise ResponseValidationFailure()
         raise ProviderFailure()
 
     async def query(self, request: SettingToolQuery) -> SettingToolResponse:

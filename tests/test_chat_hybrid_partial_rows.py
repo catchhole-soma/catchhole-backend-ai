@@ -170,7 +170,12 @@ def test_row_gap_fix_does_not_accept_invalid_coverage_or_references(tmp_path, in
     result = asyncio.run(
         replay(tmp_path, case, spring_setup=setup_history, config={"max_evidence_calls": 4})
     )
-    assert result["finish"] == {"result": None, "failure": "PROVIDER_FAILURE"}
+    assert result["finish"]["failure"] is None
+    response = result["finish"]["result"]
+    assert response["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert response["sources"] == response.get("retrievalSources", []) == []
+    assert all(claim["text"] not in response["text"] for claim in answer["claims"])
+    assert "R999" not in response["text"] and "E999" not in response["text"]
     assert len(result["raw"].requests) == 3
 
 

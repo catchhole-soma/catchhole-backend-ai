@@ -489,8 +489,13 @@ def test_conflict_with_nonexistent_support_cannot_publish_a_disagreement(tmp_pat
         )
     )
 
-    assert result["finish"]["failure"] == "PROVIDER_FAILURE"
-    assert result["finish"]["result"] is None
+    assert result["finish"]["failure"] is None
+    response = result["finish"]["result"]
+    assert response["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert response["sources"] == response.get("retrievalSources", []) == []
+    assert "제공된 원문에 없는 문장이다." not in response["text"]
+    assert text not in response["text"]
+    assert "다르게 나타납니다" not in response["text"]
     assert len(result["raw"].requests) == 3
     assert "GROUNDING_QUOTE_NOT_FOUND" in result["raw"].requests[-1]["system"]
 

@@ -38,6 +38,7 @@ from app.chatbot.qa_render import (
     setting_label,
 )
 from app.chatbot.qa_synthesis import logical_groups
+from app.chatbot.qa_validation import ResponseValidationFailure
 from app.chatbot.runtime import ProviderFailure
 from app.clients.setting_tools_client import SettingToolClientError
 from app.retrieval.evidence import compose_evidence
@@ -422,7 +423,11 @@ class _HybridSession(_Session):
             return await self.run_items(plan)
         # A direct lookup also needs a final recheck. Keep room for a minimal
         # search -> receipt -> final revalidation -> final receipt path.
-        await self.evidence(self.chosen, reserve=4 + len(self.collection_checks), revalidate=True)
+        await self.evidence(
+            self.chosen,
+            reserve=3 * self.hcfg.max_rounds + 2 + len(self.collection_checks),
+            revalidate=True,
+        )
         self.add_direct_evidence()
         draft = None
         partial_snapshot = None
@@ -540,6 +545,36 @@ class _HybridSession(_Session):
                 "INSUFFICIENT_EVIDENCE",
                 f"{names}: 등록된 항목은 확인했지만, 이번에 조회한 원문으로는 요청한 경위나 이유를 확인하지 못했습니다.",
                 self.codes + ["NO_SEARCH_EVIDENCE"],
+            )
+        if plan.requested_parts:
+            needs = "·".join(safe_text(p.description) for p in plan.requested_parts)
+            text = (
+                f"확인한 자료만으로는 {needs}에 대해 확정해서 답하기 어렵습니다. "
+                "해당 사실이 없다고 단정한 것은 아닙니다."
+            )
+            scope_codes = {
+                "SEARCH_LIMIT",
+                "SEARCH_QUERY_LIMIT",
+                "EVIDENCE_CONTEXT_LIMIT",
+                "CONTEXT_LIMIT",
+            }
+            if scope_codes.intersection(self.codes):
+                text += " 관련 원문을 모두 살펴본 결과는 아니므로 추가 근거가 있을 수 있습니다."
+            return message(
+                "INSUFFICIENT_EVIDENCE",
+                text,
+                [
+                    c
+                    for c in self.codes
+                    if c
+                    not in scope_codes
+                    | {
+                        "NARRATIVE_SOURCE_RANGE",
+                        "NO_RELATED_SETTING",
+                        "NO_SEARCH_EVIDENCE",
+                        "HISTORY_IS_NOT_A_STATE_SNAPSHOT",
+                    }
+                ],
             )
         return message(
             "INSUFFICIENT_EVIDENCE",
@@ -1324,12 +1359,14 @@ class _HybridSession(_Session):
                 if (
                     any(
                         not c.answered_facets
+                        and not c.related_facets
                         and (
                             c.event_status is None
                             or event_matches(c.event_status, plan.event_scope)
                         )
                         for c in answer.claims
                     )
+                    or any(not set(c.related_facets) <= requested for c in answer.claims)
                     or covered & missing
                     or covered | missing != requested
                 ):
@@ -1342,14 +1379,39 @@ class _HybridSession(_Session):
 
                     raise ChatResponseContractError("REQUESTED_PARTS_INCOMPLETE")
 
-        answer = await self.model(
-            GroundedAnswer,
-            ANSWER_PROMPT,
-            payload,
-            "CHAT_ANSWER",
-            ANSWER_VERSION,
-            valid,
+        attempts = min(
+            self.cfg.max_attempts,
+            self.hcfg.max_model_calls - self.model_calls,
+            self.execution.context.max_calls - self.execution.calls,
         )
+        try:
+            if attempts < 1:
+                self.codes.append("SEARCH_LIMIT")
+                raise ResponseValidationFailure()
+            answer = await self.model(
+                GroundedAnswer,
+                ANSWER_PROMPT,
+                payload,
+                "CHAT_ANSWER",
+                ANSWER_VERSION,
+                valid,
+                max_attempts=attempts,
+            )
+        except ResponseValidationFailure:
+            # Reject every unverified claim, but keep the search/partial-answer
+            # recovery path alive. Transport and provider failures still propagate.
+            self.trace("answer_validation_exhausted", round=self.rounds)
+            return (
+                empty_item_answer(self.logical_items, requested_facets(plan))
+                if self.logical_items
+                else GroundedAnswer(
+                    coverage="NONE",
+                    claims=[],
+                    conflicts=[],
+                    missing_facets=requested_facets(plan),
+                    unanswered_row_refs=list(r_refs) if plan.per_item else [],
+                )
+            )
         answer = grounded(answer)
         answer = apply_event_scope(
             answer, plan.event_scope, requested_facets(plan), event_context=plan.event_context

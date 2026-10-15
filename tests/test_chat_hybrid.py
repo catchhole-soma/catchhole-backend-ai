@@ -360,7 +360,13 @@ def test_repeated_invalid_citations_never_publish_success(tmp_path):
     result = asyncio.run(
         replay(tmp_path, case, outputs=[case["outputs"][0], answer("E999"), answer("E999")])
     )
-    assert result["finish"] == {"result": None, "failure": "PROVIDER_FAILURE"}
+    assert result["finish"]["failure"] is None
+    response = result["finish"]["result"]
+    assert response["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert response["sources"] == response.get("retrievalSources", []) == []
+    assert "E999" not in response["text"]
+    assert answer()["claims"][0]["text"] not in response["text"]
+    assert len(result["raw"].requests) == 3
 
 
 def test_source_changed_after_generation_is_withheld_before_finish(tmp_path):
@@ -511,7 +517,19 @@ def test_unrecognized_conflict_reference_is_rejected(tmp_path):
     bad = case["outputs"][-1] | {"conflicts": [{"rowRefs": ["R999"], "evidenceRefs": ["E2"]}]}
     case["outputs"] = [*case["outputs"][:-1], bad, bad]
     result = asyncio.run(replay(tmp_path, case))
-    assert result["finish"]["failure"] == "PROVIDER_FAILURE"
+    assert result["finish"]["failure"] is None
+    response = result["finish"]["result"]
+    # A valid direct-evidence answer preceded the invalid search draft. Only
+    # that earlier partial answer may survive, with its own rechecked source.
+    assert response["outcome"] == "ANSWER"
+    assert case["outputs"][2]["claims"][0]["text"] in response["text"]
+    assert "질문의 일부만 답할 수 있었어요" in response["text"]
+    assert response["sources"] and response.get("retrievalSources", []) == []
+    tools = [query["tool"] for query in result["spring"].queries]
+    assert tools.count("CHARACTER_EVIDENCE") == 2
+    assert "R999" not in response["text"]
+    assert "다르게 나타납니다" not in response["text"]
+    assert all(claim["text"] not in response["text"] for claim in bad["claims"])
 
 
 def test_missing_rdb_with_ambiguous_named_subject_requests_clarification(tmp_path):
