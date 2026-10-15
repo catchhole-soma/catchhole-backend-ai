@@ -140,6 +140,61 @@ raw→handoff 개수 차이는 주체 해소나 중복 제거 경계에서 후�
 아니라 **2차 이전 후보 파이프라인 전체의 누락**을 뜻합니다. 원인을 더 좁힐 때 raw 상세를 함께
 확인합니다. 2차 평가는 handoff 후보만 사용합니다.
 
+#### 검수된 청크 간 반복 사실의 채점 단위
+
+같은 현재 PROFILE 사실을 다른 청크에서 다시 추출한 경우, 독립 검수한 반복 그룹만
+1차 검출 P/R/F1의 한 사실 단위로 셀 수 있습니다. `--character-repeat-provenance`로
+검수 sidecar를 명시했을 때 `scoringUnit=REVIEWED_FACT`를 기록하고 주 지표의 분모를
+조정합니다. sidecar가 없으면 기존 후보 단위 매칭과 보고서를 유지합니다. 세계관의 기존
+경로 그룹화, 1차 값·근거 품질 축, 2차 Gold 점수와 누적 상태 평가는 이 옵션으로 바뀌지 않습니다.
+
+sidecar는 원문 UTF-8의 SHA-256, 원래 `ScenarioPrediction` 전체의 canonical JSON SHA-256,
+저장 실행의 청크 경계와 독립 검수한 그룹을 함께 고정합니다. `continuityVerified=true`는
+원문에서 중간의 실제 변화가 없고 같은 현재 사실이 반복됨을 사람이 검수했다는 뜻입니다.
+모델의 동일 문자열이나 `operation=EXCLUDE`만으로 이 검수를 대신하지 않습니다.
+
+```json
+{
+  "scenarios": {
+    "S1": {
+      "sourceSha256": "<64자리 소문자 SHA-256>",
+      "scenarioPredictionSha256": "<64자리 소문자 SHA-256>",
+      "chunks": [
+        {"chunkIndex": 0, "startOffset": 0, "endOffset": 100},
+        {"chunkIndex": 1, "startOffset": 100, "endOffset": 200}
+      ],
+      "repeatGroups": [
+        {"candidateIds": ["P1", "P2"], "continuityVerified": true}
+      ]
+    }
+  }
+}
+```
+
+예측 해시는 `evals.multi_stage_setting.reviewed_repeats.scenario_prediction_sha256`로
+계산합니다. 청크는 현재 splitter로 다시 추정하지 않고 저장 실행의 경계를 사용합니다.
+범위는 원문 문자 offset `[startOffset, endOffset)`이고, 후보 `sortOrder`의 저장 runtime 계약
+`chunkIndex * 1_000_000 + 청크 안의 1부터 시작하는 후보 순서`와 정확한 인용 offset을 검증합니다.
+잘못된 sidecar 형식·해시·청크 경계·후보 참조는 평가를 거절합니다.
+
+실제 그룹화에는 같은 확정 `entityRef`, 정확히 같은 PROFILE key·자료형·표시값·valueJson,
+후보별 PRESENT 판단, 서로 다른 청크의 검증된 근거가 필요합니다. 같은 slot의 EXTRACT Gold가
+정확히 한 행이어야 하고 그 행의 태그는 `CURRENT`를 포함하며 `CURRENT/REPEAT`만 허용합니다.
+중간의 값 변화·불명확한 처리나 key의 좁은 철자 변형으로 표현된 변화도 그룹화를 막습니다.
+동일 청크 중복, STATUS·발견 후보, 미매칭·모호한 주체, 미상 출처·시점은 묶지 않습니다.
+그룹별 `GROUPED/NOT_GROUPED`와 거절 이유는 시나리오의 `reviewedRepeatGroups`에 남깁니다.
+
+원래 후보 기준 P/R/F1과 개수는 `candidateProcessing.metrics/counts`에 보존합니다.
+`repeatedCandidateProcessing`은 검수된 사실을 다시 처리한 후보 수입니다. 모든 raw/handoff
+후보와 2차 결정·실패 진단은 남고, 반복 행에는 `repeatOfPredictionId`와 `factGoldIds`를 표시합니다.
+이 연결은 채점 표시용이며 reducer 입력·적용 순서·원시 예측·상태 해시를 바꾸지 않습니다.
+
+```bash
+python -m evals.multi_stage_setting.cli --gold gold.json --predictions predictions.json \
+  --source-root private/sources --character-repeat-provenance reviewed-repeats.json \
+  --semantic-judge none --output score.json
+```
+
 캐릭터 1차의 추출 또는 주체 해소가 한 청크에서라도 실패하면 운영과 동일하게 해당 시나리오를
 `PIPELINE_FAILED`로 표시합니다. 앞에서 성공한 `rawStage1`은 진단용으로 남기지만 캐릭터 handoff,
 2차 비교, 후속 세계관 단계는 실행하지 않습니다. 세계관 1차가 실패하면 이미 완료된 캐릭터
@@ -174,9 +229,40 @@ category·canonical subject·raw scope 안에서 같은 사실로 통합할 여�
 상태와 이번 후보 사이의 처리**이고, consolidation은 **이번 회차에 같은 세계관 경로로 나온
 여러 원문 값 사이의 관계**입니다.
 
-세계관 `UPDATE/MERGE`와 기존 property를 지정한 `EXCLUDE`의 `matchedScopeName`은 1차 후보의
-scope와 같아야 합니다. 운영 comparator가 생성할 수 없는 교차-scope 정답은 export 검증에서
-즉시 거절합니다.
+채점에서는 실제 decision에 연결된 후보 전체의 `sourceValues`를 기준으로 입력 값 하나는
+`SINGLE`, 양립하는 여러 값은 `MERGED`인지 확인합니다. Gold와 문자열을 나눈 방식만 다르면
+Gold의 포장 enum과 직접 일치할 필요가 없습니다. 이를 인정하려면 실제 연결이 해당 Gold
+decision의 승인된 1차 통합 그룹 구성원을 모두 포함하고, 기존 값 판정에서 의미 보존이
+확인되어야 합니다. 누락·미상·중복 source나 다른 사실의 source를 섞어 통과시키지 않으며,
+판정 전에는 consolidation도 `PENDING`입니다. Gold의 `CONFLICT`는 복수 대안과 `CONFLICT`
+보존을 계속 요구합니다. operation·target·path·최종값·상태 적용은 독립 검증하고, 상세의
+expected/actual enum과 원시 prediction·reducer·상태 해시는 보존합니다. source 개수 확인을
+위해 새 의미 판정 호출을 만들지 않습니다.
+제품 batch와 동일하게 서로 다른 후보가 같은 값을 하나씩 제공해도 입력은 복수로 셉니다.
+`ORACLE`의 여러 Gold 행은 하나의 통합 handoff를 기술하므로 기존 Gold의 고유 값 기준을
+유지합니다.
+Gold와 실제 enum이 모두 `SINGLE`이고 실제 입력이 정확히 하나이며 연결·identity가 맞으면
+통합 축은 값 오답과 독립적으로 인정합니다. 포장 enum이 달라진 경우와 `MERGED/CONFLICT`는
+기존 의미 보존 검증을 계속 요구하며, 단일값의 내용 오답도 값·최종 결정에서 감점합니다.
+
+세계관 기존 항목 비교는 같은 category·canonical 주체 안에서 전체 경로·값·원문 근거로
+판단합니다. 1차 후보와 기존 항목의 정리용 scope/name은 달라도 됩니다. 실제 지역·시점·조건·
+하위 집단·확실성 차이는 보존하며, 빈 scope만으로 검토 대상으로 바꾸지 않습니다.
+`matchedScopeName/matchedPropertyName`은 실제 선택한 기존 항목의 경로여야 하고,
+`UPDATE/MERGE`는 그 경로를 그대로 유지합니다. 이때 null도 최상위 경로를 뜻하므로 후보의
+scope로 대체하지 않습니다. `EXCLUDE`는 기존 상세 값을 수정하지 않습니다.
+
+세계관 `FIXED` 비교도 제품과 같은 복구 함수를 사용합니다. 최초 응답의 각 판단을 독립
+검증하고 정상 판단을 보존합니다. 실패한 판단과 출처·읽기/쓰기 경로·범위 이동·새 상위 범위로
+의존하는 판단만 함께 묶어 한 번 재시도합니다. 여러 출처를 합친 판단은 하나의 단위로 유지하고,
+파싱할 수 없는 응답은 전체를 한 번 재시도합니다. 마지막 합산 검증까지 통과한 판단과 남은
+typed failure가 모든 원본 후보를 정확히 한 번 덮어야 합니다. quota·lease·고정 입력·영구
+provider 오류는 후보 실패로 바꾸지 않습니다. 직접 검토의 정상 판단은 저장되더라도 사용자
+확정을 기다리며, 기존 그룹 확정 화면은 실패 후보의 처리가 끝난 뒤 진행합니다.
+
+저장된 1차 후보로 2차만 재실행한 실험은 새 추출 평가와 구분합니다. 같은 입력·Gold·채점기로
+비교하고 2차 호출 수·시간·토큰만 기록합니다. 1차 점수는 그대로이며 전체 분석 속도나 다른
+회차의 개선으로 일반화하지 않습니다.
 
 ## reference reducer의 상태 변경 규칙
 
@@ -377,7 +463,23 @@ Notion 변경 시 1차 대기 정책 지정과 연결된 2차 정답 제거를 �
 다른 기존 속성을 수정하거나 경로를 바꾸는 계약 위반을 정답으로 보정하지 않습니다. 신규 scope의
 실제 하위 속성이 둘 이상이어야 한다는 reducer 규칙도 그대로 적용합니다.
 
+`EXCLUDE`의 proposed 경로는 저장할 위치가 아니라 검토할 원본 설명입니다. 실제 후보 경로
+또는 선택한 실제 기존 경로를 보존한 경우, 두 설명의 정리용 분류 차이만으로 감점하지 않습니다.
+operation·실제 target/matched 경로·값·출처 통합은 각각 검증하며 임의 경로와 잘못된 대상은
+계속 거절합니다. 보고서에는 답지와 AI의 실제 경로를 그대로 표시합니다.
+
+실제 병합 판단을 상태에 적용할 때는 `sourceCandidateIds`가 가리키는 원본 후보를 모두
+사용합니다. 대표 후보 하나의 값만 넣고 MERGED를 거절하거나 SINGLE로 바꾸지 않습니다.
+알 수 없는 참조·다른 묶음의 출처는 거절하며, 제품처럼 실제 입력 개수를 세는 규칙과 ORACLE의
+Gold 고유 값 규칙을 구분합니다.
+
 ### 캐릭터 의미 판정
+
+`acceptedFactKeyAliases`에 명시한 별칭은 해당 Gold 행의 1차·2차 canonical key·최종 상태
+채점에서 공통 인정합니다. 예를 들어 `profile.키` 행이 승인한 `profile.외형`은 다른 행에
+자동 적용되지 않습니다. 인물·factType·값과 필수/금지 사실, target·제거 reference는 계속
+검증하며 별칭 자체에는 LLM 판정이 필요하지 않습니다. 최종 상태의 별칭 대응도 명시한
+reference 쌍에만 적용하고 exact reference 우선·일대일 대응·중복 집계를 유지합니다.
 
 `profile.가족관계`와 `profile.가족_관계`처럼 마지막 한글 항목명에서 한글 사이 공백·밑줄만
 다르면 같은 키의 표기로 인정합니다. 이 정규화는 1차·2차·최종 상태 채점에 공통 적용하며
@@ -485,7 +587,29 @@ judge가 항목·범위의 동등성을 결정할 수 없으면 nullable 판정�
 ID를 표시하므로 답지와 연결된 후보와 과추출 후보를 각각 추적할 수 있습니다. 원시 상태 적용은
 대표 후보를 기준으로 한 번만 수행합니다. 목록이 없는 기존 예측은 단일 source 연결로 읽으며,
 기록되지 않은 통합 관계를 이름·값으로 추정하지 않습니다.
-모델의 자유 형식 비교 이유는 공개하지 않고 기존 허용 필드와 고정 안내 문구만 사용합니다.
+2차 비교 AI가 답변에 적은 판단 이유는 실제 제안 처리와 함께 결과에 표시합니다.
+이는 의미 채점 judge의 판정 이유와 구분하며, 모델 내부 추론이나 전체 응답을 공개하는 기능은
+아닙니다. 저장된 이유가 없는 과거 결과에는 확인할 수 없다고 표시합니다.
+
+비교가 실패했을 때는 **AI가 제안한 처리와 이유 → 프로그램이 거절한 조건 → 반영 여부**
+순서로 읽을 수 있게 설명합니다. 검증에서 실제로 문제가 확인된 항목과 같은 묶음에서 처리를
+끝내지 못한 항목을 구분합니다. 뒤의 항목들은 정상이라고 확정된 것이 아니며, 묶음 실패를
+각 내용의 오답으로 해석하지 않습니다. 비교 실패만으로 기존에 저장된 정보가 사라졌다고
+설명하지도 않습니다.
+
+이유와 선택한 항목은 응답에서 확인된 범위만 기록하고, 형식 오류나 알 수 없는 참조 때문에
+원인 항목을 특정할 수 없으면 그 한계를 표시합니다. 재시도별 기록을 보존하되 일반 결과에는
+같은 설명을 반복하지 않습니다. 모델 문자열은 표시 전에 이스케이프하며, 원고·프롬프트 전문,
+인증값, 임의의 예외 메시지는 결과와 로그에 추가하지 않습니다. 이 진단은 프롬프트·재시도·
+검증 규칙·상태 반영·점수를 바꾸지 않습니다.
+
+독립 복구의 각 시도는 실제 요청에 포함된 후보 범위를 기록합니다. 실패 항목에는 해당 후보가
+포함된 시도만 연결하므로 다른 복구 묶음의 뒤늦은 실패가 앞선 거절 이유를 덮지 않습니다.
+파싱 오류로 원인 후보를 특정할 수 없는 경우는 확인 불가로 남깁니다.
+
+공개 `diagnostics.json`과 Markdown은 비교 이유와 실패 제안의 대상·경로·값·원인 항목 이름에
+같은 설명 정리를 적용합니다. 내부 참조·UUID·처리 용어를 바꾼 뒤 기존 길이 제한을 적용합니다.
+구조화된 operation·reviewReason·ruleCode·stage와 추적 ID는 유지하며 원본 시도 기록·비공개 예측은 바꾸지 않습니다.
 
 ### 후보별 실제 처리 기록
 

@@ -306,9 +306,14 @@ def test_world_book_independent_recovery_keeps_frozen_source_in_every_request():
         "review_reason": None, "comparison_reason": f"엘프의 {candidate.setting_name}이 명시되어 있습니다."}]}
         for candidate in candidates]
     provider = RecordingClient(*responses)
+    initial = ComparisonValidationError("Synthetic invalid independent decisions")
+    initial.world_batch_response_payload = {"decisions": [
+        {**response["decisions"][0], "operation": "EXCLUDE", "matched_property_ref": "T1.P99"}
+        for response in responses]}
+    initial.world_batch_request_payload = {"targets": [{"ref": "T1", "properties": []}]}
     result = asyncio.run(recover_world_batch(WorldSettingComparator(llm_client=provider, model="test-model"),
         "RACE", candidates, [WorkerWorldSettingComparisonTarget(world_setting_id=uuid4(), subject_name="엘프", properties=[], version=0)],
-        ComparisonValidationError("Synthetic invalid combined response"), analysis_source=source))
+        initial, ordered_context=True, analysis_source=source))
     assert len(result.decisions) == 2 and result.failures == [] and result.recovery_calls == 2
     assert all(json.loads(request["user_prompt"])["source"] == source.prompt_data() for request in provider.requests)
     assert all("미래" in request["system_prompt"] and "설정집" in request["system_prompt"] for request in provider.requests)

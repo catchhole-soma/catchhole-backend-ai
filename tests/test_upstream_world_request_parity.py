@@ -26,7 +26,8 @@ def captured():
 @pytest.mark.parametrize("purpose", ["world_extraction", "world_singleton"])
 def test_world_request_keeps_upstream_input_and_transport(purpose, captured):
     actual, expected = captured
-    overrides = expected["gh180Overrides"].get(purpose, {})
+    overrides = {**expected["gh180Overrides"].get(purpose, {}),
+                 **json.loads((ROOT / "tests/fixtures/world_semantic_scope_request_overrides.json").read_text())["overrides"].get(purpose, {})}
     assert set(overrides) <= {"sha256", "system_sha256", "prompt_cache_key"}
     if purpose == "world_extraction":
         # Keep the latest main extraction request exactly, including PR65.
@@ -41,4 +42,9 @@ def test_world_request_keeps_upstream_input_and_transport(purpose, captured):
     assert set(general_rule_overrides) == {"world_batch", "world_singleton"}
     assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in general_rule_overrides.values())
     overrides = {**overrides, **general_rule_overrides.get(purpose, {})}
+    integration_overrides = json.loads((ROOT / "tests/fixtures/pr221_main_integration_request_overrides_20261015.json").read_text())["overrides"]
+    assert set(integration_overrides) == {"extraction", "world_batch", "world_singleton"}
+    assert all(set(integration_overrides[key]) == {"sha256", "system_sha256", "prompt_cache_key"}
+               for key in ("world_batch", "world_singleton"))
+    overrides = {**overrides, **integration_overrides.get(purpose, {})}
     assert actual[purpose] == {**expected["requests"][purpose], **overrides}

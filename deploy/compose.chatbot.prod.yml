@@ -1,0 +1,58 @@
+# Separate from analysis/comparison replicas; deploy explicitly after #238 readiness.
+name: catchhole-chatbot
+services:
+  chatbot:
+    image: ${AI_IMAGE:?Set an immutable AI image tag}
+    command: ["uvicorn", "app.chatbot.http_app:app", "--host", "0.0.0.0", "--port", "8082", "--workers", "1", "--no-access-log"]
+    init: true
+    restart: unless-stopped
+    environment:
+      SPRING_INTERNAL_API_KEY: ${SPRING_INTERNAL_API_KEY:?Required}
+      SPRING_INTERNAL_API_BASE_URL: ${SPRING_INTERNAL_API_BASE_URL:?Required}
+      CHAT_OUTBOX_PATH: /var/lib/catchhole-chat/outbox.sqlite3
+      CHAT_CAPACITY: ${CHAT_CAPACITY:-4}
+      CHAT_SHUTDOWN_GRACE: 15
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      CHAT_QA_ENABLED: ${CHAT_QA_ENABLED:-false}
+      CHAT_QA_MODEL: ${CHAT_QA_MODEL:-gpt-5.6-terra}
+      CHAT_QA_REASONING_EFFORT: ${CHAT_QA_REASONING_EFFORT:-medium}
+      CHAT_QA_MAX_ATTEMPTS: ${CHAT_QA_MAX_ATTEMPTS:-2}
+      CHAT_QA_MAX_OUTPUT_TOKENS: ${CHAT_QA_MAX_OUTPUT_TOKENS:-1500}
+      CHAT_QA_MAX_INPUT_TOKENS: ${CHAT_QA_MAX_INPUT_TOKENS:-8000}
+      CHAT_QA_MAX_CONTEXT_CHARACTERS: ${CHAT_QA_MAX_CONTEXT_CHARACTERS:-24000}
+      CHAT_QA_PAGE_SIZE: ${CHAT_QA_PAGE_SIZE:-20}
+      CHAT_QA_MAX_PAGES: ${CHAT_QA_MAX_PAGES:-2}
+      CHAT_QA_MAX_ITEMS: ${CHAT_QA_MAX_ITEMS:-80}
+      CHAT_QA_MAX_TOOL_CALLS: ${CHAT_QA_MAX_TOOL_CALLS:-16}
+      CHAT_QA_MAX_SELECTED_ROWS: ${CHAT_QA_MAX_SELECTED_ROWS:-10}
+      CHAT_QA_MAX_EVIDENCE_CALLS: ${CHAT_QA_MAX_EVIDENCE_CALLS:-8}
+      CHAT_QA_MAX_ANSWER_CHARACTERS: ${CHAT_QA_MAX_ANSWER_CHARACTERS:-12000}
+      CHAT_RETRIEVAL_ENABLED: ${CHAT_RETRIEVAL_ENABLED:-false}
+      CHAT_RETRIEVAL_DATABASE_URL: ${CHAT_RETRIEVAL_DATABASE_URL:-}
+      CHAT_RETRIEVAL_EMBEDDING_VERSION: ${CHAT_RETRIEVAL_EMBEDDING_VERSION:-v1}
+      CHAT_RETRIEVAL_KEYWORD_TOP_K: ${CHAT_RETRIEVAL_KEYWORD_TOP_K:-12}
+      CHAT_RETRIEVAL_VECTOR_TOP_K: ${CHAT_RETRIEVAL_VECTOR_TOP_K:-12}
+      CHAT_RETRIEVAL_NEIGHBOR_RADIUS: ${CHAT_RETRIEVAL_NEIGHBOR_RADIUS:-1}
+      CHAT_RETRIEVAL_MAX_NEIGHBORS: ${CHAT_RETRIEVAL_MAX_NEIGHBORS:-6}
+      CHAT_RETRIEVAL_MAX_EVIDENCE: ${CHAT_RETRIEVAL_MAX_EVIDENCE:-8}
+      CHAT_RETRIEVAL_PER_EPISODE: ${CHAT_RETRIEVAL_PER_EPISODE:-3}
+      CHAT_RETRIEVAL_EVIDENCE_TOKENS: ${CHAT_RETRIEVAL_EVIDENCE_TOKENS:-3000}
+      CHAT_RETRIEVAL_MAX_ROUNDS: ${CHAT_RETRIEVAL_MAX_ROUNDS:-2}
+      CHAT_RETRIEVAL_MAX_MODEL_CALLS: ${CHAT_RETRIEVAL_MAX_MODEL_CALLS:-6}
+      CHAT_RETRIEVAL_MAX_QUERY_EMBEDDINGS: ${CHAT_RETRIEVAL_MAX_QUERY_EMBEDDINGS:-1}
+    ports:
+      - "${CHAT_BIND_ADDRESS:-127.0.0.1}:8082:8082"
+    volumes:
+      - chat_outbox:/var/lib/catchhole-chat
+    cpus: ${CHAT_CPUS:-0.5}
+    mem_limit: ${CHAT_MEMORY:-512m}
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: journald
+volumes:
+  chat_outbox:

@@ -197,6 +197,37 @@ def test_absent_refs_and_fixed_key_renames_are_not_created_or_approved() -> None
     assert character_setting_ref_mapping({fixed}, {alternate}, [(fixed, alternate)]) == {}
 
 
+@pytest.mark.parametrize("kind", ["fact", "fact-json", "history", "history-json"])
+def test_declared_ref_alias_pair_is_explicit_and_keeps_exact_refs_and_duplicates(kind):
+    canonical = _ref("profile.키", fact_type="PROFILE", kind=kind)
+    alias = _ref("profile.외형", fact_type="PROFILE", kind=kind)
+    second = _ref("profile.체형", fact_type="PROFILE", kind=kind)
+    pairs = [(canonical, alias)]
+    assert character_setting_ref_mapping(
+        {canonical}, {alias}, pairs, declared_alias_pairs=pairs,
+    ) == {alias: canonical}
+    assert character_setting_ref_mapping(
+        {canonical}, {canonical, alias}, pairs, declared_alias_pairs=pairs,
+    ) == {canonical: canonical}
+    assert character_setting_ref_mapping(
+        {canonical}, {alias, second}, pairs + [(canonical, second)],
+        declared_alias_pairs=pairs + [(canonical, second)],
+    ) == {}
+
+
+@pytest.mark.parametrize("actual", [
+    _ref("profile.외형", fact_type="PROFILE", entity="character:other"),
+    _ref("profile.외형", fact_type="STATUS"),
+    _ref("profile.외형", fact_type="PROFILE", kind="fact-json"),
+])
+def test_declared_alias_ref_pair_still_rejects_wrong_structural_identity(actual):
+    expected = _ref("profile.키", fact_type="PROFILE")
+    pairs = [(expected, actual)]
+    assert character_setting_ref_mapping(
+        {expected}, {actual}, pairs, declared_alias_pairs=pairs,
+    ) == {}
+
+
 def test_structured_comparison_collects_narrative_leaves_with_json_pointer_paths() -> None:
     expected = {"value": "다리에 상처가 있다", "a/b~c": [{"description": "이동이 힘들다"}]}
     actual = {"value": "다리가 다쳤다", "a/b~c": [{"description": "걷기 어렵다"}], "extra": "허용"}

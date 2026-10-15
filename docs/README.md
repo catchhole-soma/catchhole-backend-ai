@@ -6,6 +6,8 @@ Python AI Worker의 문서 위치와 작성 기준을 정리합니다.
 
 ## 문서 목록
 
+- [설정 조회 클라이언트 v1](setting-tools-v1.md): GH236 typed schema, 인증된 문맥, Spring 계약과 테스트 fixture.
+
 | 문서 | 내용 |
 | --- | --- |
 | [AI Logic Versions](ai-logic-versions/README.md) | AI 로직의 사람용 변경·점수 요약과 AI용 상세 실행 기록 |

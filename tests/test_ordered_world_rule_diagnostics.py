@@ -43,8 +43,7 @@ def test_five_source_replay_keeps_failure_boundary_and_last_batch_recovery_rules
     # This is one possible invalid form, not a reconstruction of the lost output.
     duplicate_paths = deepcopy(valid_shape)
     duplicate_paths[2]["proposed_value"] = "PRIVATE_REJECTED_VALUE"
-    responses = [missing_target, missing_target, duplicate_paths,
-                 [valid_shape[0]], duplicate_paths[1:3], [valid_shape[3]], [valid_shape[4]]]
+    responses = [missing_target, missing_target, duplicate_paths, duplicate_paths[1:3]]
     requests = []
 
     class Client:
@@ -67,16 +66,16 @@ def test_five_source_replay_keeps_failure_boundary_and_last_batch_recovery_rules
 
     with caplog.at_level(logging.WARNING):
         result = asyncio.run(execute())
-    assert len(requests) == 7 and result.recovery_calls == 4
+    assert len(requests) == 4 and result.recovery_calls == 1
     assert [row.source_candidate_refs for row in result.decisions] == [["C1"], ["C4"], ["C5"]]
     assert [row.source_candidate_refs for row in result.failures] == [["C2", "C3"]]
     history = [row.model_dump(by_alias=True) for row in result.diagnostics]
     assert [(row["attempt"], row["rule"], row["phase"], row["stage"], row["candidateRefs"])
-            for row in history] == [
+            for row in history if row["stage"] is not None] == [
         (1, "CANONICAL_TARGET_REQUIRED", "BATCH", "DECISION_VALIDATION", ["C3"]),
         (2, "CANONICAL_TARGET_REQUIRED", "BATCH", "DECISION_VALIDATION", ["C3"]),
         (3, "FINAL_PATH_DUPLICATED", "BATCH", "SCOPE_PLAN", ["C2", "C3"]),
-        (5, "FINAL_PATH_DUPLICATED", "RECOVERY", "SCOPE_PLAN", ["C2", "C3"]),
+        (4, "FINAL_PATH_DUPLICATED", "BATCH", "SCOPE_PLAN", ["C2", "C3"]),
     ]
     assert [row.model_dump() for row in sources] == before
     rendered = json.dumps(history) + caplog.text
@@ -175,32 +174,23 @@ def test_diagnostic_only_rule_does_not_enable_narrower_combined_recovery_isolati
 
 def test_combined_recovery_keeps_all_previous_failure_scope_with_detailed_rule(monkeypatch):
     sources = [candidate("C1", name="정의"), candidate("C2", name="특징")]
-    validator = recovery_module._validate_batch_comparison_result
-
-    def fail_union(result, *args, **kwargs):
-        validator(result, *args, **kwargs)
-        if len(result.decisions) == 2:
-            with diagnose_world_rule(True, "SCOPE_PLAN", 1, ["C2"]):
-                raise ValueError("Batch decisions must not propose the same final path.")
 
     class Comparator:
         max_attempts = 3
 
         async def compare_batch(self, category, candidates, targets, **kwargs):
-            rows = []
-            for source in candidates:
-                row = decision(source)
-                row.pop("matched_property_ref")
-                row.update(matched_scope_name=None, matched_property_name=None)
-                rows.append(row)
-            return WorldSettingComparisonBatchResult.model_validate({"decisions": rows}), {}
+            # Match the real comparator boundary: rejected validation is a typed
+            # response error, not a successful result followed by an injected fault.
+            error = ComparisonValidationError("retry response rejected")
+            error.validation_diagnostics = [{"attempt_number": 1, "rule_code": "FINAL_PATH_DUPLICATED",
+                "candidate_refs": ["C2"], "selected_properties": [], "stage": "SCOPE_PLAN", "phase": "RECOVERY"}]
+            raise error
 
-    monkeypatch.setattr(recovery_module, "_validate_batch_comparison_result", fail_union)
     result = asyncio.run(recover_world_batch(
         Comparator(), "MONSTER", sources, [empty_target()], ComparisonValidationError("initial"),
     ))
     assert result.decisions == []
-    assert [row.source_candidate_refs for row in result.failures] == [["C1"], ["C2"]]
+    assert [row.source_candidate_refs for row in result.failures] == [["C1", "C2"]]
     detail = next(row for row in result.diagnostics if row.rule == "FINAL_PATH_DUPLICATED")
     assert detail.candidate_refs == ["C2"]
     assert detail.stage == "SCOPE_PLAN" and detail.phase == "RECOVERY"

@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     llm_extraction_model: str | None = None
     llm_subject_resolution_model: str | None = None
     llm_comparison_model: str | None = None
-    # GPT-5.6의 기본 medium 추론 비용을 자동으로 추가하지 않는 MVP 기준값
-    llm_reasoning_effort: str = "none"
+    # 환경변수가 없으면 medium을 사용하고 명시한 값은 그대로 전달한다.
+    llm_reasoning_effort: str = "medium"
     openai_responses_api_url: str = "https://api.openai.com/v1/responses"
     # LLM 응답 JSON 파싱/검증 실패 시 전체 시도 횟수
     llm_extraction_max_attempts: int = 3
@@ -80,6 +80,8 @@ class Settings(BaseSettings):
         return self.llm_comparison_model or self.llm_model
 
     # 청크와 검색 query가 함께 사용하는 embedding 계약
+    # Prepare retrieval slices during new analysis; embeddings use a separate bounded operator run.
+    retrieval_preparation_enabled: bool = False
     embedding_generation_enabled: bool = False
     embedding_model: str = "text-embedding-3-small"
     # DB의 episode_chunks.embedding vector(1536)과 반드시 동일해야 함

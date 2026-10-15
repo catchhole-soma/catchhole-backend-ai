@@ -172,6 +172,98 @@ def _evaluate(gold, bundle, judge):
     return asyncio.run(evaluate_multi_stage(gold, bundle, semantic_judge=judge))
 
 
+def _profile_alias_fixture(*, declared=True, mode="FIXED"):
+    gold, bundle = _fixture(
+        mode=mode,
+        fact_type="PROFILE",
+        expected_key="profile.키",
+        actual_key="profile.외형",
+        expected_value="키가 180cm다.",
+        actual_value="키가 180cm다.",
+        expected_json={"value": "키가 180cm다."},
+        actual_json={"value": "키가 180cm다."},
+    )
+    gold.stage1[0] = gold.stage1[0].model_copy(update={
+        "accepted_fact_key_aliases": ["profile.외형"] if declared else [],
+    })
+    gold = gold.with_fixture_hash()
+    bundle.fixture_hash = gold.fixture_hash
+    return gold, bundle
+
+
+@pytest.mark.parametrize("mode", ["FIXED", "ORACLE"])
+def test_declared_profile_alias_matches_all_stages_without_rewriting_raw_state(mode):
+    gold, bundle = _profile_alias_fixture(mode=mode)
+    original = bundle.model_dump(mode="json")
+    judge = _Judge()
+    raw_report = _evaluate(gold, bundle, None)
+
+    report = _evaluate(gold, bundle, judge)
+
+    assert report["stages"]["character"]["stage2"]["metrics"]["fullDecisionAccuracy"] == 1
+    assert report["endToEnd"]["domains"]["CHARACTER"]["afterStateF1"] == 1
+    assert report["endToEnd"]["metrics"]["transitionF1"] == 1
+    hashes = report["endToEnd"]["scenarios"][0]
+    assert hashes["predictedStateHash"] != hashes["expectedStateHash"]
+    assert hashes["predictedStateHash"] == (
+        raw_report["endToEnd"]["scenarios"][0]["predictedStateHash"]
+    )
+    assert bundle.model_dump(mode="json") == original
+    assert judge.cases == []
+
+
+def test_declared_profile_alias_does_not_override_wrong_stage2_value():
+    gold, bundle = _profile_alias_fixture()
+    bundle.scenarios[0].stage2[0] = bundle.scenarios[0].stage2[0].model_copy(update={
+        "proposed_value": "키가 150cm다.",
+        "proposed_value_json": {"value": "키가 150cm다."},
+    })
+
+    report = _evaluate(gold, bundle, _Judge(values=False))
+
+    metrics = report["stages"]["character"]["stage2"]["metrics"]
+    assert metrics["characterCanonicalFactKeyResolutionAccuracy"] == 1
+    assert metrics["fullDecisionAccuracy"] == 0
+    assert report["endToEnd"]["domains"]["CHARACTER"]["afterStateF1"] < 1
+
+
+@pytest.mark.parametrize("wrong", ["undeclared", "person", "type"])
+def test_profile_alias_is_per_row_and_preserves_person_and_fact_type(wrong):
+    gold, bundle = _profile_alias_fixture(declared=wrong != "undeclared")
+    source = bundle.scenarios[0].stage1[0]
+    if wrong == "person":
+        source = source.model_copy(update={"entity_ref": "character:other"})
+    elif wrong == "type":
+        source = source.model_copy(update={"fact_type": type(source.fact_type)("STATUS")})
+    bundle.scenarios[0].stage1[0] = source
+
+    report = _evaluate(gold, bundle, _Judge())
+
+    assert report["stages"]["character"]["stage1"]["counts"]["identityTruePositive"] == 0
+    assert report["stages"]["character"]["stage2"]["counts"]["upstreamReached"] == 0
+    assert report["endToEnd"]["domains"]["CHARACTER"]["afterStateF1"] < 1
+
+
+def test_declared_profile_alias_does_not_hide_duplicate_canonical_and_alias_predictions():
+    gold, bundle = _profile_alias_fixture()
+    scenario = bundle.scenarios[0]
+    scenario.stage1.append(scenario.stage1[0].model_copy(update={
+        "candidate_id": "P2", "fact_key": "profile.키",
+    }))
+    scenario.stage2.append(scenario.stage2[0].model_copy(update={
+        "source_candidate_id": "P2", "resolved_canonical_fact_key": "profile.키",
+    }))
+    original = bundle.model_dump(mode="json")
+
+    report = _evaluate(gold, bundle, None)
+
+    counts = report["stages"]["character"]["stage1"]["counts"]
+    assert counts["identityTruePositive"] == 1
+    assert counts["extra"] == 1
+    assert report["endToEnd"]["domains"]["CHARACTER"]["afterStateF1"] < 1
+    assert bundle.model_dump(mode="json") == original
+
+
 @pytest.mark.parametrize("mode", ["FIXED", "ORACLE"])
 @pytest.mark.parametrize("actual_key", ["profile.가족_관계", "profile.가족 관계"])
 def test_family_relation_spelling_matches_all_stages_without_llm_or_raw_key_changes(mode, actual_key):

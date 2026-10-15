@@ -1,0 +1,29 @@
+name: catchhole-retrieval
+services:
+  retrieval-index:
+    image: ${AI_IMAGE:?AI_IMAGE is required}
+    command: ["python", "-m", "app.retrieval.cli", "--help"]
+    restart: "no"
+    logging:
+      driver: journald
+    environment:
+      TZ: ${APP_TIMEZONE:-Asia/Seoul}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      AWS_REGION: ${AWS_REGION:?AWS_REGION is required}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:?AWS_S3_BUCKET is required}
+      SPRING_INTERNAL_API_BASE_URL: ${SPRING_INTERNAL_API_BASE_URL:?SPRING_INTERNAL_API_BASE_URL is required}
+      SPRING_INTERNAL_API_KEY: ${SPRING_INTERNAL_API_KEY:?SPRING_INTERNAL_API_KEY is required}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      EMBEDDING_GENERATION_ENABLED: ${RETRIEVAL_EMBEDDING_GENERATION_ENABLED:-false}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
+      EMBEDDING_VERSION: ${EMBEDDING_VERSION:-v1}
+    volumes:
+      - retrieval_outbox:/var/lib/catchhole-chat
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+volumes:
+  retrieval_outbox:
