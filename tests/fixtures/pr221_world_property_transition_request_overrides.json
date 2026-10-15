@@ -1,0 +1,20 @@
+{
+  "reason": "GH221 approved persistent world property transition prompt additions and final cache namespace bump only. Original captures/probes and prior verification values preserved. user/schema/model/reasoning/store/transport/limits unchanged. Semantic verification performed with identical final prompt body and earlier cache namespaces; no API rerun.",
+  "overrides": {
+    "world_extraction": {
+      "sha256": "0ea815be74a0a5170434ff616bb5c4fac30e1c189722d5ddf9d6dec86d8e2074",
+      "system_sha256": "b0789a299ba24e636ee541f6bba7835b7e4988635a54ba16e23f58f38dfab8ad",
+      "prompt_cache_key": "world-setting-extraction:v5"
+    },
+    "world_singleton": {
+      "sha256": "7fa878c4ae1d5319ba10428b30e4c81ca379a7514382b966213933741a74b774",
+      "system_sha256": "654593d80aaa083966762698148d9ad3be332b3c9bc5e795344415f90f4c0262",
+      "prompt_cache_key": "world-setting-comparison:v17"
+    },
+    "world_batch": {
+      "sha256": "5af709d0cc88339b73b93264a169d1c78daf23b1c01dd0055358622d2d02b16c",
+      "system_sha256": "42c72a6d23a6e424e865502e15272508b9ca6f6f8ee627aa4ddb98e29b6cfa3c",
+      "prompt_cache_key": "world-setting-comparison-batch:v14"
+    }
+  }
+}

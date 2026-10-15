@@ -104,9 +104,17 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     assert set(budget_overrides) == {"character_batch"}
     assert set(budget_overrides["character_batch"]) == {"sha256", "max_output_tokens"}
     authorized = {**authorized, **budget_overrides.get(purpose, {})}
+    transition_overrides = json.loads((ROOT / "tests/fixtures/pr221_world_property_transition_request_overrides.json").read_text())["overrides"]
+    assert set(transition_overrides) == {"world_extraction", "world_singleton", "world_batch"}
+    assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in transition_overrides.values())
+    authorized = {**authorized, **transition_overrides.get(purpose, {})}
     integration_overrides = json.loads((ROOT / "tests/fixtures/pr221_main_integration_request_overrides_20261015.json").read_text())["overrides"]
     assert set(integration_overrides) == {"extraction", "world_batch", "world_singleton"}
     assert set(integration_overrides["extraction"]) == {"sha256", "system_sha256"}
     assert all(set(integration_overrides[key]) == changing for key in ("world_batch", "world_singleton"))
     authorized = {**authorized, **integration_overrides.get(purpose, {})}
+    final_integration = json.loads((ROOT / "tests/fixtures/pr221_final_main_integration_request_overrides_20261015.json").read_text())["overrides"]
+    assert set(final_integration) == {"world_extraction", "world_singleton", "world_batch"}
+    assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in final_integration.values())
+    authorized = {**authorized, **final_integration.get(purpose, {})}
     assert actual[purpose] == {**expected, **authorized}

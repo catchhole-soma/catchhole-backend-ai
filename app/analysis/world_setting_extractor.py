@@ -34,7 +34,7 @@ from app.schemas.worker import WorkerAnalysisSettingBookPayload
 DEFAULT_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "llm" / "prompts" / "world_setting_extraction.md"
 )
-WORLD_SETTING_EXTRACTION_CACHE_KEY = "world-setting-extraction:v4"
+WORLD_SETTING_EXTRACTION_CACHE_KEY = "world-setting-extraction:v5"
 
 
 def _book_world_response_schema() -> dict:

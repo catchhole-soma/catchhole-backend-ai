@@ -161,7 +161,7 @@ def test_ordered_book_scope_input_contract(monkeypatch, raw, is_book, expected_s
     assert item.model_dump(mode="json") == before
     assert request["model"] == "test-model" and request["max_output_tokens"] == 2000
     assert request["prompt_cache_key"] == (
-        "ordered-world-subject-resolution:v4:book-grounded-identity-v1" if is_book
+        "ordered-world-subject-resolution:v4:book-grounded-identity-v2" if is_book
         else "ordered-world-subject-resolution:v4"
     )
     schema = request["response_schema"]
