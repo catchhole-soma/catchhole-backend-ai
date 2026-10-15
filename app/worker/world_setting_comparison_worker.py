@@ -5,7 +5,7 @@ import logging
 from app.analysis.world_setting_pipeline import WorldSettingComparisonPipeline
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import get_settings
-from app.domain.enums import AnalysisFailureCode, AnalysisJobType, AnalysisStep
+from app.domain.enums import AnalysisFailureCode, AnalysisJobType, AnalysisSourceKind, AnalysisStep
 from app.exceptions.failure_classification import analysis_failure_code
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
@@ -77,6 +77,8 @@ class WorldSettingComparisonWorker:
             allowed_job_types=[AnalysisJobType.WORLD_SETTING_COMPARISON],
             model_name=self.comparison_model_name,
             current_step=AnalysisStep.WORLD_SETTING_COMPARISON.value,
+            supported_source_kinds=[AnalysisSourceKind.EPISODE, AnalysisSourceKind.SETTING_BOOK],
+            supports_setting_book_reference_time=True,
         )
 
     async def run_once(self) -> WorkerRunResult:
@@ -111,6 +113,9 @@ class WorldSettingComparisonWorker:
                 result = await self._get_comparison_pipeline(payload).process_all(
                     payload.analysis_job_id,
                     payload.lease_token,
+                    **({"analysis_context": payload.analysis_context} if payload.analysis_context is not None else {}),
+                    **({"analysis_source": payload.frozen_source()}
+                       if payload.source_kind == AnalysisSourceKind.SETTING_BOOK else {}),
                 )
                 lease_heartbeat.raise_if_failed()
             if result.failed_count:

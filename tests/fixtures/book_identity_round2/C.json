@@ -1,0 +1,1106 @@
+{
+  "fixtureKind": "actual-public-extraction-boundary, not provider response or gold",
+  "round": "2",
+  "group": "C",
+  "count": 44,
+  "rawExportSha256": "f29b40a4485f8319a5ffa7b93352b806ff02d898884393a76323b55ce70852e7",
+  "source": {
+    "sourceKind": "SETTING_BOOK",
+    "episodeId": null,
+    "episodeNo": null,
+    "settingBookId": "d60e027f-6112-4fe5-9623-30afb84cd5ab",
+    "settingBookName": "04-later-book.txt",
+    "revisionId": "a509a997-e4df-4a6c-b077-0c58ae917472",
+    "revisionNo": 1,
+    "contentHash": "2afd739a7817b8e193e7e81d62b5fc3e7a96b9342aa115cfb50889038e7b46e9",
+    "referenceTimeKind": "EPISODE",
+    "referenceEpisodeNo": 3
+  },
+  "sourceAnalysisJobId": "99a92fab-f763-469b-bec3-af78c8aacaeb",
+  "sourceText": "백조항의 잔향등 — 세 번째 기록 종료 설정집\n기준: 3화 종료 시점\n\n[인물 / 한서린 — 항만청 기록관]\n성별: 여성\n나이: 28세\n키: 168cm\n별칭: 은등\n직책: 수문 기록 책임자\n소속: 항만청 기록실\n능력: 옛 수문문자와 점검표 약자 해독\n필기 도구: 은필 — 3화에서 청동 펜 대신 사용하기 시작\n소지품: 방수 지도통\n오른손 감각: 정상 — 3화 재진에서 회복 확인\n\n[인물 / 한서린 — 나룻배 선원]\n성별: 남성\n나이: 34세\n키: 176cm\n직업: 나룻배 선원\n배: 물새\n지정 정박지: 동쪽 나루 세 번째 말뚝 — 3화부터 사용\n동명이인: 기록관과 다른 사람, 은등이라는 별칭은 쓰지 않음\n\n[인물 / 류도윤]\n직책: 항만 경비총괄\n주무기: 검 — 3화에 인도받음, 장창은 반납\n신호 도구: 뿔피리\n야간 근무 시작: 해 질 녘 — 1화부터 현재까지 유지\n\n[인물 / 윤해온]\n직업: 의사\n근무지: 남쪽 진료소\n청각: 양쪽 정상\n왕진 가방 색 / 장비대장: 초록색, 3화 종료일 서명\n왕진 가방 색 / 진료소 인수장: 파란색, 같은 날 서명\n확인 메모: 두 기록이 충돌함, 어느 쪽이 맞는지 미확인\n\n[인물 / 문가람]\n직책: 정식 수문 기사 — 3화에 견습 과정 종료\n주손: 왼손\n\n[인물 / 백무겸]\n직책: 항만청장\n거처: 항만청 서관\n\n[지역 / 백조항]\n야간 통행: 허가증 소지자 허용 — 3화 마지막 명령으로 금지 해제\n북문 통행세: 은화 세 닢 — 같은 명령으로 변경\n소금 검사 장소: 서쪽 검량소\n\n[시설 / 염수문]\n위험 경보색: 푸른색\n가동 인원: 두 명 — 문가람이 정식 기사가 되어도 유지\n비상열쇠 보관: 관제실 벽걸이함 — 3화에 철제함에서 이동\n정기 점검: 매일 새벽\n현재 안전 압력 메모: 4화부터 스무 눈금으로 바뀌어 지금도 그 값이라고 적힘\n시점 확인: 위 안전 압력 메모는 이 문서의 3화 종료 기준과 어긋남\n\n[도구 / 잔향등]\n기록 지속: 한 시간\n관리 규칙: 젖은 천으로 받침 청소\n운반 규칙: 나루 밖으로 옮길 때 천으로 덮은 상자 사용\n\n[마법 / 조수술 — 현재 규칙]\n대상: 액체 상태 물\n대가: 시전자 체온 하락\n\n[과거 기록 / 현재 인물·시설과 분리]\n1화 종료 당시 기록관 한서린의 직책: 일반 기록관\n개막 전 염수문의 경보색: 붉은색\n훼손된 별지: 현재가 1화 종료라고 적고 백무겸의 현재 거처를 동관으로 기록함 — 본문과 시점이 다름\n\n[고대 신화 시대 / 청동 왕조 자료 보완]\n당시 통행세: 조개 세 개\n현재 남은 유산: 액체 물에만 작용하는 조수술\n전승 대조: 얼음을 움직인 첫 제사장 이야기는 여전히 사실 여부 미확인\n\n[미확인 인물 쪽지]\n서린의 출생지: 북쪽 섬 — 성·직업·배 이름 없음, 두 동명이인 중 누구인지 불명\n검은새: 은등과 같은 사람이라는 말과 물새의 오기라는 말이 충돌, 정체 미확인\n\n[4화 이후 미정 구상 / 아직 채택하지 않음]\n기록관 한서린: 한쪽 눈을 잃는 장면, 어느 눈인지 미정\n조수술: 체온 하락 대가를 없애는 안\n문가람: 날개가 생겨 수문 위를 날게 하는 가정\n",
+  "parentProfiles": [
+    {
+      "quote": "[인물 / 한서린 — 항만청 기록관]\n성별: 여성\n나이: 28세\n키: 168cm\n별칭: 은등\n직책: 수문 기록 책임자\n소속: 항만청 기록실\n능력: 옛 수문문자와 점검표 약자 해독\n필기 도구: 은필 — 3화에서 청동 펜 대신 사용하기 시작\n소지품: 방수 지도통\n오른손 감각: 정상 — 3화 재진에서 회복 확인",
+      "start_offset": 40,
+      "end_offset": 211
+    },
+    {
+      "quote": "[인물 / 한서린 — 나룻배 선원]\n성별: 남성\n나이: 34세\n키: 176cm\n직업: 나룻배 선원\n배: 물새\n지정 정박지: 동쪽 나루 세 번째 말뚝 — 3화부터 사용\n동명이인: 기록관과 다른 사람, 은등이라는 별칭은 쓰지 않음",
+      "start_offset": 213,
+      "end_offset": 339
+    }
+  ],
+  "distinctEvidence": {
+    "quote": "동명이인: 기록관과 다른 사람, 은등이라는 별칭은 쓰지 않음",
+    "start_offset": 306,
+    "end_offset": 339
+  },
+  "candidates": [
+    {
+      "candidate_id": "3bbd7b46-b242-41eb-93d4-b1b964d5e47a",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 한서린 — 항만청 기록관]",
+            "end_offset": 60,
+            "start_offset": 40
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "d0d10563-b784-4486-8779-2b245c8ee060",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 한서린 — 나룻배 선원]",
+            "end_offset": 232,
+            "start_offset": 213
+          }
+        ],
+        "confidence": 0.98,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "b772a4cb-036d-45f6-803e-b43635286e14",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.occupation",
+        "attribute_value": "항만청 기록관",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "항만청 기록관"
+        },
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 한서린 — 항만청 기록관]",
+            "end_offset": 60,
+            "start_offset": 40
+          }
+        ],
+        "confidence": 0.93,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "94aac6e0-3e3f-4a21-8900-f0fe67bf95ed",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.gender",
+        "attribute_value": "여성",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "여성"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성별: 여성",
+            "end_offset": 67,
+            "start_offset": 61
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "59e08e21-d022-411f-99bd-b592a61d5a67",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "age",
+        "attribute_value": "28",
+        "value_type": "NUMBER",
+        "value_json": {
+          "value": 28
+        },
+        "evidence_spans": [
+          {
+            "quote": "나이: 28세",
+            "end_offset": 75,
+            "start_offset": 68
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "0ce34393-282b-427d-9cfc-57f38a698c7d",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.키",
+        "attribute_value": "168cm",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "168cm"
+        },
+        "evidence_spans": [
+          {
+            "quote": "키: 168cm",
+            "end_offset": 84,
+            "start_offset": 76
+          }
+        ],
+        "confidence": 0.94,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "0db06700-c692-45c3-861f-4bc1c378d733",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.별칭",
+        "attribute_value": "은등",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "은등"
+        },
+        "evidence_spans": [
+          {
+            "quote": "별칭: 은등",
+            "end_offset": 91,
+            "start_offset": 85
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "4d0a8425-6f0e-4ccb-b74e-ba3da3141ff6",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.직책",
+        "attribute_value": "수문 기록 책임자",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "수문 기록 책임자"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직책: 수문 기록 책임자",
+            "end_offset": 105,
+            "start_offset": 92
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "10e21017-1f56-454d-8d72-85ecee6e7519",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.affiliation",
+        "attribute_value": "항만청 기록실",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "항만청 기록실"
+        },
+        "evidence_spans": [
+          {
+            "quote": "소속: 항만청 기록실",
+            "end_offset": 117,
+            "start_offset": 106
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "05fb509e-6a69-4f13-9d6b-854eb4d787cf",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.능력",
+        "attribute_value": "옛 수문문자와 점검표 약자 해독",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "옛 수문문자와 점검표 약자 해독"
+        },
+        "evidence_spans": [
+          {
+            "quote": "능력: 옛 수문문자와 점검표 약자 해독",
+            "end_offset": 139,
+            "start_offset": 118
+          }
+        ],
+        "confidence": 0.9,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "3de7bd68-96d4-4372-a3d3-ece10eeabd7b",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "item.은필",
+        "attribute_value": "필기 도구로 사용 시작",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "은필",
+          "role": "필기 도구",
+          "description": "3화에서 청동 펜 대신 사용하기 시작"
+        },
+        "evidence_spans": [
+          {
+            "quote": "필기 도구: 은필 — 3화에서 청동 펜 대신 사용하기 시작",
+            "end_offset": 172,
+            "start_offset": 140
+          }
+        ],
+        "confidence": 0.94,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "d24c6f25-206c-4f94-a46a-9548f0488c5d",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "item.청동_펜",
+        "attribute_value": "은필로 대체되어 사용 종료",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "청동 펜",
+          "in_use": false,
+          "description": "은필로 대체됨"
+        },
+        "evidence_spans": [
+          {
+            "quote": "필기 도구: 은필 — 3화에서 청동 펜 대신 사용하기 시작",
+            "end_offset": 172,
+            "start_offset": 140
+          }
+        ],
+        "confidence": 0.84,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "a08f70ab-003a-48f4-b0fb-b15c2e4c2e07",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "item.방수_지도통",
+        "attribute_value": "소지품",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "방수 지도통",
+          "owned": true
+        },
+        "evidence_spans": [
+          {
+            "quote": "소지품: 방수 지도통",
+            "end_offset": 184,
+            "start_offset": 173
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "fc411ecf-7453-4c4f-af11-d63d7377f24b",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.오른손_감각",
+        "attribute_value": "정상",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "정상"
+        },
+        "evidence_spans": [
+          {
+            "quote": "오른손 감각: 정상 — 3화 재진에서 회복 확인",
+            "end_offset": 211,
+            "start_offset": 185
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "53b48cc5-8483-4406-9852-93dfedf7da03",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.occupation",
+        "attribute_value": "나룻배 선원",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "나룻배 선원"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직업: 나룻배 선원",
+            "end_offset": 267,
+            "start_offset": 257
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "8dbe0e2a-a9ae-4c57-b264-f1c4bd041616",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.gender",
+        "attribute_value": "남성",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "남성"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성별: 남성",
+            "end_offset": 239,
+            "start_offset": 233
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "ec9938a4-c55c-4d98-81b8-687aa56da199",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "age",
+        "attribute_value": "34",
+        "value_type": "NUMBER",
+        "value_json": {
+          "value": 34
+        },
+        "evidence_spans": [
+          {
+            "quote": "나이: 34세",
+            "end_offset": 247,
+            "start_offset": 240
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "6de72bec-06e6-4bf6-a1d8-838241acfc61",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.키",
+        "attribute_value": "176cm",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "176cm"
+        },
+        "evidence_spans": [
+          {
+            "quote": "키: 176cm",
+            "end_offset": 256,
+            "start_offset": 248
+          }
+        ],
+        "confidence": 0.94,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "a1deddaa-4e95-4b1b-8cd1-1cbd01f222d0",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "item.물새",
+        "attribute_value": "배",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "물새",
+          "type": "배"
+        },
+        "evidence_spans": [
+          {
+            "quote": "배: 물새",
+            "end_offset": 273,
+            "start_offset": 268
+          }
+        ],
+        "confidence": 0.94,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "e009b2d0-7762-4432-9f7c-91165679ebe9",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.지정_정박지",
+        "attribute_value": "동쪽 나루 세 번째 말뚝",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "동쪽 나루 세 번째 말뚝"
+        },
+        "evidence_spans": [
+          {
+            "quote": "지정 정박지: 동쪽 나루 세 번째 말뚝 — 3화부터 사용",
+            "end_offset": 305,
+            "start_offset": 274
+          }
+        ],
+        "confidence": 0.92,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "c87d06ae-a6e5-419f-a25c-d7d8400b65b3",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.description",
+        "attribute_value": "기록관과 다른 동명이인이며 은등이라는 별칭을 쓰지 않음",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "기록관과 다른 동명이인이며 은등이라는 별칭을 쓰지 않음"
+        },
+        "evidence_spans": [
+          {
+            "quote": "동명이인: 기록관과 다른 사람, 은등이라는 별칭은 쓰지 않음",
+            "end_offset": 339,
+            "start_offset": 306
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "6a78368a-8802-45b2-b758-7ff4f1a54a72",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "기록관 한서린",
+        "attribute_name": "profile.직책",
+        "attribute_value": "일반 기록관",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "일반 기록관"
+        },
+        "evidence_spans": [
+          {
+            "quote": "1화 종료 당시 기록관 한서린의 직책: 일반 기록관",
+            "end_offset": 1101,
+            "start_offset": 1073
+          }
+        ],
+        "confidence": 0.94,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "ed7833c9-4402-4a19-ad65-80f737fdcd16",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "기록관 한서린",
+        "attribute_name": "status.한쪽_눈_상실",
+        "attribute_value": "4화 이후 한쪽 눈을 잃는 미채택 구상",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "한쪽 눈 상실",
+          "description": "4화 이후 미정 구상이며 어느 눈인지 미정"
+        },
+        "evidence_spans": [
+          {
+            "quote": "기록관 한서린: 한쪽 눈을 잃는 장면, 어느 눈인지 미정",
+            "end_offset": 1448,
+            "start_offset": 1417
+          }
+        ],
+        "confidence": 0.7,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "3db3feff-569e-4fd5-afa1-414d6b182230",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 류도윤]",
+            "end_offset": 351,
+            "start_offset": 341
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "109cae72-6015-4988-9e7b-011930393c7b",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "profile.직책",
+        "attribute_value": "항만 경비총괄",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "항만 경비총괄"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직책: 항만 경비총괄",
+            "end_offset": 363,
+            "start_offset": 352
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "11dbb434-54d5-4892-89b8-a68d035f9e40",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "item.검",
+        "attribute_value": "주무기로 인도받음",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "검",
+          "role": "주무기",
+          "description": "3화에 인도받음"
+        },
+        "evidence_spans": [
+          {
+            "quote": "주무기: 검 — 3화에 인도받음, 장창은 반납",
+            "end_offset": 389,
+            "start_offset": 364
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "c6db0ab1-efa9-4b6e-8b6e-2397a443b4fb",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "item.뿔피리",
+        "attribute_value": "신호 도구",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "뿔피리",
+          "role": "신호 도구"
+        },
+        "evidence_spans": [
+          {
+            "quote": "신호 도구: 뿔피리",
+            "end_offset": 400,
+            "start_offset": 390
+          }
+        ],
+        "confidence": 0.93,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "7073a457-86d9-468f-a00b-aae2a87027ce",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "profile.야간_근무_시작",
+        "attribute_value": "해 질 녘",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "해 질 녘"
+        },
+        "evidence_spans": [
+          {
+            "quote": "야간 근무 시작: 해 질 녘 — 1화부터 현재까지 유지",
+            "end_offset": 431,
+            "start_offset": 401
+          }
+        ],
+        "confidence": 0.9,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "3c01655b-2f12-4282-98c5-3fa2d8c49df7",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 윤해온]",
+            "end_offset": 443,
+            "start_offset": 433
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "b5981908-1295-4d56-918d-60c0c36bce80",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "profile.occupation",
+        "attribute_value": "의사",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "의사"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직업: 의사",
+            "end_offset": 450,
+            "start_offset": 444
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "605e25ee-ef6d-49d7-9a27-23eec3ec7c90",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "profile.근무지",
+        "attribute_value": "남쪽 진료소",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "남쪽 진료소"
+        },
+        "evidence_spans": [
+          {
+            "quote": "근무지: 남쪽 진료소",
+            "end_offset": 462,
+            "start_offset": 451
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "8b876ef5-0793-4c93-8e54-138a3279737f",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "profile.청각",
+        "attribute_value": "양쪽 정상",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "양쪽 정상"
+        },
+        "evidence_spans": [
+          {
+            "quote": "청각: 양쪽 정상",
+            "end_offset": 472,
+            "start_offset": 463
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "8ec2f49c-d52d-473f-8073-8101ca3d74c0",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 문가람]",
+            "end_offset": 579,
+            "start_offset": 569
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "fb0d4df7-2dad-43e0-8f48-dce98362eb78",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": "profile.직책",
+        "attribute_value": "정식 수문 기사",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "정식 수문 기사"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직책: 정식 수문 기사 — 3화에 견습 과정 종료",
+            "end_offset": 607,
+            "start_offset": 580
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "ef9eaef0-2c0d-467d-859e-e0cde7f3c07f",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": "profile.주손",
+        "attribute_value": "왼손",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "왼손"
+        },
+        "evidence_spans": [
+          {
+            "quote": "주손: 왼손",
+            "end_offset": 614,
+            "start_offset": 608
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "6f0e3eff-cd34-4e4d-9162-f8b3c69ffc1c",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 백무겸]",
+            "end_offset": 626,
+            "start_offset": 616
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "9945a803-6c90-431f-8199-a2c107231cd0",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": "profile.직책",
+        "attribute_value": "항만청장",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "항만청장"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직책: 항만청장",
+            "end_offset": 635,
+            "start_offset": 627
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "fca805b0-97ad-48d9-9b25-ed366e36923a",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": "profile.거처",
+        "attribute_value": "항만청 서관",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "항만청 서관"
+        },
+        "evidence_spans": [
+          {
+            "quote": "거처: 항만청 서관",
+            "end_offset": 646,
+            "start_offset": 636
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "c196a8b4-6820-441f-b8a6-6e89d906c370",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "item.장창",
+        "attribute_value": "반납",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "장창",
+          "owned": false,
+          "description": "3화에 반납"
+        },
+        "evidence_spans": [
+          {
+            "quote": "주무기: 검 — 3화에 인도받음, 장창은 반납",
+            "end_offset": 389,
+            "start_offset": 364
+          }
+        ],
+        "confidence": 0.94,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "74724465-be15-41be-be35-ef262cb67a7a",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "item.왕진_가방",
+        "attribute_value": "초록색",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "왕진 가방",
+          "color": "초록색",
+          "source": "장비대장"
+        },
+        "evidence_spans": [
+          {
+            "quote": "왕진 가방 색 / 장비대장: 초록색, 3화 종료일 서명",
+            "end_offset": 503,
+            "start_offset": 473
+          }
+        ],
+        "confidence": 0.82,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "5e9436a3-7cd3-4f0a-89a3-97d30bdb9367",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "item.왕진_가방",
+        "attribute_value": "파란색",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "왕진 가방",
+          "color": "파란색",
+          "source": "진료소 인수장"
+        },
+        "evidence_spans": [
+          {
+            "quote": "왕진 가방 색 / 진료소 인수장: 파란색, 같은 날 서명",
+            "end_offset": 535,
+            "start_offset": 504
+          },
+          {
+            "quote": "확인 메모: 두 기록이 충돌함, 어느 쪽이 맞는지 미확인",
+            "end_offset": 567,
+            "start_offset": 536
+          }
+        ],
+        "confidence": 0.79,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "05ad8fc6-7985-42d5-8ba2-4be2c32462d3",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": "profile.거처",
+        "attribute_value": "동관",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "동관"
+        },
+        "evidence_spans": [
+          {
+            "quote": "훼손된 별지: 현재가 1화 종료라고 적고 백무겸의 현재 거처를 동관으로 기록함 — 본문과 시점이 다름",
+            "end_offset": 1177,
+            "start_offset": 1121
+          }
+        ],
+        "confidence": 0.72,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "1c8b1c75-c5e1-4b49-b8ec-a16ba05c7329",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": "status.날개_생성",
+        "attribute_value": "날개가 생기는 미채택 가정",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "날개 생성",
+          "description": "날개가 생겨 수문 위를 날게 하는 4화 이후 미정 가정"
+        },
+        "evidence_spans": [
+          {
+            "quote": "문가람: 날개가 생겨 수문 위를 날게 하는 가정",
+            "end_offset": 1496,
+            "start_offset": 1470
+          }
+        ],
+        "confidence": 0.68,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    },
+    {
+      "candidate_id": "ee851d98-4fe0-45d0-90ef-19c9303024aa",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "미상",
+        "raw_entity_mention": "서린의",
+        "attribute_name": "profile.출생지",
+        "attribute_value": "북쪽 섬",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "북쪽 섬"
+        },
+        "evidence_spans": [
+          {
+            "quote": "서린의 출생지: 북쪽 섬 — 성·직업·배 이름 없음, 두 동명이인 중 누구인지 불명",
+            "end_offset": 1344,
+            "start_offset": 1298
+          }
+        ],
+        "confidence": 0.7,
+        "source_chunk_id": "4f7f3188-76e8-4334-8bf0-59c6e2442d05"
+      }
+    }
+  ]
+}

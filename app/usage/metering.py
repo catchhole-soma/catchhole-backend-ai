@@ -23,6 +23,7 @@ from app.embeddings.exceptions import (
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.exceptions import (
     LlmIncompleteResponseError,
+    LlmInputTokenCountError,
     LlmOutputTruncatedError,
     LlmResponseValidationError,
 )
@@ -170,6 +171,29 @@ class MeteredTextGenerationClient:
             output_token_count=self._output_token_count,
         )
 
+    async def count_input_tokens(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None = None,
+        response_schema: LlmResponseSchema | None = None,
+    ) -> int:
+        count = getattr(self.delegate, "count_input_tokens", None)
+        if not callable(count):
+            raise LlmInputTokenCountError("Text provider does not support exact input token counting.")
+        try:
+            tokens = await count(
+                system_prompt=system_prompt, user_prompt=user_prompt,
+                model=model or self.default_model, response_schema=response_schema,
+            )
+        except LlmInputTokenCountError:
+            raise
+        except Exception as exc:
+            raise LlmInputTokenCountError("Exact input token counting failed.") from exc
+        if type(tokens) is not int or tokens < 0:
+            raise LlmInputTokenCountError("Exact input token count must be a nonnegative integer.")
+        return tokens
+
     async def create_text_response(
         self,
         system_prompt: str,
@@ -180,13 +204,15 @@ class MeteredTextGenerationClient:
         response_schema: LlmResponseSchema | None = None,
     ) -> LlmTextResponse:
         effective_model = model or self.default_model
-        reserved_tokens = _estimate_text_token_upper_bound(
-            system_prompt,
-            user_prompt,
-            effective_model,
-            max_output_tokens,
-            response_schema,
-        )
+        if self.purpose == "CHARACTER_FACT_COMPARISON" and effective_model.startswith("gpt-6.1-sol"):
+            # Fit/preflight already counted this identity; the provider cache avoids another HTTP call.
+            reserved_tokens = await self.count_input_tokens(
+                system_prompt, user_prompt, effective_model, response_schema,
+            ) + max_output_tokens
+        else:
+            reserved_tokens = _estimate_text_token_upper_bound(
+                system_prompt, user_prompt, effective_model, max_output_tokens, response_schema,
+            )
         retry_error_type = "other"
         for retry_index in range(self.max_retries + 1):
             async with _optional_semaphore(self.request_semaphore):
@@ -615,6 +641,16 @@ def _estimate_text_token_upper_bound(
     max_output_tokens: int,
     response_schema: LlmResponseSchema | None = None,
 ) -> int:
+    return estimate_text_input_tokens(system_prompt, user_prompt, model, response_schema) + max_output_tokens
+
+
+def estimate_text_input_tokens(
+    system_prompt: str,
+    user_prompt: str,
+    model: str,
+    response_schema: LlmResponseSchema | None = None,
+) -> int:
+    """Conservative local estimate including framing/schema; unknown models use UTF-8 bytes."""
     schema_text = _serialize_response_schema(response_schema)
     try:
         encoding = _encoding_for_model(model)
@@ -627,14 +663,14 @@ def _estimate_text_token_upper_bound(
         return _estimate_text_token_byte_upper_bound(
             system_prompt,
             user_prompt,
-            max_output_tokens,
+            0,
             schema_text,
         )
 
     # Responses API message framing과 tokenizer 차이를 10% + 256 token으로 흡수하고,
     # 출력은 provider가 허용한 최대량 전체를 예약해 실제 사용량이 quota를 넘지 않게 한다.
     estimated_input_tokens = math.ceil(content_tokens * 1.10) + 256
-    return estimated_input_tokens + max_output_tokens
+    return estimated_input_tokens
 
 
 @lru_cache

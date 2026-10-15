@@ -1,0 +1,10 @@
+{
+  "description": "PR1 explicitly asserted current undecided-state comparison instructions. Immutable prior captures stay intact; only character batch system/body hashes and cache namespace change.",
+  "overrides": {
+    "character_batch": {
+      "prompt_cache_key": "character-fact-comparison-batch:v8",
+      "sha256": "26302a44fdb8ace9599f375412ca2027533778bf15abfbbe5840b4d63cb5a77b",
+      "system_sha256": "4e864bfebf793e9ba66f613ed5da4a829f3640bf920f188c6caf3ee96ee7ba71"
+    }
+  }
+}

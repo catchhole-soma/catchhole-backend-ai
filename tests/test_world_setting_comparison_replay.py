@@ -767,7 +767,8 @@ def test_batch_candidate_tie_break_uses_java_uuid_order() -> None:
     ] == ["음수 후보", "양수 후보"]
 
 
-def test_conflict_proposal_does_not_change_simulated_final_state() -> None:
+@pytest.mark.parametrize("operation", ["ADD", "UPDATE", "MERGE", "EXCLUDE", "REVIEW_REQUIRED"])
+def test_conflict_proposal_does_not_change_simulated_final_state(operation) -> None:
     state = {("RACE", "TARGET:private", None, "비밀 설정"): "기존 값"}
     proposal = ReplayProposal(
         episode_no=1,
@@ -779,7 +780,7 @@ def test_conflict_proposal_does_not_change_simulated_final_state() -> None:
         matched_scope_name=None,
         matched_setting_name="비밀 설정",
         consolidation_status=WorldSettingConsolidationStatus.CONFLICT.value,
-        operation=WorldSettingOperation.UPDATE.value,
+        operation=operation,
         proposed_scope_name=None,
         proposed_setting_name="비밀 설정",
         proposed_value="충돌 값",
@@ -790,6 +791,63 @@ def test_conflict_proposal_does_not_change_simulated_final_state() -> None:
     assert state == {
         ("RACE", "TARGET:private", None, "비밀 설정"): "기존 값"
     }
+
+
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize("operation", ["ADD", "UPDATE", "MERGE"])
+def test_fixed_conflict_response_preserves_every_value_before_replay(batch, operation) -> None:
+    # The comparator must restore both sources even if the fixed provider reply picks one value.
+    from app.analysis.world_setting_comparator import WorldSettingComparator
+    from app.schemas.analysis_source import WorkerAnalysisSource
+    from app.schemas.worker import (
+        WorkerWorldSettingComparisonBatchCandidate,
+        WorkerWorldSettingComparisonTarget,
+    )
+    from tests.test_ordered_analysis_runtime import RecordingClient
+    from tests.test_setting_book_source_contract import SOURCE
+
+    source = WorkerAnalysisSource.model_validate({**SOURCE, "referenceTimeKind": "EPISODE", "referenceEpisodeNo": 2})
+    target = WorkerWorldSettingComparisonTarget(
+        world_setting_id=TARGET_ID, subject_name="엘프", version=1,
+        properties=[] if operation == "ADD" else [{"setting_name": "대표 키", "value": "기존 값",
+            "provenance": {"confirmationStatus": "CONFIRMED", "sourceEpisodeNo": 1}}],
+    )
+    payload = {"consolidation_status": "CONFLICT", "operation": operation, "target_ref": "T1",
+        "matched_scope_name": None, "matched_property_name": None if operation == "ADD" else "대표 키",
+        "proposed_scope_name": None, "proposed_setting_name": "대표 키", "proposed_value": "178cm",
+        "comparison_reason": "동일한 종족의 같은 조건에서 키가 달라 두 근거 모두 확인이 필요합니다.", "review_reason": None}
+    candidate_fields = {"subject_name": "엘프", "setting_name": "대표 키", "temporal_scope": "PRESENT",
+        "raw_extraction_json": {"epistemic_status": "ASSERTED"}}
+    if batch:
+        candidates = [WorkerWorldSettingComparisonBatchCandidate(candidate_ref=ref, candidate_id=UUID(int=index),
+            extracted_value=value, evidence_spans=[{"quote": f"엘프의 키는 {value}이다."}], **candidate_fields)
+            for index, (ref, value) in enumerate([("C1", "168cm"), ("C2", "178cm")], 1)]
+        payload.update(source_candidate_refs=["C1", "C2"], existing_root_property_names_to_move=[])
+        provider = RecordingClient({"decisions": [payload]})
+    else:
+        candidate = WorkerWorldSettingCandidatePayload(candidate_id=UUID(int=1), work_id=WORK_ID,
+            source=source, source_episode_id=None, category="RACE", extracted_value="168cm\n178cm",
+            evidence_spans=[{"quote": "엘프의 키는 168cm이다."}, {"quote": "엘프의 키는 178cm이다."}], **candidate_fields)
+        provider = RecordingClient(payload)
+    comparator = WorldSettingComparator(llm_client=provider, model="test-model", max_attempts=1)
+    result, _ = asyncio.run(comparator.compare_batch("RACE", candidates, [target], analysis_source=source)
+        if batch else comparator.compare(candidate, [target]))
+    decision = result.decisions[0] if batch else result
+
+    assert decision.operation == operation
+    assert decision.consolidation_status == "CONFLICT"
+    assert decision.proposed_value == "168cm\n178cm"
+    if batch:
+        assert decision.source_candidate_refs == ["C1", "C2"]
+
+    proposal = _proposal_from_decision(
+        episode_no=2, category="RACE", source_candidate_ids=(UUID(int=1), UUID(int=2)),
+        resolution=SimpleNamespace(canonical_subject_key=f"TARGET:{TARGET_ID}", canonical_subject_name="엘프"),
+        decision=decision, targets=[SimpleNamespace(world_setting_id=TARGET_ID)],
+    )
+    state = {("RACE", f"TARGET:{TARGET_ID}", None, "대표 키"): "기존 값"}
+    _apply_proposal(state, proposal)
+    assert state == {("RACE", f"TARGET:{TARGET_ID}", None, "대표 키"): "기존 값"}
 
 
 def test_new_subjects_with_same_name_and_path_stay_separate_by_category() -> None:

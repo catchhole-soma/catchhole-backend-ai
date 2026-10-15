@@ -2,7 +2,8 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import BigInteger, DateTime, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PostgresUUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.enums import AnalysisJobStatus, AnalysisJobType, AnalysisReviewMode
@@ -18,6 +19,9 @@ class AnalysisJob(TimestampMixin, Base):
     work_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True))
     batch_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
     episode_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
+    source_kind: Mapped[str] = mapped_column(String(20), default="EPISODE")
+    source_setting_book_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
+    source_setting_book_revision_id: Mapped[UUID | None] = mapped_column(PostgresUUID(as_uuid=True))
     job_type: Mapped[AnalysisJobType] = mapped_column(String(40))
     status: Mapped[AnalysisJobStatus] = mapped_column(String(20))
     current_step: Mapped[str | None] = mapped_column(String(100))

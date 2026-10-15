@@ -3,21 +3,28 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.analysis.character_name_resolver import (
     CharacterNameMatch,
     KnownCharacter,
+    located_discovery_key,
     normalize_character_name,
     normalize_known_characters,
     resolve_candidate_character,
 )
-from app.analysis.schemas import ExtractedSettingCandidate
+from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.ordered_character_subjects import OrderedCandidateBinding
+from app.analysis.schemas import ExtractedSettingCandidate
 from app.domain.enums import (
-    CharacterFactComparisonStatus, SettingCandidateKind, SettingCandidateMatchStatus,
+    AnalysisSourceKind,
+    CharacterFactComparisonStatus,
+    SettingCandidateKind,
+    SettingCandidateMatchStatus,
 )
 from app.mappers.setting_candidate_mapper import SettingCandidateMapper
+from app.models.setting_book_chunk import SettingBookChunk
 from app.models.setting_candidate import SettingCandidate
 from app.repositories.setting_candidate_repository import SettingCandidateRepository
 from app.services.ordered_analysis_fence import (
@@ -33,6 +40,9 @@ class SettingCandidateSaveItem:
     candidate: ExtractedSettingCandidate
     ordered_binding: OrderedCandidateBinding | None = None
     source_content_version: str | None = None
+    source_kind: AnalysisSourceKind = AnalysisSourceKind.EPISODE
+    setting_book_id: UUID | None = None
+    setting_book_revision_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +72,17 @@ class SettingCandidateService:
         known_characters: list[KnownCharacter],
         ordered_write_context: OrderedCandidateWriteContext | None = None,
     ) -> list[SettingCandidate]:
+        is_book = (ordered_write_context is not None
+                   and ordered_write_context.source_kind == AnalysisSourceKind.SETTING_BOOK)
+        for item in save_items:
+            if item.source_kind == AnalysisSourceKind.SETTING_BOOK:
+                if (not is_book or item.episode_id is not None
+                        or item.setting_book_id != ordered_write_context.setting_book_id
+                        or item.setting_book_revision_id != ordered_write_context.setting_book_revision_id
+                        or item.source_content_s3_key != ordered_write_context.content_s3_key):
+                    raise ComparisonValidationError("Setting-book candidate source does not match its job.")
+            elif is_book or item.setting_book_id is not None or item.setting_book_revision_id is not None:
+                raise ComparisonValidationError("Episode candidate cannot use a setting-book write fence.")
         if ordered_write_context is None:
             if any(item.ordered_binding is not None for item in save_items):
                 raise ValueError("Ordered subject bindings require an ordered write fence.")
@@ -84,9 +105,29 @@ class SettingCandidateService:
                 analysis_job_id=analysis_job_id,
                 candidate=item.candidate,
                 character_match=prepared.character_match,
+                source_kind=item.source_kind,
+                setting_book_id=item.setting_book_id,
+                setting_book_revision_id=item.setting_book_revision_id,
             )
+            mapped_candidate.raw_ai_result_json.pop('setting_book_identity_proof', None)
             if item.ordered_binding is not None:
                 binding = item.ordered_binding
+                if binding.book_identity_proof is not None:
+                    proof = binding.book_identity_proof
+                    source = proof.context.source
+                    target_ref = (f'character:{binding.actual_character_id}'
+                                  if binding.actual_character_id else binding.provisional_subject_key)
+                    if (not is_book or proof.context.analysis_job_id != analysis_job_id
+                            or source.setting_book_id != ordered_write_context.setting_book_id
+                            or source.revision_id != ordered_write_context.setting_book_revision_id
+                            or source.content_hash != ordered_write_context.context.source_hash
+                            or source.reference_time_kind != ordered_write_context.reference_time_kind
+                            or source.reference_episode_no != ordered_write_context.reference_episode_no
+                            or proof.parent_target_ref != target_ref
+                            or binding.match_status != SettingCandidateMatchStatus.MATCHED
+                            or binding.subject_failure_code is not None):
+                        raise ComparisonValidationError('Identity proof is outside its frozen source or binding.')
+                    mapped_candidate.raw_ai_result_json['setting_book_identity_proof'] = proof.wire()
                 if binding.actual_character_id is not None and binding.provisional_subject_key:
                     raise ValueError("Actual and provisional character identities are exclusive.")
                 mapped_candidate.id = binding.candidate_id
@@ -123,8 +164,21 @@ class SettingCandidateService:
                         work_id=work_id,
                         write_context=ordered_write_context,
                     )
+                if is_book:
+                    chunk_ids = {item.candidate.source_chunk_id for item in save_items}
+                    owned = set(session.scalars(select(SettingBookChunk.id).where(
+                        SettingBookChunk.id.in_(chunk_ids),
+                        SettingBookChunk.analysis_job_id == analysis_job_id,
+                        SettingBookChunk.setting_book_revision_id == ordered_write_context.setting_book_revision_id,
+                    ))) if chunk_ids else set()
+                    if owned != chunk_ids:
+                        raise ComparisonValidationError("Setting-book candidate chunk is outside its source job.")
                 # 같은 analysis_job_id 기준으로 재실행해도 후보가 중복 저장되지 않게 교체한다.
-                repository.delete_by_analysis_job_id(analysis_job_id)
+                if is_book:
+                    repository.delete_by_setting_book_job(analysis_job_id,
+                        ordered_write_context.setting_book_id, ordered_write_context.setting_book_revision_id)
+                else:
+                    repository.delete_by_analysis_job_id(analysis_job_id)
                 saved_candidates = repository.save_all(candidates)
                 session.commit()
             except Exception:
@@ -156,12 +210,14 @@ def _prepare_ordered_setting_candidates(
                 and binding.subject_failure_code is None
                 and (binding.actual_character_id is not None or binding.provisional_subject_key)
                 and binding.match_status != SettingCandidateMatchStatus.AMBIGUOUS
-                and item.episode_id is not None and item.source_content_s3_key
+                and (item.episode_id is not None or item.setting_book_id is not None)
+                and item.source_content_s3_key
                 and candidate.value_json is not None
                 and all(span.start_offset is not None and span.end_offset is not None
                         and span.end_offset > span.start_offset for span in candidate.evidence_spans)):
             key = (
-                item.episode_id, item.source_content_s3_key,
+                item.source_kind, item.episode_id, item.setting_book_id,
+                item.setting_book_revision_id or item.source_content_version or item.source_content_s3_key,
                 binding.actual_character_id, binding.provisional_subject_key,
                 candidate.attribute_name, candidate.value_type,
                 json.dumps(candidate.value_json, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
@@ -190,7 +246,7 @@ def prepare_setting_candidates(
 
     normalized_known_characters = normalize_known_characters(known_characters)
     prepared: list[PreparedSettingCandidate] = []
-    seen_discovery_names: set[str] = set()
+    seen_discoveries: set[tuple] = set()
     if source_identities is not None and len(source_identities) != len(candidates):
         raise ValueError("source_identities must align with candidates.")
     setting_candidate_by_key: dict[tuple[object, ...], tuple[int, float]] = {}
@@ -202,10 +258,13 @@ def prepare_setting_candidates(
         if candidate.candidate_kind == SettingCandidateKind.CHARACTER_DISCOVERY:
             if character_match.match_status != SettingCandidateMatchStatus.UNRESOLVED:
                 continue
-            normalized_name = normalize_character_name(candidate.entity_name)
-            if normalized_name in seen_discovery_names:
+            discovery_key = located_discovery_key(candidate)
+            if discovery_key is not None and source_identities is not None:
+                discovery_key = (source_identities[source_index], discovery_key)
+            if discovery_key is not None and discovery_key in seen_discoveries:
                 continue
-            seen_discovery_names.add(normalized_name)
+            if discovery_key is not None:
+                seen_discoveries.add(discovery_key)
 
         item = PreparedSettingCandidate(
             source_index=source_index,

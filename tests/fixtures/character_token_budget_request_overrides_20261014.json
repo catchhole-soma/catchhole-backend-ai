@@ -1,0 +1,9 @@
+{
+  "reason": "2026-10-14 authorized character batch output default 16000 -> 128000; historical captures and all other request fields remain unchanged.",
+  "overrides": {
+    "character_batch": {
+      "max_output_tokens": 128000,
+      "sha256": "5661376b87ce8568752d565d23bae9a3a8d8c6129429a5705d8ade015789d991"
+    }
+  }
+}

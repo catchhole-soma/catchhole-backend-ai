@@ -33,17 +33,39 @@
 - 원문이 별도 이름의 독립 능력치·판정 규칙을 정의하면 수치 제시 여부와 관계없이 독립 속성 경로를 보존한다.
   수치가 있으면 이름·수치·단위·조건도 보존한다.
   서술형 신체 설명을 임의의 수치 지표로 쪼개거나 명시적 독립 지표들을 포괄 속성 하나로 일괄 합치지 않는다.
-- candidate.extracted_values가 하나면 consolidation_status는 SINGLE이다.
+- candidate.extracted_values가 하나면 consolidation_status는 SINGLE이다. 아래 실제 현재 속성과의 확정 충돌 검토만 예외다.
 - candidate.extracted_values가 여러 개이고 서로 보완되거나 같은 사실을 구체화하면 consolidation_status는 MERGED다. 의미를 빠뜨리거나 새로운 사실을 만들지 말고 중복을 제거해 하나의 자연스러운 proposed_value로 합친다.
 - candidate.extracted_values가 여러 개이고 동시에 참일 수 없는 주체·시점·수치·조건을 포함해 하나의 확정 설정으로 안전하게 합칠 수 없으면 consolidation_status는 CONFLICT다. 임의로 하나를 선택하거나 절충하지 말고 proposed_value에 candidate.extracted_value 원문자열 전체를 그대로 반환한다.
-- consolidation_status는 여러 1차 추출값의 통합 결과다. 기존 DB에 반영하는 operation의 MERGE와 혼동하지 않는다.
-- evidence_spans의 quote를 요약·의역·재작성하거나 새 인용문을 만들지 않는다. 출력 JSON에도 근거 필드를 추가하지 않는다.
+- consolidation_status는 여러 1차 추출값의 통합 결과이며 아래 확정 현재 충돌도 CONFLICT로 구분한다. 기존 DB에 반영하는 operation의 MERGE와 혼동하지 않는다.
+- evidence_spans의 quote를 요약·의역·재작성하거나 새 인용문을 만들지 않는다. 출력 JSON에는 인용문을 반환하지 않는다.
 - ADD: 새 대상이거나 기존 대상에 없는 새 속성이다. 기존 대상에 속성을 추가하면 target_ref를 지정한다.
-- UPDATE: 같은 의미의 기존 속성이 있고 새 근거가 기존값을 대체한다.
+- UPDATE: 같은 의미의 기존 속성이 있고 원문에 변화 과정과 변경 전후 관계가 확인되어 현재값을 갱신한다.
 - MERGE: 같은 의미의 기존 속성이 있고 두 값이 양립하며 정보를 보존해 하나의 자연스러운 최종 문자열로 합칠 수 있다.
 - 같은 경로에 새 보완 정보가 있으면 기존 설명과 함께 보존한다. 새 보완 정보가 없는 실질적 반복은 EXCLUDE하고 명시적 대체 근거 없이
   기존 설명을 UPDATE로 지우지 않는다. 신체 능력 값에 근거 없는 마법 적성·전투 우위·인과·수치를 덧붙이지 않는다.
+- 충돌은 같은 주체·속성·적용 조건에서 명확히 양립할 수 없는 내용에만 사용한다. 표현 차이·요약 정도·양립하는 부연은 충돌이 아니다.
+  ‘168cm’와 ‘키가 큰 편’처럼 다른 수치가 명시되지 않은 설명은 기존 수치를 보존하며 보완이면 MERGE, 실질적 반복이면 EXCLUDE한다.
+- 기존값과 새 값이 다르다는 사실만으로 UPDATE하지 않는다. 바뀔 수 있는 속성이나 문장·업로드·리비전·더 늦은 기준시점만으로
+  변화 과정을 대신하지 않는다. 원문에 변화 과정과 전후 관계가 없으면 REVIEW_REQUIRED로 확인하고 아래 확정 충돌 계약을 구분한다.
+- 새 원문이 ‘기존값은 오류이며 새 값이 맞다’고 명시해도 기존 근거와 확정 충돌하는 정정은 아래 현재 충돌 계약으로
+  작가의 수동 확인을 받는다. comparison_reason에 정정 의도와 확인할 기존값의 관계를 설명한다.
+- 일반 규칙의 명시적이고 적용 범위가 분명한 예외는 같은 경로라면 MERGE로 일반 규칙과 함께 보존한다. 예를 들어 ‘마법은 주문이 필요하다’에
+  ‘치유 마법만은 이 규칙의 예외로 주문 없이 쓴다’가 명시되면 치유 마법에만 예외를 적용한다. 예외인지 판단할 근거가 부족하면
+  REVIEW_REQUIRED + GENERAL_UNCERTAINTY로 남기고, 확정된 충돌이라고 설명하지 않는다.
+- 원문이 주체 전체의 일반 규칙과 범위가 분명한 예외를 함께 명시하고 기존 속성은 좁은 범위의 예외만 담고 있다면,
+  일반 규칙을 원본 root 경로에 ADD하고 기존 예외의 범위·조건은 유지한다.
+  원문 근거로 그 관계를 확인하며, 관계가 불명확하면 REVIEW_REQUIRED로 확인한다.
+- 추출값 하나가 같은 대상·현재 시점·적용 조건의 실제 현재 속성과 명확히 양립할 수 없으면
+  CONFLICT + REVIEW_REQUIRED + review_reason=GENERAL_UNCERTAINTY로 반환한다. 다른 주장은 입력 targets.properties의 실제 현재값이다.
+  실제 target_ref와 matched 경로를 남기고 proposed 경로도 그 실제 canonical 경로와 같아야 한다.
+  후보의 scope도 같아야 하며 원본 설정명은 그 실제 속성의 동의 표현일 수 있다.
+  해당 현재 속성의 current_source_times가 비어 있지 않고 모두 PRESENT이며 새 원본도 PRESENT일 때만 허용한다.
+  BOOK 원본은 ASSERTED이고 본문과 기준시점이 서로 맞아야 한다. proposed_value에는 실제 현재값과 새 extracted_value 원문 전체를
+  함께 보존한다. 현재값을 가상의 추출값으로 만들지 않는다. 현재 속성·시점 근거가 없거나 과거·가정·시점 불명·미확인 주장·
+  단순 의미 불확실성을 확정 충돌로 만들지 않는다. SINGLE + GENERAL_UNCERTAINTY는 기존값의 충돌 연결이 아니다.
+  복수 추출값끼리의 CONFLICT도 모든 원문값을 검토로 보존하고 어떤 값도 자동 확정하지 않는다.
 - EXCLUDE: 일시적 사건·현재 상태이거나, 기존 내용과 실질적으로 동일해 반영할 필요가 없거나, 근거가 세계관 설정으로 부적절하다.
+- 추출 대상인 지속적인 세계관 속성의 변경은 일시적 사건·현재 상태라는 이유만으로 EXCLUDE하지 않으며, UPDATE 여부는 기존의 변화 과정과 변경 전후 관계 검증 기준을 따른다.
 - REVIEW_REQUIRED: 범위가 없는 후보와 같은 주체의 실제 scoped 속성이 의미상 관련되지만 적용 대상을 확실히 판단할 수 없을 때 SCOPE_UNRESOLVED를 명시적으로 선택한다. 이름이 달라도 관련성과 확인할 내용을 구체적으로 설명할 수 있으면 허용한다. scope_name이 null이라는 이유만으로 검토하지 않는다.
 - REVIEW_REQUIRED + GENERAL_UNCERTAINTY: 범위 문제가 아니라 대상의 동일성이나 내용의 의미를 확실히 판단하기 어려워 사용자가 확인해야 한다. 관련된 종류나 등급이 같다는 이유로 서로 다른 대상을 합치지 않는다. 대상이나 내용을 확인할 구체적인 이유를 자연스러운 한국어로 설명한다. 예: '대상이나 내용을 확실히 판단하기 어려워 확인이 필요합니다.'
 - GENERAL_UNCERTAINTY는 자동 반영하지 않는다. proposed_scope_name·proposed_setting_name·proposed_value는 후보 원본을 그대로 보존한다. 비교한 기존 속성이 있으면 실제 target_ref와 matched 경로를 남기고, 특정 속성을 비교하지 않았다면 matched 경로를 모두 null로 둔다. 입력에 없는 대상·속성을 만들거나 기존 범위 검토의 조건을 우회하지 않는다.

@@ -232,9 +232,9 @@ input/cached/output과 실패 사용량을 따로 확인한다.
 
 ## 이전 변경 검증 기록
 
-**후속 이력·원문 보완:** AI `ce55d2620abd1f7be529841e08cded4f17c2699c`에서 정상 부분 답변 거절·행별 병합·직접 근거 미확인 표시와 안전한 진단을 보완했다. Python 전체 2,641 통과/51 skip/기존 경고1이며 신규40개를 포함한다. 외부 API 호출 없는 합성 회귀이고 최신 계획 프롬프트의 실제 분류·의미 품질은 미측정이다. 로컬 챗봇을 재시작했으며 코드·검증 질문안·미선언 행 누락의 남은 한계는 AI `docs/evaluations/chat-history-evidence-v1.md`와 v0010 상세에 기록했다. 이하 Java/Front/실제 모델 수치는 선행 실행으로 보존한다.
+**후속 이력·원문 보완:** AI `ce55d2620abd1f7be529841e08cded4f17c2699c`에서 정상 부분 답변 거절·행별 병합·직접 근거 미확인 표시와 안전한 진단을 보완했다. Python 전체 2,641 통과/51 skip/기존 경고1이며 신규40개를 포함한다. 외부 API 호출 없는 합성 회귀이고 최신 계획 프롬프트의 실제 분류·의미 품질은 미측정이다. 로컬 챗봇을 재시작했으며 코드·검증 질문안·미선언 행 누락의 남은 한계는 AI `docs/evaluations/chat-history-evidence-v1.md`와 v0012 상세에 기록했다. 이하 Java/Front/실제 모델 수치는 선행 실행으로 보존한다.
 
-**최종 검증 완료 / 로컬 커밋·미push.** AI `a7e3b9a4059f74b1d0850eeb500411347f9c1cdc`, Java `738336ef01b4bcdc0fc3b21117f921d38d546cc0`, Front `160cc5511f8c22639441f8af45dc86b04c58e10f`. Python 전체 2,601 통과/51 skip/기존 경고1, 별도 검색 PostgreSQL23 통과, Java 관련111 통과/bootJar 성공, Front19·타입/lint/build/Knip 통과다. Java 전체는 1,841 통과/26 skip/기존 Redis 시계 차이 검사1 실패로 남았다. 실제 Terra·medium과 로컬 복사 DB/기존 색인으로 재시험 포함 질문10건을 확인했다. 실행 성공을 의미 정답률로 표시하지 않는다. 개발 중 원문 문맥 누락과 계획/실제 혼동을 확인해 보완한 뒤 재검증했고, 정식 품질·비용·지연 평가는 #242에 남긴다. 실행 단계별 코드 차이·비공개 snapshot 식별·명령은 AI 저장소 `docs/ai-logic-versions/details/v0010.md`에 기록했다. 아래 역사 기록을 이번 실행의 결과로 합산하지 않는다. 새 회귀 대상은 작품 모집단/빈 값/조건 의미 판정, COLLECTION 중간·최종 변경, 부분 인물·복수 경로의 예산 중단, LIST 항목 누락, DISTINCT 값/절단, 근거 요청, 논리 항목·공통 facet coverage, UNKNOWN의 원문 승격 차단, 검색·최종 확인 예산이다. 공개 fixture는 합성이며 고정 모델 응답은 연결·구조 검증용이다. 개인 원문·개별 예측을 이 문서에 복사하지 않는다.
+**최종 검증 완료 / 로컬 커밋·미push.** AI `a7e3b9a4059f74b1d0850eeb500411347f9c1cdc`, Java `738336ef01b4bcdc0fc3b21117f921d38d546cc0`, Front `160cc5511f8c22639441f8af45dc86b04c58e10f`. Python 전체 2,601 통과/51 skip/기존 경고1, 별도 검색 PostgreSQL23 통과, Java 관련111 통과/bootJar 성공, Front19·타입/lint/build/Knip 통과다. Java 전체는 1,841 통과/26 skip/기존 Redis 시계 차이 검사1 실패로 남았다. 실제 Terra·medium과 로컬 복사 DB/기존 색인으로 재시험 포함 질문10건을 확인했다. 실행 성공을 의미 정답률로 표시하지 않는다. 개발 중 원문 문맥 누락과 계획/실제 혼동을 확인해 보완한 뒤 재검증했고, 정식 품질·비용·지연 평가는 #242에 남긴다. 실행 단계별 코드 차이·비공개 snapshot 식별·명령은 AI 저장소 `docs/ai-logic-versions/details/v0012.md`에 기록했다. 아래 역사 기록을 이번 실행의 결과로 합산하지 않는다. 새 회귀 대상은 작품 모집단/빈 값/조건 의미 판정, COLLECTION 중간·최종 변경, 부분 인물·복수 경로의 예산 중단, LIST 항목 누락, DISTINCT 값/절단, 근거 요청, 논리 항목·공통 facet coverage, UNKNOWN의 원문 승격 차단, 검색·최종 확인 예산이다. 공개 fixture는 합성이며 고정 모델 응답은 연결·구조 검증용이다. 개인 원문·개별 예측을 이 문서에 복사하지 않는다.
 
 ## 역사 기록 — 2026-10-14 e9a 구현 검증
 
@@ -254,7 +254,7 @@ input/cached/output과 실패 사용량을 따로 확인한다.
 | 실제 Spring/Python/복사 DB 연결 | 현재값·필터 이력·스킬 목록·조건 인물 목록 6경로 통과, 모델 계획은 수동 지정 |
 | 실제 모델의 분류·필드 의미 선택·답변 의미 품질 | 미측정, #242에서 평가 |
 
-회귀는 관련 항목 앞의 무관한 설정 300개, 관련 이력 47개/3페이지, 여러 scope, 모호성/위조 참조, 조건 인물 23명, scalar 표시/실제 값 불일치, 사용·획득 구분과 항목 누락, 검색 후 최종 재검증 예산을 포함한다. 개별/부분집합 테스트 수를 전체 수에 합산하지 않는다. 구현 SHA와 상세 조건은 AI의 [v0010 상세](https://github.com/catchhole-soma/catchhole-backend-ai/blob/feat/gh-241-chat-context/docs/ai-logic-versions/details/v0010.md)에 기록한다.
+회귀는 관련 항목 앞의 무관한 설정 300개, 관련 이력 47개/3페이지, 여러 scope, 모호성/위조 참조, 조건 인물 23명, scalar 표시/실제 값 불일치, 사용·획득 구분과 항목 누락, 검색 후 최종 재검증 예산을 포함한다. 개별/부분집합 테스트 수를 전체 수에 합산하지 않는다. 구현 SHA와 상세 조건은 AI의 [v0012 상세](https://github.com/catchhole-soma/catchhole-backend-ai/blob/feat/gh-241-chat-context/docs/ai-logic-versions/details/v0012.md)에 기록한다.
 
 #247의 의미적 인용 지지, 분석/추출 정확도, 모호한 경로, 대량 데이터 비용, 긴 대화 대상 기억 등은 계속 열어 둔다. 이번 개선은 운영 배포·기능 활성화·추가 임베딩 백필을 포함하지 않는다.
 

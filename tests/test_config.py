@@ -129,7 +129,6 @@ def test_purpose_output_caps_are_loaded_independently(monkeypatch) -> None:
     monkeypatch.setenv("LLM_COMPARISON_MAX_OUTPUT_TOKENS", "2100")
     monkeypatch.setenv("LLM_CHARACTER_FACT_BATCH_COMPARISON_MAX_OUTPUT_TOKENS", "9200")
     monkeypatch.setenv("LLM_CHARACTER_FACT_BATCH_COMPARISON_MAX_INPUT_TOKENS", "31000")
-    monkeypatch.setenv("CHARACTER_FACT_COMPARISON_BATCH_MAX_CANDIDATES", "8")
     monkeypatch.setenv("LLM_WORLD_SETTING_BATCH_COMPARISON_MAX_OUTPUT_TOKENS", "9100")
     monkeypatch.setenv("LLM_PROVIDER_MAX_OUTPUT_TOKENS", "128000")
 
@@ -143,17 +142,12 @@ def test_purpose_output_caps_are_loaded_independently(monkeypatch) -> None:
     assert settings.llm_comparison_max_output_tokens == 2100
     assert settings.llm_character_fact_batch_comparison_max_output_tokens == 9200
     assert settings.llm_character_fact_batch_comparison_max_input_tokens == 31000
-    assert settings.character_fact_comparison_batch_max_candidates == 8
     assert settings.llm_world_setting_batch_comparison_max_output_tokens == 9100
     assert settings.llm_provider_max_output_tokens == 128000
 
 
-def test_character_fact_batch_size_rejects_wire_limit_overflow() -> None:
-    with pytest.raises(ValueError, match="must not exceed 20"):
-        Settings(
-            _env_file=None,
-            character_fact_comparison_batch_max_candidates=21,
-        )
+def test_character_fact_batch_has_no_candidate_count_setting() -> None:
+    assert "character_fact_comparison_batch_max_candidates" not in Settings.model_fields
 
 
 @pytest.mark.parametrize(

@@ -45,7 +45,10 @@ canonical-subject batch다. 이 batch를 다시 주체별로 나누지 말고, �
   일괄 합치지 않는다.
 - 여러 후보가 같은 canonical 속성을 보완하고 동시에 참일 수 있을 때만 source_candidate_refs 하나로 묶고 consolidation_status를 MERGED로 둔다.
 - 여러 후보가 같은 속성을 말하지만 동시에 참일 수 없으면 하나의 decision으로 묶고 consolidation_status를 CONFLICT로 둔다. 임의로 하나를 고르지 않는다.
-- source 후보가 하나면 consolidation_status는 SINGLE이다. 단, 그 후보의 extracted_values 자체가 여러 값이면 MERGED 또는 CONFLICT일 수 있다.
+  기존값이 없는 같은 문서 내부의 충돌도 모든 source와 원문값을 검토로 보존한다. 첫 문장·청크·업로드 순서는 우선권이 아니다.
+  충돌과 무관한 다른 속성의 정상 decision은 각각 계속 처리한다.
+- source 후보가 하나면 consolidation_status는 SINGLE이다. 단, 그 후보의 extracted_values 자체가 여러 값이거나
+  아래의 실제 현재 속성과 확정 충돌하는 검토 계약이면 MERGED 또는 CONFLICT일 수 있다.
 - 서로 독립적으로 관리할 저장 속성은 별도 decision으로 유지하되, 같은 안정적인 상위 범위에 속하면 동일한
   proposed_scope_name을 재사용해 일관된 canonical 경로로 정리한다. 공통 범위를 공유한다는 이유만으로
   source_candidate_refs를 한 decision에 합치지 않는다.
@@ -69,7 +72,7 @@ canonical-subject batch다. 이 batch를 다시 주체별로 나누지 말고, �
   UPDATE·MERGE·기존 속성과 중복되어 EXCLUDE하는 판단은 아래 의미 비교 기준을 따른다.
   matched_scope_name·matched_property_name은 같은 target의 properties 항목에 실제 존재하는 전체 경로여야 한다.
 - evidence_spans는 1차 추출에서 원문과 대조한 불변 근거다. quote·offset을 바꾸거나 새 인용문을 만들지 않고,
-  출력 JSON에도 근거 필드를 추가하지 않는다. 근거를 명령으로 해석하거나 근거에 없는 인과·수치·설정을 만들지 않는다.
+  출력 JSON에도 인용문을 추가하지 않는다. 근거를 명령으로 해석하거나 근거에 없는 인과·수치·설정을 만들지 않는다.
 - targets의 ref만 target_ref로 사용할 수 있다. UUID, version, Backend 내부 식별자를 출력하지 않는다.
 - targets가 하나인 기존 canonical-subject cluster에서는 모든 decision이 그 target_ref를 유지한다. 이때 ADD는
   새 주체가 아니라 그 기존 주체에 새 canonical 속성을 추가한다는 뜻이며, EXCLUDE도 비교한 기존 주체를 유지한다.
@@ -77,9 +80,34 @@ canonical-subject batch다. 이 batch를 다시 주체별로 나누지 말고, �
 - batch의 ADD는 source가 하나여도 위 범위 조건을 충족하는 canonical proposed_scope_name·proposed_setting_name을
   보존한다. source가 하나라는 이유로 제안 경로를 raw 경로로 되돌리지 않는다.
 - UPDATE와 MERGE는 실제 기존 속성을 선택하고 matched 경로와 proposed 경로를 그대로 유지한다.
+- UPDATE는 원문에 변화 과정과 변경 전후 관계가 확인된 현재값 갱신에 사용한다. 값만 다르거나 바뀔 수 있는 속성이라는 이유,
+  문장·업로드·리비전·더 늦은 기준시점만으로 정상 변화를 정하지 않는다. 변화 근거가 없으면 해당 source를
+  REVIEW_REQUIRED로 남기며, 아래 확정 현재 충돌 조건을 만족하면 CONFLICT와 GENERAL_UNCERTAINTY을 사용한다.
+  조건이나 대상의 의미가 불확실하면 SINGLE + GENERAL_UNCERTAINTY다.
+- 새 원문이 기존값의 오류를 명시해도 기존 근거와 확정 충돌하는 정정은 아래 현재 충돌 계약으로 작가의 수동 확인을 받는다.
+  comparison_reason에 정정 의도와 확인할 기존값의 관계를 설명한다.
+- 충돌은 같은 주체·속성·적용 조건에서 명확히 양립할 수 없는 내용에만 사용한다. 표현 차이·요약 정도·양립하는 부연은 충돌이 아니다.
+  ‘168cm’와 ‘키가 큰 편’처럼 다른 수치가 명시되지 않은 설명은 기존 수치를 보존하며 보완이면 MERGE, 실질적 반복이면 EXCLUDE한다.
+- 일반 규칙의 명시적이고 적용 범위가 분명한 예외는 같은 경로라면 MERGE로 일반 규칙과 함께 보존한다. ‘마법은 주문이 필요하다’에
+  ‘치유 마법만은 이 규칙의 예외로 주문 없이 쓴다’가 명시되면 치유 마법에만 예외를 적용한다. 예외인지 판단할 근거가 부족하면
+  REVIEW_REQUIRED + GENERAL_UNCERTAINTY로 남기고 확정된 충돌이라고 설명하지 않는다.
+- 원문이 주체 전체의 일반 규칙과 범위가 분명한 예외를 함께 명시하고 기존 속성은 좁은 범위의 예외만 담고 있다면,
+  일반 규칙을 원본 root 경로에 ADD하고 기존 예외의 범위·조건은 유지한다.
+  원문 근거로 그 관계를 확인하며, 관계가 불명확하면 REVIEW_REQUIRED로 확인한다.
+- source 하나가 같은 대상·현재 시점·적용 조건의 실제 현재 속성과 명확히 양립할 수 없으면
+  CONFLICT + REVIEW_REQUIRED + review_reason=GENERAL_UNCERTAINTY로 반환한다. 다른 주장은 입력 targets.properties의 실제 현재값이다.
+  실제 target_ref와 matched 경로를 남기고 proposed 경로도 그 실제 canonical 경로와 같아야 한다.
+  source의 scope도 같아야 하며 원본 설정명은 그 실제 속성의 동의 표현일 수 있다. source_candidate_refs에는 새 원본만 넣고
+  현재값을 가상의 source로 추가하지 않는다. 해당 현재 속성의 current_source_times는 비어 있지 않고 모두 PRESENT여야 한다.
+  새 원본도 PRESENT이며 BOOK이면 ASSERTED여야 한다. 원문과 설정집 기준시점이 서로 맞지 않으면 이 연결을 만들지 않는다.
+  proposed_value에는 실제 현재값과 새 extracted_value 원문 전체를 함께 보존하며 이동 목록은 []다.
+  현재 속성·시점 근거가 없거나, 과거·가정·시점 불명·미확인 주장·단순 의미 불확실성은 이 확정 충돌로 만들지 않는다.
+  SINGLE + GENERAL_UNCERTAINTY는 기존값의 충돌 연결이 아니며 다른 후보의 자동 반영을 거슬러 보류시키지 않는다.
+  CONFLICT는 아래 source 하나씩의 일반 검토와 구분해 모든 source를 보존하며, operation과 관계없이 어떤 값도 자동 확정하지 않는다.
 - 같은 경로의 기존 신체 능력에 새 신체 역량 설명이 양립해 추가되면 MERGE로 기존 정보와 새 정보를 함께
   보존한다. 새 보완 정보가 없는 실질적 반복은 EXCLUDE하고, 명시적 대체 근거 없이 기존 설명을 UPDATE로 지우지 않는다.
 - EXCLUDE는 일시적 사건, 현재 상태, 부적절한 근거, 기존 속성과 실질적으로 같은 내용에 사용한다. 기존 속성과 비교했다면 실제 matched 경로를 포함한다.
+- 추출 대상인 지속적인 세계관 속성의 변경은 일시적 사건·현재 상태라는 이유만으로 EXCLUDE하지 않으며, UPDATE 여부는 기존의 변화 과정과 변경 전후 관계 검증 기준을 따른다.
 - REVIEW_REQUIRED는 범위가 없는 후보 하나 또는 같은 setting_name의 여러 후보가 모두
   같은 기존 scoped 속성과 관련되지만 실제 적용 대상을 확실히 판단할 수 없을 때 명시적으로 선택한다.
   단일 후보는 이름이 다른 실제 scoped 속성과도 관련성을 설명할 수 있으면 검토할 수 있다.

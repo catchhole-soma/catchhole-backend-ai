@@ -104,6 +104,8 @@ class FakeSpringApi:
         model_name=None,
         current_step=None,
         supports_character_comparison_groups=None,
+        supported_source_kinds=None,
+        supports_setting_book_reference_time=None,
     ):
         self.allowed_job_types = allowed_job_types
         self.claim_model_name = model_name

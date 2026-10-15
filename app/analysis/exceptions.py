@@ -8,6 +8,10 @@ class ComparisonValidationError(LlmExtractionError):
     """LLM 비교 응답을 도메인 결정으로 검증하지 못한 경우다."""
 
 
+class CharacterComparisonInputTooLargeError(ComparisonValidationError):
+    """A complete character comparison prompt exceeds its estimated token budget."""
+
+
 class OrderedInputContextError(ComparisonValidationError):
     """The frozen input/identity contract changed; never a candidate-local failure."""
 

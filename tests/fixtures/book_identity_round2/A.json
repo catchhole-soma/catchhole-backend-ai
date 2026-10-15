@@ -1,0 +1,1402 @@
+{
+  "fixtureKind": "actual-public-extraction-boundary, not provider response or gold",
+  "round": "2",
+  "group": "A",
+  "count": 56,
+  "rawExportSha256": "436628fd7d98d0b4dbc106cc32a89eb04b4247621868ce0f1c1461cb28bc7c6f",
+  "source": {
+    "sourceKind": "SETTING_BOOK",
+    "episodeId": null,
+    "episodeNo": null,
+    "settingBookId": "7f54e518-baf4-421d-9526-15f9884e9b69",
+    "settingBookName": "01-base-book.txt",
+    "revisionId": "b0df9e41-d2fa-4b0b-86a8-8a3acec79f25",
+    "revisionNo": 1,
+    "contentHash": "41a3a9a766fce1ad5c50ebcbb8286a2803de3fe754229f01a64d0b7a7662d7f3",
+    "referenceTimeKind": "WORK_START"
+  },
+  "sourceAnalysisJobId": "97034dda-009c-4901-958c-da29ed400814",
+  "sourceText": "백조항의 잔향등 — 개막 전 설정집\n기준: 이야기 시작 전\n\n[인물 / 한서린 — 항만청 기록관]\n성별: 여성\n나이: 28세\n키: 168cm\n성격: 꼼꼼함, 의심이 나면 원장을 대조함\n직업: 항만 기록관\n소속: 항만청 기록실\n별칭: 은등\n능력: 장부 대조\n필기 도구: 청동 펜\n오른손 감각: 정상\n관계: 류도윤과 업무 협력, 친족 아님\n\n[인물 / 한서린 — 나룻배 선원]\n성별: 남성\n나이: 34세\n키: 176cm\n성격: 농담을 즐김, 승객 약속 시간을 지킴\n직업: 나룻배 선원\n활동 장소: 동쪽 나루\n배: 물새\n동명이인 주의: 위 기록관과 성과 이름이 같지만 다른 사람, 가족도 아님\n별칭: 은등 아님\n\n[인물 / 류도윤]\n성별: 남성\n나이: 36세\n키: 182cm\n성격: 책임감이 강함, 보고 누락을 싫어함\n직책: 북문 경비대장\n주무기: 장창\n관계: 기록관 한서린과 통행 기록 확인에 협력\n\n[인물 / 윤해온]\n성별: 여성\n나이: 31세\n키: 163cm\n성격: 침착함, 환자의 신분보다 위급함을 먼저 봄\n직업: 의사\n근무지: 남쪽 진료소\n청각: 양쪽 정상, 청력 상실 이력 없음\n왕진 가방: 붉은색\n\n[인물 / 문가람]\n성별: 남성\n나이: 22세\n키: 171cm\n성격: 호기심이 많음, 허가 없는 조작은 삼감\n직책: 수문 견습 기사\n주손: 왼손\n권한: 단독 수문 가동 불가\n\n[인물 / 백무겸]\n성별: 남성\n나이: 49세\n키: 178cm\n성격: 권위적, 결재 근거를 요구함\n직책: 항만청장\n거처: 항만청 서관\n\n[지역 / 백조항]\n주교역품: 소금\n북문 통행세: 은화 두 닢\n야간 통행: 허가증 소지자 허용\n\n[시설 / 염수문]\n가동 인원: 두 명\n역할: 바퀴 조작 한 명 + 압력 확인 한 명\n위험 경보색: 붉은색\n비상열쇠 보관: 관리소 철제함\n\n[마법 / 조수술 — 현재 규칙]\n대상: 액체 상태 물\n불가 대상: 얼음, 수증기\n대가: 사용할 때마다 시전자의 체온 하락\n유래: 고대 조수제사의 물길 조절법에서 계승\n\n[도구 / 잔향등]\n기능: 주변 소리 기록\n기록 지속: 한 시간\n재생 조건: 소금 한 꼬집\n보관 장소: 기록실 창고\n\n[계약 / 백색서약]\n효력: 서명자의 허위 진술에 잉크가 검게 변함\n불가 기능: 생각 읽기, 미래 거짓말 예언\n\n[고대 신화 시대 / 사라진 청동 왕조]\n당시 통행세: 조개 세 개 — 현재 백조항 세금 아님\n당시 경보: 종을 세 번 울림 — 현재 염수문 경보 장치 아님\n현재까지 남은 유산: 조수술은 액체 물에만 작용\n불확실한 전승: 첫 제사장은 얼음 바다도 움직였다고 함, 사실 여부 미확인\n\n[미정 구상 / 앞으로 쓸 수도 있는 장면]\n기록관 한서린: 잔향등 파편으로 한쪽 눈을 잃는 안, 채택 여부와 어느 눈인지 미정\n백무겸: 사건 배후로 삼는 안, 아직 범인으로 확정하지 않음\n\n[미확인 소문]\n검은새: 사람인지 배인지 불명, 두 한서린 중 누구의 별칭인지도 확인되지 않음\n",
+  "parentProfiles": [
+    {
+      "quote": "[인물 / 한서린 — 항만청 기록관]\n성별: 여성\n나이: 28세\n키: 168cm\n성격: 꼼꼼함, 의심이 나면 원장을 대조함\n직업: 항만 기록관\n소속: 항만청 기록실\n별칭: 은등\n능력: 장부 대조\n필기 도구: 청동 펜\n오른손 감각: 정상\n관계: 류도윤과 업무 협력, 친족 아님",
+      "start_offset": 34,
+      "end_offset": 187
+    },
+    {
+      "quote": "[인물 / 한서린 — 나룻배 선원]\n성별: 남성\n나이: 34세\n키: 176cm\n성격: 농담을 즐김, 승객 약속 시간을 지킴\n직업: 나룻배 선원\n활동 장소: 동쪽 나루\n배: 물새\n동명이인 주의: 위 기록관과 성과 이름이 같지만 다른 사람, 가족도 아님\n별칭: 은등 아님",
+      "start_offset": 189,
+      "end_offset": 338
+    }
+  ],
+  "distinctEvidence": {
+    "quote": "동명이인 주의: 위 기록관과 성과 이름이 같지만 다른 사람, 가족도 아님",
+    "start_offset": 288,
+    "end_offset": 328
+  },
+  "candidates": [
+    {
+      "candidate_id": "d711a7dd-cc43-4a88-a42e-f49ec7c38f82",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 한서린 — 항만청 기록관]",
+            "end_offset": 54,
+            "start_offset": 34
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "dbe274b3-8133-43d9-89d0-e0020ac73b6a",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 한서린 — 나룻배 선원]",
+            "end_offset": 208,
+            "start_offset": 189
+          },
+          {
+            "quote": "동명이인 주의: 위 기록관과 성과 이름이 같지만 다른 사람, 가족도 아님",
+            "end_offset": 328,
+            "start_offset": 288
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "6098f74c-4982-4108-a1b1-4f7159c0ea17",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.gender",
+        "attribute_value": "여성",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "여성"
+        },
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 한서린 — 항만청 기록관]",
+            "end_offset": 54,
+            "start_offset": 34
+          },
+          {
+            "quote": "성별: 여성",
+            "end_offset": null,
+            "start_offset": null
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "94eb9dba-b30a-4563-b5c8-ff46cc935813",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "age",
+        "attribute_value": "28",
+        "value_type": "NUMBER",
+        "value_json": {
+          "value": 28
+        },
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 한서린 — 항만청 기록관]",
+            "end_offset": 54,
+            "start_offset": 34
+          },
+          {
+            "quote": "나이: 28세",
+            "end_offset": 69,
+            "start_offset": 62
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "bf52790a-5818-4bc6-bf3c-bd9c7ef69983",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.성격",
+        "attribute_value": "꼼꼼함, 의심이 나면 원장을 대조함",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "꼼꼼함, 의심이 나면 원장을 대조함"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성격: 꼼꼼함, 의심이 나면 원장을 대조함",
+            "end_offset": 102,
+            "start_offset": 79
+          }
+        ],
+        "confidence": 0.93,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "f9059ea2-5abf-49a3-a679-1e01977fc87f",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.키",
+        "attribute_value": "168cm",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "168cm"
+        },
+        "evidence_spans": [
+          {
+            "quote": "키: 168cm",
+            "end_offset": 78,
+            "start_offset": 70
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "423a08cf-fa16-4a2d-847a-e266e230ac65",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.occupation",
+        "attribute_value": "항만 기록관",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "항만 기록관"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직업: 항만 기록관",
+            "end_offset": 113,
+            "start_offset": 103
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "a7fc3d09-61dc-4d22-92e8-55da1b718707",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.affiliation",
+        "attribute_value": "항만청 기록실",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "항만청 기록실"
+        },
+        "evidence_spans": [
+          {
+            "quote": "소속: 항만청 기록실",
+            "end_offset": 125,
+            "start_offset": 114
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "53089e97-e3f5-4428-8b3c-6937d2d65d68",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.별칭",
+        "attribute_value": "은등",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "은등"
+        },
+        "evidence_spans": [
+          {
+            "quote": "별칭: 은등",
+            "end_offset": null,
+            "start_offset": null
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "3b13a277-8bd0-425c-85a5-c73454c8aa88",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "item.청동_펜",
+        "attribute_value": "청동 펜",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "청동 펜",
+          "type": "필기 도구"
+        },
+        "evidence_spans": [
+          {
+            "quote": "필기 도구: 청동 펜",
+            "end_offset": 154,
+            "start_offset": 143
+          }
+        ],
+        "confidence": 0.91,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "cff90ddf-8123-4552-91ca-bb4f9a49a7d9",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "skill.장부_대조",
+        "attribute_value": "장부 대조",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "장부 대조"
+        },
+        "evidence_spans": [
+          {
+            "quote": "능력: 장부 대조",
+            "end_offset": 142,
+            "start_offset": 133
+          }
+        ],
+        "confidence": 0.92,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "2273a44a-5db4-4f4a-bbe3-15f6c6f4dbdc",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.오른손_감각",
+        "attribute_value": "정상",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "정상"
+        },
+        "evidence_spans": [
+          {
+            "quote": "오른손 감각: 정상",
+            "end_offset": 165,
+            "start_offset": 155
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "999a2cfb-0595-42ca-be05-7d66e8003e5c",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 항만청 기록관",
+        "attribute_name": "profile.관계",
+        "attribute_value": "류도윤과 업무 협력, 친족 아님",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "류도윤과 업무 협력, 친족 아님"
+        },
+        "evidence_spans": [
+          {
+            "quote": "관계: 류도윤과 업무 협력, 친족 아님",
+            "end_offset": 187,
+            "start_offset": 166
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "9a905568-3f28-47d9-9fbc-4a6b3b5e0a66",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.gender",
+        "attribute_value": "남성",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "남성"
+        },
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 한서린 — 나룻배 선원]",
+            "end_offset": 208,
+            "start_offset": 189
+          },
+          {
+            "quote": "성별: 남성",
+            "end_offset": null,
+            "start_offset": null
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "7256ab8b-f48a-432b-b2a5-5fa6034b714c",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "age",
+        "attribute_value": "34",
+        "value_type": "NUMBER",
+        "value_json": {
+          "value": 34
+        },
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 한서린 — 나룻배 선원]",
+            "end_offset": 208,
+            "start_offset": 189
+          },
+          {
+            "quote": "나이: 34세",
+            "end_offset": 223,
+            "start_offset": 216
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "2b7c36c2-5706-4e23-8bcd-ed8c1519b9af",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.키",
+        "attribute_value": "176cm",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "176cm"
+        },
+        "evidence_spans": [
+          {
+            "quote": "키: 176cm",
+            "end_offset": 232,
+            "start_offset": 224
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "63a47675-4b9f-4e6d-92d4-0f8255e80191",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.성격",
+        "attribute_value": "농담을 즐김, 승객 약속 시간을 지킴",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "농담을 즐김, 승객 약속 시간을 지킴"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성격: 농담을 즐김, 승객 약속 시간을 지킴",
+            "end_offset": 257,
+            "start_offset": 233
+          }
+        ],
+        "confidence": 0.93,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "ad84e532-5a1f-4822-b277-aabbc5d1de34",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.활동_장소",
+        "attribute_value": "동쪽 나루",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "동쪽 나루"
+        },
+        "evidence_spans": [
+          {
+            "quote": "활동 장소: 동쪽 나루",
+            "end_offset": 281,
+            "start_offset": 269
+          }
+        ],
+        "confidence": 0.94,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "fce20215-1e40-4810-926c-cc6e3d231e8d",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.occupation",
+        "attribute_value": "나룻배 선원",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "나룻배 선원"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직업: 나룻배 선원",
+            "end_offset": 268,
+            "start_offset": 258
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "f18f015a-aa6c-4f1d-b86a-16fb4882d1a7",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "item.물새",
+        "attribute_value": "물새",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "물새",
+          "type": "배"
+        },
+        "evidence_spans": [
+          {
+            "quote": "배: 물새",
+            "end_offset": 287,
+            "start_offset": 282
+          }
+        ],
+        "confidence": 0.89,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "37a2b657-2846-44a7-b9a1-bdd111002f52",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.동명이인_구분",
+        "attribute_value": "기록관 한서린과 다른 사람이며 가족도 아님",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "기록관 한서린과 다른 사람이며 가족도 아님"
+        },
+        "evidence_spans": [
+          {
+            "quote": "동명이인 주의: 위 기록관과 성과 이름이 같지만 다른 사람, 가족도 아님",
+            "end_offset": 328,
+            "start_offset": 288
+          }
+        ],
+        "confidence": 0.98,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "a875ec0f-708f-4845-892d-ce662f82d21f",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "한서린 — 나룻배 선원",
+        "attribute_name": "profile.별칭",
+        "attribute_value": "은등 아님",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "은등 아님"
+        },
+        "evidence_spans": [
+          {
+            "quote": "별칭: 은등 아님",
+            "end_offset": 338,
+            "start_offset": 329
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "55fe28d9-b3d4-469f-b6fd-526a784fc148",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "한서린",
+        "raw_entity_mention": "기록관 한서린",
+        "attribute_name": "status.한쪽_눈_상실",
+        "attribute_value": "잔향등 파편으로 한쪽 눈을 잃는 미정 구상",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "한쪽 눈 상실",
+          "certainty": "채택 여부와 어느 눈인지 미정",
+          "description": "잔향등 파편으로 한쪽 눈을 잃는 안"
+        },
+        "evidence_spans": [
+          {
+            "quote": "기록관 한서린: 잔향등 파편으로 한쪽 눈을 잃는 안, 채택 여부와 어느 눈인지 미정",
+            "end_offset": 1322,
+            "start_offset": 1276
+          }
+        ],
+        "confidence": 0.84,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "8eba5c98-2484-494c-8c5c-d5e448befd38",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 류도윤]",
+            "end_offset": 350,
+            "start_offset": 340
+          }
+        ],
+        "confidence": 0.98,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "6aa4a162-0ebd-4931-a760-68d4374429d3",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "profile.gender",
+        "attribute_value": "남성",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "남성"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성별: 남성",
+            "end_offset": null,
+            "start_offset": null
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "8895dfd9-a520-47f9-8708-5ec392b852dd",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "profile.키",
+        "attribute_value": "182cm",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "182cm"
+        },
+        "evidence_spans": [
+          {
+            "quote": "키: 182cm",
+            "end_offset": 374,
+            "start_offset": 366
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "f8cfc789-c93a-4767-9d1a-7254349157ae",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "age",
+        "attribute_value": "36",
+        "value_type": "NUMBER",
+        "value_json": {
+          "value": 36
+        },
+        "evidence_spans": [
+          {
+            "quote": "나이: 36세",
+            "end_offset": 365,
+            "start_offset": 358
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "06e54feb-da0f-43ff-8824-27d65250e489",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "profile.직책",
+        "attribute_value": "북문 경비대장",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "북문 경비대장"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직책: 북문 경비대장",
+            "end_offset": 410,
+            "start_offset": 399
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "a2012990-b6e3-4bcf-a4fa-bfc9492f1cf2",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "profile.성격",
+        "attribute_value": "책임감이 강함, 보고 누락을 싫어함",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "책임감이 강함, 보고 누락을 싫어함"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성격: 책임감이 강함, 보고 누락을 싫어함",
+            "end_offset": 398,
+            "start_offset": 375
+          }
+        ],
+        "confidence": 0.92,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "f7e2869d-41b1-4493-91b8-21a4dda87528",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "item.장창",
+        "attribute_value": "장창",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "장창",
+          "type": "주무기"
+        },
+        "evidence_spans": [
+          {
+            "quote": "주무기: 장창",
+            "end_offset": 418,
+            "start_offset": 411
+          }
+        ],
+        "confidence": 0.93,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "1b0bd74c-b857-4cfb-a137-e59708252272",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "류도윤",
+        "raw_entity_mention": "류도윤",
+        "attribute_name": "profile.관계",
+        "attribute_value": "기록관 한서린과 통행 기록 확인에 협력",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "기록관 한서린과 통행 기록 확인에 협력"
+        },
+        "evidence_spans": [
+          {
+            "quote": "관계: 기록관 한서린과 통행 기록 확인에 협력",
+            "end_offset": 444,
+            "start_offset": 419
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "150919da-59e3-4fa8-9bbb-1be09c92bcb8",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 윤해온]",
+            "end_offset": 456,
+            "start_offset": 446
+          }
+        ],
+        "confidence": 0.98,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "649e128a-9c6a-4003-95f5-a83eeb771cc9",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "profile.gender",
+        "attribute_value": "여성",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "여성"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성별: 여성",
+            "end_offset": null,
+            "start_offset": null
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "c682651c-2004-406b-a720-2758832a1e6a",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "profile.키",
+        "attribute_value": "163cm",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "163cm"
+        },
+        "evidence_spans": [
+          {
+            "quote": "키: 163cm",
+            "end_offset": 480,
+            "start_offset": 472
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "e8995f35-764c-45e8-9376-27b17678a10c",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "age",
+        "attribute_value": "31",
+        "value_type": "NUMBER",
+        "value_json": {
+          "value": 31
+        },
+        "evidence_spans": [
+          {
+            "quote": "나이: 31세",
+            "end_offset": 471,
+            "start_offset": 464
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "a5162717-9fdb-4b20-aebf-6d1a8ad3380c",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "profile.성격",
+        "attribute_value": "침착함, 환자의 신분보다 위급함을 먼저 봄",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "침착함, 환자의 신분보다 위급함을 먼저 봄"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성격: 침착함, 환자의 신분보다 위급함을 먼저 봄",
+            "end_offset": 508,
+            "start_offset": 481
+          }
+        ],
+        "confidence": 0.92,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "0fbf79c6-dc8e-4622-829a-9757733039f3",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "profile.occupation",
+        "attribute_value": "의사",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "의사"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직업: 의사",
+            "end_offset": 515,
+            "start_offset": 509
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "168af816-feae-42c3-97c6-df17e82279ac",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "profile.근무지",
+        "attribute_value": "남쪽 진료소",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "남쪽 진료소"
+        },
+        "evidence_spans": [
+          {
+            "quote": "근무지: 남쪽 진료소",
+            "end_offset": 527,
+            "start_offset": 516
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "0b7854a9-7b86-4505-b6fe-3e9826ef37cb",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "item.왕진_가방",
+        "attribute_value": "붉은색 왕진 가방",
+        "value_type": "JSON",
+        "value_json": {
+          "name": "왕진 가방",
+          "color": "붉은색"
+        },
+        "evidence_spans": [
+          {
+            "quote": "왕진 가방: 붉은색",
+            "end_offset": 561,
+            "start_offset": 551
+          }
+        ],
+        "confidence": 0.9,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "e2211dbc-160a-40e7-ad90-14f15777b1f9",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "윤해온",
+        "raw_entity_mention": "윤해온",
+        "attribute_name": "profile.청각",
+        "attribute_value": "양쪽 정상, 청력 상실 이력 없음",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "양쪽 정상, 청력 상실 이력 없음"
+        },
+        "evidence_spans": [
+          {
+            "quote": "청각: 양쪽 정상, 청력 상실 이력 없음",
+            "end_offset": 550,
+            "start_offset": 528
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "75ffb92a-d98c-4f68-9ac3-9d9f82115d44",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 문가람]",
+            "end_offset": 573,
+            "start_offset": 563
+          }
+        ],
+        "confidence": 0.98,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "6a3156c7-3adb-47fc-b612-1ee48f063e98",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": "profile.gender",
+        "attribute_value": "남성",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "남성"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성별: 남성",
+            "end_offset": null,
+            "start_offset": null
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "1e60389a-5825-4b00-b068-f90a0c5889da",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": "age",
+        "attribute_value": "22",
+        "value_type": "NUMBER",
+        "value_json": {
+          "value": 22
+        },
+        "evidence_spans": [
+          {
+            "quote": "나이: 22세",
+            "end_offset": 588,
+            "start_offset": 581
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "86464fa8-166c-4b1b-844e-dd604068e80f",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": "profile.키",
+        "attribute_value": "171cm",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "171cm"
+        },
+        "evidence_spans": [
+          {
+            "quote": "키: 171cm",
+            "end_offset": 597,
+            "start_offset": 589
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "d9728990-b444-4ac5-a087-95f36081269d",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": "profile.직책",
+        "attribute_value": "수문 견습 기사",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "수문 견습 기사"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직책: 수문 견습 기사",
+            "end_offset": 636,
+            "start_offset": 624
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "db561eb9-446e-4f9d-9e05-f55b1cc0937d",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": "profile.성격",
+        "attribute_value": "호기심이 많음, 허가 없는 조작은 삼감",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "호기심이 많음, 허가 없는 조작은 삼감"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성격: 호기심이 많음, 허가 없는 조작은 삼감",
+            "end_offset": 623,
+            "start_offset": 598
+          }
+        ],
+        "confidence": 0.92,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "c1c2f334-2b8c-47aa-b6d6-d4325495a73c",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": "profile.주손",
+        "attribute_value": "왼손",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "왼손"
+        },
+        "evidence_spans": [
+          {
+            "quote": "주손: 왼손",
+            "end_offset": 643,
+            "start_offset": 637
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "285d55db-dcc4-4cc2-8430-9eb725ced628",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "문가람",
+        "raw_entity_mention": "문가람",
+        "attribute_name": "profile.권한",
+        "attribute_value": "단독 수문 가동 불가",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "단독 수문 가동 불가"
+        },
+        "evidence_spans": [
+          {
+            "quote": "권한: 단독 수문 가동 불가",
+            "end_offset": 659,
+            "start_offset": 644
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "5425ec8c-2fbc-49ec-bd2b-24ce4567b3d7",
+      "extraction": {
+        "candidate_kind": "CHARACTER_DISCOVERY",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": null,
+        "attribute_value": null,
+        "value_type": null,
+        "value_json": null,
+        "evidence_spans": [
+          {
+            "quote": "[인물 / 백무겸]",
+            "end_offset": 671,
+            "start_offset": 661
+          }
+        ],
+        "confidence": 0.98,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "1e6e93f6-b000-44e4-b1e0-ce10267b9efa",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": "profile.gender",
+        "attribute_value": "남성",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "남성"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성별: 남성",
+            "end_offset": null,
+            "start_offset": null
+          }
+        ],
+        "confidence": 0.96,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "75aa1208-195d-4d93-8aed-76498fe8f0fe",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": "profile.키",
+        "attribute_value": "178cm",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "178cm"
+        },
+        "evidence_spans": [
+          {
+            "quote": "키: 178cm",
+            "end_offset": 695,
+            "start_offset": 687
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "b4fd6f07-1768-4b1b-91ff-a9b660e571a8",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": "age",
+        "attribute_value": "49",
+        "value_type": "NUMBER",
+        "value_json": {
+          "value": 49
+        },
+        "evidence_spans": [
+          {
+            "quote": "나이: 49세",
+            "end_offset": 686,
+            "start_offset": 679
+          }
+        ],
+        "confidence": 0.99,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "1373d89e-f5a0-4983-a3e7-4db09b517bcf",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": "profile.직책",
+        "attribute_value": "항만청장",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "항만청장"
+        },
+        "evidence_spans": [
+          {
+            "quote": "직책: 항만청장",
+            "end_offset": 724,
+            "start_offset": 716
+          }
+        ],
+        "confidence": 0.97,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "a8339b24-fcd8-40fa-832f-c23b4d0a3841",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": "profile.성격",
+        "attribute_value": "권위적, 결재 근거를 요구함",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "권위적, 결재 근거를 요구함"
+        },
+        "evidence_spans": [
+          {
+            "quote": "성격: 권위적, 결재 근거를 요구함",
+            "end_offset": 715,
+            "start_offset": 696
+          }
+        ],
+        "confidence": 0.92,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "d68661b7-2732-477a-b943-42a50b7775ca",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": "profile.거처",
+        "attribute_value": "항만청 서관",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "항만청 서관"
+        },
+        "evidence_spans": [
+          {
+            "quote": "거처: 항만청 서관",
+            "end_offset": 735,
+            "start_offset": 725
+          }
+        ],
+        "confidence": 0.95,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    },
+    {
+      "candidate_id": "a4d04e73-1eca-4fb6-b7c5-1460dee8a95d",
+      "extraction": {
+        "candidate_kind": "SETTING",
+        "entity_type": "CHARACTER",
+        "entity_name": "백무겸",
+        "raw_entity_mention": "백무겸",
+        "attribute_name": "profile.사건_배후",
+        "attribute_value": "사건 배후로 삼는 안, 아직 범인으로 확정하지 않음",
+        "value_type": "STRING",
+        "value_json": {
+          "value": "사건 배후로 삼는 안, 아직 범인으로 확정하지 않음"
+        },
+        "evidence_spans": [
+          {
+            "quote": "백무겸: 사건 배후로 삼는 안, 아직 범인으로 확정하지 않음",
+            "end_offset": 1356,
+            "start_offset": 1323
+          }
+        ],
+        "confidence": 0.85,
+        "source_chunk_id": "5c19767a-d544-40f7-a87a-b4c567a23615"
+      }
+    }
+  ]
+}

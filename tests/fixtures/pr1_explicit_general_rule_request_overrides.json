@@ -1,0 +1,15 @@
+{
+  "reason": "GH221 PR1 Q5 explicit general rule plus clear narrow exception: comparison prompt/body SHA and cache key only. Historical captures/probes, user input, schema, model, reasoning, store, limits and all non-world requests remain unchanged. Offline fixed-response transport verification only.",
+  "overrides": {
+    "world_batch": {
+      "prompt_cache_key": "world-setting-comparison-batch:v13",
+      "sha256": "82ab1f5ff88efcdce974aeb065c7c6ea0685f90c2a7d7c4ab305bc163c284b9c",
+      "system_sha256": "f29f6cc5268594c3d64b4655a07a34d8b4259c67955c81bbf2fa3219cb8be6eb"
+    },
+    "world_singleton": {
+      "prompt_cache_key": "world-setting-comparison:v16",
+      "sha256": "be707ac09f5a319eec310392e96a5acb606db9a2250b174a33a593941a4b701a",
+      "system_sha256": "124acce196b894178e7aa3fa36bed31dd0ba274239b36fdddbe53c61cd959032"
+    }
+  }
+}

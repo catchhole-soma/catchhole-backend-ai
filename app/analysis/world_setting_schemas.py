@@ -3,7 +3,9 @@ from typing import Annotated
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from app.analysis.schemas import ExtractedEvidenceSpan
+from app.analysis.book_world_claims import BookEpistemicStatus
 from app.domain.enums import (
+    CharacterFactTemporalScope,
     WorldSettingCategory,
     WorldSettingComparisonReviewReason,
     WorldSettingConsolidationStatus,
@@ -27,10 +29,22 @@ class ExtractedWorldSettingCandidate(BaseModel):
     # Confidence is descriptive metadata; a valid fractional score must not
     # invalidate otherwise usable setting facts or get rounded upwards.
     confidence: float = Field(strict=True, ge=0, le=1, allow_inf_nan=False)
+    temporal_scope: CharacterFactTemporalScope | None = Field(default=None, exclude_if=lambda value: value is None)
+    effective_from_episode_no: int | None = Field(default=None, ge=1, strict=True, exclude_if=lambda value: value is None)
 
 
 class WorldSettingExtractionResult(BaseModel):
     candidates: list[ExtractedWorldSettingCandidate] = Field(default_factory=list)
+
+
+class BookExtractedWorldSettingCandidate(ExtractedWorldSettingCandidate):
+    temporal_scope: CharacterFactTemporalScope
+    effective_from_episode_no: int | None = Field(ge=1, strict=True)
+    epistemic_status: BookEpistemicStatus
+
+
+class BookWorldSettingExtractionResult(WorldSettingExtractionResult):
+    candidates: list[BookExtractedWorldSettingCandidate]
 
 
 class WorldSettingSubjectSelection(BaseModel):

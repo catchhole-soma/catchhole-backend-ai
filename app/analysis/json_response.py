@@ -1,5 +1,5 @@
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from logging import Logger
 from typing import TypeVar
 
@@ -100,6 +100,7 @@ async def request_validated_model(
     response_schema: LlmResponseSchema | None = None,
     validation_error_summary: Callable[[Exception | None], str] | None = None,
     validation_failure_callback: Callable[[int, Exception, dict | None], None] | None = None,
+    input_preflight: Callable[[str, str, LlmResponseSchema | None], Awaitable[object]] | None = None,
 ) -> ModelT:
     """LLM JSON 객체를 Pydantic 모델로 검증하고 동일 요청 범위에서 재시도한다."""
 
@@ -111,6 +112,9 @@ async def request_validated_model(
     for attempt in range(1, max_attempts + 1):
         while True:
             parsed_payload = None
+            if input_preflight is not None:
+                # Count the final retry prompt before generation; counting errors are job failures.
+                await input_preflight(system_prompt, current_user_prompt, response_schema)
             try:
                 response = await client.create_text_response(
                     system_prompt=system_prompt,

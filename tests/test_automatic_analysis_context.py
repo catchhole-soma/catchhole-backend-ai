@@ -197,9 +197,9 @@ def test_character_batch_pipeline_keeps_unresolved_out_of_snapshots_and_counts_i
     comparator.batch_max_input_tokens = _estimate_prompt_tokens(
         client.requests[0]["system_prompt"], client.requests[0]["user_prompt"], comparator.model,
     ) + 1
-    assert comparator.batch_fits(**args)
+    assert asyncio.run(comparator.batch_fits(**args))
     oversized = _reference().model_copy(update={"value": "synthetic unresolved claim " * 20000})
-    assert not comparator.batch_fits(**{**args, "unresolved_references": (oversized,)})
+    assert not asyncio.run(comparator.batch_fits(**{**args, "unresolved_references": (oversized,)}))
     with pytest.raises(ComparisonValidationError, match="explicit ordered"):
         asyncio.run(comparator.compare_batch(**{**args, "ordered_context": False}))
 

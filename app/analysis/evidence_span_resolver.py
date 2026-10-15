@@ -99,9 +99,12 @@ def resolve_evidence_span_offsets(
     # 그래서 공백을 하나로 정규화한 뒤 다시 검색한다.
     normalized_range = _find_whitespace_normalized_range(chunk_text, span.quote)
 
-    # 공백 정규화 검색에 성공하면 원문 기준 위치로 되돌려 offset을 채운다.
+    # 유일한 공백 정규화 match는 offset과 인용문을 같은 원문 slice로 복원한다.
+    # offset만 고치면 저장된 quote가 줄바꿈을 바꾼 채 원문에 존재하지 않게 된다.
     if normalized_range is not None:
-        return _with_offsets(span, chunk_start_offset, normalized_range)
+        start, end = normalized_range
+        exact_span = span.model_copy(update={"quote": chunk_text[start:end]})
+        return _with_offsets(exact_span, chunk_start_offset, normalized_range)
 
     # exact match도 실패하고, 공백 정규화 match도 실패한 경우.
     # quote의 위치를 확정할 수 없으므로 offset을 None으로 비운다.

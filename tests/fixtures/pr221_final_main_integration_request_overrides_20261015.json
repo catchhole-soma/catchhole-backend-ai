@@ -1,0 +1,20 @@
+{
+  "policy": "PR82 final integration preserves main scope/recovery, BOOK safeguards and approved persistent world attribute transition prompts. Historical PR82 and PR81 captures remain immutable. Only authorized system/full request hashes and world cache namespaces change; input/schema/model/reasoning/store/keys/output limits remain exact.",
+  "overrides": {
+    "world_extraction": {
+      "sha256": "0ea815be74a0a5170434ff616bb5c4fac30e1c189722d5ddf9d6dec86d8e2074",
+      "system_sha256": "b0789a299ba24e636ee541f6bba7835b7e4988635a54ba16e23f58f38dfab8ad",
+      "prompt_cache_key": "world-setting-extraction:v5"
+    },
+    "world_singleton": {
+      "sha256": "781d9ed02807d68270c78d5a6327fabbc86b4d98974db17d67ae5ecbd82798e1",
+      "system_sha256": "2e64d97faa06abb9bd2932e66c266c9187c728071d55982fe3763ffc47b4035e",
+      "prompt_cache_key": "world-setting-comparison:v19"
+    },
+    "world_batch": {
+      "sha256": "73a3d5449050cb005d244957f6cfedc3e7b1b6e11473cb6b7cd7f37c5806dbfd",
+      "system_sha256": "2b045d438814d56b8530ab155381c02bed581c631ca14ec6d62a612352abdcb3",
+      "prompt_cache_key": "world-setting-comparison-batch:v16"
+    }
+  }
+}

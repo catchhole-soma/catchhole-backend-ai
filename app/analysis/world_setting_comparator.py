@@ -11,11 +11,24 @@ import tiktoken
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.analysis.comparison_reason import USER_FACING_REASON_INSTRUCTIONS
-from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
-from app.analysis.ordered_context import (
-    BoundedOrderedClient, ORDERED_STATE_INSTRUCTIONS, ordered_provenance_data, ordered_reference_data,
+from app.analysis.book_world_claims import (
+    BOOK_CLAIM_REVIEW_ERROR, BOOK_WORLD_REVIEW_INSTRUCTIONS,
+    book_claim_prompt_data, is_asserted_book_claim,
 )
-from app.schemas.analysis_context import WorkerAnalysisReference
+from app.analysis.book_world_identity import (
+    BOOK_WORLD_IDENTITY_INSTRUCTIONS, BOOK_WORLD_SUBJECT_RESPONSE_SCHEMA, BookWorldSubjectSelection,
+    book_world_identity_retry_prompt, validate_book_world_selection,
+)
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.json_response import compact_error_message, request_validated_model
+from app.analysis.ordered_context import (
+    CURRENT_CHRONOLOGY_INSTRUCTIONS,
+    SETTING_BOOK_INSTRUCTIONS,
+    BoundedOrderedClient,
+    ordered_provenance_data,
+    ordered_reference_data,
+    ordered_state_instructions,
+)
 from app.analysis.ordered_world_batch_contract import (
     ORDERED_WORLD_BATCH_INSTRUCTIONS,
     OrderedWorldBatchValidationError,
@@ -24,10 +37,12 @@ from app.analysis.ordered_world_batch_contract import (
     ordered_world_batch_retry_prompt,
 )
 from app.analysis.ordered_world_diagnostics import (
-    property_response_schema, restore_selected_properties, validation_diagnostics,
+    property_response_schema,
+    restore_selected_properties,
+    validation_diagnostics,
 )
-from app.analysis.json_response import compact_error_message, request_validated_model
 from app.analysis.ordered_world_rule_diagnostics import diagnose_world_rule
+from app.analysis.source_chronology import has_book_current, validate_current_change
 from app.analysis.world_setting_schemas import (
     WorldSettingComparisonBatchDecision,
     WorldSettingComparisonBatchResult,
@@ -36,12 +51,16 @@ from app.analysis.world_setting_schemas import (
 )
 from app.core.config import get_settings
 from app.domain.enums import (
+    AnalysisSourceKind,
+    CharacterFactTemporalScope,
     WorldSettingComparisonReviewReason,
     WorldSettingConsolidationStatus,
     WorldSettingOperation,
 )
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
+from app.schemas.analysis_context import WorkerAnalysisReference
+from app.schemas.analysis_source import WorkerAnalysisSource
 from app.schemas.worker import (
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonBatchCandidate,
@@ -61,7 +80,7 @@ BATCH_COMPARISON_PROMPT_PATH = (
     / "prompts"
     / "world_setting_comparison_batch.md"
 )
-WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY = "world-setting-comparison-batch:v11"
+WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY = "world-setting-comparison-batch:v16"
 logger = logging.getLogger(__name__)
 LOCAL_REFERENCE_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])[CST]\d+(?![A-Za-z0-9_])",
@@ -198,6 +217,10 @@ class WorldSettingSubjectResolver:
         candidate: WorkerWorldSettingCandidatePayload,
         subjects: list[WorkerWorldSettingSubject],
     ) -> list[SubjectReference]:
+        if (candidate.source is not None
+                and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+                and not is_asserted_book_claim(candidate.raw_extraction_json)):
+            return []
         references = [
             SubjectReference(
                 reference=f"S{index}",
@@ -213,12 +236,14 @@ class WorldSettingSubjectResolver:
         payload = await request_validated_model(
             client=self.llm_client,
             response_model=WorldSettingSubjectSelection,
-            system_prompt=self.prompt_path.read_text(encoding="utf-8"),
+            system_prompt=self.prompt_path.read_text(encoding="utf-8") + ("\n\n" + SETTING_BOOK_INSTRUCTIONS
+                if candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK else ""),
             user_prompt=json.dumps(
                 {
                     "candidate": {
                         "category": candidate.category,
                         "subject_name": candidate.subject_name,
+                        **({"source": candidate.source.prompt_data()} if candidate.source else {}),
                     },
                     "subjects": [
                         {
@@ -233,7 +258,8 @@ class WorldSettingSubjectResolver:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="world-setting-subject-resolution:v1",
+            prompt_cache_key="world-setting-subject-resolution:v1" + (":setting-book-time-v3"
+                if candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK else ""),
             operation_name="World-setting subject resolution",
             logger=logger,
             validate_model=lambda selection: _validate_subject_refs(
@@ -247,19 +273,27 @@ class WorldSettingSubjectResolver:
         return [references_by_key[ref] for ref in payload.selected_subject_refs]
 
     async def select_ordered_subjects(self, candidate, subjects, *, unresolved_references=()):
+        is_book = candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+        if is_book and not is_asserted_book_claim(candidate.raw_extraction_json):
+            # No anchor and no accumulated identity evidence for an unresolved
+            # topic, including old BOOK rows whose marker is absent on restart.
+            return [], True
         if not subjects and not unresolved_references:
             return [], False
         references = {f"S{index}": subject for index, subject in enumerate(subjects, 1)}
+        raw_scope = candidate.raw_extraction_json.get("scope_name") if is_book else None
 
         def validate(selection):
             refs = selection.selected_subject_refs
             if len(refs) != len(set(refs)) or any(ref not in references for ref in refs):
                 raise ComparisonValidationError("Unknown ordered world subject reference.")
+            if is_book:
+                validate_book_world_selection(selection, candidate, references)
 
         result = await request_validated_model(
             client=BoundedOrderedClient(self.llm_client),
-            response_model=_OrderedSubjectSelection,
-            system_prompt=(ORDERED_STATE_INSTRUCTIONS + "\n"
+            response_model=BookWorldSubjectSelection if is_book else _OrderedSubjectSelection,
+            system_prompt=(ordered_state_instructions(candidate.source.source_kind if candidate.source else None) + "\n"
                 "입력 subjects는 같은 분류에서 선택 가능한 대상입니다. 원문 근거와 대상 설명으로 "
                 "같은 주체를 판단하세요. 같은 이름의 임시 대상이 같은 개념·존재를 가리키면 "
                 "그 참조를 재사용하세요. 비교할 특성이 다르거나 아직 설정을 확정하지 않았다는 "
@@ -274,11 +308,13 @@ class WorldSettingSubjectResolver:
                 "선택 가능한 대상이나 확정 사실이 아니며 그것만으로 같은 주체라고 결정하지 마세요. "
                 "연결이 모호하면 ambiguous=true 및 빈 목록을 "
                 "반환하세요. 명확한 신규 주체는 ambiguous=false 및 빈 목록입니다.\n\n"
-                + _ORDERED_WORLD_SUBJECT_FORMAT_INSTRUCTIONS),
+                + (BOOK_WORLD_IDENTITY_INSTRUCTIONS if is_book else _ORDERED_WORLD_SUBJECT_FORMAT_INSTRUCTIONS)),
             user_prompt=json.dumps({
                 "candidate": {"category": candidate.category,
                               "subject_name": candidate.subject_name,
-                              "evidence": [span.quote for span in candidate.evidence_spans]},
+                              **({"scope_name": raw_scope} if is_book and isinstance(raw_scope, str) and raw_scope.strip() else {}),
+                              "evidence": [span.quote for span in candidate.evidence_spans],
+                              **({"source": candidate.source.prompt_data()} if candidate.source else {})},
                 "subjects": [{
                     "ref": ref, "name": subject.subject_name, "aliases": subject.aliases,
                     "identity_evidence": [span.quote for span in subject.identity_evidence],
@@ -291,11 +327,11 @@ class WorldSettingSubjectResolver:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="ordered-world-subject-resolution:v4",
+            prompt_cache_key="ordered-world-subject-resolution:v4" + (":book-grounded-identity-v2" if is_book else ""),
             operation_name="Ordered world subject resolution", logger=logger,
             validate_model=validate,
-            retry_user_prompt_builder=_ordered_world_subject_retry_prompt,
-            response_schema=ORDERED_WORLD_SUBJECT_RESPONSE_SCHEMA,
+            retry_user_prompt_builder=book_world_identity_retry_prompt if is_book else _ordered_world_subject_retry_prompt,
+            response_schema=BOOK_WORLD_SUBJECT_RESPONSE_SCHEMA if is_book else ORDERED_WORLD_SUBJECT_RESPONSE_SCHEMA,
         )
         if result.ambiguous:
             # Explicit uncertainty cannot establish identity, even when the model
@@ -344,6 +380,10 @@ class WorldSettingComparator:
             ComparisonTargetReference(reference=f"T{index}", target=target)
             for index, target in enumerate(targets, start=1)
         ]
+        temporal_context = (candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+                            or _has_book_current(targets) or any(
+                                prop.provenance is not None and prop.provenance.current_source_times
+                                for target in targets for prop in target.properties))
         raw_payload = {
             "candidate": {
                 "category": candidate.category,
@@ -368,15 +408,27 @@ class WorldSettingComparator:
                 for target_reference in references
             ],
         }
+        system_prompt = self.prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS
+        if candidate.source is not None:
+            raw_payload["candidate"]["source"] = candidate.source.prompt_data()
+            if candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK:
+                system_prompt += "\n\n" + SETTING_BOOK_INSTRUCTIONS + "\n\n" + BOOK_WORLD_REVIEW_INSTRUCTIONS
+                raw_payload["candidate"].update(book_claim_prompt_data(candidate.raw_extraction_json))
+        if temporal_context:
+            system_prompt += "\n\n" + CURRENT_CHRONOLOGY_INSTRUCTIONS
+            raw_payload["candidate"].update(_candidate_time_data(candidate, candidate.source))
+            _add_target_time_data(raw_payload["targets"], targets)
         decision = await request_validated_model(
             client=self.llm_client,
             response_model=WorldSettingComparisonDecision,
-            system_prompt=self.prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS,
+            system_prompt=system_prompt,
             user_prompt=json.dumps(raw_payload, ensure_ascii=False),
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
-            prompt_cache_key="world-setting-comparison:v14",
+            prompt_cache_key="world-setting-comparison:v19" + (":setting-book-claims-v2"
+                if candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+                else ":book-current-time-v3" if temporal_context else ""),
             operation_name="World-setting comparison",
             logger=logger,
             validate_model=lambda comparison_decision: _validate_comparison_decision(
@@ -389,7 +441,7 @@ class WorldSettingComparator:
         # LLM이 판단할 필요가 없는 불변 필드는 원본 후보에서 복원한다. 단일
         # ADD/EXCLUDE/REVIEW_REQUIRED 값을 문장만 다듬어 반환했다는 이유로 같은 비교를
         # 반복하지 않게 한다.
-        decision = _normalize_deterministic_fields(decision, candidate)
+        decision = _normalize_deterministic_fields(decision, candidate, references=references)
         decision = _replace_internal_target_references(decision, references)
         return decision, decision.model_dump(mode="json")
 
@@ -402,6 +454,7 @@ class WorldSettingComparator:
         unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
         max_attempts_override: int | None = None,
         preserve_source_paths: bool = False,
+        analysis_source: WorkerAnalysisSource | None = None,
         evaluation_failure_callback=None,
         defer_generated_scope_validation: bool = False,
     ) -> tuple[WorldSettingComparisonBatchResult, dict]:
@@ -421,6 +474,10 @@ class WorldSettingComparator:
             ComparisonTargetReference(reference=f"T{index}", target=target)
             for index, target in enumerate(targets, start=1)
         ]
+        temporal_context = ((analysis_source is not None and analysis_source.source_kind == AnalysisSourceKind.SETTING_BOOK)
+                            or _has_book_current(targets) or any(
+                                prop.provenance is not None and prop.provenance.current_source_times
+                                for target in targets for prop in target.properties))
         raw_payload = {
             "category": category,
             "candidates": [
@@ -435,6 +492,9 @@ class WorldSettingComparator:
                         evidence.model_dump(mode="json")
                         for evidence in candidate.evidence_spans
                     ],
+                    **(_candidate_time_data(candidate, analysis_source) if temporal_context else {}),
+                    **(book_claim_prompt_data(candidate.raw_extraction_json) if analysis_source is not None
+                       and analysis_source.source_kind == AnalysisSourceKind.SETTING_BOOK else {}),
                 }
                 for candidate in candidates
             ],
@@ -451,9 +511,20 @@ class WorldSettingComparator:
             ],
         }
         system_prompt = self.batch_prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS
+        if analysis_source is not None:
+            raw_payload["source"] = analysis_source.prompt_data()
+            if not ordered_context and analysis_source.source_kind == AnalysisSourceKind.SETTING_BOOK:
+                system_prompt += "\n\n" + SETTING_BOOK_INSTRUCTIONS
+            if analysis_source.source_kind == AnalysisSourceKind.SETTING_BOOK:
+                system_prompt += "\n\n" + BOOK_WORLD_REVIEW_INSTRUCTIONS
+        if not ordered_context and temporal_context:
+            _add_target_time_data(raw_payload["targets"], targets)
+        if temporal_context:
+            system_prompt += "\n\n" + CURRENT_CHRONOLOGY_INSTRUCTIONS
         if ordered_context:
             system_prompt += (
-                "\n\n" + ORDERED_STATE_INSTRUCTIONS + "\n\n" + ORDERED_WORLD_BATCH_INSTRUCTIONS
+                "\n\n" + ordered_state_instructions(analysis_source.source_kind if analysis_source else None)
+                + "\n\n" + ORDERED_WORLD_BATCH_INSTRUCTIONS
             )
             raw_payload["unresolved_references"] = ordered_reference_data(unresolved_references)
             for target_data, target in zip(raw_payload["targets"], targets, strict=True):
@@ -505,6 +576,7 @@ class WorldSettingComparator:
             _validate_batch_comparison_result(
                 restored_result, candidates, references, ordered_context=True,
                 preserve_source_paths=preserve_source_paths,
+                analysis_source=analysis_source,
                 require_generated_scope_siblings=not defer_generated_scope_validation,
                 validation_observer=observe_rejection if evaluation_failure_callback else None,
             )
@@ -540,13 +612,17 @@ class WorldSettingComparator:
                 max_output_tokens=self.batch_max_output_tokens,
                 max_attempts=(self.max_attempts if max_attempts_override is None else max_attempts_override),
                 prompt_cache_key=(WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY
-                                  + (":ordered-provisional-v7" if ordered_context else "")),
+                                  + (":ordered-provisional-v8" if ordered_context else "")
+                                  + (":setting-book-claims-v2" if analysis_source is not None
+                                    and analysis_source.source_kind == AnalysisSourceKind.SETTING_BOOK
+                                    else ":book-current-time-v3" if _has_book_current(targets) else "")),
                 operation_name="World-setting batch comparison",
                 logger=logger,
                 validate_model=(validate_ordered if ordered_context else
                                lambda comparison_result: _validate_batch_comparison_result(
                                    comparison_result, candidates, references,
                                    ordered_context=ordered_context,
+                                   analysis_source=analysis_source,
                                    require_generated_scope_siblings=not defer_generated_scope_validation,
                                    validation_observer=observe_rejection if evaluation_failure_callback else None,
                                )),
@@ -708,6 +784,10 @@ def _batch_limit_review_result(
 
 def _build_batch_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
     payload = json.loads(original_user_prompt)
+    feedback = _book_review_retry_feedback(payload, exc)
+    if feedback is not None:
+        payload["validation_feedback"] = feedback
+        return json.dumps(payload, ensure_ascii=False)
     payload["validation_feedback"] = {
         "previous_response_rejected": True,
         "reason": compact_error_message(exc),
@@ -738,6 +818,102 @@ def _ordered_path_error(code, decision_index, decision, target=None):
     )
 
 
+def _has_book_current(targets):
+    return any(has_book_current(prop.provenance)
+               for target in targets for prop in target.properties)
+
+
+def _candidate_time_data(candidate, source):
+    scope = candidate.temporal_scope
+    if scope is None:
+        scope = (CharacterFactTemporalScope.UNKNOWN if source is not None
+                 and source.source_kind == AnalysisSourceKind.SETTING_BOOK else CharacterFactTemporalScope.PRESENT)
+    return {"temporal_scope": scope, "effective_from_episode_no": candidate.effective_from_episode_no}
+
+
+def _add_target_time_data(targets_data, targets):
+    for data, target in zip(targets_data, targets, strict=True):
+        if target.protected_paths:
+            data["protected_paths"] = [item.prompt_data() for item in target.protected_paths]
+        for prop_data, prop in zip(data["properties"], target.properties, strict=True):
+            if prop.provenance is not None:
+                prop_data.update(prop.provenance.prompt_data())
+
+
+def _validate_world_current_change(decision, candidates, targets_by_ref, source):
+    if source is not None and source.source_kind == AnalysisSourceKind.SETTING_BOOK:
+        for candidate in candidates:
+            if not is_asserted_book_claim(candidate.raw_extraction_json) and not (
+                decision.operation == WorldSettingOperation.REVIEW_REQUIRED
+                and decision.review_reason == WorldSettingComparisonReviewReason.GENERAL_UNCERTAINTY
+                and decision.consolidation_status != WorldSettingConsolidationStatus.CONFLICT
+                and len(candidates) == 1
+            ):
+                raise ValueError(BOOK_CLAIM_REVIEW_ERROR)
+    # Non-current book claims remain review proposals, even if a model tries to
+    # discard them as duplicates. Their absence from CURRENT alone is not success.
+    if (source is not None and source.source_kind == AnalysisSourceKind.SETTING_BOOK
+            and decision.operation != WorldSettingOperation.REVIEW_REQUIRED):
+        for candidate in candidates:
+            validate_current_change(source=source, **_candidate_time_data(candidate, source))
+    if decision.operation not in {WorldSettingOperation.ADD, WorldSettingOperation.UPDATE, WorldSettingOperation.MERGE}:
+        return
+    target = targets_by_ref.get(decision.target_ref)
+    affected = []
+    if target is not None:
+        if source is not None and source.source_kind == AnalysisSourceKind.SETTING_BOOK:
+            protected = {(_optional_duplicate_key(path.scope_name), _backend_duplicate_key(path.setting_name))
+                         for path in target.protected_paths}
+            paths = {(_optional_duplicate_key(decision.proposed_scope_name), _backend_duplicate_key(decision.proposed_setting_name))}
+            if decision.matched_property_name is not None:
+                paths.add((_optional_duplicate_key(decision.matched_scope_name), _backend_duplicate_key(decision.matched_property_name)))
+            for name in getattr(decision, "existing_root_property_names_to_move", []):
+                paths.add((None, _backend_duplicate_key(name)))
+                paths.add((_optional_duplicate_key(decision.proposed_scope_name), _backend_duplicate_key(name)))
+            if protected & paths:
+                raise ValueError("Book cannot change protected current state.")
+        for prop in target.properties:
+            matched = (decision.matched_property_name is not None
+                       and _same_optional_name(prop.scope_name, decision.matched_scope_name)
+                       and _same_optional_name(prop.setting_name, decision.matched_property_name))
+            moved = (prop.scope_name is None and any(_same_optional_name(prop.setting_name, name)
+                     for name in getattr(decision, "existing_root_property_names_to_move", [])))
+            if matched or moved:
+                destination_operation = (decision.operation if matched and not moved
+                    and _same_optional_name(prop.scope_name, decision.proposed_scope_name)
+                    and _same_optional_name(prop.setting_name, decision.proposed_setting_name) else None)
+                affected.append((prop, destination_operation))
+    for candidate in candidates:
+        time = _candidate_time_data(candidate, source)
+        validate_current_change(source=source, **time)
+        for prop, operation in affected:
+            validate_current_change(source=source, current=prop.provenance, changing_existing=True,
+                                    operation=operation, **time)
+
+
+def _optional_duplicate_key(value):
+    return None if value is None else _backend_duplicate_key(value)
+
+
+def _validate_current_conflict_review(decision, candidates, targets_by_ref, source):
+    """Validate the read-only CURRENT claim, without inferring textual incompatibility."""
+    target = targets_by_ref.get(decision.target_ref)
+    matched = next((prop for prop in target.properties
+        if _same_optional_name(prop.scope_name, decision.matched_scope_name)
+        and _same_optional_name(prop.setting_name, decision.matched_property_name)), None) if target else None
+    if (len(candidates) != 1 or matched is None
+            or not _same_optional_name(decision.proposed_scope_name, matched.scope_name)
+            or not _same_optional_name(decision.proposed_setting_name, matched.setting_name)
+            or not _same_optional_name(candidates[0].scope_name, matched.scope_name)
+            or getattr(decision, "existing_root_property_names_to_move", [])
+            or matched.provenance is None or not matched.provenance.current_source_times
+            or any(item.temporal_scope != CharacterFactTemporalScope.PRESENT
+                   for item in matched.provenance.current_source_times)
+            or _candidate_time_data(candidates[0], source)["temporal_scope"] != CharacterFactTemporalScope.PRESENT):
+        raise ValueError("Current conflict review requires one PRESENT source and an exact PRESENT current path.")
+    validate_current_change(source=source, **_candidate_time_data(candidates[0], source))
+
+
 def _validate_batch_comparison_result(
     result: WorldSettingComparisonBatchResult,
     candidates: list[WorkerWorldSettingComparisonBatchCandidate],
@@ -745,6 +921,7 @@ def _validate_batch_comparison_result(
     *,
     ordered_context: bool = False,
     preserve_source_paths: bool = False,
+    analysis_source: WorkerAnalysisSource | None = None,
     validation_observer=None,
     require_generated_scope_siblings: bool = True,
 ) -> None:
@@ -775,6 +952,7 @@ def _validate_batch_comparison_result(
                 for candidate in candidates
                 if candidate.candidate_ref in selected_source_refs
             ]
+            _validate_world_current_change(decision, sources, references_by_key, analysis_source)
             source_values = [value for source in sources for value in _source_values(source)]
             if len(source_values) > 1 and decision.consolidation_status == "SINGLE":
                 if ordered_context:
@@ -833,6 +1011,11 @@ def _validate_batch_comparison_result(
                 == WorldSettingComparisonReviewReason.BATCH_LIMIT_EXCEEDED
             ):
                 raise ValueError("The provider must not classify output-budget overflow.")
+            if (decision.operation == WorldSettingOperation.REVIEW_REQUIRED
+                    and decision.consolidation_status == WorldSettingConsolidationStatus.CONFLICT
+                    and decision.review_reason == WorldSettingComparisonReviewReason.GENERAL_UNCERTAINTY):
+                _validate_current_conflict_review(decision, sources, references_by_key, analysis_source)
+                continue
             if decision.review_reason == WorldSettingComparisonReviewReason.GENERAL_UNCERTAINTY:
                 if len(sources) != 1 or decision.existing_root_property_names_to_move:
                     if ordered_context:
@@ -1015,7 +1198,7 @@ def _project_batch_comparison_result(
             for candidate in candidates
             if candidate.candidate_ref in selected_source_refs
         ]
-        normalized = _normalize_batch_deterministic_fields(decision, sources)
+        normalized = _normalize_batch_deterministic_fields(decision, sources, references=references)
         if (
             normalized.operation != WorldSettingOperation.ADD
             and normalized.existing_root_property_names_to_move
@@ -1215,18 +1398,47 @@ def _build_retry_user_prompt(original_user_prompt: str, exc: Exception) -> str:
     """남은 관계형 검증 오류를 다음 비교 시도의 보정 지시로 전달한다."""
 
     payload = json.loads(original_user_prompt)
+    feedback = _book_review_retry_feedback(payload, exc)
+    if feedback is not None:
+        payload["validation_feedback"] = feedback
+        return json.dumps(payload, ensure_ascii=False)
     payload["validation_feedback"] = {
         "previous_response_rejected": True,
         "reason": compact_error_message(exc),
         "correction": (
             "입력에 실제 존재하는 target ref와 속성 경로만 사용하세요. "
             "UPDATE와 MERGE는 선택한 기존 속성의 범위명과 설정명을 그대로 유지하고, "
-            "ADD는 기존 속성을 비교 대상으로 지정하지 마세요. 후보 범위가 없고 다른 "
-            "범위의 동명 속성만 관련될 수 있으면 REVIEW_REQUIRED와 SCOPE_UNRESOLVED를 "
-            "사용하세요. JSON 전체를 다시 반환하세요."
+            "ADD는 기존 속성을 비교 대상으로 지정하지 마세요. 범위 누락이나 동명 속성 자체만으로 "
+            "검토로 바꾸지 말고, 범위가 없는 후보의 실제 적용 대상·조건이 불명확할 때만 "
+            "REVIEW_REQUIRED와 SCOPE_UNRESOLVED를 선택하세요. JSON 전체를 다시 반환하세요."
         ),
     }
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _book_review_retry_feedback(payload, error):
+    source = payload.get("source") or payload.get("candidate", {}).get("source")
+    if not source or source.get("source_kind") != "SETTING_BOOK":
+        return None
+    # Match only the fixed developer-owned reasons, never failed provider prose.
+    if type(error) is not ValueError or len(error.args) != 1:
+        return None
+    codes = {
+        "Book reference time requires review before changing current state.": "BOOK_TIME_REQUIRES_REVIEW",
+        BOOK_CLAIM_REVIEW_ERROR: "BOOK_CLAIM_REQUIRES_REVIEW",
+    }
+    code = codes.get(error.args[0]) if type(error.args[0]) is str else None
+    if code is None:
+        return None
+    return {
+        "previous_response_rejected": True, "reason_code": code,
+        "correction": (
+            "확정 현재값으로 적용하거나 중복 EXCLUDE로 버릴 수 없는 BOOK 주장입니다. "
+            "해당 원본 하나를 REVIEW_REQUIRED와 GENERAL_UNCERTAINTY로 보존하세요. "
+            "원본 주체, 경로, 값과 이미 연결된 target_ref를 유지하세요. 없는 비교 경로나 "
+            "회차를 만들거나 다른 독립 후보와 묶지 말고 전체 JSON을 다시 반환하세요."
+        ),
+    }
 
 
 def _normalize_deterministic_fields(
@@ -1234,6 +1446,7 @@ def _normalize_deterministic_fields(
     candidate: WorkerWorldSettingCandidatePayload,
     *,
     preserve_canonical_add_path: bool = False,
+    references: list[ComparisonTargetReference],
 ) -> WorldSettingComparisonDecision:
     """비교 판단과 무관하게 원본에서 결정되는 출력 필드를 복원한다.
 
@@ -1243,6 +1456,18 @@ def _normalize_deterministic_fields(
 
     source_values = _source_values(candidate)
     updates: dict[str, object] = {}
+    if (decision.operation == WorldSettingOperation.REVIEW_REQUIRED
+            and decision.review_reason == WorldSettingComparisonReviewReason.GENERAL_UNCERTAINTY
+            and decision.consolidation_status == WorldSettingConsolidationStatus.CONFLICT):
+        # The validated second claim is actual CURRENT, not a fabricated source candidate.
+        target = next(reference.target for reference in references if reference.reference == decision.target_ref)
+        matched = next(prop for prop in target.properties
+                       if _same_optional_name(prop.scope_name, decision.matched_scope_name)
+                       and _same_optional_name(prop.setting_name, decision.matched_property_name))
+        return decision.model_copy(update={
+            "proposed_scope_name": matched.scope_name, "proposed_setting_name": matched.setting_name,
+            "proposed_value": matched.value + "\n" + candidate.extracted_value,
+        })
     if len(source_values) == 1:
         updates["consolidation_status"] = WorldSettingConsolidationStatus.SINGLE
     # 실제 복수 원문 값이 충돌할 때만 원문 목록을 보존한다. 단일 후보에서 모델이
@@ -1274,6 +1499,7 @@ def _normalize_deterministic_fields(
 def _normalize_batch_deterministic_fields(
     decision: WorldSettingComparisonBatchDecision,
     sources: list[WorkerWorldSettingComparisonBatchCandidate],
+    *, references: list[ComparisonTargetReference],
 ) -> WorldSettingComparisonBatchDecision:
     """Restore fields that are deterministic across every source in a batch decision."""
 
@@ -1283,8 +1509,11 @@ def _normalize_batch_deterministic_fields(
             normalized,
             sources[0],
             preserve_canonical_add_path=True,
+            references=references,
         )
-    if normalized.consolidation_status == WorldSettingConsolidationStatus.CONFLICT:
+    if (normalized.consolidation_status == WorldSettingConsolidationStatus.CONFLICT
+            and not (normalized.operation == WorldSettingOperation.REVIEW_REQUIRED
+                     and normalized.review_reason == WorldSettingComparisonReviewReason.GENERAL_UNCERTAINTY)):
         normalized = normalized.model_copy(
             update={
                 "proposed_value": "\n".join(
@@ -1320,10 +1549,16 @@ def _validate_comparison_decision(
     }
     if decision.target_ref is not None and decision.target_ref not in references_by_key:
         raise ValueError(f"Unknown comparison target_ref: {decision.target_ref}")
+    _validate_world_current_change(decision, [candidate], references_by_key, candidate.source)
     _validate_user_facing_reason(
         decision.comparison_reason, references,
         display_names=(candidate.subject_name, candidate.scope_name, candidate.setting_name),
     )
+    if (decision.operation == WorldSettingOperation.REVIEW_REQUIRED
+            and decision.consolidation_status == WorldSettingConsolidationStatus.CONFLICT
+            and decision.review_reason == WorldSettingComparisonReviewReason.GENERAL_UNCERTAINTY):
+        _validate_current_conflict_review(decision, [candidate], references_by_key, candidate.source)
+        return
     if decision.review_reason == WorldSettingComparisonReviewReason.GENERAL_UNCERTAINTY:
         if decision.matched_property_name is not None and not _has_property(
             references_by_key[decision.target_ref], decision.matched_scope_name, decision.matched_property_name,

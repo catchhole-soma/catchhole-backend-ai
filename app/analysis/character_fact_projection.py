@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonDecision,
 )
+from app.analysis.source_chronology import has_book_current, validate_current_change
 from app.domain.enums import (
     CharacterFactComparisonOperation,
     CharacterFactTemporalScope,
@@ -14,6 +15,8 @@ from app.domain.enums import (
 )
 from app.domain.setting_values import normalize_setting_display_value
 from app.schemas.analysis_context import AnalysisStateProvenance
+from app.schemas.analysis_source import WorkerAnalysisSource
+from app.schemas.worker import WorkerProtectedCharacterSlot
 
 
 @dataclass(frozen=True)
@@ -46,7 +49,8 @@ class CharacterProjectionApplication:
 class CharacterProjectionState:
     """Sequential, in-memory character snapshot used during one batch call."""
 
-    def __init__(self, entries: list[CharacterProjectionEntry]) -> None:
+    def __init__(self, entries: list[CharacterProjectionEntry], *, protected_slots=()) -> None:
+        self._protected_slots = tuple(WorkerProtectedCharacterSlot.model_validate(item) for item in protected_slots)
         self._entries_by_ref: dict[str, CharacterProjectionEntry] = {}
         self._ref_by_slot: dict[tuple[str, str], str] = {}
         # A missing slot can itself be the result of an earlier decision. Keep that
@@ -71,6 +75,10 @@ class CharacterProjectionState:
     def entries_by_ref(self) -> dict[str, CharacterProjectionEntry]:
         return dict(self._entries_by_ref)
 
+    @property
+    def protected_slots(self):
+        return self._protected_slots
+
     def exact_target_ref(self, fact_type: str, fact_key: str) -> str | None:
         return self._ref_by_slot.get((fact_type, fact_key))
 
@@ -85,6 +93,7 @@ class CharacterProjectionState:
         candidate_value_json: Any | None,
         decision: CharacterFactComparisonDecision,
         source_episode_no: int | None = None,
+        source: WorkerAnalysisSource | None = None,
     ) -> CharacterProjectionApplication:
         validate_character_fact_decision(
             decision,
@@ -93,6 +102,8 @@ class CharacterProjectionState:
             candidate_value_type=value_type,
             candidate_value_json=candidate_value_json,
             entries_by_ref=self._entries_by_ref,
+            source=source,
+            protected_slots=self._protected_slots,
         )
 
         projected_slot = (fact_type, resolved_fact_key)
@@ -122,6 +133,17 @@ class CharacterProjectionState:
             CharacterFactComparisonOperation.UPDATE,
             CharacterFactComparisonOperation.MERGE,
         }:
+            previous = (self._entries_by_ref[decision.target_ref].provenance
+                        if decision.target_ref is not None else None)
+            provenance = AnalysisStateProvenance.from_source(
+                confirmation_status="PROVISIONAL", source_episode_no=source_episode_no, source=source,
+                effective_from_episode_no=decision.effective_from_episode_no,
+            )
+            if decision.operation == CharacterFactComparisonOperation.MERGE and (
+                has_book_current(previous) or has_book_current(provenance)
+                or (previous is not None and previous.current_source_times)
+            ):
+                provenance = provenance.with_merged_sources(previous)
             if decision.target_ref is not None:
                 self._remove(
                     decision.target_ref,
@@ -140,9 +162,7 @@ class CharacterProjectionState:
                 origin="PRIOR_DECISION",
                 source_candidate_ref=candidate_ref,
                 dependency_candidate_refs=effect_dependencies,
-                provenance=AnalysisStateProvenance(
-                    confirmation_status="PROVISIONAL", source_episode_no=source_episode_no
-                ),
+                provenance=provenance,
             )
             self._insert(projected_entry)
 
@@ -242,6 +262,8 @@ def validate_character_fact_decision(
     candidate_value_type: SettingValueType | None,
     candidate_value_json: Any | None,
     entries_by_ref: dict[str, CharacterProjectionEntry],
+    source: WorkerAnalysisSource | None = None,
+    protected_slots=(),
 ) -> None:
     """Shared #126 operation validator for legacy and projected batch flows."""
 
@@ -275,6 +297,32 @@ def validate_character_fact_decision(
 
     if decision.operation == CharacterFactComparisonOperation.ADD and exact_target_ref is not None:
         raise ValueError("ADD is invalid when the canonical Fact slot already exists.")
+
+    if decision.operation == CharacterFactComparisonOperation.EXCLUDE or (
+        decision.operation == CharacterFactComparisonOperation.REVIEW_REQUIRED and decision.target_ref is not None
+    ):
+        # A source-anchor conflict still requires review even without a CURRENT mutation.
+        validate_current_change(source=source, temporal_scope=decision.temporal_scope,
+                                effective_from_episode_no=decision.effective_from_episode_no)
+
+    if decision.operation in {
+        CharacterFactComparisonOperation.ADD, CharacterFactComparisonOperation.UPDATE,
+        CharacterFactComparisonOperation.MERGE, CharacterFactComparisonOperation.REMOVE,
+    }:
+        if source is not None and source.source_kind == "SETTING_BOOK":
+            protected = {(item.fact_type, item.fact_key) for item in protected_slots}
+            affected = {(candidate_fact_type, resolved_fact_key)} | {
+                (entries_by_ref[ref].fact_type, entries_by_ref[ref].fact_key) for ref in requested_refs
+            }
+            if protected & affected:
+                raise ValueError("Book cannot change protected current state.")
+        validate_current_change(source=source, temporal_scope=decision.temporal_scope,
+                                effective_from_episode_no=getattr(decision, "effective_from_episode_no", None))
+        for reference in requested_refs:
+            validate_current_change(source=source, current=entries_by_ref[reference].provenance,
+                temporal_scope=decision.temporal_scope,
+                effective_from_episode_no=getattr(decision, "effective_from_episode_no", None), changing_existing=True,
+                operation=("REMOVE" if reference in decision.removed_snapshot_refs else decision.operation))
 
     applies_to_snapshot = decision.operation in {
         CharacterFactComparisonOperation.ADD,

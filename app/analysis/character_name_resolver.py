@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from uuid import UUID
 
 from app.analysis.schemas import ExtractedSettingCandidate
@@ -95,6 +95,16 @@ AMBIGUOUS_MENTIONS = {
 }
 
 UNKNOWN_ENTITY_NAME = "미상"
+
+
+def located_discovery_key(candidate: ExtractedSettingCandidate):
+    """A name alone cannot identify a person or a repeated discovery."""
+    spans = candidate.evidence_spans
+    if not spans or any(span.start_offset is None or span.end_offset is None
+                        or span.end_offset <= span.start_offset for span in spans):
+        return None
+    return (normalize_character_name(candidate.entity_name),
+            tuple((span.quote, span.start_offset, span.end_offset) for span in spans))
 
 PLACEHOLDER_ENTITY_NAMES = {
     UNKNOWN_ENTITY_NAME,

@@ -61,9 +61,14 @@ def _input_context():
 
 
 def _ordered_payload():
+    from tests.semantic_current_fixtures import semantic_current_fixture
     payload = _payload().model_dump()
-    payload.update(analysis_mode="ORDERED_PROVISIONAL", analysis_context=_input_context())
+    payload.update(analysis_mode="ORDERED_PROVISIONAL", analysis_context=_input_context(),
+                   comparison_evidence_contract={"formatVersion": 1})
     payload["episode"].update(content_hash="b" * 64, episode_no=2)
+    payload["semantic_current_context"] = semantic_current_fixture(
+        payload["analysis_context"], _payload().known_characters,
+    )
     return payload
 
 
@@ -404,8 +409,8 @@ def test_character_comparison_removes_a_provisional_status_and_keeps_single_inpu
     )
     assert ordered_raw["estimated_input_tokens"] > baseline_raw["estimated_input_tokens"]
     comparator.batch_max_input_tokens = baseline_raw["estimated_input_tokens"]
-    assert comparator.batch_fits(**kwargs)
-    assert not comparator.batch_fits(**ordered_kwargs, ordered_context=True)
+    assert asyncio.run(comparator.batch_fits(**kwargs))
+    assert not asyncio.run(comparator.batch_fits(**ordered_kwargs, ordered_context=True))
     with pytest.raises(ComparisonValidationError, match="explicit ordered"):
         asyncio.run(comparator.compare_batch(**ordered_kwargs))
 
