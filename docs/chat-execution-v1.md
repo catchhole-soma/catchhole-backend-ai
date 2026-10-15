@@ -106,6 +106,16 @@ stateDiagram-v2
 - 같은 callId의 owner/purpose/model/reservation 또는 완료 정산값이 달라지면 충돌한다. SETTLED/RELEASED 재전송은 잔액을 다시 바꾸지 않는다.
 - 운영 backfill run은 actor/policy/작품/예약 예산을 기록하고 OPERATIONAL_BACKFILL만 허용한다. work의 member_id는 귀속 정보이며 사용자 계정에는 예약·차감을 하지 않는다. 완료된 예약도 run의 누적 예약 예산에 포함하므로 회수/재전송으로 예산을 재사용하지 않는다. 실제 백필 실행·embedding은 #239이며 이 run은 채팅 dispatcher가 자동 전달하지 않는다.
 
+### 2026-10-15 단계별 출력과 제한된 복구
+
+챗봇 해석 출력은 기본 1,500토큰, 답변 출력은 3,000토큰이다. provider가 출력 잘림으로 종료하면 불완전한 JSON을 게시하지 않고, 해당 단계의 기본 출력량을 두 배로 늘려 최대 6,000토큰 안에서 다시 생성한다. 따라서 기본 해석의 잘림 재시도는 3,000, 답변의 잘림 재시도는 6,000이다. schema/참조 검증 오류에는 허용된 필드 경로와 고정 규칙만 피드백하며 출력 잘림과 구분한다. 오류에 포함된 사용자 자료·모델 응답·예외 원문은 재시도 지침이나 로그에 복사하지 않는다.
+
+`CHAT_QA_MAX_ATTEMPTS=2`는 같은 단계의 최초 호출과 모든 복구를 합친 기본 시도 수다. schema 오류와 잘림이 각각 별도 두 번을 받는 구조가 아니다. 각 실제 복구 호출도 새 callId로 예약·정산하며, 텍스트 최대 6회·전체 실행 deadline·회원 잔액·서버 호출 한도를 함께 지킨다. 잘린 호출의 알려진 사용량은 FAILURE로 정산하고, 알 수 없는 사용량은 UNKNOWN으로 남긴다. 일반 transport/provider 실패나 quota는 이 잘림 복구로 재호출하지 않는다.
+
+실행 누적 예약 기본값은 240,000이다. 보수적으로 텍스트 6회 모두에 입력 추정 32,000과 출력 6,000을 적용하고 질문 임베딩 예약 4,256을 더하면 232,256이다. 이는 호출 시작 전에 적용하는 상한 계산이며 실제 토큰 소비량·평균 비용이 아니다. 사용자 차감 정책은 여전히 실측 input+output이고, Luna 모델별 할인은 별도 [#252](https://github.com/catchhole-soma/catchhole-backend-java/issues/252) 범위다.
+
+최신 검증 코드 AI `257dfe6cb56cf759047f5e62c0d079ff0d4a64e7`·Java `1166892aa300a8c27c46b40f227df6e69ec3ebcd`에서 Python 전체 2,780 passed/54 skipped/기존 경고 1개(11.50초), 별도 검색 PostgreSQL 26 passed, Java ChatExecution 관련 21 passed와 bootJar 성공을 확인했다. 실제 Luna·medium의 로컬 HTTP 질문 실행 13건은 개발 중 8건·중간 코드 2건·최종 코드 3건으로 구분하며 실행 오류는 0건이었다. 부분 답변도 정상 실행에 포함하므로 이 결과는 의미 정확도나 운영 처리량 보장이 아니다. 최종 원문 대조 결과와 미답변 요구는 [공통 품질 검증 기록](chat-query-quality-v1.md)에 기록한다.
+
 Python outbox는 SQLite 파일과 전용 볼륨을 사용한다. provider 호출 자체를 재생하지 않고 결과·사용량 보고만 재전송한다. 답변과 사용량은 각각 최대 8건을 선택하고, 두 종류가 함께 대기하면 각 2개씩 독립 전송 슬롯을 사용한다(한 종류만 있으면 최대 4개). 종류별로 마지막 시도 순서를 SQLite에 남겨 일시 실패가 같은 종류의 후속 보고도 막지 않게 순환한다. 기존 볼륨에는 시작 시 `last_attempt` 컬럼을 추가하고 미전송 기록을 보존한다. 만료 기록은 매 전달 주기마다 전체 대기열에서 먼저 제거한다. 시작 시 백그라운드 복구를 시작하지만 전체 backlog 처리를 기다린 뒤 요청을 받는 구조는 아니다. 결과는 실행 deadline까지만, 사용량은 deadline+24시간까지만 로컬에 보관한다. 삭제/권한 취소가 확인된 보고는 즉시 지우고 SQLite secure_delete를 사용한다. 네트워크가 끊기면 삭제 사실을 즉시 알 수 없으므로 TTL이 로컬 보관의 최대 시간이다. 원문 전체·질문은 outbox에 저장하지 않는다. 결과 본문과 capability가 있는 민감 볼륨이므로 사설 호스트 권한으로 관리한다.
 
 프로세스가 provider 실행 중 종료되면 자동 재호출하지 않는다. Spring이 deadline에 TIMED_OUT으로 바꾸고 예약을 회수한다. 디스크 오류로 실측 보고 자체를 저장하지 못하면 보고 복구가 불가능할 수 있으므로 UNKNOWN이 남는다. 이를 성공 정산으로 위장하지 않는다. Python의 report_storage_failure와 Spring의 usageUnknown을 운영에서 확인한다.
@@ -131,7 +141,7 @@ Python outbox는 SQLite 파일과 전용 볼륨을 사용한다. provider 호출
 | CHAT_MAX_ACTIVE_PER_MEMBER | 3 | 사용자별 대기/실행/정산 대기 합계 |
 | CHAT_MAX_CALLS | 8 | 실행별 provider 호출 수 |
 | CHAT_MAX_TOOL_CALLS | 20 | 실행별 조회 수 |
-| CHAT_ATTEMPT_TOKEN_BUDGET | 208000 | 실행별 누적 예약 상한; 실제 차감은 provider 측정량 정산 |
+| CHAT_ATTEMPT_TOKEN_BUDGET | 240000 | 실행별 누적 예약 상한; 단계별 출력·잘림 복구 포함, 실제 차감은 provider 측정량 정산 |
 | CHAT_EXECUTION_TIMEOUT | 120s | 대기 시간을 포함한 시도 deadline |
 | CHAT_USAGE_GRACE | 10m | 미정산 예약 보류 시간 |
 | CHAT_RECOVERY_DELAY_MS | 5000 | Spring 복구 간격 |

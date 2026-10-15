@@ -196,11 +196,11 @@
 ### RDB 단일 질의응답 (#238)
 
 - 계약·사례·한계·재현 명령은 `docs/chat-qa-v1.md`를 Java/Python에 동일하게 보관한다. 기존 `ChatResult`/조회 DTO를 재사용하며 현재값 계산과 권한 판정은 Spring이 소유한다.
-- `app/schemas/chat_qa.py`는 질문 유형·답변 목적·작품 전체 collection과 요청 내 참조만 받는다. `qa.py`/`qa_lookup.py`는 대상·경로·필터 조회, `qa_collection.py`는 모집단·페이지 token 검사, `qa_synthesis.py`는 등록 자료의 소개·조건 판정·목록/집계를 맡고 `qa_render.py`가 실제 값·검증된 근거를 표시한다. 분류는 `chat-qa-plan-v4`, 경로 선택은 `chat-qa-field-select-v1`, 구형 행 선택은 `chat-qa-select-v3`이다. 현재 계약은 `docs/chat-query-quality-v1.md`, 후속 대화는 #241을 따른다.
+- `app/schemas/chat_qa.py`는 질문 유형·답변 목적·작품 전체 collection과 요청 내 참조만 받는다. `qa.py`/`qa_lookup.py`는 대상·경로·필터 조회, `qa_collection.py`는 모집단·페이지 token 검사, `qa_synthesis.py`는 등록 자료의 소개·조건 판정·목록/집계를 맡고 `qa_render.py`가 실제 값·검증된 근거를 표시한다. 분류는 `chat-qa-plan-v6`, 경로 선택은 `chat-qa-field-select-v1`, 구형 행 선택은 `chat-qa-select-v3`이다. 현재 계약은 `docs/chat-query-quality-v1.md`, 후속 대화는 #241을 따른다.
 - 현재값/이력의 저장 key와 scope를 모델이 추측해 조회하지 않는다. 새 분류 schema는 필수 focus로 고정 FactType과 질문의 항목 표현을 구분한다. 유형 전체는 먼저 필터하고, 동적 항목은 값 없는 FIELD 목록을 끝까지 확인한 뒤 F 참조를 선택해 실제 저장 경로로 조회한다. 필터된 결과는 전역 도구 예산까지 순회하고 모델의 10행 선택이나 입력 문맥 상한으로 자르지 않는다. 구형 기록 계획의 R 행 선택 경로만 기존 페이지/행 상한을 유지한다. 새 작품 전체 조건은 collection으로 현재 자료를 읽고 인물별 MATCH/NO_MATCH/UNKNOWN을 판정한다. 기존 CHARACTER_LIST 기록만 단일 scalar 정확 일치 경로를 유지한다. 이름은 현재 질문 또는 제한된 서버 대화 문맥에 명시된 문자열만 조회하며 복수 후보·불완전한 탐색 페이지는 추가 확인으로 끝낸다. 모델이 선택한 행의 의미적 적합성은 별도 품질 검증 대상이다.
-- `qa_config.py`의 `CHAT_QA_*` 설정은 `.env`를 읽지 않고 프로세스 환경으로 주입한다. `ENABLED=false`, `MODEL=gpt-6-luna`, `REASONING_EFFORT=medium`, `MAX_ATTEMPTS=2`, `MAX_OUTPUT_TOKENS=1500`, `MAX_INPUT_TOKENS=32000`, `MAX_CONTEXT_CHARACTERS=32000`, `PAGE_SIZE=20`, `MAX_PAGES=2`, `MAX_ITEMS=80`, `MAX_TOOL_CALLS=16`, `MAX_SELECTED_ROWS=10`, `MAX_EVIDENCE_CALLS=8`, `MAX_ANSWER_CHARACTERS=12000`을 기본으로 한다. 이름 앞에는 모두 `CHAT_QA_`를 붙인다.
+- `qa_config.py`의 `CHAT_QA_*` 설정은 `.env`를 읽지 않고 프로세스 환경으로 주입한다. `ENABLED=false`, `MODEL=gpt-6-luna`, `REASONING_EFFORT=medium`, `MAX_ATTEMPTS=2`, `MAX_OUTPUT_TOKENS=1500`, `ANSWER_MAX_OUTPUT_TOKENS=3000`, `TRUNCATION_RETRY_MAX_OUTPUT_TOKENS=6000`, `MAX_INPUT_TOKENS=32000`, `MAX_CONTEXT_CHARACTERS=32000`, `PAGE_SIZE=20`, `MAX_PAGES=2`, `MAX_ITEMS=80`, `MAX_TOOL_CALLS=16`, `MAX_SELECTED_ROWS=10`, `MAX_EVIDENCE_CALLS=8`, `MAX_ANSWER_CHARACTERS=12000`을 기본으로 한다. 이름 앞에는 모두 `CHAT_QA_`를 붙인다.
 - 독립 `compose.chatbot.prod.yml`이 위 설정과 `LLM_API_KEY`를 명시적으로 전달한다. `deploy/chatbot.env.example`에 예제를 유지한다. QA 활성화 시 key가 없으면 기동을 거절하며, 기본 비활성 상태에서는 provider client를 생성하지 않는다. Spring 기능 flag와 별도여서 명시적 운영 활성화가 필요하다.
-- 질문 해석과 행 선택은 기존 `ChatTextClient`/`Execution.call()`을 사용한다. schema 재시도도 새 호출로 예약·정산하고 자동 transport retry는 하지 않는다. 조회 오류를 빈 결과로 바꾸지 않으며 현재값/이력/출처 범위와 원문 확인 불가 상태를 보존한다.
+- 질문 해석과 행 선택은 기존 `ChatTextClient`/`Execution.call()`을 사용한다. 최초 호출과 schema/참조 오류·provider 출력 절단 복구는 같은 MAX_ATTEMPTS를 공유한다. 절단은 해당 목적 기본 출력의 두 배를 복구 상한 안에서 새로 예약하며 JSON 조각을 이어 붙이지 않는다. 실패 사용량을 보존하고 모든 재시도도 새 호출로 예약·정산하며 자동 transport retry는 하지 않는다. 조회 오류를 빈 결과로 바꾸지 않으며 현재값/이력/출처 범위와 원문 확인 불가 상태를 보존한다.
 - `app/chatbot/replay.py`는 네트워크·DB·API key 없는 합성 CLI 재현기다. `tests/fixtures/chat-qa-v1.json`의 고정 모델 출력은 코드 경로 검증용이며 배포 모델 품질 측정값으로 보고하지 않는다. 실제 HTTP 검증용 `tests/support/chat_qa_stub_server.py`는 `CHAT_TEST_ONLY=true`와 localhost 제한을 유지한다.
 - 이 변경은 챗봇 분류·선택·출력 로직에 영향을 주므로 AI 로직 버전을 기록한다. 기존 분석 Worker의 추출·비교 프롬프트와 모델 설정은 변경하지 않는다.
 
@@ -218,9 +218,9 @@
 - 공통 계약은 양쪽 `docs/chat-hybrid-retrieval-v1.md`와 `docs/contracts/chat-hybrid-v1.json`이다. `app/chatbot/hybrid*.py`·`app/schemas/chat_hybrid.py`는 독립 rdbMode/sourceNeed를 해석하고 기존 RDB 경로, 직접 근거, 키워드·인접·벡터 검색을 제한된 정책으로 연결한다. 원문 필요가 있으면 RDB 미등록만으로 종료하지 않는다.
 - `app/retrieval/{search_contracts,search_repository,search,evidence}.py`는 오류 검증에도 재사용할 수 있는 읽기 전용 공통 모듈이다. 회원·작품·회차 범위는 서버 문맥에서 만들며 임의 SQL·LLM 생성 ID/settingKey/scopeName을 받지 않는다. 전체 허용 코퍼스에 유효성 필터·정렬을 적용한 뒤 LIMIT한다. 연결 회차는 keyword 정렬 힌트이며 범위를 제한하지 않는다.
 - 기존 `EpisodeChunkVectorSearchService`를 명시적 scoped adapter와 계량된 query embedding client로만 재사용한다. legacy `episode_chunks`나 전역 `.env`/provider default로 우회하지 않는다. 임베딩 없는 유효 텍스트는 keyword/인접에 사용하되 부분 준비를 표시한다.
-- 검색 근거는 기존 Fact 참조와 다른 `RetrievalReference`로 전달한다. 생성한 주장에는 관측된 E*만 허용하고 원문 quote는 코드가 복사한다. 저장 전 Python fingerprint 및 Spring 실제 원문/receipt 검증이 실패하면 관련 설명 전체를 보류한다. 올바른 참조/인용이 의미적 지지를 보장한다고 주장하지 않는다.
+- 검색 근거는 기존 Fact 참조와 다른 `RetrievalReference`로 전달한다. 새 hybrid plan/answer v6는 요청 부분과 지원 구절을 보존한다. `hybrid_grounding.py`가 모델이 지정 passage에서 그대로 복사한 supports.quote의 유일한 위치와 원래 청크 offset을 검사해 실제 지원 참조에 연결한다. 다른 passage로 이동하거나 없는/모호한 구절을 허용하지 않는다. 공개 인용은 원래 청크 계약을 유지한다. 저장 전 Python fingerprint 및 Spring 실제 원문/receipt 검증이 실패하면 관련 설명 전체를 보류한다. 올바른 참조/지원 구절이 의미적 지지나 작품 전체 최초를 보장한다고 주장하지 않는다.
 - `CHAT_RETRIEVAL_ENABLED=false` 기본, QA ON과 명시적 `CHAT_RETRIEVAL_DATABASE_URL`(postgresql+psycopg)이 있어야 사용한다. 검색 연결은 읽기 전용 transaction·pool 2/overflow 0·5초 SQL/연결/풀 상한이며 전체 DB 연결 예산에 포함한다. 배포 설정/기본 상한은 `hybrid_config.py`, 별도 chatbot Compose와 env 예제에 함께 유지한다.
-- 검색 최대 2라운드·질문 임베딩 1회·텍스트 모델 6회(각 schema 재시도 포함), 기존 서버/QA 전체 도구·실행 토큰 상한을 함께 적용한다. provider 사용량은 기존 실행 원장을 통해 예약·정산한다. 검색 metrics에는 고정 method/purpose/outcome만 사용하고 질문·ID·원문을 label로 넣지 않는다.
+- 검색 최대 2라운드·질문 임베딩 1회·텍스트 모델 6회(각 schema/참조 오류·출력 절단 복구 포함), 기존 서버/QA 전체 도구·실행 토큰 상한을 함께 적용한다. provider 사용량은 기존 실행 원장을 통해 예약·정산한다. 검색 metrics에는 고정 method/purpose/outcome만 사용하고 질문·ID·원문을 label로 넣지 않는다.
 - 오프라인 fixture의 고정 모델 출력은 연결 검증용이다. 유효한 인용을 가진 무관한 주장의 negative control은 품질 통과로 집계하지 않는다. 실제 모델/judge API 없이 내부 의미 검토한 결과와 실제 모델 품질 측정을 구분하고 v0009 기록을 유지한다. 이전 이력 전체 조회 한계와 #247 OPT-09 보류를 이번 기능으로 해결했다고 표시하지 않는다.
 
 
@@ -237,10 +237,14 @@
 - 조회 계약·공통 fixture와 `docs/chat-query-quality-v1.md`를 Java/Python에 동기화한다. collection 조건은 관련 현재 자료에 대한 의미 판정이며, 부정·대소·복수 조건을 구형 valueEquals로 변환하지 않는다. 서버 모집단 대상 수·설정 행 수·확인한 MATCH 수를 구분하고, 부분 인물·UNKNOWN·미검토 대상을 확인한 수에 넣지 않는다. 수집한 COLLECTION은 사실 답변 게시 전에 readToken을 재확인한다.
 - 조회가 완전해도 원문 검색이나 답변 길이가 제한될 수 있다. 경로 목록이 불완전하면 유일한 경로로 확정하지 않고, 필터된 값의 중단은 부분 확인으로 알린다. 도구 예산에 최종 원문 재검증/receipt와 직접 근거 재조회 비용을 남긴다.
 - 본문은 plain text다. 실제 고유명사·저장값을 기술어 regex로 치환하지 않고, Markdown 백슬래시를 삽입하지 않는다. 내부 R/F/E 참조와 처리 enum 대신 현재값·출처 회차·삭제/이력 전용의 의미를 표시한다. 직접 sources 다음 retrievalSources의 원본 순서로 근거 번호를 맞춘다.
-- 새 perItem 질문은 현재값/이력을 논리 항목으로 묶고 모든 itemAnswers에서 requestedFacets를 답변/미확인으로 나눈다. 일반 답변도 answeredFacets/missingFacets를 검사한다. 구형 행 참조 coverage는 기록 호환용이다. UNKNOWN 현재 조건을 원문 설명으로 승격하지 않으며 사용 장면을 획득 경위로 간주하지 않는다. 참조·항목 coverage와 의미적 지지는 별도 평가 대상이다.
+- 새 원문 질문은 최대 네 개의 requestedParts(P1~P4와 질문의 요구 설명)를 보존하고 perItem이면 모든 논리 항목에 같은 요청 부분을 적용한다. 기존 answeredFacets/missingFacets/facet 필드는 새 계획에서 P 참조를 사용한다. 고정 TIME/HOW/WHY/SCENE와 구형 행 참조 coverage는 저장 기록 호환용이다. UNKNOWN 현재 조건을 원문 설명으로 승격하지 않으며 사용 장면을 획득 경위로 간주하지 않는다. 참조·항목 coverage와 의미적 지지는 별도 평가 대상이다.
 - Spring의 상시 SETTING_BOOK_UNSUPPORTED는 일반 등록 설정 답변의 경고로 반복하지 않는다. 부분 조회·값 절단·근거 확인 실패는 유지하며 원문을 요청하지 않은 질문에 근거 목록 상한 경고를 붙이지 않는다.
 
 - 작품 전체 collection은 실제 FIELD category/scope/key를 보존하고 경로별 DISTINCT를 합치지 않는다. 이름을 지정한 현재 소개·목록·개수도 생성 후 현재 version/name/존재를 재확인한다. HISTORY 집계는 사건 단위이며 현재값과 이력의 혼합 COUNT는 집계 대상을 확인한다.
 - 시점·과정 질문의 eventScope와 원문 답변 eventStatus를 구분한다. 계획·불확실 판정을 실제 발생 완료로 세지 않고 계획 설명도 최종 근거 검증을 거친다. 항목별 검색 후보는 공통 앵커와 인접 문맥을 함께 배분하며 특정 인물·설정명에 맞춘 분기를 추가하지 않는다. 의미 분류 자체의 정답률은 별도 평가 대상이다.
+- 새 requestedParts 일반 원문 답변은 회차별 교대 대신 검색 순위를 보존하고, 인접 확장은 재검증된 seed 순위·거리 순서를 따른다. 직전 검색 답변이 NONE이면 다음 벡터 라운드의 후보 목록을 새 결과로 교체한 뒤 인접 문맥을 확장하며 이전 키워드 점수로 새 후보를 밀어내지 않는다. PARTIAL의 검증된 답변·근거 snapshot은 보존하고 병합한다. 기존 회차별/개수/문맥 한도는 유지한다. 검색에서 회수됐는지, 모델 입력에 포함됐는지, 질문의 최초·동일 사건 조건에 의미적으로 연결됐는지를 별도 검증한다.
 
-- 챗봇 기본 검색 문맥은 직접 인용과 겹침 병합된 검색 본문 합계 6,000 cl100k 토큰이다. Luna의 로컬 tokenizer 미지원은 보수적인 byte 입력 추정으로 유지하고 Spring 누적 예약 기본값 208,000과 동기화한다. 성공한 원문 답변의 검색 범위·미확인 사항은 본문에 알리고 실제 데이터/원문 오류는 숨기지 않는다. 조립 진단에는 고정 사유와 개수만 남긴다.
+- 이름을 지정한 세계관 대상도 worldCategory를 공통 resolve_subject에 전달하고 RDB/hybrid에서 같은 FIND 필터를 적용한다. CHARACTER에 분류를 넣거나 분류 불일치 응답을 허용하지 않는다. 명확화 후속 질문은 원래 요청과 최신 정정을 함께 해석한다. 원문 후속 질문의 eventContext는 같은 사건의 제약이며 이전 답변 값·회차를 사실 근거나 강제 범위로 재사용하지 않는다. eventMatch OTHER/UNCERTAIN을 요청 사건의 확정 답으로 게시하지 않는다.
+- 조건 결과는 MATCH를 먼저 표시하고 UNKNOWN은 개별 이름/설명 대신 수로 요약한다. 미확인·미검토·부분 조회가 남은 상태에서 일치 대상 없음으로 단정하지 않는다. 기존 주장과 실제 등록값을 표현 정리 목적으로 변경하지 않는다.
+
+- 챗봇 기본 검색 문맥은 직접 인용과 겹침 병합된 검색 본문 합계 6,000 cl100k 토큰이다. Luna의 로컬 tokenizer 미지원은 보수적인 byte 입력 추정으로 유지하고 Spring 누적 예약 기본값 240,000과 동기화한다. 성공한 원문 답변의 검색 범위·미확인 사항은 본문에 알리고 실제 데이터/원문 오류는 숨기지 않는다. 조립 집계는 고정 사유·개수·선택 토큰을 기록한다. 별도 내부 추적에는 attempt ID, 검색 방식/순위/점수와 청크 ID, 선택·입력 절단 후 실제 E 참조, 제외 사유, coverage만 남긴다. 원시 질문·원문·모델 응답·사건 문맥 설명·회원/작품 ID·키·예외 본문을 로그에 넣지 않고 고유 ID를 metric label에 사용하지 않는다. 최종 선택 로그를 결과 저장 성공으로 간주하지 않는다.
