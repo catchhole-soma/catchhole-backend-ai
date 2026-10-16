@@ -22,6 +22,8 @@ Type=oneshot
 User=$deploy_user
 WorkingDirectory=$deploy_path
 ExecStart=/usr/bin/python3 $deploy_path/current-chat-release/manage-ai-runtime.py run --directory $deploy_path
+# The application owns a 300s work deadline. These outer bounds also cover
+# Docker startup, final persistence/reporting and shutdown; an active run skips ticks.
 TimeoutStartSec=900
 TimeoutStopSec=45
 UMask=0077

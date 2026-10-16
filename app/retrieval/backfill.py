@@ -307,7 +307,10 @@ class CampaignState:
 
     def finish_sweep(self):
         row = self.row()
-        self.outcome("PARTIAL" if row["excluded"] else "READY" if row["seen"] else "EMPTY")
+        self.outcome(
+            "PARTIAL" if row["excluded"] else "READY" if row["seen"] else "EMPTY",
+            progress=True,
+        )
         with self.db:
             self.db.execute(
                 "UPDATE campaigns SET scanning=0 WHERE id=?", (self.config.campaign_id,)
@@ -336,11 +339,25 @@ class CampaignProvider:
         if outbox is not None and outbox.count():
             raise IndexProviderFailure("REPORTS_PENDING", False)
         self.state.reserve(_estimate_embedding_token_upper_bound([c.chunk_text for c in chunks]))
+        attempts_before = self.attempts
         unknown_before = self.unknown_usage
         try:
             result = await self.delegate.embed(source, chunks, before_call)
             self.attempt_usage_unknown = self.unknown_usage != unknown_before
             return result
+        except ChatTransportError as exc:
+            # operation/start/reserve can fail before invoke() reaches the provider.
+            # A lost Spring response cannot have invoked it; keep the spent admission
+            # allowance, but do not turn a known zero-call failure into unknown billing.
+            if self.attempts != attempts_before or self.unknown_usage != unknown_before:
+                raise
+            self.state.resolve_attempt()
+            retryable = exc.status is None or exc.status in {408, 429} or 500 <= exc.status < 600
+            # Retry on a later timer, with the campaign's consecutive-failure bound.
+            # Do not multiply reservations through service-level provider retries.
+            raise IndexProviderFailure(
+                "LEDGER_RETRYABLE" if retryable else "LEDGER_REJECTED", False
+            ) from None
         except (IndexProviderFailure, SourceChanged):
             if self.unknown_usage == unknown_before:
                 self.state.resolve_attempt()
@@ -444,6 +461,11 @@ class CampaignRunner:
                             state="REPORTS_PENDING",
                             embeddedChunks=embedded,
                             providerAttempts=self.provider.attempts,
+                        )
+                    if report["state"] == "LEDGER_RETRYABLE":
+                        state.no_progress("LEDGER_FAILURE")
+                        return state.status(
+                            embeddedChunks=embedded, providerAttempts=self.provider.attempts
                         )
                     if report["state"] in {"CHUNK_LIMIT", "TIME_LIMIT"}:
                         state.outcome(report["state"])
@@ -581,9 +603,38 @@ async def preflight(config, settings, spec):
         with engine.connect() as connection:
             connection.execute(text("SELECT 1 FROM retrieval_sources LIMIT 0"))
             connection.execute(text("SELECT 1 FROM retrieval_chunks LIMIT 0"))
+            _check_database_permissions(connection)
         return {"state": "PREFLIGHT_READY", "providerAttempts": 0, "userTokenDebit": False}
     finally:
         engine.dispose()
+
+
+def _check_database_permissions(connection):
+    # Inspect ACLs without modifying data, taking row locks or invoking a provider.
+    # Each privilege is checked separately: PostgreSQL's comma-separated privilege
+    # argument means ANY privilege, whereas this writer requires ALL of them.
+    permitted = connection.scalar(
+        text("""
+        SELECT current_setting('transaction_read_only') = 'off'
+           AND has_any_column_privilege(current_user, 'works', 'UPDATE')
+           AND bool_and(has_table_privilege(current_user, relation, privilege))
+        FROM (VALUES
+            ('works', 'SELECT'),
+            ('members', 'SELECT'),
+            ('episodes', 'SELECT'),
+            ('episode_source_purge_requests', 'SELECT'),
+            ('retrieval_sources', 'SELECT'),
+            ('retrieval_sources', 'INSERT'),
+            ('retrieval_sources', 'UPDATE'),
+            ('retrieval_chunks', 'SELECT'),
+            ('retrieval_chunks', 'INSERT'),
+            ('retrieval_chunks', 'UPDATE'),
+            ('retrieval_chunks', 'DELETE')
+        ) AS required(relation, privilege)
+        """)
+    )
+    if permitted is not True:
+        raise ValueError("Backfill database writer permissions are required")
 
 
 def _pending_reports(path):

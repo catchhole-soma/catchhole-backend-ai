@@ -170,6 +170,29 @@ class Rollout:
             raise BootstrapError("EXPECTED_SECURITY_GROUP_NOT_ATTACHED")
         return groups[0]
 
+    @staticmethod
+    def primary_groups(instance):
+        # The chatbot binds the instance's primary IPv4, so only this ENI's
+        # attached groups determine its effective ingress (their rules are additive).
+        interfaces = [
+            interface
+            for interface in instance.get("NetworkInterfaces", [])
+            if interface.get("Attachment", {}).get("DeviceIndex") == 0
+            and interface.get("PrivateIpAddress") == instance.get("PrivateIpAddress")
+            and interface.get("VpcId") == instance.get("VpcId")
+        ]
+        if len(interfaces) != 1:
+            raise BootstrapError("PRIMARY_NETWORK_INTERFACE_INVALID")
+        groups = interfaces[0].get("Groups", [])
+        ids = [group.get("GroupId", "") for group in groups]
+        if (
+            not ids
+            or len(ids) != len(set(ids))
+            or any(not re.fullmatch(r"sg-[a-f0-9]+", group_id) for group_id in ids)
+        ):
+            raise BootstrapError("PRIMARY_NETWORK_INTERFACE_GROUPS_INVALID")
+        return {"SecurityGroups": groups}
+
     def download(self, instance, *, api=False):
         release = self.api_release if api else self.release
         user = API_USER if api else self.user
@@ -213,29 +236,53 @@ class Rollout:
         if result.get("state") not in states:
             raise BootstrapError("REMOTE_STATE_UNEXPECTED")
 
-    def ensure_ingress(self, worker_group, api_group, vpc):
+    def check_ingress(self, worker_groups, worker_group, api_group, vpc):
+        requested = set(worker_groups) | {api_group}
         groups = self.aws.call(
-            "ec2", "describe-security-groups", "--group-ids", worker_group, api_group
+            "ec2", "describe-security-groups", "--group-ids", *sorted(requested)
         ).get("SecurityGroups", [])
         by_id = {g["GroupId"]: g for g in groups}
-        if set(by_id) != {worker_group, api_group} or any(g.get("VpcId") != vpc for g in groups):
+        if set(by_id) != requested or any(g.get("VpcId") != vpc for g in groups):
             raise BootstrapError("SECURITY_GROUP_VPC_MISMATCH")
+        exact_rule = False
+        for group_id in worker_groups:
+            for rule in by_id[group_id].get("IpPermissions", []):
+                protocol = str(rule.get("IpProtocol"))
+                if protocol == "-1":
+                    covers_chat = True
+                elif protocol in {"tcp", "6"}:
+                    start, end = rule.get("FromPort"), rule.get("ToPort")
+                    if type(start) is not int or type(end) is not int or start > end:
+                        raise BootstrapError("CHAT_INGRESS_RULE_INVALID")
+                    covers_chat = start <= 8082 <= end
+                else:
+                    covers_chat = False
+                if not covers_chat:
+                    continue
+                pairs = rule.get("UserIdGroupPairs", [])
+                if (
+                    any(rule.get(key) for key in ("IpRanges", "Ipv6Ranges", "PrefixListIds"))
+                    or not pairs
+                    or any(pair.get("GroupId") != api_group for pair in pairs)
+                ):
+                    raise BootstrapError("CHAT_INGRESS_NOT_API_ONLY")
+                exact_rule |= (
+                    group_id == worker_group
+                    and protocol in {"tcp", "6"}
+                    and rule.get("FromPort") == 8082
+                    and rule.get("ToPort") == 8082
+                )
+        return exact_rule
+
+    def ensure_ingress(self, worker_groups, worker_group, api_group, vpc):
+        if self.check_ingress(worker_groups, worker_group, api_group, vpc):
+            return
         permission = {
             "IpProtocol": "tcp",
             "FromPort": 8082,
             "ToPort": 8082,
             "UserIdGroupPairs": [{"GroupId": api_group}],
         }
-        for rule in by_id[worker_group].get("IpPermissions", []):
-            if (
-                rule.get("IpProtocol") == "tcp"
-                and rule.get("FromPort") == 8082
-                and rule.get("ToPort") == 8082
-            ):
-                if any(
-                    pair.get("GroupId") == api_group for pair in rule.get("UserIdGroupPairs", [])
-                ):
-                    return
         self.current()
         self.aws.call(
             "ec2",
@@ -246,6 +293,14 @@ class Rollout:
             json.dumps([permission]),
             allowed_errors=("InvalidPermission.Duplicate",),
         )
+        # Re-read all effective groups after authorization, including duplicate races.
+        # A narrow rule never overrides an older, broader source permission.
+        for attempt in range(3):
+            if self.check_ingress(worker_groups, worker_group, api_group, vpc):
+                return
+            if attempt < 2:
+                time.sleep(1)
+        raise BootstrapError("CHAT_INGRESS_RULE_NOT_VISIBLE")
 
     def prepare(self, worker_id):
         self.current()
@@ -256,7 +311,9 @@ class Rollout:
             raise BootstrapError("WORKER_INSTANCE_NOT_RUNNING")
         worker = workers[0]
         worker_ip = private_ip(worker["PrivateIpAddress"])
-        worker_group = self.group(worker, "catchhole-worker-prod-sg")
+        worker_interface = self.primary_groups(worker)
+        worker_group = self.group(worker_interface, "catchhole-worker-prod-sg")
+        worker_groups = [group["GroupId"] for group in worker_interface["SecurityGroups"]]
         self.download(worker_id)
         inspected = self.host(worker_id, "inspect")
         self.expect(inspected, {"INSPECTED"})
@@ -274,8 +331,8 @@ class Rollout:
         api = candidates[0]
         if api.get("VpcId") != worker["VpcId"] or api.get("PrivateIpAddress") != api_ip:
             raise BootstrapError("API_INSTANCE_SCOPE_MISMATCH")
-        api_group = self.group(api, "catchhole-api-prod-sg")
-        self.ensure_ingress(worker_group, api_group, worker["VpcId"])
+        api_group = self.group(self.primary_groups(api), "catchhole-api-prod-sg")
+        self.ensure_ingress(worker_groups, worker_group, api_group, worker["VpcId"])
         self.download(api["InstanceId"], api=True)
         prepared = self.host(
             api["InstanceId"], "prepare-api", "--private-ip", worker_ip, api=True, mutation=True

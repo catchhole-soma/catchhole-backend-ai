@@ -272,7 +272,9 @@ def _validate_role(connection, name, *, exact_select=False):
             text("""
             SELECT n.nspname,c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
             WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
-              AND c.relkind IN ('r','p','v','m','f','S') AND has_table_privilege(:role,c.oid,'SELECT')
+              AND ((c.relkind IN ('r','p','v','m','f')
+                    AND has_any_column_privilege(:role,c.oid,'SELECT'))
+                   OR (c.relkind='S' AND has_sequence_privilege(:role,c.oid,'SELECT')))
         """),
             params,
         ).all()
@@ -356,6 +358,21 @@ def _managed_reader(connection, config):
     return config.admin_url.set(username=ROLE, password=intent["password"]), intent
 
 
+def _existing_reader(connection, config):
+    reader, intent = config.existing_url, None
+    if reader.username == ROLE:
+        role = _role(connection, ROLE)
+        intent = _intent(config)  # Also verifies the persisted database target.
+        marked = role is not None and (role["marker"] or "").startswith(MARKER)
+        if intent is not None or marked:
+            # A saved managed DSN must not fall back to the broader custom-reader
+            # policy when either half of its ownership proof is missing/changed.
+            if intent is None or role is None or role["marker"] != intent["marker"]:
+                raise BootstrapFailure("READ_ROLE_COLLISION")
+    _validate_role(connection, reader.username, exact_select=intent is not None)
+    return reader, intent
+
+
 def prepare(config):
     with _private_directory(config.output_dir):
         engine = _engine(config.admin_url)
@@ -368,8 +385,7 @@ def prepare(config):
                 ):
                     raise BootstrapFailure("DATABASE_TARGET_MISMATCH")
                 if config.existing_url is not None:
-                    _validate_role(connection, config.existing_url.username)
-                    reader, intent = config.existing_url, None
+                    reader, intent = _existing_reader(connection, config)
                 else:
                     reader, intent = _managed_reader(connection, config)
         finally:
@@ -391,7 +407,7 @@ def prepare(config):
             "managed": intent is not None,
         }
         if intent is not None:
-            output["password"] = intent["password"]
+            output["password"] = reader.password
         _write_private(config.output_dir / "reader.json", output)
         return {
             "schemaVersion": 1,

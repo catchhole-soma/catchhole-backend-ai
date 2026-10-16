@@ -446,7 +446,9 @@ class Bootstrap:
         if available_memory() < 768 * 1024 * 1024:
             raise BootstrapError("AI_MEMORY_BELOW_768_MIB")
         with self.locked():
-            _, worker_pool = self.worker_connections(self.configuration("worker"))
+            worker_config = self.configuration("worker")
+            _, worker_pool = self.worker_connections(worker_config)
+            worker = worker_config["ai-worker"]["environment"]
             paths = {kind: self.directory / (kind + ".env") for kind in ("chatbot", "retrieval")}
             texts = {kind: read_env(path) for kind, path in paths.items()}
             initialized = self.state.get("ai", {}).get("initialized", False)
@@ -474,6 +476,16 @@ class Bootstrap:
             retrieval = self.configuration("retrieval", candidate=texts["retrieval"])[
                 "retrieval-index"
             ]["environment"]
+            # Legacy service envs duplicated these values. Never create a role in
+            # their stale database or silently replace an operator's credentials.
+            common = ("SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL", "LLM_API_KEY")
+            for env, keys in (
+                (chat, common),
+                (retrieval, (*common, "DATABASE_URL", "AWS_REGION", "AWS_S3_BUCKET")),
+            ):
+                for key in keys:
+                    if not worker.get(key) or env.get(key) != worker[key]:
+                        raise BootstrapError("INCONSISTENT_" + key)
             if first_chat:
                 chat_changes.update(CHAT_QA_ENABLED="true", CHAT_RETRIEVAL_ENABLED="true")
             if first_retrieval:

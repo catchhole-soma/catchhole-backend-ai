@@ -92,9 +92,15 @@ class Runtime:
         for env in (w, c, r):
             for key in ("SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL", "LLM_API_KEY"):
                 required(env, key)
-        for env in (c, r):
-            for key in ("SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL"):
-                if env[key] != w[key]:
+        common = ("SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL", "LLM_API_KEY")
+        for env, keys in (
+            (c, common),
+            (r, (*common, "DATABASE_URL", "AWS_REGION", "AWS_S3_BUCKET")),
+        ):
+            for key in keys:
+                if not w.get(key):
+                    raise DeploymentError("MISSING_" + key)
+                if env.get(key) != w[key]:
                     raise DeploymentError("INCONSISTENT_" + key)
         try:
             bind = ipaddress.ip_address(chat["ports"][0]["host_ip"])
