@@ -1,5 +1,6 @@
 """Token-sized exact original slices; offsets are Unicode code points, not bytes."""
 
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from hashlib import sha256
 import re
@@ -58,10 +59,12 @@ class RetrievalSplitter:
                     high = mid
             end = high if self.count(text[start:high]) <= TARGET_TOKENS else low
             if end < len(text):
-                preferred = [b for b in boundaries if start < b <= end]
+                boundary_index = bisect_right(boundaries, end) - 1
                 # Do not reduce an otherwise useful chunk to one tiny paragraph.
-                if preferred and self.count(text[start : preferred[-1]]) >= TARGET_TOKENS // 2:
-                    end = preferred[-1]
+                if boundary_index >= 0 and boundaries[boundary_index] > start:
+                    boundary = boundaries[boundary_index]
+                    if self.count(text[start:boundary]) >= TARGET_TOKENS // 2:
+                        end = boundary
             value = text[start:end]
             if value.strip():
                 chunks.append(
@@ -83,6 +86,10 @@ class RetrievalSplitter:
             overlap = end
             while overlap > start + 1 and self.count(text[overlap - 1 : end]) <= OVERLAP_TOKENS:
                 overlap -= 1
-            preferred = [b for b in boundaries if overlap <= b < end]
-            start = preferred[0] if preferred else overlap
+            boundary_index = bisect_left(boundaries, overlap)
+            start = (
+                boundaries[boundary_index]
+                if boundary_index < len(boundaries) and boundaries[boundary_index] < end
+                else overlap
+            )
         return chunks

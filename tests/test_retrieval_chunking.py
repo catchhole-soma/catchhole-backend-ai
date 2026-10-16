@@ -1,8 +1,33 @@
 from hashlib import sha256
+import json
 
 import pytest
 
 from app.retrieval.chunking import RetrievalSplitter
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_digest"),
+    [
+        ("가.\r\n" * 4000, "28f372f47388bdbf842fc5f4c1ea0b8dc463614cb38097d6c90d56baa3b17ac5"),
+        (
+            "아리아😀는 멈췄다.\r\n두 번째 문장입니다! 셋째 문장.\n" * 250,
+            "b1cdcd4ebdc46301a2902d87c36a7cb3d36c64ec6856736008bd6a09c474243e",
+        ),
+        (
+            "가나다라마바사😀" * 1800,
+            "2ae99d4a2b0686bf0343d89fc303389d963c58201268216ee6df658bc194aee6",
+        ),
+    ],
+    ids=["dense-crlf", "mixed-sentences", "no-boundary"],
+)
+def test_boundary_lookup_keeps_previously_indexed_chunk_identity(text, expected_digest):
+    # Captured from the pre-optimization splitter (3b8e574). Offsets, token counts
+    # and hashes must stay identical so saved vectors remain reusable under v1.
+    chunks = RetrievalSplitter().split(text)
+    identity = [(c.index, c.start, c.end, c.tokens, c.content_hash) for c in chunks]
+    encoded = json.dumps(identity, separators=(",", ":")).encode()
+    assert sha256(encoded).hexdigest() == expected_digest
 
 
 @pytest.fixture(scope="module")
