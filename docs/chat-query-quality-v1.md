@@ -2,6 +2,10 @@
 
 관련: [GH241](https://github.com/catchhole-soma/catchhole-backend-java/issues/241), [누적 한계 GH247](https://github.com/catchhole-soma/catchhole-backend-java/issues/247). Java/Python에 같은 내용으로 보관한다. 이 문서의 현재 동작은 이번 수정 코드 기준이며, 아래 과거 검증 수치는 새 구현의 통과 기록으로 재사용하지 않는다.
 
+## 안내 계획 변환 보완 — 2026-10-16
+
+`HybridPlan` 검증을 통과한 `CLARIFICATION`·`UNSUPPORTED`·`PAST_STATE`는 조회를 실행하지 않고 기존 안내를 반환한다. `QuestionPlan`으로 변환할 때 이 분기에서 사용하지 않는 `characterFilter`·`collection`을 비워, 안내가 교차 schema 불일치로 실행 오류가 되는 것을 막는다. 원래 계획의 schema·관측된 대상/검색어 검증과 `PROCEED`의 조회 조건은 유지한다. 추가 모델 호출이나 조회를 하지 않으며 잘못된 계획을 정상 사실 답변으로 바꾸지 않는다.
+
 ## 추가 진단에 따른 대화·조회 보완 — OPT-31
 
 [#247 OPT-31](https://github.com/catchhole-soma/catchhole-backend-java/issues/247)의 후속 개선이다. 현재 코드 계약은 아래 네 가지이며, 후속 실제 모델 6건의 실행·미확인 결과는 아래 검증 기록에 구분한다. 아래 과거 실행·정확도 해석을 이번 변경의 검증으로 재사용하지 않으며, 진단 당시 기록되지 않은 모델 출력의 정확한 오류 필드나 분류 원인을 사후 추정해 확정하지 않는다.
@@ -119,7 +123,7 @@ flowchart TD
 
 조건 판정의 묶음은 실제 CHAT_ANSWER 출력 상한과 입력 적합성을 함께 사용한다. 기본 출력 3,000토큰에서는 항목당 100토큰의 기존 추정 기준으로 최대 30항목이며, 입력이 크면 더 작게 나눈다. 이 수는 실제 출력 길이나 정답을 보장하지 않는다. 모델/실행 상한과 미검토 대상 표시는 유지한다. 질문 계획과 FIELD 선택의 호출·지연 지표는 모두 CHAT_INTERPRETATION으로 기록하며, 실제 예약·정산 목적과 일치시킨다.
 
-COLLECTION의 두 번째 페이지부터 최초 `readToken`을 전달하고 답변 생성 후 같은 필터의 page 0을 재검사한다. token은 작품·도구·필터·대상 집합/이름/version·표시 schema의 변경 확인용이며 권한이나 과거 snapshot 저장소가 아니다. 생성 중 변경이 확인되면 결과를 확정하지 않고 최신 상태로 다시 질문하도록 안내한다. 조건 없는 전체 대상 목록도 COLLECTION으로 조회 전후를 감싸고 중복 대상/완료 목록 수를 확인한다. 단일 COUNT는 한 FIND 응답의 서버 totalElements를 사용한다. FIND API 자체에 snapshot token이 추가된 것은 아니다.
+COLLECTION의 두 번째 페이지부터 최초 `readToken`을 전달하고 답변 생성 후 같은 필터의 page 0을 재검사한다. token은 작품·도구·필터·대상 집합/이름/version·세계관 수동 수정 경로·표시 schema의 변경 확인용이며 권한이나 과거 snapshot 저장소가 아니다. 생성 중 변경이 확인되면 결과를 확정하지 않고 최신 상태로 다시 질문하도록 안내한다. 조건 없는 전체 대상 목록도 COLLECTION으로 조회 전후를 감싸고 중복 대상/완료 목록 수를 확인한다. 단일 COUNT는 한 FIND 응답의 서버 totalElements를 사용한다. FIND API 자체에 snapshot token이 추가된 것은 아니다.
 
 원문을 결합한 답변도 이름을 지정한 CURRENT/CURRENT_AND_HISTORY의 선택된 현재 대상별 version·이름·존재를 최종 재확인한다. 일반·항목별 답변과 등록 항목명을 남기는 항목별 근거 부족 응답에 같은 검사를 적용한다. 조회·직접 근거·검색 예산에서 대상별 마지막 조회 비용을 남기며, COLLECTION은 전체 readToken 검사로 대신한다. HTTP 409 또는 내부 CONCURRENT_UPDATE는 통신 장애로 표시하지 않고 CURRENT_CHANGED와 최신 설정으로 다시 확인하라는 안내로 반환한다. 실제 500/전송 실패·실행 한도는 기존 실패로 유지한다. 이 재확인은 결과 저장과 설정 수정을 하나의 트랜잭션으로 잠그는 기능은 아니다.
 
