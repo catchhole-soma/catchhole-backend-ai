@@ -12,6 +12,8 @@ from app.retrieval.chunking import RetrievalSplitter
 from app.retrieval.contracts import Limits, SourceChanged
 from app.retrieval.provider import IndexProviderFailure
 
+MAX_SOURCE_BYTES = 2_000_000
+
 
 class RetrievalIndexService:
     def __init__(self, store, storage, spec, *, splitter=None):
@@ -20,8 +22,15 @@ class RetrievalIndexService:
 
     def _slices(self, source):
         self.store.check_source(source)
-        value = self.storage.get_text(source.key, version_id=source.version, max_bytes=2000000)
-        if len(value) > 250000 or sha256(value.encode("utf-8")).hexdigest() != source.content_hash:
+        value = self.storage.get_text(
+            source.key, version_id=source.version, max_bytes=MAX_SOURCE_BYTES
+        )
+        encoded = value.encode("utf-8")
+        # Stored legacy episodes can exceed today's upload character limit. Retain
+        # the bounded UTF-8 read contract even for alternate storage implementations.
+        if len(encoded) > MAX_SOURCE_BYTES:
+            raise ValueError("Source exceeds the retrieval read limit")
+        if sha256(encoded).hexdigest() != source.content_hash:
             raise SourceChanged()
         self.store.check_source(source)
         return self.splitter.split(value)
