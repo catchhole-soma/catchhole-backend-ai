@@ -15,6 +15,11 @@ class Dispatch(ContractModel):
     deadline: datetime
 
 
+class ConversationTurn(ContractModel):
+    question: str = Field(min_length=1, max_length=4000, repr=False)
+    answer: str = Field(min_length=1, max_length=1000, repr=False)
+
+
 class ExecutionContext(ContractModel):
     schema_version: Literal[1]
     question_id: UUID | None
@@ -29,6 +34,18 @@ class ExecutionContext(ContractModel):
     max_calls: int = Field(ge=1)
     max_tool_calls: int = Field(ge=1)
     operational: bool
+    conversation: list[ConversationTurn] = Field(
+        default_factory=list, max_length=6, repr=False, exclude_if=lambda value: not value
+    )
+    conversation_truncated: bool = Field(default=False, exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def conversation_budget(self) -> Self:
+        if sum(len(t.question) + len(t.answer) for t in self.conversation) > 8000:
+            raise ValueError("Conversation context exceeds its boundary")
+        if self.operational and self.conversation:
+            raise ValueError("Operational runs cannot contain conversation")
+        return self
 
 
 class ChatResult(ContractModel):

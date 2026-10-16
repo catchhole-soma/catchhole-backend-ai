@@ -7,8 +7,10 @@ Scripted model decisions verify plumbing, not production model quality.
 import argparse
 import asyncio
 import copy
+import hashlib
 import json
 import tempfile
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
@@ -118,13 +120,144 @@ class ReplaySpring:
 
     def lookup(self, query):
         tool = query.tool.value
+        collection = None
+
+        def matching(item):
+            return (query.fact_type is None or item["category"] == query.fact_type) and (
+                query.setting_key is None
+                or (item["settingKey"], item["scopeName"]) == (query.setting_key, query.scope_name)
+            )
+
+        def in_range(item):
+            episode = item["sourceEpisodeNo"]
+            return (
+                query.episode_from is None or episode is not None and episode >= query.episode_from
+            ) and (query.episode_to is None or episode is not None and episode <= query.episode_to)
+
+        def matches_current_scalar(item, expected):
+            # Mirror Java SettingToolScalarValue: display text and descriptive
+            # fields cannot establish an exact current-value condition.
+            raw = item.get("structuredValueJson")
+            if raw is None:
+                return False
+            try:
+                value = json.loads(raw)
+            except (TypeError, ValueError):
+                return False
+            if isinstance(value, dict):
+                primary = value.get("value")
+                value = primary if primary is not None else value.get("name")
+            if value is None or isinstance(value, (dict, list)):
+                return False
+            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+            def normalize(text):
+                return unicodedata.normalize("NFC", text.strip()).lower()
+
+            return normalize(text) == normalize(expected)
+
         if tool.startswith("FIND_"):
             kind = "CHARACTER" if tool == "FIND_CHARACTERS" else "WORLD_SETTING"
             items = [
                 s["subject"]
                 for s in self.catalog
                 if s["subject"]["kind"] == kind
+                and (
+                    query.world_category is None or s["subject"]["category"] == query.world_category
+                )
                 and (query.query or "").casefold() in s["subject"]["subjectName"].casefold()
+                and (
+                    query.value_equals is None
+                    or any(
+                        matching(i) and matches_current_scalar(i, query.value_equals)
+                        for i in s.get("current", [])
+                    )
+                )
+            ]
+        elif tool.endswith("_COLLECTION"):
+            kind = "CHARACTER" if tool.startswith("CHARACTER") else "WORLD_SETTING"
+            subjects = [
+                s
+                for s in self.catalog
+                if s["subject"]["kind"] == kind
+                and (
+                    query.world_category is None or s["subject"]["category"] == query.world_category
+                )
+            ]
+            items = [i for s in subjects for i in s.get("current", []) if matching(i)]
+            token = hashlib.sha256(
+                json.dumps(
+                    {
+                        "subjects": subjects,
+                        "query": query.model_dump(
+                            mode="json", exclude={"read_token", "page", "size"}
+                        ),
+                    },
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()
+            if query.read_token is not None and query.read_token != token:
+                raise AssertionError("Replay collection changed")
+            collection = {
+                "population": "ACTIVE_REGISTERED_CHARACTERS"
+                if kind == "CHARACTER"
+                else "REGISTERED_WORLD_SETTINGS",
+                "subjectCount": len(subjects),
+                "subjectsWithValues": len({i["subjectId"] for i in items}),
+                "recordCount": len(items),
+                "readToken": token,
+            }
+        elif tool.endswith("_FIELDS"):
+            domain_kind = "CHARACTER" if tool == "CHARACTER_FIELDS" else "WORLD_SETTING"
+            fields = {}
+            for subject in self.catalog:
+                if (
+                    subject["subject"]["kind"] != domain_kind
+                    or (
+                        query.target_id is not None
+                        and subject["subject"]["id"] != str(query.target_id)
+                    )
+                    or (
+                        query.world_category is not None
+                        and subject["subject"]["category"] != query.world_category
+                    )
+                ):
+                    continue
+                scoped = query.episode_from is not None or query.episode_to is not None
+                values = ([] if scoped else subject.get("current", [])) + (
+                    [i for i in subject.get("history", []) if in_range(i)]
+                    if query.target_id
+                    else []
+                )
+                for item in values:
+                    if not matching(item):
+                        continue
+                    identity = (item["category"], item["scopeName"], item["settingKey"])
+                    field = copy.deepcopy(item)
+                    field.update(
+                        kind="FIELD",
+                        id=None,
+                        value=None,
+                        structuredValueJson=None,
+                        sources=[],
+                        evidence=None,
+                        valueTruncated=False,
+                        contributesToCurrent=None,
+                        historyOnly=None,
+                        operation=None,
+                        sourceEpisodeNo=None,
+                        sourceEpisodeId=None,
+                        effectiveFromEpisodeNo=None,
+                    )
+                    if query.target_id is None:
+                        field.update(
+                            subjectId=str(self.context.work_id),
+                            subjectName="작품의 인물 설정",
+                            settingVersion=None,
+                        )
+                    fields[identity] = field
+            items = [
+                fields[key] for key in sorted(fields, key=lambda key: tuple(v or "" for v in key))
             ]
         elif tool.endswith("_EVIDENCE"):
             items = [
@@ -152,6 +285,7 @@ class ReplaySpring:
                 for subject in self.catalog
                 if subject["subject"]["id"] == str(query.target_id)
                 for item in subject.get(key, [])
+                if matching(item)
             ]
             if key == "history":
                 items = [
@@ -177,6 +311,7 @@ class ReplaySpring:
                 "tool": tool,
                 "partial": False,
                 "limitations": ["SETTING_BOOK_UNSUPPORTED"],
+                "collection": collection,
                 "items": {
                     "content": content,
                     "page": query.page,

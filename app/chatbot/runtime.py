@@ -31,6 +31,10 @@ class ProviderFailure(RuntimeError):
         super().__init__("Provider call failed")
 
 
+class ProviderOutputTruncated(ProviderFailure):
+    """A measured output-cap failure, eligible only for the QA's bounded retry."""
+
+
 class Execution:
     def __init__(self, dispatch, runner, context, client, outbox):
         self.dispatch, self.runner, self.context = dispatch, runner, context

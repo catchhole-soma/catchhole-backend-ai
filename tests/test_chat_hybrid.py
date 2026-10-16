@@ -270,6 +270,8 @@ def test_authored_offline_replays_through_http_execution_and_sqlite_outbox(tmp_p
     assert result["search"].calls == expected["searches"]
     for value in expected["contains"]:
         assert value in finish["result"]["text"]
+    for value in expected.get("sourceContains", []):
+        assert any(value in s["quote"] for s in finish["result"].get("retrievalSources", []))
     calls = len(result["raw"].requests) + len(result["embedding"].inputs)
     assert len(result["spring"].reservations) == len(result["spring"].reports) == calls
     assert len({r["callId"] for r in result["spring"].reservations}) == calls
@@ -358,7 +360,13 @@ def test_repeated_invalid_citations_never_publish_success(tmp_path):
     result = asyncio.run(
         replay(tmp_path, case, outputs=[case["outputs"][0], answer("E999"), answer("E999")])
     )
-    assert result["finish"] == {"result": None, "failure": "PROVIDER_FAILURE"}
+    assert result["finish"]["failure"] is None
+    response = result["finish"]["result"]
+    assert response["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert response["sources"] == response.get("retrievalSources", []) == []
+    assert "E999" not in response["text"]
+    assert answer()["claims"][0]["text"] not in response["text"]
+    assert len(result["raw"].requests) == 3
 
 
 def test_source_changed_after_generation_is_withheld_before_finish(tmp_path):
@@ -433,8 +441,10 @@ def test_embedding_reservation_failure_is_distinct_and_does_not_call_provider(
 
 def test_model_and_tool_budgets_stop_before_additional_external_work(tmp_path):
     result = asyncio.run(replay(tmp_path, hybrid={"max_model_calls": 1}))
-    assert result["finish"]["failure"] == "EXECUTION_LIMIT_EXCEEDED"
+    assert result["finish"]["failure"] is None
+    assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
     assert len(result["raw"].requests) == 1
+    assert not result["search"].calls and not result["embedding"].inputs
 
 
 def test_schema_retries_share_six_call_cap_across_planning_selection_and_answers(tmp_path):
@@ -443,10 +453,12 @@ def test_schema_retries_share_six_call_cap_across_planning_selection_and_answers
     outputs = [response for valid in case["outputs"] for response in ({}, valid)]
     result = asyncio.run(replay(tmp_path, case, outputs=outputs))
 
-    assert result["finish"]["failure"] == "EXECUTION_LIMIT_EXCEEDED"
+    assert result["finish"]["failure"] is None
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert len(result["raw"].requests) == 6
     assert len(result["spring"].reservations) == len(result["spring"].reports) == 6
     assert not result["embedding"].inputs
+    assert not result["search"].calls  # The last permitted answer remains usable after recheck.
 
 
 def test_no_query_embedding_budget_exposes_insufficient_evidence(tmp_path):
@@ -461,9 +473,11 @@ def test_tool_budget_stops_before_receipt_and_answer_generation(tmp_path):
     case = scenario()
     case["maxToolCalls"] = 2
     result = asyncio.run(replay(tmp_path, case))
-    assert result["finish"]["failure"] == "EXECUTION_LIMIT_EXCEEDED"
+    assert result["finish"]["failure"] is None
+    assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert any("검색" in note for note in result["finish"]["result"]["limitations"])
     assert len(result["raw"].requests) == 1
-    assert result["search"].calls == ["keyword", "neighbors"]
+    assert result["search"].calls == []
     assert not result["spring"].receipts
 
 
@@ -483,7 +497,7 @@ def test_partial_answer_stays_explicit_when_search_round_budget_ends(tmp_path):
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert not result["embedding"].inputs
     assert result["search"].calls == ["keyword", "neighbors", "revalidate"]
-    assert any("일부" in value for value in result["finish"]["result"]["limitations"])
+    assert "질문의 일부만 답할 수 있었어요" in result["finish"]["result"]["text"]
 
 
 def test_conflicting_registered_value_and_source_are_both_preserved(tmp_path):
@@ -492,7 +506,9 @@ def test_conflicting_registered_value_and_source_are_both_preserved(tmp_path):
     result = asyncio.run(replay(tmp_path, case))
     text = result["finish"]["result"]["text"]
     assert result["finish"]["result"]["outcome"] == "ANSWER"
-    assert "[R1]" in text and "[E2]" in text
+    assert "[R1]" not in text and "[E2]" not in text
+    assert "근거 1" in text
+    assert result["finish"]["result"]["retrievalSources"]
     assert "화염구" in text and "다르게 나타납니다" in text
 
 
@@ -501,7 +517,19 @@ def test_unrecognized_conflict_reference_is_rejected(tmp_path):
     bad = case["outputs"][-1] | {"conflicts": [{"rowRefs": ["R999"], "evidenceRefs": ["E2"]}]}
     case["outputs"] = [*case["outputs"][:-1], bad, bad]
     result = asyncio.run(replay(tmp_path, case))
-    assert result["finish"]["failure"] == "PROVIDER_FAILURE"
+    assert result["finish"]["failure"] is None
+    response = result["finish"]["result"]
+    # A valid direct-evidence answer preceded the invalid search draft. Only
+    # that earlier partial answer may survive, with its own rechecked source.
+    assert response["outcome"] == "ANSWER"
+    assert case["outputs"][2]["claims"][0]["text"] in response["text"]
+    assert "질문의 일부만 답할 수 있었어요" in response["text"]
+    assert response["sources"] and response.get("retrievalSources", []) == []
+    tools = [query["tool"] for query in result["spring"].queries]
+    assert tools.count("CHARACTER_EVIDENCE") == 2
+    assert "R999" not in response["text"]
+    assert "다르게 나타납니다" not in response["text"]
+    assert all(claim["text"] not in response["text"] for claim in bad["claims"])
 
 
 def test_missing_rdb_with_ambiguous_named_subject_requests_clarification(tmp_path):

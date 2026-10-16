@@ -7,14 +7,64 @@ from pydantic import Field, model_validator
 from app.schemas.setting_tools import ContractModel
 
 
+CharacterFactType = Literal["PROFILE", "AGE", "LEVEL", "STAT", "SKILL", "ITEM", "STATUS", "TIME"]
+AnswerShape = Literal["FACTS", "LIST", "COUNT", "SUMMARY", "DISTINCT"]
+WorldCategory = Literal[
+    "RACE", "FACTION", "LOCATION", "MONSTER", "POWER_SYSTEM", "WORLD_RULE_HISTORY", "IMPORTANT_ITEM"
+]
+
+
+class WorkCollection(ContractModel):
+    """An information need in the server-owned work, never an authority selector."""
+
+    domain: Literal["CHARACTER", "WORLD"]
+    fact_type: CharacterFactType | None
+    world_category: WorldCategory | None
+    attribute: str | None = Field(min_length=1, max_length=100)
+    predicate: str | None = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        if self.domain == "WORLD" and self.fact_type is not None:
+            raise ValueError("World collections have no character fact type")
+        if self.domain == "CHARACTER" and self.world_category is not None:
+            raise ValueError("Character collections have no world category")
+        return self
+
+
+class SettingFocus(ContractModel):
+    """Question vocabulary, never a model-authored storage key or scope."""
+
+    fact_type: CharacterFactType | None
+    attribute: str | None = Field(min_length=1, max_length=100)
+
+
+class CharacterFilter(ContractModel):
+    fact_type: CharacterFactType
+    attribute: str = Field(min_length=1, max_length=100)
+    value: str = Field(min_length=1, max_length=200)
+
+
 class QuestionSubject(ContractModel):
     domain: Literal["CHARACTER", "WORLD"]
     name: str = Field(min_length=1, max_length=100)
+    # A classification of the named subject, not a storage path or authority scope.
+    # Keep old recorded plans readable; provider schemas require explicit null.
+    world_category: WorldCategory | None = None
+    # New structured-output schemas require a non-null focus. The default only
+    # keeps pre-extension recorded plans readable; fields_set identifies those.
+    focus: SettingFocus = Field(
+        default_factory=lambda: SettingFocus(fact_type=None, attribute=None)
+    )
 
     @model_validator(mode="after")
     def nonblank(self) -> Self:
         if not self.name.strip():
             raise ValueError("A subject name is required")
+        if self.domain == "WORLD" and self.focus and self.focus.fact_type is not None:
+            raise ValueError("World settings do not have character fact types")
+        if self.domain == "CHARACTER" and self.world_category is not None:
+            raise ValueError("Characters do not have a world category")
         return self
 
 
@@ -24,27 +74,69 @@ class QuestionPlan(ContractModel):
         "HISTORY",
         "CURRENT_AND_HISTORY",
         "DIRECT_EVIDENCE",
+        "CHARACTER_LIST",
         "NEEDS_SEARCH",
         "PAST_STATE",
         "CLARIFICATION",
         "UNSUPPORTED",
+        "GREETING",
+        "THANKS",
+        "HELP",
     ]
     subjects: list[QuestionSubject] = Field(max_length=3)
     include_evidence: bool
     episode_from: int | None = Field(ge=1, strict=True)
     episode_to: int | None = Field(ge=1, strict=True)
+    character_filter: CharacterFilter | None = None
+    collection: WorkCollection | None = None
+    answer_shape: AnswerShape = "FACTS"
 
     @model_validator(mode="after")
     def valid_plan(self) -> Self:
+        if self.intent in {"GREETING", "THANKS", "HELP"} and (
+            self.subjects
+            or self.include_evidence
+            or self.episode_from is not None
+            or self.episode_to is not None
+            or self.character_filter is not None
+            or self.collection is not None
+            or self.answer_shape != "FACTS"
+        ):
+            raise ValueError("Conversational requests do not query work information")
         lookup = self.intent in {"CURRENT", "HISTORY", "CURRENT_AND_HISTORY", "DIRECT_EVIDENCE"}
-        if lookup and not self.subjects:
+        if lookup and not self.subjects and self.collection is None:
             raise ValueError("Lookup requires a named subject")
-        identities = {(s.domain, s.name.strip().casefold()) for s in self.subjects}
+        if self.collection is not None and (
+            self.subjects or self.character_filter is not None or self.intent != "CURRENT"
+        ):
+            raise ValueError("Work collections query current registered information")
+        if (self.intent == "CHARACTER_LIST") != (self.character_filter is not None):
+            raise ValueError("Character lists require one exact current-value condition")
+        if self.intent == "CHARACTER_LIST" and (
+            self.subjects or self.episode_from is not None or self.episode_to is not None
+        ):
+            raise ValueError("A character list queries current values across the work")
+        identities = {
+            (s.domain, s.name.strip().casefold(), s.world_category) for s in self.subjects
+        }
         if len(identities) != len(self.subjects):
             raise ValueError("Duplicate subjects")
         if self.episode_from is not None and self.episode_to is not None:
             if self.episode_from > self.episode_to:
                 raise ValueError("Invalid source range")
+        return self
+
+
+class FieldSelection(ContractModel):
+    outcome: Literal["ANSWER", "CLARIFICATION", "INSUFFICIENT_EVIDENCE"]
+    field_refs: list[str] = Field(max_length=20)
+
+    @model_validator(mode="after")
+    def valid_selection(self) -> Self:
+        if (self.outcome == "ANSWER") != bool(self.field_refs):
+            raise ValueError("Only matched fields have references")
+        if len(set(self.field_refs)) != len(self.field_refs):
+            raise ValueError("Duplicate field references")
         return self
 
 

@@ -108,8 +108,8 @@ class RetrievalSearchRepository:
         return self._rows(
             f"SELECT {FIELDS},({score})/{len(terms)} AS score {CURRENT_FROM} "
             f"AND ({' OR '.join(matches)}) "
-            "ORDER BY (e.id=ANY(CAST(:preferred AS uuid[]))) DESC,"
-            "score DESC,e.episode_no,c.chunk_index,c.id LIMIT :limit",
+            "ORDER BY score DESC,(e.id=ANY(CAST(:preferred AS uuid[]))) DESC,"
+            "e.episode_no,c.chunk_index,c.id LIMIT :limit",
             {**params, "limit": limit, "preferred": list(dict.fromkeys(preferred_episode_ids))},
             "KEYWORD",
         )
@@ -151,17 +151,22 @@ class RetrievalSearchRepository:
         current = self.revalidate(seeds)
         if not current:
             return []
+        # Preserve the caller's ranked, revalidated seeds. Otherwise all radius-1
+        # neighbors tie on score and early episodes exhaust the expansion budget.
+        # Pick each neighbor's earliest supporting seed before applying the limit.
         return self._rows(
-            f"WITH valid AS MATERIALIZED (SELECT {FIELDS} {CURRENT_FROM}) "
-            "SELECT v.*,1.0/(1+min(abs(v.chunk_index-seed.chunk_index))) AS score "
+            f"WITH valid AS MATERIALIZED (SELECT {FIELDS} {CURRENT_FROM}), "
+            "neighbors AS (SELECT DISTINCT ON (v.id) v.*,"
+            "array_position(CAST(:ids AS uuid[]),seed.id) AS seed_rank,"
+            "abs(v.chunk_index-seed.chunk_index) AS distance "
             "FROM valid v JOIN valid seed ON seed.episode_id=v.episode_id "
             "AND abs(v.chunk_index-seed.chunk_index)<=:radius "
             "WHERE seed.id=ANY(CAST(:ids AS uuid[])) "
             "AND NOT (v.id=ANY(CAST(:ids AS uuid[]))) "
-            "GROUP BY v.id,v.episode_id,v.episode_no,v.chunk_index,v.chunk_text,v.start_offset,"
-            "v.end_offset,v.chunk_hash,v.source_key,v.source_version,v.source_hash,v.chunk_policy "
-            "ORDER BY score DESC,v.episode_no,v.chunk_index,v.id LIMIT :limit",
-            dict(ids=[c.chunk_id for c in current], radius=radius, limit=limit),
+            "ORDER BY v.id,seed_rank,distance) "
+            "SELECT neighbors.*,1.0/(1+distance) AS score FROM neighbors "
+            "ORDER BY seed_rank,distance,episode_no,chunk_index,id LIMIT :limit",
+            dict(ids=list(dict.fromkeys(c.chunk_id for c in current)), radius=radius, limit=limit),
             "NEIGHBOR",
         )
 

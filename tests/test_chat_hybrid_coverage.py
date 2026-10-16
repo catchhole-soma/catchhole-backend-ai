@@ -55,14 +55,21 @@ def test_missing_rdb_coverage_remains_visible_after_source_answer(tmp_path, miss
 
 def test_all_selected_rdb_subjects_do_not_get_missing_coverage_notice(tmp_path):
     case = mixed_subjects()
+    # Keep both direct quotes in this coverage fixture, including their source
+    # rechecks and the two final current-subject checks. Budget limits are tested separately.
+    case["maxToolCalls"] = 24
     case["outputs"][1]["rowRefs"] = ["R1", "R3"]
     case["outputs"][-1]["claims"][0]["evidenceRefs"] = ["E3"]
-    result = asyncio.run(replay(tmp_path, case))
+    result = asyncio.run(replay(tmp_path, case, config={"max_tool_calls": 24}))
     finish = result["finish"]
     assert finish["failure"] is None
     assert finish["result"]["outcome"] == "ANSWER"
     assert "아리아" in finish["result"]["text"] and "루나" in finish["result"]["text"]
     assert notices(["NO_RELATED_SETTING"])[0] not in finish["result"]["limitations"]
+    current = [q for q in result["spring"].queries if q["tool"] == "CHARACTER_CURRENT"]
+    assert len(current) == 4
+    assert [q["targetId"] for q in current[:2]] == [q["targetId"] for q in current[2:]]
+    assert all(q["size"] == 1 for q in current[2:])
 
 
 def test_source_only_question_does_not_require_rdb_coverage(tmp_path):

@@ -1,6 +1,8 @@
 """Bounded RDB QA. LLMs classify/select; code owns queries, scope and quotations."""
 
 import json
+import logging
+import re
 from collections.abc import Callable
 
 from pydantic import BaseModel, ValidationError
@@ -8,15 +10,23 @@ from pydantic import BaseModel, ValidationError
 from app.chatbot.client import ChatTransportError
 from app.chatbot.providers import ChatTextClient
 from app.chatbot.qa_config import ChatQaSettings
+from app.chatbot.qa_lookup import FocusedLookup
+from app.chatbot.qa_collection import WorkLookup
+from app.chatbot.qa_synthesis import RegisteredSynthesis
 from app.chatbot.qa_prompts import PLAN_PROMPT, PLAN_VERSION, SELECT_PROMPT, SELECT_VERSION
-from app.chatbot.qa_render import AnswerRow, message, render_answer, safe_text
-from app.chatbot.runtime import Execution, ProviderFailure
+from app.chatbot.qa_render import AnswerRow, current_changed, message, render_answer
+from app.chatbot.qa_validation import RULES, ResponseValidationFailure, retry_feedback
+from app.chatbot.runtime import Execution, ProviderFailure, ProviderOutputTruncated
 from app.clients.setting_tools_client import SettingToolClientError
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
+from app.llm.responses import LlmTextResponse
 from app.schemas.chat_execution import Finish
 from app.schemas.chat_qa import AnswerSelection, QuestionPlan
 from app.schemas.setting_tools import SettingToolQuery, SettingToolResponse
 from app.usage.metering import _estimate_text_token_upper_bound
+
+
+logger = logging.getLogger(__name__)
 
 
 def response_schema(model: type[BaseModel]) -> LlmResponseSchema:
@@ -27,6 +37,9 @@ def response_schema(model: type[BaseModel]) -> LlmResponseSchema:
             # Local Pydantic validation enforces these string constraints too.
             for key in ("title", "minLength", "maxLength"):
                 node.pop(key, None)
+            node.pop("default", None)
+            if node.get("type") == "object":
+                node["required"] = list(node.get("properties", {}))
             for value in node.values():
                 normalize(value)
         elif isinstance(node, list):
@@ -64,15 +77,62 @@ class ChatQaHandler:
             return Finish(failure="PROVIDER_FAILURE")
 
 
-class _Session:
+class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
+    schema = staticmethod(response_schema)
+
     def __init__(self, handler: ChatQaHandler, execution: Execution):
         self.handler, self.execution, self.cfg = handler, execution, handler.settings
         self.tools = execution.tools()
         self.tool_count = 0
-        self.codes = ["SETTING_BOOK_UNSUPPORTED"]
+        self.codes = []
         self.rows: list[AnswerRow] = []
+        self.selected_rows: list[AnswerRow] = []
+        # Internal lookup outcomes, never inferred from public warning strings.
+        self.lookup_gaps: set[str] = set()
+        self.focused_refs: set[str] = set()
+        self.snapshot_versions = {}
+        self.last_collection = None
+        self.collection_checks = []
+        self.incomplete_subjects = set()
+        self.include_sources = False
         self.source_from = execution.context.episode_from
         self.source_to = execution.context.episode_to
+        self.conversation = [t.model_dump() for t in execution.context.conversation]
+        if execution.context.conversation_truncated:
+            self.codes.append("CONVERSATION_LIMIT")
+
+    def conversation_payload(self):
+        return {"conversation": self.conversation} if self.conversation else {}
+
+    def observed_question_text(self):
+        # History supplies vocabulary for reference resolution, never evidence or authority.
+        return "\n".join(
+            [self.execution.context.question or ""]
+            + [text for turn in self.conversation for text in turn.values()]
+        ).casefold()
+
+    def plan_payload(self, prompt, schema):
+        ctx = self.execution.context
+        return self.trim_conversation_to_fit(
+            prompt,
+            lambda: {
+                "question": ctx.question,
+                "sourceRange": {"from": ctx.episode_from, "to": ctx.episode_to},
+                **self.conversation_payload(),
+                "conversationTruncated": "CONVERSATION_LIMIT" in self.codes,
+            },
+            schema,
+        )
+
+    def trim_conversation_to_fit(self, prompt, payload: Callable[[], dict], schema):
+        # Fresh rows and quotes take precedence over reference-resolution history.
+        while True:
+            current = payload()
+            if self.fits(prompt, current, schema) or not self.conversation:
+                return current
+            self.conversation.pop(0)
+            if "CONVERSATION_LIMIT" not in self.codes:
+                self.codes.append("CONVERSATION_LIMIT")
 
     def before_model_call(self, purpose):
         pass
@@ -88,38 +148,139 @@ class _Session:
             <= self.cfg.max_input_tokens
         )
 
-    async def model(self, cls, prompt, payload, purpose, version, validate: Callable | None = None):
+    async def model(
+        self,
+        cls,
+        prompt,
+        payload,
+        purpose,
+        version,
+        validate: Callable | None = None,
+        *,
+        max_attempts=None,
+    ):
         schema = response_schema(cls)
         if not self.fits(prompt, payload, schema):
             raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         client = ChatTextClient(
             self.handler.delegate, self.execution, purpose=purpose, default_model=self.cfg.model
         )
-        for attempt in range(self.cfg.max_attempts):
-            # Each schema retry is a separate metered provider invocation. No transport retry.
+        attempt_limit = (
+            self.cfg.max_attempts
+            if max_attempts is None
+            else min(self.cfg.max_attempts, max_attempts)
+        )
+        feedback = []
+        truncated_retry = False
+        validation_failed = False
+        for attempt in range(attempt_limit):
+            # Every recovery call uses the same attempt/call/ledger limits. No transport retry.
             retry_prompt = prompt + (
                 "\n이전 출력이 계약 검증에 실패했습니다. schema와 제공된 참조만 사용하세요."
-                if attempt
+                "\n안전한 검증 피드백: " + encode(feedback)
+                if feedback
                 else ""
             )
             if not self.fits(retry_prompt, payload, schema):
                 raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
             self.before_model_call(purpose)
-            response = await client.create_text_response(
-                retry_prompt,
-                encode(payload),
-                max_output_tokens=self.cfg.max_output_tokens,
-                prompt_cache_key=version,
-                response_schema=schema,
-            )
+            output_cap = self.cfg.output_tokens_for(purpose, truncated_retry=truncated_retry)
+            validation_failed = False
+            try:
+                response = await client.create_text_response(
+                    retry_prompt,
+                    encode(payload),
+                    max_output_tokens=output_cap,
+                    prompt_cache_key=version,
+                    response_schema=schema,
+                )
+            except ProviderOutputTruncated as exc:
+                # Execution has already queued FAILURE usage. Include that measured usage in
+                # aggregate metrics too; never reconstruct or publish a partial provider answer.
+                if exc.usage is not None and exc.usage.kind == "SETTLE":
+                    self.record_model_response(
+                        purpose,
+                        LlmTextResponse(
+                            "",
+                            exc.usage.input_tokens,
+                            exc.usage.cached_input_tokens,
+                            exc.usage.output_tokens,
+                        ),
+                    )
+                logger.warning(
+                    "chat_response_output_truncated purpose=%s schema=%s attempt=%d "
+                    "max_attempts=%d max_output_tokens=%d",
+                    purpose,
+                    cls.__name__,
+                    attempt + 1,
+                    attempt_limit,
+                    output_cap,
+                    extra={
+                        "purpose": purpose,
+                        "schema": cls.__name__,
+                        "attempt": attempt + 1,
+                        "max_attempts": attempt_limit,
+                        "validation_stage": "PROVIDER_OUTPUT",
+                        "error_category": "OUTPUT_TRUNCATED",
+                        "origin": "app.chatbot.providers.ChatTextClient",
+                    },
+                )
+                if truncated_retry:
+                    break
+                truncated_retry = True
+                feedback = [{"code": "OUTPUT_TRUNCATED", "rule": RULES["OUTPUT_TRUNCATED"]}]
+                continue
             self.record_model_response(purpose, response)
+            validation_stage = "RESPONSE_SCHEMA"
             try:
                 parsed = cls.model_validate_json(response.text)
                 if validate:
+                    validation_stage = "RESPONSE_CONTRACT"
                     validate(parsed)
                 return parsed
-            except (ValidationError, ValueError):
-                pass
+            except (ValidationError, ValueError) as exc:
+                validation_failed = True
+                feedback = retry_feedback(exc, schema.schema)
+                # Never log exception text, rejected values, response bodies or IDs.
+                category = (
+                    "SCHEMA_VALIDATION"
+                    if validation_stage == "RESPONSE_SCHEMA"
+                    else "CONTRACT_VALIDATION"
+                )
+                if isinstance(exc, ValidationError) and any(
+                    error["type"] == "json_invalid"
+                    for error in exc.errors(
+                        include_url=False, include_context=False, include_input=False
+                    )
+                ):
+                    category = "JSON_INVALID"
+                origin = "UNKNOWN"
+                trace = exc.__traceback__
+                while trace is not None:
+                    module = trace.tb_frame.f_globals.get("__name__", "")
+                    if module.startswith(("app.chatbot.", "app.schemas.")):
+                        origin = f"{module}.{trace.tb_frame.f_code.co_name}:{trace.tb_lineno}"
+                    trace = trace.tb_next
+                diagnostic = {
+                    "purpose": purpose,
+                    "schema": cls.__name__,
+                    "attempt": attempt + 1,
+                    "max_attempts": attempt_limit,
+                    "validation_stage": validation_stage,
+                    "error_category": category,
+                    "origin": origin,
+                    "validation_errors": [
+                        {"code": item["code"], "path": item.get("path", "$")} for item in feedback
+                    ],
+                }
+                logger.warning(
+                    "chat_response_validation_failed purpose=%s schema=%s attempt=%d "
+                    "max_attempts=%d stage=%s category=%s origin=%s errors=%s",
+                    *diagnostic.values(),
+                    extra=diagnostic,
+                )
+        if validation_failed:
+            raise ResponseValidationFailure()
         raise ProviderFailure()
 
     async def query(self, request: SettingToolQuery) -> SettingToolResponse:
@@ -127,41 +288,123 @@ class _Session:
             raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         self.tool_count += 1
         response = await self.tools.query(request)
-        self.codes.extend(response.limitations)
-        if response.partial:
+        if request.tool.value.endswith("_COLLECTION"):
+            meta = response.collection
+            if (
+                meta is None
+                or meta.record_count != response.items.total_elements
+                or (request.read_token is not None and meta.read_token != request.read_token)
+            ):
+                raise SettingToolClientError("CONTRACT_ERROR")
+        # A general capability restriction is not a warning about every character answer.
+        response_codes = [c for c in response.limitations if c != "SETTING_BOOK_UNSUPPORTED"]
+        self.codes.extend(
+            c
+            for c in response_codes
+            if self.include_sources
+            or c not in {"SOURCE_REFERENCE_LIMIT", "WORLD_SOURCE_SCAN_LIMIT"}
+        )
+        if response.partial and not response_codes:
             self.codes.append("PARTIAL_RESULTS")
         return response
 
-    async def pages(self, tool: str, *, target=None, query=None):
+    async def pages(
+        self,
+        tool: str,
+        *,
+        target=None,
+        query=None,
+        fact_type=None,
+        setting_key=None,
+        scope_name=None,
+        value_equals=None,
+        world_category=None,
+        source_range=False,
+        exhaustive=False,
+        reserve=0,
+    ):
         items = []
         complete = True
-        version = None
-        for page in range(self.cfg.max_pages):
+        collection = tool.endswith("_COLLECTION")
+        read_token = None
+        self.last_collection = None
+        page_limit = 10001 if exhaustive else self.cfg.max_pages
+        for page in range(page_limit):
+            if (
+                exhaustive
+                and self.tool_count
+                >= min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls) - reserve
+            ):
+                complete = False
+                break
             history = tool.endswith("_HISTORY")
+            fields = tool.endswith("_FIELDS")
             result = await self.query(
                 SettingToolQuery(
                     tool=tool,
                     target_id=target,
                     query=query,
+                    fact_type=fact_type,
+                    setting_key=setting_key,
+                    scope_name=scope_name,
+                    value_equals=value_equals,
+                    world_category=world_category,
+                    read_token=read_token,
                     page=page,
                     size=self.cfg.page_size,
-                    episode_from=self.source_from if history else None,
-                    episode_to=self.source_to if history else None,
+                    episode_from=self.source_from if history or source_range else None,
+                    episode_to=self.source_to if history or source_range else None,
                 )
             )
-            if result.partial and tool.startswith("FIND_"):
+            if collection:
+                self.last_collection = result.collection
+                read_token = result.collection.read_token
+                if page == 0:
+                    self.collection_checks.append(
+                        (
+                            SettingToolQuery(
+                                tool=tool,
+                                fact_type=fact_type,
+                                world_category=world_category,
+                                setting_key=setting_key,
+                                scope_name=scope_name,
+                            ),
+                            result.collection,
+                        )
+                    )
+                if result.partial:
+                    complete = False
+            if result.partial and (tool.startswith("FIND_") or fields):
                 complete = False
+            if result.items.has_next and not result.items.content:
+                raise SettingToolClientError("CONTRACT_ERROR")
             for item in result.items.content:
                 expected = (
-                    "HISTORY"
+                    "FIELD"
+                    if fields
+                    else "HISTORY"
                     if history
                     else "CURRENT"
-                    if tool.endswith("_CURRENT")
+                    if tool.endswith("_CURRENT") or collection
                     else "CHARACTER"
                     if tool == "FIND_CHARACTERS"
                     else "WORLD_SETTING"
                 )
                 if item.kind != expected or (target is not None and item.subject_id != target):
+                    raise SettingToolClientError("CONTRACT_ERROR")
+                if (
+                    fact_type is not None
+                    and not tool.startswith("FIND_")
+                    and item.category != fact_type
+                ):
+                    raise SettingToolClientError("CONTRACT_ERROR")
+                if (
+                    setting_key is not None
+                    and not tool.startswith("FIND_")
+                    and (item.setting_key != setting_key or item.scope_name != scope_name)
+                ):
+                    raise SettingToolClientError("CONTRACT_ERROR")
+                if fields and (not item.setting_key or not item.category):
                     raise SettingToolClientError("CONTRACT_ERROR")
                 if history and (
                     item.id is None
@@ -176,16 +419,21 @@ class _Session:
                 if expected == "CURRENT":
                     if item.history_only is True or item.contributes_to_current is not True:
                         raise SettingToolClientError("CONTRACT_ERROR")
+                    version = self.snapshot_versions.get(item.subject_id)
                     if version is not None and item.setting_version != version:
                         raise SettingToolClientError("CONCURRENT_UPDATE")
-                    version = item.setting_version
-                if len(items) < self.cfg.max_items:
+                    self.snapshot_versions[item.subject_id] = item.setting_version
+                    if item.value_truncated:
+                        complete = False
+                if exhaustive or len(items) < self.cfg.max_items:
                     items.append(item)
                 else:
                     complete = False
             if not result.items.has_next:
                 break
-            if page + 1 == self.cfg.max_pages or len(items) >= self.cfg.max_items:
+            if not exhaustive and (
+                page + 1 == self.cfg.max_pages or len(items) >= self.cfg.max_items
+            ):
                 complete = False
                 break
         if not complete:
@@ -193,6 +441,29 @@ class _Session:
         return items, complete
 
     def range_allowed(self, plan: QuestionPlan) -> bool:
+        # Conversation can resolve names, but cannot authorize an old episode filter.
+        # Accept bounds repeated from this request's trusted UI range, or numbers
+        # attached to an episode expression in the current question (3~5화, 3화부터).
+        question = self.execution.context.question or ""
+        episodes = {
+            int(value)
+            for match in re.finditer(
+                r"(?<![\d.])(?:제\s*)?(\d+)\s*(?:(?:[~～–—-]|부터|에서)\s*(?:제\s*)?(\d+)\s*)?(?:화|회차)"
+                r"|\bepisodes?\s+(\d+)(?:\s*(?:[~–—-]|to|through)\s*(\d+))?",
+                question,
+                re.IGNORECASE,
+            )
+            for value in match.groups()
+            if value is not None
+        }
+        if any(
+            bound is not None and bound != trusted and bound not in episodes
+            for bound, trusted in (
+                (plan.episode_from, self.source_from),
+                (plan.episode_to, self.source_to),
+            )
+        ):
+            return False
         if plan.episode_from is not None:
             if self.source_from is not None and plan.episode_from < self.source_from:
                 return False
@@ -205,9 +476,11 @@ class _Session:
             self.source_from is None or self.source_to is None or self.source_from <= self.source_to
         )
 
-    def payload(self, question: str, plan: QuestionPlan):
+    def payload(self, question: str, plan: QuestionPlan, *, rows=None):
         return {
             "question": question,
+            **self.conversation_payload(),
+            "conversationTruncated": "CONVERSATION_LIMIT" in self.codes,
             "plan": plan.model_dump(by_alias=True),
             "maxSelectedRows": self.cfg.max_selected_rows,
             "partial": any(c in self.codes for c in {"PARTIAL_RESULTS", "CONTEXT_LIMIT"}),
@@ -235,7 +508,7 @@ class _Session:
                         },
                     ),
                 }
-                for row in self.rows
+                for row in (self.rows if rows is None else rows)
             ],
         }
 
@@ -245,19 +518,19 @@ class _Session:
             return message(
                 "CLARIFICATION", "조회할 인물이나 세계관 항목과 질문을 알려주세요.", self.codes
             )
-        question = context.question
 
         def validate_plan(plan):
-            if any(s.name.strip().casefold() not in question.casefold() for s in plan.subjects):
+            self.validate_focus(plan)
+            if any(
+                s.name.strip().casefold() not in self.observed_question_text()
+                for s in plan.subjects
+            ):
                 raise ValueError("Only names explicitly present in the question may be searched")
 
         plan = await self.model(
             QuestionPlan,
             PLAN_PROMPT,
-            {
-                "question": question,
-                "sourceRange": {"from": context.episode_from, "to": context.episode_to},
-            },
+            self.plan_payload(PLAN_PROMPT, response_schema(QuestionPlan)),
             "CHAT_INTERPRETATION",
             PLAN_VERSION,
             validate_plan,
@@ -266,7 +539,14 @@ class _Session:
 
     async def answer_plan(self, plan: QuestionPlan) -> Finish:
         """Reuse bounded RDB behavior after a trusted, validated planner has run."""
-        question = self.execution.context.question
+        if plan.intent in {"GREETING", "THANKS", "HELP"}:
+            text = {
+                "GREETING": "안녕하세요! 작품에서 궁금한 내용을 물어보세요.",
+                "THANKS": "천만에요. 더 궁금한 내용이 있으면 말씀해 주세요.",
+                "HELP": "작품의 인물이나 세계관 설정에 대해 물어보세요. 확인할 대상과 궁금한 내용을 함께 알려주시면 도움이 돼요.",
+            }[plan.intent]
+            return message("ANSWER", text, [])
+        self.include_sources = plan.include_evidence or plan.intent == "DIRECT_EVIDENCE"
         if plan.intent in {"NEEDS_SEARCH", "PAST_STATE", "CLARIFICATION", "UNSUPPORTED"}:
             outcome, text, code = {
                 "NEEDS_SEARCH": (
@@ -281,8 +561,8 @@ class _Session:
                 ),
                 "CLARIFICATION": (
                     "CLARIFICATION",
-                    "인물·세계관의 이름과 조회할 항목을 구체적으로 알려주세요. 한 번에 최대 3개 대상을 조회합니다.",
-                    "UNSUPPORTED_REQUEST",
+                    "어떤 인물이나 설정을 뜻하는지 조금 더 구체적으로 알려주세요.",
+                    "NEEDS_CLARIFICATION",
                 ),
                 "UNSUPPORTED": (
                     "INSUFFICIENT_EVIDENCE",
@@ -299,52 +579,108 @@ class _Session:
             )
         if self.source_from is not None or self.source_to is not None:
             self.codes.append("SOURCE_RANGE")
+        if plan.intent == "CHARACTER_LIST":
+            return await self.character_list(plan)
+        if plan.collection is not None:
+            return await self.answer_collection(plan)
         targets = []
         for subject in plan.subjects:
-            find = "FIND_CHARACTERS" if subject.domain == "CHARACTER" else "FIND_WORLD_SETTINGS"
-            found, complete = await self.pages(find, query=subject.name.strip())
-            if not complete or len(found) > 1:
-                names = ", ".join(safe_text(i.subject_name) for i in found[:5])
-                return message(
-                    "CLARIFICATION",
-                    f"'{safe_text(subject.name)}'의 대상을 하나로 정할 수 없습니다. 이름이나 대상을 더 구체적으로 알려주세요. 조회된 후보: {names or '조회 범위 확인 필요'}",
-                    self.codes,
-                )
-            if not found:
-                return message(
-                    "INSUFFICIENT_EVIDENCE",
-                    f"등록 정보에서 '{safe_text(subject.name)}' 대상을 찾지 못했습니다. 작품에 존재하지 않는다는 뜻은 아닙니다.",
-                    self.codes + ["NO_RELATED_SETTING"],
-                )
-            if found[0].id is None or found[0].id != found[0].subject_id:
-                raise SettingToolClientError("CONTRACT_ERROR")
-            targets.append((subject.domain, found[0].subject_id))
-        for domain, target in targets:
+            item, stop = await self.resolve_subject(subject)
+            if stop:
+                return stop
+            targets.append((subject, item.subject_id))
+        synthesis = (
+            plan.answer_shape in {"SUMMARY", "COUNT", "LIST"} and plan.intent != "DIRECT_EVIDENCE"
+        )
+        current_checks = len(targets) if synthesis and plan.intent != "HISTORY" else 0
+        for subject, target in targets:
             modes = (
                 ["CURRENT", "HISTORY"]
                 if plan.intent == "CURRENT_AND_HISTORY"
                 else ["HISTORY" if plan.intent == "HISTORY" else "CURRENT"]
             )
-            for mode in modes:
-                items, _ = await self.pages(f"{domain}_{mode}", target=target)
-                if mode == "HISTORY":
-                    self.codes.append("HISTORY_IS_NOT_A_STATE_SNAPSHOT")
-                for item in items:
-                    if len(self.rows) >= self.cfg.max_items:
-                        self.codes.append("PARTIAL_RESULTS")
-                        break
-                    self.rows.append(AnswerRow(f"R{len(self.rows) + 1}", item, domain))
+            stop = await self.subject_rows(subject, target, modes, reserve=current_checks)
+            if stop:
+                return stop
+        chosen, stop = await self.select_rows(plan)
+        self.selected_rows = chosen
+        if stop:
+            return stop
+        if {row.item.subject_id for row in chosen} != {target for _, target in targets}:
+            self.codes.append("NO_RELATED_SETTING")
+        if plan.include_evidence or plan.intent == "DIRECT_EVIDENCE":
+            await self.evidence(chosen, reserve=current_checks)
+        if synthesis:
+            result = await self.registered_answer(plan, chosen)
+            if current_checks and not await self.current_subjects_unchanged(chosen):
+                self.codes.append("CURRENT_CHANGED")
+                return current_changed(self.codes)
+            return result
+        return render_answer(
+            chosen,
+            self.codes,
+            direct_only=plan.intent == "DIRECT_EVIDENCE",
+            maximum=self.cfg.max_answer_characters,
+        )
+
+    async def current_subjects_unchanged(self, rows):
+        """Recheck named current subjects after synthesis without sending IDs to the model."""
+        subjects = {
+            (row.domain, row.item.subject_id): row.item
+            for row in rows
+            if row.item.kind == "CURRENT"
+        }
+        for (domain, target), original in subjects.items():
+            try:
+                result = await self.query(
+                    SettingToolQuery(tool=f"{domain}_CURRENT", target_id=target, size=1)
+                )
+            except SettingToolClientError as exc:
+                if exc.status_code in {404, 409} or exc.code == "CONCURRENT_UPDATE":
+                    return False
+                raise
+            if not result.items.content:
+                return False
+            current = result.items.content[0]
+            if (
+                current.kind != "CURRENT"
+                or current.subject_id != target
+                or current.subject_name != original.subject_name
+                or current.setting_version is None
+                or current.setting_version != original.setting_version
+            ):
+                return False
+        return True
+
+    async def select_rows(self, plan, *, allow_missing=False):
+        question = self.execution.context.question
+        focused = [row for row in self.rows if row.ref in self.focused_refs]
+        candidates = [row for row in self.rows if row.ref not in self.focused_refs]
+        if focused and not candidates:
+            return list(self.rows), None
         schema = response_schema(AnswerSelection)
-        while self.rows and not self.fits(SELECT_PROMPT, self.payload(question, plan), schema):
-            self.rows.pop()
+
+        def payload():
+            return self.payload(question, plan, rows=candidates)
+
+        self.trim_conversation_to_fit(SELECT_PROMPT, payload, schema)
+        while candidates and not self.fits(SELECT_PROMPT, payload(), schema):
+            candidates.pop()
             self.codes.append("CONTEXT_LIMIT")
-        if not self.rows:
-            return message(
+        if not candidates:
+            if focused:
+                return focused, None
+            if allow_missing:
+                self.codes.append("NO_RELATED_SETTING")
+                return [], None
+            if not self.rows:
+                self.lookup_gaps.add("NO_ROWS")
+            return [], message(
                 "INSUFFICIENT_EVIDENCE",
                 "조회한 등록 정보에서 답변할 항목을 확인하지 못했습니다.",
                 self.codes + ["NO_RELATED_SETTING"],
             )
-        by_ref = {row.ref: row for row in self.rows}
+        by_ref = {row.ref: row for row in candidates}
 
         def validate_selection(selection):
             if len(selection.row_refs) > self.cfg.max_selected_rows or any(
@@ -355,7 +691,7 @@ class _Session:
         selection = await self.model(
             AnswerSelection,
             SELECT_PROMPT,
-            self.payload(question, plan),
+            payload(),
             "CHAT_ANSWER",
             SELECT_VERSION,
             validate_selection,
@@ -367,24 +703,24 @@ class _Session:
                 else "조회한 등록 정보만으로 질문에 답할 수 없습니다. 작품 전체에서 사실이 없다는 뜻은 아닙니다."
             )
             if selection.outcome == "INSUFFICIENT_EVIDENCE":
+                self.lookup_gaps.add("NO_RELEVANT_ROWS")
                 self.codes.append("NO_RELATED_SETTING")
-            return message(selection.outcome, text, self.codes)
+                if focused:
+                    return focused, None
+            if allow_missing and selection.outcome == "INSUFFICIENT_EVIDENCE":
+                return [], None
+            return [], message(selection.outcome, text, self.codes)
         # Preserve server order rather than allowing model reordering of historical events.
-        chosen = [row for row in self.rows if row.ref in selection.row_refs]
-        if len(chosen) == self.cfg.max_selected_rows and len(chosen) < len(self.rows):
+        chosen = [row for row in self.rows if row.ref in {*selection.row_refs, *self.focused_refs}]
+        if len(selection.row_refs) == self.cfg.max_selected_rows and len(selection.row_refs) < len(
+            candidates
+        ):
             self.codes.append("SELECTION_LIMIT")
-        if {row.item.subject_id for row in chosen} != {target for _, target in targets}:
-            self.codes.append("NO_RELATED_SETTING")
-        if plan.include_evidence or plan.intent == "DIRECT_EVIDENCE":
-            await self.evidence(chosen)
-        return render_answer(
-            chosen,
-            self.codes,
-            direct_only=plan.intent == "DIRECT_EVIDENCE",
-            maximum=self.cfg.max_answer_characters,
-        )
+        return chosen, None
 
-    async def evidence(self, rows: list[AnswerRow]):
+    async def evidence(self, rows: list[AnswerRow], *, reserve=0, revalidate=False):
+        for row in rows:
+            row.evidence_requested = True
         cache = {}
         for row in rows:
             if row.item.sources_truncated:
@@ -393,7 +729,12 @@ class _Session:
                 self.codes.append("NO_SOURCE")
             for ref in row.item.sources:
                 if ref not in cache:
-                    if len(cache) >= self.cfg.max_evidence_calls:
+                    final_checks = len(cache) + 1 if revalidate else 0
+                    if (
+                        len(cache) >= self.cfg.max_evidence_calls
+                        or self.tool_count + 1 + reserve + final_checks
+                        > min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls)
+                    ):
                         self.codes.append("EVIDENCE_LIMIT")
                         continue
                     result = await self.query(
