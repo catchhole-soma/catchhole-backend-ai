@@ -66,11 +66,16 @@ sequenceDiagram
 | POST `…/{id}/calls/{callId}` | `{kind,inputTokens?,cachedInputTokens?,outputTokens?,outcome?}` |
 | POST `…/{id}/finish` | `{result?,failure?}` 중 정확히 하나 |
 | POST `/api/internal/v1/chat-runs/operations/{id}` | 운영 전용 `{workId,actor,policy,tokenBudget}`, 같은 id는 같은 입력만 허용 |
+| GET `/api/internal/v1/chat-runs/operations/readiness` | 내부 key 인증 후 `{operationsEnabled,publicChatEnabled,capabilityConfigured}`. DB·provider 호출·실행 생성 없음 |
 | Python POST `/internal/v1/chat-executions` | Spring Dispatch만 수신. 202 또는 포화 429 |
 | Python GET `/healthz` | ready/draining, 비밀값·실행 정보 없음 |
 | Python GET `/metrics` | 내부 API key 필요 |
 
 오류: 입력 400, 인증 401, 실행 범위 403, 접근 가능한 대상 없음 404, 입력/상태 충돌 409, 계정 잔액 부족은 기존 AI_TOKEN_QUOTA_EXHAUSTED 409, 실행 한도 429, 기능 비활성 503, 본문 상한 413. 외부 provider 오류 원문을 전달하지 않는다. 실행 제한은 HTTP 429 + `CHAT_LIMIT_EXCEEDED` 코드로 `EXECUTION_LIMIT_EXCEEDED`를 보고한다. 계정 잔액 부족은 `AI_TOKEN_QUOTA_EXHAUSTED` 코드일 때만 `QUOTA_EXHAUSTED`로 보고하며 알 수 없는 429를 잔액 부족으로 추정하지 않는다. 실패 enum은 `PROVIDER_FAILURE`, `NETWORK_FAILURE`, `QUOTA_EXHAUSTED`, `EXECUTION_LIMIT_EXCEEDED`, `HANDLER_UNAVAILABLE`, `INTERRUPTED`다. 시간 초과·삭제는 실행 상태로 별도 구분한다.
+
+운영 백필의 새 접수는 `CHAT_OPERATIONS_ENABLED`로 제어하며 공개 채팅의 `CHAT_ENABLED`와 독립적이다. `CHAT_ENABLED=false`, `CHAT_OPERATIONS_ENABLED=true`이면 사용자 질문·대화 생성은 503으로 차단하지만 신뢰 운영자의 서비스 부담 백필은 가능하다. 운영 게이트를 꺼도 동일 운영 ID·동일 입력 재전송, 이미 접수된 실행의 start·보고·복구는 유지된다. 동일 ID의 입력 변경은 계속 409다. 사용자 계정 예약·차감은 없다.
+
+준비 상태 GET은 `X-Internal-Api-Key`만 요구하며 비활성 게이트도 200과 false로 반환한다. 401은 내부 키 인증 실패다. 반환값은 CommonResponse의 `data`에 있으며 백필 호출자는 `operationsEnabled=true`와 `capabilityConfigured=true`를, 공개 채팅 배포 확인은 `capabilityConfigured=true`와 해당 단계의 공개 게이트를 확인해야 한다. 200만으로 준비 완료를 판단하지 않는다. 이 경로는 DB·S3·provider 연결과 모델 품질을 검증하지 않는다.
 
 ## 상태와 재시도
 
@@ -133,8 +138,9 @@ Python outbox는 SQLite 파일과 전용 볼륨을 사용한다. provider 호출
 | 설정 | 기본값 | 목적 |
 |---|---:|---|
 | CHAT_ENABLED | false | 새 사용자 접수와 전송 활성화 |
-| CHAT_PYTHON_URL | 없음 | 별도 FastAPI 사설 주소 |
-| CHAT_CAPABILITY_SECRET | 없음 | 내부 API key와 다른 32자 이상 secret |
+| CHAT_OPERATIONS_ENABLED | false | 새 운영 백필 접수 활성화. 공개 채팅과 독립 |
+| CHAT_PYTHON_URL | 없음 | 별도 FastAPI 사설 주소. CHAT_ENABLED=true일 때만 필수 |
+| CHAT_CAPABILITY_SECRET | 없음 | 내부 API key와 다른 32자 이상·공백이 아닌 secret. 어느 게이트든 true이면 기동 시 필수 검증 |
 | CHAT_MAX_BODY_BYTES (Spring) | 131072 | 본문 상한, 512–131072바이트 |
 | CHAT_DISPATCH_THREADS / CHAT_DISPATCH_QUEUE_CAPACITY | 2 / 32 | 즉시 HTTP 전송 동시성·대기열 |
 | CHAT_MAX_QUESTION_CHARACTERS | 4000 | 질문 상한 (최대 4000) |
@@ -155,11 +161,13 @@ Spring HTTP 전송 기본값은 2 thread + 32 queue이며 DB에 접수된 실행
 ## 배포·롤백
 
 1. Spring V75 migration과 API부터 배포한다. CHAT_ENABLED는 false로 유지한다.
-2. AI #236 선행 PR을 먼저 병합하고 이 HTTP runtime 이미지/독립 Compose를 준비한다.
-3. #238 실제 handler와 제공된 provider adapter를 연결하고 평가한 뒤 운영 활성화한다. 지금 이미지는 기본 handler가 비활성 실패를 반환하므로 사용자에게 열지 않는다.
-4. `deploy/compose.chatbot.prod.yml`을 명시적으로 실행한다. 기존 Worker Compose에 자동 합치지 않는다. 사설 IP:8082를 Spring 보안그룹에서만 허용하고, metrics도 내부 key로 수집한다. 기본 localhost bind를 인터넷 공개 주소로 바꾸지 않는다.
+   초기 백필에는 별도 실행 secret을 설정하고 `CHAT_OPERATIONS_ENABLED=true`만 켠다. 인증된 readiness GET의 `operationsEnabled`·`capabilityConfigured`를 확인한 뒤 기존 운영 백필 절차를 따른다. 공개 채팅을 켜기 위한 Python URL은 이 단계에 필요하지 않다.
+2. Java #258 준비 상태 API 배포 후 AI #258 자동 배포를 연결한다. 같은 publish SHA의 Worker·챗봇 Compose와 백필 실행기를 사용하며 상세 절차는 AI 저장소의 `docs/chat-runtime-operations.md`를 따른다.
+3. QA handler와 provider 설정을 활성화하고 유료 호출 없는 preflight를 통과시킨다. `/healthz`의 200만으로 handler·DB·인증 준비가 끝났다고 판단하지 않는다. 실제 모델 품질 확인 후 공개 게이트를 켠다.
+4. 챗봇은 기존 Worker와 별도 Compose/프로세스를 유지하며 자동 배포가 함께 갱신한다. 사설 IP:8082를 Spring 보안그룹에서만 허용하고 metrics도 내부 key로 수집한다.
 5. 같은 EC2에 배치할 수 있으나 CPU 0.5/메모리 512MiB/동시성 4는 출발값이다. 기존 5+2 Worker의 처리량·메모리와 함께 부하를 확인한 뒤 조정한다. 새 EC2 생성·운영 SG 변경·실배포는 수행하지 않았다.
 6. 롤백은 먼저 CHAT_ENABLED=false로 새 접수를 막고 진행 중 실행/보고를 drain한다. 복구 스케줄은 feature flag와 독립이므로 예약 정리가 계속된다. capability secret과 outbox 볼륨은 유지한다. 미정산 실행이 있는 동안 V75 이전 Spring 이미지로 되돌리면 복구가 멈추므로 현재 Spring을 유지하고 Python 이미지만 되돌린다. DB를 down migration하거나 outbox 볼륨을 삭제하지 않는다.
+   운영 백필의 새 접수도 중단하려면 `CHAT_OPERATIONS_ENABLED=false`를 함께 설정한다. 기존 운영 ID 재전송과 보고·복구는 계속되므로 비밀값을 비우거나 회전하지 않는다.
 
 지표: Python chat_execution_seconds/chat_active/chat_executions_total/chat_pending_reports, Spring chat.dispatch/chat.recovery/chat.execution.count/chat.usage.count. Spring DB 집계는 15초 캐시이며 chat.snapshot.last.success.seconds가 오래되면 집계값을 최신 상태로 해석하지 않는다. HTTP 상태/지연은 기존 Actuator를 사용한다. label은 고정 결과 분류만 사용하며 회원·작품·실행 ID, 질문·원문·답변·secret을 넣지 않는다.
 
