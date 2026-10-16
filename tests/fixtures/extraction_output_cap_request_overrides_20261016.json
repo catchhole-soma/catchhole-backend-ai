@@ -1,0 +1,13 @@
+{
+  "reason": "PR83 authorizes character extraction output default 6000 -> 32000 and world extraction 5000 -> 32000. Historical captures and all other request fields remain unchanged.",
+  "overrides": {
+    "extraction": {
+      "max_output_tokens": 32000,
+      "sha256": "fee4bdd416c2efee864b5e7d7d1111908ac06daf1aa5aaea4030657313500c82"
+    },
+    "world_extraction": {
+      "max_output_tokens": 32000,
+      "sha256": "6329a19e4a0dd06fce8e0447716974614b88f6e9facb5767cb2a95a357c5776e"
+    }
+  }
+}
