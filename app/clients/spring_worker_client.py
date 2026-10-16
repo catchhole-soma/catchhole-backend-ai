@@ -263,7 +263,7 @@ class SpringWorkerClient:
                 f"/api/internal/v1/analysis-jobs/{analysis_job_id}"
                 "/character-fact-comparison-batches/claim-next"
             ),
-            headers=self._headers(lease_token),
+            headers={**self._headers(lease_token), "X-Character-Comparison-Person-Batches": "true"},
         )
         if response.status_code == 204:
             return None

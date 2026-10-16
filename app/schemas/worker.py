@@ -881,6 +881,18 @@ class WorkerCharacterFactComparisonBatchCandidate(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    canonical_fact_type: str | None = Field(default=None, alias="canonicalFactType", min_length=1, max_length=30)
+
+    def fact_type_for_batch(self, batch_fact_type: str | None) -> str:
+        """New person batches carry each type; persisted legacy batches carry one type."""
+        if self.canonical_fact_type is None:
+            if batch_fact_type is None:
+                raise ValueError("Each person batch candidate requires its Fact type.")
+            return batch_fact_type
+        if batch_fact_type is not None and batch_fact_type != self.canonical_fact_type:
+            raise ValueError("Candidate Fact type does not match the legacy batch Fact type.")
+        return self.canonical_fact_type
+
     candidate_ref: str = Field(
         alias="candidateRef",
         pattern=r"^C[1-9][0-9]*$",
@@ -931,7 +943,7 @@ class WorkerCharacterFactComparisonBatchPayload(BaseModel):
     source: WorkerAnalysisSource | None = None
     character_ref: str = Field(alias="characterRef", pattern=r"^K[1-9][0-9]*$")
     matched_character_name: str = Field(alias="matchedCharacterName", min_length=1, max_length=100)
-    canonical_fact_type: str = Field(alias="canonicalFactType", min_length=1, max_length=30)
+    canonical_fact_type: str | None = Field(default=None, alias="canonicalFactType", min_length=1, max_length=30)
     analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
     provisional_subject_key: str | None = Field(default=None, alias="provisionalSubjectKey")
     candidates: list[WorkerCharacterFactComparisonBatchCandidate] = Field(
@@ -955,7 +967,7 @@ class WorkerCharacterFactComparisonBatchPayload(BaseModel):
             raise ValueError("Book candidates require explicit batch source metadata.")
         for index, candidate in enumerate(self.candidates):
             _validate_status_active_value(
-                self.canonical_fact_type,
+                candidate.fact_type_for_batch(self.canonical_fact_type),
                 candidate.value_json,
                 f"candidates[{index}].valueJson",
             )
@@ -1008,7 +1020,7 @@ class WorkerCharacterFactComparisonBatchContextResponse(BaseModel):
     comparison_batch_id: UUID = Field(alias="comparisonBatchId")
     character_ref: str = Field(alias="characterRef", pattern=r"^K[1-9][0-9]*$")
     matched_character_name: str = Field(alias="matchedCharacterName", min_length=1, max_length=100)
-    canonical_fact_type: str = Field(alias="canonicalFactType", min_length=1, max_length=30)
+    canonical_fact_type: str | None = Field(default=None, alias="canonicalFactType", min_length=1, max_length=30)
     analysis_context: WorkerAnalysisContext | None = Field(default=None, alias="analysisContext")
     provisional_subject_key: str | None = Field(default=None, alias="provisionalSubjectKey")
     base_snapshot_version: int = Field(alias="baseSnapshotVersion", ge=0)
@@ -1025,14 +1037,14 @@ class WorkerCharacterFactComparisonBatchContextResponse(BaseModel):
 
     @model_validator(mode="after")
     def validate_status_values(self) -> "WorkerCharacterFactComparisonBatchContextResponse":
-        if self.analysis_context is None and len(self.snapshot_entries) > 30:
+        if self.analysis_context is None and self.canonical_fact_type is not None and len(self.snapshot_entries) > 30:
             raise ValueError("Confirmed-only character snapshots retain the legacy limit of 30.")
         if self.analysis_context is None and any(entry.origin == "PROVISIONAL"
                                                 for entry in self.snapshot_entries):
             raise ValueError("Provisional snapshots require an ordered input context.")
         for index, candidate in enumerate(self.candidates):
             _validate_status_active_value(
-                self.canonical_fact_type,
+                candidate.fact_type_for_batch(self.canonical_fact_type),
                 candidate.value_json,
                 f"candidates[{index}].valueJson",
             )
