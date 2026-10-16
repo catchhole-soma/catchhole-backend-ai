@@ -127,7 +127,8 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      - name: Deploy Worker server with AWS Systems Manager
+      - name: Deploy Worker and Chat runtimes with AWS Systems Manager
+        timeout-minutes: 35
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -139,6 +140,11 @@ jobs:
 
           if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::Publish workflow returned an invalid commit SHA."
+            exit 1
+          fi
+
+          if [[ ! "$WORKER_EC2_DEPLOY_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]] || [[ ! "$WORKER_EC2_DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            echo "::error::Unsupported deploy directory or user."
             exit 1
           fi
 
@@ -155,37 +161,37 @@ jobs:
           RAW_BASE='$RAW_BASE'
           AI_IMAGE='$AI_IMAGE'
 
-          mkdir -p "\$DEPLOY_PATH"
-          curl -fsSL "\$RAW_BASE/compose.worker.prod.yml" -o "\$DEPLOY_PATH/compose.worker.prod.yml"
-          test -f "\$DEPLOY_PATH/worker.env"
-          grep -q '^AI_IMAGE=' "\$DEPLOY_PATH/worker.env"
-          sed -i "s|^AI_IMAGE=.*|AI_IMAGE=\$AI_IMAGE|" "\$DEPLOY_PATH/worker.env"
-          chown "\$DEPLOY_USER:\$DEPLOY_USER" "\$DEPLOY_PATH/compose.worker.prod.yml" "\$DEPLOY_PATH/worker.env"
-
-          runuser -u "\$DEPLOY_USER" -- bash -lc "cd \"\$DEPLOY_PATH\" && docker compose --env-file worker.env -f compose.worker.prod.yml config --quiet"
-          runuser -u "\$DEPLOY_USER" -- bash -lc "cd \"\$DEPLOY_PATH\" && docker compose --env-file worker.env -f compose.worker.prod.yml pull"
-          runuser -u "\$DEPLOY_USER" -- bash -lc "cd \"\$DEPLOY_PATH\" && docker compose --env-file worker.env -f compose.worker.prod.yml up -d"
-          runuser -u "\$DEPLOY_USER" -- bash -lc "cd \"\$DEPLOY_PATH\" && docker compose --env-file worker.env -f compose.worker.prod.yml ps"
-
-          for i in \$(seq 1 30); do
-            ANALYSIS_COUNT=\$(runuser -u "\$DEPLOY_USER" -- bash -lc "cd \"\$DEPLOY_PATH\" && docker compose --env-file worker.env -f compose.worker.prod.yml ps --status running -q ai-worker | wc -l | tr -d ' '")
-            CHARACTER_COUNT=\$(runuser -u "\$DEPLOY_USER" -- bash -lc "cd \"\$DEPLOY_PATH\" && docker compose --env-file worker.env -f compose.worker.prod.yml ps --status running -q ai-character-comparison-worker | wc -l | tr -d ' '")
-            WORLD_COUNT=\$(runuser -u "\$DEPLOY_USER" -- bash -lc "cd \"\$DEPLOY_PATH\" && docker compose --env-file worker.env -f compose.worker.prod.yml ps --status running -q ai-world-comparison-worker | wc -l | tr -d ' '")
-
-            if [ "\$ANALYSIS_COUNT" -eq 5 ] && [ "\$CHARACTER_COUNT" -eq 1 ] && [ "\$WORLD_COUNT" -eq 1 ]; then
-              exit 0
-            fi
-
-            echo "Worker process check failed. Retrying in 5 seconds... (\$i/30)"
-            sleep 5
+          DEPLOY_SHA='$DEPLOY_SHA'
+          RELEASE="\$DEPLOY_PATH/releases/\$DEPLOY_SHA"
+          mkdir -p "\$RELEASE"
+          for file in compose.worker.prod.yml compose.chatbot.prod.yml compose.retrieval.prod.yml manage-ai-runtime.py install-chat-scheduler.sh chatbot.env.example retrieval.env.example; do
+            curl -fsSL "\$RAW_BASE/\$file" -o "\$RELEASE/\$file.tmp"
+            mv "\$RELEASE/\$file.tmp" "\$RELEASE/\$file"
           done
-
-          echo "Worker process check failed after retries. Printing container logs."
-          runuser -u "\$DEPLOY_USER" -- bash -lc "cd \"\$DEPLOY_PATH\" && docker compose --env-file worker.env -f compose.worker.prod.yml logs --tail=200"
-          exit 1
+          chown -R "\$DEPLOY_USER:\$DEPLOY_USER" "\$RELEASE"
+          # Create private templates once; operators fill explicit rollout settings.
+          for kind in chatbot retrieval; do
+            if [ ! -f "\$DEPLOY_PATH/\$kind.env" ]; then
+              cp "\$RELEASE/\$kind.env.example" "\$DEPLOY_PATH/\$kind.env"
+              chmod 600 "\$DEPLOY_PATH/\$kind.env"
+              chown "\$DEPLOY_USER:\$DEPLOY_USER" "\$DEPLOY_PATH/\$kind.env"
+            fi
+          done
+          # All configuration/network checks precede any running-service mutation.
+          runuser -u "\$DEPLOY_USER" -- python3 "\$RELEASE/manage-ai-runtime.py" deploy --directory "\$DEPLOY_PATH" --release "\$RELEASE" --image "\$AI_IMAGE"
+          # Switch future timer invocations only; an already running backfill keeps its image.
+          ln -sfn "\$RELEASE" "\$DEPLOY_PATH/.current-chat-release.new"
+          mv -Tf "\$DEPLOY_PATH/.current-chat-release.new" "\$DEPLOY_PATH/current-chat-release"
+          sed -i "s|^AI_IMAGE=.*|AI_IMAGE=\$AI_IMAGE|" "\$DEPLOY_PATH/worker.env"
+          for kind in worker chatbot retrieval; do
+            cp "\$RELEASE/compose.\$kind.prod.yml" "\$DEPLOY_PATH/compose.\$kind.prod.yml"
+            chown "\$DEPLOY_USER:\$DEPLOY_USER" "\$DEPLOY_PATH/compose.\$kind.prod.yml"
+          done
+          bash "\$RELEASE/install-chat-scheduler.sh" "\$DEPLOY_PATH" "\$DEPLOY_USER"
+          echo 'AI runtime deployed. Backfill progress is tracked separately by catchhole-retrieval-backfill.service.'
           EOF
 
-          jq -n --rawfile script /tmp/catchhole-worker-deploy.sh '{commands: [$script]}' > /tmp/ssm-worker-parameters.json
+          jq -n --rawfile script /tmp/catchhole-worker-deploy.sh '{commands: [$script], executionTimeout: ["1800"]}' > /tmp/ssm-worker-parameters.json
 
           CURRENT_MAIN_SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')
           if [ "$DEPLOY_SHA" != "$CURRENT_MAIN_SHA" ]; then
@@ -204,7 +210,7 @@ jobs:
           echo "AWS Systems Manager command id: $COMMAND_ID"
 
           WAIT_STATUS=1
-          for i in $(seq 1 180); do
+          for i in $(seq 1 360); do
             INVOCATION_STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
               --instance-id "$WORKER_EC2_INSTANCE_ID" \

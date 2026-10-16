@@ -1,4 +1,4 @@
-# Separate from analysis/comparison replicas; deploy explicitly after #238 readiness.
+# Separate process, deployed with the same publish SHA after runtime preflight.
 name: catchhole-chatbot
 services:
   chatbot:

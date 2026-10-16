@@ -2,7 +2,9 @@ name: catchhole-retrieval
 services:
   retrieval-index:
     image: ${AI_IMAGE:?AI_IMAGE is required}
-    command: ["python", "-m", "app.retrieval.cli", "--help"]
+    command: ["python", "-m", "app.retrieval.backfill", "run"]
+    init: true
+    stop_grace_period: 30s
     restart: "no"
     logging:
       driver: journald
@@ -18,6 +20,21 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
       EMBEDDING_VERSION: ${EMBEDDING_VERSION:-v1}
+      RETRIEVAL_BACKFILL_ENABLED: ${RETRIEVAL_BACKFILL_ENABLED:-false}
+      RETRIEVAL_BACKFILL_ID: ${RETRIEVAL_BACKFILL_ID:-}
+      RETRIEVAL_BACKFILL_MAX_INPUT_TOKENS: ${RETRIEVAL_BACKFILL_MAX_INPUT_TOKENS:-}
+      RETRIEVAL_BACKFILL_SCOPE: ${RETRIEVAL_BACKFILL_SCOPE:-}
+      RETRIEVAL_BACKFILL_WORK_IDS: ${RETRIEVAL_BACKFILL_WORK_IDS:-}
+      RETRIEVAL_BACKFILL_ACTOR: ${RETRIEVAL_BACKFILL_ACTOR:-}
+      RETRIEVAL_BACKFILL_STATE_PATH: /var/lib/catchhole-chat/backfill.sqlite3
+      RETRIEVAL_BACKFILL_OUTBOX_PATH: /var/lib/catchhole-chat/retrieval.sqlite
+      RETRIEVAL_BACKFILL_MAX_SECONDS: ${RETRIEVAL_BACKFILL_MAX_SECONDS:-300}
+      RETRIEVAL_BACKFILL_PAGE_SIZE: ${RETRIEVAL_BACKFILL_PAGE_SIZE:-100}
+      RETRIEVAL_BACKFILL_MAX_CHUNKS: ${RETRIEVAL_BACKFILL_MAX_CHUNKS:-1000}
+      RETRIEVAL_BACKFILL_BATCH_SIZE: ${RETRIEVAL_BACKFILL_BATCH_SIZE:-8}
+      RETRIEVAL_BACKFILL_MAX_RETRIES: ${RETRIEVAL_BACKFILL_MAX_RETRIES:-1}
+      AI_RUNTIME_API_DB_POOL_SIZE: ${AI_RUNTIME_API_DB_POOL_SIZE:-10}
+      AI_RUNTIME_DB_CONNECTION_BUDGET: ${AI_RUNTIME_DB_CONNECTION_BUDGET:-0}
     volumes:
       - retrieval_outbox:/var/lib/catchhole-chat
     deploy:

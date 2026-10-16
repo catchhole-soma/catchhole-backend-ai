@@ -225,3 +225,9 @@ __marimo__/
 deploy/retrieval.env
 *.sqlite
 *.sqlite.lock
+
+# Private chat deployment environment and backfill campaign state
+deploy/chatbot.env
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3.lock
