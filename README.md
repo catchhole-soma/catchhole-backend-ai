@@ -185,11 +185,13 @@ sudo journalctl CONTAINER_NAME=catchhole-worker-ai-worker-1 -n 1 -o json-pretty
 - `LLM_MODEL`: 단계별 모델 변수가 없을 때 사용하는 하위 호환 모델명. 기본값은 `gpt-5.6-terra`입니다.
 - `LLM_REASONING_EFFORT`: 추론 지원 모델의 추론 강도. 환경변수를 생략하면 앱·Worker Compose 모두 `medium`을 사용하며 명시한 값이 우선합니다. GPT-6 계열도 요청에 이 값을 전달합니다. 운영·다단계 평가에서는 `medium`을 명시합니다.
 - `OPENAI_RESPONSES_API_URL`: OpenAI Responses API endpoint
-- `LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 캐릭터 설정 추출의 최초 6,000·절단 재시도 12,000 token 상한
-- `LLM_WORLD_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_WORLD_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 세계관 추출의 최초 5,000·절단 재시도 10,000 token 상한
-- `LLM_SUBJECT_RESOLUTION_MAX_OUTPUT_TOKENS`, `LLM_COMPARISON_MAX_OUTPUT_TOKENS`: 주체 해소 2,000·비교 3,000 token 상한
-- `LLM_CHARACTER_FACT_BATCH_COMPARISON_MAX_OUTPUT_TOKENS`, `LLM_CHARACTER_FACT_BATCH_COMPARISON_MAX_INPUT_TOKENS`: 캐릭터 Fact 묶음 비교의 출력 16,000·입력 64,000 token 상한
-- `CHARACTER_FACT_COMPARISON_BATCH_MAX_CANDIDATES`: 한 캐릭터·FactType 묶음의 최대 후보 수. Spring claim 기본값과 같은 10이며 wire schema 방어 상한은 20입니다.
+- `LLM_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 캐릭터 설정 추출의 최초 32,000·절단 재시도 64,000 token 상한
+- `LLM_WORLD_SETTING_EXTRACTION_MAX_OUTPUT_TOKENS`, `LLM_WORLD_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`: 세계관 추출의 최초 32,000·절단 재시도 64,000 token 상한
+- `LLM_SUBJECT_RESOLUTION_MAX_OUTPUT_TOKENS`, `LLM_COMPARISON_MAX_OUTPUT_TOKENS`: 캐릭터 식별과 구 단건 주체 해소 2,000·구 단건 설정 비교 3,000 token 상한
+- `LLM_CHARACTER_FACT_BATCH_COMPARISON_MAX_OUTPUT_TOKENS`, `LLM_CHARACTER_FACT_BATCH_COMPARISON_MAX_INPUT_TOKENS`: 인물별 모든 Fact 유형 묶음 비교의 출력 128,000·입력 256,000 token 상한
+- 후보 수로 나누지 않습니다. 한 인물의 전체 후보를 먼저 비교하고 입력 한도 초과·출력 절단 때만 원문 순서를 유지해 분할합니다.
+- `LLM_WORLD_SETTING_BATCH_SUBJECT_RESOLUTION_MAX_OUTPUT_TOKENS`, `LLM_WORLD_SETTING_BATCH_SUBJECT_RESOLUTION_MAX_INPUT_TOKENS`: 원고 전체 세계관 대상 연결의 출력 32,000·입력 64,000 token 상한. 캐릭터 식별 한도와 분리합니다.
+- `LLM_WORLD_SETTING_BATCH_COMPARISON_MAX_OUTPUT_TOKENS`: 연결된 세계관 대상의 속성 비교 출력 16,000 token 상한.
 - `LLM_PROVIDER_MAX_OUTPUT_TOKENS`: 목적별 상한을 검증할 provider 전체 출력 상한. 기본값은 128,000입니다.
 - `LLM_HTTP_MAX_RETRIES`: 429/5xx/timeout 같은 일시 provider 오류의 재시도 횟수. 최초 요청은 제외하며 운영 기본값은 3입니다.
 - `LLM_HTTP_RETRY_BASE_SECONDS`: provider 재시도의 지수 backoff 기준값. 운영 기본값 2초에서 2초, 4초, 8초와 jitter를 적용하고 `Retry-After`가 있으면 우선합니다.
