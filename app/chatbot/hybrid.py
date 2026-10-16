@@ -378,6 +378,7 @@ class _HybridSession(_Session):
         # cannot distinguish missing information from a failed or truncated read.
         blocked = {
             "PARTIAL_RESULTS",
+            "CONVERSATION_LIMIT",
             "CONTEXT_LIMIT",
             "VALUE_LIMIT",
             "SELECTION_LIMIT",

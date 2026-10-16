@@ -185,6 +185,8 @@ def render_answer(
             block += " (현재 설정)"
         if item.origin == "USER_INPUT":
             block += " · 직접 입력"
+        elif item.origin == "UNKNOWN":
+            block += " · 출처 미상"
         if item.value_truncated:
             block += " · 값 일부만 확인됨"
         row_refs = list(dict.fromkeys(ref for ref, _ in row.evidence))
@@ -217,6 +219,8 @@ def render_answer(
             sentence = f"{safe_text(item.subject_name)}의 현재 {label}{particle} {value}입니다."
             if item.origin == "USER_INPUT":
                 sentence += " (직접 입력한 설정)"
+            elif item.origin == "UNKNOWN":
+                sentence += " 이 설정의 출처는 확인되지 않았어요."
             if refs:
                 sentence += " 근거 " + ", ".join(str(n) for n in range(1, len(refs) + 1))
             elif rows[0].evidence_requested:

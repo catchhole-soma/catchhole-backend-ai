@@ -298,6 +298,12 @@ class RegisteredSynthesis:
                 break
             parts.append(part)
             sources = next_sources
+        if not parts:
+            return message(
+                "INSUFFICIENT_EVIDENCE",
+                "답변 한도 안에서 등록 정보를 표시할 수 없습니다.",
+                self.codes,
+            )
         if any(code in self.codes for code in ("PARTIAL_RESULTS", "CONTEXT_LIMIT", "VALUE_LIMIT")):
             parts.insert(0, "이번에 확인한 설정 범위에서 설명할게요.")
         result = message("ANSWER", "\n".join(parts), self.codes)
