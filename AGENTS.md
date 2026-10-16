@@ -224,6 +224,7 @@
 
 - `app/retrieval`과 `docs/retrieval-index-v1.md`는 현재 회차 검색용 준비/계량 계약이다. 공통 문서를 Java와 동기화한다. 기존 분석용 `episode_chunks`/source_chunk_id를 검색 크기로 바꾸지 않는다.
 - V76 `retrieval_sources`/`retrieval_chunks`는 현재 원문 key/version/hash와 `cl100k-800-100-boundary-v1`(최대 800토큰, 약 100토큰 겹침)을 보존한다. 원문 slice와 Unicode code point offset을 저장하며 tokenizer token bytes를 decode해 재조립하지 않는다.
+- 기존 저장 원고의 검색 읽기는 Java 인용 검증과 같은 UTF-8 2,000,000 byte 상한을 적용하고 신규 업로드·수정 글자 수 정책과 분리한다. byte 상한 초과는 `SOURCE_UNREADABLE`, 실제 hash/출처 변경은 `SOURCE_CHANGED`로 구분하며 원문을 잘라 상한을 우회하지 않는다.
 - 새 분석의 `RETRIEVAL_PREPARATION_ENABLED=false`는 검색 청크 준비만 제어한다. 별도 one-shot CLI가 기존 `EMBEDDING_GENERATION_ENABLED=false`로 벡터 생성 여부를 결정한다. 검색 준비는 기존 분석의 사용자 과금 경로를 호출하지 않고 OPERATIONAL_BACKFILL/RETRIEVAL_INDEX_SERVICE_PAID_V1로 기록한다.
 - CLI는 명시한 작품/회차/입력·청크·시도·시간 상한을 유지하며 .env를 읽지 않는다. S3/DB/원장/임베딩 실사용은 dry-run과 구분한다. SQLite outbox를 먼저 복구하고 성공 벡터는 공유 PostgreSQL에서 판정한다. API 응답 후 DB 반영 전 종료의 중복 호출 가능성을 숨기지 않는다.
 - 검색 소비자는 `retrieval_current_chunks`에 서버 범위와 policy/model/version 필터를 함께 적용한다. 모델·차원·tokenizer 변경은 기존 공간과 혼합하지 않고 명시적 재생성/전환 계획이 필요하다. 설정집/과거 버전은 지원 전 READY로 표시하지 않는다.

@@ -85,8 +85,13 @@ DB를 쓰거나 embedding client/사용량 예약을 생성하지 않는다. S3 
 | provider 동시성 | 1, 같은 작품의 겹친 운영 실행은 PostgreSQL advisory lock으로 거절 |
 | 추가 재시도 | 1 / 2, 일시 provider 오류만; 인증/계약/DB/원장 오류는 중단 |
 | 시간 | 900 / 3,600초, 새 작업/호출 허용 한도와 진행 중 provider timeout; 동기 저장소/DB 취소의 hard deadline은 아님 |
-| 원문 읽기 | 회차당 2MB 및 250,000 code point |
+| 원문 읽기 | 회차당 UTF-8 2,000,000 bytes, 경계값 포함 |
 | 금액 | `--usd-per-million`과 `--max-cost-usd`를 함께 지정하면 입력량 기반 추정액으로 호출 전 제한 |
+
+기존 저장 원고는 신규 업로드 정책보다 클 수 있으므로 검색 읽기 상한을 업로드 글자 수 제한과 분리한다.
+Python 색인과 Java 검색 인용 검증은 동일한 UTF-8 byte 상한을 적용한다. 신규 업로드·직접 수정 정책은 바꾸지 않는다.
+byte 상한 초과는 색인에서 `SOURCE_UNREADABLE`이며, 실제 hash/출처 변경의 `SOURCE_CHANGED`와 구분한다.
+원문을 자르거나 정규화하지 않으며, 800/100토큰 청크와 Unicode code point offset, 원문 hash를 유지한다.
 
 provider 호출 전에 source와 chunk를 다시 검증하고, 원장 예약 뒤 호출 직전에도 검증한다.
 호출이 시작되지 않았다면 RELEASE다. 성공 응답을 저장할 때 같은 작품 row 잠금을 잡고 다시 비교한다.

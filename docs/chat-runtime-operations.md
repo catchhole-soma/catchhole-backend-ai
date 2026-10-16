@@ -136,6 +136,18 @@ python3 current-chat-release/manage-ai-runtime.py resume
 sudo systemctl start --no-block catchhole-retrieval-backfill.service
 ```
 
+### 기존 대용량 원고로 중단된 최초 백필
+
+이전 색인기는 UTF-8 2,000,000 byte 안에 있는 원고도 250,000 code point를 넘으면
+`SOURCE_CHANGED`로 보고했다. 반복되면 캠페인이 `BLOCKED`가 되므로 이 코드만으로 실제 원문 수정이라고 단정하지 않는다.
+원문 본문·key·hash를 로그에 남기지 않고 현재 출처 일치 여부, UTF-8 byte 수와 hash 일치 여부로 원인을 확인한다.
+
+검색 읽기 상한을 2,000,000 bytes로 맞춘 Java 인용 검증을 먼저 배포하고, 같은 상한의 AI 이미지를 배포한다.
+새 AI 이미지가 실제 적용된 뒤 미전송 보고 0·불확실 호출 없음과 기존 예산을 확인해 위 `resume`으로 같은 캠페인을 재개한다.
+코드 배포 자체는 `BLOCKED`를 해제하지 않는다. 첫 공개 단계가 먼저 실패했으면 백필 준비 완료 뒤 최신 AI 배포를 재실행한다.
+이미 완료된 청크·진행 위치·누적 예산은 보존하며, 막힌 회차를 건너뛰거나 원문을 자르지 않는다.
+새 상한도 초과한 원문은 `SOURCE_UNREADABLE`로 중단하며 자동 제외나 공개 우회는 하지 않는다.
+
 새 유료 백필 중단은 `retrieval.env`의 `RETRIEVAL_BACKFILL_ENABLED=false`와 API의
 `CHAT_OPERATIONS_ENABLED=false`로 제어한다. timer를 유지하면 disabled 상태에서도 outbox 복구가 계속된다.
 공개 중단은 API의 `CHAT_ENABLED=false`로 별도 제어한다. API/chatbot env 변경에는 컨테이너 재생성이 필요하고,
