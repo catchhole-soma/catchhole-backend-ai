@@ -586,6 +586,21 @@ async def preflight(config, settings, spec):
         engine.dispose()
 
 
+def _pending_reports(path):
+    destination = Path(path)
+    if not destination.exists():
+        return 0
+    if destination.is_symlink():
+        raise ValueError("Outbox must not be a symlink")
+    db = sqlite3.connect(destination.as_uri() + "?mode=ro", uri=True, timeout=5)
+    try:
+        # Expired rows still count until normal recovery removes them. Status does
+        # not send reports or mutate the outbox to satisfy an activation check.
+        return db.execute("SELECT count(*) FROM reports").fetchone()[0]
+    finally:
+        db.close()
+
+
 async def main(mode, env=None):
     env = os.environ if env is None else env
     enabled = _boolean(env.get("RETRIEVAL_BACKFILL_ENABLED", "false"))
@@ -625,7 +640,11 @@ async def main(mode, env=None):
         state = CampaignState(config, spec, create=mode == "run")
         try:
             if mode == "status":
-                return state.status()
+                pending = _pending_reports(config.outbox_path)
+                return state.status(
+                    state="REPORTS_PENDING" if pending else state.row()["state"],
+                    pendingReports=pending,
+                )
             if mode == "resume":
                 state.resume()
                 return state.status()

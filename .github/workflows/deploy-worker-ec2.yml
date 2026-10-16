@@ -30,6 +30,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 135
 
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -94,6 +95,13 @@ jobs:
               if [ "$CURRENT_BACKEND_HEAD_SHA" != "$BACKEND_HEAD_SHA" ]; then
                 echo "Backend main advanced while checking deployment. Retrying... ($i/20)"
               elif curl -fsS "$SPRING_HEALTH_URL" >/dev/null; then
+                # Bootstrap and API deployment must serialize api.env/Compose changes.
+                curl -fsSL "https://raw.githubusercontent.com/$BACKEND_REPOSITORY/$BACKEND_HEAD_SHA/.github/workflows/$BACKEND_DEPLOY_WORKFLOW" \
+                  -o /tmp/catchhole-api-deploy.yml
+                if ! grep -Fq '.api-deploy.lock' /tmp/catchhole-api-deploy.yml; then
+                  echo "::error::Deploy the Java API deployment-lock change before chatbot bootstrap."
+                  exit 1
+                fi
                 echo "Backend $BACKEND_HEAD_SHA is deployed and Spring is ready."
                 break
               else
@@ -127,113 +135,48 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
+      - name: Check out the published immutable deployment scripts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Prepare chatbot settings and private connectivity
+        id: bootstrap
+        timeout-minutes: 20
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 deploy/bootstrap-chat-aws.py prepare \
+            --worker-instance-id "$WORKER_EC2_INSTANCE_ID" \
+            --directory "${WORKER_EC2_DEPLOY_PATH:-/opt/catchhole}" \
+            --user "${WORKER_EC2_DEPLOY_USER:-ubuntu}" \
+            --sha '${{ github.event.workflow_run.head_sha }}' \
+            --context "$RUNNER_TEMP/chat-bootstrap.json"
+
       - name: Deploy Worker and Chat runtimes with AWS Systems Manager
+        if: steps.bootstrap.outputs.prepared == 'true'
         timeout-minutes: 35
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          python3 deploy/bootstrap-chat-aws.py deploy \
+            --directory "${WORKER_EC2_DEPLOY_PATH:-/opt/catchhole}" \
+            --user "${WORKER_EC2_DEPLOY_USER:-ubuntu}" \
+            --sha '${{ github.event.workflow_run.head_sha }}' \
+            --context "$RUNNER_TEMP/chat-bootstrap.json"
 
-          WORKER_EC2_DEPLOY_PATH="${WORKER_EC2_DEPLOY_PATH:-/opt/catchhole}"
-          WORKER_EC2_DEPLOY_USER="${WORKER_EC2_DEPLOY_USER:-ubuntu}"
-          DEPLOY_SHA='${{ github.event.workflow_run.head_sha }}'
-
-          if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Publish workflow returned an invalid commit SHA."
-            exit 1
-          fi
-
-          if [[ ! "$WORKER_EC2_DEPLOY_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]] || [[ ! "$WORKER_EC2_DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
-            echo "::error::Unsupported deploy directory or user."
-            exit 1
-          fi
-
-          DEPLOY_SHORT_SHA="${DEPLOY_SHA:0:7}"
-          RAW_BASE="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$DEPLOY_SHA/deploy"
-          AI_IMAGE="$REGISTRY/$IMAGE_NAME:sha-$DEPLOY_SHORT_SHA"
-
-          cat > /tmp/catchhole-worker-deploy.sh <<EOF
-          # AWS-RunShellScript executes this block with /bin/sh, so keep it POSIX-compatible.
-          set -eu
-
-          DEPLOY_PATH='$WORKER_EC2_DEPLOY_PATH'
-          DEPLOY_USER='$WORKER_EC2_DEPLOY_USER'
-          RAW_BASE='$RAW_BASE'
-          AI_IMAGE='$AI_IMAGE'
-
-          DEPLOY_SHA='$DEPLOY_SHA'
-          RELEASE="\$DEPLOY_PATH/releases/\$DEPLOY_SHA"
-          mkdir -p "\$RELEASE"
-          for file in compose.worker.prod.yml compose.chatbot.prod.yml compose.retrieval.prod.yml manage-ai-runtime.py install-chat-scheduler.sh chatbot.env.example retrieval.env.example; do
-            curl -fsSL "\$RAW_BASE/\$file" -o "\$RELEASE/\$file.tmp"
-            mv "\$RELEASE/\$file.tmp" "\$RELEASE/\$file"
-          done
-          chown -R "\$DEPLOY_USER:\$DEPLOY_USER" "\$RELEASE"
-          # Create private templates once; operators fill explicit rollout settings.
-          for kind in chatbot retrieval; do
-            if [ ! -f "\$DEPLOY_PATH/\$kind.env" ]; then
-              cp "\$RELEASE/\$kind.env.example" "\$DEPLOY_PATH/\$kind.env"
-              chmod 600 "\$DEPLOY_PATH/\$kind.env"
-              chown "\$DEPLOY_USER:\$DEPLOY_USER" "\$DEPLOY_PATH/\$kind.env"
-            fi
-          done
-          # All configuration/network checks precede any running-service mutation.
-          runuser -u "\$DEPLOY_USER" -- python3 "\$RELEASE/manage-ai-runtime.py" deploy --directory "\$DEPLOY_PATH" --release "\$RELEASE" --image "\$AI_IMAGE"
-          # Switch future timer invocations only; an already running backfill keeps its image.
-          ln -sfn "\$RELEASE" "\$DEPLOY_PATH/.current-chat-release.new"
-          mv -Tf "\$DEPLOY_PATH/.current-chat-release.new" "\$DEPLOY_PATH/current-chat-release"
-          sed -i "s|^AI_IMAGE=.*|AI_IMAGE=\$AI_IMAGE|" "\$DEPLOY_PATH/worker.env"
-          for kind in worker chatbot retrieval; do
-            cp "\$RELEASE/compose.\$kind.prod.yml" "\$DEPLOY_PATH/compose.\$kind.prod.yml"
-            chown "\$DEPLOY_USER:\$DEPLOY_USER" "\$DEPLOY_PATH/compose.\$kind.prod.yml"
-          done
-          bash "\$RELEASE/install-chat-scheduler.sh" "\$DEPLOY_PATH" "\$DEPLOY_USER"
-          echo 'AI runtime deployed. Backfill progress is tracked separately by catchhole-retrieval-backfill.service.'
-          EOF
-
-          jq -n --rawfile script /tmp/catchhole-worker-deploy.sh '{commands: [$script], executionTimeout: ["1800"]}' > /tmp/ssm-worker-parameters.json
-
-          CURRENT_MAIN_SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')
-          if [ "$DEPLOY_SHA" != "$CURRENT_MAIN_SHA" ]; then
-            echo "::notice::Skipping superseded publish run for $DEPLOY_SHA; current main is $CURRENT_MAIN_SHA."
-            exit 0
-          fi
-
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "$WORKER_EC2_INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --comment "Deploy CatchHole Worker from GitHub Actions run ${GITHUB_RUN_ID}" \
-            --parameters file:///tmp/ssm-worker-parameters.json \
-            --query "Command.CommandId" \
-            --output text)
-
-          echo "AWS Systems Manager command id: $COMMAND_ID"
-
-          WAIT_STATUS=1
-          for i in $(seq 1 360); do
-            INVOCATION_STATUS=$(aws ssm get-command-invocation \
-              --command-id "$COMMAND_ID" \
-              --instance-id "$WORKER_EC2_INSTANCE_ID" \
-              --query 'Status' \
-              --output text 2>/dev/null || true)
-
-            case "$INVOCATION_STATUS" in
-              Success)
-                WAIT_STATUS=0
-                break
-                ;;
-              Cancelled|TimedOut|Failed|Cancelling)
-                break
-                ;;
-            esac
-
-            sleep 5
-          done
-
-          aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$WORKER_EC2_INSTANCE_ID" \
-            --query '{Status:Status,StatusDetails:StatusDetails,StandardOutput:StandardOutputContent,StandardError:StandardErrorContent}' \
-            --output json
-
-          exit "$WAIT_STATUS"
+      - name: Activate first chatbot rollout after backfill readiness
+        if: steps.bootstrap.outputs.prepared == 'true'
+        timeout-minutes: 55
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 deploy/bootstrap-chat-aws.py finish \
+            --directory "${WORKER_EC2_DEPLOY_PATH:-/opt/catchhole}" \
+            --user "${WORKER_EC2_DEPLOY_USER:-ubuntu}" \
+            --sha '${{ github.event.workflow_run.head_sha }}' \
+            --context "$RUNNER_TEMP/chat-bootstrap.json"
