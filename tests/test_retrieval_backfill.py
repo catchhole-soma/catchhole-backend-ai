@@ -523,7 +523,12 @@ def test_preflight_is_readonly_and_can_run_while_campaign_lock_is_held(tmp_path,
     monkeypatch.setattr("app.retrieval.backfill.operations_ready", checked)
     queries = []
     engine = SimpleNamespace(
-        connect=lambda: nullcontext(SimpleNamespace(execute=lambda sql: queries.append(str(sql)))),
+        connect=lambda: nullcontext(
+            SimpleNamespace(
+                execute=lambda sql: queries.append(str(sql)),
+                scalar=lambda sql: queries.append(str(sql)) or True,
+            )
+        ),
         dispose=lambda: None,
     )
     monkeypatch.setattr("app.retrieval.backfill._engine", lambda _: engine)
@@ -536,7 +541,9 @@ def test_preflight_is_readonly_and_can_run_while_campaign_lock_is_held(tmp_path,
     )
     with exclusive_campaign(cfg.state_path):
         report = asyncio.run(preflight(cfg, settings, IndexSpec()))
-    assert report["state"] == "PREFLIGHT_READY" and len(queries) == 2
+    assert report["state"] == "PREFLIGHT_READY" and len(queries) == 3
+    assert all(query.strip().startswith("SELECT") for query in queries)
+    assert "transaction_read_only" in queries[-1] and "has_table_privilege" in queries[-1]
     assert before == (tmp_path / "state.sqlite").read_bytes()
     checked.assert_awaited_once()
     with pytest.raises(ValueError, match="immutable"):
@@ -555,13 +562,39 @@ def test_preflight_does_not_create_a_new_campaign_or_outbox(tmp_path, monkeypatc
     )
     monkeypatch.setattr("app.retrieval.backfill.operations_ready", AsyncMock())
     engine = SimpleNamespace(
-        connect=lambda: nullcontext(SimpleNamespace(execute=lambda _: None)), dispose=lambda: None
+        connect=lambda: nullcontext(SimpleNamespace(execute=lambda _: None, scalar=lambda _: True)),
+        dispose=lambda: None,
     )
     monkeypatch.setattr("app.retrieval.backfill._engine", lambda _: engine)
     assert (
         asyncio.run(preflight(config(tmp_path), settings, IndexSpec()))["state"]
         == "PREFLIGHT_READY"
     )
+    assert not list(tmp_path.iterdir())
+
+
+def test_preflight_rejects_missing_writer_permissions_without_creating_state(tmp_path, monkeypatch):
+    from app.retrieval.backfill import preflight
+
+    settings = Settings(
+        _env_file=None,
+        spring_internal_api_key="test",
+        llm_api_key="test",
+        embedding_generation_enabled=True,
+        aws_s3_bucket="synthetic-bucket",
+    )
+    monkeypatch.setattr("app.retrieval.backfill.operations_ready", AsyncMock())
+    disposed = []
+    engine = SimpleNamespace(
+        connect=lambda: nullcontext(
+            SimpleNamespace(execute=lambda _: None, scalar=lambda _: False)
+        ),
+        dispose=lambda: disposed.append(True),
+    )
+    monkeypatch.setattr("app.retrieval.backfill._engine", lambda _: engine)
+    with pytest.raises(ValueError, match="writer permissions"):
+        asyncio.run(preflight(config(tmp_path), settings, IndexSpec()))
+    assert disposed == [True]
     assert not list(tmp_path.iterdir())
 
 
@@ -582,6 +615,155 @@ def test_pending_reports_stop_next_batch_then_resume_after_delivery(tmp_path):
     pending["count"] = 0
     resumed = invoke(cfg, corpus)
     assert resumed["state"] == "READY" and resumed["embeddedChunks"] == len(item.chunks) - 1
+
+
+@pytest.fixture
+def ledger_failure_case(tmp_path):
+    from app.chatbot.client import ChatTransportError
+    from app.chatbot.outbox import Outbox
+    from app.retrieval.provider import OperationalEmbeddingProvider
+    from app.schemas.chat_execution import Dispatch
+
+    case = SimpleNamespace(stage="operation", status=503, failing=True, ledger_calls=[])
+
+    def check(stage):
+        case.ledger_calls.append(stage)
+        if case.failing and case.stage == stage:
+            raise ChatTransportError(case.status)
+
+    class Ledger:
+        async def operation(self, operation_id, work_id, actor, policy, maximum):
+            check("operation")
+            self.work_id, self.maximum = work_id, maximum
+            return Dispatch(
+                schemaVersion=1,
+                attemptId=operation_id,
+                capability="a" * 64,
+                deadline=datetime.now(UTC) + timedelta(minutes=2),
+            )
+
+        async def start(self, dispatch, runner):
+            check("start")
+            return SimpleNamespace(
+                operational=True,
+                work_id=self.work_id,
+                question_id=None,
+                token_budget=self.maximum,
+                max_calls=1,
+            )
+
+        async def reserve(self, *args):
+            check("reserve")
+
+        async def request(self, *args):
+            pass  # Synthetic report delivery; no external HTTP.
+
+    class Embedding:
+        async def create_embeddings(self, values):
+            assert not case.failing, "A rejected ledger request must not invoke the provider"
+            return SimpleNamespace(
+                model=IndexSpec().model,
+                input_token_count=7,
+                embeddings=[[1.0] * IndexSpec().dimensions for _ in values],
+            )
+
+    case.outbox = Outbox(str(tmp_path / "outbox.sqlite"))
+    case.provider = OperationalEmbeddingProvider(
+        Ledger(), Embedding(), case.outbox, IndexSpec(), "synthetic-actor"
+    )
+    try:
+        yield case
+    finally:
+        case.outbox.close()
+
+
+@pytest.mark.parametrize("stage", ["operation", "start", "reserve"])
+@pytest.mark.parametrize("status", [None, 503, 429])
+def test_pre_provider_transient_ledger_failure_recovers_on_next_run_without_refund(
+    tmp_path, ledger_failure_case, stage, status
+):
+    case = ledger_failure_case
+    case.stage, case.status = stage, status
+    corpus = Corpus()
+    corpus.add(uuid4(), 1)
+    cfg = config(tmp_path)
+    first = invoke(cfg, corpus, case.provider)
+    assert first["state"] == "PROGRESS" and first["reason"] == "LEDGER_FAILURE"
+    assert first["providerAttempts"] == 0 and not first["uncertainAttempt"]
+    assert case.ledger_calls.count(stage) == 1  # No immediate service-level retry.
+    case.failing = False
+    second = invoke(cfg, corpus, case.provider)
+    assert second["state"] == "READY" and second["providerAttempts"] == 1
+    assert second["admittedInputTokenUpperBound"] == 2 * first["admittedInputTokenUpperBound"]
+
+
+def test_pre_provider_transient_ledger_failures_block_after_three_timer_runs(
+    tmp_path, ledger_failure_case
+):
+    corpus = Corpus()
+    corpus.add(uuid4(), 1)
+    cfg, case = config(tmp_path), ledger_failure_case
+    reports = [invoke(cfg, corpus, case.provider) for _ in range(3)]
+    assert [report["state"] for report in reports] == ["PROGRESS", "PROGRESS", "BLOCKED"]
+    assert reports[-1]["reason"] == "LEDGER_FAILURE"
+    assert all(
+        not report["uncertainAttempt"] and report["providerAttempts"] == 0 for report in reports
+    )
+    assert (
+        reports[-1]["admittedInputTokenUpperBound"]
+        == 3 * reports[0]["admittedInputTokenUpperBound"]
+    )
+    case.failing = False
+    assert invoke(cfg, corpus, case.provider)["state"] == "BLOCKED"
+    assert case.ledger_calls == ["operation"] * 3
+
+
+@pytest.mark.parametrize("stage", ["operation", "start", "reserve"])
+@pytest.mark.parametrize("status", [401, 403, 409])
+def test_pre_provider_permanent_ledger_rejection_blocks_without_unknown_billing(
+    tmp_path, ledger_failure_case, stage, status
+):
+    case = ledger_failure_case
+    case.stage, case.status = stage, status
+    corpus = Corpus()
+    corpus.add(uuid4(), 1)
+    cfg = config(tmp_path)
+    first = invoke(cfg, corpus, case.provider)
+    assert first["state"] == "BLOCKED" and first["reason"] == "LEDGER_REJECTED"
+    assert first["providerAttempts"] == 0 and not first["uncertainAttempt"]
+    before = list(case.ledger_calls)
+    case.failing = False
+    assert invoke(cfg, corpus, case.provider)["state"] == "BLOCKED"
+    assert case.ledger_calls == before
+
+
+def test_ledger_transport_error_after_provider_started_keeps_uncertainty(tmp_path):
+    from app.chatbot.client import ChatTransportError
+
+    corpus = Corpus()
+    corpus.add(uuid4(), 1)
+
+    def fail(_):
+        raise ChatTransportError(503)
+
+    report = invoke(config(tmp_path), corpus, Provider(fail))
+    assert report["state"] == "BLOCKED" and report["reason"] == "UNKNOWN_USAGE"
+    assert report["providerAttempts"] == 1 and report["uncertainAttempt"]
+
+
+def test_completed_empty_sweep_resets_old_failure_count_before_new_source(tmp_path):
+    cfg, corpus = config(tmp_path), Corpus()
+    old = corpus.add(uuid4(), 1)
+    old.source = replace(old.source, content_hash="b" * 64)
+    assert invoke(cfg, corpus)["state"] == "PROGRESS"
+    assert invoke(cfg, corpus)["state"] == "PROGRESS"
+    old.source = replace(old.source, state="ARCHIVED")
+    assert invoke(cfg, corpus)["state"] == "EMPTY"
+    new = corpus.add(uuid4(), 1)
+    new.source = replace(new.source, content_hash="c" * 64)
+    assert invoke(cfg, corpus)["state"] == "PROGRESS"
+    assert invoke(cfg, corpus)["state"] == "PROGRESS"
+    assert invoke(cfg, corpus)["state"] == "BLOCKED"
 
 
 def test_successful_vectors_with_unknown_usage_block_following_paid_calls(tmp_path):

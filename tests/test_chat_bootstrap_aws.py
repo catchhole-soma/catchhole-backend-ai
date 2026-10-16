@@ -34,6 +34,15 @@ class FakeAws:
             "State": {"Name": "running"},
             "SecurityGroups": [{"GroupId": "sg-bbb", "GroupName": "catchhole-api-prod-sg"}],
         }
+        for instance in (self.worker, self.api):
+            instance["NetworkInterfaces"] = [
+                {
+                    "Attachment": {"DeviceIndex": 0},
+                    "PrivateIpAddress": instance["PrivateIpAddress"],
+                    "VpcId": instance["VpcId"],
+                    "Groups": instance["SecurityGroups"],
+                }
+            ]
         self.groups = [
             {"GroupId": "sg-aaa", "VpcId": "vpc-aaa", "IpPermissions": []},
             {"GroupId": "sg-bbb", "VpcId": "vpc-aaa", "IpPermissions": []},
@@ -48,8 +57,12 @@ class FakeAws:
             instances = [self.worker] if "--instance-ids" in arguments else self.candidates
             return {"Reservations": [{"Instances": instances}]}
         if operation == "describe-security-groups":
-            return {"SecurityGroups": self.groups}
+            requested = arguments[arguments.index("--group-ids") + 1 :]
+            return {"SecurityGroups": [g for g in self.groups if g["GroupId"] in requested]}
         if operation == "authorize-security-group-ingress":
+            target = arguments[arguments.index("--group-id") + 1]
+            rules = json.loads(arguments[arguments.index("--ip-permissions") + 1])
+            next(g for g in self.groups if g["GroupId"] == target)["IpPermissions"].extend(rules)
             return {"Return": True}
         raise AssertionError(operation)
 
@@ -167,6 +180,179 @@ def test_existing_rule_makes_prepare_idempotent(rollout):
     ]
     obj.prepare("i-aaa")
     assert not any(call[1] == "authorize-security-group-ingress" for call in aws.calls)
+
+
+def chat_rule(**changes):
+    return {
+        "IpProtocol": "tcp",
+        "FromPort": 8082,
+        "ToPort": 8082,
+        "UserIdGroupPairs": [{"GroupId": "sg-bbb"}],
+        **changes,
+    }
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        chat_rule(IpRanges=[{"CidrIp": "0.0.0.0/0"}]),
+        chat_rule(IpRanges=[{"CidrIp": "10.0.0.1/32"}]),
+        chat_rule(Ipv6Ranges=[{"CidrIpv6": "::/0"}]),
+        chat_rule(PrefixListIds=[{"PrefixListId": "pl-aaa"}]),
+        chat_rule(UserIdGroupPairs=[{"GroupId": "sg-ccc"}]),
+        chat_rule(UserIdGroupPairs=[{"GroupId": "sg-bbb"}, {"GroupId": "sg-ccc"}]),
+        chat_rule(FromPort=8000, ToPort=9000, IpRanges=[{"CidrIp": "10.0.0.0/16"}]),
+        chat_rule(IpProtocol="6", IpRanges=[{"CidrIp": "10.0.0.0/16"}]),
+        {"IpProtocol": "-1", "UserIdGroupPairs": [{"GroupId": "sg-ccc"}]},
+        {"IpProtocol": "-1", "IpRanges": [{"CidrIp": "10.0.0.0/16"}]},
+    ],
+)
+@pytest.mark.parametrize("extra_group", [False, True])
+def test_all_effective_chat_rules_require_api_group_only(rollout, rule, extra_group):
+    obj, aws = rollout
+    # An existing correct rule must not hide broader access, even on another attached SG.
+    aws.groups[0]["IpPermissions"] = [chat_rule()]
+    if extra_group:
+        aws.worker["NetworkInterfaces"][0]["Groups"].append(
+            {"GroupId": "sg-ccc", "GroupName": "another-attached-group"}
+        )
+        aws.groups.append({"GroupId": "sg-ccc", "VpcId": "vpc-aaa", "IpPermissions": [rule]})
+    else:
+        aws.groups[0]["IpPermissions"].append(rule)
+    before = json.dumps(aws.groups, sort_keys=True)
+    with pytest.raises(bootstrap.BootstrapError, match="CHAT_INGRESS_NOT_API_ONLY"):
+        obj.prepare("i-aaa")
+    assert json.dumps(aws.groups, sort_keys=True) == before
+    assert not any("security-group-ingress" in call[1] for call in aws.calls)
+    assert not any("prepare-api" in script for _, script in aws.scripts)
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        chat_rule(IpProtocol="udp", IpRanges=[{"CidrIp": "0.0.0.0/0"}]),
+        chat_rule(FromPort=22, ToPort=22, IpRanges=[{"CidrIp": "0.0.0.0/0"}]),
+        chat_rule(FromPort=8083, ToPort=9000, IpRanges=[{"CidrIp": "0.0.0.0/0"}]),
+        chat_rule(FromPort=8000, ToPort=8081, IpRanges=[{"CidrIp": "0.0.0.0/0"}]),
+    ],
+)
+def test_unrelated_ports_and_protocols_are_preserved(rollout, rule):
+    obj, aws = rollout
+    aws.groups[0]["IpPermissions"] = [rule]
+    obj.prepare("i-aaa")
+    assert aws.groups[0]["IpPermissions"] == [rule, chat_rule()]
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        chat_rule(IpProtocol="6"),
+        chat_rule(FromPort=8000, ToPort=9000),
+        {"IpProtocol": "-1", "UserIdGroupPairs": [{"GroupId": "sg-bbb"}]},
+    ],
+)
+def test_api_only_existing_rules_are_safe_and_keep_exact_managed_rule(rollout, rule):
+    obj, aws = rollout
+    aws.groups[0]["IpPermissions"] = [rule]
+    obj.prepare("i-aaa")
+    assert rule in aws.groups[0]["IpPermissions"]
+    assert any(
+        r.get("IpProtocol") in {"tcp", "6"} and r.get("FromPort") == r.get("ToPort") == 8082
+        for r in aws.groups[0]["IpPermissions"]
+    )
+
+
+def test_other_interface_rules_do_not_govern_primary_bind(rollout):
+    obj, aws = rollout
+    aws.worker["NetworkInterfaces"].append(
+        {
+            "Attachment": {"DeviceIndex": 1},
+            "PrivateIpAddress": "10.0.1.2",
+            "VpcId": "vpc-aaa",
+            "Groups": [{"GroupId": "sg-ccc", "GroupName": "separate-interface"}],
+        }
+    )
+    aws.groups.append(
+        {
+            "GroupId": "sg-ccc",
+            "VpcId": "vpc-aaa",
+            "IpPermissions": [chat_rule(IpRanges=[{"CidrIp": "0.0.0.0/0"}])],
+        }
+    )
+    obj.prepare("i-aaa")
+    descriptions = [c for c in aws.calls if c[1] == "describe-security-groups"]
+    assert all("sg-ccc" not in c[2] for c in descriptions)
+
+
+@pytest.mark.parametrize("target", ["worker", "api"])
+@pytest.mark.parametrize("fault", ["missing", "different-address", "wrong-interface-group"])
+def test_expected_groups_must_be_on_actual_primary_interface(rollout, target, fault):
+    obj, aws = rollout
+    instance = getattr(aws, target)
+    if fault == "missing":
+        instance["NetworkInterfaces"] = []
+    elif fault == "different-address":
+        instance["NetworkInterfaces"][0]["PrivateIpAddress"] = "10.0.0.9"
+    else:
+        instance["NetworkInterfaces"][0]["Groups"] = [
+            {"GroupId": "sg-ccc", "GroupName": "unrelated-sg"}
+        ]
+    with pytest.raises(bootstrap.BootstrapError, match="INTERFACE|EXPECTED_SECURITY_GROUP"):
+        obj.prepare("i-aaa")
+    assert not any(call[1] == "authorize-security-group-ingress" for call in aws.calls)
+
+
+def test_final_ingress_check_rejects_broader_rule_added_during_authorization(rollout, monkeypatch):
+    obj, aws = rollout
+    original = aws.call
+
+    def call(service, operation, *arguments, **kwargs):
+        result = original(service, operation, *arguments, **kwargs)
+        if operation == "authorize-security-group-ingress":
+            aws.groups[0]["IpPermissions"].append(chat_rule(IpRanges=[{"CidrIp": "0.0.0.0/0"}]))
+        return result
+
+    monkeypatch.setattr(aws, "call", call)
+    with pytest.raises(bootstrap.BootstrapError, match="CHAT_INGRESS_NOT_API_ONLY"):
+        obj.prepare("i-aaa")
+    assert not any("prepare-api" in script for _, script in aws.scripts)
+
+
+def test_added_ingress_is_rechecked_with_bounded_consistency_wait(rollout, monkeypatch):
+    obj, aws = rollout
+    original = aws.call
+    checks = []
+    waits = []
+
+    def call(service, operation, *arguments, **kwargs):
+        result = original(service, operation, *arguments, **kwargs)
+        if operation == "describe-security-groups":
+            checks.append(True)
+            if len(checks) == 2:
+                result = json.loads(json.dumps(result))
+                result["SecurityGroups"][0]["IpPermissions"] = []
+        return result
+
+    monkeypatch.setattr(aws, "call", call)
+    monkeypatch.setattr(bootstrap.time, "sleep", waits.append)
+    obj.prepare("i-aaa")
+    assert len(checks) == 3 and waits == [1]
+
+
+def test_missing_added_rule_never_proceeds_to_runtime_changes(rollout, monkeypatch):
+    obj, aws = rollout
+    original = aws.call
+
+    def call(service, operation, *arguments, **kwargs):
+        if operation == "authorize-security-group-ingress":
+            return {"awsError": "InvalidPermission.Duplicate"}
+        return original(service, operation, *arguments, **kwargs)
+
+    monkeypatch.setattr(aws, "call", call)
+    monkeypatch.setattr(bootstrap.time, "sleep", lambda _: None)
+    with pytest.raises(bootstrap.BootstrapError, match="CHAT_INGRESS_RULE_NOT_VISIBLE"):
+        obj.prepare("i-aaa")
+    assert not any("prepare-api" in script for _, script in aws.scripts)
 
 
 def test_aws_permission_failure_is_specific_without_secret(monkeypatch):

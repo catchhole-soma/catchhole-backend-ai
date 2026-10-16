@@ -142,6 +142,69 @@ def test_changed_database_target_cannot_reuse_private_intent(tmp_path):
         b._intent(config(tmp_path))
 
 
+def test_saved_managed_dsn_keeps_exact_scope_and_supplied_credentials(tmp_path, monkeypatch):
+    cfg = config(
+        tmp_path,
+        CHAT_RETRIEVAL_DATABASE_URL=ADMIN.replace("admin:synthetic-secret", b.ROLE + ":new-secret"),
+    )
+    intent = {
+        "schemaVersion": 1,
+        "role": b.ROLE,
+        "target": b._target(cfg.admin_url),
+        "password": "old-intent-password" * 3,
+        "marker": b.MARKER + "a" * 32,
+    }
+    b._write_private(tmp_path / "reader-intent.json", intent)
+    monkeypatch.setattr(b, "_role", lambda *args: {"marker": intent["marker"]})
+    validate = Mock()
+    monkeypatch.setattr(b, "_validate_role", validate)
+    connection = object()
+    reader, saved_intent = b._existing_reader(connection, cfg)
+    assert reader == cfg.existing_url and reader.password == "new-secret"
+    assert saved_intent == intent
+    validate.assert_called_once_with(connection, b.ROLE, exact_select=True)
+
+
+@pytest.mark.parametrize("missing", ["intent", "marker", "role", "target"])
+def test_managed_proof_cannot_fall_back_to_custom_reader_policy(tmp_path, monkeypatch, missing):
+    cfg = config(
+        tmp_path,
+        CHAT_RETRIEVAL_DATABASE_URL=ADMIN.replace("admin:", b.ROLE + ":"),
+    )
+    intent = {
+        "schemaVersion": 1,
+        "role": b.ROLE,
+        "target": b._target(cfg.admin_url),
+        "password": "a" * 48,
+        "marker": b.MARKER + "a" * 32,
+    }
+    if missing == "target":
+        intent["target"] = {"host": "other.invalid"}
+    if missing != "intent":
+        b._write_private(tmp_path / "reader-intent.json", intent)
+    role = (
+        None if missing == "role" else {"marker": None if missing == "marker" else intent["marker"]}
+    )
+    monkeypatch.setattr(b, "_role", lambda *args: role)
+    validate = Mock()
+    monkeypatch.setattr(b, "_validate_role", validate)
+    code = "READER_INTENT_INVALID" if missing == "target" else "READ_ROLE_COLLISION"
+    with pytest.raises(b.BootstrapFailure, match=code):
+        b._existing_reader(object(), cfg)
+    validate.assert_not_called()
+
+
+@pytest.mark.parametrize("name", ["custom_reader", b.ROLE])
+def test_custom_reader_preserves_readonly_policy_without_managed_proof(tmp_path, monkeypatch, name):
+    cfg = config(tmp_path, CHAT_RETRIEVAL_DATABASE_URL=ADMIN.replace("admin:", name + ":"))
+    monkeypatch.setattr(b, "_role", lambda *args: {"marker": None})
+    validate = Mock()
+    monkeypatch.setattr(b, "_validate_role", validate)
+    connection = object()
+    assert b._existing_reader(connection, cfg) == (cfg.existing_url, None)
+    validate.assert_called_once_with(connection, name, exact_select=False)
+
+
 @pytest.mark.parametrize(
     "flag", ["rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"]
 )

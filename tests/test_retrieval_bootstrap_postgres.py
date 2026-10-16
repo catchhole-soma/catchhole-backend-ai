@@ -65,6 +65,8 @@ def prepared_environment(bootstrap_database, tmp_path):
     yield engine, admin, env, tmp_path
     with engine.begin() as connection:
         connection.exec_driver_sql("DROP FUNCTION IF EXISTS public.bootstrap_unsafe()")
+        connection.exec_driver_sql("DROP SEQUENCE IF EXISTS public.bootstrap_read_sequence")
+        connection.exec_driver_sql("REVOKE SELECT(storage_url) ON upload_files FROM PUBLIC")
         # Only roles created by this module in the disposable test container.
         for role in [b.ROLE, "existing_reader", "unexpected_membership"]:
             if connection.scalar(
@@ -134,6 +136,11 @@ def test_non_superuser_bootstrap_is_readonly_and_crash_restart_never_rotates_pas
     assert b.run(env)["state"] == "READY"
     assert b._private_file(directory / "reader.json") == output
     assert b._private_file(directory / "reader-intent.json") == intent
+    # The host persists this DSN after first prepare, then supplies it on every rerun.
+    env["CHAT_RETRIEVAL_DATABASE_URL"] = output["databaseUrl"]
+    assert b.run(env)["state"] == "READY"
+    assert b._private_file(directory / "reader.json") == output
+    assert b._private_file(directory / "reader-intent.json") == intent
     with engine.connect() as connection:
         assert (
             connection.scalar(
@@ -174,6 +181,19 @@ def test_unmanaged_role_name_collision_does_not_change_role_or_write_intent(prep
             "READ_ROLE_EXCESS_READ_PRIVILEGE",
         ),
         (
+            "GRANT SELECT(storage_url) ON upload_files TO catchhole_chat_reader",
+            "READ_ROLE_EXCESS_READ_PRIVILEGE",
+        ),
+        (
+            "GRANT SELECT(storage_url) ON upload_files TO PUBLIC",
+            "READ_ROLE_EXCESS_READ_PRIVILEGE",
+        ),
+        (
+            "CREATE SEQUENCE bootstrap_read_sequence; GRANT SELECT ON bootstrap_read_sequence TO catchhole_chat_reader",
+            "READ_ROLE_EXCESS_READ_PRIVILEGE",
+        ),
+        ("COMMENT ON ROLE catchhole_chat_reader IS NULL", "READ_ROLE_COLLISION"),
+        (
             "CREATE ROLE unexpected_membership; GRANT unexpected_membership TO catchhole_chat_reader",
             "READ_ROLE_MEMBERSHIP",
         ),
@@ -187,17 +207,35 @@ def test_unmanaged_role_name_collision_does_not_change_role_or_write_intent(prep
         ),
     ],
 )
+@pytest.mark.parametrize("saved_dsn", [False, True], ids=["managed-prepare", "host-rerun"])
 def test_existing_managed_reader_privilege_drift_fails_without_repair(
-    prepared_environment, mutation, code
+    prepared_environment, mutation, code, saved_dsn
 ):
     engine, _, env, directory = prepared_environment
     assert b.run(env)["state"] == "READY"
     before = (directory / "reader.json").read_bytes()
+    if saved_dsn:
+        env["CHAT_RETRIEVAL_DATABASE_URL"] = b._private_file(directory / "reader.json")[
+            "databaseUrl"
+        ]
     with engine.begin() as connection:
         connection.exec_driver_sql(mutation)
     result = b.run(env)
     assert result["code"] == code, result
     assert (directory / "reader.json").read_bytes() == before
+
+
+def test_preexisting_public_column_select_is_rejected_during_first_prepare(prepared_environment):
+    engine, _, env, directory = prepared_environment
+    with engine.begin() as connection:
+        connection.exec_driver_sql("GRANT SELECT(storage_url) ON upload_files TO PUBLIC")
+    result = b.run(env)
+    assert result["code"] == "READ_ROLE_EXCESS_READ_PRIVILEGE", result
+    assert not (directory / "reader.json").exists()
+    with engine.connect() as connection:
+        assert not connection.scalar(
+            text("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=:role)"), {"role": b.ROLE}
+        )
 
 
 def test_existing_dsn_is_reused_without_password_or_role_changes(prepared_environment):
@@ -213,6 +251,9 @@ def test_existing_dsn_is_reused_without_password_or_role_changes(prepared_enviro
         connection.exec_driver_sql(
             "GRANT SELECT ON " + ",".join(b.RELATIONS) + " TO existing_reader"
         )
+        # User-provided read-only accounts retain their broader SELECT policy.
+        connection.exec_driver_sql("GRANT SELECT ON upload_files TO existing_reader")
+        connection.exec_driver_sql("GRANT SELECT(id) ON upload_batches TO existing_reader")
         before = connection.scalar(
             text("SELECT rolpassword FROM pg_authid WHERE rolname='existing_reader'")
         )

@@ -3,8 +3,10 @@
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
+from app.retrieval.backfill import _check_database_permissions
 from app.retrieval.contracts import SourceChanged
 from app.retrieval.store import RetrievalStore
 from tests import test_retrieval_postgres as postgres_tests
@@ -12,6 +14,67 @@ from tests.test_retrieval_search_postgres import Corpus
 
 pytestmark = pytest.mark.integration
 database = postgres_tests.database
+
+
+@pytest.fixture
+def writer_permissions(database):
+    # All role/grant changes are rolled back in the explicitly disposable DB.
+    with database.connect() as connection, connection.begin():
+        role = "backfill_writer_" + uuid4().hex
+        schema = connection.scalar(text("SELECT current_schema()"))
+        connection.exec_driver_sql(f'CREATE ROLE "{role}" NOLOGIN')
+        connection.exec_driver_sql(f'GRANT USAGE ON SCHEMA "{schema}" TO "{role}"')
+        connection.exec_driver_sql(f'GRANT SELECT ON ALL TABLES IN SCHEMA "{schema}" TO "{role}"')
+        connection.exec_driver_sql(f'GRANT INSERT, UPDATE ON retrieval_sources TO "{role}"')
+        connection.exec_driver_sql(f'GRANT INSERT, UPDATE, DELETE ON retrieval_chunks TO "{role}"')
+        # FOR UPDATE requires UPDATE on any column, not table-wide UPDATE.
+        connection.exec_driver_sql(f'GRANT UPDATE(id) ON works TO "{role}"')
+        connection.exec_driver_sql(f'SET LOCAL ROLE "{role}"')
+        try:
+            yield connection, role
+        finally:
+            connection.rollback()
+
+
+def test_preflight_accepts_index_writer_with_only_column_level_work_lock_permission(
+    writer_permissions,
+):
+    connection, _ = writer_permissions
+    _check_database_permissions(connection)
+    connection.execute(text("SELECT id FROM works WHERE false FOR UPDATE"))
+
+
+@pytest.mark.parametrize(
+    "table,privilege",
+    [
+        ("retrieval_sources", "INSERT"),
+        ("retrieval_sources", "UPDATE"),
+        ("retrieval_chunks", "INSERT"),
+        ("retrieval_chunks", "UPDATE"),
+        ("retrieval_chunks", "DELETE"),
+        ("works", "UPDATE(id)"),
+        ("works", "SELECT"),
+        ("members", "SELECT"),
+        ("episodes", "SELECT"),
+        ("episode_source_purge_requests", "SELECT"),
+    ],
+)
+def test_preflight_rejects_each_missing_writer_or_source_privilege(
+    writer_permissions, table, privilege
+):
+    connection, role = writer_permissions
+    connection.exec_driver_sql("RESET ROLE")
+    connection.exec_driver_sql(f'REVOKE {privilege} ON {table} FROM "{role}"')
+    connection.exec_driver_sql(f'SET LOCAL ROLE "{role}"')
+    with pytest.raises(ValueError, match="writer permissions"):
+        _check_database_permissions(connection)
+
+
+def test_preflight_rejects_readonly_connection_even_with_superuser_privileges(database):
+    with database.connect() as connection, connection.begin():
+        connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+        with pytest.raises(ValueError, match="writer permissions"):
+            _check_database_permissions(connection)
 
 
 @pytest.fixture

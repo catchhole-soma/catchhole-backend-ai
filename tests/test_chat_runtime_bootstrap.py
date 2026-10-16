@@ -43,6 +43,10 @@ def runtime(tmp_path, monkeypatch):
                 "DATABASE_POOL_MAX_OVERFLOW": "0",
                 "SPRING_INTERNAL_API_BASE_URL": "http://10.0.0.1:8080",
                 "LLM_API_KEY": "private-provider-key",
+                "SPRING_INTERNAL_API_KEY": "private-internal-key",
+                "DATABASE_URL": "postgresql+psycopg://admin:private@10.0.0.3/catchhole",
+                "AWS_REGION": "ap-northeast-2",
+                "AWS_S3_BUCKET": "synthetic-bucket",
             },
             "deploy": {"replicas": 5},
         },
@@ -70,7 +74,8 @@ def runtime(tmp_path, monkeypatch):
             return worker
         path = tmp_path / (kind + ".env")
         text = candidate if candidate is not None else path.read_text() if path.exists() else ""
-        env = {**defaults[kind], **env_values(text)}
+        inherited = worker["ai-worker"]["environment"] if kind != "api" else {}
+        env = {**inherited, **defaults[kind], **env_values(text)}
         if kind == "chatbot" and env.get("CHAT_BIND_ADDRESS") == "REPLACE_WITH_AI_PRIVATE_IP":
             raise bootstrap.BootstrapError("COMPOSE_CONFIGURATION_INVALID")
         service = {"api": "backend", "retrieval": "retrieval-index", "chatbot": "chatbot"}[kind]
@@ -148,6 +153,45 @@ def test_first_ai_setup_handles_missing_files_and_example_placeholder(runtime, e
     for path in (obj.private, obj.private / "state.json", obj.directory / "chatbot.env"):
         assert stat.S_IMODE(path.stat().st_mode) == (0o700 if path.is_dir() else 0o600)
     assert READER not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "kind,key",
+    [
+        (kind, key)
+        for kind in ("chatbot", "retrieval")
+        for key in ("LLM_API_KEY", "SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL")
+    ]
+    + [("retrieval", key) for key in ("DATABASE_URL", "AWS_REGION", "AWS_S3_BUCKET")],
+)
+@pytest.mark.parametrize("value", ["", "synthetic-stale-setting"])
+def test_legacy_override_stops_before_role_creation_or_env_writes(runtime, kind, key, value):
+    obj = runtime.obj
+    path = obj.directory / (kind + ".env")
+    change(path, **{key: value})
+    before = path.read_bytes()
+    with pytest.raises(bootstrap.BootstrapError, match="^INCONSISTENT_" + key + "$"):
+        obj.prepare_ai(ADDRESS, 10)
+    assert not runtime.db_calls
+    assert path.read_bytes() == before
+    assert not (obj.private / "state.json").exists()
+
+
+def test_equal_legacy_overrides_and_service_specific_values_are_preserved(runtime):
+    obj = runtime.obj
+    worker = runtime.worker["ai-worker"]["environment"]
+    common = ("LLM_API_KEY", "SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL")
+    for kind, keys in (
+        ("chatbot", common),
+        ("retrieval", (*common, "DATABASE_URL", "AWS_REGION", "AWS_S3_BUCKET")),
+    ):
+        change(obj.directory / (kind + ".env"), **{key: worker[key] for key in keys})
+    change(obj.directory / "chatbot.env", CHAT_QA_MODEL="custom-model")
+    obj.prepare_ai(ADDRESS, 10)
+    for kind, keys in (("chatbot", common), ("retrieval", (*common, "DATABASE_URL", "AWS_S3_BUCKET"))):
+        actual = env_values((obj.directory / (kind + ".env")).read_text())
+        assert all(actual[key] == worker[key] for key in keys)
+    assert env_values((obj.directory / "chatbot.env").read_text())["CHAT_QA_MODEL"] == "custom-model"
 
 
 def test_custom_models_allowlist_dsn_campaign_and_budget_survive(runtime):

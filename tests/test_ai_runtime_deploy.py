@@ -23,6 +23,9 @@ def runtime(tmp_path, monkeypatch):
         "SPRING_INTERNAL_API_KEY": "private-test-key",
         "LLM_API_KEY": "provider-test-key",
         "SPRING_INTERNAL_API_BASE_URL": "http://10.0.0.1:8080",
+        "DATABASE_URL": "postgresql+psycopg://admin:test@10.0.0.3/catchhole",
+        "AWS_REGION": "ap-northeast-2",
+        "AWS_S3_BUCKET": "synthetic-bucket",
     }
     configs = {
         "worker": {
@@ -107,6 +110,26 @@ def test_wrong_internal_scope_credentials_fail_closed(runtime):
     )
     with pytest.raises(deploy.DeploymentError, match="INCONSISTENT_SPRING_INTERNAL_API_KEY"):
         obj.validate()
+
+
+@pytest.mark.parametrize(
+    "kind,service,key",
+    [
+        ("chatbot", "chatbot", "LLM_API_KEY"),
+        *[
+            ("retrieval", "retrieval-index", key)
+            for key in ("LLM_API_KEY", "DATABASE_URL", "AWS_REGION", "AWS_S3_BUCKET")
+        ],
+    ],
+)
+def test_stale_common_settings_stop_before_service_changes(runtime, monkeypatch, kind, service, key):
+    obj, configs = runtime
+    configs[kind][service]["environment"][key] = "synthetic-stale-setting"
+    calls = []
+    monkeypatch.setattr(obj, "compose", lambda *args, **kwargs: calls.append(args))
+    with pytest.raises(deploy.DeploymentError, match="^INCONSISTENT_" + key + "$"):
+        obj.deploy()
+    assert not calls
 
 
 def test_new_embedding_version_requires_chat_consumer_match(runtime):
