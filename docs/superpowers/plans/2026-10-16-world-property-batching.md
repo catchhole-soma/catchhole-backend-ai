@@ -48,7 +48,7 @@ Spring의 내부 batch·후보 membership·검수/저장 단위는 그대로 유
 - [x] 공통 채점기로 1·2·3화18개 결과를 채점하고 후속 회차는 정답률 대신 판정 차이를 기록한다.
 - [x] 전체 Python4,067통과/132skip, Java2,738통과/236skip 및 bootJar성공을 확인한다.
 - [x] v0017 요약/상세/집계, AI AGENTS/README/계약 문서를 갱신한다.
-- [ ] 초안 PR을 #267에 연결한다. 상위 #251은 자동 종료하지 않는다.
+- [x] 초안 AI #88 / Java #268을 #267에 연결했다. 상위 #251은 자동 종료하지 않는다.
 
 독립 리뷰의 Important3건과 최초 API strict-schema 오류는 회귀 테스트로 보완했다.
 원래 계획과 실패 기록은 workspace outputs의 private/에 보존했다.
