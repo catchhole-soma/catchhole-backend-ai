@@ -379,6 +379,7 @@ class WorldSettingComparator:
             if batch_max_output_tokens is None
             else batch_max_output_tokens
         )
+        self.batch_max_input_tokens = getattr(settings, "llm_world_setting_batch_comparison_max_input_tokens", 64000)
 
     async def compare(
         self,
@@ -454,19 +455,12 @@ class WorldSettingComparator:
         decision = _replace_internal_target_references(decision, references)
         return decision, decision.model_dump(mode="json")
 
-    async def compare_batch(
-        self,
-        category: str,
-        candidates: list[WorkerWorldSettingComparisonBatchCandidate],
-        targets: list[WorkerWorldSettingComparisonTarget],
-        ordered_context: bool = False,
-        unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
-        max_attempts_override: int | None = None,
-        preserve_source_paths: bool = False,
-        analysis_source: WorkerAnalysisSource | None = None,
-        evaluation_failure_callback=None,
-        defer_generated_scope_validation: bool = False,
-    ) -> tuple[WorldSettingComparisonBatchResult, dict]:
+    def prepare_batch_input(
+        self, category, candidates, targets, *, ordered_context=False,
+        unresolved_references=(), max_attempts_override=None,
+        preserve_source_paths=False, analysis_source=None,
+    ):
+        """Build the same complete input for standalone and packed comparisons."""
         if not candidates:
             raise ValueError("World-setting comparison batch must include candidates.")
         if not ordered_context and any(target.provisional_subject_key for target in targets):
@@ -553,6 +547,27 @@ class WorldSettingComparator:
                     "existing_root_property_names_to_move는 []로 두세요. UPDATE/MERGE의 "
                     "proposed scope/name은 null이며 선택한 실제 기존 속성 경로를 사용합니다."
                 )
+        return system_prompt, raw_payload, references
+
+    async def compare_batch(
+        self,
+        category: str,
+        candidates: list[WorkerWorldSettingComparisonBatchCandidate],
+        targets: list[WorkerWorldSettingComparisonTarget],
+        ordered_context: bool = False,
+        unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
+        max_attempts_override: int | None = None,
+        preserve_source_paths: bool = False,
+        analysis_source: WorkerAnalysisSource | None = None,
+        evaluation_failure_callback=None,
+        defer_generated_scope_validation: bool = False,
+    ) -> tuple[WorldSettingComparisonBatchResult, dict]:
+        system_prompt, raw_payload, references = self.prepare_batch_input(
+            category, candidates, targets, ordered_context=ordered_context,
+            unresolved_references=unresolved_references,
+            max_attempts_override=max_attempts_override,
+            preserve_source_paths=preserve_source_paths, analysis_source=analysis_source,
+        )
         user_prompt = json.dumps(raw_payload, ensure_ascii=False)
         minimum_output_tokens = _estimate_batch_minimum_output_tokens(
             candidates,
@@ -612,7 +627,7 @@ class WorldSettingComparator:
 
         try:
             result = await request_validated_model(
-                client=(BoundedOrderedClient(self.llm_client) if ordered_context else self.llm_client),
+                client=BoundedOrderedClient(self.llm_client, self.batch_max_input_tokens),
                 response_model=(OrderedWorldPropertyBatchResult if ordered_context
                                 else WorldSettingComparisonBatchResult),
                 system_prompt=system_prompt,
@@ -675,6 +690,7 @@ def _estimate_batch_minimum_output_tokens(
     candidates: list[WorkerWorldSettingComparisonBatchCandidate],
     targets: list[WorkerWorldSettingComparisonTarget],
     model: str,
+    *, encoding=None,
 ) -> int:
     """Estimate a conservative contract-complete batch response size.
 
@@ -684,14 +700,15 @@ def _estimate_batch_minimum_output_tokens(
     short comparison reasons and provider/tokenizer variance.
     """
 
-    try:
-        encoding = (
-            tiktoken.get_encoding("o200k_base")
-            if model.startswith("gpt-5.6")
-            else tiktoken.encoding_for_model(model)
-        )
-    except Exception:  # noqa: BLE001 - byte counts keep the guard active.
-        encoding = None
+    if encoding is None:
+        try:
+            encoding = (
+                tiktoken.get_encoding("o200k_base")
+                if model.startswith("gpt-5.6")
+                else tiktoken.encoding_for_model(model)
+            )
+        except Exception:  # noqa: BLE001 - byte counts keep the guard active.
+            encoding = None
 
     def token_weight(value: str) -> int:
         serialized_value = json.dumps(value, ensure_ascii=False)

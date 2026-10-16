@@ -9,6 +9,7 @@ from app.analysis.world_setting_pipeline import (
     WorldSettingComparisonPipeline,
     WorldSettingComparisonSpringApi,
 )
+from app.analysis.world_setting_manuscript import WorldSettingManuscriptComparator
 from app.core.config import get_settings
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
@@ -54,14 +55,15 @@ def create_world_setting_comparison_pipeline(
         max_retries=max_retries,
         retry_base_seconds=retry_base_seconds,
     )
+    comparator = WorldSettingComparator(
+        llm_client=comparison_client, model=effective_comparison_model,
+    )
     return WorldSettingComparisonPipeline(
         spring_client=spring_client,
         subject_resolver=WorldSettingSubjectResolver(
             llm_client=subject_client,
             model=effective_subject_resolution_model,
         ),
-        comparator=WorldSettingComparator(
-            llm_client=comparison_client,
-            model=effective_comparison_model,
-        ),
+        comparator=comparator,
+        manuscript_comparator=WorldSettingManuscriptComparator(comparator),
     )
