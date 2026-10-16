@@ -598,3 +598,32 @@ def test_successful_vectors_with_unknown_usage_block_following_paid_calls(tmp_pa
     assert all(chunk.status == "READY" for chunk in item.chunks)
     resumed = invoke(cfg, corpus, resume=True)
     assert resumed["state"] == "READY" and resumed["providerAttempts"] == 0
+
+
+def test_status_reads_pending_outbox_without_delivery_or_mutation(tmp_path, monkeypatch):
+    from app.chatbot.outbox import Outbox
+    from app.schemas.chat_execution import Dispatch
+
+    cfg = config(tmp_path)
+    state = CampaignState(cfg, IndexSpec())
+    state.start_sweep([])
+    state.finish_sweep()
+    state.close()
+    outbox = Outbox(cfg.outbox_path)
+    expires = datetime.now(UTC) + timedelta(minutes=5)
+    dispatch = Dispatch(schemaVersion=1, attemptId=uuid4(), capability="a" * 64, deadline=expires)
+    outbox.put("pending", dispatch, uuid4(), "finish", {"test": True}, expires.timestamp())
+    outbox.close()
+    before = (tmp_path / "outbox.sqlite").read_bytes()
+    monkeypatch.setattr("app.retrieval.backfill.CampaignConfig.from_env", lambda _: cfg)
+    monkeypatch.setattr("app.retrieval.backfill.Settings", lambda **kw: Settings(_env_file=None))
+    monkeypatch.setattr("app.retrieval.backfill.Outbox", None, raising=False)
+    monkeypatch.setattr(
+        "app.retrieval.backfill.ChatExecutionClient.request",
+        AsyncMock(side_effect=AssertionError("delivery during status")),
+    )
+    report = asyncio.run(main("status", {}))
+    assert report["state"] == "REPORTS_PENDING" and report["pendingReports"] == 1
+    assert report["sweep"] == 1 and report["checkedSources"] == report["readySources"] == 0
+    assert not report["sweepInProgress"] and not report["uncertainAttempt"]
+    assert before == (tmp_path / "outbox.sqlite").read_bytes()
