@@ -344,6 +344,8 @@ class _HybridSession(_Session):
         self.event_scope = plan.event_scope
         if plan.disposition != "PROCEED" or plan.source_need == "NONE":
             # Registered-only synthesis and collection queries share the base handler.
+            # Terminal guidance does not execute the tentative lookup. Its
+            # filters are meaningful only when the converted intent can query.
             registered = await self.answer_plan(
                 QuestionPlan(
                     intent=plan.rdb_mode if plan.disposition == "PROCEED" else plan.disposition,
@@ -351,8 +353,10 @@ class _HybridSession(_Session):
                     include_evidence=plan.include_evidence,
                     episode_from=plan.episode_from,
                     episode_to=plan.episode_to,
-                    character_filter=plan.character_filter,
-                    collection=plan.collection,
+                    character_filter=plan.character_filter
+                    if plan.disposition == "PROCEED"
+                    else None,
+                    collection=plan.collection if plan.disposition == "PROCEED" else None,
                     answer_shape=plan.answer_shape,
                 )
             )
