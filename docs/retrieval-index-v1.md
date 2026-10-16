@@ -3,7 +3,12 @@
 ## 완료 범위와 다음 연결
 
 현재 회차의 S3 원문을 재업로드·설정 재추출 없이 검색용 청크로 만들고,
-필요한 벡터만 제한된 운영 실행으로 생성한다. `status → dry-run → execute → status`가 운영 흐름이다.
+필요한 벡터만 제한된 운영 실행으로 생성한다. #258 이후 운영 자동화는 AI 저장소의 `docs/chat-runtime-operations.md`를 따른다. 아래 `status → dry-run → execute → status`는 단건 CLI 점검/수동 복구 경로다.
+Spring의 새 운영 백필 접수에는 `CHAT_OPERATIONS_ENABLED=true`와 별도 32자 이상 실행 secret이 필요하다.
+공개 `CHAT_ENABLED`는 false로 유지할 수 있고 이 단계의 `CHAT_PYTHON_URL`은 필요하지 않다.
+내부 키로 `GET /api/internal/v1/chat-runs/operations/readiness`를 호출해 CommonResponse `data`의
+`operationsEnabled=true`, `capabilityConfigured=true`를 확인한다. HTTP 200만으로 판단하지 않는다.
+이 GET은 DB·S3·provider를 호출하거나 운영 실행을 생성하지 않으므로 실제 저장소 준비 검증은 기존 status/dry-run이 맡는다.
 기존 #238의 RDB 질의응답과 직접 근거 조회는 이 준비 상태에 의존하지 않는다.
 질문 벡터·키워드 검색·랭킹·주변 문단 확장·답변 합성은 #240이다. 이 변경만 배포해서
 원문 질문에 답하는 것은 아니다. 실제 운영 전체 백필과 검색 품질 측정은 아직 하지 않았다.
@@ -122,12 +127,12 @@ DB 저장 실패/강제 종료 뒤 미완료 벡터는 다시 생성 대상이�
 ## 운영 명령과 배포 순서
 
 Java V76/파기 코드 → AI #238 기반과 이 변경 순으로 배포한다. 현재 생성/준비 기본값은 모두 OFF다.
-검색 실행기는 기존 분석 5개/해소 2개/챗봇 HTTP 프로세스와 별도의 **수동 one-shot 프로세스**다.
-`deploy/compose.retrieval.prod.yml`은 포트를 열지 않고 기본 command도 `--help`다. 자동 배포에 연결하지 않는다.
+검색 실행기는 기존 분석 5개/해소 2개/챗봇 HTTP 프로세스와 별도의 one-shot 프로세스다.
+#258 자동 배포가 별도 systemd timer를 설치하며 기본 command는 `app.retrieval.backfill run`이다. 유료 생성 기본 OFF와 명시적 전체 예산을 유지하고 포트를 열지 않는다. 기존 단건 CLI는 command override로 사용할 수 있다.
 
 운영 전 실제 work ID/회차 범위와 단가를 확인한다. 예시 ID는 교체해야 한다.
 환경변수는 프로세스에 명시적으로 주입하며 CLI는 로컬 `.env`를 읽지 않는다.
-S3 IAM Role/기존 설정, Spring 내부 API key와 CHAT_ENABLED/실행 서명 설정이 필요하다.
+S3 IAM Role/기존 설정, Spring 내부 API key와 CHAT_OPERATIONS_ENABLED/실행 서명 설정이 필요하다.
 단가 예시 0.02 USD/1M은 구현 시점의 text-embedding-3-small 일반 입력 단가이며 실행 전에 확인한다.
 출처: https://developers.openai.com/api/docs/models/text-embedding-3-small
 
@@ -142,9 +147,9 @@ Compose에서는 `--env-file deploy/retrieval.env -f deploy/compose.retrieval.pr
 뒤에 위 `python -m ...` 명령을 붙인다. 실제 env는 커밋하지 않는다. 생성 flag는 이 Compose에만
 `RETRIEVAL_EMBEDDING_GENERATION_ENABLED=true`로 전달한다.
 
-기존 애플리케이션의 연결 예산 27개를 유지하려면 **백필 동안 분석 Worker 최소 1개를 정상 drain**하여
-3개 연결을 확보한다. 분석 4×3 + 비교 2×1 + Java 10 + 운영 실행기 2 = 최대 26개다.
-프로세스를 무단 추가하거나 DB pool 크기를 올리지 않는다. 수동 적용/복구 시 기존 graceful shutdown을 따른다.
+기존 애플리케이션 27개 + 챗봇 검색 2개 + 백필 2개 = 정상 동시 운영 31개다.
+배포 preflight 연결 1개까지 32개이며 관리/다른 앱의 여유는 별도다. 기존의 분석 Worker 1개 drain 계산은 챗봇 pool을 제외했으므로 동시 운영 계획에 사용하지 않는다.
+실제 RDS 여유를 확인해 명시한 전체 연결 예산 안에서만 배포하며 워커 수/pool을 자동 변경하지 않는다.
 
 CHUNK_LIMIT/BUDGET_EXHAUSTED/TIME_LIMIT이면 같은 범위로 재실행한다. 해당 범위가 준비되었는지 확인한 뒤
 다음 회차 범위로 이동한다. `nextEpisodeFrom`은 source 페이지 이동 안내이며 **미완료 청크를 건너뛰라는 뜻이 아니다.**

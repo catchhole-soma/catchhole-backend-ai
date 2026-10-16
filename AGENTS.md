@@ -203,7 +203,7 @@
 - 계약은 `docs/chat-execution-v1.md`, 양쪽 공통 fixture는 `docs/contracts/chat-execution-v1.json`이다. 질문/시도/provider 호출의 ID를 구분한다.
 - Spring `domain/chat/{controller,dto,entity,exception,mapper,repository,service,type}`와 `global/config/chat`은 실행·권한·원장을 담당한다. 내부 wire DTO는 버전 경계를 함께 검토하도록 `ChatContract`에 record로 모으고 OpenAPI 이름은 `Chat*V1`으로 고정한다.
 - Python `app/chatbot/{http_app,client,runtime,outbox,providers}.py`와 `app/schemas/chat_execution.py`는 독립 HTTP 진입점이다. 기존 Worker replica/lease loop에 HTTP listener를 추가하지 않는다.
-- `CHAT_ENABLED=false` 기본. 공통 Spring YAML의 CHAT_* 설정은 local/prod 모두 환경변수로 지정한다. FastAPI 별도 Compose는 명시적으로만 배포한다. 기능 flag를 꺼도 기존 예약 복구는 계속한다.
+- `CHAT_ENABLED=false` 기본. 공통 Spring YAML의 CHAT_* 설정은 local/prod 모두 환경변수로 지정한다. FastAPI는 별도 Compose로 격리하며 #258 이후 검증된 동일 publish SHA 배포에 연결한다. 운영 백필은 CHAT_OPERATIONS_ENABLED로 공개 게이트와 분리한다. 기능 flag를 꺼도 기존 예약 복구는 계속한다.
 - 채팅은 실행에 묶인 tools route를 사용하며 member/work를 LLM 인자에서 받지 않는다. provider SDK 재시도도 실제 호출마다 `Execution.call()` 예약 경계 안에 있어야 한다.
 - 실행 한도는 `EXECUTION_LIMIT_EXCEEDED`, 계정 잔액 부족은 `QUOTA_EXHAUSTED`로 구분한다. HTTP 429만으로 잔액 부족을 추정하지 않는다. 실패 안내와 재시도 판단에서 계정 상태와 실행 제한을 혼동하지 않기 위함이다.
 - UNKNOWN은 사용량 0이 아니다. 원문 변경/삭제 시 저장 답변 자체도 무효화한다. 후속 대화 저장소가 생기면 같은 파기 계약을 연결한다.
@@ -227,7 +227,7 @@
 - 새 분석의 `RETRIEVAL_PREPARATION_ENABLED=false`는 검색 청크 준비만 제어한다. 별도 one-shot CLI가 기존 `EMBEDDING_GENERATION_ENABLED=false`로 벡터 생성 여부를 결정한다. 검색 준비는 기존 분석의 사용자 과금 경로를 호출하지 않고 OPERATIONAL_BACKFILL/RETRIEVAL_INDEX_SERVICE_PAID_V1로 기록한다.
 - CLI는 명시한 작품/회차/입력·청크·시도·시간 상한을 유지하며 .env를 읽지 않는다. S3/DB/원장/임베딩 실사용은 dry-run과 구분한다. SQLite outbox를 먼저 복구하고 성공 벡터는 공유 PostgreSQL에서 판정한다. API 응답 후 DB 반영 전 종료의 중복 호출 가능성을 숨기지 않는다.
 - 검색 소비자는 `retrieval_current_chunks`에 서버 범위와 policy/model/version 필터를 함께 적용한다. 모델·차원·tokenizer 변경은 기존 공간과 혼합하지 않고 명시적 재생성/전환 계획이 필요하다. 설정집/과거 버전은 지원 전 READY로 표시하지 않는다.
-- 별도 `compose.retrieval.prod.yml`은 수동 실행 전용이며 기본 --help/OFF다. 기존 연결 상한 27개를 지키려면 실행기 2개 연결을 위해 분석 Worker 1개를 drain한다. 민감 outbox 볼륨과 Spring의 회차/작품 파기 경로를 유지한다.
+- 별도 `compose.retrieval.prod.yml`은 #258에서 명시적 범위·고정 campaign ID·누적 예산을 가진 one-shot timer에 연결한다. 기본 OFF이며 같은 ID의 예산은 재배포/재시작으로 초기화하지 않는다. 기존 27 + 챗봇2 + 백필2 + preflight1 = 32개와 별도 관리 여유를 실제 RDS 기준으로 확인한다. 기존 워커 수/pool은 자동 변경하지 않고 민감 상태/outbox 볼륨과 Spring 파기 경로를 유지한다.
 
 ### RDB·원문 결합 답변 (#240)
 
@@ -277,3 +277,13 @@
 - 실제 77dc74e 검증 6건에는 자연 발생한 모델 응답 검증 실패가 없었다. related 맥락 경로의 실제 확인과 typed 검증 실패 복구의 합성 회귀를 구분한다. 최종 265fc68는 같은 프롬프트·검색·검증에 안내 표현만 보완했으며 전체 자동 테스트·로컬 기동으로 확인했고 실제 모델을 다시 호출하지 않았다.
 
 - 답변 v10은 기존 답변 호출에서 일반/항목별 `missingExplanations`를 생성한다. 고유한 missing facet에만 연결하고 구체적인 미확인 범위를 자연스러운 존댓말로 설명한다. 설명으로 coverage를 높이지 않으며 병합에서 해결된 요구, 검증에서 제거된 주장과 충돌 항목의 설명을 제거한다. 설명 누락은 기본 안내로 보존한다. 과거 저장 답변과 최종 NONE 경로는 유지하며 v9 실제 실행을 v10 품질 측정으로 재사용하지 않는다.
+
+### 챗봇 운영 배포·자동 백필 (#258)
+
+- `deploy/manage-ai-runtime.py`는 같은 SHA의 워커·챗봇·백필 파일을 환경/연결 사전 검사한 뒤 배포한다. `worker.env`의 공통 설정을 서비스별 env가 덮어쓰고 이미지 SHA는 배포 인자로 고정한다. 기존 custom 값과 비밀값을 보존하고 비밀값/Compose rendered config를 로그에 출력하지 않는다.
+- `app.retrieval.backfill`의 `run/status/preflight/resume`은 고정 campaign 범위·모델·버전·전체 입력 상한과 영속 SQLite를 사용한다. active works 또는 UUID allowlist를 명시하며 키셋 순회·원문 재검증·완료 청크 건너뛰기를 유지한다. 정상 순회 후 신규/수정분을 다시 탐색한다.
+- 호출 전 보수적인 입력 상한을 영속 차감하고 DB 저장까지 불확실 표식을 유지한다. 불명/실패 재시도 소진은 BLOCKED로 멈추며 명시적 resume도 예산을 환급하지 않는다. 유료 실행 없이 preflight를 검사하며 기존 실행과 병행해도 상태/outbox를 변경하지 않는다.
+- 5분 systemd timer는 같은 one-shot을 중복 기동하지 않는다. 내부 작업·임베딩 deadline은 300초이며 프로세스 벽시계 상한과 구분한다. Docker 실행/정리를 포함한 호스트 호출은 780초, systemd는 900초와 종료 유예 45초다. 장애로 종료가 지연되면 다음 timer를 건너뛸 수 있다. 실행 중인 백필의 이미지/프로세스를 재배포로 중단하지 않는다. 배포 성공과 색인 완료를 구분하며 AI 서비스 재생성 전에 설정/연결 검증을 완료한다. `docs/chat-runtime-operations.md`가 최초 설정·상태/복구 운영 계약이다.
+- 최초 배포는 `bootstrap-chat-aws.py` → `bootstrap-chat-runtime.py` → `app.retrieval.bootstrap`으로 기존 운영 설정을 보완한다. 현재 AI publish SHA와 Java의 공통 잠금 지원을 확인하고, 같은 VPC의 유일한 API 인스턴스 및 실제 부착된 API/Worker SG를 검증한다. Worker TCP 8082에 API SG만 허용하며 IAM·인스턴스 용량을 자동 확대하지 않는다. API 경로/사용자는 기존 `/opt/catchhole`·`ubuntu` 계약이며 Worker의 custom 경로와 혼동하지 않는다.
+- 최초 자동 백필 정책은 기존 값이 없을 때 활성 작품의 현재 원문, stable `retrieval-v1-rollout`, 서비스 부담 누적 보수적 입력 상한 50,000,000이다. 재배포로 새 ID/예산을 만들지 않는다. 기존 범위·예산·모델·DSN과 초기 설정 이후 수동 OFF를 보존하고, 비밀값과 역할 생성 intent는 호스트의 0700/0600 비공개 파일로 영속화한다. 기존 동명 역할의 암호를 재설정하거나 전역 DB ACL을 변경하지 않는다.
+- API env 준비·첫 공개는 Java 배포와 같은 `.api-deploy.lock`을 사용한다. 첫 공개는 지원 원문 순회 READY/정상 EMPTY, 미전송 보고 0, 불확실 호출 없음, 현재 handler/연결 검증 뒤에만 수행한다. 30분 내 완료하지 못하면 timer/진행 상태를 보존하고 공개를 보류한다. `status`는 outbox를 읽기만 하며 보고나 유료 호출을 실행하지 않는다.

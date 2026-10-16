@@ -136,7 +136,16 @@ class RetrievalIndexService:
                 prepared += 1
         return {"preparedSources": prepared, "hasMoreSources": more}
 
-    async def run(self, scope, provider, *, enabled: bool, limits=Limits(), deadline=None):
+    async def run(
+        self,
+        scope,
+        provider,
+        *,
+        enabled: bool,
+        limits=Limits(),
+        deadline=None,
+        source_snapshot=None,
+    ):
         if not enabled:
             return {"state": "DISABLED", "providerAttempts": 0, "userTokenDebit": False}
         report = {
@@ -165,7 +174,16 @@ class RetrievalIndexService:
             )
             return report
         selected = 0
-        sources, more = await asyncio.to_thread(self.store.sources, scope)
+        if source_snapshot is None:
+            sources, more = await asyncio.to_thread(self.store.sources, scope)
+        else:
+            # The campaign runner owns pagination. Every use of this snapshot still passes
+            # the same current-source validation before reading, calling and saving.
+            if source_snapshot.work_id != scope.work_id or scope.episode_ids != (
+                source_snapshot.episode_id,
+            ):
+                raise ValueError("Snapshot does not match the explicit source scope")
+            sources, more = [source_snapshot], False
         report["hasMoreSources"] = more
         report["nextEpisodeFrom"] = sources[-1].episode_no + 1 if more else None
         for source in sources:
@@ -236,9 +254,13 @@ class RetrievalIndexService:
                         async with asyncio.timeout_at(deadline):
                             vectors = await provider.embed(source, batch, before_call)
                         await asyncio.to_thread(self.store.save, source, self.spec, batch, vectors)
+                        if hasattr(provider, "after_save"):
+                            provider.after_save()
                         report["embeddedChunks"] += len(batch)
                         break
                     except SourceChanged:
+                        if hasattr(provider, "discard_result"):
+                            provider.discard_result()
                         report["changedChunks"] += len(batch)
                         source_changed = True
                         break

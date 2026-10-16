@@ -28,6 +28,56 @@ class RetrievalStore:
     def __init__(self, session_factory):
         self.sessions = session_factory
 
+    def backfill_snapshot(self, work_ids=()):
+        """Freeze eligible works and episode upper bounds in one database snapshot.
+
+        Only private IDs, a timestamp and numeric bounds reach the durable cursor.
+        New works/episodes and changes behind the cursor are discovered next sweep.
+        """
+        with self.sessions() as session:
+            return [
+                (row["work_id"], row["episode_to"], row["snapshot_at"].isoformat())
+                for row in session.execute(
+                    text("""
+                    SELECT w.id AS work_id, max(e.episode_no) AS episode_to,
+                           statement_timestamp() AS snapshot_at
+                    FROM works w JOIN members m ON m.id=w.member_id
+                    JOIN episodes e ON e.work_id=w.id
+                    WHERE w.lifecycle_status='ACTIVE' AND m.status='ACTIVE'
+                      AND e.status <> 'ARCHIVED'
+                      AND (:all_works OR w.id=ANY(:ids))
+                    GROUP BY w.id ORDER BY w.id"""),
+                    {"all_works": not work_ids, "ids": list(work_ids)},
+                ).mappings()
+            ]
+
+    def backfill_sources(self, work_id, episode_to, snapshot_at, after_no, after_id, limit):
+        """Keyset page: equal episode numbers cannot be lost at a page boundary."""
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid backfill page size")
+        with self.sessions() as session:
+            return [
+                self._source(row)
+                for row in session.execute(
+                    text(
+                        SOURCE_SQL
+                        + """ WHERE e.work_id=:work AND e.status <> 'ARCHIVED'
+                        AND e.episode_no <= :hi AND e.created_at <= :snapshot
+                        AND (e.episode_no > :after_no
+                             OR (e.episode_no=:after_no AND e.id > :after_id))
+                        ORDER BY e.episode_no,e.id LIMIT :limit"""
+                    ),
+                    dict(
+                        work=work_id,
+                        hi=episode_to,
+                        snapshot=datetime.fromisoformat(snapshot_at),
+                        after_no=after_no,
+                        after_id=after_id,
+                        limit=limit,
+                    ),
+                ).mappings()
+            ]
+
     @contextmanager
     def exclusive(self, work_id):
         # Session-level advisory lock survives short transaction commits; no row
