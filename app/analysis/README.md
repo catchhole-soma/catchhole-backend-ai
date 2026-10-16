@@ -299,7 +299,7 @@ LLM 응답 JSON 객체 파싱은 `json_response.py`의 helper를 사용합니다
 ## 재시도 기준
 
 `CharacterSettingExtractor`의 일반 검증 재시도는 LLM 응답이 JSON으로 파싱되지 않거나, Provider wire model 또는 저장 경계 model의 Pydantic 검증에 실패한 경우에만 수행합니다. 다음 시도는 항상 최초 prompt에 안전한 `reasonCode + fieldLocs`만 붙여 만들며 이전 실패 응답은 재주입하지 않습니다. 후보 하나라도 검증에 실패하면 전체 응답을 재시도하고 일부 후보만 저장하지 않습니다.
-캐릭터 설정 추출은 최초 `max_output_tokens=6000`을 사용하고 출력 절단 시 12000으로 한 번만 확장합니다. 세계관 추출도 5000에서 시작해 절단 시 10000으로 한 번만 확장하며, 이 확장은 JSON/schema 검증 재시도 횟수를 소비하지 않습니다.
+캐릭터·세계관 설정 추출은 각각 기본 `max_output_tokens=32000`을 사용하고 출력 절단 시 64000으로 한 번만 확장합니다. 명시한 환경변수 값은 기본값보다 우선하며, 이 확장은 JSON/schema 검증 재시도 횟수를 소비하지 않습니다.
 
 캐릭터 Fact 비교와 세계관 추출·대상 선택·비교도 JSON/schema/참조 검증 실패만 설정된 횟수만큼 재시도합니다. 캐릭터 비교는 canonical slot과 STATUS 제거·시간 범위 불변식을, 세계관 대상 선택은 입력 ref의 중복·누락 범위를, 세계관 비교는 operation별 target/property와 제안 문자열을 Python에서 추가 검증합니다. DB 문맥 충돌은 LLM 응답 오류와 별도로 각 pipeline이 최신 문맥을 다시 받아 최대 3회 처리합니다.
 
