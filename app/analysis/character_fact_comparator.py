@@ -289,7 +289,7 @@ class CharacterFactComparator:
         self,
         *,
         matched_character_name: str,
-        canonical_fact_type: str,
+        canonical_fact_type: str | None,
         candidates: list[WorkerCharacterFactComparisonBatchCandidate],
         snapshot_entries: list[
             WorkerCharacterFactComparisonBatchSnapshotEntry | CharacterProjectionEntry
@@ -351,10 +351,11 @@ class CharacterFactComparator:
                 max_output_tokens=self.batch_max_output_tokens,
                 max_attempts=attempts,
                 prompt_cache_key=(CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY
+                                  + (":person-all-types-v1" if canonical_fact_type is None else "")
                                   + (":ordered-provisional-v1" if ordered_context else "")
                                   + (":setting-book-time-v3" if _batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK
                                      else ":book-current-time-v3" if _has_temporal_context(candidates, initial_entries) else "")
-                                  + (STATUS_FORECAST_CACHE_SUFFIX if ordered_context and canonical_fact_type == "STATUS" else "")),
+                                  + (STATUS_FORECAST_CACHE_SUFFIX if ordered_context and _has_status_candidates(candidates, canonical_fact_type) else "")),
                 operation_name="Character-fact batch comparison",
                 logger=logger,
                 validate_model=lambda comparison_result: _validate_batch_comparison_result(
@@ -408,7 +409,7 @@ class CharacterFactComparator:
         self,
         *,
         matched_character_name: str,
-        canonical_fact_type: str,
+        canonical_fact_type: str | None,
         candidates: list[WorkerCharacterFactComparisonBatchCandidate],
         snapshot_entries: list[
             WorkerCharacterFactComparisonBatchSnapshotEntry | CharacterProjectionEntry
@@ -481,6 +482,14 @@ class CharacterFactComparator:
             protected_slots=protected_slots, advisory_current_context=advisory_current_context,
         )
         system_prompt = self.batch_prompt_path.read_text(encoding="utf-8") + "\n\n" + USER_FACING_REASON_INSTRUCTIONS
+        if canonical_fact_type is None:
+            system_prompt = system_prompt.replace("한 캐릭터·한 Fact 유형", "한 캐릭터의 모든 Fact 유형")
+            system_prompt = system_prompt.replace("같은 인물·같은 Fact\n유형", "같은 인물의 모든 Fact\n유형")
+            system_prompt += ("\n\n각 후보의 canonical_fact_type이 해당 후보의 설정 유형입니다. "
+                              "유형이 달라도 후보를 입력 순서대로 판단하고 앞선 결과를 반영하세요. "
+                              "각 유형의 규칙은 해당 유형의 후보에만 적용합니다. "
+                              "UPDATE/MERGE 및 충돌 참조는 같은 유형·같은 key의 활성값만 사용하고, "
+                              "제거 대상은 STATUS 규칙을 따르세요.")
         if not ordered_context and _batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK:
             system_prompt += "\n\n" + SETTING_BOOK_INSTRUCTIONS
         if _has_temporal_context(candidates, initial_entries):
@@ -488,7 +497,7 @@ class CharacterFactComparator:
             _add_safe_snapshot_provenance(prompt_payload, initial_entries)
         if ordered_context:
             system_prompt += "\n\n" + ordered_state_instructions(_batch_source_kind(candidates)) + "\n\n" + ORDERED_CHARACTER_SLOT_INSTRUCTIONS
-            if canonical_fact_type == "STATUS":
+            if _has_status_candidates(candidates, canonical_fact_type):
                 system_prompt += "\n\n" + STATUS_FORECAST_REVIEW_INSTRUCTIONS
             _add_ordered_snapshot_provenance(prompt_payload, initial_entries)
             prompt_payload["unresolved_references"] = ordered_reference_data(unresolved_references)
@@ -567,7 +576,8 @@ def _verified_slot_conflict_context(payload: dict, error: OrderedCharacterSlotCo
         return None
     context = {"candidate_ref": error.candidate_ref,
                "initial_canonical_fact_key": candidate["initial_canonical_fact_key"]}
-    if payload.get("canonical_fact_type") != error.target_fact_type:
+    candidate_type = candidate.get("canonical_fact_type") or payload.get("canonical_fact_type")
+    if candidate_type != error.target_fact_type:
         return None
     if re.fullmatch(r"P[1-9][0-9]*", error.target_ref):
         target = next((item for item in payload.get("snapshot_entries", [])
@@ -582,11 +592,11 @@ def _verified_slot_conflict_context(payload: dict, error: OrderedCharacterSlotCo
         target = next((item for item in candidates[:candidate_index] if isinstance(item, dict)
                        and item.get("projected_snapshot_ref") == error.target_ref
                        and item.get("candidate_ref") == error.target_source_candidate_ref), None)
-        if target is None:
+        if target is None or (target.get("canonical_fact_type") or payload.get("canonical_fact_type")) != candidate_type:
             return None
         context.update(active_target_ref=error.target_ref,
                        target_source_candidate_ref=target["candidate_ref"],
-                       fact_type=payload["canonical_fact_type"])
+                       fact_type=candidate_type)
         # A normalized STATUS key may originate in a prior response. The active Q
         # still identifies that decision, but only an input-owned key is emitted.
         if target.get("initial_canonical_fact_key") == error.target_fact_key:
@@ -752,9 +762,13 @@ def _projection_entries(
     ]
 
 
+def _has_status_candidates(candidates, canonical_fact_type) -> bool:
+    return any(candidate.fact_type_for_batch(canonical_fact_type) == "STATUS" for candidate in candidates)
+
+
 def _validate_batch_candidates(
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
-    canonical_fact_type: str,
+    canonical_fact_type: str | None,
 ) -> None:
     refs = [candidate.candidate_ref for candidate in candidates]
     projected_refs = [candidate.projected_snapshot_ref for candidate in candidates]
@@ -770,7 +784,7 @@ def _validate_batch_candidates(
         raise ValueError("Character comparison candidates must follow local ref chronology.")
     for candidate in candidates:
         validate_status_active_value(
-            canonical_fact_type,
+            candidate.fact_type_for_batch(canonical_fact_type),
             candidate.value_json,
             field_name=f"candidate[{candidate.candidate_ref}].value_json",
         )
@@ -797,7 +811,7 @@ def _add_safe_snapshot_provenance(payload, entries):
 
 def _batch_prompt_payload(
     matched_character_name: str,
-    canonical_fact_type: str,
+    canonical_fact_type: str | None,
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
     snapshot_entries: list[CharacterProjectionEntry],
     *,
@@ -810,10 +824,12 @@ def _batch_prompt_payload(
         **({"protected_slots": [WorkerProtectedCharacterSlot.model_validate(item).prompt_data()
                                 for item in protected_slots]} if protected_slots else {}),
         "matched_character_name": matched_character_name,
-        "canonical_fact_type": canonical_fact_type,
+        **({"canonical_fact_type": canonical_fact_type} if canonical_fact_type is not None else {}),
         "candidates": [
             {
                 "candidate_ref": candidate.candidate_ref,
+                **({"canonical_fact_type": candidate.fact_type_for_batch(canonical_fact_type)}
+                   if canonical_fact_type is None else {}),
                 "projected_snapshot_ref": candidate.projected_snapshot_ref,
                 "source_episode_no": candidate.source_episode_no,
                 **({"source": candidate.source.prompt_data()} if candidate.source is not None else {}),
@@ -851,7 +867,7 @@ def _batch_prompt_payload(
 
 def _validate_batch_comparison_result(
     result: CharacterFactComparisonBatchResult,
-    canonical_fact_type: str,
+    canonical_fact_type: str | None,
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
     initial_entries: list[CharacterProjectionEntry],
     *,
@@ -873,7 +889,7 @@ def _validate_batch_comparison_result(
             initial_fact_key=candidate.initial_canonical_fact_key,
             resolved_fact_key=decision.resolved_canonical_fact_key,
             canonical_key_resolution=candidate.canonical_key_resolution,
-            fact_type=canonical_fact_type,
+            fact_type=candidate.fact_type_for_batch(canonical_fact_type),
         )
         active_entries = state.entries
         active_refs = {entry.reference for entry in active_entries}
@@ -894,7 +910,7 @@ def _validate_batch_comparison_result(
             state.apply(
                 candidate_ref=candidate.candidate_ref,
                 projected_snapshot_ref=candidate.projected_snapshot_ref,
-                fact_type=canonical_fact_type,
+                fact_type=candidate.fact_type_for_batch(canonical_fact_type),
                 resolved_fact_key=decision.resolved_canonical_fact_key,
                 value_type=candidate.value_type,
                 candidate_value_json=candidate.value_json,
@@ -906,7 +922,7 @@ def _validate_batch_comparison_result(
             # domain-output rule gets input-owned ordered retry context.
             if (ordered_context and type(error) is ValueError
                     and error.args == ("ADD is invalid when the canonical Fact slot already exists.",)):
-                target_ref = state.exact_target_ref(canonical_fact_type, decision.resolved_canonical_fact_key)
+                target_ref = state.exact_target_ref(candidate.fact_type_for_batch(canonical_fact_type), decision.resolved_canonical_fact_key)
                 target = state.entries_by_ref.get(target_ref)
                 if target is not None:
                     raise OrderedCharacterSlotConflict(candidate.candidate_ref, target) from error
@@ -915,7 +931,7 @@ def _validate_batch_comparison_result(
 
 def _normalize_batch_comparison_result(
     result: CharacterFactComparisonBatchResult,
-    canonical_fact_type: str,
+    canonical_fact_type: str | None,
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
     initial_entries: list[CharacterProjectionEntry],
     *,
@@ -930,7 +946,7 @@ def _normalize_batch_comparison_result(
         state.apply(
             candidate_ref=candidate.candidate_ref,
             projected_snapshot_ref=candidate.projected_snapshot_ref,
-            fact_type=canonical_fact_type,
+            fact_type=candidate.fact_type_for_batch(canonical_fact_type),
             resolved_fact_key=normalized.resolved_canonical_fact_key,
             value_type=candidate.value_type,
             candidate_value_json=candidate.value_json,
@@ -943,7 +959,7 @@ def _normalize_batch_comparison_result(
 
 def _independent_ordered_decisions(
     payload: dict | None,
-    canonical_fact_type: str,
+    canonical_fact_type: str | None,
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
     initial_entries: list[CharacterProjectionEntry],
     *,
@@ -965,12 +981,13 @@ def _independent_ordered_decisions(
            for row, candidate in zip(rows, candidates, strict=True)):
         return empty
     state = CharacterProjectionState(initial_entries, protected_slots=protected_slots)
-    blocked_keys: set[str] = set()
+    blocked_keys: set[tuple[str, str]] = set()
     uncertain_status = False
     uncertain_narrative_time = False
     retained = []
     for row, candidate in zip(rows, candidates, strict=True):
-        if uncertain_status or uncertain_narrative_time or candidate.initial_canonical_fact_key in blocked_keys:
+        candidate_slot = (candidate.fact_type_for_batch(canonical_fact_type), candidate.initial_canonical_fact_key)
+        if uncertain_status or uncertain_narrative_time or candidate_slot in blocked_keys:
             retained.append(None)
             continue
         try:
@@ -989,7 +1006,7 @@ def _independent_ordered_decisions(
             state.apply(
                 candidate_ref=candidate.candidate_ref,
                 projected_snapshot_ref=candidate.projected_snapshot_ref,
-                fact_type=canonical_fact_type,
+                fact_type=candidate.fact_type_for_batch(canonical_fact_type),
                 resolved_fact_key=normalized.resolved_canonical_fact_key,
                 value_type=candidate.value_type,
                 candidate_value_json=candidate.value_json,
@@ -997,8 +1014,8 @@ def _independent_ordered_decisions(
                 source_episode_no=candidate.source_episode_no, source=candidate.source,
             )
         except (TypeError, ValueError):
-            blocked_keys.add(candidate.initial_canonical_fact_key)
-            uncertain_status = canonical_fact_type == "STATUS"
+            blocked_keys.add(candidate_slot)
+            uncertain_status = candidate.fact_type_for_batch(canonical_fact_type) == "STATUS"
             uncertain_narrative_time = candidate.narrative_time is not None and candidate.narrative_time.reference_time is not None
             retained.append(None)
         else:

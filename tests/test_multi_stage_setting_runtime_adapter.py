@@ -557,7 +557,7 @@ def test_fixed_runtime_reuses_character_dedupe_and_world_consolidation() -> None
     assert bundle.comparison_model == "comparison-model"
     assert bundle.character_schema_hash is not None
     assert bundle.prompt_versions["characterExtraction"] == "setting-extraction:v12"
-    assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v10"
+    assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v10:person-all-types-v1"
     assert bundle.prompt_versions["worldExtraction"] == "world-setting-extraction:v5"
     assert bundle.prompt_versions["worldComparison"] == "world-setting-comparison-batch:v16"
 
@@ -1883,6 +1883,7 @@ def test_live_runtime_uses_explicit_fact_type_for_work_specific_schema() -> None
     assert bundle.scenarios[0].stage1[0].fact_key == "guild.rank"
     assert bundle.scenarios[0].stage1[0].fact_type == "PROFILE"
     assert comparator.canonical_fact_type == "PROFILE"
+    assert comparator.batch_fact_type is None
 
 
 def test_live_runtime_passes_episode_title_to_both_extractors() -> None:
@@ -1967,7 +1968,7 @@ def test_live_runtime_quarantines_candidate_that_does_not_match_schema() -> None
     assert prediction.failures[0].error_type == "ValueError"
 
 
-def test_character_batch_snapshot_context_matches_spring_slot_selection() -> None:
+def test_legacy_character_batch_snapshot_context_matches_spring_slot_selection() -> None:
     profile_height = _character_state("PROFILE", "profile.height", "180")
     profile_species = _character_state("PROFILE", "profile.species", "바바리안")
     injured = _character_state(
@@ -2020,7 +2021,7 @@ def test_character_batch_snapshot_context_matches_spring_slot_selection() -> Non
     assert [item.snapshot_ref for item in status_context] == ["P1", "P2", "P3"]
 
 
-def test_character_batch_snapshot_context_prioritizes_exact_slots_before_cap() -> None:
+def test_legacy_character_batch_snapshot_context_prioritizes_exact_slots_before_cap() -> None:
     state = EvaluationState(
         character_facts=[
             _character_state("PROFILE", f"profile.field_{index:02d}", str(index))
@@ -2840,12 +2841,14 @@ class _AddCharacterComparator:
 class _CanonicalKeyCapturingComparator(_AddCharacterComparator):
     canonical_fact_key = None
     canonical_fact_type = None
+    batch_fact_type = None
     raw_fact_key = None
     canonical_key_resolution = None
 
     async def compare_batch(self, *, candidates, canonical_fact_type, **kwargs):
         self.canonical_fact_key = candidates[0].initial_canonical_fact_key
-        self.canonical_fact_type = canonical_fact_type
+        self.canonical_fact_type = candidates[0].canonical_fact_type
+        self.batch_fact_type = canonical_fact_type
         self.raw_fact_key = candidates[0].raw_fact_key
         self.canonical_key_resolution = candidates[0].canonical_key_resolution
         return await super().compare_batch(candidates=candidates, **kwargs)

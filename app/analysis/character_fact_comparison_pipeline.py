@@ -132,7 +132,7 @@ class CharacterFactBatchComparator(Protocol):
         self,
         *,
         matched_character_name: str,
-        canonical_fact_type: str,
+        canonical_fact_type: str | None,
         candidates: list[WorkerCharacterFactComparisonBatchCandidate],
         snapshot_entries: list[CharacterProjectionEntry],
         ordered_context: bool = False,
@@ -145,7 +145,7 @@ class CharacterFactBatchComparator(Protocol):
         self,
         *,
         matched_character_name: str,
-        canonical_fact_type: str,
+        canonical_fact_type: str | None,
         candidates: list[WorkerCharacterFactComparisonBatchCandidate],
         snapshot_entries: list[CharacterProjectionEntry],
         ordered_context: bool = False,
@@ -236,7 +236,7 @@ async def execute_character_fact_comparison_batch(
     comparator: CharacterFactBatchComparator,
     *,
     matched_character_name: str,
-    canonical_fact_type: str,
+    canonical_fact_type: str | None,
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
     snapshot_entries: list[
         WorkerCharacterFactComparisonBatchSnapshotEntry | CharacterProjectionEntry
@@ -246,7 +246,7 @@ async def execute_character_fact_comparison_batch(
     protected_slots=(),
     advisory_current_context=None,
 ) -> CharacterFactBatchExecutionResult:
-    """Split, compare, and project one ordered character+FactType batch.
+    """Split, compare, and project one ordered character batch (including persisted legacy FactType batches).
 
     Spring claim/context/stale/complete ownership intentionally stays outside this
     function. Evaluation can therefore reuse the exact provider fallback and Q-ref
@@ -337,7 +337,7 @@ async def execute_character_fact_comparison_batch(
                     ))
                     advisory_current_context = project_advisory_narrative_time(
                         advisory_current_context, candidate, retained_decision,
-                        fact_type=canonical_fact_type, previous_entries=previous_entries,
+                        fact_type=candidate.fact_type_for_batch(canonical_fact_type), previous_entries=previous_entries,
                     )
                     continue
                 provider_segment_count += 1
@@ -364,7 +364,7 @@ async def execute_character_fact_comparison_batch(
                     )
                     advisory_current_context = project_advisory_narrative_time(
                         advisory_current_context, candidate, singleton_result.decisions[0],
-                        fact_type=canonical_fact_type, previous_entries=previous_entries,
+                        fact_type=candidate.fact_type_for_batch(canonical_fact_type), previous_entries=previous_entries,
                     )
                 except AiTokenQuotaExhaustedError:
                     # Quota exhaustion is job-scoped. Continuing with later singletons would
@@ -409,7 +409,7 @@ async def execute_character_fact_comparison_batch(
             )
             advisory_current_context = project_advisory_narrative_time(
                 advisory_current_context, candidate, by_ref[candidate.candidate_ref],
-                fact_type=canonical_fact_type, previous_entries=previous_entries,
+                fact_type=candidate.fact_type_for_batch(canonical_fact_type), previous_entries=previous_entries,
             )
         cursor += len(segment)
     return CharacterFactBatchExecutionResult(
@@ -862,7 +862,7 @@ async def _largest_fitting_segment(
     comparator: CharacterFactBatchComparator,
     *,
     matched_character_name: str,
-    canonical_fact_type: str,
+    canonical_fact_type: str | None,
     candidates: list[WorkerCharacterFactComparisonBatchCandidate],
     state: CharacterProjectionState,
     start: int,
@@ -906,14 +906,14 @@ async def _mandatory_context_fits(comparator, *, state, **kwargs) -> bool:
 
 def _apply_and_map_decision(
     state: CharacterProjectionState,
-    canonical_fact_type: str,
+    canonical_fact_type: str | None,
     candidate: WorkerCharacterFactComparisonBatchCandidate,
     decision: CharacterFactComparisonBatchDecision,
 ) -> WorkerCharacterFactComparisonBatchDecision:
     application = state.apply(
         candidate_ref=candidate.candidate_ref,
         projected_snapshot_ref=candidate.projected_snapshot_ref,
-        fact_type=canonical_fact_type,
+        fact_type=candidate.fact_type_for_batch(canonical_fact_type),
         resolved_fact_key=decision.resolved_canonical_fact_key,
         value_type=candidate.value_type,
         candidate_value_json=candidate.value_json,

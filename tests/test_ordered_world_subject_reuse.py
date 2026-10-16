@@ -46,7 +46,7 @@ def run_selection(outputs, *, names=("캐릭터", "캐릭터", "캐릭터"), cat
     class Client:
         async def create_text_response(self, **kwargs):
             calls.append(kwargs)
-            return LlmTextResponse(text=json.dumps(outputs[len(calls) - 1]))
+            return LlmTextResponse(text=json.dumps({"decisions": outputs}))
     class Spring:
         async def get_pending_world_setting_subject_resolutions(self, *args):
             return WorkerWorldSettingSubjectResolutionPendingResponse(
@@ -73,26 +73,28 @@ def run_selection(outputs, *, names=("캐릭터", "캐릭터", "캐릭터"), cat
     return candidates, calls, saved[0].resolutions, pages
 
 
+def choice(index, selected=(), *, ambiguous=False):
+    return {"candidate_ref": f"C{index}", "selected_subject_refs": list(selected),
+            "ambiguous": ambiguous, "identity_proofs": []}
+
+
 def test_same_game_concept_reuses_first_provisional_only_after_explicit_selection():
-    choice = {"selected_subject_refs": ["S1"], "ambiguous": False}
-    sources, calls, results, pages = run_selection([choice, choice])
+    sources, calls, results, pages = run_selection([choice(1), choice(2, ["N1"]), choice(3, ["N1"])])
     anchor = f"provisional-world:{sources[0].candidate_id}"
     assert [row.provisional_subject_keys for row in results] == [[anchor]] * 3
-    assert pages == ["POWER_SYSTEM"] and len(calls) == 2
+    assert pages == ["POWER_SYSTEM"] and len(calls) == 1
     assert "그 참조를 재사용" in calls[0]["system_prompt"]
     assert "자동 연결의 충분한 근거가 아닙니다" in calls[0]["system_prompt"]
-    second_input = json.loads(calls[1]["user_prompt"])
-    assert len(second_input["subjects"]) == 1
-    assert second_input["subjects"][0]["identity_evidence"] == [
-        sources[0].evidence_spans[0].quote, sources[1].evidence_spans[0].quote,
-    ]
+    request = json.loads(calls[0]["user_prompt"])
+    assert request["initial_subjects"] == []
+    assert [item["new_subject_ref"] for item in request["candidates"]] == ["N1", "N2", "N3"]
     assert all(str(source.candidate_id) not in str(calls) for source in sources)
 
 
 @pytest.mark.parametrize("ambiguous", [False, True])
 def test_same_name_does_not_force_reuse_when_model_selects_new_or_uncertain(ambiguous):
     sources, calls, results, _ = run_selection(
-        [{"selected_subject_refs": [], "ambiguous": ambiguous}], names=("백탑", "백탑"),
+        [choice(1), choice(2, ambiguous=ambiguous)], names=("백탑", "백탑"),
     )
     assert len(calls) == 1
     assert results[0].provisional_subject_keys == [f"provisional-world:{sources[0].candidate_id}"]
@@ -103,40 +105,37 @@ def test_same_name_does_not_force_reuse_when_model_selects_new_or_uncertain(ambi
 
 
 def test_same_name_in_another_category_is_not_a_selectable_identity():
-    sources, calls, results, pages = run_selection([], names=("캐릭터", "캐릭터"),
+    _, calls, results, pages = run_selection([choice(1), choice(2)], names=("캐릭터", "캐릭터"),
         categories=["POWER_SYSTEM", "FACTION"])
-    assert calls == []
+    assert len(calls) == 1
     assert pages == ["POWER_SYSTEM", "FACTION"]
     assert results[0].provisional_subject_keys != results[1].provisional_subject_keys
 
 
 def test_ambiguous_selection_is_held_without_polluting_later_subject_evidence():
     sources, calls, results, _ = run_selection(
-        [{"selected_subject_refs": ["S1"], "ambiguous": True},
-         {"selected_subject_refs": ["S1"], "ambiguous": False}],
+        [choice(1), choice(2, ["N1"], ambiguous=True), choice(3, ["N1"])],
         names=("마석", "스톤", "마석"), categories=["IMPORTANT_ITEM"] * 3,
         evidence_quotes=["마석은 마물에서 얻는다.", "스톤으로 가격을 표시한다.",
                          "마석을 모아 환전한다."],
     )
     anchor = f"provisional-world:{sources[0].candidate_id}"
-    assert len(results) == 3 and len(calls) == 2
+    assert len(results) == 3 and len(calls) == 1
     assert [row.provisional_subject_keys for row in results] == [[anchor], [], [anchor]]
     assert [row.ambiguous for row in results] == [False, True, False]
     assert results[1].target_world_setting_ids == []
-    next_input = json.loads(calls[1]["user_prompt"])
-    assert len(next_input["subjects"]) == 1
-    assert next_input["subjects"][0]["identity_evidence"] == [sources[0].evidence_spans[0].quote]
+    assert results[2].provisional_subject_keys != [f"provisional-world:{sources[1].candidate_id}"]
 
 
 def test_distinct_monster_classifications_remain_separate_when_model_selects_new():
     names = ("변이종", "상위종", "희귀종", "상위 변이종")
     sources, calls, results, _ = run_selection(
-        [{"selected_subject_refs": [], "ambiguous": False}] * 3,
+        [choice(index) for index in range(1, 5)],
         names=names, categories=["MONSTER"] * 4,
         evidence_quotes=[f"가상 분류 목록의 {index}번은 {name}을 별도로 설명한다."
                          for index, name in enumerate(names, 1)],
     )
-    assert len(calls) == 3  # No additional model or mandatory-review step.
+    assert len(calls) == 1
     assert [row.provisional_subject_keys for row in results] == [
         [f"provisional-world:{source.candidate_id}"] for source in sources
     ]
@@ -146,7 +145,7 @@ def test_distinct_monster_classifications_remain_separate_when_model_selects_new
 
 def test_different_names_with_explicit_alias_evidence_can_still_select_same_subject():
     sources, calls, results, _ = run_selection(
-        [{"selected_subject_refs": ["S1"], "ambiguous": False}],
+        [choice(1), choice(2, ["N1"])],
         names=("상위 변이종", "네임드"), categories=["MONSTER"] * 2,
         evidence_quotes=["이 가상 작품에서는 상위 변이종을 네임드라고도 부른다."] * 2,
     )
@@ -164,7 +163,7 @@ def test_related_names_remain_distinct_with_explicit_synthetic_distinction(names
     # Episode 44 provides these names, not the lost provider response. The
     # distinction below is controlled evidence, not a claim about the live text.
     sources, calls, results, _ = run_selection(
-        [{"selected_subject_refs": [], "ambiguous": False}],
+        [choice(1), choice(2)],
         names=names, categories=["POWER_SYSTEM"] * 2,
         evidence_quotes=[f"합성 예시에서는 {names[0]}와 {names[1]}를 별개의 종류로 구분한다."] * 2,
     )

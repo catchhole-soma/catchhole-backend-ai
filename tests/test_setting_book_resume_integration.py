@@ -85,6 +85,9 @@ class SyntheticBookProvider:
                 "epistemic_status": "ASSERTED",
                 "evidence_spans": [{"quote": "낮은 길다."}], "confidence": 0.95}]
                 if "낮은 길다." in request["user_prompt"] else []}
+        elif key.startswith("world-manuscript-subject-resolution:"):
+            result = {"decisions": [{"candidate_ref": "C1", "selected_subject_refs": [],
+                                      "ambiguous": False, "identity_proofs": []}]}
         elif key.startswith("world-setting-comparison-batch:"):
             result = {"decisions": [{"source_candidate_refs": ["C1"], "consolidation_status": "SINGLE",
                 "operation": "ADD", "review_reason": None, "target_ref": "T1", "matched_property_ref": None,
@@ -458,7 +461,7 @@ def _run_persisted_scenario(database, *, disconnect_at=None, quota_at=None, reje
         assert reads == [(write.content_s3_key, "v1"), (write.content_s3_key, "v1")]
         assert all(episode_status is None for _step, episode_status, _checkpoint in backend.progress)
         assert backend.completions[0]["settingBookCount"] == 1 and backend.completions[0]["episodeCount"] == 0
-        assert len(provider.requests) == len(chunk_ids) * 2 + 2 + (1 if quota_at else 0)
+        assert len(provider.requests) == len(chunk_ids) * 2 + 3 + (1 if quota_at else 0)
         assert all("SETTING_BOOK" in request["user_prompt"] for request in provider.requests)
         assert all(str(write.setting_book_id) not in request["user_prompt"] for request in provider.requests)
         for span in backend._world_rows()[0]["item"]["evidenceSpans"]:

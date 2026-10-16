@@ -372,6 +372,34 @@ class WorldSettingComparisonPipeline:
                 raise ComparisonValidationError("World subjects do not match the claimed input state.")
             if not pending.candidates:
                 return
+            resolve_manuscript = getattr(self.subject_resolver, "select_manuscript_subjects", None)
+            if callable(resolve_manuscript):
+                # Validate the entire frozen source before any model request.
+                for candidate in pending.candidates:
+                    validate_comparison_source(candidate.source, analysis_context, analysis_source)
+                for candidate in pending.candidates:
+                    if (candidate.source is not None
+                            and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+                            and not is_asserted_book_claim(candidate.raw_extraction_json)):
+                        continue
+                    if candidate.category not in subjects_by_category:
+                        subjects_by_category[candidate.category] = await self._load_all_subjects_for_category(
+                            analysis_job_id, lease_token, candidate.category,
+                        )
+                request = WorkerWorldSettingSubjectResolutionRequest(resolutions=await resolve_manuscript(
+                    pending.candidates, subjects_by_category,
+                    ordered=pending.analysis_context is not None,
+                    unresolved_references=(tuple(pending.analysis_context.unresolved_references)
+                                           if pending.analysis_context is not None else ()),
+                    continue_on_candidate_failure=continue_on_candidate_failure,
+                ))
+                response = await self.spring_client.complete_world_setting_subject_resolutions(
+                    analysis_job_id, lease_token, request,
+                )
+                _validate_subject_resolution_response(request, response)
+                continue
+            # Existing injected resolvers and the legacy candidate API retain
+            # their single-candidate contract; production uses the batch above.
             resolutions: list[WorkerWorldSettingSubjectResolutionRequestItem] = []
             for candidate in pending.candidates:
                 validate_comparison_source(candidate.source, analysis_context, analysis_source)

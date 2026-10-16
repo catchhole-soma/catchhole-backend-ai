@@ -34,6 +34,7 @@ from app.analysis.character_subject_resolver import (
     SubjectResolutionChunkContext,
 )
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
+from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.analysis.setting_extractor import (
     SETTING_EXTRACTION_CACHE_KEY_VERSION,
@@ -60,7 +61,7 @@ from app.domain.enums import (
     WorldSettingOperation,
 )
 from app.domain.setting_values import normalize_setting_display_value
-from app.exceptions.failure_classification import is_candidate_comparison_failure
+from app.exceptions.failure_classification import comparison_failure_code, is_candidate_comparison_failure
 from app.llm.exceptions import LlmIncompleteResponseError, LlmInputTokenCountError, LlmResponseValidationError
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
@@ -80,6 +81,7 @@ from app.schemas.worker import (
     WorkerWorldSettingComparisonTarget,
     WorkerWorldSettingProperty,
     WorkerWorldSettingSubject,
+    WorkerWorldSettingSubjectResolutionCandidate,
 )
 from app.services.setting_candidate_service import prepare_setting_candidates
 from evals.multi_stage_setting.comparison_diagnostics import (
@@ -547,9 +549,14 @@ async def run_multi_stage_predictions(
         prompt_versions={
             "characterExtraction": SETTING_EXTRACTION_CACHE_KEY_VERSION,
             "characterSubjectResolution": "subject-resolution:v1",
-            "characterComparison": CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY,
+            "characterComparison": CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY + ":person-all-types-v1",
             "worldExtraction": WORLD_SETTING_EXTRACTION_CACHE_KEY,
-            "worldSubjectResolution": "world-setting-subject-resolution:v1",
+            "worldSubjectResolution": (
+                "world-manuscript-subject-resolution:v1:confirmed"
+                if mode != EvaluationMode.ORACLE
+                and callable(getattr(components.world_subject_resolver, "select_manuscript_subjects", None))
+                else "world-setting-subject-resolution:v1"
+            ),
             "worldComparison": WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
         },
         character_schema_hash=(
@@ -994,7 +1001,6 @@ async def _run_live_scenario(
             stage1=handoff_stage1,
             stage2=stage2,
         )
-    world_batch_sources: list[_WorldBatchSource] = []
     for consolidated_order, item in enumerate(consolidated, start=1):
         source_values = _publish_source_values(item)
         candidate_id = str(
@@ -1023,26 +1029,14 @@ async def _run_live_scenario(
             confidence=item.extraction_confidence,
         )
         handoff_stage1.append(prediction)
-    for prediction in handoff_stage1:
-        if not isinstance(prediction, WorldStage1Prediction):
-            continue
-        trace.start([prediction.candidate_id], "WORLD_PREPARATION")
-        try:
-            world_batch_sources.append(
-                await _live_world_batch_source(
-                    scenario,
-                    before_state,
-                    prediction,
-                    components.world_subject_resolver,
-                )
-            )
-        except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
-            raise
-        except Exception as exc:
-            trace.fail([prediction.candidate_id], prediction.domain, exc)
-            failures.append(
-                _runtime_failure(EvaluationDomain.WORLD, 2, prediction.candidate_id, exc)
-            )
+    world_batch_sources, subject_failures = await _live_world_batch_sources(
+        scenario,
+        before_state,
+        [item for item in handoff_stage1 if isinstance(item, WorldStage1Prediction)],
+        components.world_subject_resolver,
+        trace=trace,
+    )
+    failures.extend(subject_failures)
 
     world_stage2, world_failures = await _run_world_batches(
         world_batch_sources,
@@ -1071,21 +1065,21 @@ async def _run_character_batches(
     *,
     trace: ProcessingTrace | None = None,
 ) -> tuple[list[CharacterStage2Prediction], list[RuntimeFailure]]:
-    """Run one production-equivalent batch per character and FactType in this episode."""
+    """Run one production-equivalent batch per character across all FactTypes."""
 
     trace = trace or ProcessingTrace()
-    grouped: dict[tuple[str, CharacterFactType], list[_CharacterBatchSource]] = {}
+    grouped: dict[str, list[_CharacterBatchSource]] = {}
     for item in sorted(sources, key=_character_batch_source_sort_key):
         source = item.source
         if source.entity_ref is None or source.fact_type is None or source.fact_key is None:
             trace.start([_character_batch_source_id(source)], "CHARACTER_PREPARATION")
             trace.fail([_character_batch_source_id(source)], "CHARACTER", ValueError())
             continue
-        grouped.setdefault((source.entity_ref, source.fact_type), []).append(item)
+        grouped.setdefault(source.entity_ref, []).append(item)
 
     predictions: list[CharacterStage2Prediction] = []
     failures: list[RuntimeFailure] = []
-    for (entity_ref, fact_type), group in grouped.items():
+    for entity_ref, group in grouped.items():
         batch_size = len(group)
         for offset in range(0, len(group), batch_size):
             batch_group = group[offset : offset + batch_size]
@@ -1102,7 +1096,7 @@ async def _run_character_batches(
                 snapshots, stable_ref_by_request_ref = _character_batch_snapshots(
                     state,
                     entity_ref,
-                    fact_type,
+                    None,
                     [candidate.initial_canonical_fact_key for candidate in candidates],
                 )
                 source_by_candidate_ref = {
@@ -1114,7 +1108,7 @@ async def _run_character_batches(
                 execution = await execute_character_fact_comparison_batch(
                     comparator,
                     matched_character_name=_character_batch_matched_name(batch_group[0].source),
-                    canonical_fact_type=fact_type,
+                    canonical_fact_type=None,
                     candidates=candidates,
                     snapshot_entries=snapshots,
                 )
@@ -1133,13 +1127,13 @@ async def _run_character_batches(
                         CharacterFactComparisonOperation.UPDATE,
                         CharacterFactComparisonOperation.MERGE,
                     }:
-                        projected_ref = candidate_by_ref[
-                            decision.candidate_ref
-                        ].projected_snapshot_ref
-                        stable_ref_by_request_ref[projected_ref] = character_state_ref(
-                            entity_ref,
-                            fact_type,
-                            decision.resolved_canonical_fact_key,
+                        candidate = candidate_by_ref[decision.candidate_ref]
+                        stable_ref_by_request_ref[candidate.projected_snapshot_ref] = (
+                            character_state_ref(
+                                entity_ref,
+                                candidate.fact_type_for_batch(None),
+                                decision.resolved_canonical_fact_key,
+                            )
                         )
                 for prediction in group_predictions:
                     trace.complete(prediction)
@@ -1182,7 +1176,11 @@ def _worker_character_batch_candidate(
     index: int,
 ) -> WorkerCharacterFactComparisonBatchCandidate:
     source = item.source
-    assert source.fact_key is not None and source.value_type is not None
+    assert (
+        source.fact_type is not None
+        and source.fact_key is not None
+        and source.value_type is not None
+    )
     evidence = (
         _worker_evidence_from_quotes(source.evidence_quotes)
         if isinstance(source, CharacterStage1Gold)
@@ -1191,6 +1189,7 @@ def _worker_character_batch_candidate(
     return WorkerCharacterFactComparisonBatchCandidate(
         candidate_ref=f"C{index}",
         projected_snapshot_ref=f"Q{index}",
+        canonical_fact_type=source.fact_type,
         source_episode_no=scenario.episode_no,
         attribute_value=source.display_value,
         value_json=source.value_json,
@@ -1274,7 +1273,20 @@ async def _live_world_batch_source(
     source: WorldStage1Prediction,
     subject_resolver: WorldSettingSubjectResolver | Any | None,
 ) -> _WorldBatchSource:
-    runtime_candidate = WorkerWorldSettingCandidatePayload(
+    runtime_candidate = _live_world_candidate(scenario, source)
+    target_set = await _live_world_targets(state, runtime_candidate, subject_resolver)
+    return _WorldBatchSource(
+        source_id=source.candidate_id,
+        candidate=runtime_candidate,
+        target_set=target_set,
+    )
+
+
+def _live_world_candidate(
+    scenario: ScenarioGold,
+    source: WorldStage1Prediction,
+) -> WorkerWorldSettingCandidatePayload:
+    return WorkerWorldSettingCandidatePayload(
         candidate_id=UUID(source.candidate_id),
         work_id=_stable_uuid("work", gold_version_key(scenario)),
         source_episode_id=_stable_uuid("episode", scenario.scenario_id),
@@ -1286,12 +1298,103 @@ async def _live_world_batch_source(
         evidence_spans=_worker_evidence(source.evidence_spans),
         extraction_confidence=source.confidence,
     )
-    target_set = await _live_world_targets(state, runtime_candidate, subject_resolver)
-    return _WorldBatchSource(
-        source_id=source.candidate_id,
-        candidate=runtime_candidate,
-        target_set=target_set,
-    )
+
+
+async def _live_world_batch_sources(
+    scenario: ScenarioGold,
+    state: EvaluationState,
+    sources: list[WorldStage1Prediction],
+    subject_resolver: WorldSettingSubjectResolver | Any | None,
+    *,
+    trace: ProcessingTrace,
+) -> tuple[list[_WorldBatchSource], list[RuntimeFailure]]:
+    prepared: list[_WorldBatchSource] = []
+    failures: list[RuntimeFailure] = []
+    if not sources:
+        return prepared, failures
+    resolve_manuscript = getattr(subject_resolver, "select_manuscript_subjects", None)
+    if not callable(resolve_manuscript):
+        if isinstance(subject_resolver, WorldSettingSubjectResolver):
+            raise TypeError("Production world subject resolver requires manuscript resolution.")
+        # Legacy injected test resolvers retain their existing candidate contract.
+        for source in sources:
+            trace.start([source.candidate_id], "WORLD_PREPARATION")
+            try:
+                prepared.append(await _live_world_batch_source(scenario, state, source, subject_resolver))
+            except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
+                raise
+            except Exception as exc:
+                trace.fail([source.candidate_id], source.domain, exc)
+                failures.append(_runtime_failure(EvaluationDomain.WORLD, 2, source.candidate_id, exc))
+        return prepared, failures
+
+    candidates = [_live_world_candidate(scenario, source) for source in sources]
+    subjects_by_category = {candidate.category: [] for candidate in candidates}
+    entries_by_id = {}
+    for entries in _group_world_entries(state.world_facts).values():
+        first = entries[0]
+        if first.category not in subjects_by_category:
+            continue
+        subject_id = _world_subject_id_for_entry(first)
+        entries_by_id[subject_id] = entries
+        subjects_by_category[first.category].append(WorkerWorldSettingSubject(
+            world_setting_id=subject_id, subject_name=first.subject_name,
+        ))
+
+    def fail(source_id, code):
+        trace.record(source_id, "WORLD", "PREPARATION_FAILED", failure_code=code)
+        failures.append(RuntimeFailure(
+            stage="WORLD_STAGE2", source_id=source_id, error_type=code.value,
+            message="World subject resolution failed.",
+        ))
+
+    trace.start([source.candidate_id for source in sources], "WORLD_PREPARATION")
+    try:
+        # These evaluation modes still compare only confirmed before-state targets.
+        # ORDERED_PROVISIONAL and its temporary identities use the Java journal adapter.
+        resolutions = await resolve_manuscript([
+            WorkerWorldSettingSubjectResolutionCandidate(
+                candidate_id=candidate.candidate_id,
+                source_episode_id=candidate.source_episode_id,
+                source_episode_no=scenario.episode_no,
+                category=candidate.category,
+                subject_name=candidate.subject_name,
+                evidence_spans=candidate.evidence_spans,
+            ) for candidate in candidates
+        ], subjects_by_category, ordered=False, continue_on_candidate_failure=True)
+        if [item.candidate_id for item in resolutions] != [item.candidate_id for item in candidates]:
+            raise ComparisonValidationError("World subject resolution must cover every candidate in order.")
+    except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
+        raise
+    except Exception as exc:
+        if not is_candidate_comparison_failure(exc):
+            raise
+        for source in sources:
+            fail(source.candidate_id, comparison_failure_code(exc))
+        return prepared, failures
+
+    for source, candidate, resolution in zip(sources, candidates, resolutions, strict=True):
+        if resolution.failure_code is not None:
+            fail(source.candidate_id, resolution.failure_code)
+            continue
+        try:
+            selected_ids = resolution.target_world_setting_ids
+            if (resolution.ambiguous or resolution.provisional_subject_keys
+                    or len(selected_ids) != len(set(selected_ids))
+                    or any(target_id not in entries_by_id
+                           or entries_by_id[target_id][0].category != candidate.category
+                           for target_id in selected_ids)):
+                raise ComparisonValidationError("Invalid confirmed world subject resolution target.")
+            prepared.append(_WorldBatchSource(
+                source_id=source.candidate_id,
+                candidate=candidate,
+                target_set=_world_target_set([
+                    entry for target_id in selected_ids for entry in entries_by_id[target_id]
+                ]),
+            ))
+        except ComparisonValidationError as exc:
+            fail(source.candidate_id, comparison_failure_code(exc))
+    return prepared, failures
 
 
 async def _run_world_batches(
@@ -1691,30 +1794,33 @@ def _character_prediction(
 def _character_batch_snapshots(
     state: EvaluationState,
     entity_ref: str,
-    fact_type: CharacterFactType,
+    fact_type: CharacterFactType | None,
     initial_fact_keys: list[str],
 ) -> tuple[list[WorkerCharacterFactComparisonBatchSnapshotEntry], dict[str, str]]:
-    """Mirror Java's exact-slot-first, then factKey ordered 30-entry selection."""
+    """Keep the full person context; nonnull types retain legacy slot selection."""
 
     matching = [
         item
         for item in state.character_facts
-        if item.entity_ref == entity_ref and item.fact_type == fact_type
+        if item.entity_ref == entity_ref and (fact_type is None or item.fact_type == fact_type)
     ]
-    entry_by_key = {item.fact_key: item for item in matching}
-    entries = []
-    selected_refs: set[str] = set()
-    for fact_key in dict.fromkeys(initial_fact_keys):
-        entry = entry_by_key.get(fact_key)
-        if entry is not None and len(entries) < MAX_CHARACTER_CONTEXT_ENTRIES:
-            entries.append(entry)
-            selected_refs.add(entry.ref)
-    entries.extend(
-        item
-        for item in sorted(matching, key=lambda value: (value.fact_key, value.ref))
-        if item.ref not in selected_refs
-    )
-    entries = entries[:MAX_CHARACTER_CONTEXT_ENTRIES]
+    if fact_type is None:
+        entries = sorted(matching, key=lambda item: (item.fact_type, item.fact_key, item.ref))
+    else:
+        entry_by_key = {item.fact_key: item for item in matching}
+        entries = []
+        selected_refs: set[str] = set()
+        for fact_key in dict.fromkeys(initial_fact_keys):
+            entry = entry_by_key.get(fact_key)
+            if entry is not None and len(entries) < MAX_CHARACTER_CONTEXT_ENTRIES:
+                entries.append(entry)
+                selected_refs.add(entry.ref)
+        entries.extend(
+            item
+            for item in sorted(matching, key=lambda value: (value.fact_key, value.ref))
+            if item.ref not in selected_refs
+        )
+        entries = entries[:MAX_CHARACTER_CONTEXT_ENTRIES]
     return (
         [
             WorkerCharacterFactComparisonBatchSnapshotEntry(
