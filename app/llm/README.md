@@ -86,7 +86,9 @@ Spring의 `ai_token_usages`를 기준으로 조회합니다.
 자동 누적 분석에서 AI 비교 응답만 실패한 경우에는 해당 묶음을 실패로 보존하고 다른 묶음을 진행합니다. 고정 입력·대상 계약이 깨지거나 캐릭터 단일 후보 또는 재시도 prompt가 입력 상한을 넘은 경우에는 작업을 중단하며, 실패 API에도 격리 불가능한 `UNEXPECTED_ERROR`를 저장합니다. Spring 입력 검증·claim·저장 오류를 AI 응답 실패와 같은 코드로 바꾸지 않습니다. 세계관 대상 저장 검증의 전용 실패 코드는 기존 계약대로 Spring source metadata와 함께 남기고, Backend는 그 metadata를 보고 진행을 차단합니다. 기존 확정 설정 기반 단일 과대 후보의 typed failure 정책은 유지합니다.
 
 JSON 파싱 실패 또는 Python schema 검증 실패는 `CharacterSettingExtractor`에서 재시도합니다. 다음 요청에는 최초 prompt와 값이 제거된 `reasonCode + fieldLocs`만 넣고 실패 응답 원문은 prompt나 로그에 남기지 않습니다. 다만 attribute 이름 정책처럼 schema로 표현하지 않은 프롬프트 정책 위반까지 강제하지는 않습니다.
-캐릭터 설정 추출은 `max_output_tokens=6000`에서 시작해 출력 절단 시 12000으로, 세계관 추출은 5000에서 시작해 절단 시 10000으로 한 번만 확장합니다. 주체 해소는 2000, 단건 비교는 3000, 세계관 batch 비교는 16000을 사용하며 절단 확장 재시도는 하지 않습니다. batch의 모든 원문 값·실제 target 경로·decision JSON을 보존하는 최소 출력 예상치가 16000을 넘으면 provider를 호출하지 않고 `BATCH_LIMIT_EXCEEDED` 검토로 전환합니다.
+캐릭터·세계관 설정 추출은 각각 기본 `max_output_tokens=32000`에서 시작해 출력 절단 시 64000으로 한 번만 확장합니다. 명시한 환경변수 값은 기본값보다 우선합니다. 주체 해소는 2000, 단건 비교는 3000, 세계관 batch 비교는 16000을 사용하며 절단 확장 재시도는 하지 않습니다. batch의 모든 원문 값·실제 target 경로·decision JSON을 보존하는 최소 출력 예상치가 16000을 넘으면 provider를 호출하지 않고 `BATCH_LIMIT_EXCEEDED` 검토로 전환합니다.
+
+BOOK 전체 원문 동명 identity 검증은 주체 해소 모델을 사용하며 최초 출력 상한은 주체 해소·캐릭터 추출 설정 중 큰 값(기본 32000), 절단 재시도는 캐릭터 추출 재시도 설정(기본 64000)을 따릅니다. 일반 주체 해소 기본 상한 2000은 유지합니다.
 
 예를 들어 `attribute_name`이 `item`처럼 suffix 없이 오거나, `confidence`가 `0.0`인 응답은 프롬프트상 원하지 않는 값이지만 현재 schema만으로는 통과할 수 있습니다.
 

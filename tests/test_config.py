@@ -35,10 +35,10 @@ def test_reasoning_effort_loads_dotenv_value_and_prioritizes_environment(monkeyp
 def test_purpose_output_caps_use_operational_defaults() -> None:
     defaults = Settings.model_fields
 
-    assert defaults["llm_setting_extraction_max_output_tokens"].default == 6000
-    assert defaults["llm_setting_extraction_retry_max_output_tokens"].default == 12000
-    assert defaults["llm_world_setting_extraction_max_output_tokens"].default == 5000
-    assert defaults["llm_world_setting_extraction_retry_max_output_tokens"].default == 10000
+    assert defaults["llm_setting_extraction_max_output_tokens"].default == 32000
+    assert defaults["llm_setting_extraction_retry_max_output_tokens"].default == 64000
+    assert defaults["llm_world_setting_extraction_max_output_tokens"].default == 32000
+    assert defaults["llm_world_setting_extraction_retry_max_output_tokens"].default == 64000
     assert defaults["llm_subject_resolution_max_output_tokens"].default == 2000
     assert defaults["llm_comparison_max_output_tokens"].default == 3000
     assert defaults["llm_world_setting_batch_comparison_max_output_tokens"].default == 16000
