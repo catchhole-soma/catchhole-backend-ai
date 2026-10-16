@@ -58,7 +58,8 @@ def test_restart_unresolved_never_adds_an_anchor_or_evidence_even_with_exact_exi
                 "canonicalSubjectName": "검은 깃", "targetWorldSettingIds": row.target_world_setting_ids,
                 "provisionalSubjectKeys": row.provisional_subject_keys,
             } for row in request.resolutions])
-    client = RecordingClient({"selected_subject_refs": ["S1"], "ambiguous": False, "identity_proofs": []})
+    client = RecordingClient({"decisions": [{"candidate_ref": "C2", "selected_subject_refs": ["S1"],
+                                            "ambiguous": False, "identity_proofs": []}]})
     asyncio.run(WorldSettingComparisonPipeline(Spring(),
         WorldSettingSubjectResolver(llm_client=client, model="test-model"), object())._prepare_subject_resolutions(
             uuid4(), uuid4(), context, analysis_source=source))
@@ -68,7 +69,7 @@ def test_restart_unresolved_never_adds_an_anchor_or_evidence_even_with_exact_exi
     assert pending.model_dump() == before
     if ordered:
         assert len(client.requests) == 1
-        assert json.loads(client.requests[0]["user_prompt"])["subjects"][0]["identity_evidence"] == ["기원은 고대 의식이다."]
+        assert json.loads(client.requests[0]["user_prompt"])["initial_subjects"][0]["identity_evidence"] == ["기원은 고대 의식이다."]
     else:
         assert client.requests == []
 

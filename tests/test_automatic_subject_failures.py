@@ -107,6 +107,16 @@ def run_world(outputs, *, automatic=True, tamper_failure=False):
     return client, spring
 
 
+def world_failure_outputs(invalid):
+    def decision(ref, selected=()):
+        return {"decisions": [{"candidate_ref": ref, "selected_subject_refs": list(selected),
+                                "ambiguous": False, "identity_proofs": []}]}
+    rejected = ({"decisions": [{"candidate_ref": "C2", "identity_proofs": [], **invalid}]}
+                if isinstance(invalid, dict) else invalid)
+    # Exhaust the full batch, then its right half, then the invalid singleton.
+    return ([rejected] * 3 + [decision("C1")] + [rejected] * 6 + [decision("C3", ["N1"])])
+
+
 @pytest.mark.parametrize(("invalid", "failure_code"), [
     ({"selected_subject_refs": ["S999"], "ambiguous": False}, "COMPARISON_VALIDATION_FAILED"),
     ({"selected_subject_refs": ["S1", "S1"], "ambiguous": False}, "COMPARISON_VALIDATION_FAILED"),
@@ -114,31 +124,29 @@ def run_world(outputs, *, automatic=True, tamper_failure=False):
     ("{invalid", "LLM_RESPONSE_PARSE_ERROR"),
 ])
 def test_automatic_world_failure_preserves_normal_neighbors_and_does_not_create_identity(invalid, failure_code):
-    good = {"selected_subject_refs": ["S1"], "ambiguous": False}
-    client, spring = run_world([invalid] * 3 + [good])
+    client, spring = run_world(world_failure_outputs(invalid))
     first, failed, last = spring.saved[0].resolutions
     assert first.failure_code is None and last.failure_code is None
     assert failed.failure_code == failure_code and failed.ambiguous is False
     assert failed.target_world_setting_ids == failed.provisional_subject_keys == []
     assert first.provisional_subject_keys == last.provisional_subject_keys
     later = json.loads(client.calls[-1]["user_prompt"])
-    assert len(later["subjects"]) == 1
-    assert later["subjects"][0]["identity_evidence"] == [spring.sources[0].evidence_spans[0].quote]
-    assert "스톤으로 가격" not in json.dumps(later["subjects"], ensure_ascii=False)
-    assert len(client.calls) == 4
+    assert len(later["initial_subjects"]) == 1
+    assert later["initial_subjects"][0]["identity_evidence"] == [spring.sources[0].evidence_spans[0].quote]
+    assert "스톤으로 가격" not in json.dumps(later["initial_subjects"], ensure_ascii=False)
+    assert len(client.calls) == 11
 
 
 def test_world_failure_cannot_be_changed_to_normal_ambiguity_by_backend():
     invalid = {"selected_subject_refs": ["S999"], "ambiguous": False}
-    good = {"selected_subject_refs": ["S1"], "ambiguous": False}
     with pytest.raises(ComparisonValidationError, match="changed a failed"):
-        run_world([invalid] * 3 + [good], tamper_failure=True)
+        run_world(world_failure_outputs(invalid), tamper_failure=True)
 
 
 def test_manual_world_subject_failure_keeps_existing_stop_boundary():
     invalid = {"selected_subject_refs": ["S999"], "ambiguous": False}
     with pytest.raises(ComparisonValidationError):
-        run_world([invalid] * 3, automatic=False)
+        run_world(world_failure_outputs(invalid), automatic=False)
 
 
 def character_sources():

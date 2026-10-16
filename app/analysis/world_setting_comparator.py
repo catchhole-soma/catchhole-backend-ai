@@ -49,6 +49,10 @@ from app.analysis.world_setting_schemas import (
     WorldSettingComparisonDecision,
     WorldSettingSubjectSelection,
 )
+from app.analysis.world_subject_batch import (
+    ORDERED_WORLD_SUBJECT_IDENTITY_INSTRUCTIONS,
+    resolve_manuscript_subjects,
+)
 from app.core.config import get_settings
 from app.domain.enums import (
     AnalysisSourceKind,
@@ -200,6 +204,8 @@ class WorldSettingSubjectResolver:
         model: str | None = None,
         max_attempts: int | None = None,
         max_output_tokens: int | None = None,
+        batch_max_output_tokens: int | None = None,
+        batch_max_input_tokens: int | None = None,
     ) -> None:
         settings = get_settings()
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
@@ -210,6 +216,22 @@ class WorldSettingSubjectResolver:
             settings.llm_subject_resolution_max_output_tokens
             if max_output_tokens is None
             else max_output_tokens
+        )
+        self.batch_max_output_tokens = (getattr(settings, "llm_world_setting_batch_subject_resolution_max_output_tokens", 32000)
+                                        if batch_max_output_tokens is None else batch_max_output_tokens)
+        self.batch_max_input_tokens = (getattr(settings, "llm_world_setting_batch_subject_resolution_max_input_tokens", 64000)
+                                       if batch_max_input_tokens is None else batch_max_input_tokens)
+
+    async def select_manuscript_subjects(
+        self, candidates, subjects_by_category, *, ordered, unresolved_references=(),
+        continue_on_candidate_failure=False,
+    ):
+        return await resolve_manuscript_subjects(
+            candidates, subjects_by_category, client=self.llm_client, model=self.model,
+            prompt_path=self.prompt_path, max_attempts=self.max_attempts,
+            max_output_tokens=self.batch_max_output_tokens, max_input_tokens=self.batch_max_input_tokens,
+            ordered=ordered, unresolved_references=unresolved_references,
+            continue_on_candidate_failure=continue_on_candidate_failure,
         )
 
     async def select_subjects(
@@ -294,20 +316,7 @@ class WorldSettingSubjectResolver:
             client=BoundedOrderedClient(self.llm_client),
             response_model=BookWorldSubjectSelection if is_book else _OrderedSubjectSelection,
             system_prompt=(ordered_state_instructions(candidate.source.source_kind if candidate.source else None) + "\n"
-                "입력 subjects는 같은 분류에서 선택 가능한 대상입니다. 원문 근거와 대상 설명으로 "
-                "같은 주체를 판단하세요. 같은 이름의 임시 대상이 같은 개념·존재를 가리키면 "
-                "그 참조를 재사용하세요. 비교할 특성이 다르거나 아직 설정을 확정하지 않았다는 "
-                "이유로 새 주체를 만들지 마세요. 예를 들어 게임의 일반적인 캐릭터에 관한 "
-                "장비 수치와 전투 수치 설명은 같은 개념의 다른 특성일 수 있습니다. 반면 이름이 "
-                "같아도 서로 다른 장소·개별 존재라는 근거가 있으면 별도 주체입니다. 이름 일치는 "
-                "검토할 단서이며 자동 연결의 충분한 근거가 아닙니다. 연관된 분류나 상위·하위 종류는 "
-                "같은 대상의 별칭이 아닙니다. 원문이 변이종·상위종·희귀종·상위 변이종을 각각 다른 "
-                "분류로 설명하면 단어가 겹치거나 서로 관련돼도 구분하세요. 다른 이름을 연결하려면 "
-                "별칭·약칭·번역 차이 또는 원문이 같은 대상을 달리 부른다는 근거를 확인하세요. "
-                "앞서 보류된 참고 주장은 "
-                "선택 가능한 대상이나 확정 사실이 아니며 그것만으로 같은 주체라고 결정하지 마세요. "
-                "연결이 모호하면 ambiguous=true 및 빈 목록을 "
-                "반환하세요. 명확한 신규 주체는 ambiguous=false 및 빈 목록입니다.\n\n"
+                + ORDERED_WORLD_SUBJECT_IDENTITY_INSTRUCTIONS + "\n\n"
                 + (BOOK_WORLD_IDENTITY_INSTRUCTIONS if is_book else _ORDERED_WORLD_SUBJECT_FORMAT_INSTRUCTIONS)),
             user_prompt=json.dumps({
                 "candidate": {"category": candidate.category,

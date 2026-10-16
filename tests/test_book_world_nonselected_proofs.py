@@ -83,11 +83,17 @@ def test_pipeline_enriches_selected_identity_without_enriching_explanation_targe
                 "targetWorldSettingIds": [], "provisionalSubjectKeys": row.provisional_subject_keys,
             } for row in request.resolutions])
 
-    client = RecordingClient(choice(["S1"], [{"subject_ref": "S2", "relation": "DISTINCT", "quote": quote}]), choice(["S2"]))
+    # Force the complete batch to split, exposing the validated state supplied
+    # to the later candidate without changing either identity judgment.
+    client = RecordingClient({"decisions": []},
+        {"decisions": [{"candidate_ref": "C1", **choice(["S1"], [
+            {"subject_ref": "S2", "relation": "DISTINCT", "quote": quote}])}]},
+        {"decisions": [{"candidate_ref": "C2", **choice(["S2"])}]})
     asyncio.run(WorldSettingComparisonPipeline(Spring(), WorldSettingSubjectResolver(llm_client=client, model="test-model", max_attempts=1), object())._prepare_subject_resolutions(uuid4(), uuid4(), context, analysis_source=first.source))
     rows = saved[0].resolutions
     assert [r.provisional_subject_keys for r in rows] == [[plate.provisional_subject_key], [rod.provisional_subject_key]]
-    next_subjects = json.loads(client.requests[1]["user_prompt"])["subjects"]
+    assert len(client.requests) == 3
+    next_subjects = json.loads(client.requests[2]["user_prompt"])["initial_subjects"]
     assert next_subjects[0]["identity_evidence"] == ["조율판은 금속판이다.", quote]
     assert next_subjects[1]["identity_evidence"] == ["측정봉은 공구다."]
     assert [s.model_dump() for s in [plate, rod]] == original

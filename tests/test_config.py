@@ -150,6 +150,25 @@ def test_character_fact_batch_has_no_candidate_count_setting() -> None:
     assert "character_fact_comparison_batch_max_candidates" not in Settings.model_fields
 
 
+def test_world_subject_batch_budget_does_not_change_character_identity_budget(monkeypatch):
+    monkeypatch.setenv("LLM_WORLD_SETTING_BATCH_SUBJECT_RESOLUTION_MAX_OUTPUT_TOKENS", "48000")
+    monkeypatch.setenv("LLM_WORLD_SETTING_BATCH_SUBJECT_RESOLUTION_MAX_INPUT_TOKENS", "96000")
+    settings = Settings(_env_file=None, llm_subject_resolution_max_output_tokens=2000)
+    assert settings.llm_world_setting_batch_subject_resolution_max_output_tokens == 48000
+    assert settings.llm_world_setting_batch_subject_resolution_max_input_tokens == 96000
+    assert settings.llm_subject_resolution_max_output_tokens == 2000
+
+
+@pytest.mark.parametrize("overrides", [
+    {"llm_world_setting_batch_subject_resolution_max_output_tokens": 128001},
+    {"llm_world_setting_batch_subject_resolution_max_output_tokens": 0},
+    {"llm_world_setting_batch_subject_resolution_max_input_tokens": 0},
+])
+def test_world_subject_batch_rejects_invalid_budgets(overrides):
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, **overrides)
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

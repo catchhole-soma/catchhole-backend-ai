@@ -116,14 +116,16 @@ def test_explicit_ambiguity_with_contradictory_proof_never_enriches_identity_mem
                 "provisionalSubjectKeys": row.provisional_subject_keys,
             } for row in request.resolutions])
     bad = {**proof("S1", quote), "relation": "DISTINCT"}
-    client = RecordingClient(choice(["S1"], [bad], ambiguous=True), choice(["S1"]))
+    client = RecordingClient({"decisions": []},
+        {"decisions": [{"candidate_ref": "C1", **choice(["S1"], [bad], ambiguous=True)}]},
+        {"decisions": [{"candidate_ref": "C2", **choice(["S1"])}]})
     asyncio.run(WorldSettingComparisonPipeline(Spring(), WorldSettingSubjectResolver(llm_client=client,
         model="test-model", max_attempts=1), object())._prepare_subject_resolutions(
             uuid4(), uuid4(), context, analysis_source=first.source))
-    assert len(client.requests) == 2 and saved[0].resolutions[0].ambiguous
+    assert len(client.requests) == 3 and saved[0].resolutions[0].ambiguous
     assert saved[0].resolutions[0].provisional_subject_keys == []
     assert saved[0].resolutions[1].provisional_subject_keys == [subject.provisional_subject_key]
-    assert json.loads(client.requests[1]["user_prompt"])["subjects"][0]["identity_evidence"] == [
+    assert json.loads(client.requests[2]["user_prompt"])["initial_subjects"][0]["identity_evidence"] == [
         span.quote for span in subject.identity_evidence]
     assert subject.model_dump() == original
 

@@ -273,9 +273,10 @@ def test_world_pipeline_forwards_frozen_references_to_subject_resolution_and_com
             assert kwargs["unresolved_references"] == tuple(context.unresolved_references)
             return await super().compare_batch(category, candidates, targets)
 
-    client = RecordingClient(*[
-        {"selected_subject_refs": ["S1"], "ambiguous": False} for _ in batch.candidates
-    ])
+    client = RecordingClient({"decisions": [
+        {"candidate_ref": candidate.candidate_ref, "selected_subject_refs": ["S1"],
+         "ambiguous": False, "identity_proofs": []} for candidate in batch.candidates
+    ]})
     spring = Spring([batch])
     pipeline = WorldSettingComparisonPipeline(
         spring, WorldSettingSubjectResolver(llm_client=client, model="test-model"),
@@ -287,7 +288,7 @@ def test_world_pipeline_forwards_frozen_references_to_subject_resolution_and_com
         await pipeline._compare_batch_with_fresh_context(uuid4(), uuid4(), batch, 1, [])
 
     asyncio.run(scenario())
-    assert len(client.requests) == len(batch.candidates)
+    assert len(client.requests) == 1
     assert all(len(json.loads(call["user_prompt"])["unresolved_references"]) == 2 for call in client.requests)
     assert len(spring.completions) == 1
     assert spring.completions[0].context_token == "c" * 64
