@@ -1,107 +1,130 @@
-# 챗봇 배포와 검색 백필 운영 (#258)
+# 챗봇 최초 설정·배포·검색 백필 (#258)
 
-## 배포와 데이터 준비
+## 정상 배포 경로
 
-Java PR을 먼저 배포한 뒤 AI PR을 배포한다. Python 이미지 발행 성공과 최신 main SHA 확인,
-최신 Java 배포 성공·health 확인은 기존 workflow가 유지한다. 같은 SHA의 파일을
-`/opt/catchhole/releases/<full-sha>/`에 내려받고, 환경·내부 API 인증·검색 DB를 검사한 뒤
-기존 5+1+1 워커와 별도 챗봇을 갱신한다. 프로세스 수는 실제 Compose 설정에서 읽는다.
-검사 실패 시 기존 서비스는 변경하지 않는다. 서비스 재생성 이후 실패의 자동 롤백은 제공하지 않는다.
+Java #262와 공통 호스트 잠금을 추가한 Java #263을 먼저 배포한 뒤 AI #84를 머지한다.
+기존 GitHub Actions 배포 자격 증명과 서버의 `api.env`·`worker.env`를 재사용한다.
+새로운 키·DB 암호·사설 IP를 GitHub Secrets에 복사하거나 서버에서 SQL을 직접 실행할 필요가 없다.
 
-정상 기동 후 `current-chat-release` 링크를 원자적으로 바꾸고 systemd timer를 설치한다.
-`catchhole-retrieval-backfill.service`는 5분마다 최대 300초의 one-shot을 실행한다.
-실행 중이면 중복 기동하지 않으며, 재배포 중 실행 중인 백필은 시작한 이미지로 마친다.
-다음 실행부터 새 release를 사용한다. 백필에 HTTP 포트는 없다. 서버 배포 성공은 전체 백필 완료를 뜻하지 않는다.
-각 실행은 결과를 journald에 남기며 `status`가 영속 진행 상황을 조회한다.
+1. 기존 workflow가 최신 Java main 배포 성공과 Spring health를 확인한다.
+2. 같은 AI publish SHA의 최초 설정 코드를 내려받는다. 워커의 실제 사설 IP/VPC와 기존
+   `SPRING_INTERNAL_API_BASE_URL`의 API 인스턴스를 대조한다. 서로 다른 VPC나 모호한 인스턴스는 거절한다.
+3. 문서화된 API/Worker 보안 그룹이 실제 인스턴스에 연결됐는지 확인하고,
+   Worker SG의 TCP 8082를 API SG에서만 접근하도록 준비한다. 인터넷/CIDR 전체를 열지 않는다.
+4. API 호스트에서 기존 비밀값을 보존하고 없는 실행 서명값만 생성한다. 초기 운영 백필 접수를 켜고
+   AI 사설 주소를 연결한다. 공개 채팅은 기존에 열려 있었다면 유지하고, 첫 공개는 준비 완료까지 보류한다.
+5. AI 호스트에서 공통 자격 증명을 상속해 서비스별 env를 준비한다. 기존 검색 DSN은 검사·재사용하고,
+   없다면 읽기 전용 계정과 비밀번호를 생성해 운영 호스트에만 보관한다. 실제 DB 용량과 메모리를 확인한다.
+6. 기존 readiness를 통과한 동일 SHA의 워커·챗봇을 배포하고, `current-chat-release`와 백필 timer를 설정한다.
+7. 첫 공개가 남아 있다면 최대 30분 동안 백필 및 미전송 보고 상태를 확인한다.
+   지원 원문 범위가 준비되고 AI의 health가 확인된 뒤 API의 공개 채팅을 활성화한다.
 
-## 최초 한 번 필요한 설정
+이 흐름은 **최초 설정을 자동 수행하는 배포**다. 실제 운영 적용·임베딩 공급자 호출은
+PR 테스트와 별개이며, merge 이후 배포 단계에서 시작된다. 배포 성공과 색인 완료를 구분한다.
 
-API 서버의 `api.env`에 `CHAT_OPERATIONS_ENABLED=true`, 별도 32자 이상
-`CHAT_CAPABILITY_SECRET`을 설정한다. 비밀값은 내부 API key와 다르게 생성하고 재배포마다 바꾸지 않는다.
-백필 준비 중 `CHAT_ENABLED=false`를 유지할 수 있다. 사용자 공개 때
-`CHAT_PYTHON_URL=http://<AI-private-IP>:8082`와 `CHAT_ENABLED=true`를 적용한다.
-환경 파일 변경은 컨테이너 재생성이 필요하다. 기존 예약의 보고·복구를 위해 secret을 보존한다.
+## 최초 자동 설정의 정책
 
-AI 첫 배포는 `chatbot.env`, `retrieval.env`가 없으면 0600 예제를 생성하고 미설정 항목에서 중단한다.
-환경 파일은 커밋하지 않는다. 실제 값은 `/opt/catchhole/`에 한 번 넣고 같은 Actions 배포를 다시 실행한다.
-기존 파일은 자동 배포가 덮어쓰지 않는다. 공통 자격 증명은 `worker.env`를 먼저 읽어 상속하며,
-그 뒤 서비스별 파일의 값이 덮어쓴다. 이미지 SHA만 배포 인자로 고정한다.
+기존 값이 없는 최초 rollout의 기본값은 다음과 같다. custom 모델·DSN·campaign·범위·예산은 보존한다.
 
-| 파일 | 필수 설정 |
+| 항목 | 최초 정책 |
 |---|---|
-| `worker.env` | 기존 DB/S3·Spring 내부 주소/key·provider key. 공통 설정은 재복사하지 않는다 |
-| `chatbot.env` | `CHAT_QA_ENABLED=true`, `CHAT_BIND_ADDRESS=<AI-private-IP>`; 모델 기본 `gpt-6-luna` |
-| `chatbot.env` 원문 검색 | `CHAT_RETRIEVAL_ENABLED=true`, `CHAT_RETRIEVAL_DATABASE_URL=<SELECT-only DSN>`; 버전 `v1` |
-| `retrieval.env` | `RETRIEVAL_BACKFILL_ENABLED=true`, `RETRIEVAL_EMBEDDING_GENERATION_ENABLED=true`, 안정적인 `RETRIEVAL_BACKFILL_ID`, 전체 `RETRIEVAL_BACKFILL_MAX_INPUT_TOKENS`, `RETRIEVAL_BACKFILL_ACTOR` |
-| `retrieval.env` 범위 | `RETRIEVAL_BACKFILL_SCOPE=active-works` 또는 scope를 비우고 `RETRIEVAL_BACKFILL_WORK_IDS=<UUID,...>` 중 하나 |
-| `retrieval.env` 자원 | 실제 API pool을 `AI_RUNTIME_API_DB_POOL_SIZE`에, 확인한 앱 전체 연결 예산을 `AI_RUNTIME_DB_CONNECTION_BUDGET`에 지정 |
+| 챗봇 | 독립 FastAPI, `gpt-6-luna`, QA 및 원문 검색 활성화 |
+| 백필 대상 | `active-works`: 활성 작품의 현재 회차 원문, 이후 추가·수정분 포함 |
+| campaign | `retrieval-v1-rollout`, 운영 주체 `scheduled-retrieval` |
+| 누적 입력 상한 | `50,000,000` 보수적 입력 단위, 재배포/재시작으로 충전하지 않음 |
+| 청크·모델 | 기존 800/100 토큰, `text-embedding-3-small`, 1536차원, v1 |
+| 비용 귀속 | 기존 서비스 부담 원장 사용, 사용자 토큰 차감 없음 |
+| 실행 | 5분 간격, 최대 300초·1,000청크·batch 8·알려진 실패 재시도 1 |
+| DB | 실제 Compose 풀 합계와 API pool을 사용. 기본 정상 31 + 점검 1 = 32 |
 
-AI SG의 TCP 8082는 API SG에서만 허용한다. API TCP 8080은 AI SG에서 접근 가능해야 한다.
-RDS 접근과 S3 IAM 권한은 기존 정책을 사용한다. 검색 계정에는 CONNECT/USAGE 및
-`retrieval_chunks`, `retrieval_sources`, `retrieval_current_chunks`, `episodes`, `works`, `members`,
-`episode_source_purge_requests` SELECT가 필요하다. view 권한만으로는 실제 검색 쿼리가 실행되지 않는다.
-검색 DSN은 `postgresql+psycopg` 형식이며 비밀번호 URL 인코딩과 TLS 설정을 유지한다.
+5천만은 공급자에게 반드시 소비하는 양이나 400회차의 측정 결과가 아니라 **유료 호출을 제한하는
+누적 실행 상한**이다. 예산은 현재 원고와 이후 추가/수정분이 공유한다. 실제 provider 사용량은 별도 원장에 기록한다.
+같은 campaign의 범위·모델·버전·예산·운영 주체는 최초 실행 후 바꾸지 않는다.
+새 ID는 새 예산이므로 장애 복구 목적으로 자동 생성하지 않는다. 설정집·과거 버전은 지원 범위가 아니다.
 
-기본 연결은 API 10 + 분석 5×3 + 비교 2 + 챗봇 2 + 백필 2 = 31이다.
-배포 사전 검사 연결 1개까지 **32개**이며 RDS 관리·다른 앱 연결 여유는 별도다.
-기존 27개에서 분석 워커 1개만 줄이면 충분하다는 예전 계산은 챗봇 연결을 빠뜨렸다.
-실제 RDS `max_connections`와 기존 연결, CPU·메모리를 확인하고 예산을 설정한다.
-이번 배포는 기존 워커 수나 DB pool을 자동으로 줄이거나 늘리지 않는다.
+처음부터 특정 작품만 원하는 경우 배포 전에 기존 `retrieval.env`에 `RETRIEVAL_BACKFILL_WORK_IDS`와
+해당 범위를 명시할 수 있다. 자동화는 기존 allowlist를 모든 작품으로 넓히지 않는다.
+기존 `worker.env`의 분석용 `EMBEDDING_GENERATION_ENABLED`는 변경하지 않는다.
+`RETRIEVAL_PREPARATION_ENABLED=true`도 필수가 아니며 실행기가 현재 원고의 검색 청크를 직접 준비한다.
 
-## 백필 범위·예산·중단 재개
+## 비밀값·재실행·배포 경합
 
-campaign ID는 배포 SHA/날짜로 생성하지 않는다. 같은 ID의 작품 범위·모델·버전·전체 예산·운영 주체는
-영속 SQLite에 고정된다. 변경해서 재사용하면 실패한다. 새 ID는 새로운 예산이므로 의도적인 새 작업에만 쓴다.
-사용자 토큰은 차감하지 않으며 기존 서비스 부담 원장으로 기록한다.
+- `CHAT_CAPABILITY_SECRET`은 API 호스트에서 생성·보존하며 AI나 GitHub에 전송하지 않는다.
+- 검색 비밀번호·DSN은 AI의 `.chat-bootstrap/` 및 비공개 env에만 보관한다.
+  DB 계정 생성 전에 비밀번호 intent를 저장해, 중간 실패 후 재실행에서도 같은 자격 증명을 사용한다.
+- 동명의 기존 DB 역할이 자동화 소유로 확인되지 않으면 암호를 강제로 변경하지 않는다.
+  기존 검색 DSN도 역할 속성·멤버십·쓰기 권한을 검사한다. 조회 중 `read_only`만 켜는 것으로 관리자 계정을 허용하지 않는다.
+- 기존 파일의 관련 없는 항목과 custom 값을 보존한다. 최초 활성화 기록 후 운영자가 끈 flag를 다음 배포에서 다시 켜지 않는다.
+- API 배포와 최초 설정/공개 전환은 `.api-deploy.lock`을 공유한다. 이미지 값·다른 서비스 설정을 덮어쓰지 않는다.
+- SSM/GitHub 로그에는 고정 상태와 집계만 반환한다. 원시 Docker 설정·SSM stderr·DSN·원문·비밀번호를 출력하지 않는다.
+- 운영 상태 파일과 SQLite 볼륨은 삭제하지 않는다. 불확실 호출의 자동 재결제나 실패 시 전체 초기화를 하지 않는다.
 
-한 순회 시작 시 대상 작품·회차 번호 상한·생성 시점을 고정한다. `(episode_no, id)`로 순회하므로
-페이지 제한이나 같은 회차 번호에서도 건너뛰지 않는다. 회차의 모든 현재 청크가 READY인 경우만 전진한다.
-시간/청크 제한은 같은 위치에서 다음 실행으로 이어지고, 완료된 청크는 재호출하지 않는다.
-한 순회가 끝나면 다음 정기 실행이 새 원고·수정 원고를 탐색한다. 과거 버전·설정집은 지원 범위가 아니다.
+## 권한·자원 부족은 자동 확대하지 않는다
 
-provider 호출 전에 보수적인 UTF-8 입력 상한을 SQLite에 기록한다. 이 누적 상한은 실측 provider 토큰이
-아니며 재시작/알려진 실패에도 환급하지 않는다. 기존 사용량 원장은 별도로 실제 측정값을 유지한다.
-예산 소진이면 새 호출을 멈춘다. 프로세스 종료나 응답·저장 사이 실패처럼 호출 결과가 불확실하면
-`BLOCKED / UNKNOWN_USAGE`로 멈추며 자동 유료 재실행하지 않는다. 정상 보고는 기존 outbox에서 먼저 복구한다.
-`resume`은 운영자가 원장·저장 상태를 확인한 뒤 명시적으로 재개할 때만 사용하며 누적 예산은 초기화하지 않는다.
-외부 API와 PostgreSQL의 분산 원자성을 제공하지 않으므로 명시적 재개에도 중복 호출 가능성은 남는다.
+기존 배포 주체에는 EC2 인스턴스/보안 그룹 조회, Worker SG의 좁은 ingress 추가,
+API·Worker 두 인스턴스의 SSM 명령 실행/결과 조회 권한이 필요하다.
+권한이 없으면 해당 단계가 고정 오류 코드로 멈추며 IAM 권한을 스스로 확대하지 않는다.
+기존 worker DB 계정에는 검색 계정 생성과 필요한 SELECT 부여 권한이 있어야 한다.
+운영 권한 충족 여부는 실제 배포 전 확인해야 하며 로컬 합성 테스트 통과가 운영 IAM 검증을 대신하지 않는다.
 
-영속 `retrieval_outbox` 볼륨에는 기존 `retrieval.sqlite` 보고와 새 `backfill.sqlite3` 상태가 있다.
-완료 후에도 상태·예산을 삭제하지 않는다. 이 파일은 비공개 ID를 포함할 수 있으므로 외부에 공유하지 않는다.
-SQLite에는 원문이나 키를 저장하지 않으며 로그는 상태·개수·예산만 출력한다.
+검색 계정은 실제 DB CONNECT, public USAGE와 `retrieval_chunks`, `retrieval_sources`,
+`retrieval_current_chunks`, `episodes`, `works`, `members`, `episode_source_purge_requests` SELECT가 필요하다.
+다른 공유 테이블의 쓰기, 객체 소유권, 높은 역할 권한을 부여하지 않는다.
+DB의 PUBLIC CREATE 권한처럼 기존 공유 ACL 때문에 읽기 전용을 보장할 수 없으면 전역 ACL을 임의로 변경하지 않는다.
 
-## 확인·복구 명령
+현재 최대 연결 한도와 예약 연결을 확인하고 앱 합계 외 관리 여유를 남긴다.
+다른 앱의 미래 연결 수·전체 부하를 보증하지 않으며 RDS 용량·기존 워커 수·풀은 자동 변경하지 않는다.
+AI 호스트의 가용 메모리가 부족한 경우도 보고하고 중단한다. 새 EC2나 유료 인스턴스 증설을 자동 수행하지 않는다.
+기존 AI→API 8080, RDS/S3 접근과 provider 자격 증명은 기존 운영 구성을 재사용한다.
 
-AI 서버에서 `sudo -iu ubuntu` 후 실행한다.
+## 백필 생명주기와 복구
+
+한 순회 시작 시 작품·회차 번호 상한·생성 시점을 고정하고 `(episode_no, id)` 키셋으로 순회한다.
+회차의 현재 청크가 모두 READY인 경우만 전진하며, 시간/청크 제한 뒤 같은 위치에서 계속한다.
+다음 순회는 새 원고·수정분을 찾고 완료 청크는 재호출하지 않는다.
+
+입력 상한은 provider 호출 전에 SQLite에 기록하고 실패/재시작으로 환급하지 않는다.
+응답·DB 저장 사이 종료 등 결과가 불확실하면 `BLOCKED / UNKNOWN_USAGE`로 멈춘다.
+기존 사용량 보고를 먼저 복구하고 새 유료 호출을 진행한다. 외부 API와 DB 사이의 exactly-once는 제공하지 않는다.
+영속 `retrieval_outbox` 볼륨의 `retrieval.sqlite`와 `backfill.sqlite3`는 완료 후에도 보존한다.
+
+정상 배포 뒤 AI 서버의 진단 명령:
 
 ```bash
+sudo -iu ubuntu
 cd /opt/catchhole
 python3 current-chat-release/manage-ai-runtime.py status
-systemctl status catchhole-retrieval-backfill.timer
-systemctl status catchhole-retrieval-backfill.service
-journalctl -u catchhole-retrieval-backfill.service -n 30 --no-pager
+systemctl list-timers catchhole-retrieval-backfill.timer
+systemctl show catchhole-retrieval-backfill.service -p Result -p ExecMainStatus
+sudo journalctl -u catchhole-retrieval-backfill.service -n 30 --no-pager
 ```
 
-`READY`는 해당 순회에서 확인한 지원 원문 범위가 준비됐다는 뜻이다. 이후 수정·추가된 원고와
-검색 품질을 보증하지 않는다. `PARTIAL`은 제외/확인 불가 출처, `REPORTS_PENDING`은 원장 보고 대기,
-`BLOCKED`는 명시적인 확인 필요 상태다. `BUDGET_EXHAUSTED`는 전체 상한 소진이며 자동 재충전하지 않는다.
-`TIME_LIMIT`/`CHUNK_LIMIT`은 다음 정기 실행에서 이어간다. `status`가 실행과 겹치면 `INDEX_BUSY`가 반환될 수 있다.
+첫 성공 전에는 `current-chat-release`가 없다. one-shot 서비스는 실행 사이 `inactive`여도 정상이다.
+`READY`는 해당 순회에서 확인한 현재 원문 범위의 준비이며 이후 변경/검색 품질까지 보증하지 않는다.
+`TIME_LIMIT`/`CHUNK_LIMIT`은 다음 주기에 이어지고, `INDEX_BUSY`는 동시 실행 중이다.
+`PARTIAL`, `REPORTS_PENDING`, `BLOCKED`, `BUDGET_EXHAUSTED`는 자동 첫 공개 조건을 충족하지 않는다.
+대상이 실제로 없는 완료 순회만 EMPTY로 인정한다.
+
+첫 준비 대기 시간이 초과되면 timer와 진행 상태를 유지하고 공개 전환을 보류한다.
+문제를 해결하거나 백필이 끝난 뒤 **최신 main에 해당하는 Deploy Worker EC2 실행을 재실행**하면
+보존된 설정·진행 상태로 이어간다. 새 커밋/새 campaign/수동 SQL은 필요하지 않다.
+이미 설정 파일을 ON으로 저장한 뒤 컨테이너 재기동이 실패한 경우에는 자동 OFF 롤백을 하지 않는다.
+이 경우 env와 실제 실행 상태를 대조해 복구해야 하며, 모든 배포 실패가 공개 OFF를 보장한다고 해석하지 않는다.
+
+불확실 상태의 재개는 원장·DB 확인 뒤에만 실행한다. 누적 예산은 초기화하지 않으며 중복 호출 가능성이 남는다.
 
 ```bash
-# 원장·DB 확인 후에만: 불확실 상태 해제, 예산 환급 없음
 python3 current-chat-release/manage-ai-runtime.py resume
-# 다음 주기를 기다리지 않고 실행
 sudo systemctl start --no-block catchhole-retrieval-backfill.service
 ```
 
-새 유료 작업 중단은 `retrieval.env`의 `RETRIEVAL_BACKFILL_ENABLED=false`와 API의
-`CHAT_OPERATIONS_ENABLED=false`로 제어한다. 이미 외부로 전송된 호출은 취소되지 않는다.
-timer를 유지하면 disabled 상태에서도 outbox 보고 복구가 계속된다. timer만 끄면 보고 복구도 멈춘다.
-사용자 공개 중단은 별도로 `CHAT_ENABLED=false`를 적용한다. 원장/SQLite 볼륨은 삭제하지 않는다.
+새 유료 백필 중단은 `retrieval.env`의 `RETRIEVAL_BACKFILL_ENABLED=false`와 API의
+`CHAT_OPERATIONS_ENABLED=false`로 제어한다. timer를 유지하면 disabled 상태에서도 outbox 복구가 계속된다.
+공개 중단은 API의 `CHAT_ENABLED=false`로 별도 제어한다. API/chatbot env 변경에는 컨테이너 재생성이 필요하고,
+retrieval timer는 다음 실행 때 env를 다시 읽는다. 이미 전송된 공급자 호출은 취소되지 않는다.
 
 ## 검증 경계
 
-preflight는 유료 호출·사용자 원문 읽기 없이 설정, 내부 인증, Spring health, DB 스키마·SELECT 권한을 확인한다.
-provider key의 실제 유효성·모델 접근 권한, 실제 S3 GetObject 권한, 답변 품질·검색 완료까지 보증하지 않는다.
-실제 PostgreSQL의 정상 역할/기본 테이블 권한 누락/뷰 권한 누락/벡터 차원 오류를 격리 환경에서 검증했다.
-운영 활성화·유료 백필은 이 PR 작성 중 실행하지 않았다. 새 배포 후 RDB 질문·원문 질문과 근거를 확인한다.
+테스트는 합성 데이터·격리 PostgreSQL로 수행하고 운영 키나 유료 모델을 호출하지 않는다.
+사전 점검은 설정·인증·스키마·SELECT/역할 권한·자원을 확인한다. 실제 모델 접근 권한, S3 GetObject,
+답변 품질을 보증하지 않는다. 운영 배포 뒤 등록 설정 질문·원문 질문·인용 열기를 별도로 확인한다.
