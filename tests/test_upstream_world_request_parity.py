@@ -59,4 +59,8 @@ def test_world_request_keeps_upstream_input_and_transport(purpose, captured):
     assert set(extraction_budget_overrides) == {"extraction", "world_extraction"}
     assert all(set(row) == {"sha256", "max_output_tokens"} for row in extraction_budget_overrides.values())
     overrides = {**overrides, **extraction_budget_overrides.get(purpose, {})}
+    world_prompt_overrides = json.loads((ROOT / "tests/fixtures/world_extraction_scope_request_overrides_20261017.json").read_text())["overrides"]
+    assert set(world_prompt_overrides) == {"world_extraction"}
+    assert set(world_prompt_overrides["world_extraction"]) == {"sha256", "system_sha256", "prompt_cache_key"}
+    overrides = {**overrides, **world_prompt_overrides.get(purpose, {})}
     assert actual[purpose] == {**expected["requests"][purpose], **overrides}

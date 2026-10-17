@@ -558,7 +558,7 @@ def test_fixed_runtime_reuses_character_dedupe_and_world_consolidation() -> None
     assert bundle.character_schema_hash is not None
     assert bundle.prompt_versions["characterExtraction"] == "setting-extraction:v12"
     assert bundle.prompt_versions["characterComparison"] == "character-fact-comparison-batch:v10:person-all-types-v1"
-    assert bundle.prompt_versions["worldExtraction"] == "world-setting-extraction:v5"
+    assert bundle.prompt_versions["worldExtraction"] == "world-setting-extraction:v6"
     assert bundle.prompt_versions["worldComparison"] == "world-setting-comparison-batch:v16"
 
 
