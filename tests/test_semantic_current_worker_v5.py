@@ -59,7 +59,7 @@ def test_full_worker_stage_passes_prepared_context_only_to_extraction():
         async def _run_chunk_stage(self, payload, checkpoint):
             return [], {"embeddedChunkCount": 0, "embeddingFailedChunkCount": 0, "embeddingSkippedChunkCount": 0}
 
-        async def _run_character_stage(self, payload, chunks, checkpoint, known, hints, current):
+        async def _run_character_stage(self, payload, chunks, checkpoint, known, hints, current, world_extractions):
             received.append(("character", current.character_prompt_json()))
             return {"candidateCount": 0, "subjectFallbackCallCount": 0,
                     "subjectFallbackResolvedCount": 0, "subjectFallbackUnresolvedCount": 0,
@@ -69,7 +69,7 @@ def test_full_worker_stage_passes_prepared_context_only_to_extraction():
         async def _run_character_comparison_stage(self, payload, checkpoint):
             return CharacterFactComparisonRunResult(0, 0)
 
-        async def _run_world_extraction_stage(self, payload, chunks, checkpoint, current):
+        async def _run_world_extraction_stage(self, payload, chunks, checkpoint, current, world_extractions):
             received.append(("world", current.world_prompt_json()))
             return 0
 

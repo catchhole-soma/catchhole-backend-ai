@@ -19,7 +19,7 @@ from app.analysis.character_subject_resolver import (
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
-from app.chunking.chunk_splitter import EpisodeChunkDraft, split_into_chunks
+from app.chunking.chunk_splitter import EpisodeChunkDraft, split_episode_into_chunks
 from app.schemas.worker import WorkerAnalysisCharacterSettingSchemaPayload
 
 # 로컬에서 텍스트 파일을 넣으면 청킹 -> llm로 설정후보 추출 -> 인용문 offset 보정 -> fall back 흐름 -> Setting_candidates 응답값을 json 파일로 주는 테스트 코드
@@ -55,7 +55,7 @@ async def run_episode_text_analysis_debug(
     schema_hints: tuple[CharacterSettingSchemaHint, ...],
 ) -> dict:
     raw_text = text_file.read_text(encoding="utf-8")
-    drafts = split_into_chunks(raw_text)
+    drafts = split_episode_into_chunks(raw_text)
     chunks = [
         DebugChunk(
             id=uuid4(),

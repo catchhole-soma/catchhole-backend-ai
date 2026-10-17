@@ -5,6 +5,7 @@ from dataclasses import dataclass
 DEFAULT_TARGET_CHARS = 6000
 DEFAULT_MAX_CHARS = 7000
 DEFAULT_MIN_CHARS = 1000
+WHOLE_EPISODE_MAX_CHARS = 10000
 
 #Java의 record와 유사한 형식 (현재는 한 파일의 내부 응답 경우에 사용 중)
 @dataclass(frozen=True)
@@ -23,6 +24,15 @@ class EpisodeChunkDraft: #최종적으로 만들어지는 청크 하나
     end_offset: int
     paragraph_start_index: int
     paragraph_end_index: int
+
+
+def split_episode_into_chunks(text: str) -> list[EpisodeChunkDraft]:
+    """Keep short episodes together; retain source slices and the long-source policy."""
+    if len(text) <= WHOLE_EPISODE_MAX_CHARS:
+        return split_into_chunks(
+            text, target_chars=WHOLE_EPISODE_MAX_CHARS, max_chars=WHOLE_EPISODE_MAX_CHARS,
+        )
+    return split_into_chunks(text)
 
 
 def split_into_chunks(

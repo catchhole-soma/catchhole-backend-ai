@@ -6,6 +6,20 @@ from app.models.episode_chunk import EpisodeChunk
 from app.services.episode_chunk_service import EpisodeChunkService
 
 
+@pytest.mark.parametrize("size,expected_lengths", [
+    (9999, [9999]), (10000, [10000]), (10001, [6000, 3999]),
+])
+def test_episode_whole_source_boundary_preserves_offsets(size, expected_lengths):
+    text = "가" * 6000 + "\r\n" + "나" * (size - 6002)
+    service = EpisodeChunkService(FakeSession, FakeEpisodeChunkRepository)
+
+    chunks = service.replace_episode_chunks(uuid4(), text)
+
+    assert [len(chunk.chunk_text) for chunk in chunks] == expected_lengths
+    assert all(chunk.chunk_text == text[chunk.start_offset:chunk.end_offset] for chunk in chunks)
+    assert chunks[-1].end_offset == size
+
+
 def test_replace_episode_chunks_preserves_source_and_saves_chunks() -> None:
     # 회차 원문을 변경하지 않고 청크로 나눈 뒤 기존 청크를 대체 저장하는지 확인한다.
     episode_id = uuid4()

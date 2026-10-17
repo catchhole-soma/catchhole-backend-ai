@@ -3,7 +3,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.chunking.chunk_splitter import split_into_chunks
+from app.chunking.chunk_splitter import split_episode_into_chunks
 from app.mappers.episode_chunk_mapper import EpisodeChunkMapper
 from app.models.episode_chunk import EpisodeChunk
 from app.repositories.episode_chunk_repository import EpisodeChunkRepository
@@ -30,7 +30,7 @@ class EpisodeChunkService:
     ) -> list[EpisodeChunk]:
         # Episode.content_s3_key로 읽은 회차 원문을 변경하지 않고 나눠야
         # chunk/evidence offset을 같은 원문에 그대로 적용할 수 있다.
-        drafts = split_into_chunks(raw_text)
+        drafts = split_episode_into_chunks(raw_text)
         # EpisodeChunkDraft를 실제 DB에 저장할 EpisodeChunk 엔티티로 변환
         chunks = [
             EpisodeChunkMapper.to_entity(

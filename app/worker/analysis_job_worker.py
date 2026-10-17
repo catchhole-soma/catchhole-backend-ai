@@ -471,6 +471,9 @@ class AnalysisJobWorker:
             )
             for schema in payload.character_setting_schemas
         )
+        # Per-job memory only: publish at the original checkpoint, never on the
+        # shared worker instance. A restart re-extracts any uncommitted result.
+        world_extractions = {} if payload.source_kind == AnalysisSourceKind.EPISODE else None
         character_metrics = await self._run_character_stage(
             payload,
             chunks,
@@ -478,6 +481,7 @@ class AnalysisJobWorker:
             known_characters,
             schema_hints,
             semantic_current_context,
+            world_extractions,
         )
         character_comparison_result = await self._run_character_comparison_stage(
             payload,
@@ -488,6 +492,7 @@ class AnalysisJobWorker:
             chunks,
             checkpoint,
             semantic_current_context,
+            world_extractions,
         )
         comparison_result = await self._run_world_comparison_stage(payload, checkpoint)
 
@@ -649,6 +654,7 @@ class AnalysisJobWorker:
         known_characters: list[KnownCharacter],
         schema_hints: tuple[CharacterSettingSchemaHint, ...],
         semantic_current_context: SemanticCurrentInput | None = None,
+        world_extractions: dict[UUID, WorldSettingExtractionResult] | None = None,
     ) -> dict[str, int]:
         status_context_character_count = sum(
             bool(character.active_statuses) for character in known_characters
@@ -700,7 +706,7 @@ class AnalysisJobWorker:
         ordered_subjects = initial_ordered_subjects(ordered_context) if ordered_context else []
         time_context: list[NarrativeTimePoint] = []
         for index, chunk in enumerate(chunks):
-            extraction_result = await setting_extractor.extract_from_chunk(
+            character_extraction = setting_extractor.extract_from_chunk(
                 source_chunk_id=chunk.id,
                 chunk_text=chunk.chunk_text,
                 analysis_job_id=payload.analysis_job_id,
@@ -712,6 +718,20 @@ class AnalysisJobWorker:
                    if semantic_current_context is not None else {}),
                 **({"time_context": tuple(time_context)} if time_context else {}),
             )
+            if world_extractions is None:
+                extraction_result = await character_extraction
+            else:
+                # Drain both requests before propagating a failure. Cancellation
+                # cancels both; the existing metered clients release their slots.
+                results = await asyncio.gather(
+                    character_extraction,
+                    self._extract_world_chunk(payload, chunk, semantic_current_context),
+                    return_exceptions=True,
+                )
+                for result in results:
+                    if isinstance(result, BaseException):
+                        raise result
+                extraction_result, world_extractions[chunk.id] = results
             extraction_result = ground_extraction_narrative_time(
                 extraction_result, chunk=chunk, time_context=time_context,
             )
@@ -912,6 +932,7 @@ class AnalysisJobWorker:
         chunks: list[EpisodeChunk | SettingBookChunk],
         checkpoint: AnalysisJobCheckpointStage | None,
         semantic_current_context: SemanticCurrentInput | None = None,
+        world_extractions: dict[UUID, WorldSettingExtractionResult] | None = None,
     ) -> int:
         if _checkpoint_reached(
             checkpoint,
@@ -925,20 +946,13 @@ class AnalysisJobWorker:
                 AnalysisStep.WORLD_SETTING_EXTRACTION, _episode_processing_status(payload),
             )
 
-        extractor = self._get_world_setting_extractor(
-            payload.analysis_job_id,
-            payload.lease_token,
-        )
         extracted_items: list[WorkerWorldSettingCandidatePublishItem] = []
         for chunk in chunks:
-            extraction_result = await extractor.extract_from_chunk(
-                chunk_text=chunk.chunk_text,
-                **_source_extraction_arguments(payload),
-                **({"analysis_context": payload.analysis_context}
-                   if payload.analysis_context is not None else {}),
-                **({"semantic_current_context": semantic_current_context}
-                   if semantic_current_context is not None else {}),
-            )
+            extraction_result = (world_extractions or {}).get(chunk.id)
+            if extraction_result is None:
+                extraction_result = await self._extract_world_chunk(
+                    payload, chunk, semantic_current_context,
+                )
             extracted_items.extend(
                 WorldSettingCandidateMapper.to_publish_item(candidate, chunk)
                 for candidate in extraction_result.candidates
@@ -953,6 +967,22 @@ class AnalysisJobWorker:
             candidates,
         )
         return len(published)
+
+    async def _extract_world_chunk(
+        self,
+        payload: WorkerAnalysisJobPayload,
+        chunk: EpisodeChunk | SettingBookChunk,
+        semantic_current_context: SemanticCurrentInput | None,
+    ) -> WorldSettingExtractionResult:
+        extractor = self._get_world_setting_extractor(payload.analysis_job_id, payload.lease_token)
+        return await extractor.extract_from_chunk(
+            chunk_text=chunk.chunk_text,
+            **_source_extraction_arguments(payload),
+            **({"analysis_context": payload.analysis_context}
+               if payload.analysis_context is not None else {}),
+            **({"semantic_current_context": semantic_current_context}
+               if semantic_current_context is not None else {}),
+        )
 
     async def _run_world_comparison_stage(
         self,

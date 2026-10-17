@@ -1,0 +1,10 @@
+{
+  "reason": "Approved world-only extraction wording: preserve properties, conditions, negative facts and original scope even when mentioned once. Character prompt and all other request fields are unchanged; historical captures remain immutable.",
+  "overrides": {
+    "world_extraction": {
+      "sha256": "be4a0f1f41d714a9a05968efcc34ad8e993d48f08bc51eb86c5be8ea2576d09f",
+      "system_sha256": "fd7868cc41b61bd34199d09f4c3e3304d1ad978483504399d50ffc5506454f6c",
+      "prompt_cache_key": "world-setting-extraction:v6"
+    }
+  }
+}
