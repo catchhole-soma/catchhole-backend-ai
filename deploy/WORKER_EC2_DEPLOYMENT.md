@@ -421,6 +421,8 @@ fi
 
 LLM Histogram은 delegate 한 호출의 monotonic 시간이며 semaphore·예약/정산·retry sleep은 제외한다. transport 재시도만 retries Counter에 기록하며 schema/출력 절단의 바깥 재시도는 호출/오류/시간으로 보인다. usage input에는 cached input이 포함된다. 이 Counter를 quota 감사 원장이나 금액으로 대체하지 않는다. 운영/로컬 labels, 지표 정의와 성공률은 Java 저장소 `docs/analysis-metrics.md`를 따른다.
 
+LLM 호출·재시도 Counter의 `error_type`은 HTTP 400·401·403을 각각 `400`·`401`·`403`으로 구분하고 다른 4xx는 `4xx`로 묶는다. 429는 기존 `429`, 408은 `timeout`, 500~599는 `5xx`를 유지한다. 예외 wrapper가 있어도 원인 HTTP status로 분류하며 응답 본문·오류 메시지는 label에 넣지 않는다.
+
 로컬 fake 검증:
 
 ```bash
@@ -428,4 +430,4 @@ python -m pytest tests/test_worker_metrics.py tests/test_ai_token_metering.py te
 python -m unittest discover -s deploy/tests -p 'test_worker_targets.py'
 ```
 
-실제 LLM 과금 호출 없이 지연/429/timeout/취소와 exporter HTTP를 검증한다. exporter의 생성·업데이트·bind·종료 오류가 원래 Worker·ledger 결과를 바꾸지 않도록 경고만 남긴다. rollout은 Java schema/API 배포 성공 뒤 기존 AI main 배포를 사용하며 이전 이미지로 rollback할 때 target/bind와 수집 상태도 함께 확인한다.
+실제 LLM 과금 호출 없이 지연/4xx/429/timeout/취소와 exporter HTTP를 검증한다. exporter의 생성·업데이트·bind·종료 오류가 원래 Worker·ledger 결과를 바꾸지 않도록 경고만 남긴다. rollout은 Java schema/API 배포 성공 뒤 기존 AI main 배포를 사용하며 이전 이미지로 rollback할 때 target/bind와 수집 상태도 함께 확인한다.

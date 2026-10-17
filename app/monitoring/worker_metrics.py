@@ -40,6 +40,10 @@ LLM_OUTCOMES = frozenset({"success", "failure", "canceled", "unknown"})
 ERROR_TYPES = frozenset(
     {
         "none",
+        "400",
+        "401",
+        "403",
+        "4xx",
         "429",
         "5xx",
         "timeout",
@@ -91,6 +95,10 @@ def llm_error_type(exc: BaseException) -> str:
                 return "5xx"
             if status == 408:
                 return "timeout"
+            if status in {400, 401, 403}:
+                return str(status)
+            if 400 <= status <= 499:
+                return "4xx"
     if any(isinstance(error, (TimeoutError, httpx.TimeoutException)) for error in errors):
         return "timeout"
     if any(isinstance(error, (httpx.NetworkError, httpx.RemoteProtocolError)) for error in errors):
