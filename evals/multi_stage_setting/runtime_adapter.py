@@ -51,7 +51,7 @@ from app.analysis.world_setting_extractor import (
     WORLD_SETTING_EXTRACTION_CACHE_KEY,
     WorldSettingExtractor,
 )
-from app.chunking.chunk_splitter import EpisodeChunkDraft, split_into_chunks
+from app.chunking.chunk_splitter import EpisodeChunkDraft, split_episode_into_chunks as split_into_chunks
 from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.domain.enums import (
     CharacterFactComparisonOperation,
