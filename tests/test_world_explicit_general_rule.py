@@ -37,7 +37,11 @@ def _offline(monkeypatch):
 
     monkeypatch.setattr(socket.socket, "connect", reject_network)
     monkeypatch.setattr(ordered_context.tiktoken, "get_encoding", lambda name: Encoding())
-    monkeypatch.setattr(world_setting_comparator, "get_settings", lambda: SimpleNamespace())
+    # This tokenizer counts UTF-8 bytes, not model tokens. Keep a separate
+    # synthetic budget so response-contract tests reach the recording client.
+    monkeypatch.setattr(world_setting_comparator, "get_settings", lambda: SimpleNamespace(
+        llm_world_setting_batch_comparison_max_input_tokens=64000,
+    ))
 
 
 def _source(book=False):

@@ -38,7 +38,11 @@ def offline_dependencies(monkeypatch):
 
     monkeypatch.setattr(socket.socket, "connect", no_network)
     monkeypatch.setattr(ordered_context.tiktoken, "get_encoding", lambda name: Encoding())
-    monkeypatch.setattr(world_setting_comparator, "get_settings", lambda: SimpleNamespace())
+    # This tokenizer counts UTF-8 bytes, not model tokens. Keep a separate
+    # synthetic budget so response-contract tests reach the recording client.
+    monkeypatch.setattr(world_setting_comparator, "get_settings", lambda: SimpleNamespace(
+        llm_world_setting_batch_comparison_max_input_tokens=64000,
+    ))
 
 
 def _candidate(ref="C1", *, name="조명 환경", scope="외곽 지역", subject="미궁"):

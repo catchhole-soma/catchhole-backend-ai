@@ -14,6 +14,7 @@ from app.analysis.ordered_character_subjects import (
     resolve_ordered_character_subjects,
 )
 from app.analysis.schemas import ExtractedSettingCandidate
+from app.core.config import Settings
 from app.llm.responses import LlmTextResponse
 
 
@@ -38,6 +39,11 @@ def no_network(monkeypatch):
             return list(value.encode("utf-8"))
 
     monkeypatch.setattr(socket.socket, "connect", reject)
+    # The offline tokenizer counts bytes; this budget isolates response rules
+    # from the production token cap, covered by the real-tokenizer packing tests.
+    monkeypatch.setattr("app.analysis.world_setting_comparator.get_settings", lambda: Settings(
+        _env_file=None, llm_world_setting_batch_comparison_max_input_tokens=64000,
+    ))
     monkeypatch.setattr(
         "app.analysis.ordered_context.tiktoken.get_encoding", lambda unused: OfflineEncoding()
     )
