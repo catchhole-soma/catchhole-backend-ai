@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     llm_character_fact_batch_comparison_max_output_tokens: int = 128000
     llm_character_fact_batch_comparison_max_input_tokens: int = 256000
     llm_world_setting_batch_comparison_max_output_tokens: int = 16000
-    llm_world_setting_batch_comparison_max_input_tokens: int = 64000
+    llm_world_setting_batch_comparison_max_input_tokens: int = 32000
     # 현재 사용 모델의 공식 최대 출력 한도보다 큰 오설정을 시작 시 차단한다.
     llm_provider_max_output_tokens: int = 128000
     # 한 프로세스 안에서 token 예약부터 provider 정산까지 동시에 수행할 LLM 요청 상한
