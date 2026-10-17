@@ -6,7 +6,7 @@
 
 | 설정 | 기본값 | 검사 대상 |
 |---|---:|---|
-| `LLM_WORLD_SETTING_BATCH_COMPARISON_MAX_INPUT_TOKENS` | 64,000 | 공통 지시 + 비교 데이터 + 응답 schema + 여유 |
+| `LLM_WORLD_SETTING_BATCH_COMPARISON_MAX_INPUT_TOKENS` | 32,000 | 공통 지시 + 비교 데이터 + 응답 schema + 여유 |
 | `LLM_WORLD_SETTING_BATCH_COMPARISON_MAX_OUTPUT_TOKENS` | 16,000 | 응답과 추론을 합친 실제 출력 상한 |
 
 입력은 `o200k_base` 추정에 10%와 256토큰을 더해 확인한다. 출력은 기존 contract-complete 예상량의 2배에 공통 여유 1,024를 더해 묶을 크기를 결정한다. 예상량은 실제 추론량을 보장하지 않으므로 provider의 출력 상한과 응답 복구를 함께 유지한다. 입력 계산 API 호출은 추가하지 않는다.
