@@ -21,6 +21,7 @@ from app.analysis.schemas import ExtractedSettingCandidate
 from app.analysis.setting_extractor import CharacterSettingExtractor
 from app.analysis.world_setting_comparator import WorldSettingComparator, WorldSettingSubjectResolver
 from app.analysis.world_setting_extractor import WorldSettingExtractor
+from app.core.config import Settings
 from app.schemas.analysis_context import AnalysisStateProvenance, WorkerAnalysisReference
 from app.schemas.worker import (
     WorkerAnalysisJobPayload, WorkerAnalysisKnownCharacterPayload,
@@ -48,6 +49,11 @@ def forbid_network(monkeypatch):
     # vocabulary before the synthetic request reaches our recording client.
     monkeypatch.setattr("app.analysis.ordered_context.tiktoken.get_encoding", lambda name: Encoding())
     monkeypatch.setattr(socket.socket, "connect", reject_network)
+    # The offline tokenizer counts bytes; this budget isolates response rules
+    # from the production token cap, covered by the real-tokenizer packing tests.
+    monkeypatch.setattr("app.analysis.world_setting_comparator.get_settings", lambda: Settings(
+        _env_file=None, llm_world_setting_batch_comparison_max_input_tokens=64000,
+    ))
 
 
 def _reference(domain="characters"):

@@ -7,7 +7,8 @@ from app.analysis.exceptions import ComparisonValidationError, OrderedInputConte
 from app.analysis.book_world_claims import is_asserted_book_claim
 from app.analysis.ordered_context import validate_comparison_source
 from app.analysis.world_setting_batch_recovery import (
-    MAX_RECOVERY_CALLS, compare_world_batch_with_recovery, exception_diagnostics, map_diagnostics,
+    MAX_RECOVERY_CALLS, WorldBatchRecoveryResult, compare_world_batch_with_recovery,
+    exception_diagnostics, map_diagnostics, recover_world_batch,
 )
 from app.analysis.world_setting_comparator import (
     WorldSettingComparator,
@@ -302,6 +303,7 @@ class WorldSettingComparisonPipeline:
         subject_resolver: WorldSettingSubjectResolver,
         comparator: WorldSettingComparator,
         max_context_attempts: int = 3,
+        manuscript_comparator=None,
     ) -> None:
         if max_context_attempts < 1:
             raise ValueError("max_context_attempts must be at least 1.")
@@ -309,6 +311,7 @@ class WorldSettingComparisonPipeline:
         self.subject_resolver = subject_resolver
         self.comparator = comparator
         self.max_context_attempts = max_context_attempts
+        self.manuscript_comparator = manuscript_comparator
 
     async def process_all(
         self, analysis_job_id: UUID, lease_token: UUID,
@@ -582,11 +585,14 @@ class WorldSettingComparisonPipeline:
         batch_usages: list[WorldSettingComparisonBatchUsage] = []
         cluster_usages: list[WorldSettingComparisonClusterUsage] = []
         subject_resolution_stale_attempts: dict[tuple[UUID, ...], int] = {}
+        from app.analysis.world_setting_manuscript_pipeline import WorldSettingComparisonWindow
+        window = (WorldSettingComparisonWindow(self, analysis_job_id, lease_token,
+                                               analysis_context, analysis_source)
+                  if self.manuscript_comparator is not None else None)
         while True:
-            batch = await self.spring_client.claim_next_world_setting_comparison_batch(
-                analysis_job_id,
-                lease_token,
-            )
+            batch = (await window.claim_next() if window is not None else
+                     await self.spring_client.claim_next_world_setting_comparison_batch(
+                         analysis_job_id, lease_token))
             if batch is None:
                 return WorldSettingComparisonRunResult(
                     completed_count=completed_count,
@@ -616,6 +622,7 @@ class WorldSettingComparisonPipeline:
                     batch_count,
                     cluster_usages,
                     allow_recovery=True,
+                    manuscript_window=window,
                 )
             except AiTokenQuotaExhaustedError as exc:
                 source_error_code, source_reason_code = spring_failure_source(exc)
@@ -673,6 +680,8 @@ class WorldSettingComparisonPipeline:
                     subject_resolution_usage += _component_usage_snapshot(
                         self.subject_resolver
                     ).since(resolution_usage_before)
+                    if window is not None:
+                        await window.after_subject_resolution_reset()
                     batch_usages.append(
                         _batch_usage(
                             batch_count,
@@ -752,6 +761,9 @@ class WorldSettingComparisonPipeline:
                     usage,
                 )
             )
+            if (window is not None and stats.failed_count and analysis_context is not None
+                    and not continue_on_candidate_failure):
+                raise ComparisonValidationError("Ordered manual world comparison stopped after candidate failure.")
 
     def _usage_snapshot(self) -> TextGenerationUsageSnapshot:
         return _component_usage_snapshot(self.subject_resolver) + _component_usage_snapshot(
@@ -891,6 +903,26 @@ class WorldSettingComparisonPipeline:
                 return subjects
             page += 1
 
+    async def _load_batch_context(self, analysis_job_id, lease_token, batch):
+        target_ids = batch.resolved_target_world_setting_ids
+        context = await self.spring_client.get_world_setting_comparison_batch_context(
+            analysis_job_id,
+            batch.comparison_batch_id,
+            lease_token,
+            target_ids,
+            **({"provisional_subject_keys": batch.resolved_provisional_subject_keys}
+               if batch.analysis_context is not None else {}),
+        )
+        try:
+            _validate_batch_context_response(batch, context)
+        except ComparisonValidationError as exc:
+            raise OrderedInputContextError("World batch input context is invalid.") from exc
+        if context.analysis_context != batch.analysis_context:
+            raise OrderedInputContextError("Ordered world batch input context changed.")
+        if batch.analysis_context is not None and context.context_token is None:
+            raise OrderedInputContextError("Ordered world comparison requires a context token.")
+        return context
+
     async def _compare_batch_with_fresh_context(
         self,
         analysis_job_id: UUID,
@@ -900,27 +932,13 @@ class WorldSettingComparisonPipeline:
         cluster_usage_sink: list[WorldSettingComparisonClusterUsage],
         *,
         allow_recovery: bool = False,
+        manuscript_window=None,
     ) -> _BatchComparisonStats:
         stale_retry_count = 0
         recovery_calls_used = 0
         for attempt in range(1, self.max_context_attempts + 1):
             target_ids = batch.resolved_target_world_setting_ids
-            context = await self.spring_client.get_world_setting_comparison_batch_context(
-                analysis_job_id,
-                batch.comparison_batch_id,
-                lease_token,
-                target_ids,
-                **({"provisional_subject_keys": batch.resolved_provisional_subject_keys}
-                   if batch.analysis_context is not None else {}),
-            )
-            try:
-                _validate_batch_context_response(batch, context)
-            except ComparisonValidationError as exc:
-                raise OrderedInputContextError("World batch input context is invalid.") from exc
-            if context.analysis_context != batch.analysis_context:
-                raise OrderedInputContextError("Ordered world batch input context changed.")
-            if batch.analysis_context is not None and context.context_token is None:
-                raise OrderedInputContextError("Ordered world comparison requires a context token.")
+            context = await self._load_batch_context(analysis_job_id, lease_token, batch)
             targets_by_id = {target.identity_key(): target for target in context.targets}
             selected_identity_keys = [f"world:{target_id}" for target_id in target_ids]
             selected_identity_keys.extend(batch.resolved_provisional_subject_keys)
@@ -937,14 +955,35 @@ class WorldSettingComparisonPipeline:
             try:
                 unresolved = (tuple(context.analysis_context.unresolved_references)
                               if context.analysis_context else ())
+                prefetched = (await manuscript_window.outcome(batch, context)
+                              if manuscript_window is not None and attempt == 1 else None)
                 if allow_recovery:
-                    recovered, raw_comparison = await compare_world_batch_with_recovery(
-                        self.comparator, batch.category, batch.candidates, cluster_targets,
-                        ordered_context=batch.analysis_context is not None,
-                        unresolved_references=unresolved,
-                        max_recovery_calls=MAX_RECOVERY_CALLS - recovery_calls_used,
-                        analysis_source=batch.source,
-                    )
+                    if prefetched is not None and prefetched.error is None:
+                        recovered = WorldBatchRecoveryResult(
+                            prefetched.result.decisions, [],
+                            map_diagnostics(prefetched.raw.get("validation_diagnostics", []),
+                                            batch.candidates, cluster_targets), 0,
+                        )
+                        raw_comparison = prefetched.raw
+                    elif prefetched is not None:
+                        recovered = await recover_world_batch(
+                            self.comparator, batch.category, batch.candidates, cluster_targets,
+                            prefetched.error, ordered_context=batch.analysis_context is not None,
+                            unresolved_references=unresolved,
+                            max_recovery_calls=MAX_RECOVERY_CALLS - recovery_calls_used,
+                            analysis_source=batch.source,
+                        )
+                        raw_comparison = {"recoveryMode": "VALIDATED_INDEPENDENT_DECISIONS",
+                                          "recoveryCalls": recovered.recovery_calls,
+                                          "decisions": [item.model_dump(mode="json") for item in recovered.decisions]}
+                    else:
+                        recovered, raw_comparison = await compare_world_batch_with_recovery(
+                            self.comparator, batch.category, batch.candidates, cluster_targets,
+                            ordered_context=batch.analysis_context is not None,
+                            unresolved_references=unresolved,
+                            max_recovery_calls=MAX_RECOVERY_CALLS - recovery_calls_used,
+                            analysis_source=batch.source,
+                        )
                     recovery_calls_used += recovered.recovery_calls
                     domain_decisions = recovered.decisions
                     failures, diagnostics = recovered.failures, recovered.diagnostics

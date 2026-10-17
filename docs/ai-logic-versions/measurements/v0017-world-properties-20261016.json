@@ -1,0 +1,5511 @@
+{
+  "status": "COMPLETE",
+  "issue": "https://github.com/catchhole-soma/catchhole-backend-java/issues/267",
+  "provenance": {
+    "aiBase": "ed015dd948d580059020a506a96fb1b0b107b011",
+    "javaBase": "339ef410162b450764cea968bc18c51555dbc8c4",
+    "aiHead": "91ac7567e37aec3c30e6e08cc57f2112e8aa80c8",
+    "javaHead": "7326b5716099ba60bd2c0e5ee974983e86fa7153",
+    "snapshotMatchesCommittedCode": true,
+    "note": "Committed during replay; snapshot was frozen before replay and every executed file matches this commit."
+  },
+  "fixtureHash": "4219011f539d0812b995072e7b49e5b9f59bab6eaf2f072cf7cd4794e0382f60",
+  "scorerCommit": "1863b3e23e6144693fdd2dec4a4fa80397834cfc",
+  "conditions": {
+    "scope": "WORLD property comparison only, frozen extraction/linking/before-state",
+    "mode": "FIXED for episodes1/2/3; frozen CONFIRMED_ONLY follow-up replay",
+    "comparisonModel": "gpt-6.1-sol",
+    "reasoning": "medium",
+    "judgeModel": "gpt-5.6-sol",
+    "judgeReasoning": "medium",
+    "inputBudget": 64000,
+    "outputBudget": 16000,
+    "store": false,
+    "repetitions": 3,
+    "alternatingOrder": true,
+    "providerCountingRequests": 0,
+    "judgeDuringMeasurements": false,
+    "qualityMeanDefinition": "Arithmetic mean of WORLD afterStateF1 over all 9 episode/repetition scores per variant."
+  },
+  "totals": {
+    "existing": {
+      "generationRequests": 60,
+      "inputTokenCountRequests": 0,
+      "elapsedSeconds": 530.9192,
+      "inputTokens": 276654,
+      "cachedInputTokens": 268012,
+      "outputTokens": 27361,
+      "failureCount": 0
+    },
+    "packed": {
+      "generationRequests": 24,
+      "inputTokenCountRequests": 0,
+      "elapsedSeconds": 480.4231,
+      "inputTokens": 149892,
+      "cachedInputTokens": 119458,
+      "outputTokens": 27430,
+      "failureCount": 0
+    }
+  },
+  "qualityMean": {
+    "existing": 0.8349318057828696,
+    "packed": 0.8301282051282052
+  },
+  "rows": [
+    {
+      "dataset": "ep1",
+      "variants": {
+        "existing": {
+          "elapsedSeconds": {
+            "mean": 17.759066666666666,
+            "median": 17.6025,
+            "min": 16.0993,
+            "max": 19.5754,
+            "values": [
+              19.5754,
+              16.0993,
+              17.6025
+            ]
+          },
+          "providerSeconds": {
+            "mean": 17.75136666666667,
+            "median": 17.5953,
+            "min": 16.0924,
+            "max": 19.5664,
+            "values": [
+              19.5664,
+              16.0924,
+              17.5953
+            ]
+          },
+          "generationRequests": {
+            "mean": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2,
+            "values": [
+              2,
+              2,
+              2
+            ]
+          },
+          "inputTokens": {
+            "mean": 9006,
+            "median": 9006,
+            "min": 9006,
+            "max": 9006,
+            "values": [
+              9006,
+              9006,
+              9006
+            ]
+          },
+          "cachedInputTokens": {
+            "mean": 9000,
+            "median": 9000,
+            "min": 9000,
+            "max": 9000,
+            "values": [
+              9000,
+              9000,
+              9000
+            ]
+          },
+          "outputTokens": {
+            "mean": 921.3333333333334,
+            "median": 903,
+            "min": 884,
+            "max": 977,
+            "values": [
+              884,
+              903,
+              977
+            ]
+          },
+          "decisionCount": {
+            "mean": 5,
+            "median": 5,
+            "min": 5,
+            "max": 5,
+            "values": [
+              5,
+              5,
+              5
+            ]
+          },
+          "failureCount": {
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "values": [
+              0,
+              0,
+              0
+            ]
+          },
+          "statuses": [
+            "COMPLETE",
+            "COMPLETE",
+            "COMPLETE"
+          ],
+          "candidateCount": 5,
+          "quality": {
+            "afterStateF1": {
+              "mean": 1.0,
+              "median": 1.0,
+              "min": 1.0,
+              "max": 1.0,
+              "values": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "fullDecisionAccuracy": {
+              "mean": 1.0,
+              "median": 1.0,
+              "min": 1.0,
+              "max": 1.0,
+              "values": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "fullDecisionCounts": [
+              {
+                "value": 1.0,
+                "numerator": 5,
+                "denominator": 5,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 1.0,
+                "numerator": 5,
+                "denominator": 5,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 1.0,
+                "numerator": 5,
+                "denominator": 5,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              }
+            ],
+            "stateCounts": [
+              {
+                "matched": 5,
+                "expected": 5,
+                "predicted": 5,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 5,
+                "expected": 5,
+                "predicted": 5,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 5,
+                "expected": 5,
+                "predicted": 5,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              }
+            ],
+            "scoreStatuses": [
+              "COMPLETE",
+              "COMPLETE",
+              "COMPLETE"
+            ],
+            "runtimeFailures": [
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              }
+            ],
+            "stateApplicationErrors": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "packed": {
+          "elapsedSeconds": {
+            "mean": 18.944566666666667,
+            "median": 17.5393,
+            "min": 16.3275,
+            "max": 22.9669,
+            "values": [
+              16.3275,
+              17.5393,
+              22.9669
+            ]
+          },
+          "providerSeconds": {
+            "mean": 18.93,
+            "median": 17.5243,
+            "min": 16.3118,
+            "max": 22.9539,
+            "values": [
+              16.3118,
+              17.5243,
+              22.9539
+            ]
+          },
+          "generationRequests": {
+            "mean": 1,
+            "median": 1,
+            "min": 1,
+            "max": 1,
+            "values": [
+              1,
+              1,
+              1
+            ]
+          },
+          "inputTokens": {
+            "mean": 5829,
+            "median": 5829,
+            "min": 5829,
+            "max": 5829,
+            "values": [
+              5829,
+              5829,
+              5829
+            ]
+          },
+          "cachedInputTokens": {
+            "mean": 3884,
+            "median": 5826,
+            "min": 0,
+            "max": 5826,
+            "values": [
+              0,
+              5826,
+              5826
+            ]
+          },
+          "outputTokens": {
+            "mean": 988.3333333333334,
+            "median": 962,
+            "min": 961,
+            "max": 1042,
+            "values": [
+              962,
+              1042,
+              961
+            ]
+          },
+          "decisionCount": {
+            "mean": 5,
+            "median": 5,
+            "min": 5,
+            "max": 5,
+            "values": [
+              5,
+              5,
+              5
+            ]
+          },
+          "failureCount": {
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "values": [
+              0,
+              0,
+              0
+            ]
+          },
+          "statuses": [
+            "COMPLETE",
+            "COMPLETE",
+            "COMPLETE"
+          ],
+          "candidateCount": 5,
+          "quality": {
+            "afterStateF1": {
+              "mean": 1.0,
+              "median": 1.0,
+              "min": 1.0,
+              "max": 1.0,
+              "values": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "fullDecisionAccuracy": {
+              "mean": 1.0,
+              "median": 1.0,
+              "min": 1.0,
+              "max": 1.0,
+              "values": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "fullDecisionCounts": [
+              {
+                "value": 1.0,
+                "numerator": 5,
+                "denominator": 5,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 1.0,
+                "numerator": 5,
+                "denominator": 5,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 1.0,
+                "numerator": 5,
+                "denominator": 5,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              }
+            ],
+            "stateCounts": [
+              {
+                "matched": 5,
+                "expected": 5,
+                "predicted": 5,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 5,
+                "expected": 5,
+                "predicted": 5,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 5,
+                "expected": 5,
+                "predicted": 5,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              }
+            ],
+            "scoreStatuses": [
+              "COMPLETE",
+              "COMPLETE",
+              "COMPLETE"
+            ],
+            "runtimeFailures": [
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              }
+            ],
+            "stateApplicationErrors": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      "medianReductionPercent": 0.35903990910381123
+    },
+    {
+      "dataset": "ep2",
+      "variants": {
+        "existing": {
+          "elapsedSeconds": {
+            "mean": 30.7962,
+            "median": 30.9075,
+            "min": 28.4801,
+            "max": 33.001,
+            "values": [
+              28.4801,
+              33.001,
+              30.9075
+            ]
+          },
+          "providerSeconds": {
+            "mean": 30.778333333333332,
+            "median": 30.8906,
+            "min": 28.4619,
+            "max": 32.9825,
+            "values": [
+              28.4619,
+              32.9825,
+              30.8906
+            ]
+          },
+          "generationRequests": {
+            "mean": 4,
+            "median": 4,
+            "min": 4,
+            "max": 4,
+            "values": [
+              4,
+              4,
+              4
+            ]
+          },
+          "inputTokens": {
+            "mean": 18385,
+            "median": 18385,
+            "min": 18385,
+            "max": 18385,
+            "values": [
+              18385,
+              18385,
+              18385
+            ]
+          },
+          "cachedInputTokens": {
+            "mean": 17759.333333333332,
+            "median": 18373,
+            "min": 16532,
+            "max": 18373,
+            "values": [
+              16532,
+              18373,
+              18373
+            ]
+          },
+          "outputTokens": {
+            "mean": 1437.3333333333333,
+            "median": 1427,
+            "min": 1365,
+            "max": 1520,
+            "values": [
+              1427,
+              1365,
+              1520
+            ]
+          },
+          "decisionCount": {
+            "mean": 7,
+            "median": 7,
+            "min": 7,
+            "max": 7,
+            "values": [
+              7,
+              7,
+              7
+            ]
+          },
+          "failureCount": {
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "values": [
+              0,
+              0,
+              0
+            ]
+          },
+          "statuses": [
+            "COMPLETE",
+            "COMPLETE",
+            "COMPLETE"
+          ],
+          "candidateCount": 7,
+          "quality": {
+            "afterStateF1": {
+              "mean": 0.6235897435897436,
+              "median": 0.6153846153846154,
+              "min": 0.6153846153846154,
+              "max": 0.64,
+              "values": [
+                0.6153846153846154,
+                0.6153846153846154,
+                0.64
+              ]
+            },
+            "fullDecisionAccuracy": {
+              "mean": 0.75,
+              "median": 0.75,
+              "min": 0.75,
+              "max": 0.75,
+              "values": [
+                0.75,
+                0.75,
+                0.75
+              ]
+            },
+            "fullDecisionCounts": [
+              {
+                "value": 0.75,
+                "numerator": 3,
+                "denominator": 4,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 0.75,
+                "numerator": 3,
+                "denominator": 4,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 0.75,
+                "numerator": 3,
+                "denominator": 4,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              }
+            ],
+            "stateCounts": [
+              {
+                "matched": 8,
+                "expected": 14,
+                "predicted": 12,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 8,
+                "expected": 14,
+                "predicted": 12,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 8,
+                "expected": 14,
+                "predicted": 11,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              }
+            ],
+            "scoreStatuses": [
+              "COMPLETE",
+              "COMPLETE",
+              "COMPLETE"
+            ],
+            "runtimeFailures": [
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              }
+            ],
+            "stateApplicationErrors": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "packed": {
+          "elapsedSeconds": {
+            "mean": 27.099833333333333,
+            "median": 27.069,
+            "min": 24.5679,
+            "max": 29.6626,
+            "values": [
+              24.5679,
+              29.6626,
+              27.069
+            ]
+          },
+          "providerSeconds": {
+            "mean": 27.070633333333333,
+            "median": 27.0406,
+            "min": 24.5389,
+            "max": 29.6324,
+            "values": [
+              24.5389,
+              29.6324,
+              27.0406
+            ]
+          },
+          "generationRequests": {
+            "mean": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2,
+            "values": [
+              2,
+              2,
+              2
+            ]
+          },
+          "inputTokens": {
+            "mean": 11441,
+            "median": 11441,
+            "min": 11441,
+            "max": 11441,
+            "values": [
+              11441,
+              11441,
+              11441
+            ]
+          },
+          "cachedInputTokens": {
+            "mean": 9139.666666666666,
+            "median": 11435,
+            "min": 4549,
+            "max": 11435,
+            "values": [
+              4549,
+              11435,
+              11435
+            ]
+          },
+          "outputTokens": {
+            "mean": 1481.6666666666667,
+            "median": 1490,
+            "min": 1412,
+            "max": 1543,
+            "values": [
+              1412,
+              1543,
+              1490
+            ]
+          },
+          "decisionCount": {
+            "mean": 7,
+            "median": 7,
+            "min": 7,
+            "max": 7,
+            "values": [
+              7,
+              7,
+              7
+            ]
+          },
+          "failureCount": {
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "values": [
+              0,
+              0,
+              0
+            ]
+          },
+          "statuses": [
+            "COMPLETE",
+            "COMPLETE",
+            "COMPLETE"
+          ],
+          "candidateCount": 7,
+          "quality": {
+            "afterStateF1": {
+              "mean": 0.6153846153846154,
+              "median": 0.6153846153846154,
+              "min": 0.6153846153846154,
+              "max": 0.6153846153846154,
+              "values": [
+                0.6153846153846154,
+                0.6153846153846154,
+                0.6153846153846154
+              ]
+            },
+            "fullDecisionAccuracy": {
+              "mean": 0.75,
+              "median": 0.75,
+              "min": 0.75,
+              "max": 0.75,
+              "values": [
+                0.75,
+                0.75,
+                0.75
+              ]
+            },
+            "fullDecisionCounts": [
+              {
+                "value": 0.75,
+                "numerator": 3,
+                "denominator": 4,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 0.75,
+                "numerator": 3,
+                "denominator": 4,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 0.75,
+                "numerator": 3,
+                "denominator": 4,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              }
+            ],
+            "stateCounts": [
+              {
+                "matched": 8,
+                "expected": 14,
+                "predicted": 12,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 8,
+                "expected": 14,
+                "predicted": 12,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 8,
+                "expected": 14,
+                "predicted": 12,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              }
+            ],
+            "scoreStatuses": [
+              "COMPLETE",
+              "COMPLETE",
+              "COMPLETE"
+            ],
+            "runtimeFailures": [
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              }
+            ],
+            "stateApplicationErrors": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      "medianReductionPercent": 12.419315700072797
+    },
+    {
+      "dataset": "ep3",
+      "variants": {
+        "existing": {
+          "elapsedSeconds": {
+            "mean": 54.55923333333333,
+            "median": 53.8973,
+            "min": 51.3088,
+            "max": 58.4716,
+            "values": [
+              58.4716,
+              53.8973,
+              51.3088
+            ]
+          },
+          "providerSeconds": {
+            "mean": 54.530433333333335,
+            "median": 53.868,
+            "min": 51.2845,
+            "max": 58.4388,
+            "values": [
+              58.4388,
+              53.868,
+              51.2845
+            ]
+          },
+          "generationRequests": {
+            "mean": 6,
+            "median": 6,
+            "min": 6,
+            "max": 6,
+            "values": [
+              6,
+              6,
+              6
+            ]
+          },
+          "inputTokens": {
+            "mean": 28089,
+            "median": 28089,
+            "min": 28089,
+            "max": 28089,
+            "values": [
+              28089,
+              28089,
+              28089
+            ]
+          },
+          "cachedInputTokens": {
+            "mean": 27080.666666666668,
+            "median": 28071,
+            "min": 25100,
+            "max": 28071,
+            "values": [
+              25100,
+              28071,
+              28071
+            ]
+          },
+          "outputTokens": {
+            "mean": 2746.3333333333335,
+            "median": 2726,
+            "min": 2635,
+            "max": 2878,
+            "values": [
+              2878,
+              2726,
+              2635
+            ]
+          },
+          "decisionCount": {
+            "mean": 11.666666666666666,
+            "median": 12,
+            "min": 11,
+            "max": 12,
+            "values": [
+              12,
+              12,
+              11
+            ]
+          },
+          "failureCount": {
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "values": [
+              0,
+              0,
+              0
+            ]
+          },
+          "statuses": [
+            "COMPLETE",
+            "COMPLETE",
+            "COMPLETE"
+          ],
+          "candidateCount": 15,
+          "quality": {
+            "afterStateF1": {
+              "mean": 0.8812056737588653,
+              "median": 0.875,
+              "min": 0.875,
+              "max": 0.8936170212765957,
+              "values": [
+                0.875,
+                0.875,
+                0.8936170212765957
+              ]
+            },
+            "fullDecisionAccuracy": {
+              "mean": 0.8888888888888888,
+              "median": 0.8888888888888888,
+              "min": 0.8888888888888888,
+              "max": 0.8888888888888888,
+              "values": [
+                0.8888888888888888,
+                0.8888888888888888,
+                0.8888888888888888
+              ]
+            },
+            "fullDecisionCounts": [
+              {
+                "value": 0.8888888888888888,
+                "numerator": 8,
+                "denominator": 9,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 0.8888888888888888,
+                "numerator": 8,
+                "denominator": 9,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 0.8888888888888888,
+                "numerator": 8,
+                "denominator": 9,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              }
+            ],
+            "stateCounts": [
+              {
+                "matched": 21,
+                "expected": 24,
+                "predicted": 24,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 21,
+                "expected": 24,
+                "predicted": 24,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 21,
+                "expected": 24,
+                "predicted": 23,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              }
+            ],
+            "scoreStatuses": [
+              "COMPLETE",
+              "COMPLETE",
+              "COMPLETE"
+            ],
+            "runtimeFailures": [
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              }
+            ],
+            "stateApplicationErrors": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "packed": {
+          "elapsedSeconds": {
+            "mean": 51.77953333333333,
+            "median": 50.8902,
+            "min": 49.5209,
+            "max": 54.9275,
+            "values": [
+              54.9275,
+              49.5209,
+              50.8902
+            ]
+          },
+          "providerSeconds": {
+            "mean": 51.727399999999996,
+            "median": 50.8322,
+            "min": 49.4633,
+            "max": 54.8867,
+            "values": [
+              54.8867,
+              49.4633,
+              50.8322
+            ]
+          },
+          "generationRequests": {
+            "mean": 3,
+            "median": 3,
+            "min": 3,
+            "max": 3,
+            "values": [
+              3,
+              3,
+              3
+            ]
+          },
+          "inputTokens": {
+            "mean": 17378,
+            "median": 17378,
+            "min": 17378,
+            "max": 17378,
+            "values": [
+              17378,
+              17378,
+              17378
+            ]
+          },
+          "cachedInputTokens": {
+            "mean": 14661.666666666666,
+            "median": 17369,
+            "min": 9247,
+            "max": 17369,
+            "values": [
+              9247,
+              17369,
+              17369
+            ]
+          },
+          "outputTokens": {
+            "mean": 2764.3333333333335,
+            "median": 2795,
+            "min": 2689,
+            "max": 2809,
+            "values": [
+              2809,
+              2689,
+              2795
+            ]
+          },
+          "decisionCount": {
+            "mean": 12,
+            "median": 12,
+            "min": 12,
+            "max": 12,
+            "values": [
+              12,
+              12,
+              12
+            ]
+          },
+          "failureCount": {
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "values": [
+              0,
+              0,
+              0
+            ]
+          },
+          "statuses": [
+            "COMPLETE",
+            "COMPLETE",
+            "COMPLETE"
+          ],
+          "candidateCount": 15,
+          "quality": {
+            "afterStateF1": {
+              "mean": 0.875,
+              "median": 0.875,
+              "min": 0.875,
+              "max": 0.875,
+              "values": [
+                0.875,
+                0.875,
+                0.875
+              ]
+            },
+            "fullDecisionAccuracy": {
+              "mean": 0.8888888888888888,
+              "median": 0.8888888888888888,
+              "min": 0.8888888888888888,
+              "max": 0.8888888888888888,
+              "values": [
+                0.8888888888888888,
+                0.8888888888888888,
+                0.8888888888888888
+              ]
+            },
+            "fullDecisionCounts": [
+              {
+                "value": 0.8888888888888888,
+                "numerator": 8,
+                "denominator": 9,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 0.8888888888888888,
+                "numerator": 8,
+                "denominator": 9,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              },
+              {
+                "value": 0.8888888888888888,
+                "numerator": 8,
+                "denominator": 9,
+                "semanticPending": 0,
+                "numeratorMeaning": "correct"
+              }
+            ],
+            "stateCounts": [
+              {
+                "matched": 21,
+                "expected": 24,
+                "predicted": 24,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 21,
+                "expected": 24,
+                "predicted": 24,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              },
+              {
+                "matched": 21,
+                "expected": 24,
+                "predicted": 24,
+                "semanticPending": 0,
+                "pendingExpected": 0,
+                "pendingPredicted": 0
+              }
+            ],
+            "scoreStatuses": [
+              "COMPLETE",
+              "COMPLETE",
+              "COMPLETE"
+            ],
+            "runtimeFailures": [
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              },
+              {
+                "total": 0,
+                "byStage": {},
+                "byErrorType": {}
+              }
+            ],
+            "stateApplicationErrors": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      "medianReductionPercent": 5.579314733762176
+    },
+    {
+      "dataset": "barbarian6",
+      "variants": {
+        "existing": {
+          "elapsedSeconds": {
+            "mean": 40.373,
+            "median": 40.2635,
+            "min": 38.4633,
+            "max": 42.3922,
+            "values": [
+              42.3922,
+              40.2635,
+              38.4633
+            ]
+          },
+          "providerSeconds": {
+            "mean": 40.35706666666667,
+            "median": 40.2505,
+            "min": 38.4469,
+            "max": 42.3738,
+            "values": [
+              42.3738,
+              40.2505,
+              38.4469
+            ]
+          },
+          "generationRequests": {
+            "mean": 4,
+            "median": 4,
+            "min": 4,
+            "max": 4,
+            "values": [
+              4,
+              4,
+              4
+            ]
+          },
+          "inputTokens": {
+            "mean": 18488,
+            "median": 18488,
+            "min": 18488,
+            "max": 18488,
+            "values": [
+              18488,
+              18488,
+              18488
+            ]
+          },
+          "cachedInputTokens": {
+            "mean": 17828,
+            "median": 18476,
+            "min": 16532,
+            "max": 18476,
+            "values": [
+              16532,
+              18476,
+              18476
+            ]
+          },
+          "outputTokens": {
+            "mean": 2269,
+            "median": 2261,
+            "min": 2201,
+            "max": 2345,
+            "values": [
+              2345,
+              2261,
+              2201
+            ]
+          },
+          "decisionCount": {
+            "mean": 12,
+            "median": 12,
+            "min": 12,
+            "max": 12,
+            "values": [
+              12,
+              12,
+              12
+            ]
+          },
+          "failureCount": {
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "values": [
+              0,
+              0,
+              0
+            ]
+          },
+          "statuses": [
+            "COMPLETE",
+            "COMPLETE",
+            "COMPLETE"
+          ],
+          "candidateCount": 12
+        },
+        "packed": {
+          "elapsedSeconds": {
+            "mean": 35.52336666666667,
+            "median": 36.6612,
+            "min": 33.0736,
+            "max": 36.8353,
+            "values": [
+              36.6612,
+              33.0736,
+              36.8353
+            ]
+          },
+          "providerSeconds": {
+            "mean": 35.48923333333333,
+            "median": 36.6264,
+            "min": 33.0428,
+            "max": 36.7985,
+            "values": [
+              36.6264,
+              33.0428,
+              36.7985
+            ]
+          },
+          "generationRequests": {
+            "mean": 1,
+            "median": 1,
+            "min": 1,
+            "max": 1,
+            "values": [
+              1,
+              1,
+              1
+            ]
+          },
+          "inputTokens": {
+            "mean": 7777,
+            "median": 7777,
+            "min": 7777,
+            "max": 7777,
+            "values": [
+              7777,
+              7777,
+              7777
+            ]
+          },
+          "cachedInputTokens": {
+            "mean": 5182.666666666667,
+            "median": 7774,
+            "min": 0,
+            "max": 7774,
+            "values": [
+              0,
+              7774,
+              7774
+            ]
+          },
+          "outputTokens": {
+            "mean": 2160.6666666666665,
+            "median": 2115,
+            "min": 2103,
+            "max": 2264,
+            "values": [
+              2264,
+              2115,
+              2103
+            ]
+          },
+          "decisionCount": {
+            "mean": 12,
+            "median": 12,
+            "min": 12,
+            "max": 12,
+            "values": [
+              12,
+              12,
+              12
+            ]
+          },
+          "failureCount": {
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "values": [
+              0,
+              0,
+              0
+            ]
+          },
+          "statuses": [
+            "COMPLETE",
+            "COMPLETE",
+            "COMPLETE"
+          ],
+          "candidateCount": 12
+        }
+      },
+      "medianReductionPercent": 8.94681287021744
+    },
+    {
+      "dataset": "ai2",
+      "variants": {
+        "existing": {
+          "elapsedSeconds": {
+            "mean": 33.485566666666664,
+            "median": 33.8627,
+            "min": 32.5184,
+            "max": 34.0756,
+            "values": [
+              32.5184,
+              33.8627,
+              34.0756
+            ]
+          },
+          "providerSeconds": {
+            "mean": 33.472766666666665,
+            "median": 33.8502,
+            "min": 32.504,
+            "max": 34.0641,
+            "values": [
+              32.504,
+              33.8502,
+              34.0641
+            ]
+          },
+          "generationRequests": {
+            "mean": 4,
+            "median": 4,
+            "min": 4,
+            "max": 4,
+            "values": [
+              4,
+              4,
+              4
+            ]
+          },
+          "inputTokens": {
+            "mean": 18250,
+            "median": 18250,
+            "min": 18250,
+            "max": 18250,
+            "values": [
+              18250,
+              18250,
+              18250
+            ]
+          },
+          "cachedInputTokens": {
+            "mean": 17669.333333333332,
+            "median": 18238,
+            "min": 16532,
+            "max": 18238,
+            "values": [
+              16532,
+              18238,
+              18238
+            ]
+          },
+          "outputTokens": {
+            "mean": 1746.3333333333333,
+            "median": 1769,
+            "min": 1696,
+            "max": 1774,
+            "values": [
+              1696,
+              1774,
+              1769
+            ]
+          },
+          "decisionCount": {
+            "mean": 8,
+            "median": 8,
+            "min": 8,
+            "max": 8,
+            "values": [
+              8,
+              8,
+              8
+            ]
+          },
+          "failureCount": {
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "values": [
+              0,
+              0,
+              0
+            ]
+          },
+          "statuses": [
+            "COMPLETE",
+            "COMPLETE",
+            "COMPLETE"
+          ],
+          "candidateCount": 8
+        },
+        "packed": {
+          "elapsedSeconds": {
+            "mean": 26.793733333333332,
+            "median": 25.0326,
+            "min": 24.6719,
+            "max": 30.6767,
+            "values": [
+              30.6767,
+              24.6719,
+              25.0326
+            ]
+          },
+          "providerSeconds": {
+            "mean": 26.755666666666666,
+            "median": 24.9952,
+            "min": 24.6348,
+            "max": 30.637,
+            "values": [
+              30.637,
+              24.6348,
+              24.9952
+            ]
+          },
+          "generationRequests": {
+            "mean": 1,
+            "median": 1,
+            "min": 1,
+            "max": 1,
+            "values": [
+              1,
+              1,
+              1
+            ]
+          },
+          "inputTokens": {
+            "mean": 7539,
+            "median": 7539,
+            "min": 7539,
+            "max": 7539,
+            "values": [
+              7539,
+              7539,
+              7539
+            ]
+          },
+          "cachedInputTokens": {
+            "mean": 6951.333333333333,
+            "median": 7536,
+            "min": 5782,
+            "max": 7536,
+            "values": [
+              5782,
+              7536,
+              7536
+            ]
+          },
+          "outputTokens": {
+            "mean": 1748.3333333333333,
+            "median": 1705,
+            "min": 1683,
+            "max": 1857,
+            "values": [
+              1857,
+              1683,
+              1705
+            ]
+          },
+          "decisionCount": {
+            "mean": 8,
+            "median": 8,
+            "min": 8,
+            "max": 8,
+            "values": [
+              8,
+              8,
+              8
+            ]
+          },
+          "failureCount": {
+            "mean": 0,
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "values": [
+              0,
+              0,
+              0
+            ]
+          },
+          "statuses": [
+            "COMPLETE",
+            "COMPLETE",
+            "COMPLETE"
+          ],
+          "candidateCount": 8
+        }
+      },
+      "medianReductionPercent": 26.07618411999043
+    }
+  ],
+  "runs": [
+    {
+      "label": "existing-r1-ai2",
+      "variant": "existing",
+      "repetition": 1,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:12:53.046052+00:00",
+      "finishedAt": "2026-10-16T14:13:25.564452+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 32.5184,
+      "providerSeconds": 32.504,
+      "generationRequests": 4,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 18250,
+      "cachedInputTokens": 16532,
+      "outputTokens": 1696,
+      "candidateCount": 8,
+      "decisionCount": 8,
+      "coveredCandidateCount": 8,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r1-barbarian6",
+      "variant": "existing",
+      "repetition": 1,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:11:33.954051+00:00",
+      "finishedAt": "2026-10-16T14:12:16.346251+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 42.3922,
+      "providerSeconds": 42.3738,
+      "generationRequests": 4,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 18488,
+      "cachedInputTokens": 16532,
+      "outputTokens": 2345,
+      "candidateCount": 12,
+      "decisionCount": 12,
+      "coveredCandidateCount": 12,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r1-ep1",
+      "variant": "existing",
+      "repetition": 1,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:08:11.437072+00:00",
+      "finishedAt": "2026-10-16T14:08:31.012472+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 19.5754,
+      "providerSeconds": 19.5664,
+      "generationRequests": 2,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 9006,
+      "cachedInputTokens": 9000,
+      "outputTokens": 884,
+      "candidateCount": 5,
+      "decisionCount": 5,
+      "coveredCandidateCount": 5,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r1-ep2",
+      "variant": "existing",
+      "repetition": 1,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:08:47.399306+00:00",
+      "finishedAt": "2026-10-16T14:09:15.879406+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 28.4801,
+      "providerSeconds": 28.4619,
+      "generationRequests": 4,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 18385,
+      "cachedInputTokens": 16532,
+      "outputTokens": 1427,
+      "candidateCount": 7,
+      "decisionCount": 7,
+      "coveredCandidateCount": 7,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r1-ep3",
+      "variant": "existing",
+      "repetition": 1,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:09:40.495589+00:00",
+      "finishedAt": "2026-10-16T14:10:38.967190+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 58.4716,
+      "providerSeconds": 58.4388,
+      "generationRequests": 6,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 28089,
+      "cachedInputTokens": 25100,
+      "outputTokens": 2878,
+      "candidateCount": 15,
+      "decisionCount": 12,
+      "coveredCandidateCount": 15,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r2-ai2",
+      "variant": "existing",
+      "repetition": 2,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:18:54.310636+00:00",
+      "finishedAt": "2026-10-16T14:19:28.173336+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 33.8627,
+      "providerSeconds": 33.8502,
+      "generationRequests": 4,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 18250,
+      "cachedInputTokens": 18238,
+      "outputTokens": 1774,
+      "candidateCount": 8,
+      "decisionCount": 8,
+      "coveredCandidateCount": 8,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r2-barbarian6",
+      "variant": "existing",
+      "repetition": 2,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:17:49.315827+00:00",
+      "finishedAt": "2026-10-16T14:18:29.579327+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 40.2635,
+      "providerSeconds": 40.2505,
+      "generationRequests": 4,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 18488,
+      "cachedInputTokens": 18476,
+      "outputTokens": 2261,
+      "candidateCount": 12,
+      "decisionCount": 12,
+      "coveredCandidateCount": 12,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r2-ep1",
+      "variant": "existing",
+      "repetition": 2,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:14:13.863178+00:00",
+      "finishedAt": "2026-10-16T14:14:29.962478+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 16.0993,
+      "providerSeconds": 16.0924,
+      "generationRequests": 2,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 9006,
+      "cachedInputTokens": 9000,
+      "outputTokens": 903,
+      "candidateCount": 5,
+      "decisionCount": 5,
+      "coveredCandidateCount": 5,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r2-ep2",
+      "variant": "existing",
+      "repetition": 2,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:14:59.690035+00:00",
+      "finishedAt": "2026-10-16T14:15:32.691035+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 33.001,
+      "providerSeconds": 32.9825,
+      "generationRequests": 4,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 18385,
+      "cachedInputTokens": 18373,
+      "outputTokens": 1365,
+      "candidateCount": 7,
+      "decisionCount": 7,
+      "coveredCandidateCount": 7,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r2-ep3",
+      "variant": "existing",
+      "repetition": 2,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:16:22.300757+00:00",
+      "finishedAt": "2026-10-16T14:17:16.198057+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 53.8973,
+      "providerSeconds": 53.868,
+      "generationRequests": 6,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 28089,
+      "cachedInputTokens": 28071,
+      "outputTokens": 2726,
+      "candidateCount": 15,
+      "decisionCount": 12,
+      "coveredCandidateCount": 15,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r3-ai2",
+      "variant": "existing",
+      "repetition": 3,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:24:04.466667+00:00",
+      "finishedAt": "2026-10-16T14:24:38.542267+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 34.0756,
+      "providerSeconds": 34.0641,
+      "generationRequests": 4,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 18250,
+      "cachedInputTokens": 18238,
+      "outputTokens": 1769,
+      "candidateCount": 8,
+      "decisionCount": 8,
+      "coveredCandidateCount": 8,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r3-barbarian6",
+      "variant": "existing",
+      "repetition": 3,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:22:49.115339+00:00",
+      "finishedAt": "2026-10-16T14:23:27.578639+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 38.4633,
+      "providerSeconds": 38.4469,
+      "generationRequests": 4,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 18488,
+      "cachedInputTokens": 18476,
+      "outputTokens": 2201,
+      "candidateCount": 12,
+      "decisionCount": 12,
+      "coveredCandidateCount": 12,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r3-ep1",
+      "variant": "existing",
+      "repetition": 3,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:19:28.195477+00:00",
+      "finishedAt": "2026-10-16T14:19:45.797977+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 17.6025,
+      "providerSeconds": 17.5953,
+      "generationRequests": 2,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 9006,
+      "cachedInputTokens": 9000,
+      "outputTokens": 977,
+      "candidateCount": 5,
+      "decisionCount": 5,
+      "coveredCandidateCount": 5,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r3-ep2",
+      "variant": "existing",
+      "repetition": 3,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:20:08.823776+00:00",
+      "finishedAt": "2026-10-16T14:20:39.731276+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 30.9075,
+      "providerSeconds": 30.8906,
+      "generationRequests": 4,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 18385,
+      "cachedInputTokens": 18373,
+      "outputTokens": 1520,
+      "candidateCount": 7,
+      "decisionCount": 7,
+      "coveredCandidateCount": 7,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "existing-r3-ep3",
+      "variant": "existing",
+      "repetition": 3,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:21:06.858021+00:00",
+      "finishedAt": "2026-10-16T14:21:58.166821+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 51.3088,
+      "providerSeconds": 51.2845,
+      "generationRequests": 6,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 28089,
+      "cachedInputTokens": 28071,
+      "outputTokens": 2635,
+      "candidateCount": 15,
+      "decisionCount": 11,
+      "coveredCandidateCount": 15,
+      "failureCount": 0,
+      "packedRequestSizes": []
+    },
+    {
+      "label": "packed-r1-ai2",
+      "variant": "packed",
+      "repetition": 1,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:13:25.592785+00:00",
+      "finishedAt": "2026-10-16T14:13:56.269485+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 30.6767,
+      "providerSeconds": 30.637,
+      "generationRequests": 1,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 7539,
+      "cachedInputTokens": 5782,
+      "outputTokens": 1857,
+      "candidateCount": 8,
+      "decisionCount": 8,
+      "coveredCandidateCount": 8,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 9779,
+          "output_tokens": 8096,
+          "group_count": 4,
+          "candidate_count": 8
+        }
+      ]
+    },
+    {
+      "label": "packed-r1-barbarian6",
+      "variant": "packed",
+      "repetition": 1,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:12:16.364770+00:00",
+      "finishedAt": "2026-10-16T14:12:53.025970+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 36.6612,
+      "providerSeconds": 36.6264,
+      "generationRequests": 1,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 7777,
+      "cachedInputTokens": 0,
+      "outputTokens": 2264,
+      "candidateCount": 12,
+      "decisionCount": 12,
+      "coveredCandidateCount": 12,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 10041,
+          "output_tokens": 9030,
+          "group_count": 4,
+          "candidate_count": 12
+        }
+      ]
+    },
+    {
+      "label": "packed-r1-ep1",
+      "variant": "packed",
+      "repetition": 1,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:08:31.042632+00:00",
+      "finishedAt": "2026-10-16T14:08:47.370132+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 16.3275,
+      "providerSeconds": 16.3118,
+      "generationRequests": 1,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 5829,
+      "cachedInputTokens": 0,
+      "outputTokens": 962,
+      "candidateCount": 5,
+      "decisionCount": 5,
+      "coveredCandidateCount": 5,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 7302,
+          "output_tokens": 4764,
+          "group_count": 2,
+          "candidate_count": 5
+        }
+      ]
+    },
+    {
+      "label": "packed-r1-ep2",
+      "variant": "packed",
+      "repetition": 1,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:09:15.897515+00:00",
+      "finishedAt": "2026-10-16T14:09:40.465415+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 24.5679,
+      "providerSeconds": 24.5389,
+      "generationRequests": 2,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 11441,
+      "cachedInputTokens": 4549,
+      "outputTokens": 1412,
+      "candidateCount": 7,
+      "decisionCount": 7,
+      "coveredCandidateCount": 7,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 8766,
+          "output_tokens": 5714,
+          "group_count": 3,
+          "candidate_count": 4
+        }
+      ]
+    },
+    {
+      "label": "packed-r1-ep3",
+      "variant": "packed",
+      "repetition": 1,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:10:38.996449+00:00",
+      "finishedAt": "2026-10-16T14:11:33.923949+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 54.9275,
+      "providerSeconds": 54.8867,
+      "generationRequests": 3,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 17378,
+      "cachedInputTokens": 9247,
+      "outputTokens": 2809,
+      "candidateCount": 15,
+      "decisionCount": 12,
+      "coveredCandidateCount": 15,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 10424,
+          "output_tokens": 8748,
+          "group_count": 4,
+          "candidate_count": 10
+        }
+      ]
+    },
+    {
+      "label": "packed-r2-ai2",
+      "variant": "packed",
+      "repetition": 2,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:18:29.608633+00:00",
+      "finishedAt": "2026-10-16T14:18:54.280533+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 24.6719,
+      "providerSeconds": 24.6348,
+      "generationRequests": 1,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 7539,
+      "cachedInputTokens": 7536,
+      "outputTokens": 1683,
+      "candidateCount": 8,
+      "decisionCount": 8,
+      "coveredCandidateCount": 8,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 9779,
+          "output_tokens": 8096,
+          "group_count": 4,
+          "candidate_count": 8
+        }
+      ]
+    },
+    {
+      "label": "packed-r2-barbarian6",
+      "variant": "packed",
+      "repetition": 2,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:17:16.217854+00:00",
+      "finishedAt": "2026-10-16T14:17:49.291454+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 33.0736,
+      "providerSeconds": 33.0428,
+      "generationRequests": 1,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 7777,
+      "cachedInputTokens": 7774,
+      "outputTokens": 2115,
+      "candidateCount": 12,
+      "decisionCount": 12,
+      "coveredCandidateCount": 12,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 10041,
+          "output_tokens": 9030,
+          "group_count": 4,
+          "candidate_count": 12
+        }
+      ]
+    },
+    {
+      "label": "packed-r2-ep1",
+      "variant": "packed",
+      "repetition": 2,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:13:56.292890+00:00",
+      "finishedAt": "2026-10-16T14:14:13.832190+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 17.5393,
+      "providerSeconds": 17.5243,
+      "generationRequests": 1,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 5829,
+      "cachedInputTokens": 5826,
+      "outputTokens": 1042,
+      "candidateCount": 5,
+      "decisionCount": 5,
+      "coveredCandidateCount": 5,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 7302,
+          "output_tokens": 4764,
+          "group_count": 2,
+          "candidate_count": 5
+        }
+      ]
+    },
+    {
+      "label": "packed-r2-ep2",
+      "variant": "packed",
+      "repetition": 2,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:14:29.994529+00:00",
+      "finishedAt": "2026-10-16T14:14:59.657129+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 29.6626,
+      "providerSeconds": 29.6324,
+      "generationRequests": 2,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 11441,
+      "cachedInputTokens": 11435,
+      "outputTokens": 1543,
+      "candidateCount": 7,
+      "decisionCount": 7,
+      "coveredCandidateCount": 7,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 8766,
+          "output_tokens": 5714,
+          "group_count": 3,
+          "candidate_count": 4
+        }
+      ]
+    },
+    {
+      "label": "packed-r2-ep3",
+      "variant": "packed",
+      "repetition": 2,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:15:32.723250+00:00",
+      "finishedAt": "2026-10-16T14:16:22.244150+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 49.5209,
+      "providerSeconds": 49.4633,
+      "generationRequests": 3,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 17378,
+      "cachedInputTokens": 17369,
+      "outputTokens": 2689,
+      "candidateCount": 15,
+      "decisionCount": 12,
+      "coveredCandidateCount": 15,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 10424,
+          "output_tokens": 8748,
+          "group_count": 4,
+          "candidate_count": 10
+        }
+      ]
+    },
+    {
+      "label": "packed-r3-ai2",
+      "variant": "packed",
+      "repetition": 3,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:24:38.566289+00:00",
+      "finishedAt": "2026-10-16T14:25:03.598889+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 25.0326,
+      "providerSeconds": 24.9952,
+      "generationRequests": 1,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 7539,
+      "cachedInputTokens": 7536,
+      "outputTokens": 1705,
+      "candidateCount": 8,
+      "decisionCount": 8,
+      "coveredCandidateCount": 8,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 9779,
+          "output_tokens": 8096,
+          "group_count": 4,
+          "candidate_count": 8
+        }
+      ]
+    },
+    {
+      "label": "packed-r3-barbarian6",
+      "variant": "packed",
+      "repetition": 3,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:23:27.599442+00:00",
+      "finishedAt": "2026-10-16T14:24:04.434742+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 36.8353,
+      "providerSeconds": 36.7985,
+      "generationRequests": 1,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 7777,
+      "cachedInputTokens": 7774,
+      "outputTokens": 2103,
+      "candidateCount": 12,
+      "decisionCount": 12,
+      "coveredCandidateCount": 12,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 10041,
+          "output_tokens": 9030,
+          "group_count": 4,
+          "candidate_count": 12
+        }
+      ]
+    },
+    {
+      "label": "packed-r3-ep1",
+      "variant": "packed",
+      "repetition": 3,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:19:45.824803+00:00",
+      "finishedAt": "2026-10-16T14:20:08.791703+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 22.9669,
+      "providerSeconds": 22.9539,
+      "generationRequests": 1,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 5829,
+      "cachedInputTokens": 5826,
+      "outputTokens": 961,
+      "candidateCount": 5,
+      "decisionCount": 5,
+      "coveredCandidateCount": 5,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 7302,
+          "output_tokens": 4764,
+          "group_count": 2,
+          "candidate_count": 5
+        }
+      ]
+    },
+    {
+      "label": "packed-r3-ep2",
+      "variant": "packed",
+      "repetition": 3,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:20:39.759265+00:00",
+      "finishedAt": "2026-10-16T14:21:06.828265+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 27.069,
+      "providerSeconds": 27.0406,
+      "generationRequests": 2,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 11441,
+      "cachedInputTokens": 11435,
+      "outputTokens": 1490,
+      "candidateCount": 7,
+      "decisionCount": 7,
+      "coveredCandidateCount": 7,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 8766,
+          "output_tokens": 5714,
+          "group_count": 3,
+          "candidate_count": 4
+        }
+      ]
+    },
+    {
+      "label": "packed-r3-ep3",
+      "variant": "packed",
+      "repetition": 3,
+      "status": "COMPLETE",
+      "startedAt": "2026-10-16T14:21:58.197588+00:00",
+      "finishedAt": "2026-10-16T14:22:49.087788+00:00",
+      "wallClockSource": "Approximate: metadata artifact mtime and monotonic duration; not inherited source-run timestamps.",
+      "elapsedSeconds": 50.8902,
+      "providerSeconds": 50.8322,
+      "generationRequests": 3,
+      "inputTokenCountRequests": 0,
+      "inputTokens": 17378,
+      "cachedInputTokens": 17369,
+      "outputTokens": 2795,
+      "candidateCount": 15,
+      "decisionCount": 12,
+      "coveredCandidateCount": 15,
+      "failureCount": 0,
+      "packedRequestSizes": [
+        {
+          "input_tokens": 10424,
+          "output_tokens": 8748,
+          "group_count": 4,
+          "candidate_count": 10
+        }
+      ]
+    }
+  ],
+  "scores": [
+    {
+      "label": "existing-r1-ep1",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 1.0,
+            "numerator": 10,
+            "denominator": 10,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 1.0,
+            "candidateRecall": 1.0,
+            "candidateF1": 1.0,
+            "weightedRecall": 1.0,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 1.0,
+            "valueAccuracy": 1.0,
+            "resolvedValueAccuracy": 1.0,
+            "valueLowerBoundAccuracy": 1.0,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "predictions": 5,
+            "matches": 5,
+            "identityTruePositive": 5,
+            "missed": 0,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 5,
+            "handoffPredictions": 5,
+            "groupedPredictions": 5
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 1.0,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 1.0,
+            "resolvedProposedValueAccuracy": 1.0,
+            "proposedValueLowerBoundAccuracy": 1.0,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 1.0,
+            "resolvedFullDecisionAccuracy": 1.0,
+            "fullDecisionLowerBoundAccuracy": 1.0,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 1.0,
+            "resolvedSelectiveAccuracy": 1.0,
+            "selectiveLowerBoundAccuracy": 1.0,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 5,
+            "reachedAndCompared": 5,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 5
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 5,
+          "expected": 5,
+          "predicted": 5,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 1.0,
+          "afterStateRecall": 1.0,
+          "afterStateF1": 1.0,
+          "resolvedAfterStatePrecision": 1.0,
+          "resolvedAfterStateRecall": 1.0,
+          "resolvedAfterStateF1": 1.0,
+          "afterStateLowerBoundF1": 1.0,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 28,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "packed-r1-ep1",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 1.0,
+            "numerator": 10,
+            "denominator": 10,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 1.0,
+            "candidateRecall": 1.0,
+            "candidateF1": 1.0,
+            "weightedRecall": 1.0,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 1.0,
+            "valueAccuracy": 1.0,
+            "resolvedValueAccuracy": 1.0,
+            "valueLowerBoundAccuracy": 1.0,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "predictions": 5,
+            "matches": 5,
+            "identityTruePositive": 5,
+            "missed": 0,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 5,
+            "handoffPredictions": 5,
+            "groupedPredictions": 5
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 1.0,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 1.0,
+            "resolvedProposedValueAccuracy": 1.0,
+            "proposedValueLowerBoundAccuracy": 1.0,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 1.0,
+            "resolvedFullDecisionAccuracy": 1.0,
+            "fullDecisionLowerBoundAccuracy": 1.0,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 1.0,
+            "resolvedSelectiveAccuracy": 1.0,
+            "selectiveLowerBoundAccuracy": 1.0,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 5,
+            "reachedAndCompared": 5,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 5
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 5,
+          "expected": 5,
+          "predicted": 5,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 1.0,
+          "afterStateRecall": 1.0,
+          "afterStateF1": 1.0,
+          "resolvedAfterStatePrecision": 1.0,
+          "resolvedAfterStateRecall": 1.0,
+          "resolvedAfterStateF1": 1.0,
+          "afterStateLowerBoundF1": 1.0,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 28,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "existing-r1-ep2",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.625,
+            "numerator": 10,
+            "denominator": 16,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7142857142857143,
+            "candidateRecall": 0.5555555555555556,
+            "candidateF1": 0.625,
+            "weightedRecall": 0.6666666666666666,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.7142857142857143,
+            "valueAccuracy": 0.5714285714285714,
+            "resolvedValueAccuracy": 0.5714285714285714,
+            "valueLowerBoundAccuracy": 0.5714285714285714,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.7692307692307693
+          },
+          "counts": {
+            "gold": 9,
+            "predictions": 7,
+            "matches": 7,
+            "identityTruePositive": 5,
+            "missed": 2,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 7,
+            "handoffPredictions": 7,
+            "groupedPredictions": 7
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 4,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.4444444444444444,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.75,
+            "resolvedProposedValueAccuracy": 0.75,
+            "proposedValueLowerBoundAccuracy": 0.75,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.75,
+            "resolvedFullDecisionAccuracy": 0.75,
+            "fullDecisionLowerBoundAccuracy": 0.75,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.75,
+            "resolvedSelectiveAccuracy": 0.75,
+            "selectiveLowerBoundAccuracy": 0.75,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.75
+          },
+          "counts": {
+            "gold": 9,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 4,
+            "reachedAndCompared": 4,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 4,
+              "UPSTREAM_MISSING": 2,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.6153846153846154,
+          "numerator": 16,
+          "denominator": 26,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.6153846153846154,
+          "numerator": 16,
+          "denominator": 26,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 8,
+          "expected": 14,
+          "predicted": 12,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.6666666666666666,
+          "afterStateRecall": 0.5714285714285714,
+          "afterStateF1": 0.6153846153846154,
+          "resolvedAfterStatePrecision": 0.6666666666666666,
+          "resolvedAfterStateRecall": 0.5714285714285714,
+          "resolvedAfterStateF1": 0.6153846153846154,
+          "afterStateLowerBoundF1": 0.6153846153846154,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 75,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "packed-r1-ep2",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.625,
+            "numerator": 10,
+            "denominator": 16,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7142857142857143,
+            "candidateRecall": 0.5555555555555556,
+            "candidateF1": 0.625,
+            "weightedRecall": 0.6666666666666666,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.7142857142857143,
+            "valueAccuracy": 0.5714285714285714,
+            "resolvedValueAccuracy": 0.5714285714285714,
+            "valueLowerBoundAccuracy": 0.5714285714285714,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.7692307692307693
+          },
+          "counts": {
+            "gold": 9,
+            "predictions": 7,
+            "matches": 7,
+            "identityTruePositive": 5,
+            "missed": 2,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 7,
+            "handoffPredictions": 7,
+            "groupedPredictions": 7
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 4,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.4444444444444444,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.75,
+            "resolvedProposedValueAccuracy": 0.75,
+            "proposedValueLowerBoundAccuracy": 0.75,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.75,
+            "resolvedFullDecisionAccuracy": 0.75,
+            "fullDecisionLowerBoundAccuracy": 0.75,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.75,
+            "resolvedSelectiveAccuracy": 0.75,
+            "selectiveLowerBoundAccuracy": 0.75,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.75
+          },
+          "counts": {
+            "gold": 9,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 4,
+            "reachedAndCompared": 4,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 4,
+              "UPSTREAM_MISSING": 2,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.6153846153846154,
+          "numerator": 16,
+          "denominator": 26,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.6153846153846154,
+          "numerator": 16,
+          "denominator": 26,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 8,
+          "expected": 14,
+          "predicted": 12,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.6666666666666666,
+          "afterStateRecall": 0.5714285714285714,
+          "afterStateF1": 0.6153846153846154,
+          "resolvedAfterStatePrecision": 0.6666666666666666,
+          "resolvedAfterStateRecall": 0.5714285714285714,
+          "resolvedAfterStateF1": 0.6153846153846154,
+          "afterStateLowerBoundF1": 0.6153846153846154,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 75,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "existing-r1-ep3",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.7586206896551724,
+            "numerator": 22,
+            "denominator": 29,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7333333333333333,
+            "candidateRecall": 0.7857142857142857,
+            "candidateF1": 0.7586206896551724,
+            "weightedRecall": 0.8333333333333334,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.8461538461538461,
+            "valueAccuracy": 0.7692307692307693,
+            "resolvedValueAccuracy": 0.7692307692307693,
+            "valueLowerBoundAccuracy": 0.7692307692307693,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.5625
+          },
+          "counts": {
+            "gold": 14,
+            "predictions": 15,
+            "matches": 13,
+            "identityTruePositive": 11,
+            "missed": 1,
+            "extra": 2,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 15,
+            "handoffPredictions": 15,
+            "groupedPredictions": 15
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 9,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.6923076923076923,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.8888888888888888,
+            "resolvedProposedValueAccuracy": 0.8888888888888888,
+            "proposedValueLowerBoundAccuracy": 0.8888888888888888,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.8888888888888888,
+            "resolvedFullDecisionAccuracy": 0.8888888888888888,
+            "fullDecisionLowerBoundAccuracy": 0.8888888888888888,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.8888888888888888,
+            "resolvedSelectiveAccuracy": 0.8888888888888888,
+            "selectiveLowerBoundAccuracy": 0.8888888888888888,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": 0.0,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.8888888888888888
+          },
+          "counts": {
+            "gold": 13,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 9,
+            "reachedAndCompared": 9,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 9,
+              "UPSTREAM_MISSING": 1,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 2,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.875,
+          "numerator": 42,
+          "denominator": 48,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.875,
+          "numerator": 42,
+          "denominator": 48,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 21,
+          "expected": 24,
+          "predicted": 24,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.875,
+          "afterStateRecall": 0.875,
+          "afterStateF1": 0.875,
+          "resolvedAfterStatePrecision": 0.875,
+          "resolvedAfterStateRecall": 0.875,
+          "resolvedAfterStateF1": 0.875,
+          "afterStateLowerBoundF1": 0.875,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 1,
+        "failedRequests": 0,
+        "providerSeconds": 11.63005570799578,
+        "usage": {
+          "inputTokens": 8021,
+          "cachedInputTokens": 1592,
+          "outputTokens": 760
+        },
+        "cache": {
+          "cacheHits": 112,
+          "pendingReused": 0,
+          "newCases": 3,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "packed-r1-ep3",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.7586206896551724,
+            "numerator": 22,
+            "denominator": 29,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7333333333333333,
+            "candidateRecall": 0.7857142857142857,
+            "candidateF1": 0.7586206896551724,
+            "weightedRecall": 0.8333333333333334,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.8461538461538461,
+            "valueAccuracy": 0.7692307692307693,
+            "resolvedValueAccuracy": 0.7692307692307693,
+            "valueLowerBoundAccuracy": 0.7692307692307693,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.5625
+          },
+          "counts": {
+            "gold": 14,
+            "predictions": 15,
+            "matches": 13,
+            "identityTruePositive": 11,
+            "missed": 1,
+            "extra": 2,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 15,
+            "handoffPredictions": 15,
+            "groupedPredictions": 15
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 9,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.6923076923076923,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.8888888888888888,
+            "resolvedProposedValueAccuracy": 0.8888888888888888,
+            "proposedValueLowerBoundAccuracy": 0.8888888888888888,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.8888888888888888,
+            "resolvedFullDecisionAccuracy": 0.8888888888888888,
+            "fullDecisionLowerBoundAccuracy": 0.8888888888888888,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.8888888888888888,
+            "resolvedSelectiveAccuracy": 0.8888888888888888,
+            "selectiveLowerBoundAccuracy": 0.8888888888888888,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": 0.0,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.8888888888888888
+          },
+          "counts": {
+            "gold": 13,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 9,
+            "reachedAndCompared": 9,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 9,
+              "UPSTREAM_MISSING": 1,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 2,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.875,
+          "numerator": 42,
+          "denominator": 48,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.875,
+          "numerator": 42,
+          "denominator": 48,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 21,
+          "expected": 24,
+          "predicted": 24,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.875,
+          "afterStateRecall": 0.875,
+          "afterStateF1": 0.875,
+          "resolvedAfterStatePrecision": 0.875,
+          "resolvedAfterStateRecall": 0.875,
+          "resolvedAfterStateF1": 0.875,
+          "afterStateLowerBoundF1": 0.875,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 1,
+        "failedRequests": 0,
+        "providerSeconds": 11.424665124970488,
+        "usage": {
+          "inputTokens": 8018,
+          "cachedInputTokens": 1592,
+          "outputTokens": 834
+        },
+        "cache": {
+          "cacheHits": 112,
+          "pendingReused": 0,
+          "newCases": 3,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "existing-r2-ep1",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 1.0,
+            "numerator": 10,
+            "denominator": 10,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 1.0,
+            "candidateRecall": 1.0,
+            "candidateF1": 1.0,
+            "weightedRecall": 1.0,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 1.0,
+            "valueAccuracy": 1.0,
+            "resolvedValueAccuracy": 1.0,
+            "valueLowerBoundAccuracy": 1.0,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "predictions": 5,
+            "matches": 5,
+            "identityTruePositive": 5,
+            "missed": 0,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 5,
+            "handoffPredictions": 5,
+            "groupedPredictions": 5
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 1.0,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 1.0,
+            "resolvedProposedValueAccuracy": 1.0,
+            "proposedValueLowerBoundAccuracy": 1.0,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 1.0,
+            "resolvedFullDecisionAccuracy": 1.0,
+            "fullDecisionLowerBoundAccuracy": 1.0,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 1.0,
+            "resolvedSelectiveAccuracy": 1.0,
+            "selectiveLowerBoundAccuracy": 1.0,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 5,
+            "reachedAndCompared": 5,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 5
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 5,
+          "expected": 5,
+          "predicted": 5,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 1.0,
+          "afterStateRecall": 1.0,
+          "afterStateF1": 1.0,
+          "resolvedAfterStatePrecision": 1.0,
+          "resolvedAfterStateRecall": 1.0,
+          "resolvedAfterStateF1": 1.0,
+          "afterStateLowerBoundF1": 1.0,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 1,
+        "failedRequests": 0,
+        "providerSeconds": 7.224065541988239,
+        "usage": {
+          "inputTokens": 7189,
+          "cachedInputTokens": 1592,
+          "outputTokens": 578
+        },
+        "cache": {
+          "cacheHits": 24,
+          "pendingReused": 0,
+          "newCases": 4,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "packed-r2-ep1",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 1.0,
+            "numerator": 10,
+            "denominator": 10,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 1.0,
+            "candidateRecall": 1.0,
+            "candidateF1": 1.0,
+            "weightedRecall": 1.0,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 1.0,
+            "valueAccuracy": 1.0,
+            "resolvedValueAccuracy": 1.0,
+            "valueLowerBoundAccuracy": 1.0,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "predictions": 5,
+            "matches": 5,
+            "identityTruePositive": 5,
+            "missed": 0,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 5,
+            "handoffPredictions": 5,
+            "groupedPredictions": 5
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 1.0,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 1.0,
+            "resolvedProposedValueAccuracy": 1.0,
+            "proposedValueLowerBoundAccuracy": 1.0,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 1.0,
+            "resolvedFullDecisionAccuracy": 1.0,
+            "fullDecisionLowerBoundAccuracy": 1.0,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 1.0,
+            "resolvedSelectiveAccuracy": 1.0,
+            "selectiveLowerBoundAccuracy": 1.0,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 5,
+            "reachedAndCompared": 5,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 5
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 5,
+          "expected": 5,
+          "predicted": 5,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 1.0,
+          "afterStateRecall": 1.0,
+          "afterStateF1": 1.0,
+          "resolvedAfterStatePrecision": 1.0,
+          "resolvedAfterStateRecall": 1.0,
+          "resolvedAfterStateF1": 1.0,
+          "afterStateLowerBoundF1": 1.0,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 28,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "existing-r2-ep2",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.625,
+            "numerator": 10,
+            "denominator": 16,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7142857142857143,
+            "candidateRecall": 0.5555555555555556,
+            "candidateF1": 0.625,
+            "weightedRecall": 0.6666666666666666,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.7142857142857143,
+            "valueAccuracy": 0.5714285714285714,
+            "resolvedValueAccuracy": 0.5714285714285714,
+            "valueLowerBoundAccuracy": 0.5714285714285714,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.7692307692307693
+          },
+          "counts": {
+            "gold": 9,
+            "predictions": 7,
+            "matches": 7,
+            "identityTruePositive": 5,
+            "missed": 2,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 7,
+            "handoffPredictions": 7,
+            "groupedPredictions": 7
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 4,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.4444444444444444,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.75,
+            "resolvedProposedValueAccuracy": 0.75,
+            "proposedValueLowerBoundAccuracy": 0.75,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.75,
+            "resolvedFullDecisionAccuracy": 0.75,
+            "fullDecisionLowerBoundAccuracy": 0.75,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.75,
+            "resolvedSelectiveAccuracy": 0.75,
+            "selectiveLowerBoundAccuracy": 0.75,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.75
+          },
+          "counts": {
+            "gold": 9,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 4,
+            "reachedAndCompared": 4,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 4,
+              "UPSTREAM_MISSING": 2,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.6153846153846154,
+          "numerator": 16,
+          "denominator": 26,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.6153846153846154,
+          "numerator": 16,
+          "denominator": 26,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 8,
+          "expected": 14,
+          "predicted": 12,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.6666666666666666,
+          "afterStateRecall": 0.5714285714285714,
+          "afterStateF1": 0.6153846153846154,
+          "resolvedAfterStatePrecision": 0.6666666666666666,
+          "resolvedAfterStateRecall": 0.5714285714285714,
+          "resolvedAfterStateF1": 0.6153846153846154,
+          "afterStateLowerBoundF1": 0.6153846153846154,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 75,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "packed-r2-ep2",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.625,
+            "numerator": 10,
+            "denominator": 16,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7142857142857143,
+            "candidateRecall": 0.5555555555555556,
+            "candidateF1": 0.625,
+            "weightedRecall": 0.6666666666666666,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.7142857142857143,
+            "valueAccuracy": 0.5714285714285714,
+            "resolvedValueAccuracy": 0.5714285714285714,
+            "valueLowerBoundAccuracy": 0.5714285714285714,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.7692307692307693
+          },
+          "counts": {
+            "gold": 9,
+            "predictions": 7,
+            "matches": 7,
+            "identityTruePositive": 5,
+            "missed": 2,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 7,
+            "handoffPredictions": 7,
+            "groupedPredictions": 7
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 4,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.4444444444444444,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.75,
+            "resolvedProposedValueAccuracy": 0.75,
+            "proposedValueLowerBoundAccuracy": 0.75,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.75,
+            "resolvedFullDecisionAccuracy": 0.75,
+            "fullDecisionLowerBoundAccuracy": 0.75,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.75,
+            "resolvedSelectiveAccuracy": 0.75,
+            "selectiveLowerBoundAccuracy": 0.75,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.75
+          },
+          "counts": {
+            "gold": 9,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 4,
+            "reachedAndCompared": 4,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 4,
+              "UPSTREAM_MISSING": 2,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.6153846153846154,
+          "numerator": 16,
+          "denominator": 26,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.6153846153846154,
+          "numerator": 16,
+          "denominator": 26,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 8,
+          "expected": 14,
+          "predicted": 12,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.6666666666666666,
+          "afterStateRecall": 0.5714285714285714,
+          "afterStateF1": 0.6153846153846154,
+          "resolvedAfterStatePrecision": 0.6666666666666666,
+          "resolvedAfterStateRecall": 0.5714285714285714,
+          "resolvedAfterStateF1": 0.6153846153846154,
+          "afterStateLowerBoundF1": 0.6153846153846154,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 75,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "existing-r2-ep3",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.7586206896551724,
+            "numerator": 22,
+            "denominator": 29,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7333333333333333,
+            "candidateRecall": 0.7857142857142857,
+            "candidateF1": 0.7586206896551724,
+            "weightedRecall": 0.8333333333333334,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.8461538461538461,
+            "valueAccuracy": 0.7692307692307693,
+            "resolvedValueAccuracy": 0.7692307692307693,
+            "valueLowerBoundAccuracy": 0.7692307692307693,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.5625
+          },
+          "counts": {
+            "gold": 14,
+            "predictions": 15,
+            "matches": 13,
+            "identityTruePositive": 11,
+            "missed": 1,
+            "extra": 2,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 15,
+            "handoffPredictions": 15,
+            "groupedPredictions": 15
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 9,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.6923076923076923,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.8888888888888888,
+            "resolvedProposedValueAccuracy": 0.8888888888888888,
+            "proposedValueLowerBoundAccuracy": 0.8888888888888888,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.8888888888888888,
+            "resolvedFullDecisionAccuracy": 0.8888888888888888,
+            "fullDecisionLowerBoundAccuracy": 0.8888888888888888,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.8888888888888888,
+            "resolvedSelectiveAccuracy": 0.8888888888888888,
+            "selectiveLowerBoundAccuracy": 0.8888888888888888,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": 0.0,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.8888888888888888
+          },
+          "counts": {
+            "gold": 13,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 9,
+            "reachedAndCompared": 9,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 9,
+              "UPSTREAM_MISSING": 1,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 2,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.875,
+          "numerator": 42,
+          "denominator": 48,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.875,
+          "numerator": 42,
+          "denominator": 48,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 21,
+          "expected": 24,
+          "predicted": 24,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.875,
+          "afterStateRecall": 0.875,
+          "afterStateF1": 0.875,
+          "resolvedAfterStatePrecision": 0.875,
+          "resolvedAfterStateRecall": 0.875,
+          "resolvedAfterStateF1": 0.875,
+          "afterStateLowerBoundF1": 0.875,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 1,
+        "failedRequests": 0,
+        "providerSeconds": 6.596642749966122,
+        "usage": {
+          "inputTokens": 7673,
+          "cachedInputTokens": 1592,
+          "outputTokens": 461
+        },
+        "cache": {
+          "cacheHits": 113,
+          "pendingReused": 0,
+          "newCases": 2,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "packed-r2-ep3",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.7586206896551724,
+            "numerator": 22,
+            "denominator": 29,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7333333333333333,
+            "candidateRecall": 0.7857142857142857,
+            "candidateF1": 0.7586206896551724,
+            "weightedRecall": 0.8333333333333334,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.8461538461538461,
+            "valueAccuracy": 0.7692307692307693,
+            "resolvedValueAccuracy": 0.7692307692307693,
+            "valueLowerBoundAccuracy": 0.7692307692307693,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.5625
+          },
+          "counts": {
+            "gold": 14,
+            "predictions": 15,
+            "matches": 13,
+            "identityTruePositive": 11,
+            "missed": 1,
+            "extra": 2,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 15,
+            "handoffPredictions": 15,
+            "groupedPredictions": 15
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 9,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.6923076923076923,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.8888888888888888,
+            "resolvedProposedValueAccuracy": 0.8888888888888888,
+            "proposedValueLowerBoundAccuracy": 0.8888888888888888,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.8888888888888888,
+            "resolvedFullDecisionAccuracy": 0.8888888888888888,
+            "fullDecisionLowerBoundAccuracy": 0.8888888888888888,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.8888888888888888,
+            "resolvedSelectiveAccuracy": 0.8888888888888888,
+            "selectiveLowerBoundAccuracy": 0.8888888888888888,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": 0.0,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.8888888888888888
+          },
+          "counts": {
+            "gold": 13,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 9,
+            "reachedAndCompared": 9,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 9,
+              "UPSTREAM_MISSING": 1,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 2,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.875,
+          "numerator": 42,
+          "denominator": 48,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.875,
+          "numerator": 42,
+          "denominator": 48,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 21,
+          "expected": 24,
+          "predicted": 24,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.875,
+          "afterStateRecall": 0.875,
+          "afterStateF1": 0.875,
+          "resolvedAfterStatePrecision": 0.875,
+          "resolvedAfterStateRecall": 0.875,
+          "resolvedAfterStateF1": 0.875,
+          "afterStateLowerBoundF1": 0.875,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 1,
+        "failedRequests": 0,
+        "providerSeconds": 8.609962624963373,
+        "usage": {
+          "inputTokens": 7659,
+          "cachedInputTokens": 1592,
+          "outputTokens": 565
+        },
+        "cache": {
+          "cacheHits": 113,
+          "pendingReused": 0,
+          "newCases": 2,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "existing-r3-ep1",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 1.0,
+            "numerator": 10,
+            "denominator": 10,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 1.0,
+            "candidateRecall": 1.0,
+            "candidateF1": 1.0,
+            "weightedRecall": 1.0,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 1.0,
+            "valueAccuracy": 1.0,
+            "resolvedValueAccuracy": 1.0,
+            "valueLowerBoundAccuracy": 1.0,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "predictions": 5,
+            "matches": 5,
+            "identityTruePositive": 5,
+            "missed": 0,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 5,
+            "handoffPredictions": 5,
+            "groupedPredictions": 5
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 1.0,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 1.0,
+            "resolvedProposedValueAccuracy": 1.0,
+            "proposedValueLowerBoundAccuracy": 1.0,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 1.0,
+            "resolvedFullDecisionAccuracy": 1.0,
+            "fullDecisionLowerBoundAccuracy": 1.0,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 1.0,
+            "resolvedSelectiveAccuracy": 1.0,
+            "selectiveLowerBoundAccuracy": 1.0,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 5,
+            "reachedAndCompared": 5,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 5
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 5,
+          "expected": 5,
+          "predicted": 5,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 1.0,
+          "afterStateRecall": 1.0,
+          "afterStateF1": 1.0,
+          "resolvedAfterStatePrecision": 1.0,
+          "resolvedAfterStateRecall": 1.0,
+          "resolvedAfterStateF1": 1.0,
+          "afterStateLowerBoundF1": 1.0,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 28,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "packed-r3-ep1",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 1.0,
+            "numerator": 10,
+            "denominator": 10,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 1.0,
+            "candidateRecall": 1.0,
+            "candidateF1": 1.0,
+            "weightedRecall": 1.0,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 1.0,
+            "valueAccuracy": 1.0,
+            "resolvedValueAccuracy": 1.0,
+            "valueLowerBoundAccuracy": 1.0,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "predictions": 5,
+            "matches": 5,
+            "identityTruePositive": 5,
+            "missed": 0,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 5,
+            "handoffPredictions": 5,
+            "groupedPredictions": 5
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 5,
+            "denominator": 5,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 1.0,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 1.0,
+            "resolvedProposedValueAccuracy": 1.0,
+            "proposedValueLowerBoundAccuracy": 1.0,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 1.0,
+            "resolvedFullDecisionAccuracy": 1.0,
+            "fullDecisionLowerBoundAccuracy": 1.0,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 1.0,
+            "resolvedSelectiveAccuracy": 1.0,
+            "selectiveLowerBoundAccuracy": 1.0,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 1.0
+          },
+          "counts": {
+            "gold": 5,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 5,
+            "reachedAndCompared": 5,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 5
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 1.0,
+          "numerator": 10,
+          "denominator": 10,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 5,
+          "expected": 5,
+          "predicted": 5,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 1.0,
+          "afterStateRecall": 1.0,
+          "afterStateF1": 1.0,
+          "resolvedAfterStatePrecision": 1.0,
+          "resolvedAfterStateRecall": 1.0,
+          "resolvedAfterStateF1": 1.0,
+          "afterStateLowerBoundF1": 1.0,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 28,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "existing-r3-ep2",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.625,
+            "numerator": 10,
+            "denominator": 16,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7142857142857143,
+            "candidateRecall": 0.5555555555555556,
+            "candidateF1": 0.625,
+            "weightedRecall": 0.6666666666666666,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.7142857142857143,
+            "valueAccuracy": 0.5714285714285714,
+            "resolvedValueAccuracy": 0.5714285714285714,
+            "valueLowerBoundAccuracy": 0.5714285714285714,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.7692307692307693
+          },
+          "counts": {
+            "gold": 9,
+            "predictions": 7,
+            "matches": 7,
+            "identityTruePositive": 5,
+            "missed": 2,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 7,
+            "handoffPredictions": 7,
+            "groupedPredictions": 7
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 4,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.4444444444444444,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.75,
+            "resolvedProposedValueAccuracy": 0.75,
+            "proposedValueLowerBoundAccuracy": 0.75,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.75,
+            "resolvedFullDecisionAccuracy": 0.75,
+            "fullDecisionLowerBoundAccuracy": 0.75,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.75,
+            "resolvedSelectiveAccuracy": 0.75,
+            "selectiveLowerBoundAccuracy": 0.75,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.75
+          },
+          "counts": {
+            "gold": 9,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 4,
+            "reachedAndCompared": 4,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 4,
+              "UPSTREAM_MISSING": 2,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.64,
+          "numerator": 16,
+          "denominator": 25,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.64,
+          "numerator": 16,
+          "denominator": 25,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 8,
+          "expected": 14,
+          "predicted": 11,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.7272727272727273,
+          "afterStateRecall": 0.5714285714285714,
+          "afterStateF1": 0.64,
+          "resolvedAfterStatePrecision": 0.7272727272727273,
+          "resolvedAfterStateRecall": 0.5714285714285714,
+          "resolvedAfterStateF1": 0.64,
+          "afterStateLowerBoundF1": 0.64,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 75,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "packed-r3-ep2",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.625,
+            "numerator": 10,
+            "denominator": 16,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7142857142857143,
+            "candidateRecall": 0.5555555555555556,
+            "candidateF1": 0.625,
+            "weightedRecall": 0.6666666666666666,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.7142857142857143,
+            "valueAccuracy": 0.5714285714285714,
+            "resolvedValueAccuracy": 0.5714285714285714,
+            "valueLowerBoundAccuracy": 0.5714285714285714,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.7692307692307693
+          },
+          "counts": {
+            "gold": 9,
+            "predictions": 7,
+            "matches": 7,
+            "identityTruePositive": 5,
+            "missed": 2,
+            "extra": 0,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 7,
+            "handoffPredictions": 7,
+            "groupedPredictions": 7
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 4,
+            "denominator": 4,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.4444444444444444,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.75,
+            "resolvedProposedValueAccuracy": 0.75,
+            "proposedValueLowerBoundAccuracy": 0.75,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.75,
+            "resolvedFullDecisionAccuracy": 0.75,
+            "fullDecisionLowerBoundAccuracy": 0.75,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.75,
+            "resolvedSelectiveAccuracy": 0.75,
+            "selectiveLowerBoundAccuracy": 0.75,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": null,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.75
+          },
+          "counts": {
+            "gold": 9,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 4,
+            "reachedAndCompared": 4,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 4,
+              "UPSTREAM_MISSING": 2,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 0,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.6153846153846154,
+          "numerator": 16,
+          "denominator": 26,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.6153846153846154,
+          "numerator": 16,
+          "denominator": 26,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 8,
+          "expected": 14,
+          "predicted": 12,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.6666666666666666,
+          "afterStateRecall": 0.5714285714285714,
+          "afterStateF1": 0.6153846153846154,
+          "resolvedAfterStatePrecision": 0.6666666666666666,
+          "resolvedAfterStateRecall": 0.5714285714285714,
+          "resolvedAfterStateF1": 0.6153846153846154,
+          "afterStateLowerBoundF1": 0.6153846153846154,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 0,
+        "failedRequests": 0,
+        "providerSeconds": 0,
+        "usage": {
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "outputTokens": 0
+        },
+        "cache": {
+          "cacheHits": 75,
+          "pendingReused": 0,
+          "newCases": 0,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "existing-r3-ep3",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.7586206896551724,
+            "numerator": 22,
+            "denominator": 29,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7333333333333333,
+            "candidateRecall": 0.7857142857142857,
+            "candidateF1": 0.7586206896551724,
+            "weightedRecall": 0.8333333333333334,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.8461538461538461,
+            "valueAccuracy": 0.7692307692307693,
+            "resolvedValueAccuracy": 0.7692307692307693,
+            "valueLowerBoundAccuracy": 0.7692307692307693,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.5625
+          },
+          "counts": {
+            "gold": 14,
+            "predictions": 15,
+            "matches": 13,
+            "identityTruePositive": 11,
+            "missed": 1,
+            "extra": 2,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 15,
+            "handoffPredictions": 15,
+            "groupedPredictions": 15
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 9,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.6923076923076923,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.8888888888888888,
+            "resolvedProposedValueAccuracy": 0.8888888888888888,
+            "proposedValueLowerBoundAccuracy": 0.8888888888888888,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.8888888888888888,
+            "resolvedFullDecisionAccuracy": 0.8888888888888888,
+            "fullDecisionLowerBoundAccuracy": 0.8888888888888888,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.8888888888888888,
+            "resolvedSelectiveAccuracy": 0.8888888888888888,
+            "selectiveLowerBoundAccuracy": 0.8888888888888888,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": 0.0,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.8888888888888888
+          },
+          "counts": {
+            "gold": 13,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 9,
+            "reachedAndCompared": 9,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 9,
+              "UPSTREAM_MISSING": 1,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 2,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.8936170212765957,
+          "numerator": 42,
+          "denominator": 47,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.8936170212765957,
+          "numerator": 42,
+          "denominator": 47,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 21,
+          "expected": 24,
+          "predicted": 23,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.9130434782608695,
+          "afterStateRecall": 0.875,
+          "afterStateF1": 0.8936170212765957,
+          "resolvedAfterStatePrecision": 0.9130434782608695,
+          "resolvedAfterStateRecall": 0.875,
+          "resolvedAfterStateF1": 0.8936170212765957,
+          "afterStateLowerBoundF1": 0.8936170212765957,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 1,
+        "failedRequests": 0,
+        "providerSeconds": 7.6562330420129,
+        "usage": {
+          "inputTokens": 7591,
+          "cachedInputTokens": 1592,
+          "outputTokens": 488
+        },
+        "cache": {
+          "cacheHits": 113,
+          "pendingReused": 0,
+          "newCases": 2,
+          "duplicateCasesReused": 0
+        }
+      }
+    },
+    {
+      "label": "packed-r3-ep3",
+      "status": "COMPLETE",
+      "world": {
+        "stage1": {
+          "candidateF1": {
+            "value": 0.7586206896551724,
+            "numerator": 22,
+            "denominator": 29,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "candidatePrecision": 0.7333333333333333,
+            "candidateRecall": 0.7857142857142857,
+            "candidateF1": 0.7586206896551724,
+            "weightedRecall": 0.8333333333333334,
+            "entityOrSubjectAccuracy": 1.0,
+            "pathOrFactAccuracy": 0.8461538461538461,
+            "valueAccuracy": 0.7692307692307693,
+            "resolvedValueAccuracy": 0.7692307692307693,
+            "valueLowerBoundAccuracy": 0.7692307692307693,
+            "valueSemanticCoverage": 1.0,
+            "valueTypeAccuracy": null,
+            "structuredValueAccuracy": null,
+            "evidenceLocatableRate": 1.0,
+            "evidenceCoverageRate": 0.5625
+          },
+          "counts": {
+            "gold": 14,
+            "predictions": 15,
+            "matches": 13,
+            "identityTruePositive": 11,
+            "missed": 1,
+            "extra": 2,
+            "hardNegativeHits": 0,
+            "semanticPending": 0,
+            "rawPredictions": 15,
+            "handoffPredictions": 15,
+            "groupedPredictions": 15
+          }
+        },
+        "stage2": {
+          "fullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "resolvedFullDecisionAccuracy": {
+            "value": 0.8888888888888888,
+            "numerator": 8,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "operationAccuracy": {
+            "value": 1.0,
+            "numerator": 9,
+            "denominator": 9,
+            "semanticPending": 0,
+            "numeratorMeaning": "correct"
+          },
+          "metrics": {
+            "upstreamReachRate": 0.6923076923076923,
+            "operationAccuracy": 1.0,
+            "characterCanonicalFactKeyResolutionAccuracy": null,
+            "targetAccuracy": 1.0,
+            "removedSnapshotSetAccuracy": null,
+            "temporalAccuracy": null,
+            "consolidationAccuracy": 1.0,
+            "proposedPathAccuracy": 1.0,
+            "existingRootPropertyMoveSetAccuracy": null,
+            "proposedValueAccuracy": 0.8888888888888888,
+            "resolvedProposedValueAccuracy": 0.8888888888888888,
+            "proposedValueLowerBoundAccuracy": 0.8888888888888888,
+            "proposedValueSemanticCoverage": 1.0,
+            "proposedValueJsonAccuracy": null,
+            "fullDecisionAccuracy": 0.8888888888888888,
+            "resolvedFullDecisionAccuracy": 0.8888888888888888,
+            "fullDecisionLowerBoundAccuracy": 0.8888888888888888,
+            "semanticCoverage": 1.0,
+            "selectiveCoverage": 1.0,
+            "selectiveAccuracy": 0.8888888888888888,
+            "resolvedSelectiveAccuracy": 0.8888888888888888,
+            "selectiveLowerBoundAccuracy": 0.8888888888888888,
+            "reviewRequiredRecall": null,
+            "falsePositiveSuppressionRate": 0.0,
+            "harmfulActionRate": null,
+            "oracleAccuracy": null,
+            "liveConditionalAccuracy": 0.8888888888888888
+          },
+          "counts": {
+            "gold": 13,
+            "waitingForCharacterMatch": 0,
+            "upstreamReached": 9,
+            "reachedAndCompared": 9,
+            "semanticPending": 0,
+            "upstreamOutcomes": {
+              "REACHED": 9,
+              "UPSTREAM_MISSING": 1,
+              "UPSTREAM_VALUE_ERROR": 3
+            },
+            "safeNoopCases": 0,
+            "harmfulActions": 0,
+            "extraStage1Predictions": 2,
+            "suppressedExtraPredictions": 0
+          }
+        }
+      },
+      "worldAfterState": {
+        "afterStateF1": {
+          "value": 0.875,
+          "numerator": 42,
+          "denominator": 48,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "resolvedAfterStateF1": {
+          "value": 0.875,
+          "numerator": 42,
+          "denominator": 48,
+          "semanticPending": 0,
+          "numeratorMeaning": "correct"
+        },
+        "counts": {
+          "matched": 21,
+          "expected": 24,
+          "predicted": 24,
+          "semanticPending": 0,
+          "pendingExpected": 0,
+          "pendingPredicted": 0
+        },
+        "metrics": {
+          "afterStatePrecision": 0.875,
+          "afterStateRecall": 0.875,
+          "afterStateF1": 0.875,
+          "resolvedAfterStatePrecision": 0.875,
+          "resolvedAfterStateRecall": 0.875,
+          "resolvedAfterStateF1": 0.875,
+          "afterStateLowerBoundF1": 0.875,
+          "semanticCoverage": 1.0,
+          "semanticPending": 0
+        }
+      },
+      "runtimeFailures": {
+        "total": 0,
+        "byStage": {},
+        "byErrorType": {}
+      },
+      "stateApplicationErrors": 0,
+      "judge": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "providerRequests": 1,
+        "failedRequests": 0,
+        "providerSeconds": 7.470243124989793,
+        "usage": {
+          "inputTokens": 7657,
+          "cachedInputTokens": 1592,
+          "outputTokens": 442
+        },
+        "cache": {
+          "cacheHits": 113,
+          "pendingReused": 0,
+          "newCases": 2,
+          "duplicateCasesReused": 0
+        }
+      }
+    }
+  ],
+  "maximumPackedActualTokens": {
+    "input": 8125,
+    "output": 2264
+  },
+  "remainingDifferences": {
+    "barbarian6": "Core operation/target/path/value/membership fields agree for all 36 source comparisons; reason wording excluded.",
+    "ai2": "Two properties use a common scope only in packed variant, consistently in all 3 repeats; no operation/target/value difference. No Gold accuracy claim.",
+    "episode2": "One ADD vs EXCLUDE difference in repetition3.",
+    "episode3": "Candidate merge membership/path/wording differs; final-state F1 mean 88.12% vs 87.50%."
+  },
+  "setupFailures": {
+    "providerSchemaRejected": 1,
+    "retainedInitialControlRuns": 1,
+    "scoringCacheOriginFailures": 18,
+    "scoringCacheOriginPaidCalls": 0,
+    "note": "All attempts retained; fixed final implementation measured 30 times. Cached judge source files copied with exact hash verification; scoring logic unchanged."
+  },
+  "runnerHashes": {
+    "replay_world_properties.py": "e74ba41e685ea5d5b72d31f90564fbbca14763bca3e6489c6cdf4b9ad89d2e27",
+    "score.py": "6e8edd63e98088ac6a1cf82771aee3aeb60713a330844d71111c64bbf662254b",
+    "summarize.py": "275ab016a9d4c0973c53454f7fcc2592e745bd7de0b9e5741b1ea51cbf9d4a07",
+    "normalize_metadata.py": "7c7f201d9a0537f977169af504b6fcd3b3b0ade8eb3ffc83580715168e6d9b17"
+  },
+  "inputManifest": {
+    "scope": "Frozen world property comparison only; no extraction or linking replay",
+    "files": {
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep3-request5.json": "bfd13359413f4c9a3b6d1c958b6001395eb8d10df74313495ff7a24a0ff72cc9",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep3-request4.json": "14a01c43a2c17c2e5096adaca0b60b8d223175a74524d1e1fb6766b060c6bfa7",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep3-request3.json": "02df2bd610466fb583b87ca85f92c12c4998438de8ea81bfec5620e8ef09134a",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep1-request1.json": "9f3c12255a7aaad51d1681ff9fa8bc8a3d1197a8a42a15a8f52906d176b78230",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep2-request1.json": "eb013c27e9d9f20d1e94c560cb0c3242b44d13c311bb6ea781f177e3033c40d1",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep3-request2.json": "15d050f0c4d34a4e76d0f89a8cd584f37c339a0b994ca65c33a7b9c3c24de1f3",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep3-request1.json": "15a4c0df5ed3bc2c63cedec7241ac37ecd6f2701d8a2b93c5b15b94a53f6d2fd",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep2-request2.json": "b82ececa2bc884b32542a02ae65118350ae194ed427428ad27e73fe297ff3df2",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep2-request3.json": "e0c1ea1e994953c6ea5d877993fe2585d8c82b10259bc25c3fd0540d808f78be",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep1-request2.json": "964ecc368f0c3ae066a9022fafa4e80a44a777227b1aa0cf8efbef461b4ef739",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep2-request4.json": "1c6472809fe31360273da79e86d27e31b17d2ff8dc7fcd631722e4b0703105ec",
+      "outputs/gh-251-world-property-batching-20261016/private/request-character-counts/ep3-request6.json": "c3bff2ef23a6173fc4cb5432e33c846d3421ca97b3f197d6b501d2b1956aa323",
+      "outputs/gh-251-batching-experiment-20261016/private/inputs/episode-06.json": "f71f1ea452a033fe7ee8c37a6487ee79c8684f6ae6238587be5b054520951623",
+      "outputs/gh-251-batching-experiment-20261016/private/inputs/ai-harbor-episode-02.json": "781004001f6fca135d5eadd19bf04312a42d9ae3367e64348b54aca10114cbac",
+      "outputs/ep03-survival-gold17-2026-10-07/gold-final-draft17.json": "4cbbd60467f98ff349d9aaf1f9582eb71dc22ce707cb32eb717dc7f58b592dc0"
+    },
+    "historicalRequestProof": "12 episode1/2/3 original HTTP request hashes verified before implementation; runtime candidates/targets compared for exact equality before generation.",
+    "followupProof": "Barbarian6/AI2 reconstructed from captured candidate rows and previousState.worldSettings; not a byte-identical historical HTTP request claim.",
+    "candidateCounts": {
+      "ep1": 5,
+      "ep2": 7,
+      "ep3": 15,
+      "barbarian6": 12,
+      "ai2": 8
+    },
+    "originalGroupCounts": {
+      "ep1": 2,
+      "ep2": 4,
+      "ep3": 6,
+      "barbarian6": 4,
+      "ai2": 4
+    }
+  },
+  "baselineHistoricalHttpHashMatches": 36
+}

@@ -34,14 +34,19 @@ from app.analysis.character_subject_resolver import (
     SubjectResolutionChunkContext,
 )
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
-from app.analysis.exceptions import ComparisonValidationError
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.analysis.setting_extractor import (
     SETTING_EXTRACTION_CACHE_KEY_VERSION,
     CharacterSettingExtractor,
     CharacterSettingSchemaHint,
 )
-from app.analysis.world_setting_batch_recovery import compare_world_batch_with_recovery
+from app.analysis.world_setting_batch_recovery import (
+    compare_world_batch_with_recovery, recover_world_batch, WorldBatchRecoveryResult, can_recover_response,
+)
+from app.analysis.world_setting_manuscript import (
+    WorldSettingManuscriptComparator, WorldSettingManuscriptGroup, WorldSettingManuscriptOutcome,
+)
 from app.analysis.world_setting_comparator import (
     WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
     WorldSettingComparator,
@@ -266,6 +271,7 @@ class RuntimeComponents:
     world_extractor: WorldSettingExtractor | Any | None = None
     world_subject_resolver: WorldSettingSubjectResolver | Any | None = None
     usage: RuntimeUsageCounter | None = None
+    world_manuscript_comparator: WorldSettingManuscriptComparator | None = None
 
 
 @dataclass(frozen=True)
@@ -306,6 +312,7 @@ def create_default_runtime_components(
     subject_resolution_model: str | None = None,
     comparison_model: str | None = None,
     store_responses: bool = False,
+    world_manuscript_batching: bool = True,
 ) -> RuntimeComponents:
     """운영 extractor/comparator 구현으로 평가 runtime을 구성한다."""
 
@@ -315,6 +322,7 @@ def create_default_runtime_components(
          if store_responses else OpenAIResponsesClient.from_settings()),
         usage,
     )
+    world_comparator = WorldSettingComparator(llm_client=client, model=comparison_model)
     return RuntimeComponents(
         character_extractor=CharacterSettingExtractor(
             llm_client=client,
@@ -336,10 +344,9 @@ def create_default_runtime_components(
             llm_client=client,
             model=comparison_model,
         ),
-        world_comparator=WorldSettingComparator(
-            llm_client=client,
-            model=comparison_model,
-        ),
+        world_comparator=world_comparator,
+        world_manuscript_comparator=(WorldSettingManuscriptComparator(world_comparator)
+                                     if world_manuscript_batching else None),
         usage=usage,
     )
 
@@ -557,7 +564,9 @@ async def run_multi_stage_predictions(
                 and callable(getattr(components.world_subject_resolver, "select_manuscript_subjects", None))
                 else "world-setting-subject-resolution:v1"
             ),
-            "worldComparison": WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
+            "worldComparison": ("world-setting-manuscript-comparison:v1"
+                                if components.world_manuscript_comparator is not None
+                                else WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY),
         },
         character_schema_hash=(
             _character_schema_hash(character_schema_hints)
@@ -673,6 +682,7 @@ async def _run_oracle_scenario(
         world_batch_sources,
         components.world_comparator,
         trace=trace,
+        manuscript_comparator=components.world_manuscript_comparator,
     )
     stage2.extend(world_stage2)
     failures.extend(world_failures)
@@ -1042,6 +1052,7 @@ async def _run_live_scenario(
         world_batch_sources,
         components.world_comparator,
         trace=trace,
+        manuscript_comparator=components.world_manuscript_comparator,
     )
     stage2.extend(world_stage2)
     failures.extend(world_failures)
@@ -1397,11 +1408,28 @@ async def _live_world_batch_sources(
     return prepared, failures
 
 
+
+def _world_comparison_candidates(group):
+    return [
+    WorkerWorldSettingComparisonBatchCandidate(
+        candidate_ref=f"C{index}",
+        candidate_id=item.candidate.candidate_id,
+        subject_name=item.candidate.subject_name,
+        scope_name=item.candidate.scope_name,
+        setting_name=item.candidate.setting_name,
+        extracted_value=item.candidate.extracted_value,
+        evidence_spans=item.candidate.evidence_spans,
+        extraction_confidence=item.candidate.extraction_confidence,
+    )
+    for index, item in enumerate(group, start=1)
+    ]
+
 async def _run_world_batches(
     sources: list[_WorldBatchSource],
     comparator: WorldComparatorApi,
     *,
     trace: ProcessingTrace | None = None,
+    manuscript_comparator: WorldSettingManuscriptComparator | None = None,
 ) -> tuple[list[WorldStage2Prediction], list[RuntimeFailure]]:
     trace = trace or ProcessingTrace()
     grouped: dict[tuple[Any, ...], list[_WorldBatchSource]] = {}
@@ -1410,24 +1438,14 @@ async def _run_world_batches(
 
     predictions: list[WorldStage2Prediction] = []
     failures: list[RuntimeFailure] = []
-    for group in grouped.values():
+    ordered_groups = list(grouped.values())
+    prefetched = {}
+    for group_index, group in enumerate(ordered_groups):
         ids = [source_id for item in group for source_id in (item.source_ids or (item.source_id,))]
         comparison_attempts = []
         trace.start(ids, "WORLD_PREPARATION")
         try:
-            candidates = [
-                WorkerWorldSettingComparisonBatchCandidate(
-                    candidate_ref=f"C{index}",
-                    candidate_id=item.candidate.candidate_id,
-                    subject_name=item.candidate.subject_name,
-                    scope_name=item.candidate.scope_name,
-                    setting_name=item.candidate.setting_name,
-                    extracted_value=item.candidate.extracted_value,
-                    evidence_spans=item.candidate.evidence_spans,
-                    extraction_confidence=item.candidate.extraction_confidence,
-                )
-                for index, item in enumerate(group, start=1)
-            ]
+            candidates = _world_comparison_candidates(group)
             source_by_ref = {
                 candidate.candidate_ref: item
                 for candidate, item in zip(candidates, group, strict=True)
@@ -1444,10 +1462,55 @@ async def _run_world_batches(
 
             trace.start(ids, "WORLD_STAGE2", forwarded=True)
             if isinstance(comparator, WorldSettingComparator):
-                result, _ = await compare_world_batch_with_recovery(
-                    comparator, group[0].candidate.category.value, candidates, target_set.targets,
-                    evaluation_failure_callback=record_comparison_attempt,
-                )
+                if manuscript_comparator is not None and group_index not in prefetched:
+                    window, positions, dependencies = [], [], set()
+                    for position in range(group_index, len(ordered_groups)):
+                        members = ordered_groups[position]
+                        candidate_group = WorldSettingManuscriptGroup(
+                            f"G{position + 1}", members[0].candidate.category.value,
+                            _world_comparison_candidates(members), members[0].target_set.targets,
+                        )
+                        keys = candidate_group.target_keys() or {
+                            (members[0].candidate.category.value,
+                             normalize_world_setting_name(members[0].candidate.subject_name))
+                        }
+                        if window:
+                            if dependencies & keys:
+                                break
+                            try:
+                                if not manuscript_comparator.fits([*window, candidate_group]):
+                                    break
+                            except OrderedInputContextError:
+                                # Different chronology/source instructions form a
+                                # boundary, as in the production request window.
+                                break
+                        window.append(candidate_group)
+                        positions.append(position)
+                        dependencies.update(keys)
+                    if len(window) > 1:
+                        try:
+                            outcomes = await manuscript_comparator.compare_manuscript(window)
+                        except Exception as error:
+                            if not can_recover_response(error):
+                                raise
+                            outcomes = {item.group_ref: WorldSettingManuscriptOutcome(error=error)
+                                        for item in window}
+                        prefetched.update({position: outcomes[item.group_ref]
+                                           for position, item in zip(positions, window, strict=True)})
+                outcome = prefetched.pop(group_index, None)
+                if outcome is not None and outcome.error is None:
+                    result = WorldBatchRecoveryResult(outcome.result.decisions, [], [], 0)
+                elif outcome is not None:
+                    result = await recover_world_batch(
+                        comparator, group[0].candidate.category.value, candidates, target_set.targets,
+                        outcome.error, ordered_context=False,
+                        evaluation_failure_callback=record_comparison_attempt,
+                    )
+                else:
+                    result, _ = await compare_world_batch_with_recovery(
+                        comparator, group[0].candidate.category.value, candidates, target_set.targets,
+                        evaluation_failure_callback=record_comparison_attempt,
+                    )
                 for failure in result.failures:
                     failed_ids = [source_id for ref in failure.source_candidate_refs
                                   for source_id in (source_by_ref[ref].source_ids or (source_by_ref[ref].source_id,))]
