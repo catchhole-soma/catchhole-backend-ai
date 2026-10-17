@@ -186,7 +186,9 @@ checkpoint는 `CHUNKS_READY`, `CHARACTER_CANDIDATES_SAVED`, `CHARACTER_COMPARISO
 -> 슬롯 반환
 ```
 
-슬롯이 없을 때 Job을 미리 claim해 내부 대기열에 쌓지 않습니다. 한 Job 안의 청크와 stage는 순차 처리하고, Job 사이만 비동기로 겹칩니다. `LLM_MAX_CONCURRENT_REQUESTS`는 프로세스별 LLM 요청 상한이며, 동기 DB/S3 경계는 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에서 실행합니다.
+슬롯이 없을 때 Job을 미리 claim해 내부 대기열에 쌓지 않습니다. 회차 Job 한 건은 슬롯 하나를 사용하면서 같은 청크의 캐릭터·세계관 추출 두 요청을 동시에 시작합니다. 청크 간 시점 문맥·인물 식별 순서와 저장 단계는 유지합니다. 두 요청도 기존 `LLM_MAX_CONCURRENT_REQUESTS` 세마포어를 공유하므로 자리가 하나면 하나는 대기합니다. 작업 슬롯과 LLM 요청 상한을 유지하며, 각 요청의 토큰은 기존 경로로 예약·정산합니다. 동기 DB/S3 경계는 `AI_WORKER_BLOCKING_MAX_WORKERS`로 제한한 executor에서 실행합니다. 설정집은 기존 순차 실행을 유지합니다.
+
+먼저 받은 세계관 결과는 해당 Job의 메모리에 두고 원래 세계관 게시 단계에서 사용합니다. 한쪽 추출이 실패하면 다른 요청도 종료된 뒤 기존 실패 처리를 따르며, 종료 요청으로 Job이 취소되면 두 추출을 함께 취소하고 lease 복구에 맡깁니다. 재시작은 저장된 청크와 checkpoint를 재사용합니다. 캐릭터 저장까지 끝났다면 세계관만 다시 추출하고, 세계관 게시까지 끝났다면 둘 다 건너뜁니다. API 응답을 받았어도 게시 전에 프로세스가 종료되면 세계관 요청은 다시 발생할 수 있습니다. 외부 API 호출의 정확히 한 번 실행을 보장하지는 않습니다.
 
 현재 운영 기본값은 `SETTING_EXTRACTION` 분석 Worker 5개 × 프로세스당 슬롯 10개 = 최대 50개입니다. 50개 Job 부하 테스트에서 Backend·PostgreSQL·LLM 지표가 기준에 미달하면 Worker 5개는 유지하고 슬롯과 프로세스당 LLM 요청을 5개로 낮춰 최대 25개로 되돌립니다. 별도 `character-comparison`과 `world-comparison` Worker는 각각 Job·LLM 동시성을 1로 고정합니다. 이 50은 설정 추출 Job 처리 용량이며 provider 계정 전체에 걸친 분산 동시성 제한은 아닙니다.
 
@@ -203,14 +205,15 @@ Spring claim
 -> knownCharacters 이름과 회차 시작 활성 STATUS를 추출 prompt 입력으로 준비
 -> 단일 episode S3 원문 청킹
 -> flag가 켜진 경우에만 저장 청크 batch 임베딩 전 토큰 예약·호출 후 정산
--> chunk별 캐릭터 설정 후보 추출 전 토큰 예약·호출 후 정산
+-> 같은 chunk의 캐릭터·세계관 추출 병렬 실행: 각각 토큰 예약·호출 후 정산
+-> 세계관 결과는 Job 로컬 메모리에 보관
 -> evidence quote 위치 보정
 -> 구체적이지 않은 entity_name 후보 subject fallback 전 토큰 예약·호출 후 정산
 -> setting_candidates 교체 저장
 -> 캐릭터 후보 게시 완료를 CHARACTER_COMPARISONS_HANDED_OFF로 보고
 -> Spring이 batch의 모든 원 Job 게시가 닫히면 이름/기존 캐릭터별 숨김 그룹 Job 예약
 -> character-comparison Worker가 빈 신규 또는 기존 snapshot에서 원문 순서 projected 비교 결과를 원자 저장
--> 세계관 설정 후보 추출 및 Spring 내부 API 게시
+-> 보관한 세계관 결과를 Spring 내부 API로 게시 (재시작으로 결과가 없으면 추출)
 -> 미해소 world_setting 후보의 canonical 주체를 먼저 저장
 -> Backend가 canonical 주체와 raw scope별로 만든 비교 batch claim
 -> batch 안의 독립 속성을 하나 이상의 decision으로 비교
