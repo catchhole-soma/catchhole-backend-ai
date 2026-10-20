@@ -1,10 +1,10 @@
 import asyncio
+import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from functools import partial
-import logging
 from typing import TypeVar
-
 
 ResultT = TypeVar("ResultT")
 logger = logging.getLogger(__name__)
@@ -33,7 +33,12 @@ class BlockingIoExecutor:
             raise RuntimeError("Blocking I/O executor is already closed.")
 
         loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(self._executor, partial(function, *args, **kwargs))
+        # run_in_executor does not copy contextvars like asyncio.to_thread does.
+        # Each submission needs its own context so concurrent Jobs stay isolated.
+        task_context = copy_context()
+        future = loop.run_in_executor(
+            self._executor, task_context.run, partial(function, *args, **kwargs),
+        )
         try:
             return await asyncio.shield(future)
         except asyncio.CancelledError:
