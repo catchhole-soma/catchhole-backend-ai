@@ -201,6 +201,16 @@
 - process_claimed 실행 시도와 canonical 회차 결과 준비는 다른 지표다. 후속 비교/부분 성공/사용자 재시도·lease recovery의 DB 결과는 Spring이 소유한다. 계측 오류는 기존 분석/ledger/slot 정리를 바꾸지 않는다.
 - 분석 replica마다 다른 host metrics port를 쓰고 각각 scrape한다. 기본 host bind localhost, 운영은 사설 IPv4와 모니터링 SG만 허용한다. target 생성/전달·drain·rollback은 `deploy/WORKER_EC2_DEPLOYMENT.md`를 따른다. 현재 5×10 및 비교 각1 동시성을 변경하지 않는다.
 
+## Worker Tracing (GH271)
+
+- `app.monitoring.worker_tracing`는 CLI 프로세스당 독립 OpenTelemetry Provider를 한 번 초기화한다. 기본 `AI_WORKER_TRACING_ENABLED=false`이며 SDK 전역 Provider를 덮어쓰지 않는다. 활성화한 실행 시도마다 claim 이후 새 root를 만들고 같은 Job 재실행은 Job ID로 연결한다. 초기 사용자 요청·큐/Worker 슬롯 대기·claim과 후속 숨김 Job을 같은 실행으로 과장하지 않는다.
+- 병렬 추출은 각 코루틴 안에서 Span을 열어 공통 부모를 상속하고, executor 제출마다 `copy_context()`를 새로 만든다. 기존 청크 순서·슬롯·heartbeat·취소/원장 정리·metrics 의미는 변경하지 않는다. 정산 Span은 shield를 기다리는 쪽이 아니라 실제 ledger Task 안에서 열어 취소 이후의 작업 시간도 보존한다.
+- Span에는 검토된 Job ID·시도·enum·문자 수·완료/실패 개수와 제한된 LLM 목적/모델/오류만 남긴다. 원문·prompt·응답·S3 key·lease/인증값·예외 원문을 기록하지 않고 자동 exception event/status description을 끈다. 계측 오류는 업무 예외를 숨기거나 새 업무 실패를 만들지 않는다. 정상 반환과 부분 비교 실패를 분리한다.
+- Spring HTTP는 공통 `_request`에서 수동 CLIENT Span을 만들고 요청별 헤더 복사본에 W3C 문맥을 주입한다. root가 설정한 Task별 실행 문맥과 유효한 SpanContext가 있을 때만 전파하며 `is_recording()`으로 sampled=0 문맥을 버리지 않는다. 최초 Job claim은 명시적으로 제외하고 작업 내부의 비교 후보 claim-next는 유지한다. 공유 client 헤더·인증·lease·기존 HTTP 오류 변환·재시도 횟수를 바꾸지 않는다. 고정 operation/method/status만 기록하고 URL·query·body·헤더·예외 원문은 수집하지 않는다. 자동 HTTPX 계측을 중복 적용하지 않는다.
+- 4~5단계의 ParentBased all-on·1초/256개 batch·1,024개 queue는 로컬 연결 검증 정책이다. Spring Java Agent/JDBC는 Java 저장소의 로컬 구성으로 별도 검증하며 운영 sampling/배포는 후속 단계다. 기본 기능 플래그를 임의로 켜지 않는다. 범위·설정·검증 근거는 `docs/worker-tracing.md`에 유지한다.
+- 6단계의 `scripts/tracing/verify_worker_scenarios.py`는 실제 Worker/runner/metered 경로와 합성 I/O를 연결해 지연·대기·재시도·취소·동시 문맥을 검사한다. `verify_exporter_outage.py`는 별도 loopback 수신기로 실제 SDK/OTLP 전송 실패·복구·queue drop을 검사한다. 명시적 로컬 실험만 허용하며 OTEL 헤더·proxy 환경을 격리하고 실제 LLM/DB/S3 호출·공유 Collector 중단·운영 설정 변경을 하지 않는다. 실험용 짧은 대기/작은 큐와 운영 설정을 구분하고, Collector 수락과 Tempo 조회 성공도 별도 증거로 기록한다.
+- 7단계 운영 Compose는 세 Worker에 tracing 환경 변수를 전달하되 기본 OFF를 유지한다. 종류별 `AI_ANALYSIS_TRACING_ENABLED`/`AI_CHARACTER_COMPARISON_TRACING_ENABLED`/`AI_WORLD_COMPARISON_TRACING_ENABLED`는 공통 flag보다 우선하며, 최초 canary는 기존 캐릭터 비교 한 프로세스만 켠다. 활성화 시 모니터링 EC2의 `http://<RFC1918 IPv4>:4318/v1/traces`를 사용하고, `manage-ai-runtime.py validate`/기존 preflight에서 공개·loopback·인증/query 포함 주소를 거절한다. queue 1024·batch 256·1초·timeout 5초와 기존 180/210초 drain을 유지하며 전량 기록은 제한된 초기 확인 정책이다. private SG·실제 Tempo 조회·원문 속성 검사 후 대상을 넓히고, rollback 때 공통값과 명시적 종류별 값을 모두 끈다. tail sampling과 chatbot/backfill 계측을 자동으로 확대하지 않는다.
+
 ### 채팅 실행 v1 (#237)
 
 - 계약은 `docs/chat-execution-v1.md`, 양쪽 공통 fixture는 `docs/contracts/chat-execution-v1.json`이다. 질문/시도/provider 호출의 ID를 구분한다.

@@ -7,6 +7,10 @@ Spring 기준으로는 비동기 작업 executor 또는 batch worker에 가깝�
 여러 패키지를 가로지르는 전체 흐름도는 [AI Worker Workflow](../../docs/ai-worker-workflow.md)를 기준으로 확인합니다.
 이 문서는 Worker 패키지의 책임과 상태/단계 정책을 중심으로 설명합니다.
 
+실행 구간·LLM 대기·정산을 추적하는 OpenTelemetry 설정과 해석은
+[Worker 실행 트레이스](../../docs/worker-tracing.md)를 참고합니다. 기본 OFF이며
+운영 전송과 Spring HTTP/JDBC 연결은 별도 적용 단계입니다.
+
 ## 명시적인 누적 분석 모드
 
 분석 Worker는 `supportedAnalysisModes=[CONFIRMED_ONLY, ORDERED_PROVISIONAL]`로 claim합니다.
