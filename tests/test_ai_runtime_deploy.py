@@ -2,11 +2,10 @@
 
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
@@ -218,6 +217,110 @@ def test_shell_environment_cannot_override_file_scope_budget_or_secret(tmp_path,
     assert "RETRIEVAL_BACKFILL_MAX_INPUT_TOKENS" not in obj.environment
     assert "SPRING_INTERNAL_API_KEY" not in obj.environment
     assert obj.environment["AI_IMAGE"].endswith(":sha-bbbbbbb")
+
+
+def test_worker_tracing_is_optional_with_existing_environment_files(runtime):
+    obj, _ = runtime
+    assert obj.validate()["tracingWorkerServices"] == []
+    assert not deploy.validate_worker_tracing({
+        "AI_WORKER_TRACING_ENABLED": "false",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "",
+    })
+
+
+def test_existing_single_comparison_worker_can_be_enabled_alone(runtime):
+    obj, configs = runtime
+    configs["worker"]["ai-character-comparison-worker"]["environment"].update({
+        "AI_WORKER_TRACING_ENABLED": "true",
+        "OTEL_SERVICE_NAME": "catchhole-ai-worker",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://10.0.2.10:4318/v1/traces",
+    })
+    result = obj.validate()
+    assert result["tracingWorkerServices"] == ["ai-character-comparison-worker"]
+    assert result["analysisReplicas"] == 5
+    assert result["databaseConnections"] == 31
+
+
+@pytest.mark.parametrize("address", ["10.0.2.10", "172.31.8.12", "192.168.1.20"])
+def test_all_worker_kinds_accept_explicit_private_otlp(runtime, address):
+    obj, configs = runtime
+    for service in configs["worker"].values():
+        service["environment"].update({
+            "AI_WORKER_TRACING_ENABLED": "true",
+            "OTEL_SERVICE_NAME": "catchhole-ai-worker",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": f"http://{address}:4318/v1/traces",
+        })
+    assert obj.validate()["tracingWorkerServices"] == [
+        "ai-worker", "ai-character-comparison-worker", "ai-world-comparison-worker",
+    ]
+
+
+@pytest.mark.parametrize("endpoint", [
+    "",
+    "http://127.0.0.1:4318/v1/traces",
+    "http://0.0.0.0:4318/v1/traces",
+    "http://8.8.8.8:4318/v1/traces",
+    "http://169.254.169.254:4318/v1/traces",
+    "http://192.0.2.10:4318/v1/traces",
+    "http://collector.internal:4318/v1/traces",
+    "http://[::1]:4318/v1/traces",
+    "https://10.0.2.10:4318/v1/traces",
+    "http://10.0.2.10:4317/v1/traces",
+    "http://10.0.2.10:4318/",
+    "http://synthetic-secret@10.0.2.10:4318/v1/traces",
+    "http://10.0.2.10:4318/v1/traces?token=synthetic-secret",
+    "http://10.0.2.10:4318/v1/traces#synthetic-secret",
+    "http://10.0.2.10:bad/v1/traces",
+])
+def test_invalid_tracing_endpoint_blocks_preflight_before_runtime_operations(
+    runtime, monkeypatch, endpoint,
+):
+    obj, configs = runtime
+    configs["worker"]["ai-world-comparison-worker"]["environment"].update({
+        "AI_WORKER_TRACING_ENABLED": "true",
+        "OTEL_SERVICE_NAME": "catchhole-ai-worker",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": endpoint,
+    })
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Invalid tracing config reached pull/readiness/deployment.")
+
+    monkeypatch.setattr(obj, "compose", forbidden)
+    with pytest.raises(deploy.DeploymentError) as error:
+        obj.preflight()
+    assert str(error.value) == "WORKER_TRACING_PRIVATE_OTLP_ENDPOINT_REQUIRED"
+    assert "synthetic-secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("flag", ["1", "yes", "", "typo"])
+def test_tracing_opt_in_requires_explicit_boolean(flag):
+    with pytest.raises(deploy.DeploymentError, match="WORKER_TRACING_BOOLEAN_REQUIRED"):
+        deploy.validate_worker_tracing({"AI_WORKER_TRACING_ENABLED": flag})
+
+
+def test_tracing_service_name_is_bounded():
+    with pytest.raises(deploy.DeploymentError, match="WORKER_TRACING_SERVICE_NAME_REQUIRED"):
+        deploy.validate_worker_tracing({
+            "AI_WORKER_TRACING_ENABLED": "true",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://10.0.2.10:4318/v1/traces",
+            "OTEL_SERVICE_NAME": "private source / user-provided title",
+        })
+
+
+def test_validate_cli_only_renders_and_validates_configuration(runtime, monkeypatch, capsys):
+    obj, _ = runtime
+    monkeypatch.setattr(deploy, "Runtime", lambda *args: obj)
+    monkeypatch.setattr("sys.argv", ["manage-ai-runtime.py", "validate"])
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Validation attempted a readiness check or mutation.")
+
+    monkeypatch.setattr(obj, "preflight", forbidden)
+    monkeypatch.setattr(obj, "deploy", forbidden)
+    monkeypatch.setattr(obj, "backfill", forbidden)
+    assert deploy.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["tracingWorkerServices"] == []
 
 
 def test_scheduler_script_parses_and_does_not_restart_live_backfill():
