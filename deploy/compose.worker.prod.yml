@@ -6,6 +6,10 @@ x-worker-environment: &worker-environment
   AI_WORKER_METRICS_ENABLED: ${AI_WORKER_METRICS_ENABLED:-true}
   AI_WORKER_METRICS_HOST: 0.0.0.0
   AI_WORKER_METRICS_PORT: 9102
+  # Opt in only after the private Collector and Spring tracing are ready.
+  AI_WORKER_TRACING_ENABLED: ${AI_WORKER_TRACING_ENABLED:-false}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-catchhole-ai-worker}
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
   DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-3}
   DATABASE_POOL_MAX_OVERFLOW: ${DATABASE_POOL_MAX_OVERFLOW:-0}
@@ -60,6 +64,7 @@ services:
       replicas: ${AI_WORKER_PROCESS_COUNT:-5}
     environment:
       <<: *worker-environment
+      AI_WORKER_TRACING_ENABLED: ${AI_ANALYSIS_TRACING_ENABLED:-${AI_WORKER_TRACING_ENABLED:-false}}
 
   ai-character-comparison-worker:
     <<: *worker-service
@@ -68,6 +73,7 @@ services:
     command: ["python", "scripts/run_analysis_worker.py", "--worker-kind", "character-comparison"]
     environment:
       <<: *worker-environment
+      AI_WORKER_TRACING_ENABLED: ${AI_CHARACTER_COMPARISON_TRACING_ENABLED:-${AI_WORKER_TRACING_ENABLED:-false}}
       DATABASE_POOL_SIZE: 1
       DATABASE_POOL_MAX_OVERFLOW: 0
       AI_WORKER_CONCURRENCY: 1
@@ -82,6 +88,7 @@ services:
     command: ["python", "scripts/run_analysis_worker.py", "--worker-kind", "world-comparison"]
     environment:
       <<: *worker-environment
+      AI_WORKER_TRACING_ENABLED: ${AI_WORLD_COMPARISON_TRACING_ENABLED:-${AI_WORKER_TRACING_ENABLED:-false}}
       DATABASE_POOL_SIZE: 1
       DATABASE_POOL_MAX_OVERFLOW: 0
       AI_WORKER_CONCURRENCY: 1

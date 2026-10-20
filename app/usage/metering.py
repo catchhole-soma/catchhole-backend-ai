@@ -29,13 +29,21 @@ from app.llm.exceptions import (
 )
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.llm.responses import LlmTextResponse
-from app.monitoring.worker_metrics import WorkerMetrics, get_process_metrics, llm_error_type
+from app.monitoring.worker_metrics import (
+    PURPOSES,
+    WorkerMetrics,
+    _bounded,
+    get_process_metrics,
+    llm_error_type,
+)
+from app.monitoring.worker_tracing import worker_span
 
 logger = logging.getLogger(__name__)
 TException = TypeVar("TException", bound=BaseException)
 AsyncSleeper = Callable[[float], Awaitable[None]]
 RandomSource = Callable[[], float]
 _detached_ledger_tasks: set[asyncio.Task[None]] = set()
+TraceAttributes = dict[str, str | int | float]
 
 NON_RETRYABLE_429_CODES = frozenset(
     {
@@ -203,6 +211,35 @@ class MeteredTextGenerationClient:
         prompt_cache_key: str | None = None,
         response_schema: LlmResponseSchema | None = None,
     ) -> LlmTextResponse:
+        trace_attributes: TraceAttributes = {
+            "llm.purpose": _bounded(self.purpose, PURPOSES),
+            # The tracing runtime owns its configuration/CLI allowlist independently
+            # of metrics. SafeWorkerSpan filters this value before export.
+            "llm.model": model or self.default_model,
+        }
+        with worker_span("llm.request", attributes=trace_attributes) as span:
+            response = await self._create_metered_text_response(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                model=model,
+                max_output_tokens=max_output_tokens,
+                prompt_cache_key=prompt_cache_key,
+                response_schema=response_schema,
+                trace_attributes=trace_attributes,
+            )
+            span.set_outcome("success")
+            return response
+
+    async def _create_metered_text_response(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None,
+        max_output_tokens: int,
+        prompt_cache_key: str | None,
+        response_schema: LlmResponseSchema | None,
+        trace_attributes: TraceAttributes,
+    ) -> LlmTextResponse:
         effective_model = model or self.default_model
         if self.purpose == "CHARACTER_FACT_COMPARISON" and effective_model.startswith("gpt-6.1-sol"):
             # Fit/preflight already counted this identity; the provider cache avoids another HTTP call.
@@ -215,7 +252,10 @@ class MeteredTextGenerationClient:
             )
         retry_error_type = "other"
         for retry_index in range(self.max_retries + 1):
-            async with _optional_semaphore(self.request_semaphore):
+            attempt_attributes = {**trace_attributes, "llm.retry_index": retry_index}
+            async with _optional_semaphore(
+                self.request_semaphore, trace_attributes=attempt_attributes,
+            ):
                 self._attempt += 1
                 request_id = uuid4()
                 await _reserve_tokens_cancellation_safe(
@@ -227,6 +267,7 @@ class MeteredTextGenerationClient:
                     model_name=effective_model,
                     reserved_tokens=reserved_tokens,
                     lease_token=self.lease_token,
+                    trace_attributes=attempt_attributes,
                 )
                 try:
                     if retry_index and self.metrics is not None:
@@ -234,29 +275,42 @@ class MeteredTextGenerationClient:
                             self.purpose, effective_model, retry_error_type,
                         )
                     self._provider_request_count += 1
-                    provider_started_ns = self.monotonic_ns()
-                    try:
-                        response = await self.delegate.create_text_response(
-                            system_prompt=system_prompt,
-                            user_prompt=user_prompt,
-                            model=model,
-                            max_output_tokens=max_output_tokens,
-                            prompt_cache_key=prompt_cache_key,
-                            response_schema=response_schema,
-                        )
-                    finally:
-                        provider_latency_ns = max(
-                            0,
-                            self.monotonic_ns() - provider_started_ns,
-                        )
-                        self._provider_latency_ns += provider_latency_ns
+                    with worker_span("llm.call", attributes=attempt_attributes) as span:
+                        try:
+                            provider_started_ns = self.monotonic_ns()
+                            try:
+                                response = await self.delegate.create_text_response(
+                                    system_prompt=system_prompt,
+                                    user_prompt=user_prompt,
+                                    model=model,
+                                    max_output_tokens=max_output_tokens,
+                                    prompt_cache_key=prompt_cache_key,
+                                    response_schema=response_schema,
+                                )
+                            finally:
+                                provider_latency_ns = max(
+                                    0,
+                                    self.monotonic_ns() - provider_started_ns,
+                                )
+                                self._provider_latency_ns += provider_latency_ns
+                        except asyncio.CancelledError:
+                            span.set_outcome("canceled")
+                            raise
+                        except Exception as exc:
+                            # The outer retry handler may recover this attempt. Record
+                            # its bounded failure here without exporting exception data.
+                            span.set_error(llm_error_type(exc))
+                            raise
+                        span.set_outcome("success")
                 except asyncio.CancelledError:
                     if self.metrics is not None:
                         self.metrics.record_llm_call(
                             self.purpose, effective_model, "canceled", "canceled",
                             provider_latency_ns / 1_000_000_000, None,
                         )
-                    _detach_failed_provider_finalization(self.ledger, request_id)
+                    _detach_failed_provider_finalization(
+                        self.ledger, request_id, trace_attributes=attempt_attributes,
+                    )
                     raise
                 except Exception as exc:
                     usage = _usage_from_text_error(exc)
@@ -284,6 +338,7 @@ class MeteredTextGenerationClient:
                         self.ledger,
                         request_id,
                         usage,
+                        trace_attributes=attempt_attributes,
                     )
                     if retry_index >= self.max_retries or not _is_retryable_provider_error(exc):
                         raise
@@ -315,10 +370,19 @@ class MeteredTextGenerationClient:
                         self.ledger,
                         request_id,
                         response,
+                        trace_attributes=attempt_attributes,
                     )
                     return response
 
-            await self.sleeper(retry_delay)
+            with worker_span(
+                "llm.retry.backoff",
+                attributes={
+                    **attempt_attributes,
+                    "llm.retry_delay_seconds": retry_delay,
+                },
+            ) as span:
+                await self.sleeper(retry_delay)
+                span.set_outcome("success")
 
         raise AssertionError("Provider retry loop terminated unexpectedly.")
 
@@ -416,12 +480,27 @@ class MeteredEmbeddingClient:
 @asynccontextmanager
 async def _optional_semaphore(
     semaphore: asyncio.Semaphore | None,
+    *,
+    trace_attributes: TraceAttributes | None = None,
 ) -> AsyncIterator[None]:
     if semaphore is None:
         yield
         return
-    async with semaphore:
+    if trace_attributes is None:
+        async with semaphore:
+            yield
+        return
+
+    acquired = False
+    try:
+        with worker_span("llm.semaphore.wait", attributes=trace_attributes) as span:
+            await semaphore.acquire()
+            acquired = True
+            span.set_outcome("success")
         yield
+    finally:
+        if acquired:
+            semaphore.release()
 
 
 def _validate_retry_configuration(
@@ -446,25 +525,33 @@ async def _reserve_tokens_cancellation_safe(
     model_name: str,
     reserved_tokens: int,
     lease_token: UUID,
+    *,
+    trace_attributes: TraceAttributes | None = None,
 ) -> None:
     """Reserve tokens without delaying owning Job cancellation."""
 
-    reservation_task = asyncio.create_task(
-        ledger.reserve_ai_tokens(
-            request_id=request_id,
-            analysis_job_id=analysis_job_id,
-            purpose=purpose,
-            attempt=attempt,
-            model_name=model_name,
-            reserved_tokens=reserved_tokens,
-            lease_token=lease_token,
-        )
+    reservation = ledger.reserve_ai_tokens(
+        request_id=request_id,
+        analysis_job_id=analysis_job_id,
+        purpose=purpose,
+        attempt=attempt,
+        model_name=model_name,
+        reserved_tokens=reserved_tokens,
+        lease_token=lease_token,
     )
+    if trace_attributes is not None:
+        reservation = _traced_ledger_call(
+            reservation, "llm.tokens.reserve", trace_attributes,
+        )
+    reservation_task = asyncio.create_task(reservation)
     try:
         await asyncio.shield(reservation_task)
     except asyncio.CancelledError:
         cleanup_task = asyncio.create_task(
-            _cleanup_cancelled_reservation(ledger, reservation_task, request_id)
+            _cleanup_cancelled_reservation(
+                ledger, reservation_task, request_id,
+                trace_attributes=trace_attributes,
+            )
         )
         _detach_ledger_task(
             cleanup_task,
@@ -473,9 +560,34 @@ async def _reserve_tokens_cancellation_safe(
         raise
 
 
-async def _complete_ledger_call_on_cancellation(awaitable: Awaitable[None]) -> None:
+async def _traced_ledger_call(
+    awaitable: Awaitable[None],
+    span_name: str,
+    trace_attributes: TraceAttributes,
+) -> None:
+    # Run inside the existing shielded Task: owner cancellation must not end
+    # a span for a ledger operation that is still running in the background.
+    with worker_span(span_name, attributes=trace_attributes) as span:
+        try:
+            await awaitable
+        except Exception:
+            # Failure finalization deliberately catches ledger failures. Observe
+            # them here first, without changing that provider-error precedence.
+            span.set_error("ledger_error")
+            raise
+        span.set_outcome("success")
+
+
+async def _complete_ledger_call_on_cancellation(
+    awaitable: Awaitable[None],
+    *,
+    span_name: str = "llm.tokens.finalize",
+    trace_attributes: TraceAttributes | None = None,
+) -> None:
     """Observe ledger completion without delaying owning Job cancellation."""
 
+    if trace_attributes is not None:
+        awaitable = _traced_ledger_call(awaitable, span_name, trace_attributes)
     ledger_task = asyncio.create_task(awaitable)
     try:
         await asyncio.shield(ledger_task)
@@ -488,9 +600,13 @@ async def _cleanup_cancelled_reservation(
     ledger: AiTokenLedgerApi,
     reservation_task: asyncio.Task[None],
     request_id: UUID,
+    *,
+    trace_attributes: TraceAttributes | None = None,
 ) -> None:
     await reservation_task
-    await _finalize_failed_provider_request(ledger, request_id, usage=None)
+    await _finalize_failed_provider_request(
+        ledger, request_id, usage=None, trace_attributes=trace_attributes,
+    )
 
 
 def _detach_ledger_task(task: asyncio.Task[None], failure_message: str) -> None:
@@ -511,9 +627,13 @@ def _detach_ledger_task(task: asyncio.Task[None], failure_message: str) -> None:
 def _detach_failed_provider_finalization(
     ledger: AiTokenLedgerApi,
     request_id: UUID,
+    *,
+    trace_attributes: TraceAttributes | None = None,
 ) -> None:
     cleanup_task = asyncio.create_task(
-        _finalize_failed_provider_request(ledger, request_id, usage=None)
+        _finalize_failed_provider_request(
+            ledger, request_id, usage=None, trace_attributes=trace_attributes,
+        )
     )
     _detach_ledger_task(
         cleanup_task,
@@ -525,10 +645,14 @@ async def _finalize_successful_text_request(
     ledger: AiTokenLedgerApi,
     request_id: UUID,
     response: LlmTextResponse,
+    *,
+    trace_attributes: TraceAttributes | None = None,
 ) -> None:
     if response.input_token_count is None or response.output_token_count is None:
         await _complete_ledger_call_on_cancellation(
-            ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
+            ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE"),
+            span_name="llm.tokens.release",
+            trace_attributes=_ledger_attributes(trace_attributes, "USAGE_UNAVAILABLE"),
         )
         return
     await _complete_ledger_call_on_cancellation(
@@ -538,7 +662,8 @@ async def _finalize_successful_text_request(
             cached_input_tokens=response.cached_input_token_count or 0,
             output_tokens=response.output_token_count,
             outcome="SUCCESS",
-        )
+        ),
+        trace_attributes=_ledger_attributes(trace_attributes, "SUCCESS"),
     )
 
 
@@ -719,22 +844,36 @@ async def _finalize_failed_provider_request(
     ledger: AiTokenLedgerApi,
     request_id: UUID,
     usage: tuple[int, int, int] | None,
+    *,
+    trace_attributes: TraceAttributes | None = None,
 ) -> None:
     """원장 정리 실패가 재시도 판단에 필요한 원래 provider 예외를 덮지 않게 한다."""
 
     try:
         if usage is None:
             await _complete_ledger_call_on_cancellation(
-                ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
+                ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE"),
+                span_name="llm.tokens.release",
+                trace_attributes=_ledger_attributes(trace_attributes, "USAGE_UNAVAILABLE"),
             )
         else:
             await _complete_ledger_call_on_cancellation(
-                ledger.settle_ai_tokens(request_id, *usage, outcome="FAILURE")
+                ledger.settle_ai_tokens(request_id, *usage, outcome="FAILURE"),
+                trace_attributes=_ledger_attributes(trace_attributes, "FAILURE"),
             )
     except asyncio.CancelledError:
         raise
     except Exception:
         logger.exception("Failed to finalize AI token ledger request_id=%s", request_id)
+
+
+def _ledger_attributes(
+    trace_attributes: TraceAttributes | None,
+    outcome: str,
+) -> TraceAttributes | None:
+    if trace_attributes is None:
+        return None
+    return {**trace_attributes, "ledger.outcome": outcome}
 
 
 def _usage_from_http_error(exc: Exception) -> tuple[int, int, int] | None:

@@ -9,8 +9,9 @@ from app.domain.enums import AnalysisFailureCode, AnalysisJobType, AnalysisSourc
 from app.exceptions.failure_classification import analysis_failure_code
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
+from app.monitoring.worker_tracing import worker_span
 from app.schemas.worker import WorkerAnalysisJobPayload
-from app.worker.analysis_job_worker import SpringWorkerApi, WorkerRunResult
+from app.worker.analysis_job_worker import SpringWorkerApi, WorkerRunResult, _record_comparison_span
 from app.worker.lease_heartbeat import WorkerLeaseHeartbeat
 from app.worker.world_setting_services import create_world_setting_comparison_pipeline
 
@@ -110,29 +111,32 @@ class WorldSettingComparisonWorker:
                 payload.lease_token,
                 interval_seconds=self._heartbeat_interval_seconds,
             ) as lease_heartbeat:
-                result = await self._get_comparison_pipeline(payload).process_all(
-                    payload.analysis_job_id,
-                    payload.lease_token,
-                    **({"analysis_context": payload.analysis_context} if payload.analysis_context is not None else {}),
-                    **({"analysis_source": payload.frozen_source()}
-                       if payload.source_kind == AnalysisSourceKind.SETTING_BOOK else {}),
-                )
-                lease_heartbeat.raise_if_failed()
+                with worker_span("analysis.world.compare") as span:
+                    result = await self._get_comparison_pipeline(payload).process_all(
+                        payload.analysis_job_id,
+                        payload.lease_token,
+                        **({"analysis_context": payload.analysis_context} if payload.analysis_context is not None else {}),
+                        **({"analysis_source": payload.frozen_source()}
+                           if payload.source_kind == AnalysisSourceKind.SETTING_BOOK else {}),
+                    )
+                    lease_heartbeat.raise_if_failed()
+                    _record_comparison_span(span, result)
             if result.failed_count:
                 candidate_failure_code = result.first_failure_code
                 raise RuntimeError("World-setting candidate recomparison failed.")
-            await self.spring_client.complete(
-                payload.analysis_job_id,
-                payload.lease_token,
-                summary_json=json.dumps(
-                    {
-                        "worldSettingComparisonCompletedCount": result.completed_count,
-                        "worldSettingComparisonFailedCount": result.failed_count,
-                        **result.summary_metrics(),
-                    },
-                    ensure_ascii=False,
-                ),
-            )
+            with worker_span("analysis.finalize"):
+                await self.spring_client.complete(
+                    payload.analysis_job_id,
+                    payload.lease_token,
+                    summary_json=json.dumps(
+                        {
+                            "worldSettingComparisonCompletedCount": result.completed_count,
+                            "worldSettingComparisonFailedCount": result.failed_count,
+                            **result.summary_metrics(),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
         except Exception as exc:
             try:
                 await self.spring_client.fail(

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from typing import Protocol
 from uuid import UUID
@@ -18,6 +19,7 @@ from app.analysis.character_subject_resolver import (
 )
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
 from app.analysis.exceptions import OrderedAnalysisIncompleteError, OrderedInputContextError
+from app.analysis.narrative_time import NarrativeTimePoint, ground_extraction_narrative_time
 from app.analysis.ordered_character_subjects import (
     OrderedSubjectResolutionMetrics,
     initial_ordered_subjects,
@@ -32,7 +34,6 @@ from app.analysis.semantic_current_context import (
 )
 from app.analysis.setting_book_identity import BookIdentityContext, has_book_identity_collision
 from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterSettingSchemaHint
-from app.analysis.narrative_time import NarrativeTimePoint, ground_extraction_narrative_time
 from app.analysis.world_setting_extractor import WorldSettingExtractor
 from app.analysis.world_setting_pipeline import (
     WorldSettingComparisonPipeline,
@@ -68,6 +69,7 @@ from app.llm.protocols import TextGenerationClient
 from app.mappers.world_setting_candidate_mapper import WorldSettingCandidateMapper
 from app.models.episode_chunk import EpisodeChunk
 from app.models.setting_book_chunk import SettingBookChunk
+from app.monitoring.worker_tracing import worker_span
 from app.schemas.analysis_context import WorkerAnalysisContext
 from app.schemas.worker import (
     WorkerAnalysisJobPayload,
@@ -375,27 +377,31 @@ class AnalysisJobWorker:
                 current_step=_resume_step(payload.checkpoint_stage).value,
                 episode_status=_episode_processing_status(payload),
             )
-            async with WorkerLeaseHeartbeat(
-                self.spring_client,
-                payload.analysis_job_id,
-                payload.lease_token,
-                interval_seconds=self._heartbeat_interval_seconds,
-            ) as lease_heartbeat:
-                summary = await self._run_analysis_steps(payload)
-                lease_heartbeat.raise_if_failed()
-                await self.spring_client.report_progress(
+            # Enter finalization only after analysis, keeping its span active through
+            # heartbeat shutdown and complete without changing their existing order.
+            with ExitStack() as finalization:
+                async with WorkerLeaseHeartbeat(
+                    self.spring_client,
+                    payload.analysis_job_id,
+                    payload.lease_token,
+                    interval_seconds=self._heartbeat_interval_seconds,
+                ) as lease_heartbeat:
+                    summary = await self._run_analysis_steps(payload)
+                    finalization.enter_context(worker_span("analysis.finalize"))
+                    lease_heartbeat.raise_if_failed()
+                    await self.spring_client.report_progress(
+                        analysis_job_id=payload.analysis_job_id,
+                        lease_token=payload.lease_token,
+                        current_step=AnalysisStep.PERSISTING.value,
+                        episode_status=_episode_processing_status(payload),
+                    )
+                    lease_heartbeat.raise_if_failed()
+                # 분석이 성공하면 Spring에 완료 상태와 요약 정보를 보고
+                await self.spring_client.complete(
                     analysis_job_id=payload.analysis_job_id,
                     lease_token=payload.lease_token,
-                    current_step=AnalysisStep.PERSISTING.value,
-                    episode_status=_episode_processing_status(payload),
+                    summary_json=summary.summary_json,
                 )
-                lease_heartbeat.raise_if_failed()
-            # 분석이 성공하면 Spring에 완료 상태와 요약 정보를 보고
-            await self.spring_client.complete(
-                analysis_job_id=payload.analysis_job_id,
-                lease_token=payload.lease_token,
-                summary_json=summary.summary_json,
-            )
         except Exception as exc:
             try:
                 await self.spring_client.fail(
@@ -426,75 +432,115 @@ class AnalysisJobWorker:
         payload: WorkerAnalysisJobPayload,
     ) -> WorkerRunSummary:
         checkpoint = payload.checkpoint_stage
-        semantic_current_context = (
-            prepare_semantic_current_context(
-                payload.semantic_current_context,
-                analysis_context=payload.analysis_context,
-                known_characters=payload.known_characters,
-                provisional_characters=payload.provisional_characters,
-                source_hash=payload.frozen_source().content_hash,
-            ) if payload.analysis_mode == AnalysisMode.ORDERED_PROVISIONAL else None
-        )
-        if (
-            not _checkpoint_reached(
-                checkpoint,
-                AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED,
+        with worker_span("analysis.prepare") as span:
+            semantic_current_context = (
+                prepare_semantic_current_context(
+                    payload.semantic_current_context,
+                    analysis_context=payload.analysis_context,
+                    known_characters=payload.known_characters,
+                    provisional_characters=payload.provisional_characters,
+                    source_hash=payload.frozen_source().content_hash,
+                ) if payload.analysis_mode == AnalysisMode.ORDERED_PROVISIONAL else None
             )
-            and not payload.character_setting_schemas
-        ):
-            raise ValueError(
-                "Analysis job claim must include at least one characterSettingSchemas entry."
-            )
+            if (
+                not _checkpoint_reached(
+                    checkpoint,
+                    AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED,
+                )
+                and not payload.character_setting_schemas
+            ):
+                raise ValueError(
+                    "Analysis job claim must include at least one characterSettingSchemas entry."
+                )
 
-        chunks, embedding_metrics = await self._run_chunk_stage(payload, checkpoint)
-        known_characters = [
-            KnownCharacter(
-                character_id=character.character_id,
-                name=character.name,
-                active_statuses=tuple(
-                    ActiveCharacterStatus(
-                        fact_key=status.fact_key,
-                        fact_value=status.fact_value,
-                    )
-                    for status in character.active_statuses
-                ),
+            chunks, embedding_metrics = await self._run_chunk_stage(payload, checkpoint)
+            known_characters = [
+                KnownCharacter(
+                    character_id=character.character_id,
+                    name=character.name,
+                    active_statuses=tuple(
+                        ActiveCharacterStatus(
+                            fact_key=status.fact_key,
+                            fact_value=status.fact_value,
+                        )
+                        for status in character.active_statuses
+                    ),
+                )
+                for character in payload.known_characters
+            ]
+            schema_hints = tuple(
+                CharacterSettingSchemaHint(
+                    schema_key=schema.schema_key,
+                    display_name=schema.display_name,
+                    attribute_pattern=schema.attribute_pattern,
+                    aliases=tuple(schema.aliases),
+                    value_type=schema.value_type,
+                )
+                for schema in payload.character_setting_schemas
             )
-            for character in payload.known_characters
-        ]
-        schema_hints = tuple(
-            CharacterSettingSchemaHint(
-                schema_key=schema.schema_key,
-                display_name=schema.display_name,
-                attribute_pattern=schema.attribute_pattern,
-                aliases=tuple(schema.aliases),
-                value_type=schema.value_type,
-            )
-            for schema in payload.character_setting_schemas
-        )
+            span.set_attributes({
+                "analysis.chunk.count": len(chunks),
+                "analysis.known_character.count": len(known_characters),
+                "analysis.embedding.completed_count": embedding_metrics.get("embeddedChunkCount", 0),
+                "analysis.embedding.failed_count": embedding_metrics.get("embeddingFailedChunkCount", 0),
+                "analysis.embedding.skipped_count": embedding_metrics.get("embeddingSkippedChunkCount", 0),
+            })
+            if embedding_metrics.get("embeddingFailedChunkCount", 0):
+                span.set_outcome("partial")
         # Per-job memory only: publish at the original checkpoint, never on the
         # shared worker instance. A restart re-extracts any uncommitted result.
         world_extractions = {} if payload.source_kind == AnalysisSourceKind.EPISODE else None
-        character_metrics = await self._run_character_stage(
-            payload,
-            chunks,
-            checkpoint,
-            known_characters,
-            schema_hints,
-            semantic_current_context,
-            world_extractions,
-        )
-        character_comparison_result = await self._run_character_comparison_stage(
-            payload,
-            checkpoint,
-        )
-        world_candidate_count = await self._run_world_extraction_stage(
-            payload,
-            chunks,
-            checkpoint,
-            semantic_current_context,
-            world_extractions,
-        )
-        comparison_result = await self._run_world_comparison_stage(payload, checkpoint)
+        with worker_span("analysis.character.prepare", attributes={
+            "analysis.chunk.count": len(chunks),
+            "analysis.known_character.count": len(known_characters),
+        }) as span:
+            character_metrics = await self._run_character_stage(
+                payload,
+                chunks,
+                checkpoint,
+                known_characters,
+                schema_hints,
+                semantic_current_context,
+                world_extractions,
+            )
+            if _checkpoint_reached(checkpoint, AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED):
+                span.set_outcome("skipped")
+            else:
+                span.set_attribute("analysis.candidate.count", character_metrics.get("candidateCount", 0))
+        with worker_span("analysis.character.compare") as span:
+            character_comparison_result = await self._run_character_comparison_stage(
+                payload,
+                checkpoint,
+            )
+            _record_comparison_span(span, character_comparison_result)
+            if payload.analysis_mode != AnalysisMode.ORDERED_PROVISIONAL:
+                span.set_outcome(
+                    "skipped" if _checkpoint_reached(
+                        checkpoint, AnalysisJobCheckpointStage.CHARACTER_COMPARISONS_HANDED_OFF,
+                    ) else "handed_off"
+                )
+        with worker_span("analysis.world.prepare") as span:
+            world_candidate_count = await self._run_world_extraction_stage(
+                payload,
+                chunks,
+                checkpoint,
+                semantic_current_context,
+                world_extractions,
+            )
+            if _checkpoint_reached(checkpoint, AnalysisJobCheckpointStage.WORLD_CANDIDATES_PUBLISHED):
+                span.set_outcome("skipped")
+            else:
+                span.set_attributes({
+                    "analysis.candidate.count": world_candidate_count,
+                    "analysis.world.reused_chunk_count": len(world_extractions or {}),
+                })
+        with worker_span("analysis.world.compare") as span:
+            comparison_result = await self._run_world_comparison_stage(payload, checkpoint)
+            _record_comparison_span(span, comparison_result)
+            if (payload.analysis_mode != AnalysisMode.ORDERED_PROVISIONAL and _checkpoint_reached(
+                checkpoint, AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED,
+            )):
+                span.set_outcome("skipped")
 
         summary_json = json.dumps(
             {
@@ -590,18 +636,22 @@ class AnalysisJobWorker:
         skipped_count = 0
         if self.embedding_generation_enabled:
             try:
-                result = await self._get_episode_chunk_embedding_service(
-                    payload.analysis_job_id,
-                    payload.lease_token,
-                ).embed_chunks(chunks,
-                    **({"ordered_write_context": OrderedCandidateWriteContext(
-                        lease_token=payload.lease_token, context=payload.analysis_context,
-                        episode_id=episode.episode_id, content_s3_key=episode.content_s3_key,
-                        content_s3_version=episode.content_s3_version,
-                        episode_no=episode.episode_no),
-                        "analysis_job_id": payload.analysis_job_id, "work_id": payload.work_id}
-                       if payload.analysis_context is not None else {}))
-                embedded_count = result.embedded_chunk_count
+                with worker_span("analysis.embedding", attributes={
+                    "analysis.chunk.count": len(chunks),
+                }) as span:
+                    result = await self._get_episode_chunk_embedding_service(
+                        payload.analysis_job_id,
+                        payload.lease_token,
+                    ).embed_chunks(chunks,
+                        **({"ordered_write_context": OrderedCandidateWriteContext(
+                            lease_token=payload.lease_token, context=payload.analysis_context,
+                            episode_id=episode.episode_id, content_s3_key=episode.content_s3_key,
+                            content_s3_version=episode.content_s3_version,
+                            episode_no=episode.episode_no),
+                            "analysis_job_id": payload.analysis_job_id, "work_id": payload.work_id}
+                           if payload.analysis_context is not None else {}))
+                    embedded_count = result.embedded_chunk_count
+                    span.set_attribute("analysis.embedding.completed_count", embedded_count)
             except RecoverableEmbeddingProviderError:
                 failed_count = len(chunks)
                 logger.exception(
@@ -631,17 +681,18 @@ class AnalysisJobWorker:
         from app.retrieval.store import RetrievalStore
 
         try:
-            if self._retrieval_preparer is None:
-                settings = get_settings()
-                self._retrieval_preparer = RetrievalIndexService(
-                    RetrievalStore(get_session_maker()), S3TextObjectStorage.from_settings(settings),
-                    IndexSpec(settings.embedding_model, settings.embedding_version, settings.embedding_dimensions),
+            with worker_span("analysis.retrieval.prepare"):
+                if self._retrieval_preparer is None:
+                    settings = get_settings()
+                    self._retrieval_preparer = RetrievalIndexService(
+                        RetrievalStore(get_session_maker()), S3TextObjectStorage.from_settings(settings),
+                        IndexSpec(settings.embedding_model, settings.embedding_version, settings.embedding_dimensions),
+                    )
+                await self._blocking_io_executor.run(
+                    self._retrieval_preparer.prepare,
+                    Scope(payload.work_id, (payload.episode.episode_id,), max_sources=1),
                 )
-            await self._blocking_io_executor.run(
-                self._retrieval_preparer.prepare,
-                Scope(payload.work_id, (payload.episode.episode_id,), max_sources=1),
-            )
-        except Exception:
+        except Exception:  # noqa: BLE001 - optional indexing must not fail source analysis.
             # Search preparation does not change analysis checkpoints or billing.
             # Operator readiness/dry-run observes the missing/stale source for retry.
             logger.warning("Retrieval preparation failed; bounded index execution can retry")
@@ -706,9 +757,9 @@ class AnalysisJobWorker:
         ordered_subjects = initial_ordered_subjects(ordered_context) if ordered_context else []
         time_context: list[NarrativeTimePoint] = []
         for index, chunk in enumerate(chunks):
-            character_extraction = setting_extractor.extract_from_chunk(
-                source_chunk_id=chunk.id,
-                chunk_text=chunk.chunk_text,
+            character_extraction = self._extract_character_chunk(
+                setting_extractor,
+                chunk,
                 analysis_job_id=payload.analysis_job_id,
                 **_source_extraction_arguments(payload),
                 schema_hints=schema_hints,
@@ -876,6 +927,24 @@ class AnalysisJobWorker:
             "statusInactiveCandidateCount": status_inactive_candidate_count,
         }
 
+    async def _extract_character_chunk(
+        self,
+        extractor: SettingExtractorApi,
+        chunk: EpisodeChunk | SettingBookChunk,
+        **kwargs,
+    ) -> CharacterSettingExtractionResult:
+        # The span must start in the gather-created Task, so world extraction
+        # inherits the same preparation parent instead of this character span.
+        with worker_span("analysis.character.extract", attributes={
+            "analysis.chunk.index": chunk.chunk_index,
+            "analysis.chunk.char_count": len(chunk.chunk_text),
+        }) as span:
+            result = await extractor.extract_from_chunk(
+                source_chunk_id=chunk.id, chunk_text=chunk.chunk_text, **kwargs,
+            )
+            span.set_attribute("analysis.candidate.count", len(result.candidates))
+            return result
+
     async def _run_character_comparison_stage(
         self,
         payload: WorkerAnalysisJobPayload,
@@ -974,15 +1043,21 @@ class AnalysisJobWorker:
         chunk: EpisodeChunk | SettingBookChunk,
         semantic_current_context: SemanticCurrentInput | None,
     ) -> WorldSettingExtractionResult:
-        extractor = self._get_world_setting_extractor(payload.analysis_job_id, payload.lease_token)
-        return await extractor.extract_from_chunk(
-            chunk_text=chunk.chunk_text,
-            **_source_extraction_arguments(payload),
-            **({"analysis_context": payload.analysis_context}
-               if payload.analysis_context is not None else {}),
-            **({"semantic_current_context": semantic_current_context}
-               if semantic_current_context is not None else {}),
-        )
+        with worker_span("analysis.world.extract", attributes={
+            "analysis.chunk.index": chunk.chunk_index,
+            "analysis.chunk.char_count": len(chunk.chunk_text),
+        }) as span:
+            extractor = self._get_world_setting_extractor(payload.analysis_job_id, payload.lease_token)
+            result = await extractor.extract_from_chunk(
+                chunk_text=chunk.chunk_text,
+                **_source_extraction_arguments(payload),
+                **({"analysis_context": payload.analysis_context}
+                   if payload.analysis_context is not None else {}),
+                **({"semantic_current_context": semantic_current_context}
+                   if semantic_current_context is not None else {}),
+            )
+            span.set_attribute("analysis.candidate.count", len(result.candidates))
+            return result
 
     async def _run_world_comparison_stage(
         self,
@@ -1216,6 +1291,21 @@ class AnalysisJobWorker:
         if self._llm_provider_client is None:
             self._llm_provider_client = OpenAIResponsesClient.from_settings()
         return self._llm_provider_client
+
+
+def _record_comparison_span(
+    span,
+    result: CharacterFactComparisonRunResult | WorldSettingComparisonRunResult,
+) -> None:
+    # A returned execution may include failed comparisons. These counts describe
+    # known comparison results, not source-resolution coverage or model quality.
+    span.set_attributes({
+        "analysis.comparison.completed_count": result.completed_count,
+        "analysis.comparison.failed_count": result.failed_count,
+        "analysis.comparison.batch_count": result.batch_count,
+    })
+    if result.failed_count:
+        span.set_outcome("partial", error=True)
 
 
 def _resume_step(checkpoint: AnalysisJobCheckpointStage | None) -> AnalysisStep:

@@ -431,3 +431,130 @@ python -m unittest discover -s deploy/tests -p 'test_worker_targets.py'
 ```
 
 실제 LLM 과금 호출 없이 지연/4xx/429/timeout/취소와 exporter HTTP를 검증한다. exporter의 생성·업데이트·bind·종료 오류가 원래 Worker·ledger 결과를 바꾸지 않도록 경고만 남긴다. rollout은 Java schema/API 배포 성공 뒤 기존 AI main 배포를 사용하며 이전 이미지로 rollback할 때 target/bind와 수집 상태도 함께 확인한다.
+
+## Worker 트레이스 운영 적용 준비 (#271, 7단계)
+
+이 절차는 운영 적용을 위한 설정과 확인 항목이다. 파일을 추가하거나 기본값으로 배포한
+것만으로 트레이스가 켜지지 않으며, 실제 운영 활성화·데이터 조회는 별도로 확인한다.
+세 Worker 서비스가 공통 설정을 상속하고 종류별 활성화 값을 우선 적용한다.
+분석 replica별 포트 추가나 프로세스 수 변경은 필요 없다.
+
+```text
+분석·캐릭터 비교·세계관 비교 Worker
+  └─ OTLP HTTP push → 모니터링 EC2 사설 IPv4:4318/v1/traces
+                       └─ Collector → Tempo → Grafana
+```
+
+1. 모니터링 서버의 Collector·Tempo·Grafana 연결과 보존/용량 설정을 먼저 검증한다.
+   Collector TCP 4318은 모니터링 EC2의 사설 주소에만 게시하고, 모니터링 보안 그룹의
+   인바운드 소스를 Worker/API 서버 보안 그룹으로 제한한다. 인터넷 공개 규칙을 만들지
+   않는다. Worker의 제한된 egress·NACL이 있다면 해당 사설 경로를 허용한다.
+2. Spring Java Agent의 전파·개인정보 필터와 OTLP 목적지를 준비한다. Worker가 보내는
+   `traceparent`는 인증 수단이 아니며 기존 내부 API 키와 lease 검증을 유지한다.
+   Spring Agent가 꺼져 있으면 Python CLIENT Span 뒤의 SERVER/JDBC Span은 생기지 않는다.
+3. 배포 대상 SHA의 이미지와 Compose를 준비하고 현재 환경 파일을 비공개로 백업한다.
+   `worker.env`에 아래 세 값을 설정한다. 주소는 운영자가 확인한 모니터링 EC2의
+   **RFC1918 IPv4**로 바꾼다. `localhost`는 Worker 컨테이너 자신이므로 사용하지 않는다.
+
+```dotenv
+# 기본값. 사설 수신기와 검증 절차가 준비되기 전에는 유지한다.
+AI_WORKER_TRACING_ENABLED=false
+OTEL_SERVICE_NAME=catchhole-ai-worker
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=
+
+```
+
+첫 canary는 기존 **캐릭터 비교 Worker 한 프로세스**만 사용한다. Collector → Spring
+확인 뒤 `worker.env`를 다음 상태로 변경한다. 새 Worker를 추가하거나 분석 replica 5개를
+줄이지 않으며 기존 Job/LLM 동시성도 유지한다.
+
+```dotenv
+AI_WORKER_TRACING_ENABLED=false
+AI_ANALYSIS_TRACING_ENABLED=false
+AI_CHARACTER_COMPARISON_TRACING_ENABLED=true
+AI_WORLD_COMPARISON_TRACING_ENABLED=false
+OTEL_SERVICE_NAME=catchhole-ai-worker
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://<MONITORING_PRIVATE_IPV4>:4318/v1/traces
+```
+
+세 종류별 값은 지정하지 않거나 비워 두면 공통 `AI_WORKER_TRACING_ENABLED`를 따른다.
+명시한 `true`/`false`는 공통값보다 우선한다. 따라서 공통값만 `false`로 변경해도 명시적
+`true` override는 꺼지지 않는다는 점에 주의한다. 환경 파일에는 같은 키를 중복 추가하지
+않고 기존 값을 수정한다.
+
+`OTEL_SERVICE_NAME`은 세 Worker에서 동일하게 유지한다. Trace resource의 `worker.kind`는
+`analysis`, `character-comparison`, `world-comparison`으로 구분되고,
+`deployment.environment.name=prod`, `service.instance.id`는 프로세스별 UUID다.
+컨테이너를 다시 만들면 instance ID도 바뀐다. chatbot·검색 backfill은 이번 범위에 없다.
+
+운영 활성화 전에 같은 SHA release 디렉터리의 배포 도구로 **읽기 전용 설정 검사**를 한다.
+아래 명령은 Compose를 렌더링하고 설정을 검사할 뿐, image pull·readiness 호출·컨테이너
+기동을 수행하지 않는다. 현재 배포 도구는 `worker.env`·`chatbot.env`·`retrieval.env`와
+같은 release의 세 Compose 파일을 함께 검증한다.
+
+```bash
+python3 /opt/catchhole/releases/<FULL_COMMIT_SHA>/manage-ai-runtime.py validate \
+  --directory /opt/catchhole \
+  --release /opt/catchhole/releases/<FULL_COMMIT_SHA>
+```
+
+첫 canary에서 결과의 `tracingWorkerServices`에는 `ai-character-comparison-worker`
+하나만 있어야 한다. 세 종류를 모두 켠 뒤에는 세 서비스 이름이 나온다.
+검사는 `true|false`와 활성화 시 HTTP·RFC1918 IPv4·4318·`/v1/traces`를 요구하며,
+인증 정보·query·fragment가 붙은 주소를 거절한다. 실패 출력에는 주소나 비밀값을 복사하지
+않는다. 기존 자동배포의 preflight에도 같은 검사를 적용하므로 잘못된 설정은 pull/readiness/
+재생성 전에 중단된다. `docker compose config --quiet`만으로 이 의미 검증을 대체하지 않는다.
+사설 주소가 실제 Collector인지와 SG/네트워크 연결은 별도 확인 대상이다.
+
+운영 전송 정책은 기존 Python runtime의 명시적 제한을 그대로 사용한다.
+
+| 설정 | 초기 적용값과 의미 |
+| --- | --- |
+| Head sampling | `ParentBased(ALWAYS_ON)` — Worker 실행 root를 전량 기록하는 제한적 초기 검증 정책 |
+| 완료 Span 큐 | 프로세스당 1,024개, 메모리 큐이며 디스크 재전송 보관소가 아님 |
+| Batch | 최대 256개, 최대 1초마다 전송을 시도 |
+| Export timeout | 5초, 실패해도 업무 HTTP/LLM 요청을 재실행하지 않음 |
+| 종료 | 기존 claim 중단·최대 180초 drain·Worker close 이후 별도 thread에서 flush(5초 예산)·shutdown |
+| Docker 종료 여유 | 기존 `stop_grace_period: 210s` 유지 |
+
+SDK에 explicit 값을 전달하므로 `OTEL_BSP_*`만 추가해도 이 제한이 바뀌지는 않는다.
+기본 프로세스 7개의 완료 Span 큐는 합계 최대 7,168개지만, 진행 중 Span·export 중 batch를
+포함한 전체 메모리 상한은 아니다. Collector 장애·큐 포화·SIGKILL에는 Span이 유실될 수
+있다. flush timeout도 프로세스 종료의 엄격한 시간 보장이나 Tempo 저장 보장이 아니다.
+장기 작업의 마지막 root가 늦게 도착할 수 있으므로 Tail sampling을 자동으로 켜지 않는다.
+먼저 실제 trace 길이·유입량·Collector/Tempo 메모리와 디스크를 관측하고 정책을 따로 결정한다.
+
+실제 적용은 기존 immutable SHA 배포와 drain 절차를 사용한다. 설정을 `true`로 바꾼 뒤
+실행 중 컨테이너를 재생성해야 반영되며 `worker.env` 수정만으로 즉시 바뀌지는 않는다.
+처음에는 짧은 확인 시간 동안 승인된 소량의 작업으로 다음을 확인한다.
+
+- 먼저 해당 이미지의 별도 합성/인증된 무과금 HTTP 확인으로 연결을 검사하고,
+  승인된 기존 비교 작업 표본에서 캐릭터 비교 프로세스의 실제 Trace를 확인한다.
+  합성 확인용 임시 프로세스는 Worker scheduler/claim을 시작하지 않으며 용량을 추가하지 않는다.
+- `service.name=catchhole-ai-worker`, 환경 `prod`와 작업 종류가 맞는 Trace가 Tempo에 저장된다.
+- 하나의 실행에서 Worker → Spring CLIENT/SERVER → JDBC의 부모 관계를 확인한다.
+- LLM 대기·호출·정산 구간이 구분되고 기존 요청/오류/재시도 메트릭의 의미가 유지된다.
+- Worker 일곱 개의 Prometheus 수집·작업 처리 상태와 Collector/Tempo 자원 상태가 정상이다.
+  실제 작업이 없던 Worker 종류는 Trace가 아직 없을 수 있으므로 누락 여부와 구분한다.
+- 원문·prompt·응답·S3 key·인증·lease·예외 원문이 Span에 없는지 표본을 검사한다.
+
+운영 Trace 조회와 부모 관계를 확인하기 전에는 운영 적용 완료로 기록하지 않는다.
+캐릭터 비교 한 프로세스의 확인은 전체 설정 추출 경로 검증이 아니다. 수집량·자원 예산이
+허용되면 세계관 비교, 분석 Worker 5개 순으로 각 종류별 flag를 켜고, 회차·설정집 분석과
+LLM 대기/정산 Trace를 추가 확인한다. 분석 종류별 flag를 켜면 기존 replica 5개가 함께
+켜진다. 이후 전량 기록을 계속할지 또는 sampling을 적용할지는 별도로 결정한다.
+
+중단할 때는 공통값과 **명시적으로 지정한 세 종류별 값 모두** `false`로 돌리고 같은
+drain·재생성 절차를 적용한다. `validate`의 `tracingWorkerServices=[]`도 확인한다.
+이는 이후 Span 생성을 끄며, 이미 Tempo에 저장한 데이터는 보존 정책에 따라 남는다.
+전송을 끄기 위해 Worker 동시성이나 정상 분석 상태를 임의 변경하지 않는다.
+
+로컬 설정·종료 경계 검증:
+
+```bash
+python -m pytest -q tests/test_ai_runtime_deploy.py tests/test_worker_tracing.py \
+  tests/test_run_analysis_worker.py
+```
+
+외부 endpoint·운영 DB·유료 LLM은 호출하지 않는다. 합성 Trace 실험과 확인된 한계는
+[worker-tracing.md](../docs/worker-tracing.md)를 참고한다.

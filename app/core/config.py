@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     ai_worker_metrics_enabled: bool = False
     ai_worker_metrics_host: str = "127.0.0.1"
     ai_worker_metrics_port: int = 9102
+    # Explicit Worker spans only. OTLP/HTTP uses the full /v1/traces endpoint.
+    ai_worker_tracing_enabled: bool = False
+    otel_service_name: str = "catchhole-ai-worker"
+    otel_exporter_otlp_traces_endpoint: str = "http://localhost:4318/v1/traces"
     # SQLAlchemy/S3처럼 아직 동기인 I/O만 실행하는 전용 executor 크기
     ai_worker_blocking_max_workers: int = 3
 

@@ -2,16 +2,17 @@
 """Host-side deployment/one-shot scheduler. Never prints rendered Compose secrets."""
 
 import argparse
-from datetime import datetime
 import fcntl
 import ipaddress
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import time
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlsplit
 
 
 class DeploymentError(Exception):
@@ -38,6 +39,41 @@ def required(env, key):
     if not value or "REPLACE" in value.upper() or "replace-with" in value:
         raise DeploymentError("MISSING_" + key)
     return value
+
+
+def validate_worker_tracing(env):
+    """Validate explicit production export without connecting or printing its value."""
+    flag = str(env.get("AI_WORKER_TRACING_ENABLED", "false")).lower()
+    if flag not in {"true", "false"}:
+        raise DeploymentError("WORKER_TRACING_BOOLEAN_REQUIRED")
+    if flag == "false":
+        return False
+    endpoint = str(env.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or "")
+    try:
+        url = urlsplit(endpoint)
+        address = ipaddress.IPv4Address(url.hostname or "")
+        private_networks = (
+            ipaddress.IPv4Network("10.0.0.0/8"),
+            ipaddress.IPv4Network("172.16.0.0/12"),
+            ipaddress.IPv4Network("192.168.0.0/16"),
+        )
+        if (
+            endpoint != endpoint.strip()
+            or url.scheme != "http"
+            or not any(address in network for network in private_networks)
+            or url.port != 4318
+            or url.path != "/v1/traces"
+            or url.username is not None
+            or url.password is not None
+            or url.query
+            or url.fragment
+        ):
+            raise ValueError()
+    except ValueError:
+        raise DeploymentError("WORKER_TRACING_PRIVATE_OTLP_ENDPOINT_REQUIRED") from None
+    if not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", str(env.get("OTEL_SERVICE_NAME", ""))):
+        raise DeploymentError("WORKER_TRACING_SERVICE_NAME_REQUIRED")
+    return True
 
 
 class Runtime:
@@ -83,6 +119,12 @@ class Runtime:
 
     def validate(self):
         worker = self.config("worker")
+        tracing_services = [
+            name for name in (
+                "ai-worker", "ai-character-comparison-worker", "ai-world-comparison-worker",
+            )
+            if validate_worker_tracing(worker[name]["environment"])
+        ]
         chat = self.config("chatbot")["chatbot"]
         index = self.config("retrieval")["retrieval-index"]
         w = worker["ai-worker"]["environment"]
@@ -141,6 +183,7 @@ class Runtime:
             "analysisReplicas": replicas,
             "databaseConnections": connections,
             "databaseConnectionsDuringPreflight": connections + 1,
+            "tracingWorkerServices": tracing_services,
         }
 
     def preflight(self):
@@ -296,7 +339,7 @@ class Runtime:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("preflight", "deploy", "run", "status", "resume"))
+    parser.add_argument("mode", choices=("validate", "preflight", "deploy", "run", "status", "resume"))
     parser.add_argument("--directory", default="/opt/catchhole")
     parser.add_argument("--release", default=str(Path(__file__).resolve().parent))
     parser.add_argument("--image")
@@ -304,7 +347,9 @@ def main():
     try:
         runtime = Runtime(args.directory, args.release, args.image)
         # Same-host concurrent manual deployments cannot interleave compose updates.
-        if args.mode in {"deploy", "preflight"}:
+        if args.mode == "validate":
+            result = runtime.validate()
+        elif args.mode in {"deploy", "preflight"}:
             with open(runtime.directory / ".chat-deploy.lock", "a") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 result = runtime.deploy() if args.mode == "deploy" else runtime.preflight()

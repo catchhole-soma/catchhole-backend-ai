@@ -23,6 +23,7 @@ from app.domain.enums import (
     WorldSettingCategory,
     WorldSettingComparisonValidationReason,
 )
+from app.monitoring.worker_tracing import safe_inject_traceparent, spring_http_span
 from app.schemas.worker import (
     AiTokenReleaseRequest,
     AiTokenReserveRequest,
@@ -120,6 +121,7 @@ class SpringWorkerClient:
         response = await self._request(
             "POST",
             self._url("/api/internal/v1/analysis-jobs/claim"),
+            trace_request=False,
             headers=self._headers(),
             json=request.model_dump(by_alias=True, exclude_none=True),
         )
@@ -726,13 +728,30 @@ class SpringWorkerClient:
     async def aclose(self) -> None:
         await self.http_client.aclose()
 
-    async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        try:
-            return await self.http_client.request(method, url, **kwargs)
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
-            raise SpringWorkerTransportError(
-                f"Spring Worker API {method} request failed before receiving a response."
-            ) from exc
+    async def _request(
+        self, method: str, url: str, *, trace_request: bool = True, **kwargs: Any,
+    ) -> httpx.Response:
+        with spring_http_span(method, url, enabled=trace_request) as span:
+            request_kwargs = dict(kwargs)
+            request_kwargs["headers"] = safe_inject_traceparent(
+                kwargs.get("headers"), enabled=trace_request,
+            )
+            try:
+                response = await self.http_client.request(method, url, **request_kwargs)
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+                span.set_error(
+                    "timeout" if isinstance(exc, httpx.TimeoutException)
+                    else "network" if isinstance(exc, httpx.NetworkError) else "protocol"
+                )
+                raise SpringWorkerTransportError(
+                    f"Spring Worker API {method} request failed before receiving a response."
+                ) from exc
+            span.set_attribute("http.response.status_code", response.status_code)
+            if response.status_code >= 400:
+                span.set_error("http_5xx" if response.status_code >= 500 else "http_4xx")
+            else:
+                span.set_outcome("success")
+            return response
 
     # base_url과 path를 합쳐 실제 요청 URL을 만듦
     def _url(self, path: str) -> str:

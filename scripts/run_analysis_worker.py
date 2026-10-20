@@ -13,6 +13,12 @@ from app.monitoring.worker_metrics import (
     job_error_outcome,
     set_process_metrics,
 )
+from app.monitoring.worker_tracing import (
+    create_worker_tracing,
+    job_trace_attributes,
+    set_process_tracing,
+    worker_span,
+)
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunResult
 from app.worker.character_fact_comparison_worker import CharacterFactComparisonWorker
@@ -213,18 +219,20 @@ async def _run_claimed_with_metrics(
     if metrics is not None:
         metrics.record_job_started()
     started = monotonic()
-    try:
-        result = await worker.process_claimed(payload)
-        outcome = "success"
-        return result
-    except BaseException as exc:
-        outcome = job_error_outcome(exc)
-        raise
-    finally:
-        if metrics is not None:
-            metrics.record_job_finished(
-                getattr(payload, "job_type", "other"), outcome, monotonic() - started,
-            )
+    with worker_span("analysis.job.execute", attributes=job_trace_attributes(payload), root=True) as span:
+        try:
+            result = await worker.process_claimed(payload)
+            outcome = "success"
+            return result
+        except BaseException as exc:
+            outcome = job_error_outcome(exc)
+            raise
+        finally:
+            span.set_outcome(outcome, error=outcome in {"failure", "lease_lost", "unknown"})
+            if metrics is not None:
+                metrics.record_job_finished(
+                    getattr(payload, "job_type", "other"), outcome, monotonic() - started,
+                )
 
 
 async def _wait_until_scheduler_can_progress(
@@ -303,8 +311,15 @@ async def _async_main(args: argparse.Namespace, settings: Settings) -> None:
         args.comparison_model_name,
     ))
     previous_metrics = set_process_metrics(metrics)
+    previous_tracing = set_process_tracing(None)
+    tracing = None
     worker: WorkerSchedulerApi | None = None
     try:
+        tracing = create_worker_tracing(settings, args.worker_kind, (
+            args.model_name, args.extraction_model_name, args.subject_resolution_model_name,
+            args.comparison_model_name,
+        ))
+        set_process_tracing(tracing)
         if metrics is not None:
             metrics.start_exporter(settings.ai_worker_metrics_host, settings.ai_worker_metrics_port)
         if args.worker_kind == "world-comparison":
@@ -352,9 +367,16 @@ async def _async_main(args: argparse.Namespace, settings: Settings) -> None:
             if worker is not None:
                 await worker.aclose()
         finally:
-            set_process_metrics(previous_metrics)
-            if metrics is not None:
-                metrics.stop_exporter()
+            try:
+                set_process_metrics(previous_metrics)
+                if metrics is not None:
+                    metrics.stop_exporter()
+            finally:
+                set_process_tracing(previous_tracing)
+                if tracing is not None:
+                    # SDK flush/shutdown is synchronous; do not block the event loop.
+                    # SDK timeouts are best effort, not a hard process-stop guarantee.
+                    await asyncio.to_thread(tracing.shutdown)
 
 
 def _parse_args(settings: Settings | None = None) -> argparse.Namespace:
