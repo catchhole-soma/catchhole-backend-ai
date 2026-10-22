@@ -240,7 +240,8 @@ def test_world_batch_unresolved_claims_are_not_selectable_target_properties():
     assert len(prompt["targets"]) == 1 and len(prompt["targets"][0]["properties"]) == 1
     assert prompt["targets"][0]["properties"][0]["review_source"] == "HUMAN"
     assert prompt["targets"][0]["properties"][0]["ref"] == "T1.P1"
-    assert len(prompt["unresolved_references"]) == 2
+    assert [ref["domain"] for ref in prompt["unresolved_references"]] == ["worldSettings"]
+    assert prompt["unresolved_references"][0]["applied_to_current_state"] is False
 
 
 def test_world_extraction_references_do_not_change_legacy_requests():
