@@ -6,7 +6,7 @@ from app.chatbot.qa_prompts import (
     SMALL_TALK_INSTRUCTIONS,
 )
 
-PLAN_VERSION = "chat-hybrid-plan-v10"
+PLAN_VERSION = "chat-hybrid-plan-v11"
 ANSWER_VERSION = "chat-hybrid-answer-v12"
 
 PLAN_PROMPT = (
@@ -34,7 +34,9 @@ sourceNeed는 NONE/SCENE/REASON/PROCESS다. 현재 능력과 획득 과정은 CU
 HISTORY 등 필요한 등록 기록과 함께 sourceNeed=SCENE/REASON으로 원문을 확인한다.
 저장 분류나 숫자 순서만으로 같은 개념의 증가·감소를 단정하지 않는다. 단순 값·이력 나열이나
 연결 인용을 첨부하는 요청은 기존 sourceNeed=NONE 경로로 유지한다.
-장면·이유·과정에는 원문이 필요하며 관련 등록 설정도 조회할 수 있다. 순수 장면은 rdbMode=NONE,
+등록값·이력·항목 목록 자체를 요구하지 않는 원문 사건·이유·과정 질문은 rdbMode=NONE이다.
+관련 인물이 등장한다는 이유만으로 그 인물의 전체 CURRENT 설정을 읽지 않는다.
+현재값·이력·항목 목록과 원문을 함께 요구할 때만 필요한 등록 범위와 sourceNeed를 결합한다.
 단순 현재값/이력과 연결 인용은 sourceNeed=NONE이다. 근거 요청이 없으면 includeEvidence=false다.
 registeredCurrentRequired는 현재 등록값 확인이 답변에 필수인지를 나타내며 반드시 true/false로 채운다.
 인물의 '지금/현재' 성별·속성·보유·상태를 묻거나 등록 설정·화면·직접 수정값을 확인하면 true다.
@@ -50,7 +52,9 @@ true이면 rdbMode=CURRENT 또는 CURRENT_AND_HISTORY/DIRECT_EVIDENCE이며 sour
 부재를 확인하지 못한 답을 '없음'으로 받아들였으면 sourceNeed=SCENE으로 원문도 확인한다.
 질문의 부정 표현을 사실로 받아들이거나 이전 답을 근거로 반복하지 않는다.
 subjects는 현재 질문 또는 명확히 연결된 conversation에 그대로 등장하는 이름만 최대3개, domain CHARACTER 또는 WORLD다.
-검색어 searchTerms는 현재 질문 또는 명확히 연결된 conversation에 그대로 등장하는 명사/사건 표현 최대6개. 동의어나 새 이름을 만들지 않는다.
+검색어 searchTerms는 현재 질문 또는 명확히 연결된 conversation에서 관측한 명사/사건 표현 최대6개다.
+공백으로 나뉜 각 단어는 입력 문자열에 그대로 있는 부분 표현이어야 한다. 관측한 단어를 공백으로
+묶는 것은 허용하지만 단어 자체의 동의어·새 활용형·새 이름을 만들지 않는다.
 검색어는 인물·사건·대상 표현을 우선한다. '어떤/이후/때/처음' 같은 질문 조건만으로
 무관한 장면을 늘리지 말고, 첫 사건 등의 조건은 eventContext에 보존한다.
 UUID, 회원/작품 ID, SQL, settingKey, scopeName을 생성하지 않는다.

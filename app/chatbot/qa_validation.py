@@ -28,7 +28,7 @@ RULES = {
     "UNOBSERVED_LOOKUP_TERM": "조회 이름과 항목 표현은 이번 질문 또는 제공된 대화에 실제로 있는 표현만 사용하세요.",
     "UNOBSERVED_FOCUS_ATTRIBUTE": "attribute에는 이번 질문 또는 남아 있는 대화에 실제로 있는 표현을 그대로 쓰세요. 정정이 값으로만 표현되면 그 값 표현을 쓰고, 실제 항목은 FIELD 목록에서 선택합니다. 없는 항목명이나 저장 key를 만들지 마세요.",
     "UNOBSERVED_SUBJECT_NAME": "subjects.name에는 이번 질문 또는 남아 있는 대화에 그대로 나온 이름을 쓰세요. 원문 지식으로 본명·별칭을 생성하지 말고 대상이 하나로 해소되지 않으면 CLARIFICATION으로 두세요.",
-    "UNOBSERVED_SEARCH_TERM": "searchTerms는 이번 질문 또는 남아 있는 대화의 연속된 표현을 띄어쓰기까지 그대로 복사하세요. 동의어·활용형을 새로 만들지 마세요. 원래 대상·사건·조건과 requestedParts를 유지하면서 실제 입력 표현으로 검색어를 고치세요. 단순 삭제로 요구를 없애지 마세요.",
+    "UNOBSERVED_SEARCH_TERM": "searchTerms의 공백으로 나뉜 각 단어는 이번 질문 또는 남아 있는 대화 문자열에 그대로 있는 부분 표현만 사용하세요. 관측한 단어의 공백 조합은 허용하지만 동의어·활용형을 새로 만들지 마세요. 원래 대상·사건·조건과 requestedParts를 유지하면서 실제 입력 표현으로 검색어를 고치세요. 단순 삭제로 요구를 없애지 마세요.",
     "PLAN_SEARCH_TERMS": "searchTerms는 비어 있지 않은 실제 입력 표현을 각각 80자 이하로 최대 6개 사용하세요. 긴 표현은 의미 있는 실제 부분 표현을 선택하고 원래 대상·사건·조건은 requestedParts에 보존하세요.",
     "PLAN_RDB_SUBJECT": "등록 자료를 조회할 때는 현재 질문 또는 명확한 대화의 subjects를 지정하거나 작품 전체 조회이면 collection을 사용하세요. 순수 원문 질문은 원래 요구를 유지하며 rdbMode=NONE으로 표현하세요.",
     "PLAN_INFORMATION_NEED": "PROCEED이면 실제 질문에 맞는 rdbMode 또는 sourceNeed를 지정하세요. 둘 다 NONE으로 요구를 없애지 말고, 대상을 해소할 수 없으면 CLARIFICATION을 사용하세요.",

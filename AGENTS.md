@@ -294,12 +294,13 @@
 
 ### OPT-33 현재 등록값·후속 정정 — 2026-10-22
 
-- 현재 버전은 QA plan v9/FIELD select v2, hybrid plan v10/answer v12, 등록 설명 v4이다. `registeredCurrentRequired`는 누락을 허용하지 않는 strict boolean이며, 현재 속성·보유·등록 화면 확인의 필수 근거를 표시 옵션과 분리한다. true이면 CURRENT 계열과 sourceFallback=false를 검증한다. 원문·작중/회차 서술만 묻는 질문과 일반 개념 질문에 등록 현재값을 강제하지 않는다.
+- 현재 버전은 QA plan v9/FIELD select v2, hybrid plan v11/answer v12, 등록 설명 v4이다. `registeredCurrentRequired`는 누락을 허용하지 않는 strict boolean이며, 현재 속성·보유·등록 화면 확인의 필수 근거를 표시 옵션과 분리한다. true이면 CURRENT 계열과 sourceFallback=false를 검증한다. 원문·작중/회차 서술만 묻는 질문과 일반 개념 질문에 등록 현재값을 강제하지 않는다.
 - 현재 대상/항목이 없으면 원문이나 비슷한 이름을 현재값으로 대체하지 않는다. 혼합 질문은 실제 대상 ID·CURRENT 행·완전성으로 현재 확인 여부를 판정하고 원문과 구분해 표시한다. 원문이 충분해도 현재 미확인은 부분 답변으로 유지하며, 원문이 부족해도 확인된 현재값은 보존한다. 임의 별칭 병합·저장 구조 변경을 추가하지 않는다.
 - 값만 말한 정정은 실제 입력 표현을 focus.attribute로 보존하고 관측한 FIELD의 F 참조로 항목을 고른다. 미관측 focus/name/searchTerms는 고정 규칙·정확한 경로로 기존 최대 두 번 안에서 복구하며 요구를 삭제하지 않는다. focus 오류만 반복되면 대상/항목 명확화로 종료하고 provider/다른 schema 실패는 숨기지 않는다.
 - optional provenance의 원자료·내용 수정·확정 방식은 독립 축이며 UNKNOWN/null을 false로 바꾸지 않는다. recordedAt은 설정 기록 생성 시각이다. 일반 값 목록에는 처리정보를 반복 표시하지 않고 명시적 출처 질문은 SUMMARY에서 관련 차이만 설명한다. 구 서버의 생략 호환과 원고/설정집/사용자 입력 출처를 보존하며 내부 source ID는 모델로 투영하지 않는다. 공통 계약·회귀와 실제 모델 평가는 `docs/setting-tools-v1.md`, `docs/chat-query-quality-v1.md`에 구분해 기록한다.
 
 - 다항목 중복 대상 복구는 한 subject와 실제 연속 항목 표현으로 FIELD 여러 경로를 선택하며 원래 이력/현재/원문 및 설명 목적을 보존한다. 빈 focus의 전체 열거 경계를 바꾸지 않는다. 특정 회차 원문 사건의 완료/진행 확인을 과거 전체 등록 snapshot 복원 PAST_STATE와 구분한다. 복구 안내만 입력 상한을 넘으면 고정 코드/경로로 압축하되 원래 입력·schema·기존 실패/정산 의미를 유지한다.
+- searchTerms는 키워드 검색과 같은 공백 분리 단위로 각 단어의 입력 문자열 존재를 검증한다. 관측 단어의 조합만 허용하며 새 어휘·활용형은 거절하고 subject/name·focus의 연속 표현 검증은 유지한다. 등록값·이력·항목 목록 자체를 묻지 않는 원문 사건·이유·과정은 NONE으로 계획하며, 인물 언급만으로 전체 CURRENT 조회를 추가하지 않는다.
 
 ### 챗봇 운영 배포·자동 백필 (#258)
 

@@ -328,7 +328,13 @@ class _HybridSession(_Session):
             explicit = self.observed_question_text()
             if any(s.name.strip().casefold() not in explicit for s in plan.subjects):
                 raise ChatResponseContractError("UNOBSERVED_SUBJECT_NAME")
-            if any(t.strip().casefold() not in explicit for t in plan.search_terms):
+            # Keyword search splits on whitespace too: grouping observed words
+            # into one entry must not reject the same query as separate entries.
+            if any(
+                word.casefold() not in explicit
+                for term in plan.search_terms
+                for word in term.split()
+            ):
                 raise ChatResponseContractError("UNOBSERVED_SEARCH_TERM")
 
         plan = await self.model(
