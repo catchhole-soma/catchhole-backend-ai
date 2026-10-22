@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.chatbot.replay import load_fixture, replay_case
 from app.chatbot.qa import encode
+from app.chatbot.replay import load_fixture, replay_case
 from app.schemas.chat_execution import ConversationTurn, ExecutionContext
 from tests.test_chat_hybrid import replay, scenario, source_chunk
 
@@ -58,9 +58,12 @@ def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, 
     def setup(spring):
         long_history(spring)
         spring.catalog[0]["current"][0]["value"] = "화염구 " + "현재 능력 설명 " * 200
+        spring.catalog[0]["current"][0]["structuredValueJson"] = json.dumps(
+            {"description": "Additional current explanation " * 45}, ensure_ascii=False
+        )
         spring.catalog[0]["current"][1]["value"] = "현재 다른 설정 " * 180
         spring.catalog[0]["current"][1]["structuredValueJson"] = json.dumps(
-            {"description": "추가 현재 설명 " * 100}, ensure_ascii=False
+            {"description": "추가 현재 설명 " * 220}, ensure_ascii=False
         )
 
     def run(budget):
@@ -108,7 +111,7 @@ def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, 
 @pytest.mark.parametrize("bounded", [True, False])
 def test_grounded_answer_preserves_source_before_old_conversation(tmp_path, bounded):
     chunk = source_chunk("ring")
-    text = chunk.text + " 장면 설명 " * 300
+    text = chunk.text + " scene detail " * 250
     chunk = replace(
         chunk, text=text, end_offset=len(text), chunk_hash=sha256(text.encode()).hexdigest()
     )

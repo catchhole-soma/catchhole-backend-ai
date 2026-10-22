@@ -1,15 +1,15 @@
 """Bounded policy for RDB, linked quotations and current-manuscript retrieval."""
 
-from dataclasses import dataclass
 import logging
 import math
+from dataclasses import dataclass
 
 import tiktoken
-
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.chatbot.client import ChatTransportError
 from app.chatbot.hybrid_config import HybridSettings
+from app.chatbot.hybrid_grounding import resolve_support_references
 from app.chatbot.hybrid_items import (
     FACET_LABELS,
     answer_evidence_refs,
@@ -28,7 +28,6 @@ from app.chatbot.hybrid_items import (
 )
 from app.chatbot.hybrid_metrics import HybridMetrics, ObservedEmbeddingClient, ObservedTextClient
 from app.chatbot.hybrid_prompts import ANSWER_PROMPT, ANSWER_VERSION, PLAN_PROMPT, PLAN_VERSION
-from app.chatbot.hybrid_grounding import resolve_support_references
 from app.chatbot.providers import ChatEmbeddingClient
 from app.chatbot.qa import ChatQaHandler, _Session, response_schema
 from app.chatbot.qa_prompts import FIELD_VERSION
@@ -42,7 +41,11 @@ from app.chatbot.qa_render import (
     setting_label,
 )
 from app.chatbot.qa_synthesis import logical_groups
-from app.chatbot.qa_validation import ResponseValidationFailure
+from app.chatbot.qa_validation import (
+    ChatResponseContractError,
+    LookupClarificationRequired,
+    ResponseValidationFailure,
+)
 from app.chatbot.runtime import ProviderFailure
 from app.clients.setting_tools_client import SettingToolClientError
 from app.retrieval.evidence import compose_evidence
@@ -164,6 +167,12 @@ class HybridQaHandler(ChatQaHandler):
                     if exc.status_code == 429
                     else "NETWORK_FAILURE"
                 )
+        except LookupClarificationRequired:
+            result = message(
+                "CLARIFICATION",
+                "어떤 인물의 어떤 설정을 다시 확인할지 이름과 항목을 함께 알려주세요.",
+                session.codes,
+            )
         except ProviderFailure:
             result = Finish(failure="PROVIDER_FAILURE")
         finally:
@@ -203,6 +212,9 @@ class _HybridSession(_Session):
         self.collection_conditions = []
         self.has_collection_condition = False
         self.plan = None
+        self.current_requirement_confirmed = False
+        self.current_requirement_targets = set()
+        self.current_requirement_resolved = False
 
     def trace(self, stage, **data):
         # No questions, source text, model output, member/work IDs or secrets.
@@ -314,10 +326,10 @@ class _HybridSession(_Session):
         def valid(plan):
             self.validate_focus(plan)
             explicit = self.observed_question_text()
-            if any(s.name.strip().casefold() not in explicit for s in plan.subjects) or any(
-                t.strip().casefold() not in explicit for t in plan.search_terms
-            ):
-                raise ValueError("Only explicit question names and terms are accepted")
+            if any(s.name.strip().casefold() not in explicit for s in plan.subjects):
+                raise ChatResponseContractError("UNOBSERVED_SUBJECT_NAME")
+            if any(t.strip().casefold() not in explicit for t in plan.search_terms):
+                raise ChatResponseContractError("UNOBSERVED_SEARCH_TERM")
 
         plan = await self.model(
             HybridPlan,
@@ -334,11 +346,13 @@ class _HybridSession(_Session):
             source=plan.source_need,
             parts=len(plan.requested_parts),
             event=plan.event_context is not None,
+            registered_current_required=plan.registered_current_required,
         )
         # Old saved planner records keep their earlier rendering contract. New
         # provider schemas always require this explicit presentation decision.
         self.render_registered_values = (
-            plan.include_registered_values
+            plan.registered_current_required
+            or plan.include_registered_values
             or "include_registered_values" not in plan.model_fields_set
         )
         self.event_scope = plan.event_scope
@@ -394,6 +408,7 @@ class _HybridSession(_Session):
         return bool(
             plan.disposition == "PROCEED"
             and plan.source_fallback
+            and not plan.registered_current_required
             and plan.source_need == "NONE"
             and plan.subjects
             and plan.collection is None
@@ -422,6 +437,10 @@ class _HybridSession(_Session):
             stop = await self.collect_rows(plan)
             if stop:
                 return stop
+        if plan.registered_current_required:
+            self.current_requirement_confirmed = self.current_requirement_satisfied(plan)
+            if not self.current_requirement_confirmed:
+                self.codes.append("REGISTERED_CURRENT_UNCONFIRMED")
         if not self.models_available():
             return message(
                 "INSUFFICIENT_EVIDENCE",
@@ -506,7 +525,11 @@ class _HybridSession(_Session):
                     self.expansion_query(plan, draft, query),
                     _QueryEmbedding(self),
                     limit=self.hcfg.vector_top_k,
-                    excluded_chunk_ids=tuple(dict.fromkeys(c.chunk_id for c in candidates)),
+                    # A returned candidate may have been omitted by context limits.
+                    # Only passages actually exposed to the answer model were read.
+                    excluded_chunk_ids=tuple(
+                        dict.fromkeys(e.chunk.chunk_id for e in self.evidences if e.chunk)
+                    ),
                 )
             if (
                 round_no > 1
@@ -565,6 +588,9 @@ class _HybridSession(_Session):
                 "현재 등록 자료로 질문의 조건에 해당하는 대상을 확정하지 못해 관련 원문 설명을 보류했습니다.",
                 self.codes,
             )
+        registered = await self.current_without_source(plan)
+        if registered is not None:
+            return registered
         if plan.per_item and self.chosen:
             await self.revalidate_settings()
             names = ", ".join(
@@ -648,11 +674,13 @@ class _HybridSession(_Session):
             self.chosen, stop = await self.select_rows(plan, allow_missing=True)
             return stop
         targets = set()
+        self.current_requirement_resolved = bool(plan.subjects)
         for subject in plan.subjects:
             item, stop = await self.resolve_subject(subject, allow_missing=True)
             if stop:
                 return stop
             if item is None:
+                self.current_requirement_resolved = False
                 continue
             targets.add((subject.domain, item.subject_id))
             modes = (
@@ -673,6 +701,43 @@ class _HybridSession(_Session):
             return stop
         if {(row.domain, row.item.subject_id) for row in self.chosen} != targets:
             self.codes.append("NO_RELATED_SETTING")
+        self.current_requirement_targets = targets
+        return None
+
+    def current_requirement_satisfied(self, plan):
+        """A manuscript passage cannot satisfy a required registered-current read."""
+        if self.incomplete_current_subjects or set(self.codes) & {
+            "VALUE_LIMIT",
+            "CONTEXT_LIMIT",
+            "SELECTION_LIMIT",
+            "CURRENT_CHANGED",
+            "CONDITION_UNCERTAIN",
+        }:
+            return False
+        if plan.collection is not None:
+            return bool(self.collection_checks) and not self.incomplete_subjects
+        confirmed = {
+            (row.domain, row.item.subject_id)
+            for row in self.chosen
+            if row.item.kind == "CURRENT" and not row.item.value_truncated
+        }
+        return self.current_requirement_resolved and self.current_requirement_targets <= confirmed
+
+    async def current_without_source(self, plan):
+        """Preserve observed current values when the independent source request failed."""
+        current_rows = [r for r in self.chosen if r.item.kind == "CURRENT"]
+        if not plan.registered_current_required or not current_rows:
+            return None
+        await self.revalidate_settings()
+        registered = render_answer(
+            current_rows,
+            self.codes,
+            direct_only=False,
+            maximum=self.cfg.max_answer_characters,
+        )
+        text = registered.result.text + "\n요청하신 원문 내용은 이번 조회에서 확인하지 못했어요."
+        if len(text) <= self.cfg.max_answer_characters:
+            return Finish(result=registered.result.model_copy(update={"text": text}))
         return None
 
     async def run_items(self, plan):
@@ -811,6 +876,9 @@ class _HybridSession(_Session):
                 return await self.finish_answer(self.item_draft)
         if self.item_draft.coverage != "NONE":
             return await self.finish_answer(self.item_draft)
+        registered = await self.current_without_source(plan)
+        if registered is not None:
+            return registered
         text = "\n".join(
             render_item_answers(
                 self.item_draft,
@@ -1142,7 +1210,13 @@ class _HybridSession(_Session):
             candidates,
             max_items=self.hcfg.max_evidence - len(direct),
             max_tokens=self.hcfg.evidence_tokens - self.evidence_token_count(direct),
-            per_episode=min(self.hcfg.per_episode, self.hcfg.max_evidence - len(direct)),
+            # Episode diversity is useful across a work, but a question scoped to
+            # one episode should be able to use the shared evidence budget there.
+            per_episode=(
+                self.hcfg.max_evidence - len(direct)
+                if self.source_from is not None and self.source_from == self.source_to
+                else min(self.hcfg.per_episode, self.hcfg.max_evidence - len(direct))
+            ),
             # Reserve a bounded share for the expansion's strongest new hits;
             # lexical and cosine scores are not directly comparable. The prior
             # supported draft remains separately available as a fallback.
@@ -1225,6 +1299,10 @@ class _HybridSession(_Session):
             **self.conversation_payload(),
             "plan": plan.model_dump(by_alias=True),
             "rows": rows,
+            "registeredCurrent": {
+                "required": plan.registered_current_required,
+                "confirmed": self.current_requirement_confirmed,
+            },
             "collectionConditions": [
                 {**condition, "rowRefs": [r for r in condition["rowRefs"] if r in selected]}
                 for condition in self.collection_conditions
@@ -1511,7 +1589,12 @@ class _HybridSession(_Session):
                 )
                 if response.items.content != [ev.direct_item]:
                     raise ChatTransportError(403, "SOURCE_CHANGED")
-        if answer.coverage != "COMPLETE" or self.uncertain_condition_rows():
+        missing_current = (
+            self.plan is not None
+            and self.plan.registered_current_required
+            and not self.current_requirement_confirmed
+        )
+        if answer.coverage != "COMPLETE" or self.uncertain_condition_rows() or missing_current:
             self.codes.append("PARTIAL_ANSWER")
         self.metrics.chunks.labels("used").inc(len(evidence))
         direct_refs = list(dict.fromkeys(e.direct_ref for e in evidence if e.direct_ref))
@@ -1534,6 +1617,8 @@ class _HybridSession(_Session):
             if self.logical_items
             else []
         )
+        if answer.claims or parts:
+            parts.insert(0, "원문에서 확인한 내용입니다.")
         for claim in answer.claims:
             numbers = ", ".join(
                 str(n) for n in dict.fromkeys(public_numbers[r] for r in claim.evidence_refs)
@@ -1560,7 +1645,11 @@ class _HybridSession(_Session):
                 parts.append(
                     f"{prefix}{needs} 정보는 이번에 확인한 자료만으로 확정하기 어렵습니다."
                 )
-        if self.chosen and not self.logical_items and self.render_registered_values:
+        if (
+            self.chosen
+            and self.render_registered_values
+            and (not self.logical_items or self.plan.registered_current_required)
+        ):
             # Render real registered values, independently of model-authored prose.
             registered = render_answer(
                 [
@@ -1588,7 +1677,14 @@ class _HybridSession(_Session):
                 f"등록된 {labels} 설정과 원문의 내용이 다르게 나타납니다. 근거에서 두 내용을 함께 확인해 주세요."
             )
             self.codes.append("SETTING_SOURCE_CONFLICT")
+        if missing_current:
+            parts.append(
+                "요청하신 현재 등록 설정은 확인하지 못했어요. 등록된 대상의 이름이나 조회 항목을 확인해 주세요."
+            )
         public_codes = list(self.codes)
+        if missing_current:
+            # The body already explains the exact unmet requirement.
+            public_codes = [c for c in public_codes if c != "REGISTERED_CURRENT_UNCONFIRMED"]
         # History truncation is not itself a defect in an answer whose subjects
         # and supporting sources have been resolved again for this question.
         public_codes = [c for c in public_codes if c != "CONVERSATION_LIMIT"]
@@ -1613,6 +1709,7 @@ class _HybridSession(_Session):
             or answer.unanswered_row_refs
             or answer.conflicts
             or any(item.missing_facets for item in answer.item_answers)
+            or missing_current
         )
         if "PARTIAL_ANSWER" in public_codes and not explained_gap:
             parts.append("이번에 확인한 자료로는 질문의 일부만 답할 수 있었어요.")
@@ -1620,7 +1717,8 @@ class _HybridSession(_Session):
         text = "\n".join(parts)
         self.trace(
             "published",
-            coverage=answer.coverage,
+            coverage="PARTIAL" if missing_current else answer.coverage,
+            registered_current_confirmed=self.current_requirement_confirmed,
             refs=[
                 {"ref": e.ref, "chunk": str(e.chunk.chunk_id) if e.chunk else None}
                 for e in evidence

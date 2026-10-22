@@ -9,6 +9,8 @@ from app.chatbot.qa import response_schema
 from app.schemas.chat_hybrid import HybridPlan
 from tests.test_chat_focused_lookup import catalog_subject, item
 from tests.test_chat_hybrid import replay, scenario
+from tests.test_chat_hybrid_items import passage
+from tests.test_chat_requested_parts import answer, claim, search_with
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +25,7 @@ def offline_only(monkeypatch):
 def strict_plan(disposition="CLARIFICATION", route="none"):
     value = {
         "disposition": disposition,
+        "registeredCurrentRequired": False,
         "rdbMode": "NONE",
         "sourceNeed": "NONE",
         "subjects": [],
@@ -33,11 +36,13 @@ def strict_plan(disposition="CLARIFICATION", route="none"):
     }
     if route == "legacy_filter":
         value.update(
+            registeredCurrentRequired=False,
             rdbMode="CHARACTER_LIST",
             characterFilter={"factType": "STATUS", "attribute": "상태", "value": "다친"},
         )
     elif route == "collection":
         value.update(
+            registeredCurrentRequired=False,
             rdbMode="CURRENT",
             answerShape="LIST",
             collection={
@@ -128,8 +133,12 @@ def setup_catalog(spring):
 
 
 @pytest.mark.parametrize("route", ["legacy_filter", "collection"])
-def test_proceed_preserves_valid_filters_and_current_collection_queries(tmp_path, route):
+@pytest.mark.parametrize("required_current", [False, True])
+def test_proceed_preserves_valid_filters_and_current_collection_queries(
+    tmp_path, route, required_current
+):
     plan = strict_plan("PROCEED", route)
+    plan["registeredCurrentRequired"] = required_current
     outputs = [plan]
     if route == "collection":
         outputs.append(
@@ -191,3 +200,54 @@ def test_terminal_normalization_does_not_bypass_hybrid_schema_validation(tmp_pat
     bad.update(disposition=disposition, rdbMode="NONE")
     result = asyncio.run(replay(tmp_path, execution_case(bad, strict_plan("CLARIFICATION"))))
     assert_terminal(result, "CLARIFICATION", calls=2)
+
+
+def test_episode_end_events_can_answer_completed_and_ongoing_parts_from_source(tmp_path):
+    plan = strict_plan("PROCEED", "collection")
+    plan.update(
+        rdbMode="NONE",
+        collection=None,
+        answerShape="FACTS",
+        sourceNeed="SCENE",
+        searchTerms=["순찰", "수색"],
+        includeEvidence=True,
+        episodeFrom=12,
+        episodeTo=12,
+        eventContext="해당 원문 끝에서 순찰과 수색의 진행 상황",
+        requestedParts=[
+            {"ref": "P1", "description": "완료한 일"},
+            {"ref": "P2", "description": "진행 중인 일"},
+        ],
+    )
+    completed, ongoing = "미라는 성문 순찰을 마쳤다.", "실종자 수색은 아직 진행 중이었다."
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            {
+                **execution_case(
+                    plan,
+                    answer(
+                        claim(completed, completed, parts=("P1",)),
+                        claim(ongoing, ongoing, parts=("P2",)),
+                    ),
+                ),
+                "question": "12화 원문 끝에서 순찰과 수색 중 완료한 일과 진행 중인 일을 구분해줘.",
+            },
+            search_setup=search_with(keyword=[passage(f"{completed} {ongoing}", 1, episode=12)]),
+        )
+    )
+    assert result["finish"]["failure"] is None
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    assert (
+        completed in result["finish"]["result"]["text"]
+        and ongoing in result["finish"]["result"]["text"]
+    )
+    assert not result["spring"].queries
+    assert result["search"].calls
+    assert result["raw"].requests[-1]["input"]["plan"]["requestedParts"] == plan["requestedParts"]
+
+
+def test_historical_registered_snapshot_remains_unsupported_without_source_claims(tmp_path):
+    case = execution_case(strict_plan("PAST_STATE"))
+    case["question"] = "그 시점의 등록 설정 전체를 복원해줘."
+    assert_terminal(asyncio.run(replay(tmp_path, case)), "PAST_STATE")

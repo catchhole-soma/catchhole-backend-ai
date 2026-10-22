@@ -18,6 +18,7 @@ class AnswerRow:
 
 
 NOTICES = {
+    "REGISTERED_CURRENT_UNCONFIRMED": "요청하신 현재 등록 설정은 확인하지 못했어요. 등록된 대상의 이름이나 조회 항목을 확인해 주세요.",
     "CURRENT_CHANGED": "조회 중 설정이 바뀌어 이전 값으로 답변하지 않았습니다.",
     "CONDITION_UNCERTAIN": "일부 대상은 현재 설정만으로 조건 충족 여부를 확정하지 못했습니다.",
     "SCALAR_UNAVAILABLE": "일부 설정은 단일 값으로 확인할 수 없어 종류 집계에서 제외했습니다.",
@@ -140,6 +141,21 @@ def display_value(item: SettingToolItem) -> str:
     return safe_text(human(value))
 
 
+def provenance_payload(item: SettingToolItem) -> dict:
+    """Source identity stays server-side; each immutable record keeps its own axes."""
+    if item.provenance is None:
+        return {}
+    return {
+        "provenance": {
+            "sources": [
+                source.model_dump(by_alias=True, exclude={"reference"})
+                for source in item.provenance.sources
+            ],
+            "sourcesTruncated": item.provenance.sources_truncated,
+        }
+    }
+
+
 def render_character_list(items, attribute, value, codes, *, maximum):
     condition = f"‘{safe_text(attribute)}: {safe_text(value)}’ 조건에 맞는"
     if not items:
@@ -183,10 +199,13 @@ def render_answer(
                 block += " · 현재 설정에 반영하지 않은 기록"
         elif mixed:
             block += " (현재 설정)"
-        if item.origin == "USER_INPUT":
-            block += " · 직접 입력"
-        elif item.origin == "UNKNOWN":
-            block += " · 출처 미상"
+        # Detailed processing metadata is explained only when requested through
+        # registered synthesis. Preserve the old fallback for older servers.
+        if item.provenance is None:
+            if item.origin == "USER_INPUT":
+                block += " · 직접 입력"
+            elif item.origin == "UNKNOWN":
+                block += " · 출처 미상"
         if item.value_truncated:
             block += " · 값 일부만 확인됨"
         row_refs = list(dict.fromkeys(ref for ref, _ in row.evidence))
@@ -217,10 +236,11 @@ def render_answer(
             last = ord(label[-1]) if label else 0
             particle = "은" if 0xAC00 <= last <= 0xD7A3 and (last - 0xAC00) % 28 else "는"
             sentence = f"{safe_text(item.subject_name)}의 현재 {label}{particle} {value}입니다."
-            if item.origin == "USER_INPUT":
-                sentence += " (직접 입력한 설정)"
-            elif item.origin == "UNKNOWN":
-                sentence += " 이 설정의 출처는 확인되지 않았어요."
+            if item.provenance is None:
+                if item.origin == "USER_INPUT":
+                    sentence += " (직접 입력한 설정)"
+                elif item.origin == "UNKNOWN":
+                    sentence += " 이 설정의 출처는 확인되지 않았어요."
             if refs:
                 sentence += " 근거 " + ", ".join(str(n) for n in range(1, len(refs) + 1))
             elif rows[0].evidence_requested:

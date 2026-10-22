@@ -7,7 +7,6 @@ from pydantic import Field, model_validator
 from app.schemas.chat_qa import AnswerShape, CharacterFilter, QuestionSubject, WorkCollection
 from app.schemas.setting_tools import ContractModel
 
-
 RequestedFacet = Literal["TIME", "HOW", "WHY", "SCENE", "P1", "P2", "P3", "P4"]
 EventScope = Literal["ACTUAL", "PLANNED"]
 EventStatus = Literal["OCCURRED", "PLANNED", "UNCERTAIN"]
@@ -31,6 +30,9 @@ class HybridPlan(ContractModel):
         "NONE", "CURRENT", "HISTORY", "CURRENT_AND_HISTORY", "DIRECT_EVIDENCE", "CHARACTER_LIST"
     ]
     source_need: Literal["NONE", "SCENE", "REASON", "PROCESS"]
+    # Required evidence obligation, independent of the optional presentation flag.
+    # No default: a provider response cannot silently omit this decision.
+    registered_current_required: bool = Field(strict=True)
     subjects: list[QuestionSubject] = Field(max_length=3)
     search_terms: list[str] = Field(max_length=6)
     include_evidence: bool
@@ -66,6 +68,7 @@ class HybridPlan(ContractModel):
             or self.source_fallback
             or self.per_item
             or self.include_registered_values
+            or self.registered_current_required
             or self.answer_shape != "FACTS"
         ):
             raise ValueError("Conversation replies cannot request factual lookups")
@@ -78,6 +81,14 @@ class HybridPlan(ContractModel):
         ) != len(self.subjects):
             raise ValueError("Duplicate subjects")
         if self.disposition == "PROCEED":
+            if self.registered_current_required and (
+                self.rdb_mode
+                not in {"CURRENT", "CURRENT_AND_HISTORY", "DIRECT_EVIDENCE", "CHARACTER_LIST"}
+                or self.source_fallback
+            ):
+                raise ValueError(
+                    "Required current information needs a current lookup without fallback"
+                )
             if (
                 self.rdb_mode not in {"NONE", "CHARACTER_LIST"}
                 and not self.subjects

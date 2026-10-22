@@ -32,6 +32,7 @@ def history_case(*, missing_facet=False, actual_event=False):
     )
     plan = {
         "disposition": "PROCEED",
+        "registeredCurrentRequired": False,
         "rdbMode": "HISTORY",
         "sourceNeed": "PROCESS",
         "subjects": [

@@ -43,6 +43,7 @@ def history_case(*, mode="HISTORY", episode_from=None, episode_to=None):
     case["outputs"] = [
         {
             "disposition": "PROCEED",
+            "registeredCurrentRequired": False,
             "rdbMode": mode,
             "sourceNeed": "NONE",
             "subjects": [

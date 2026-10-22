@@ -8,6 +8,8 @@ import socket
 import pytest
 
 from app.chatbot.qa_validation import RULES
+from tests.test_chat_current_authority import current_case
+from tests.test_chat_focused_lookup import catalog_subject, item
 from tests.test_chat_hybrid import replay
 from tests.test_chat_hybrid_items import passage
 from tests.test_chat_requested_parts import (
@@ -20,9 +22,9 @@ from tests.test_chat_requested_parts import (
     search_with,
 )
 
-
 PRIVATE = "rejected-private-value-5cfaf980-8f54-4b0a-a8c6-01e9daff9f61"
 REGISTERED_PLAN = {
+    "registeredCurrentRequired": False,
     "rdbMode": "CURRENT",
     "sourceNeed": "NONE",
     "subjects": [
@@ -134,18 +136,164 @@ def test_unobserved_focus_is_still_rejected_before_any_search_with_bounded_retri
     with caplog.at_level(logging.WARNING, logger="app.chatbot.qa"):
         result = asyncio.run(replay(tmp_path, case))
 
-    assert result["finish"] == {"result": None, "failure": "PROVIDER_FAILURE"}
+    assert result["finish"]["failure"] is None
+    assert result["finish"]["result"]["outcome"] == "CLARIFICATION"
     records = [record for record in caplog.records if record.name == "app.chatbot.qa"]
     assert len(records) == 2
     assert all(record.validation_stage == "RESPONSE_CONTRACT" for record in records)
     assert all(
-        record.validation_errors == [{"code": "UNOBSERVED_LOOKUP_TERM", "path": "$"}]
+        record.validation_errors
+        == [{"code": "UNOBSERVED_FOCUS_ATTRIBUTE", "path": "$.subjects[].focus.attribute"}]
         for record in records
     )
     assert all("qa_lookup.validate_focus:" in record.origin for record in records)
     assert PRIVATE not in caplog.text
-    assert "UNOBSERVED_LOOKUP_TERM" in result["raw"].requests[1]["system"]
+    assert "UNOBSERVED_FOCUS_ATTRIBUTE" in result["raw"].requests[1]["system"]
     assert PRIVATE not in result["raw"].requests[1]["system"]
     assert len(result["raw"].requests) == len(result["spring"].reservations) == 2
     assert result["search"].calls == []
     assert result["spring"].receipts == []
+
+
+@pytest.mark.parametrize(
+    "field,code,path",
+    [
+        ("searchTerms", "UNOBSERVED_SEARCH_TERM", "$.searchTerms[]"),
+        ("subjects", "UNOBSERVED_SUBJECT_NAME", "$.subjects[].name"),
+    ],
+)
+def test_unobserved_search_vocabulary_repairs_exact_field_and_preserves_requests(
+    tmp_path,
+    caplog,
+    field,
+    code,
+    path,
+):
+    case = parts_case()
+    valid = copy.deepcopy(case["outputs"][0])
+    invalid = copy.deepcopy(valid)
+    invalid[field] = (
+        [PRIVATE]
+        if field == "searchTerms"
+        else [
+            {
+                "domain": "CHARACTER",
+                "name": PRIVATE,
+                "focus": {"factType": None, "attribute": None},
+            }
+        ]
+    )
+    case["outputs"] = [
+        invalid,
+        valid,
+        answer(claim(EMOTION, EMOTION, parts=("P1",)), claim(BEHAVIOR, BEHAVIOR, parts=("P2",))),
+    ]
+    with caplog.at_level(logging.WARNING, logger="app.chatbot.qa"):
+        result = asyncio.run(
+            replay(
+                tmp_path,
+                case,
+                search_setup=search_with(keyword=[passage(f"{EMOTION} {BEHAVIOR}", 1)]),
+            )
+        )
+    assert_answer(result)
+    assert result["raw"].requests[-1]["input"]["plan"]["requestedParts"] == valid["requestedParts"]
+    feedback = result["raw"].requests[1]["system"]
+    assert code in feedback and path in feedback
+    assert PRIVATE not in feedback and PRIVATE not in caplog.text
+    assert len(result["raw"].requests) == len(result["spring"].reservations) == 3
+    assert result["search"].calls
+    assert result["spring"].receipts
+
+
+@pytest.mark.parametrize("source_need", ["NONE", "REASON"])
+def test_duplicate_subject_repair_preserves_multi_field_history_and_explanation(
+    tmp_path, source_need
+):
+    case = current_case(required=False)
+    case["question"] = "세린의 장비 등급과 훈련 단계 이력을 구분해서 설명해줘."
+    valid = case["outputs"][0]
+    valid.update(
+        rdbMode="HISTORY",
+        sourceNeed=source_need,
+        answerShape="SUMMARY",
+        subjects=[
+            {
+                "domain": "CHARACTER",
+                "name": "세린",
+                "focus": {"factType": None, "attribute": "장비 등급과 훈련 단계"},
+            }
+        ],
+        requestedParts=[{"ref": "P1", "description": "두 기록의 차이"}]
+        if source_need != "NONE"
+        else [],
+    )
+    invalid = copy.deepcopy(valid)
+    invalid["subjects"] = [
+        {
+            "domain": "CHARACTER",
+            "name": "세린",
+            "focus": {"factType": category, "attribute": attribute},
+        }
+        for category, attribute in [("ITEM", "장비 등급"), ("LEVEL", "훈련 단계")]
+    ]
+    explanation = "장비 등급과 훈련 단계는 서로 다른 기록이다."
+    response = {"claims": [{"text": explanation, "rowRefs": ["R1", "R2"]}]}
+    if source_need != "NONE":
+        response = answer(
+            {
+                **claim(explanation, explanation, parts=("P1",), event_match=None),
+                "rowRefs": ["R1", "R2"],
+            }
+        )
+    case["outputs"] = [invalid, valid, {"outcome": "ANSWER", "fieldRefs": ["F1", "F2"]}, response]
+
+    def setup(spring):
+        history = [
+            item(
+                701,
+                "세린",
+                kind="HISTORY",
+                category=category,
+                key=key,
+                label=label,
+                value=value,
+                number=n,
+                episode=1,
+            )
+            for n, (category, key, label, value) in enumerate(
+                [
+                    ("ITEM", "item.grade", "장비 등급", "4"),
+                    ("LEVEL", "level.stage", "훈련 단계", "7"),
+                    ("SKILL", "skill.unrelated", "무관한 기술", "제외되어야 하는 값"),
+                ],
+                901,
+            )
+        ]
+        spring.catalog = [catalog_subject(701, "세린", history=history)]
+
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            spring_setup=setup,
+            search_setup=search_with(keyword=[passage(explanation, 1)]),
+        )
+    )
+    assert explanation in assert_answer(result)["text"]
+    assert "제외되어야" not in result["finish"]["result"]["text"]
+    feedback = result["raw"].requests[1]["system"]
+    assert "PLAN_SUBJECTS" in feedback and RULES["PLAN_SUBJECTS"] in feedback
+    field_payload = result["raw"].requests[2]["input"]
+    assert field_payload["attribute"] == "장비 등급과 훈련 단계"
+    answer_payload = result["raw"].requests[-1]["input"]
+    assert len(answer_payload["rows"]) == 2
+    assert all(row["kind"] == "HISTORY" for row in answer_payload["rows"])
+    assert [q["tool"] for q in result["spring"].queries] == [
+        "FIND_CHARACTERS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_HISTORY",
+        "CHARACTER_HISTORY",
+    ]
+    assert bool(result["search"].calls) == (source_need != "NONE")
+    assert len(result["spring"].reservations) == len(result["spring"].reports) == 4

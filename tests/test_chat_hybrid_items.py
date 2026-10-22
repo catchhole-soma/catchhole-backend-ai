@@ -290,6 +290,7 @@ def test_condition_then_narrative_filters_subjects_and_rechecks_collection(
     case["question"] = "다친 인물들은 왜 다쳤어?"
     plan = case["outputs"][0]
     plan.update(
+        registeredCurrentRequired=False,
         rdbMode="CURRENT",
         sourceNeed="REASON",
         subjects=[],
@@ -440,6 +441,7 @@ def test_condition_batches_leave_one_call_for_grounded_answer(
     case.update(question="다친 인물들은 왜 다쳤어?", maxCalls=server_calls)
     plan = case["outputs"][0]
     plan.update(
+        registeredCurrentRequired=False,
         rdbMode="CURRENT",
         sourceNeed="REASON",
         subjects=[],

@@ -272,7 +272,7 @@ async def test_context_limit_omits_whole_rows_and_preserves_notice():
     # Large unrelated values exceed the context cap; no value is cut into a made-up fact.
     catalog[0]["current"][1]["value"] = "큰 값 " * 490
     catalog[0]["current"][1]["structuredValueJson"] = json.dumps(
-        {"description": "추가 현재 설명 " * 100}, ensure_ascii=False
+        {"description": "추가 현재 설명 " * 160}, ensure_ascii=False
     )
     full = await replay_case(case, catalog)
     plan, selection = full["modelRequests"][:2]

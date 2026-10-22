@@ -90,6 +90,7 @@ def answer_context():
     plan = HybridPlan.model_validate(
         {
             "disposition": "PROCEED",
+            "registeredCurrentRequired": False,
             "rdbMode": "CURRENT",
             "sourceNeed": "PROCESS",
             "subjects": [

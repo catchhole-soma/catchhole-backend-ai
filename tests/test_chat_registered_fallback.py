@@ -35,6 +35,7 @@ def registered_case(*, fallback=True, attribute=None):
     case["outputs"] = [
         {
             "disposition": "PROCEED",
+            "registeredCurrentRequired": False,
             "rdbMode": "CURRENT",
             "sourceNeed": "NONE",
             "subjects": [

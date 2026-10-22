@@ -9,13 +9,25 @@ from pydantic import BaseModel, ValidationError
 
 from app.chatbot.client import ChatTransportError
 from app.chatbot.providers import ChatTextClient
+from app.chatbot.qa_collection import WorkLookup
 from app.chatbot.qa_config import ChatQaSettings
 from app.chatbot.qa_lookup import FocusedLookup
-from app.chatbot.qa_collection import WorkLookup
-from app.chatbot.qa_synthesis import RegisteredSynthesis
 from app.chatbot.qa_prompts import PLAN_PROMPT, PLAN_VERSION, SELECT_PROMPT, SELECT_VERSION
-from app.chatbot.qa_render import AnswerRow, current_changed, message, render_answer
-from app.chatbot.qa_validation import RULES, ResponseValidationFailure, retry_feedback
+from app.chatbot.qa_render import (
+    AnswerRow,
+    current_changed,
+    message,
+    provenance_payload,
+    render_answer,
+)
+from app.chatbot.qa_synthesis import RegisteredSynthesis
+from app.chatbot.qa_validation import (
+    RULES,
+    ChatResponseContractError,
+    LookupClarificationRequired,
+    ResponseValidationFailure,
+    retry_feedback,
+)
 from app.chatbot.runtime import Execution, ProviderFailure, ProviderOutputTruncated
 from app.clients.setting_tools_client import SettingToolClientError
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
@@ -24,7 +36,6 @@ from app.schemas.chat_execution import Finish
 from app.schemas.chat_qa import AnswerSelection, QuestionPlan
 from app.schemas.setting_tools import SettingToolQuery, SettingToolResponse
 from app.usage.metering import _estimate_text_token_upper_bound
-
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +84,12 @@ class ChatQaHandler:
                 if exc.code in {"QUOTA_EXHAUSTED", "EXECUTION_LIMIT_EXCEEDED"}
                 else "NETWORK_FAILURE"
             )
+        except LookupClarificationRequired:
+            return message(
+                "CLARIFICATION",
+                "어떤 인물의 어떤 설정을 다시 확인할지 이름과 항목을 함께 알려주세요.",
+                [],
+            )
         except ProviderFailure:
             return Finish(failure="PROVIDER_FAILURE")
 
@@ -94,6 +111,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         self.last_collection = None
         self.collection_checks = []
         self.incomplete_subjects = set()
+        self.incomplete_current_subjects = set()
         self.include_sources = False
         self.source_from = execution.context.episode_from
         self.source_to = execution.context.episode_to
@@ -148,6 +166,28 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             <= self.cfg.max_input_tokens
         )
 
+    def fitting_retry_prompt(self, prompt, payload, schema, feedback):
+        if not feedback:
+            return prompt if self.fits(prompt, payload, schema) else None
+        # Only the repair annotation may shrink. Keep the original instructions,
+        # question, evidence, requested parts and schema identical for every retry.
+        compact = [{key: item[key] for key in ("code", "path") if key in item} for item in feedback]
+        codes = list(dict.fromkeys(item["code"] for item in feedback))
+        annotations = (
+            "\n이전 출력이 계약 검증에 실패했습니다. schema와 제공된 참조만 사용하세요."
+            "\n안전한 검증 피드백: " + encode(feedback),
+            "\nRepair to schema; keep request/evidence: " + encode(compact),
+            "\nRepair to schema; keep request/evidence: " + ",".join(codes),
+        )
+        return next(
+            (
+                prompt + annotation
+                for annotation in annotations
+                if self.fits(prompt + annotation, payload, schema)
+            ),
+            None,
+        )
+
     async def model(
         self,
         cls,
@@ -173,15 +213,18 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         feedback = []
         truncated_retry = False
         validation_failed = False
+        only_focus_failures = True
         for attempt in range(attempt_limit):
             # Every recovery call uses the same attempt/call/ledger limits. No transport retry.
-            retry_prompt = prompt + (
-                "\n이전 출력이 계약 검증에 실패했습니다. schema와 제공된 참조만 사용하세요."
-                "\n안전한 검증 피드백: " + encode(feedback)
-                if feedback
-                else ""
-            )
-            if not self.fits(retry_prompt, payload, schema):
+            retry_prompt = self.fitting_retry_prompt(prompt, payload, schema, feedback)
+            if retry_prompt is None:
+                # The original input already fit. Repair overhead must not replace
+                # the last response failure with an execution-limit failure, nor
+                # reserve a call that cannot run. Its paid usage is already recorded.
+                if validation_failed:
+                    break
+                if truncated_retry:
+                    raise ProviderOutputTruncated()
                 raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
             self.before_model_call(purpose)
             output_cap = self.cfg.output_tokens_for(purpose, truncated_retry=truncated_retry)
@@ -195,6 +238,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     response_schema=schema,
                 )
             except ProviderOutputTruncated as exc:
+                only_focus_failures = False
                 # Execution has already queued FAILURE usage. Include that measured usage in
                 # aggregate metrics too; never reconstruct or publish a partial provider answer.
                 if exc.usage is not None and exc.usage.kind == "SETTLE":
@@ -241,6 +285,9 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             except (ValidationError, ValueError) as exc:
                 validation_failed = True
                 feedback = retry_feedback(exc, schema.schema)
+                only_focus_failures = only_focus_failures and all(
+                    item["code"] == "UNOBSERVED_FOCUS_ATTRIBUTE" for item in feedback
+                )
                 # Never log exception text, rejected values, response bodies or IDs.
                 category = (
                     "SCHEMA_VALIDATION"
@@ -280,6 +327,8 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     extra=diagnostic,
                 )
         if validation_failed:
+            if only_focus_failures:
+                raise LookupClarificationRequired()
             raise ResponseValidationFailure()
         raise ProviderFailure()
 
@@ -483,11 +532,12 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             "conversationTruncated": "CONVERSATION_LIMIT" in self.codes,
             "plan": plan.model_dump(by_alias=True),
             "maxSelectedRows": self.cfg.max_selected_rows,
-            "partial": any(c in self.codes for c in {"PARTIAL_RESULTS", "CONTEXT_LIMIT"}),
+            "partial": any(c in self.codes for c in ("PARTIAL_RESULTS", "CONTEXT_LIMIT")),
             "rows": [
                 {
                     "rowRef": row.ref,
                     "domain": row.domain,
+                    **provenance_payload(row.item),
                     **row.item.model_dump(
                         by_alias=True,
                         include={
@@ -525,7 +575,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                 s.name.strip().casefold() not in self.observed_question_text()
                 for s in plan.subjects
             ):
-                raise ValueError("Only names explicitly present in the question may be searched")
+                raise ChatResponseContractError("UNOBSERVED_SUBJECT_NAME")
 
         plan = await self.model(
             QuestionPlan,

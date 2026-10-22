@@ -17,11 +17,23 @@ class ResponseValidationFailure(ProviderFailure):
         super().__init__()
 
 
+class LookupClarificationRequired(ResponseValidationFailure):
+    """Only observed-vocabulary repair failed; no provider/transport failure."""
+
+
 RULES = {
     "REQUESTED_PARTS_INCOMPLETE": "요청된 모든 답변 부분을 제공된 자료로 답하거나 미확인으로 표시하고 coverage를 일치시키세요.",
     "EVENT_CONTEXT_REQUIRED": "원문에서 관측한 사건이 질문의 실제 사건·계획·가정 문맥과 일치하는지 명시적으로 판정하세요.",
     "UNKNOWN_REFERENCE": "참조는 이번 입력에 제공된 목록에서만 선택하고 중복 없이 사용하세요.",
     "UNOBSERVED_LOOKUP_TERM": "조회 이름과 항목 표현은 이번 질문 또는 제공된 대화에 실제로 있는 표현만 사용하세요.",
+    "UNOBSERVED_FOCUS_ATTRIBUTE": "attribute에는 이번 질문 또는 남아 있는 대화에 실제로 있는 표현을 그대로 쓰세요. 정정이 값으로만 표현되면 그 값 표현을 쓰고, 실제 항목은 FIELD 목록에서 선택합니다. 없는 항목명이나 저장 key를 만들지 마세요.",
+    "UNOBSERVED_SUBJECT_NAME": "subjects.name에는 이번 질문 또는 남아 있는 대화에 그대로 나온 이름을 쓰세요. 원문 지식으로 본명·별칭을 생성하지 말고 대상이 하나로 해소되지 않으면 CLARIFICATION으로 두세요.",
+    "UNOBSERVED_SEARCH_TERM": "searchTerms는 이번 질문 또는 남아 있는 대화의 연속된 표현을 띄어쓰기까지 그대로 복사하세요. 동의어·활용형을 새로 만들지 마세요. 원래 대상·사건·조건과 requestedParts를 유지하면서 실제 입력 표현으로 검색어를 고치세요. 단순 삭제로 요구를 없애지 마세요.",
+    "PLAN_SEARCH_TERMS": "searchTerms는 비어 있지 않은 실제 입력 표현을 각각 80자 이하로 최대 6개 사용하세요. 긴 표현은 의미 있는 실제 부분 표현을 선택하고 원래 대상·사건·조건은 requestedParts에 보존하세요.",
+    "PLAN_RDB_SUBJECT": "등록 자료를 조회할 때는 현재 질문 또는 명확한 대화의 subjects를 지정하거나 작품 전체 조회이면 collection을 사용하세요. 순수 원문 질문은 원래 요구를 유지하며 rdbMode=NONE으로 표현하세요.",
+    "PLAN_INFORMATION_NEED": "PROCEED이면 실제 질문에 맞는 rdbMode 또는 sourceNeed를 지정하세요. 둘 다 NONE으로 요구를 없애지 말고, 대상을 해소할 수 없으면 CLARIFICATION을 사용하세요.",
+    "PLAN_SUBJECTS": "같은 domain/name/worldCategory는 subject 하나로 유지하세요. 같은 대상의 여러 항목은 함께 포함된 실제 입력의 연속 구절을 attribute에 보존하고, 유형이 다르면 factType=null로 두어 FIELD에서 여러 경로를 고르세요. (null,null) 전체 조회로 넓히지 마세요. 중복 대상만 고치고 원래 HISTORY/CURRENT/원문 요구와 SUMMARY 등 설명·비교 목적을 유지하세요. 서로 다른 인물·분류를 합치거나 독립 요구를 삭제하지 마세요.",
+    "CURRENT_REQUIREMENT_ROUTE": "현재 등록값 확인이 필수이면 registeredCurrentRequired=true를 유지하고 CURRENT/CURRENT_AND_HISTORY/DIRECT_EVIDENCE로 조회하며 sourceFallback=false로 두세요. 원문도 요청하면 sourceNeed를 따로 보존하세요.",
     "INVALID_PLAN": "조회 범위·대상·정보 필요·질문 유형에 따른 필드 조건을 schema와 원래 지침에 맞추세요.",
     "PLAN_PARTS_MODE": "requestedParts를 사용하면 requestedFacets는 비우세요. sourceNeed=NONE에서는 sourceFallback=true일 때만 requestedParts를 사용하고, 둘 다 원문 조회가 필요 없으면 비우세요.",
     "PLAN_PARTS_REQUIRED": "PROCEED인 원문 질문에는 실제 질문의 독립된 요구를 requestedParts에 하나 이상 넣으세요. 요구를 없애려고 sourceNeed를 바꾸지 마세요.",
@@ -121,6 +133,16 @@ _MESSAGES = {
         "Conversational requests do not query work information",
         "Conversation replies cannot request factual lookups",
     ),
+    "CURRENT_REQUIREMENT_ROUTE": (
+        "Required current information needs a current lookup without fallback",
+    ),
+    "PLAN_SEARCH_TERMS": ("Invalid search terms",),
+    "PLAN_RDB_SUBJECT": (
+        "RDB lookup requires an explicit subject",
+        "Lookup requires a named subject",
+    ),
+    "PLAN_INFORMATION_NEED": ("No information need",),
+    "PLAN_SUBJECTS": ("Duplicate subjects",),
 }
 _MESSAGE_CODES = {message: code for code, messages in _MESSAGES.items() for message in messages}
 _MESSAGE_CODES.update({code: code for code in RULES})
@@ -131,6 +153,16 @@ _RULE_FIELDS = {
     "PLAN_PARTS_FIELD": "requestedFacets",
     "PLAN_EVENT_CONTEXT": "eventContext",
     "PLAN_FALLBACK_PARTS_REQUIRED": "requestedParts",
+    "CURRENT_REQUIREMENT_ROUTE": "registeredCurrentRequired",
+    "PLAN_SEARCH_TERMS": "searchTerms",
+    "PLAN_RDB_SUBJECT": "subjects",
+    "PLAN_INFORMATION_NEED": "rdbMode",
+    "PLAN_SUBJECTS": "subjects",
+}
+_RULE_PATHS = {
+    "UNOBSERVED_FOCUS_ATTRIBUTE": "$.subjects[].focus.attribute",
+    "UNOBSERVED_SUBJECT_NAME": "$.subjects[].name",
+    "UNOBSERVED_SEARCH_TERM": "$.searchTerms[]",
 }
 _SCHEMA_TYPES = frozenset(
     {
@@ -189,7 +221,10 @@ def _safe_path(location, fields):
 def retry_feedback(exc: ValueError, schema: dict) -> list[dict[str, str]]:
     """Never copy rejected values, dynamic keys, exception messages, or IDs."""
     if isinstance(exc, ChatResponseContractError):
-        return [{"code": exc.code, "rule": RULES[exc.code]}]
+        entry = {"code": exc.code, "rule": RULES[exc.code]}
+        if exc.code in _RULE_PATHS:
+            entry["path"] = _RULE_PATHS[exc.code]
+        return [entry]
     if not isinstance(exc, ValidationError):
         # Comparing an exact known message is safe; unknown text is not interpolated.
         code = _MESSAGE_CODES.get(str(exc), "RESPONSE_CONTRACT")

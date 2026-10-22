@@ -23,6 +23,7 @@ async def conversation_handler(execution):
         outputs = [
             {
                 "disposition": "PROCEED",
+                "registeredCurrentRequired": False,
                 "rdbMode": "NONE",
                 "sourceNeed": "SCENE",
                 "subjects": [],

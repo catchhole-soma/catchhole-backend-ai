@@ -47,7 +47,17 @@
           "truncated": false
         },
         "sourceEpisodeId": "00000000-0000-0000-0000-000000000004",
-        "sourceEpisodeNo": 1
+        "sourceEpisodeNo": 1,
+        "provenance": {
+          "sources": [{
+            "reference": {"tool": "CHARACTER_EVIDENCE", "targetId": "00000000-0000-0000-0000-000000000001"},
+            "sourceKind": "EPISODE",
+            "contentEdited": false,
+            "applicationAction": "UNKNOWN",
+            "recordedAt": "2026-01-02T03:04:05"
+          }],
+          "sourcesTruncated": false
+        }
       }
     ],
     "page": 0,

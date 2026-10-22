@@ -22,6 +22,24 @@ Spring이 소유권과 설정의 의미를 결정하고 Python은 이 읽기 전
 
 `origin=CONFIRMED_ANALYSIS`는 분석 후보가 확정된 기록이라는 뜻이지 인용이 이용 가능하거나 설정값 전체를 논리적으로 입증했다는 뜻이 아니다. 실제 인용 검증 결과는 `evidence.status`로 판단한다. 인물 수동 Fact는 기존 DB에 명시적인 origin 구분이 없어 후보 없는 과거 데이터와 구별할 수 없다. 출처가 없다는 이유만으로 수동이라고 추정하지 않고 `UNKNOWN`으로 반환한다.
 
+### 인물 출처 상세 (`provenance`, OPT-33)
+
+인물 CURRENT/CURRENT_COLLECTION/HISTORY/EVIDENCE의 선택적 `provenance`는 기존 `origin`을 재정의하지 않고 원자료, 내용 편집 여부, 후보의 보존된 확정 정보를 분리한다. 현재 설정값은 계속 snapshot이 기준이다. 원문과 값이 다르다는 이유만으로 현재값을 무효화하거나 작품 속 변화가 있었다고 추론하지 않는다. 이번 범위는 인물 Fact이며 세계관과 FIELD/탐색 응답에는 이 객체를 제공하지 않는다. 서버 구버전, 연결된 Fact 없는 현재값, OUT_OF_RANGE 근거에서도 생략한다. 생략은 미상이며 미편집·출처 없음의 증명이 아니다.
+
+```json
+{"provenance":{"sources":[{"reference":{"tool":"CHARACTER_EVIDENCE","targetId":"00000000-0000-0000-0000-000000000001"},"sourceKind":"SETTING_BOOK","contentEdited":false,"applicationAction":"USER_CONFIRM","recordedAt":"2026-01-02T03:04:05"}],"sourcesTruncated":false}}
+```
+
+- `sources`는 기존 `sources` 참조와 같은 순서·20개 상한을 사용한다. CURRENT의 MERGE는 출처별 정보를 유지하며, 하나의 출처로 병합값 전체를 대표하지 않는다. HISTORY/EVIDENCE는 해당 Fact 하나다. 잘림은 두 목록의 `sourcesTruncated`에 함께 표시한다.
+- `sourceKind=EPISODE|SETTING_BOOK|USER_INPUT|UNKNOWN`은 원자료 종류다. 저장된 후보/Job의 sourceKind, 또는 연결된 회차로 판별한다. `SETTING_BOOK`이어도 설정집 원문 인용 지원을 뜻하지 않으며 기존 `SETTING_BOOK_UNSUPPORTED`는 유지한다. 인물의 후보·Job·회차 없는 Fact는 직접 입력과 레거시를 구별할 명시적 표지가 없어 `UNKNOWN`이다. `USER_INPUT`은 명시적으로 확인 가능한 직접 입력 출처를 위한 계약 값이며 이번 인물 mapper는 출처 부재나 수동 보호 표지만으로 이를 만들지 않는다.
+- `contentEdited=true|false|null`은 후보의 `user_content_modified`를 그대로 제공한다. `true`는 내용 편집 표지가 존재한다는 뜻이며 원문과 최종값의 실제 차이·편집한 필드·편집 시점까지 증명하지 않는다. legacy null, 후보 없는 Fact는 null이다. `user_modified`, 수동 보호 slot, 검토 선택만으로 true 또는 false를 추정하지 않는다.
+- `applicationAction=AUTOMATIC_CONFIRM|USER_CONFIRM|UNKNOWN`은 **후보에 현재 보존된 확정 메타데이터**다. `reviewed_automatically=true`이면 자동 확정, 그 외 `reviewed_application_mode`가 보존되어 있으면 사용자 확정으로 표시한다. 나머지는 미상이다. false만으로 사용자 확정을 추정하지 않으며 원문 파기에서 지워지는 raw 비교 JSON을 사용하지 않는다. 설정집 출처와 USER_CONFIRM을 함께 보고도 구체적인 `applyToCurrent` 클릭이나 내용 편집을 단정할 수 없다.
+- `recordedAt`은 **Fact 생성 시각**이며 nullable ISO local datetime(서버 설정 시간대, offset 없음)이다. candidate/character `updatedAt`, 사용자 편집 시각, 현재 slot 마지막 반영 시각, 작품 속 사건 시각으로 설명하지 않는다. 정확한 `appliedAt`이나 완전한 편집 이력은 기존 저장 모델에 없어 이번 응답에 추가하거나 역산하지 않는다.
+- 일반 API는 확정 후보의 내용/검토 선택을 다시 편집하지 못하게 한다. 이 정보는 별도 불변 이벤트 snapshot이 아니라 현재 보존된 후보의 메타데이터이므로 과거에 존재하지 않던 편집 이벤트를 복원하는 용도로 사용하지 않는다. 원문 파기는 인용·raw 비교 JSON을 지우되 위 확정 메타데이터와 Fact 생성 시각은 보존한다.
+- 이 메타데이터는 인용 receipt를 발급하지 않는다. 기존 AVAILABLE 근거 검증, 소유권·출처 범위, snapshotVersion/readToken, 도구 상한과 실행 정산을 유지한다. 구조 정보와 현재 설정을 읽는 기능이며 내용 수정·재분석·원문 검색을 추가하지 않는다.
+
+배포 시 Python이 `provenance` 생략과 신규 객체를 모두 읽도록 먼저 갱신한 뒤 Java의 새 응답을 제공한다. 신규 객체가 있으면 sources/sourcesTruncated와 각 항목의 reference/sourceKind/contentEdited/applicationAction/recordedAt을 검증한다. nullable 필드를 생략과 혼동하지 않는다. `src/test/resources/contracts/setting-tools-v1.json`은 새 응답, 기존 FIELD/COLLECTION fixture는 생략 호환성을 검증한다. 생성 SDK 소비자도 새 선택적 필드를 수용하는지 확인한다.
+
 ## API와 인증 경계
 
 - 사용자: `POST /api/v1/works/{workId}/setting-tools/queries`, 기존 JWT. 회원은 `MemberPrincipal`에서 얻는다.
@@ -131,6 +149,7 @@ DISTINCT나 의미 조건 판정은 이 계약 위에서 수행한다. 실제 �
 | sources | 직접 근거를 여는 `{tool, targetId}` 목록. 출처 접근 가능 여부를 보장하지 않음 |
 | sourcesTruncated | 현재 근거 참조가 상한/scan 범위 때문에 불완전함 |
 | evidence | 직접 근거 조회에만 제공. 나머지는 null |
+| provenance | 인물 Fact별 원자료·내용 편집·보존된 확정 정보. 미지원/미상 현재값/범위 밖에는 필드 생략 |
 
 `items`는 content/page/size/totalElements/totalPages/hasNext다. 빈 목록은 정상 성공이며 “알 수 없는 오류”와 같지 않다. 페이지의 전체 개수는 해당 필터의 항목 수다. `hasNext=true`이면 후속 페이지를 읽어야 한다. `partial`은 페이지 외에 값/근거가 잘렸거나 이용 불가 상태인 경우를 표시한다. 정상 페이지네이션만으로 partial을 true로 만들지 않는다. 세계관 scan 상한은 현재 근거의 완전성에만 영향을 주며 목록 총개수를 추정값으로 바꾸지 않는다.
 

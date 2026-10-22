@@ -5,9 +5,9 @@ accuracy. Only synthetic subjects and values are used; external sockets fail.
 """
 
 import asyncio
-from collections import Counter
 import json
 import socket
+from collections import Counter
 
 import pytest
 
@@ -45,6 +45,7 @@ def test_field_selection_and_retries_match_the_reserved_call_purposes(tmp_path, 
     spec["question"] = "술법의 소모 마력을 설명해 줘."
     decision = spec["outputs"][0]
     decision.update(
+        registeredCurrentRequired=False,
         rdbMode="CURRENT",
         sourceNeed="NONE",
         subjects=[
@@ -64,7 +65,7 @@ def test_field_selection_and_retries_match_the_reserved_call_purposes(tmp_path, 
         (
             "answer",
             {"claims": [{"text": "소모 마력은 30이에요.", "rowRefs": ["R1"]}]},
-            "chat-registered-answer-v2",
+            "chat-registered-answer-v4",
             "CHAT_ANSWER",
         ),
     ]
@@ -120,6 +121,7 @@ def count_case(subjects):
     spec = scenario()
     spec["question"] = "현재 사망한 인물은 몇 명이야?"
     spec["outputs"][0].update(
+        registeredCurrentRequired=False,
         rdbMode="CURRENT",
         sourceNeed="NONE",
         subjects=[],
