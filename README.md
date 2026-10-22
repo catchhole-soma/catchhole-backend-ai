@@ -191,7 +191,7 @@ sudo journalctl CONTAINER_NAME=catchhole-worker-ai-worker-1 -n 1 -o json-pretty
 - `LLM_CHARACTER_FACT_BATCH_COMPARISON_MAX_OUTPUT_TOKENS`, `LLM_CHARACTER_FACT_BATCH_COMPARISON_MAX_INPUT_TOKENS`: 인물별 모든 Fact 유형 묶음 비교의 출력 128,000·입력 256,000 token 상한
 - 후보 수로 나누지 않습니다. 한 인물의 전체 후보를 먼저 비교하고 입력 한도 초과·출력 절단 때만 원문 순서를 유지해 분할합니다.
 - `LLM_WORLD_SETTING_BATCH_SUBJECT_RESOLUTION_MAX_OUTPUT_TOKENS`, `LLM_WORLD_SETTING_BATCH_SUBJECT_RESOLUTION_MAX_INPUT_TOKENS`: 원고 전체 세계관 대상 연결의 출력 32,000·입력 64,000 token 상한. 캐릭터 식별 한도와 분리합니다.
-- `LLM_WORLD_SETTING_BATCH_COMPARISON_MAX_OUTPUT_TOKENS`, `LLM_WORLD_SETTING_BATCH_COMPARISON_MAX_INPUT_TOKENS`: 여러 세계관 대상의 속성 비교를 묶는 출력 16,000·입력 32,000 token 상한. 공통 지시·응답 schema를 포함한 입력과 추론 여유를 포함한 예상 출력이 한도 안에 드는 만큼 묶습니다. 같은 대상의 후속 비교는 앞선 결과를 저장한 뒤 새 문맥으로 요청합니다. 실패한 그룹만 기존 복구를 적용하며 원문을 잘라 맞추지 않습니다.
+- `LLM_WORLD_SETTING_BATCH_COMPARISON_MAX_OUTPUT_TOKENS`, `LLM_WORLD_SETTING_BATCH_COMPARISON_MAX_INPUT_TOKENS`: 여러 세계관 대상의 속성 비교를 묶는 출력 16,000·입력 64,000 token 상한. 공통 지시·응답 schema를 포함한 입력과 추론 여유를 포함한 예상 출력이 한도 안에 드는 만큼 묶습니다. 같은 대상의 후속 비교는 앞선 결과를 저장한 뒤 새 문맥으로 요청합니다. 실패한 그룹만 기존 복구를 적용하며 원문을 잘라 맞추지 않습니다.
 - `LLM_PROVIDER_MAX_OUTPUT_TOKENS`: 목적별 상한을 검증할 provider 전체 출력 상한. 기본값은 128,000입니다.
 - `LLM_HTTP_MAX_RETRIES`: 429/5xx/timeout 같은 일시 provider 오류의 재시도 횟수. 최초 요청은 제외하며 운영 기본값은 3입니다.
 - `LLM_HTTP_RETRY_BASE_SECONDS`: provider 재시도의 지수 backoff 기준값. 운영 기본값 2초에서 2초, 4초, 8초와 jitter를 적용하고 `Retry-After`가 있으면 우선합니다.
