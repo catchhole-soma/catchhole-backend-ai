@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import pytest
 
+from app.analysis.world_setting_batch_recovery import compare_world_batch_with_recovery
 from app.analysis.world_setting_comparator import WorldSettingComparator
 from app.analysis.world_setting_manuscript import WorldSettingManuscriptComparator
 from app.llm.responses import LlmTextResponse
@@ -14,11 +15,14 @@ from tests.test_world_setting_manuscript import decision, group
 
 
 class RecordingProvider:
-    def __init__(self):
+    def __init__(self, *, fail_first=False):
         self.requests = []
+        self.fail_first = fail_first
 
     async def create_text_response(self, **request):
         self.requests.append(request)
+        if self.fail_first and len(self.requests) == 1:
+            return LlmTextResponse(text="invalid json")
         payload = json.loads(request["user_prompt"])
         result = {"decisions": [decision(ordered=True)]}
         if "groups" in payload:
@@ -58,7 +62,7 @@ def test_world_requests_keep_world_holds_without_character_input_or_budget_overf
          "reason": "GENERAL_UNCERTAINTY", "setting_name": "환경", "value": "환경은 불명확하다.",
          "evidence": [], "confirmation_status": "UNRESOLVED", "applied_to_current_state": False},
     ]
-    provider = RecordingProvider()
+    provider = RecordingProvider(fail_first=mode == "recovery")
     comparator = WorldSettingComparator(llm_client=provider, model="offline-test", max_attempts=1)
     comparator.batch_max_input_tokens = 32000
     first = group(1, ordered=True)
@@ -71,18 +75,25 @@ def test_world_requests_keep_world_holds_without_character_input_or_budget_overf
             ])
             assert all(outcome.error is None for outcome in outcomes.values())
             return
+        if mode == "recovery":
+            result, _ = await compare_world_batch_with_recovery(
+                comparator, first.category, first.candidates, first.targets,
+                ordered_context=True, unresolved_references=refs,
+            )
+            assert not result.failures
+            assert len(result.decisions) == 1
+            return
         result, _ = await comparator.compare_batch(
             first.category, first.candidates, first.targets,
             ordered_context=True, unresolved_references=refs,
-            **({"preserve_source_paths": True, "max_attempts_override": 1}
-               if mode == "recovery" else {}),
         )
         assert len(result.decisions) == 1
 
     asyncio.run(compare())
-    assert len(provider.requests) == 1
-    payload = json.loads(provider.requests[0]["user_prompt"])
-    payloads = payload["groups"] if mode == "packed" else [payload]
-    assert all(item["unresolved_references"] == expected for item in payloads)
-    assert "CHARACTER_HOLD_ONLY" not in provider.requests[0]["user_prompt"]
+    assert len(provider.requests) == (2 if mode == "recovery" else 1)
+    for request in provider.requests:
+        payload = json.loads(request["user_prompt"])
+        payloads = payload["groups"] if mode == "packed" else [payload]
+        assert all(item["unresolved_references"] == expected for item in payloads)
+        assert "CHARACTER_HOLD_ONLY" not in request["user_prompt"]
     assert [ref.model_dump(mode="json") for ref in refs] == original
