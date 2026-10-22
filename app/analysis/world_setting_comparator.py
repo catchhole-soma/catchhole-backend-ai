@@ -379,7 +379,7 @@ class WorldSettingComparator:
             if batch_max_output_tokens is None
             else batch_max_output_tokens
         )
-        self.batch_max_input_tokens = getattr(settings, "llm_world_setting_batch_comparison_max_input_tokens", 32000)
+        self.batch_max_input_tokens = getattr(settings, "llm_world_setting_batch_comparison_max_input_tokens", 64000)
 
     async def compare(
         self,
