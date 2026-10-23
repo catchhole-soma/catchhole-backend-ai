@@ -6,6 +6,7 @@ import sys
 import time
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from time import monotonic
 from types import SimpleNamespace
 from typing import Any, Literal, Protocol, cast
@@ -313,6 +314,7 @@ def create_default_runtime_components(
     comparison_model: str | None = None,
     store_responses: bool = False,
     world_manuscript_batching: bool = True,
+    relationship_observations_output: Path | None = None,
 ) -> RuntimeComponents:
     """운영 extractor/comparator 구현으로 평가 runtime을 구성한다."""
 
@@ -323,11 +325,18 @@ def create_default_runtime_components(
         usage,
     )
     world_comparator = WorldSettingComparator(llm_client=client, model=comparison_model)
+    character_extractor = CharacterSettingExtractor(
+        llm_client=client, model=analysis_model,
+        relationship_observations=relationship_observations_output is not None,
+    )
+    if relationship_observations_output is not None:
+        from evals.multi_stage_setting.relationship_observations import RecordingRelationshipExtractor
+
+        character_extractor = RecordingRelationshipExtractor(
+            character_extractor, relationship_observations_output,
+        )
     return RuntimeComponents(
-        character_extractor=CharacterSettingExtractor(
-            llm_client=client,
-            model=analysis_model,
-        ),
+        character_extractor=character_extractor,
         character_subject_resolver=CharacterSubjectResolver(
             llm_client=client,
             model=subject_resolution_model,
@@ -555,6 +564,9 @@ async def run_multi_stage_predictions(
         comparison_model=comparison_model,
         prompt_versions={
             "characterExtraction": SETTING_EXTRACTION_CACHE_KEY_VERSION,
+            **({"characterRelationshipObservations": components.character_extractor.relationship_observation_version}
+               if getattr(components.character_extractor, "relationship_observation_version", None)
+               else {}),
             "characterSubjectResolution": "subject-resolution:v1",
             "characterComparison": CHARACTER_FACT_COMPARISON_BATCH_CACHE_KEY + ":person-all-types-v1",
             "worldExtraction": WORLD_SETTING_EXTRACTION_CACHE_KEY,

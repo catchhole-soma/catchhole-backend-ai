@@ -20,6 +20,13 @@ def main() -> None:
     mode = EvaluationMode(args.mode)
     domains = _parse_domains(args.domains)
     episodes = _parse_episode_numbers(args.episodes)
+    experiment = {}
+    if args.relationship_observations_output is not None:
+        if mode != EvaluationMode.FIXED or domains != {EvaluationDomain.CHARACTER}:
+            raise ValueError("Relationship experiment requires FIXED and CHARACTER only.")
+        if args.relationship_observations_output.resolve() == args.output.resolve():
+            raise ValueError("Observation sidecar and predictions must use different paths.")
+        experiment["relationship_observations_output"] = args.relationship_observations_output
     if mode != EvaluationMode.ORACLE and args.source_root is None:
         raise ValueError("Live extraction modes require --source-root.")
     frozen_start_state = (
@@ -48,6 +55,7 @@ def main() -> None:
                     subject_resolution_model=args.subject_resolution_model,
                     comparison_model=args.comparison_model,
                     store_responses=args.store_responses,
+                    **experiment,
                 ),
                 character_schema_hints=schema_hints,
                 max_chunks=args.max_chunks,
@@ -111,6 +119,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--analysis-model", default=None)
     parser.add_argument("--subject-resolution-model", default=None)
     parser.add_argument("--comparison-model", default=None)
+    parser.add_argument(
+        "--relationship-observations-output", type=Path, default=None,
+        help="Opt into same-call relationship observations; write private evidence sidecar. FIXED/CHARACTER only.",
+    )
     parser.add_argument(
         "--store-responses", action="store_true",
         help="Explicit diagnostic opt-in: store prediction prompts and responses at OpenAI.",

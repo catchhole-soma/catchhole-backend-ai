@@ -20,6 +20,12 @@ from pydantic_core import PydanticCustomError
 
 from app.domain.setting_values import normalize_setting_display_value
 from app.analysis.narrative_time import NarrativeTime, NarrativeTimePoint
+from app.analysis.relationship_observations import (
+    MAX_RELATIONSHIP_OBSERVATIONS,
+    RelationshipObservation,
+    RelationshipObservationRejection,
+    RelationshipObservationWire,
+)
 
 CandidateKind = Literal["SETTING", "CHARACTER_DISCOVERY"]
 SettingValueType = Literal["STRING", "NUMBER", "BOOLEAN", "JSON", "UNKNOWN"]
@@ -134,6 +140,13 @@ class CharacterSettingExtractionResult(BaseModel):
 
     candidates: list[ExtractedCharacterCandidate] = Field(default_factory=list)
     time_context: list[NarrativeTimePoint] = Field(default_factory=list)
+    relationship_observations: list[RelationshipObservation] = Field(
+        default_factory=list, exclude_if=lambda value: not value,
+    )
+    relationship_observation_rejections: list[RelationshipObservationRejection] = Field(
+        default_factory=list, exclude_if=lambda value: not value,
+    )
+    _raw_relationship_observations: Any = PrivateAttr(default=None)
 
 
 class _StrictProviderModel(BaseModel):
@@ -288,11 +301,20 @@ class CharacterSettingProviderResponse(_StrictProviderModel):
         return result
 
 
-@lru_cache(maxsize=1)
-def character_setting_provider_json_schema() -> dict[str, Any]:
+@lru_cache(maxsize=2)
+def character_setting_provider_json_schema(
+    relationship_observations: bool = False,
+) -> dict[str, Any]:
     """Pydantic schema를 Responses API strict subset 형태로 정규화한다."""
 
-    return _to_openai_strict_json_schema(CharacterSettingProviderResponse.model_json_schema())
+    schema = CharacterSettingProviderResponse.model_json_schema()
+    if relationship_observations:
+        observation = RelationshipObservationWire.model_json_schema()
+        schema.setdefault("$defs", {}).update(observation.pop("$defs", {}))
+        schema["properties"]["relationship_observations"] = {
+            "type": "array", "items": observation, "maxItems": MAX_RELATIONSHIP_OBSERVATIONS,
+        }
+    return _to_openai_strict_json_schema(schema)
 
 
 def _provider_candidate_to_internal_payload(

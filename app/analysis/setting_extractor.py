@@ -23,6 +23,10 @@ from app.analysis.schemas import (
     CharacterSettingProviderResponse,
     character_setting_provider_json_schema,
 )
+from app.analysis.relationship_observations import (
+    RELATIONSHIP_OBSERVATION_VERSION,
+    ground_relationship_observations,
+)
 from app.analysis.semantic_current_context import (
     CURRENT_STATUS_FORECAST_INSTRUCTIONS,
     SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS,
@@ -123,11 +127,21 @@ class CharacterSettingExtractor:
         max_attempts: int | None = None,
         max_output_tokens: int | None = None,
         truncation_retry_max_output_tokens: int | None = None,
+        relationship_observations: bool = False,
     ) -> None:
         settings = get_settings()
         # 실제 실행에서는 OpenAI client를 쓰고, 테스트에서는 fake client를 주입
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
+        # Deliberate per-instance experiment; no environment flag can enable Worker writes.
+        self.relationship_observations = relationship_observations
+        self.response_schema = (
+            LlmResponseSchema(
+                name="character_setting_relationship_observations",
+                schema=character_setting_provider_json_schema(relationship_observations=True),
+                strict=True,
+            ) if relationship_observations else SETTING_EXTRACTION_RESPONSE_SCHEMA
+        )
         self.model = model or settings.effective_llm_extraction_model
         self.max_attempts = (
             settings.llm_extraction_max_attempts if max_attempts is None else max_attempts
@@ -180,6 +194,11 @@ class CharacterSettingExtractor:
             known_characters=known_characters,
         )
         prompt_cache_key = _build_schema_cache_key(schema_summary_json)
+        if self.relationship_observations:
+            system_prompt += "\n\n" + DEFAULT_PROMPT_PATH.with_name(
+                "character_relationship_observations.md",
+            ).read_text(encoding="utf-8")
+            prompt_cache_key += ":" + RELATIONSHIP_OBSERVATION_VERSION
         if setting_book is not None:
             system_prompt += "\n\n" + BOOK_CURRENT_FUNCTION_INSTRUCTIONS
             if ordered_context is None:
@@ -230,7 +249,15 @@ class CharacterSettingExtractor:
                         current_max_output_tokens,
                         requires_ordered_bound=(ordered_context is not None or semantic_current_context is not None or bool(time_context)),
                     )
-                    return ground_setting_book_evidence(result, chunk_text) if setting_book is not None else result
+                    if setting_book is not None:
+                        result = ground_setting_book_evidence(result, chunk_text)
+                    if self.relationship_observations:
+                        observations, rejected = ground_relationship_observations(
+                            result._raw_relationship_observations, chunk_text, source_chunk_id,
+                        )
+                        result.relationship_observations = observations
+                        result.relationship_observation_rejections = rejected
+                    return result
                 except LlmOutputTruncatedError as exc:
                     can_expand_once = (
                         not truncation_retry_used
@@ -301,10 +328,14 @@ class CharacterSettingExtractor:
             model=self.model,
             max_output_tokens=max_output_tokens,
             prompt_cache_key=prompt_cache_key,
-            response_schema=SETTING_EXTRACTION_RESPONSE_SCHEMA,
+            response_schema=self.response_schema,
         )
         # source_chunk_id는 Provider schema에 넣지 않고 Worker 입력으로만 결합한다.
         payload = parse_json_object(response.text)
+        raw_observations = (
+            payload.pop("relationship_observations", None)
+            if self.relationship_observations else None
+        )
         candidates = payload.get("candidates")
         if isinstance(candidates, list):
             for candidate in candidates:
@@ -313,6 +344,7 @@ class CharacterSettingExtractor:
                     candidate.pop("setting_book_identity_proof", None)
         provider_result = CharacterSettingProviderResponse.model_validate(payload)
         result = provider_result.to_extraction_result(source_chunk_id)
+        result._raw_relationship_observations = raw_observations
         for candidate, raw in zip(result.candidates, payload["candidates"], strict=True):
             candidate._raw_narrative_time = raw.get("narrative_time")
         return result
