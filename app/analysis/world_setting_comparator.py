@@ -379,7 +379,7 @@ class WorldSettingComparator:
             if batch_max_output_tokens is None
             else batch_max_output_tokens
         )
-        self.batch_max_input_tokens = getattr(settings, "llm_world_setting_batch_comparison_max_input_tokens", 32000)
+        self.batch_max_input_tokens = getattr(settings, "llm_world_setting_batch_comparison_max_input_tokens", 64000)
 
     async def compare(
         self,
@@ -529,7 +529,9 @@ class WorldSettingComparator:
                 "\n\n" + ordered_state_instructions(analysis_source.source_kind if analysis_source else None)
                 + "\n\n" + ORDERED_WORLD_BATCH_INSTRUCTIONS
             )
-            raw_payload["unresolved_references"] = ordered_reference_data(unresolved_references)
+            raw_payload["unresolved_references"] = ordered_reference_data(
+                unresolved_references, domain="worldSettings",
+            )
             for target_data, target in zip(raw_payload["targets"], targets, strict=True):
                 target_data["confirmation_status"] = (
                     "PROVISIONAL" if target.provisional_subject_key is not None else "CONFIRMED"
