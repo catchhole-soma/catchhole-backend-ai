@@ -43,10 +43,10 @@ from app.analysis.setting_extractor import (
     CharacterSettingSchemaHint,
 )
 from app.analysis.world_setting_batch_recovery import (
-    compare_world_batch_with_recovery, recover_world_batch, WorldBatchRecoveryResult, can_recover_response,
-)
-from app.analysis.world_setting_manuscript import (
-    WorldSettingManuscriptComparator, WorldSettingManuscriptGroup, WorldSettingManuscriptOutcome,
+    WorldBatchRecoveryResult,
+    can_recover_response,
+    compare_world_batch_with_recovery,
+    recover_world_batch,
 )
 from app.analysis.world_setting_comparator import (
     WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
@@ -57,7 +57,13 @@ from app.analysis.world_setting_extractor import (
     WORLD_SETTING_EXTRACTION_CACHE_KEY,
     WorldSettingExtractor,
 )
-from app.chunking.chunk_splitter import EpisodeChunkDraft, split_episode_into_chunks as split_into_chunks
+from app.analysis.world_setting_manuscript import (
+    WorldSettingManuscriptComparator,
+    WorldSettingManuscriptGroup,
+    WorldSettingManuscriptOutcome,
+)
+from app.chunking.chunk_splitter import EpisodeChunkDraft
+from app.chunking.chunk_splitter import split_episode_into_chunks as split_into_chunks
 from app.clients.exceptions import AiTokenQuotaExhaustedError
 from app.domain.enums import (
     CharacterFactComparisonOperation,
@@ -67,8 +73,15 @@ from app.domain.enums import (
     WorldSettingOperation,
 )
 from app.domain.setting_values import normalize_setting_display_value
-from app.exceptions.failure_classification import comparison_failure_code, is_candidate_comparison_failure
-from app.llm.exceptions import LlmIncompleteResponseError, LlmInputTokenCountError, LlmResponseValidationError
+from app.exceptions.failure_classification import (
+    comparison_failure_code,
+    is_candidate_comparison_failure,
+)
+from app.llm.exceptions import (
+    LlmIncompleteResponseError,
+    LlmInputTokenCountError,
+    LlmResponseValidationError,
+)
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.llm.responses import LlmTextResponse
@@ -330,7 +343,9 @@ def create_default_runtime_components(
         relationship_observations=relationship_observations_output is not None,
     )
     if relationship_observations_output is not None:
-        from evals.multi_stage_setting.relationship_observations import RecordingRelationshipExtractor
+        from evals.multi_stage_setting.relationship_observations import (
+            RecordingRelationshipExtractor,
+        )
 
         character_extractor = RecordingRelationshipExtractor(
             character_extractor, relationship_observations_output,

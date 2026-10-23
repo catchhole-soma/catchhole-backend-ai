@@ -18,14 +18,14 @@ from app.analysis.ordered_context import (
     OrderedExtractionContext,
     ordered_state_instructions,
 )
+from app.analysis.relationship_observations import (
+    RELATIONSHIP_OBSERVATION_VERSION,
+    ground_relationship_observations,
+)
 from app.analysis.schemas import (
     CharacterSettingExtractionResult,
     CharacterSettingProviderResponse,
     character_setting_provider_json_schema,
-)
-from app.analysis.relationship_observations import (
-    RELATIONSHIP_OBSERVATION_VERSION,
-    ground_relationship_observations,
 )
 from app.analysis.semantic_current_context import (
     CURRENT_STATUS_FORECAST_INSTRUCTIONS,

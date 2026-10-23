@@ -7,18 +7,17 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     StrictBool,
     StrictFloat,
     StrictInt,
     StrictStr,
-    PrivateAttr,
     StringConstraints,
     field_validator,
     model_validator,
 )
 from pydantic_core import PydanticCustomError
 
-from app.domain.setting_values import normalize_setting_display_value
 from app.analysis.narrative_time import NarrativeTime, NarrativeTimePoint
 from app.analysis.relationship_observations import (
     MAX_RELATIONSHIP_OBSERVATIONS,
@@ -26,6 +25,7 @@ from app.analysis.relationship_observations import (
     RelationshipObservationRejection,
     RelationshipObservationWire,
 )
+from app.domain.setting_values import normalize_setting_display_value
 
 CandidateKind = Literal["SETTING", "CHARACTER_DISCOVERY"]
 SettingValueType = Literal["STRING", "NUMBER", "BOOLEAN", "JSON", "UNKNOWN"]
