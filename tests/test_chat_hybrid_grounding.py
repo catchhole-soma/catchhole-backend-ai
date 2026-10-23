@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from app.chatbot.hybrid_grounding import resolve_support_references
+from app.chatbot.hybrid_grounding import resolve_support_quotes, resolve_support_references
 
 
 @dataclass(frozen=True)
@@ -157,3 +157,69 @@ def test_one_reference_cannot_identify_two_distinct_sources():
 def test_empty_supports_do_not_silently_succeed():
     with pytest.raises(ValueError, match="^GROUNDING_SUPPORT_REQUIRED$"):
         resolve_support_references([], [])
+
+
+@pytest.mark.parametrize("line_break", ["\n", "\r\n", "\r", " \n\t", "\n\n"])
+def test_line_break_rendering_is_recovered_as_exact_original_quote(line_break):
+    text = f"🙂문이 닫혔다.{line_break}그래서 그는 돌아갔다."
+    quote = "문이 닫혔다. 그래서 그는 돌아갔다."
+    data = passage(text, ("E1", 0, len(text)))
+
+    resolved = resolve_support_quotes([Support("E1", quote)], [data])
+
+    assert resolved[0].quote == text[1:]
+    assert resolved[0].evidence_refs == ("E1",)
+    assert resolved[0].quote in text
+
+
+def test_line_break_rendering_keeps_all_original_chunk_references():
+    text = "문이 닫혔다.\n그래서 돌아갔다."
+    split = text.index("그래서")
+    data = passage(text, ("E1", 0, split), ("E2", split, len(text)))
+
+    resolved = resolve_support_quotes([Support("E1", text.replace("\n", " "))], [data])
+
+    assert resolved[0].quote == text
+    assert resolved[0].evidence_refs == ("E1", "E2")
+
+
+def test_line_break_rendering_does_not_fill_uncovered_source_spans():
+    text = "문이 닫혔다.\n그래서 돌아갔다."
+    split = text.index("그래서")
+    data = passage(text, ("E1", 0, split - 1), ("E2", split, len(text)))
+
+    with pytest.raises(ValueError, match="^GROUNDING_UNCOVERED_QUOTE$"):
+        resolve_support_quotes([Support("E1", text.replace("\n", " "))], [data])
+
+
+def test_line_break_rendering_does_not_reanchor_to_another_passage():
+    first = passage("다른 사건이다.", ("E1", 0, 8))
+    text = "문이 닫혔다.\n그래서 돌아갔다."
+    second = passage(text, ("E2", 0, len(text)))
+
+    with pytest.raises(ValueError, match="^GROUNDING_QUOTE_NOT_FOUND$"):
+        resolve_support_quotes([Support("E1", text.replace("\n", " "))], [first, second])
+
+
+def test_line_break_rendering_ambiguity_is_rejected():
+    text = "문이\n닫혔다. 문이\r\n닫혔다."
+    data = passage(text, ("E1", 0, len(text)))
+
+    with pytest.raises(ValueError, match="^GROUNDING_AMBIGUOUS_QUOTE$"):
+        resolve_support_quotes([Support("E1", "문이 닫혔다.")], [data])
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "문이닫혔다. 그래서 돌아갔다.",
+        "문이 닫혔다. 그래서  돌아갔다.",
+        "문이 닫혔다! 그래서 돌아갔다.",
+    ],
+)
+def test_line_break_rendering_does_not_correct_words_spacing_or_punctuation(quote):
+    text = "문이 닫혔다.\n그래서 돌아갔다."
+    data = passage(text, ("E1", 0, len(text)))
+
+    with pytest.raises(ValueError, match="^GROUNDING_QUOTE_NOT_FOUND$"):
+        resolve_support_quotes([Support("E1", quote)], [data])

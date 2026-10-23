@@ -225,7 +225,7 @@ async def test_hybrid_validation_without_retry_room_continues_search(monkeypatch
     monkeypatch.setattr(_Session, "model", bounded_answer)
     case = parts_case(event_context=None)
     text = "미라는 봉화를 켜고 기뻐했으며 이후 경비를 자원했다."
-    case["outputs"] += [PRIVATE, answer(claim(text, text, event_match=None))]
+    case["outputs"] += [PRIVATE, answer(claim(text, text, ref="E2", event_match=None))]
     result = await replay(
         tmp_path,
         case,

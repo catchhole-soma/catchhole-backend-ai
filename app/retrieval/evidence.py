@@ -1,9 +1,9 @@
 """Provider-independent passage composition with original citation references preserved."""
 
+import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
-import math
 from typing import Literal
 
 import tiktoken
@@ -73,13 +73,15 @@ def compose_evidence(
     max_tokens=6000,
     per_episode=4,
     count_tokens=None,
+    priority_chunk_ids=(),
     retained_chunk_ids=(),
     episode_round_robin=True,
 ):
     """Select at most max_items ORIGINAL references, then merge exact touching slices.
 
-    Diversity defaults to round-robin by episode after direct refs. Callers can
-    preserve method/score rank instead; per_episode still bounds both policies.
+    Explicit priority refs keep their supplied order before retained/direct refs.
+    Diversity otherwise defaults to round-robin by episode after direct refs.
+    Callers can preserve method/score rank instead; all budgets still apply.
     Text is never silently cut; skipped references and invalid/contradicting slices
     make the bundle limited. Exact duplicate removal and passage merging are not omissions.
     Each omitted candidate has one first-blocking reason; max_tokens covers passage text
@@ -93,6 +95,9 @@ def compose_evidence(
         def count_tokens(value):
             return len(encoding.encode(value, disallowed_special=()))
 
+    priority_order = {
+        chunk_id: index for index, chunk_id in enumerate(dict.fromkeys(priority_chunk_ids))
+    }
     retained_ids = set(retained_chunk_ids)
     unique, rejected = {}, 0
     input_count, duplicate_count = 0, 0
@@ -129,7 +134,14 @@ def compose_evidence(
     # Two retrieval routes may carry different chunk IDs for the same exact quote.
     # Distinct positions remain distinct, even when their text happens to be equal.
     quotes = {}
-    for chunk in sorted(unique.values(), key=lambda c: (c.chunk_id not in retained_ids, _rank(c))):
+    for chunk in sorted(
+        unique.values(),
+        key=lambda c: (
+            priority_order.get(c.chunk_id, len(priority_order)),
+            c.chunk_id not in retained_ids,
+            _rank(c),
+        ),
+    ):
         key = (chunk.source_fingerprint, chunk.start_offset, chunk.end_offset, chunk.chunk_hash)
         old = quotes.get(key)
         if old is not None:
@@ -144,8 +156,16 @@ def compose_evidence(
             )
         )
     ordered = sorted(quotes.values(), key=_rank)
-    retained = [c for c in ordered if c.chunk_id in retained_ids]
-    ordered = [c for c in ordered if c.chunk_id not in retained_ids]
+    priority = sorted(
+        (c for c in ordered if c.chunk_id in priority_order),
+        key=lambda c: priority_order[c.chunk_id],
+    )
+    retained = [
+        c for c in ordered if c.chunk_id in retained_ids and c.chunk_id not in priority_order
+    ]
+    ordered = [
+        c for c in ordered if c.chunk_id not in retained_ids and c.chunk_id not in priority_order
+    ]
     if episode_round_robin:
         direct = [c for c in ordered if "DIRECT" in c.methods]
         groups = defaultdict(list)
@@ -153,14 +173,14 @@ def compose_evidence(
             if "DIRECT" not in chunk.methods:
                 groups[chunk.episode_id].append(chunk)
         # Item-oriented callers can distribute context across different episodes.
-        candidates = [*retained, *direct]
+        candidates = [*priority, *retained, *direct]
         while groups:
             for episode in list(groups):
                 candidates.append(groups[episode].pop(0))
                 if not groups[episode]:
                     del groups[episode]
     else:
-        candidates = [*retained, *ordered]
+        candidates = [*priority, *retained, *ordered]
     chosen, per_source = [], defaultdict(int)
     passages, total = (), 0
     for chunk in candidates:

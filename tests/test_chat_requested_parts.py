@@ -311,9 +311,8 @@ def test_complementary_partial_answers_merge_without_reusing_wrong_evidence_refs
     behavior = passage(BEHAVIOR, 8, episode=12, method="VECTOR")
     case["outputs"] += [
         answer(claim(EMOTION, EMOTION, parts=("P1",)), missing=("P2",)),
-        # Fresh vector candidates receive E1 in the second answer input. The
-        # old draft's E1 still identifies the distinct earlier emotion passage.
-        answer(claim(BEHAVIOR, BEHAVIOR, parts=("P2",)), missing=("P1",)),
+        # The supported first passage is retained as E1; the fresh one is E2.
+        answer(claim(BEHAVIOR, BEHAVIOR, ref="E2", parts=("P2",)), missing=("P1",)),
     ]
 
     result = asyncio.run(

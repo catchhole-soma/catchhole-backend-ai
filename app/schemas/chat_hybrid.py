@@ -236,8 +236,6 @@ class GroundedAnswer(ContractModel):
     def coherent(self) -> Self:
         validate_missing_explanations(self.missing_explanations, self.missing_facets)
         supported = bool(self.claims or self.conflicts or any(i.answers for i in self.item_answers))
-        if (self.coverage == "NONE") == supported:
-            raise ValueError("Coverage and grounded statements disagree")
         for claim in self.claims:
             if (
                 not claim.text.strip()
@@ -250,14 +248,23 @@ class GroundedAnswer(ContractModel):
                 raise ValueError("Invalid claim")
         if len(set(self.unanswered_row_refs)) != len(self.unanswered_row_refs):
             raise ValueError("Duplicate unanswered row references")
-        if self.coverage == "COMPLETE" and self.unanswered_row_refs:
-            raise ValueError("Unanswered rows cannot have complete coverage")
         if len({item.item_ref for item in self.item_answers}) != len(self.item_answers):
             raise ValueError("Duplicate logical item references")
-        if self.coverage == "COMPLETE" and any(i.missing_facets for i in self.item_answers):
-            raise ValueError("Unanswered facets cannot have complete coverage")
         if len(set(self.missing_facets)) != len(self.missing_facets):
             raise ValueError("Duplicate unanswered facets")
-        if self.coverage == "COMPLETE" and self.missing_facets:
-            raise ValueError("Unanswered facets cannot have complete coverage")
+        # Coverage is metadata derived from this structure, not a reason to ask
+        # the model to rewrite otherwise valid claims and lose their sources.
+        # Only contradictions decidable without the request are corrected here.
+        # Reference, source and requested-facet validation still happens before
+        # publication; an unexplained PARTIAL is not upgraded at schema parsing.
+        if not supported:
+            object.__setattr__(self, "coverage", "NONE")
+        elif (
+            self.coverage == "NONE"
+            or self.conflicts
+            or self.unanswered_row_refs
+            or self.missing_facets
+            or any(i.missing_facets for i in self.item_answers)
+        ):
+            object.__setattr__(self, "coverage", "PARTIAL")
         return self
