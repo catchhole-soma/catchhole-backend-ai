@@ -1512,7 +1512,7 @@ class _HybridSession(_Session):
                 if (answer.coverage == "COMPLETE") != complete:
                     from app.chatbot.qa_validation import ChatResponseContractError
 
-                    raise ChatResponseContractError("REQUESTED_PARTS_INCOMPLETE")
+                    raise ChatResponseContractError("ANSWER_COVERAGE_MISMATCH")
 
         attempts = min(
             self.cfg.max_attempts,
@@ -1624,7 +1624,12 @@ class _HybridSession(_Session):
             else []
         )
         if answer.claims or parts:
-            parts.insert(0, "원문에서 확인한 내용입니다.")
+            parts.insert(
+                0,
+                "등록 정보와 원문을 구분해 확인한 내용입니다."
+                if any(claim.row_refs for claim in answer.claims)
+                else "원문에서 확인한 내용입니다.",
+            )
         for claim in answer.claims:
             numbers = ", ".join(
                 str(n) for n in dict.fromkeys(public_numbers[r] for r in claim.evidence_refs)

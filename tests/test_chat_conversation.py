@@ -12,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.chatbot.qa import encode
+from app.chatbot.qa_render import notices
 from app.chatbot.replay import load_fixture, replay_case
 from app.schemas.chat_execution import ConversationTurn, ExecutionContext
 from tests.test_chat_hybrid import replay, scenario, source_chunk
@@ -95,7 +96,20 @@ def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, 
         # which becomes unrelated when the production schema or prompt changes.
         full = len(selection_request["system"]) + len(encode(selection_request["input"]))
         budget = full - len(encode(selection_request["input"]["conversation"][0])) // 2
+        # Selection must drop old history, but later answer/repair prompts must
+        # still fit their selected rows, source text and the most recent turn.
+        for request in requests[requests.index(selection_request) + 1 :]:
+            recent = copy.deepcopy(request["input"])
+            recent["conversation"] = recent["conversation"][-1:]
+            if "conversationTruncated" in recent:
+                recent["conversationTruncated"] = True
+            if "limitations" in recent:
+                recent["limitations"] += notices(
+                    ["CONVERSATION_LIMIT"], include_conversation_limit=True
+                )
+            budget = max(budget, len(request["system"]) + len(encode(recent)))
         assert len(requests[0]["system"]) + len(encode(requests[0]["input"])) < budget
+        assert budget < full  # Full selection history must actually exceed this bound.
         result, requests = run(budget)
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert len(requests[0]["input"]["conversation"]) == 2  # Planner alone still fits.
@@ -106,6 +120,10 @@ def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, 
     assert len(selection["conversation"]) == (1 if bounded else 2)
     assert selection["conversationTruncated"] is bounded
     assert selection["partial"] is False
+    if engine == "hybrid":
+        answers = [r["input"] for r in requests if "passages" in r["input"]]
+        assert answers
+        assert all(a["conversation"][-1]["answer"] == "최근 답변" for a in answers)
 
 
 @pytest.mark.parametrize("bounded", [True, False])

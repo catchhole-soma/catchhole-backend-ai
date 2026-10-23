@@ -22,7 +22,8 @@ class LookupClarificationRequired(ResponseValidationFailure):
 
 
 RULES = {
-    "REQUESTED_PARTS_INCOMPLETE": "요청된 모든 답변 부분을 제공된 자료로 답하거나 미확인으로 표시하고 coverage를 일치시키세요.",
+    "REQUESTED_PARTS_INCOMPLETE": "requestedParts의 모든 P*를 실제 답한 claims.answeredFacets와 미확인 missingFacets로 빠짐없이 나누고 두 목록을 겹치지 마세요. 현재값/원문 비교는 confirmed=true인 실제 CURRENT R* 값과 E* 원문을 구분해 답하면 두 요구를 함께 표시할 수 있습니다. 원문만으로 현재값을 확정하지 말고 확인하지 못한 요구는 missingFacets에 남기세요. 요구를 삭제하지 마세요.",
+    "ANSWER_COVERAGE_MISMATCH": "답한 요청 부분과 근거·conflicts는 유지하고 coverage를 고치세요. conflicts가 있으면 모든 요구를 답해도 PARTIAL입니다. 미답 행/facet이 있어도 근거 있는 주장·관측·충돌이 있으면 PARTIAL이고, 그런 내용이 전혀 없으면 NONE입니다. 모든 요구를 답하고 conflicts·미답 행/facet이 모두 없을 때만 COMPLETE입니다. COMPLETE를 맞추려고 충돌·미확인 요구를 삭제하지 마세요.",
     "EVENT_CONTEXT_REQUIRED": "원문에서 관측한 사건이 질문의 실제 사건·계획·가정 문맥과 일치하는지 명시적으로 판정하세요.",
     "UNKNOWN_REFERENCE": "참조는 이번 입력에 제공된 목록에서만 선택하고 중복 없이 사용하세요.",
     "UNOBSERVED_LOOKUP_TERM": "조회 이름과 항목 표현은 이번 질문 또는 제공된 대화에 실제로 있는 표현만 사용하세요.",
@@ -88,12 +89,15 @@ _MESSAGES = {
         "Every observed item requires one decision",
         "Each requested setting needs an answer or explicit uncertainty",
         "Claims must answer the requested information",
+        "Duplicate requested facets",
+        "Duplicate unanswered facets",
+    ),
+    "ANSWER_COVERAGE_MISMATCH": (
         "Coverage must describe requested information",
+        "Coverage must describe requested facets, not reference presence",
         "Coverage and grounded statements disagree",
         "Unanswered rows cannot have complete coverage",
         "Unanswered facets cannot have complete coverage",
-        "Duplicate requested facets",
-        "Duplicate unanswered facets",
     ),
     "INCOMPLETE_EVIDENCE": ("Condition verdict must cite complete observed rows",),
     "INVALID_SELECTION": (
@@ -147,6 +151,7 @@ _MESSAGES = {
 _MESSAGE_CODES = {message: code for code, messages in _MESSAGES.items() for message in messages}
 _MESSAGE_CODES.update({code: code for code in RULES})
 _RULE_FIELDS = {
+    "ANSWER_COVERAGE_MISMATCH": "coverage",
     "PLAN_PARTS_MODE": "requestedParts",
     "PLAN_PARTS_REQUIRED": "requestedParts",
     "PLAN_PARTS_REFERENCES": "requestedParts",
@@ -160,6 +165,8 @@ _RULE_FIELDS = {
     "PLAN_SUBJECTS": "subjects",
 }
 _RULE_PATHS = {
+    "REQUESTED_PARTS_INCOMPLETE": "$.missingFacets",
+    "ANSWER_COVERAGE_MISMATCH": "$.coverage",
     "UNOBSERVED_FOCUS_ATTRIBUTE": "$.subjects[].focus.attribute",
     "UNOBSERVED_SUBJECT_NAME": "$.subjects[].name",
     "UNOBSERVED_SEARCH_TERM": "$.searchTerms[]",
@@ -228,7 +235,10 @@ def retry_feedback(exc: ValueError, schema: dict) -> list[dict[str, str]]:
     if not isinstance(exc, ValidationError):
         # Comparing an exact known message is safe; unknown text is not interpolated.
         code = _MESSAGE_CODES.get(str(exc), "RESPONSE_CONTRACT")
-        return [{"code": code, "rule": RULES[code]}]
+        entry = {"code": code, "rule": RULES[code]}
+        if code in _RULE_PATHS:
+            entry["path"] = _RULE_PATHS[code]
+        return [entry]
     fields = _schema_fields(schema)
     feedback = []
     for error in exc.errors(include_url=False, include_context=False, include_input=False):
