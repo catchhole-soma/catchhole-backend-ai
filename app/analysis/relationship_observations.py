@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
-RELATIONSHIP_OBSERVATION_VERSION = "relationship-observations:v1"
+RELATIONSHIP_OBSERVATION_VERSION = "relationship-observations:v2"
 MAX_RELATIONSHIP_OBSERVATIONS = 12
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 
@@ -18,14 +18,16 @@ class RelationshipEndpoint(BaseModel):
 
 
 class RelationshipObservationWire(BaseModel):
+    """An unclassified source excerpt, not a directed or confirmed relationship.
+
+    source/target identify the two participants only. Their order must not be used
+    to infer action direction, mutuality, family roles or canonical character IDs.
+    """
+
     model_config = ConfigDict(extra="forbid", strict=True)
 
     source: RelationshipEndpoint
     target: RelationshipEndpoint
-    kind: Literal["FRIEND", "COMPANION", "ALLY", "HOSTILE", "MENTOR", "FAMILY", "ROMANTIC", "OTHER"]
-    direction: Literal["SOURCE_TO_TARGET", "MUTUAL", "UNKNOWN"]
-    basis: Literal["EXPLICIT", "CONTEXTUAL", "UNCERTAIN", "NEGATED", "FIGURATIVE"]
-    temporal_scope: Literal["PRESENT", "PAST", "HYPOTHETICAL", "UNKNOWN"]
     summary: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
     evidence_quotes: list[Annotated[str, Field(min_length=1, max_length=1000)]] = Field(
         min_length=1, max_length=3,

@@ -19,8 +19,7 @@ def observation(**updates):
     return {
         "source": {"name": "라온", "mention": "라온"},
         "target": {"name": "미루", "mention": "미루"},
-        "kind": "COMPANION", "direction": "MUTUAL", "basis": "CONTEXTUAL",
-        "temporal_scope": "PRESENT", "summary": "두 사람이 함께 길을 찾는다.",
+        "summary": "두 사람이 함께 길을 찾는다.",
         "evidence_quotes": ["라온과 미루는 함께 출구로 가는 길을 찾았다."],
         **updates,
     }
@@ -59,12 +58,12 @@ def test_opt_in_preserves_facts_and_adds_grounded_side_channel_in_one_call():
     assert result.candidates[0].value_json == {"value": 12}
     value, = result.relationship_observations
     assert value.source_chunk_id == CHUNK_ID
-    assert value.basis == "CONTEXTUAL"
-    assert value.kind == "COMPANION"
+    assert value.summary == "두 사람이 함께 길을 찾는다."
+    assert not {"kind", "direction", "basis", "temporal_scope"} & value.model_dump().keys()
     span, = value.evidence_spans
     assert TEXT[span.start_offset:span.end_offset] == span.quote
     assert value.evidence_spans[0].start_offset == 0
-    assert "relationship-observations:v1" in client.calls[0]["prompt_cache_key"]
+    assert "relationship-observations:v2" in client.calls[0]["prompt_cache_key"]
 
 
 def test_default_request_and_serialized_result_remain_unchanged():
@@ -89,7 +88,8 @@ def test_default_request_and_serialized_result_remain_unchanged():
     ([observation(evidence_quotes=["없는 문장"])], "EVIDENCE_NOT_FOUND"),
     ([observation(target={"name": "라온", "mention": "미루"})], "SELF_OR_AMBIGUOUS_ENDPOINTS"),
     ([observation(target={"name": "다온", "mention": "다온"})], "ENDPOINT_NOT_IN_EVIDENCE"),
-    ([observation(direction="BOTH_WAYS")], "INVALID_ITEM"),
+    ([observation(summary={"invalid": "not text"})], "INVALID_ITEM"),
+    ([observation(kind="FRIEND", direction="MUTUAL", basis="EXPLICIT", temporal_scope="PRESENT")], "INVALID_ITEM"),
 ])
 def test_bad_observation_keeps_valid_fact_without_retry(raw, reason):
     client = Client({"candidates": [setting()], "relationship_observations": raw})
@@ -114,15 +114,18 @@ def test_valid_neighbors_survive_invalid_observation_and_duplicate():
     assert [(r.index, r.reason) for r in rejected] == [(1, "INVALID_ITEM"), (2, "DUPLICATE")]
 
 
-@pytest.mark.parametrize("basis", ["UNCERTAIN", "NEGATED", "FIGURATIVE", "CONTEXTUAL"])
-def test_uncertainty_direction_and_past_are_preserved_not_promoted(basis):
+@pytest.mark.parametrize("summary", [
+    "라온만 미루를 친구라고 여겼다.", "두 사람이 친구인지는 불명확하다.",
+    "과거에 함께 길을 찾았다.", "함께 길을 찾는다면 좋겠다고 상상했다.",
+])
+def test_validator_preserves_model_wording_without_inventing_relationship_labels(summary):
     values, rejected = ground_relationship_observations([
-        observation(basis=basis, temporal_scope="PAST", direction="SOURCE_TO_TARGET"),
+        observation(summary=summary),
     ], TEXT, CHUNK_ID)
     assert not rejected
-    assert values[0].basis == basis
-    assert values[0].direction == "SOURCE_TO_TARGET"
-    assert values[0].temporal_scope == "PAST"
+    # Location validation cannot establish semantic truth; audit the summary separately.
+    assert values[0].summary == summary
+    assert not {"kind", "direction", "basis", "temporal_scope"} & values[0].model_dump().keys()
 
 
 def test_an_unnamed_person_remains_unresolved():
@@ -163,9 +166,10 @@ def test_private_sidecar_persists_observations_without_fact_scoring_changes(tmp_
     result = extract(recorder)
     assert len(result.candidates) == 1
     data = json.loads(path.read_text())
+    assert data["version"] == "relationship-observations:v2"
     assert data["status"] == "UNCONFIRMED_OBSERVATIONS"
     assert data["chunks"][0]["episodeNo"] == 2
-    assert data["chunks"][0]["observations"][0]["kind"] == "COMPANION"
+    assert data["chunks"][0]["observations"][0]["summary"] == "두 사람이 함께 길을 찾는다."
     assert data["chunks"][0]["rawObservations"] == raw
     assert data["chunks"][0]["rejections"] == [{"index": 1, "reason": "INVALID_ITEM"}]
     assert path.stat().st_mode & 0o777 == 0o600
