@@ -47,7 +47,8 @@ python -m evals.multi_stage_setting.runtime_cli \
 공통 `LLM_REASONING_EFFORT=medium`, `store=false`를 유지한다. 기본 버전은 추가 옵션 없이
 동일 입력·모델·상한으로 실행한다. `promptVersions.characterRelationshipObservations`에
 실험 버전을 남기며 기존 fact 채점·최종 상태에는 관찰을 넣지 않는다. 별도 파일에는 성공한
-청크별 episodeNo, sourceChunkId, sourceSha256, 관찰과 제외 사유를 쓴다. 실패 청크를 성공으로
+청크별 episodeNo, sourceChunkId, sourceSha256, 원시 관찰·검증된 관찰과 제외 사유를 쓴다.
+원시 관찰은 신뢰하지 않는 진단 데이터이며 설정·관계 상태에 반영하지 않는다. 실패 청크를 성공으로
 채우지 않는다. 실행 성공 여부는 predictions의 실패 기록과 함께 확인한다.
 
 ## 판정

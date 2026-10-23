@@ -155,7 +155,8 @@ def test_invalid_fact_still_fails_existing_contract():
 
 def test_private_sidecar_persists_observations_without_fact_scoring_changes(tmp_path):
     path = tmp_path / "observations.json"
-    client = Client({"candidates": [setting()], "relationship_observations": [observation()]})
+    raw = [observation(), {"invalid": "untrusted model output"}]
+    client = Client({"candidates": [setting()], "relationship_observations": raw})
     recorder = RecordingRelationshipExtractor(
         CharacterSettingExtractor(llm_client=client, relationship_observations=True), path,
     )
@@ -165,6 +166,8 @@ def test_private_sidecar_persists_observations_without_fact_scoring_changes(tmp_
     assert data["status"] == "UNCONFIRMED_OBSERVATIONS"
     assert data["chunks"][0]["episodeNo"] == 2
     assert data["chunks"][0]["observations"][0]["kind"] == "COMPANION"
+    assert data["chunks"][0]["rawObservations"] == raw
+    assert data["chunks"][0]["rejections"] == [{"index": 1, "reason": "INVALID_ITEM"}]
     assert path.stat().st_mode & 0o777 == 0o600
     with pytest.raises(FileExistsError):
         RecordingRelationshipExtractor(recorder, path)

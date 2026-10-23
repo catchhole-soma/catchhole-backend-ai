@@ -27,6 +27,8 @@ class RecordingRelationshipExtractor:
             "episodeNo": kwargs.get("episode_no"),
             "sourceChunkId": str(kwargs["source_chunk_id"]),
             "sourceSha256": hashlib.sha256(kwargs["chunk_text"].encode("utf-8")).hexdigest(),
+            # Untrusted model data, private file only; retain rejected items for later audit.
+            "rawObservations": result._raw_relationship_observations,
             "observations": [item.model_dump(mode="json") for item in result.relationship_observations],
             "rejections": [item.model_dump(mode="json") for item in result.relationship_observation_rejections],
         })
