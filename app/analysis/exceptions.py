@@ -16,6 +16,10 @@ class OrderedInputContextError(ComparisonValidationError):
     """The frozen input/identity contract changed; never a candidate-local failure."""
 
 
+class OrderedPromptBudgetExceeded(OrderedInputContextError):
+    """The final prompt exceeds its token budget; world comparisons can hold it."""
+
+
 class OrderedAnalysisIncompleteError(Exception):
     """Stop an ordered run after a reported batch failure without losing its code."""
 

@@ -759,7 +759,7 @@ class SpringWorkerClient:
 
     # Spring 내부 API 인증 헤더 생성
     def _headers(self, lease_token: UUID | None = None) -> dict[str, str]:
-        headers = {INTERNAL_API_KEY_HEADER: self.internal_api_key}
+        headers = {INTERNAL_API_KEY_HEADER: self.internal_api_key, "X-Analysis-Reference-Selection": "true"}
         if lease_token is not None:
             headers[WORKER_LEASE_TOKEN_HEADER] = str(lease_token)
         return headers

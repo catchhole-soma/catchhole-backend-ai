@@ -63,4 +63,8 @@ def test_world_request_keeps_upstream_input_and_transport(purpose, captured):
     assert set(world_prompt_overrides) == {"world_extraction"}
     assert set(world_prompt_overrides["world_extraction"]) == {"sha256", "system_sha256", "prompt_cache_key"}
     overrides = {**overrides, **world_prompt_overrides.get(purpose, {})}
+    episode_projection = json.loads((ROOT / "tests/fixtures/gh287_episode_projection_request_overrides_20261024.json").read_text())["overrides"]
+    assert set(episode_projection) == {"extraction", "world_extraction"}
+    assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in episode_projection.values())
+    overrides = {**overrides, **episode_projection.get(purpose, {})}
     assert actual[purpose] == {**expected["requests"][purpose], **overrides}

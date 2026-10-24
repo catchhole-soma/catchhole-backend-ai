@@ -1,0 +1,15 @@
+{
+  "reason": "GH287 episode first-stage lean projection and retained static temporal rules; preserve historical captures and all other transport fields.",
+  "overrides": {
+    "extraction": {
+      "prompt_cache_key": "setting-extraction:v12:e9721bfb5d486efc:episode-lean-pending-v1",
+      "sha256": "25a53e5122f5674128f35f2bc5c4ab3cd42913c40faf44ecd2654b76fe7bff22",
+      "system_sha256": "8c394e558f0a32361f10d14b26aa15d066784d7767a1e5cc228489aee65aa4b7"
+    },
+    "world_extraction": {
+      "prompt_cache_key": "world-setting-extraction:v6:episode-lean-v1",
+      "sha256": "d71ff23c4d0a98ccfd4fd8ef2ae9c2e946ad90e37c7bf445c9b5c00b1a8ccc41",
+      "system_sha256": "fd7868cc41b61bd34199d09f4c3e3304d1ad978483504399d50ffc5506454f6c"
+    }
+  }
+}

@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
-from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError, OrderedPromptBudgetExceeded
 from app.analysis.book_world_claims import is_asserted_book_claim
 from app.analysis.ordered_context import validate_comparison_source
 from app.analysis.world_setting_batch_recovery import (
@@ -11,7 +11,7 @@ from app.analysis.world_setting_batch_recovery import (
     exception_diagnostics, map_diagnostics, recover_world_batch,
 )
 from app.analysis.world_setting_comparator import (
-    WorldSettingComparator,
+    ComparisonTargetReference, WorldSettingComparator, batch_limit_review_result,
     WorldSettingSubjectResolver,
 )
 from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
@@ -999,6 +999,17 @@ class WorldSettingComparisonPipeline:
                         diagnostics = map_diagnostics(
                             raw_comparison.get("validation_diagnostics", []), batch.candidates, cluster_targets,
                         )
+            except OrderedPromptBudgetExceeded:
+                # Local budget holds bypass provider-response recovery validation.
+                # Frozen source/context errors remain fatal in the next handler.
+                review = batch_limit_review_result(
+                    batch.candidates,
+                    [ComparisonTargetReference(reference=f"T{index}", target=target)
+                     for index, target in enumerate(cluster_targets, start=1)],
+                    reason="비교 입력이 토큰 한도를 넘어 자동 비교하지 않았습니다.",
+                )
+                domain_decisions = review.decisions
+                raw_comparison = {**review.model_dump(mode="json"), "input_budget": {"exceeded": True}}
             except BaseException as exc:
                 if batch.analysis_context is not None:
                     exc.world_comparison_diagnostics = exception_diagnostics(exc, batch.candidates, cluster_targets)
