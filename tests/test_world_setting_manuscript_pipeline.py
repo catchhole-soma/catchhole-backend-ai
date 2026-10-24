@@ -186,3 +186,32 @@ def test_reset_reclaims_replacement_before_prefetched_sibling_after_exhaustion()
     assert spring.pending == []
     assert [identifier.int for identifier, _ in spring.completions] == [103, 102]
     assert len(provider.requests) == 2
+
+
+def test_oversized_single_group_is_held_and_next_group_still_calls_provider():
+    class LargeContextSpring(Spring):
+        async def get_world_setting_comparison_batch_context(self, *args, **kwargs):
+            context = await super().get_world_setting_comparison_batch_context(*args, **kwargs)
+            if context.comparison_batch_id.int == 101:
+                from app.schemas.worker import WorkerWorldSettingProperty
+                context.targets[0].properties = [WorkerWorldSettingProperty(
+                    setting_name="기존 효과", value="기존 설정 내용 " * 10000,
+                )]
+            return context
+
+    spring, provider = LargeContextSpring([batch(1), batch(2)]), Provider()
+    comparator = WorldSettingComparator(llm_client=provider, model="gpt-6.1-sol", max_attempts=1)
+    comparator.batch_max_input_tokens = 16000
+    pipeline = WorldSettingComparisonPipeline(spring, None, comparator,
+        manuscript_comparator=WorldSettingManuscriptComparator(comparator, max_input_tokens=16000))
+    result = asyncio.run(pipeline.process_all(UUID(int=900), UUID(int=901)))
+    assert result.completed_count == 2
+    assert spring.failures == []
+    assert len(provider.requests) == 1
+    assert provider.requests[0]["candidates"][0]["setting_name"] == "효과2"
+    first, second = [request for _, request in spring.completions]
+    assert first.decisions[0].suggested_operation == "REVIEW_REQUIRED"
+    assert first.decisions[0].comparison_review_reason == "BATCH_LIMIT_EXCEEDED"
+    assert first.decisions[0].proposed_value == batch(1).candidates[0].extracted_value
+    assert first.context_versions[0].version == 1
+    assert second.decisions[0].suggested_operation == "ADD"

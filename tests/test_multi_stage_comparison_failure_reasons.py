@@ -285,3 +285,53 @@ def test_failure_reasons_reach_scored_cases_without_changing_scores():
     old_report = asyncio.run(evaluate_multi_stage(gold, old_bundle))
     assert report["stages"] == old_report["stages"]
     assert report["endToEnd"] == old_report["endToEnd"]
+
+@pytest.mark.parametrize("during_recovery", [False, True])
+@pytest.mark.parametrize("frozen_error", [False, True])
+def test_world_input_budget_matches_production_hold_and_continues(
+    monkeypatch, during_recovery, frozen_error,
+):
+    from dataclasses import replace
+    from app.analysis import ordered_context
+    from app.analysis.exceptions import OrderedInputContextError, OrderedPromptBudgetExceeded
+
+    sources = _sources()
+    next_source = replace(sources[0], source_id="next", candidate=sources[0].candidate.model_copy(
+        update={"candidate_id": UUID(int=3), "scope_name": "별도"},
+    ))
+    next_response = {"decisions": [{
+        **_response()["decisions"][1], "source_candidate_refs": ["C1"],
+        "proposed_scope_name": "별도", "proposed_setting_name": "성인식 나이",
+        "proposed_value": "열여덟 살",
+    }]}
+    client = RecordedClient(([{"decisions": []}] if during_recovery else []) + [next_response])
+    comparator = WorldSettingComparator(llm_client=client, max_attempts=2)
+    original_check = ordered_context.ensure_ordered_prompt_fits
+    checks = 0
+
+    def check(*args, **kwargs):
+        nonlocal checks
+        checks += 1
+        if checks == (2 if during_recovery else 1):
+            error = OrderedInputContextError if frozen_error else OrderedPromptBudgetExceeded
+            raise error("synthetic_input_boundary")
+        return original_check(*args, **kwargs)
+
+    monkeypatch.setattr(ordered_context, "ensure_ordered_prompt_fits", check)
+    if frozen_error:
+        with pytest.raises(OrderedInputContextError):
+            asyncio.run(_run_world_batches([*sources, next_source], comparator))
+        assert len(client.requests) == int(during_recovery)
+        return
+
+    predictions, failures = asyncio.run(_run_world_batches([*sources, next_source], comparator))
+    assert failures == []
+    assert [p.source_candidate_id for p in predictions] == ["first", "second", "next"]
+    for prediction, source in zip(predictions[:2], sources, strict=True):
+        assert prediction.operation == "REVIEW_REQUIRED"
+        assert prediction.comparison_reason == "비교 입력이 토큰 한도를 넘어 자동 비교하지 않았습니다."
+        assert prediction.proposed_scope_name == source.candidate.scope_name
+        assert prediction.proposed_setting_name == source.candidate.setting_name
+        assert prediction.proposed_value == source.candidate.extracted_value
+    assert predictions[-1].operation == "ADD"
+    assert len(client.requests) == 1 + int(during_recovery)
