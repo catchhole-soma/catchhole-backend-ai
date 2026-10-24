@@ -121,4 +121,8 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     assert set(extraction_budget_overrides) == {"extraction", "world_extraction"}
     assert all(set(row) == {"sha256", "max_output_tokens"} for row in extraction_budget_overrides.values())
     authorized = {**authorized, **extraction_budget_overrides.get(purpose, {})}
+    episode_projection = json.loads((ROOT / "tests/fixtures/gh287_episode_projection_request_overrides_20261024.json").read_text())["overrides"]
+    assert set(episode_projection) == {"extraction", "world_extraction"}
+    assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in episode_projection.values())
+    authorized = {**authorized, **episode_projection.get(purpose, {})}
     assert actual[purpose] == {**expected, **authorized}

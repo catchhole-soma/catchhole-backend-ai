@@ -58,9 +58,6 @@ def test_world_requests_keep_world_holds_without_character_input_or_budget_overf
          "reason": "SCOPE_UNRESOLVED", "setting_name": "효과", "value": "회복 효과는 불명확하다.",
          "evidence": ["회복 효과는 불명확하다."], "confirmation_status": "UNRESOLVED",
          "applied_to_current_state": False, "scope_name": "희석 상태", "matched_property_name": "효과"},
-        {"domain": "worldSettings", "subject_name": "다른 지역", "source_episode_no": 2,
-         "reason": "GENERAL_UNCERTAINTY", "setting_name": "환경", "value": "환경은 불명확하다.",
-         "evidence": [], "confirmation_status": "UNRESOLVED", "applied_to_current_state": False},
     ]
     provider = RecordingProvider(fail_first=mode == "recovery")
     comparator = WorldSettingComparator(llm_client=provider, model="offline-test", max_attempts=1)
@@ -94,6 +91,9 @@ def test_world_requests_keep_world_holds_without_character_input_or_budget_overf
     for request in provider.requests:
         payload = json.loads(request["user_prompt"])
         payloads = payload["groups"] if mode == "packed" else [payload]
-        assert all(item["unresolved_references"] == expected for item in payloads)
+        for item in payloads:
+            related = expected if item['targets'][0]['subject_name'] == '물약1' else []
+            assert item['unresolved_references'] == related
+        assert '다른 지역' not in request['user_prompt']
         assert "CHARACTER_HOLD_ONLY" not in request["user_prompt"]
     assert [ref.model_dump(mode="json") for ref in refs] == original

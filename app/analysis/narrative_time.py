@@ -101,7 +101,7 @@ def narrative_prompt_data(value: Any) -> Any:
     identities: dict[tuple[str, str], str] = {}
     prefixes = {"sourceCandidateId": "S", "sourceAnalysisJobId": "J", "sourceChunkId": "T", "factId": "H"}
     omitted = {"storageBinding", "contentHash", "sourceHash", "inputStateHash", "projectionStateHash", "contextToken",
-               "episodeId", "settingBookId", "revisionId", "workId", "characterId", "provisionalSubjectKey"}
+               "episodeId", "settingBookId", "revisionId", "workId", "characterId", "provisionalSubjectKey", "selectionNames"}
 
     def project(item):
         if isinstance(item, BaseModel):

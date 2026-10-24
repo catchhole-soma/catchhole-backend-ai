@@ -120,7 +120,7 @@ def test_current_and_forecast_have_explicit_separate_extraction_contract():
     request = client.requests[0]
     assert "별도 SETTING 후보" in request["system_prompt"]
     assert "현재 후보" in request["system_prompt"] and "active=false" in request["system_prompt"]
-    assert request["prompt_cache_key"].endswith(CACHE_SUFFIX)
+    assert request["prompt_cache_key"].endswith(":episode-lean-pending-v1")
 
 
 @pytest.mark.parametrize("ordered,fact_type", [(True, "STATUS"), (False, "STATUS"), (True, "PROFILE")])
@@ -216,7 +216,7 @@ def test_legacy_extraction_and_existing_json_properties_are_preserved():
     client = OfflineClient({"candidates": [provider_candidate(value, CURRENT_QUOTE)]})
     result = asyncio.run(CharacterSettingExtractor(llm_client=client).extract_from_chunk(CHUNK_ID, SOURCE, schema_hints=(STATUS_HINT,)))
     assert result.candidates[0].value_json == value
-    assert context_module.CURRENT_STATUS_FORECAST_INSTRUCTIONS not in client.requests[0]["system_prompt"]
+    assert context_module.CURRENT_STATUS_FORECAST_INSTRUCTIONS in client.requests[0]["system_prompt"]
     assert CACHE_SUFFIX not in client.requests[0]["prompt_cache_key"]
 
 

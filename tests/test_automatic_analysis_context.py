@@ -107,10 +107,10 @@ def test_extraction_reads_aliases_review_source_and_unresolved_as_separate_conte
         schema_hints=DEFAULT_SCHEMA_HINTS, ordered_context=context,
     ))
     prompt = client.requests[0]["user_prompt"]
-    assert '"aliases": ["에르웬 미샤"]' in prompt
-    assert '"review_source": "AUTOMATIC"' in prompt
-    assert '"confirmation_status": "UNRESOLVED"' in prompt
-    assert '"applied_to_current_state": false' in prompt
+    assert 'pending_character_hints' in prompt
+    assert '"names": ["에르웬"]' in prompt
+    assert 'identity_evidence' not in prompt and 'review_source' not in prompt
+    assert 'CHARACTER_MATCH_UNRESOLVED' not in prompt
     assert str(character.character_id) not in prompt
     assert str(context.analysis_context.run_id) not in prompt
     target = initial_ordered_subjects(context)[0]
@@ -199,7 +199,7 @@ def test_character_batch_pipeline_keeps_unresolved_out_of_snapshots_and_counts_i
     prompt = json.loads(client.requests[0]["user_prompt"])
     assert len(prompt["snapshot_entries"]) == 1
     assert prompt["snapshot_entries"][0]["review_source"] == "AUTOMATIC"
-    assert len(prompt["unresolved_references"]) == 2
+    assert len(prompt["unresolved_references"]) == 1
     comparator.batch_max_input_tokens = _estimate_prompt_tokens(
         client.requests[0]["system_prompt"], client.requests[0]["user_prompt"], comparator.model,
     ) + 1
@@ -217,13 +217,14 @@ def test_world_subject_resolver_considers_unresolved_even_without_registered_sub
         subject_name="합성 종족", evidence_spans=[{"quote": "새 합성 종족이 나타났다."}],
     )
     resolver = WorldSettingSubjectResolver(llm_client=client, model="test-model")
+    related = _reference("worldSettings").model_copy(update={"subject_name": candidate.subject_name})
     selected, ambiguous = asyncio.run(resolver.select_ordered_subjects(
-        candidate, [], unresolved_references=tuple(_context().unresolved_references),
+        candidate, [], unresolved_references=(_reference(), related),
     ))
     assert selected == [] and ambiguous is True
     prompt = json.loads(client.requests[0]["user_prompt"])
     assert prompt["subjects"] == []
-    assert len(prompt["unresolved_references"]) == 2
+    assert len(prompt["unresolved_references"]) == 1
 
 
 def test_world_batch_unresolved_claims_are_not_selectable_target_properties():
@@ -233,7 +234,7 @@ def test_world_batch_unresolved_claims_are_not_selectable_target_properties():
     target.properties[0].provenance = target.properties[0].provenance.model_copy(update={"review_source": "HUMAN"})
     result, _ = asyncio.run(comparator.compare_batch(
         "RACE", _candidates(), [target], ordered_context=True,
-        unresolved_references=tuple(_context().unresolved_references),
+        unresolved_references=(_reference(), _reference("worldSettings").model_copy(update={"subject_name": target.subject_name})),
     ))
     assert len(result.decisions) == 7
     prompt = json.loads(client.requests[0]["user_prompt"])
@@ -252,8 +253,8 @@ def test_world_extraction_references_do_not_change_legacy_requests():
     asyncio.run(extractor.extract_from_chunk("새 원고", episode_no=2))
     assert client.requests[0] == client.requests[2]
     assert "UNRESOLVED" not in client.requests[0]["user_prompt"]
-    assert '"applied_to_current_state": false' in client.requests[1]["user_prompt"]
-    assert "unresolved_references" in client.requests[1]["system_prompt"]
+    assert client.requests[0]["user_prompt"] == client.requests[1]["user_prompt"]
+    assert "unresolved_references" not in client.requests[1]["system_prompt"]
 
 
 def test_world_pipeline_forwards_frozen_references_to_subject_resolution_and_comparison():
@@ -296,7 +297,7 @@ def test_world_pipeline_forwards_frozen_references_to_subject_resolution_and_com
 
     asyncio.run(scenario())
     assert len(client.requests) == 1
-    assert all(len(json.loads(call["user_prompt"])["unresolved_references"]) == 2 for call in client.requests)
+    assert all(json.loads(call["user_prompt"])["unresolved_references"] == [] for call in client.requests)
     assert len(spring.completions) == 1
     assert spring.completions[0].context_token == "c" * 64
 
@@ -323,7 +324,8 @@ def test_character_pipeline_reads_references_from_the_frozen_batch_context():
     pipeline = CharacterFactComparisonPipeline(spring, CharacterFactComparator(llm_client=client, model="test-model"))
     asyncio.run(pipeline._compare_batch_with_fresh_context(uuid4(), uuid4(), batch))
     assert len(spring.completions) == 1
-    assert len(json.loads(client.requests[0]["user_prompt"])["unresolved_references"]) == 2
+    # The batch's different character does not inherit the work-level pending name.
+    assert json.loads(client.requests[0]["user_prompt"])["unresolved_references"] == []
 
     # Even the same input hash cannot hide changed transport reference contents.
     spring.context = comparison_context.model_copy(update={"analysis_context": _input_context().model_copy(update={
@@ -369,7 +371,208 @@ def test_analysis_worker_passes_frozen_references_to_both_extraction_stages():
 
     asyncio.run(scenario())
     assert len(client.requests) == 2
+    assert "pending_character_hints" in client.requests[0]["user_prompt"]
+    assert "unresolved_references" not in client.requests[1]["user_prompt"]
     for request in client.requests:
-        assert "unresolved_references" in request["user_prompt"]
-        assert '"applied_to_current_state": false' in request["user_prompt"]
+        assert "semantic_current_state" not in request["user_prompt"]
         assert str(payload.analysis_context.run_id) not in request["user_prompt"]
+
+
+def test_gh287_episode_first_stage_is_lean_and_world_has_no_pending_input():
+    context = OrderedExtractionContext(_context(), (), (_temporary_character(),))
+    client = RecordingClient({'candidates': []})
+    asyncio.run(CharacterSettingExtractor(llm_client=client, model='test-model').extract_from_chunk(
+        source_chunk_id=CHUNK_ID, chunk_text='이번 원문.', episode_no=2,
+        schema_hints=DEFAULT_SCHEMA_HINTS, ordered_context=context))
+    request = client.requests[0]
+    assert 'pending_character_hints' in request['user_prompt']
+    assert '이전 원문의 근거' not in request['user_prompt']
+    assert 'CHARACTER_MATCH_UNRESOLVED' not in request['user_prompt']
+    assert 'ordered_character_state' not in request['user_prompt']
+    assert 'semantic_current_state' not in request['user_prompt']
+    assert '다시 발견할 필요는 없' not in request['user_prompt']
+    world = RecordingClient({'candidates': []})
+    asyncio.run(WorldSettingExtractor(llm_client=world, model='test-model').extract_from_chunk(
+        chunk_text='이번 원문.', episode_no=2, analysis_context=_context()))
+    assert world.requests[0]['user_prompt'] == 'metadata:\n{"episode_no": 2, "episode_title": null}\n\nchunk_text:\n이번 원문.'
+    assert 'unresolved_references는' not in world.requests[0]['system_prompt']
+
+
+def test_gh287_comparison_selects_related_domain_and_known_identity_before_token_count():
+    subject_id = uuid4()
+    related = _reference().model_copy(update={'setting_name': 'status.부상', 'value': 'related injury'})
+    wrong = WorkerAnalysisReference.model_validate({**related.model_dump(by_alias=True),
+        'value': 'wrong same-name identity', 'selection': {'actualSubjectIds': [str(uuid4())]}})
+    linked = WorkerAnalysisReference.model_validate({**related.model_dump(by_alias=True),
+        'selection': {'actualSubjectIds': [str(subject_id)]}})
+    unrelated = related.model_copy(update={'subject_name': '무관한 사람', 'value': 'unrelated' * 5000})
+    refs = (wrong, linked, unrelated, _reference('worldSettings'))
+    client = RecordingClient({'decisions': [_decision_payload('C1', operation='ADD', resolved_key='status.부상', value='회복')]})
+    comparator = CharacterFactComparator(llm_client=client, model='test-model')
+    args = dict(matched_character_name='에르웬', canonical_fact_type='STATUS',
+        candidates=[_candidate('C1', 'Q1', '회복')], snapshot_entries=[], ordered_context=True,
+        unresolved_references=refs, advisory_current_context={'characterId': str(subject_id)})
+    asyncio.run(comparator.compare_batch(**args))
+    prompt = json.loads(client.requests[0]['user_prompt'])
+    assert [item['value'] for item in prompt['unresolved_references']] == ['related injury']
+    assert str(subject_id) not in client.requests[0]['user_prompt']
+    assert asyncio.run(comparator.batch_fits(**args))
+    assert len(refs) == 4
+
+
+def test_gh287_provisional_link_survives_changed_display_name_through_shared_builder():
+    from app.analysis.pending_reference_projection import PendingSubjectScope
+    key = 'provisional-character:synthetic'
+    item = WorkerAnalysisReference.model_validate({**_reference().model_dump(by_alias=True),
+        'subjectName': '이전 표기', 'selection': {'provisionalSubjectKeys': [key]}})
+    client = RecordingClient({'decisions': [_decision_payload('C1', operation='ADD', resolved_key='status.부상', value='회복')]})
+    comparator = CharacterFactComparator(llm_client=client, model='test-model')
+    args = dict(matched_character_name='새 표기', canonical_fact_type='STATUS',
+        candidates=[_candidate('C1', 'Q1', '회복')], snapshot_entries=[], ordered_context=True,
+        unresolved_references=(item,), pending_subject_scope=PendingSubjectScope(
+            'characters', provisional_subject_keys=(key,), names=('새 표기',)))
+    asyncio.run(execute_character_fact_comparison_batch(comparator, **args))
+    assert json.loads(client.requests[0]['user_prompt'])['unresolved_references'][0]['subject_name'] == '이전 표기'
+    assert key not in client.requests[0]['user_prompt']
+
+
+def test_gh287_episode_keeps_static_temporal_rules_and_provisional_status_provenance():
+    from app.analysis.semantic_current_context import CURRENT_STATUS_FORECAST_INSTRUCTIONS
+    from app.schemas.worker import WorkerAnalysisActiveCharacterStatusPayload
+    provisional = _temporary_character().model_copy(update={'active_statuses': [
+        WorkerAnalysisActiveCharacterStatusPayload(fact_key='status.부상', fact_value='골절',
+            provenance=AnalysisStateProvenance(confirmation_status='PROVISIONAL', source_episode_no=1))]})
+    client = RecordingClient({'candidates': []})
+    asyncio.run(CharacterSettingExtractor(llm_client=client, model='test-model').extract_from_chunk(
+        source_chunk_id=CHUNK_ID, chunk_text='이번 원문.', episode_no=2,
+        schema_hints=DEFAULT_SCHEMA_HINTS, ordered_context=OrderedExtractionContext(_context(), (), (provisional,))))
+    request = client.requests[0]
+    assert CURRENT_STATUS_FORECAST_INSTRUCTIONS in request['system_prompt']
+    assert 'PROVISIONAL' in request['user_prompt']
+    assert 'status.부상' in request['user_prompt']
+    assert 'identity_evidence' not in request['user_prompt']
+
+
+def test_gh287_real_character_batch_uses_frozen_aliases_without_losing_id_mismatch_guard():
+    from app.analysis.character_fact_comparison_pipeline import CharacterFactComparisonPipeline
+    from tests.test_character_fact_batch import FakeBatchSpring, _batch, _context as character_context
+    subject_id = uuid4()
+    related = _reference().model_copy(update={'subject_name': '옛별명'})
+    wrong = WorkerAnalysisReference.model_validate({**related.model_dump(by_alias=True),
+        'selection': {'actualSubjectIds': [str(uuid4())]}})
+    frozen = _input_context().model_copy(update={'unresolved_references': [related, wrong]})
+    batch = _batch().model_copy(update={'analysis_context': frozen, 'matched_character_name': '정식이름',
+        'candidates': [_candidate('C1', 'Q1', '회복')]})
+    context = character_context(batch).model_copy(update={'analysis_context': frozen,
+        'matched_character_name': '정식이름', 'snapshot_entries': [],
+        'advisory_current_context': {'characterId': str(subject_id), 'selectionNames': ['정식이름', '옛별명']}})
+    client = RecordingClient({'decisions': [_decision_payload('C1', operation='ADD', resolved_key='status.부상', value='회복')]})
+    pipeline = CharacterFactComparisonPipeline(FakeBatchSpring(batch, context),
+        CharacterFactComparator(llm_client=client, model='test-model'))
+    asyncio.run(pipeline._compare_batch_with_fresh_context(uuid4(), uuid4(), batch))
+    prompt = json.loads(client.requests[0]['user_prompt'])
+    assert [item['subject_name'] for item in prompt['unresolved_references']] == ['옛별명']
+    assert 'selectionNames' not in client.requests[0]['user_prompt']
+
+
+def test_gh287_world_resolved_target_keeps_candidate_spelling_with_same_id_guard():
+    target = _target(provisional=False).model_copy(update={'subject_name': '정식이름'})
+    candidates = [candidate.model_copy(update={'subject_name': '옛별명'}) for candidate in _candidates()]
+    related = _reference('worldSettings').model_copy(update={'subject_name': '옛별명'})
+    wrong = WorkerAnalysisReference.model_validate({**related.model_dump(by_alias=True),
+        'selection': {'actualSubjectIds': [str(uuid4())]}})
+    client = RecordingClient(_valid_result())
+    asyncio.run(WorldSettingComparator(llm_client=client, model='test-model').compare_batch(
+        'RACE', candidates, [target], ordered_context=True, unresolved_references=(related, wrong)))
+    prompt = json.loads(client.requests[0]['user_prompt'])
+    assert [item['subject_name'] for item in prompt['unresolved_references']] == ['옛별명']
+
+
+def test_gh287_large_unrelated_context_is_filtered_before_exact_count_and_schema_retry():
+    from app.analysis.ordered_context import ensure_ordered_prompt_fits
+    from app.llm.responses import LlmTextResponse
+    related = _reference().model_copy(update={'value': '다리 부상'})
+    refs = (related, *(_reference().model_copy(update={
+        'subject_name': f'무관인물{index}', 'value': '무관한 합성 설정 ' * 80}) for index in range(143)))
+
+    class CountedProvider:
+        def __init__(self):
+            self.requests, self.counts = [], []
+
+        async def count_input_tokens(self, **kwargs):
+            self.counts.append(kwargs)
+            return ensure_ordered_prompt_fits(kwargs['system_prompt'], kwargs['user_prompt'],
+                max_tokens=1000000, response_schema=kwargs.get('response_schema'))
+
+        async def create_text_response(self, **kwargs):
+            self.requests.append(kwargs)
+            return LlmTextResponse(text='invalid json' if len(self.requests) == 1 else json.dumps({
+                'decisions': [_decision_payload('C1', operation='ADD', resolved_key='status.부상', value='부상')]}))
+
+    provider = CountedProvider()
+    comparator = CharacterFactComparator(llm_client=provider, model='gpt-6.1-sol', max_attempts=2)
+    args = dict(matched_character_name='에르웬', canonical_fact_type='STATUS',
+        candidates=[_candidate('C1', 'Q1', '부상')], snapshot_entries=[], ordered_context=True,
+        unresolved_references=refs)
+    assert asyncio.run(comparator.batch_fits(**args))
+    asyncio.run(comparator.compare_batch(**args))
+    assert len(provider.requests) == 2
+    for request in provider.requests:
+        payload = json.loads(request['user_prompt'])
+        assert [item['value'] for item in payload['unresolved_references']] == ['다리 부상']
+        assert any(count['user_prompt'] == request['user_prompt'] and count['system_prompt'] == request['system_prompt']
+            and count.get('response_schema') == request.get('response_schema') for count in provider.counts)
+    request = provider.requests[0]
+    full = json.loads(request['user_prompt'])
+    full['unresolved_references'] = [item.prompt_data() for item in refs]
+    before = ensure_ordered_prompt_fits(request['system_prompt'], json.dumps(full, ensure_ascii=False),
+        max_tokens=1000000, response_schema=request.get('response_schema'))
+    after = ensure_ordered_prompt_fits(request['system_prompt'], request['user_prompt'],
+        max_tokens=1000000, response_schema=request.get('response_schema'))
+    assert before > after * 2
+    assert len(refs) == 144 and refs[-1].value.startswith('무관한 합성 설정')
+
+
+def test_gh287_forced_character_split_keeps_frozen_scope_in_counts_and_child_requests():
+    from app.analysis.pending_reference_projection import PendingSubjectScope
+    from app.llm.exceptions import LlmOutputTruncatedError
+    from app.llm.responses import LlmTextResponse
+    key = f'provisional-character:{uuid4()}'
+    related = WorkerAnalysisReference.model_validate({**_reference().model_dump(by_alias=True),
+        'subjectName': '옛 표기', 'selection': {'provisionalSubjectKeys': [key]}})
+    refs = (related, _reference().model_copy(update={'subject_name': '무관인물'}), _reference('worldSettings'))
+    sources = [_candidate('C1', 'Q1', '부상'), _candidate('C2', 'Q2', '두통').model_copy(update={
+        'raw_fact_key': 'status.두통', 'initial_canonical_fact_key': 'status.두통'})]
+
+    class SplitProvider:
+        def __init__(self):
+            self.requests, self.counts = [], []
+
+        async def count_input_tokens(self, **kwargs):
+            self.counts.append(kwargs)
+            return 1000
+
+        async def create_text_response(self, **kwargs):
+            self.requests.append(kwargs)
+            candidates = json.loads(kwargs['user_prompt'])['candidates']
+            if len(candidates) == 2:
+                raise LlmOutputTruncatedError('synthetic output cap', incomplete_reason='max_output_tokens', max_output_tokens=16000)
+            row = candidates[0]
+            return LlmTextResponse(text=json.dumps({'decisions': [_decision_payload(
+                row['candidate_ref'], operation='ADD', resolved_key=row['initial_canonical_fact_key'], value=row['attribute_value'])]}))
+
+    provider = SplitProvider()
+    result = asyncio.run(execute_character_fact_comparison_batch(
+        CharacterFactComparator(llm_client=provider, model='gpt-6.1-sol', max_attempts=1),
+        matched_character_name='새 표기', canonical_fact_type='STATUS', candidates=sources,
+        snapshot_entries=[], ordered_context=True, unresolved_references=refs,
+        pending_subject_scope=PendingSubjectScope('characters', provisional_subject_keys=(key,), names=('새 표기',))))
+    assert len(provider.requests) == 3 and len(result.decisions) == 2 and not result.failures
+    for request in provider.requests:
+        payload = json.loads(request['user_prompt'])
+        assert [item['subject_name'] for item in payload['unresolved_references']] == ['옛 표기']
+        assert any(count['user_prompt'] == request['user_prompt'] and count['system_prompt'] == request['system_prompt']
+            and count.get('response_schema') == request.get('response_schema') for count in provider.counts)
+        assert key not in request['user_prompt']
+    assert len(json.loads(provider.requests[-1]['user_prompt'])['snapshot_entries']) == 1
+    assert len(refs) == 3 and related.selection.provisional_subject_keys == (key,)

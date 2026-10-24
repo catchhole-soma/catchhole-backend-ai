@@ -20,6 +20,10 @@ from app.analysis.ordered_context import (
     ordered_reference_data,
     ordered_state_instructions,
 )
+from app.analysis.pending_reference_projection import (
+    select_pending_references,
+    world_scopes,
+)
 from app.analysis.schemas import _to_openai_strict_json_schema
 from app.domain.enums import AnalysisFailureCode, AnalysisSourceKind
 from app.exceptions.failure_classification import (
@@ -219,7 +223,9 @@ def _prompts(candidates, active, *, ordered, unresolved_references, prompt_path)
             }),
         })
     if ordered:
-        payload["unresolved_references"] = ordered_reference_data(unresolved_references)
+        payload["unresolved_references"] = ordered_reference_data(unresolved_references if has_book else
+            select_pending_references(unresolved_references,
+                world_scopes([candidate for _, candidate in candidates], tuple(active.values()))))
     return system, json.dumps(payload, ensure_ascii=False)
 
 
