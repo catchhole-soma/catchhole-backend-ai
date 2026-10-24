@@ -15,7 +15,17 @@ from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import LlmResponseSchema
 
 
-def test_default_http_client_extends_only_read_timeout_to_300_seconds() -> None:
+def test_default_client_can_receive_generation_taking_more_than_five_minutes(monkeypatch) -> None:
+    async def slow_generation(transport, request):
+        # Model a response that arrives after the old read budget, without sleeping.
+        if request.extensions["timeout"]["read"] <= 300:
+            raise httpx.ReadTimeout("Generation needs more than five minutes", request=request)
+        assert request.extensions["timeout"]["connect"] == 120
+        assert request.extensions["timeout"]["write"] == 120
+        assert request.extensions["timeout"]["pool"] == 120
+        return _response(request, [])
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", slow_generation)
     client = OpenAIResponsesClient(
         api_key="test-key",
         model="gpt-4.1-mini",
@@ -23,10 +33,8 @@ def test_default_http_client_extends_only_read_timeout_to_300_seconds() -> None:
     )
 
     try:
-        assert client.http_client.timeout.read == 300
-        assert client.http_client.timeout.connect == 120
-        assert client.http_client.timeout.write == 120
-        assert client.http_client.timeout.pool == 120
+        response = asyncio.run(client.create_text_response("rules", "source"))
+        assert response.text == '{"candidates":[]}'
     finally:
         asyncio.run(client.aclose())
 

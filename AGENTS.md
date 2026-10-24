@@ -162,7 +162,7 @@
 - 의미 채점 요청은 회차 경계를 유지하고, 같은 회차 안에서 지시문·비교 데이터·응답 schema와 여유분을 포함한 입력 추정량 64,000토큰으로 묶는다. 8쌍 같은 고정 개수 제한은 두지 않으며 출력 상한은 추론을 포함해 요청당 32,000토큰이다. 출력 절단만 해당 묶음을 반으로 나눠 재시도하고 실패 호출의 사용량도 합산한다. 단일 비교가 입력 상한을 넘으면 호출 전에 거절하며 내용을 자르거나 후보를 누락하지 않는다.
 
 - OpenAI Responses API 요청은 기본적으로 `store=false`를 명시한다. 운영 Worker·judge와 일반 평가는 이 기본값을 유지한다. 사용자가 원문/응답 저장을 명시적으로 승인한 진단 실행에만 다단계 평가 CLI `--store-responses` 또는 해당 실행의 `store_responses=true`를 사용한다. 실행 옵션 기본값은 false이고 전역 환경설정으로 저장을 활성화하지 않으며, 저장 여부와 응답 ID만 공개 로그에 남긴다.
-- OpenAI Responses 기본 client는 응답 읽기 제한을 300초, 연결·전송·풀 대기를 각각 120초로 둔다. 읽기 제한은 AI 추론 시간이나 출력 토큰 상한이 아니며 주입한 HTTP client의 timeout은 덮어쓰지 않는다. 120초 뒤 클라이언트가 중단됐어도 공급자에는 생성 결과가 남을 수 있으므로 두 상태를 구분한다.
+- OpenAI Responses 기본 client는 긴 추론 응답을 위해 읽기 제한을 900초, 연결·전송·풀 대기를 각각 120초로 둔다. 장기 Worker 호출은 기존 60초 heartbeat로 lease를 갱신하며 재시도 횟수·출력 상한을 함께 늘리지 않는다. 읽기 제한은 추론 시간이나 출력 토큰 상한이 아니며 주입한 HTTP client의 timeout은 덮어쓰지 않는다. 클라이언트 중단과 공급자 생성·청구 상태를 구분하고 응답 없는 사용량을 0으로 해석하지 않는다.
 - 평가의 `extraction_max_output_tokens`는 예측 step의 캐릭터 1차 상한만 기본 6,000 또는 진단 9,000으로 선택하는 별도 override이며 운영 기본값과 구분한다. 절단 재시도는 runtime의 `LLM_SETTING_EXTRACTION_RETRY_MAX_OUTPUT_TOKENS`를 따른다(현재 기본 64,000). 과거 12,000 재시도 실행 조건·결과는 보존하고, 읽기 제한과 함께 바꾼 실험은 단일 변수 대조로 해석하지 않는다.
 - 캐릭터 Fact·세계관 후보의 1차 추출은 `LLM_EXTRACTION_MODEL`, 캐릭터·세계관 주체 해소는 `LLM_SUBJECT_RESOLUTION_MODEL`, 후보와 확정 데이터 비교는 `LLM_COMPARISON_MODEL`로 독립 주입한다. 2026-09-09 사용자가 확인한 운영 라우팅은 추출·비교 `gpt-5.6-sol`, 주체 해소 `gpt-5.6-terra`다. 개별 값이 없으면 기존 `LLM_MODEL`(기본 `gpt-5.6-terra`)을 fallback으로 사용한다.
 - 캐릭터·세계관 2차 비교·재비교 prompt에는 Backend가 반환한 1차 `evidenceSpans`를 읽기 전용 문맥으로 전달한다. 2차 LLM이 quote·offset을 다시 생성하거나 비교 완료 payload로 반환하지 않으며, 원고가 바뀐 경우에만 새 1차 분석 후보와 근거를 만든다.
