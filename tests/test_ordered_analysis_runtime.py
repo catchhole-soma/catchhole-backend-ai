@@ -138,8 +138,8 @@ def test_ordered_extraction_is_isolated_and_never_exposes_internal_identity():
     first, ordered = client.requests[:2]
     assert first["model"] == ordered["model"]
     assert "PROVISIONAL" not in first["user_prompt"]
-    assert '"confirmation_status": "PROVISIONAL"' in ordered["user_prompt"]
-    assert '"source_episode_no": 1' in ordered["user_prompt"]
+    assert '"confirmationStatus":"PROVISIONAL"' in ordered["user_prompt"]
+    assert '"sourceEpisodeNo":1' in ordered["user_prompt"]
     assert "status.부상" in ordered["user_prompt"]
     assert temporary.provisional_subject_key not in ordered["user_prompt"]
     assert str(context.analysis_context.run_id) not in ordered["user_prompt"]
@@ -582,7 +582,7 @@ def test_worker_character_stage_passes_explicit_context_and_fenced_semantic_bind
         discovery.ordered_binding.provisional_subject_key
         == setting.ordered_binding.provisional_subject_key
     )
-    assert '"characters"' in client.requests[0]["user_prompt"]
+    assert 'pending_character_hints' in client.requests[0]["user_prompt"]
     assert str(payload.analysis_context.run_id) not in client.requests[0]["user_prompt"]
     assert len(client.requests) == 1
     assert summary["subjectFallbackCallCount"] == 0

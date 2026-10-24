@@ -50,13 +50,17 @@ def test_world_gets_all_category_current_structure_before_extraction(book):
     ))
     assert result.candidates == []
     request = client.requests[0]
-    assert SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS in request["system_prompt"]
     assert CURRENT_STATUS_FORECAST_INSTRUCTIONS not in request["system_prompt"]
-    assert '"category":"LOCATION"' in request["user_prompt"]
-    assert "은항" in request["user_prompt"] and "통행세" in request["user_prompt"]
-    assert "semantic_current_state" in request["user_prompt"]
     if book:
+        assert SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS in request["system_prompt"]
+        assert '"category":"LOCATION"' in request["user_prompt"]
+        assert "은항" in request["user_prompt"] and "통행세" in request["user_prompt"]
+        assert "semantic_current_state" in request["user_prompt"]
         assert json.loads(request["user_prompt"])["chunk_text"] == "동문 낮 통행세는 여전히 두 닢이다."
+    else:
+        assert SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS not in request["system_prompt"]
+        assert "semantic_current_state" not in request["user_prompt"]
+        assert "은항" not in request["user_prompt"]
 
 
 def test_character_sees_concrete_current_axis_and_keeps_schema_priority_instructions():
@@ -66,10 +70,10 @@ def test_character_sees_concrete_current_axis_and_keeps_schema_priority_instruct
         schema_hints=DEFAULT_SCHEMA_HINTS, semantic_current_context=prepare(),
     ))
     request = client.requests[0]
-    assert SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS in request["system_prompt"]
-    assert "semantic_current_state" in request["user_prompt"]
-    assert "profile.직책" in request["user_prompt"]
-    assert "동문 경비대장" in request["user_prompt"]
+    assert SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS not in request["system_prompt"]
+    assert "semantic_current_state" not in request["user_prompt"]
+    assert "profile.직책" not in request["user_prompt"]
+    assert "동문 경비대장" not in request["user_prompt"]
     assert "캐릭터에게 귀속" in request["system_prompt"]
     assert CURRENT_STATUS_FORECAST_INSTRUCTIONS in request["system_prompt"]
 
