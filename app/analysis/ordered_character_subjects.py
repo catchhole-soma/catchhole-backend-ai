@@ -22,6 +22,10 @@ from app.analysis.ordered_context import (
     ordered_reference_data,
     ordered_state_instructions,
 )
+from app.analysis.pending_reference_projection import (
+    character_scopes,
+    select_pending_references,
+)
 from app.analysis.schemas import ExtractedSettingCandidate, _to_openai_strict_json_schema
 from app.analysis.setting_book_identity import (
     BookIdentityContext,
@@ -478,7 +482,9 @@ async def resolve_ordered_character_subjects(
                  "evidence": [span.quote for span in candidate.evidence_spans]}
                 for ref, candidate in fallback
             ],
-            "unresolved_references": ordered_reference_data(unresolved_references),
+            "unresolved_references": ordered_reference_data(unresolved_references if is_book else
+                select_pending_references(unresolved_references,
+                    character_scopes([candidate for _, candidate in fallback], tuple(targets.values())))),
         }
         if analysis_source is not None:
             prompt['source'] = analysis_source.prompt_data()

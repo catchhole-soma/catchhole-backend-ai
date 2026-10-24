@@ -302,3 +302,9 @@
 - 최초 배포는 `bootstrap-chat-aws.py` → `bootstrap-chat-runtime.py` → `app.retrieval.bootstrap`으로 기존 운영 설정을 보완한다. 현재 AI publish SHA와 Java의 공통 잠금 지원을 확인하고, 같은 VPC의 유일한 API 인스턴스 및 실제 부착된 API/Worker SG를 검증한다. Worker TCP 8082에 API SG만 허용하며 IAM·인스턴스 용량을 자동 확대하지 않는다. API 경로/사용자는 기존 `/opt/catchhole`·`ubuntu` 계약이며 Worker의 custom 경로와 혼동하지 않는다.
 - 최초 자동 백필 정책은 기존 값이 없을 때 활성 작품의 현재 원문, stable `retrieval-v1-rollout`, 서비스 부담 누적 보수적 입력 상한 50,000,000이다. 재배포로 새 ID/예산을 만들지 않는다. 기존 범위·예산·모델·DSN과 초기 설정 이후 수동 OFF를 보존하고, 비밀값과 역할 생성 intent는 호스트의 0700/0600 비공개 파일로 영속화한다. 기존 동명 역할의 암호를 재설정하거나 전역 DB ACL을 변경하지 않는다.
 - API env 준비·첫 공개는 Java 배포와 같은 `.api-deploy.lock`을 사용한다. 첫 공개는 지원 원문 순회 READY/정상 EMPTY, 미전송 보고 0, 불확실 호출 없음, 현재 handler/연결 검증 뒤에만 수행한다. 30분 내 완료하지 못하면 timer/진행 상태를 보존하고 공개를 보류한다. `status`는 outbox를 읽기만 하며 보고나 유료 호출을 실행하지 않는다.
+
+### GH287 회차 입력 투영
+
+- `analysisContext`와 frozen hash/equality/source/lease 검증은 전체 입력을 유지한다. `pending_reference_projection`은 EPISODE의 모델 입력만 같은 도메인·관련 주체로 골라 직렬화·토큰 계산·재시도·분할·복구에 공통 적용한다. 비교의 알려진 실제/임시 ID 불일치는 동명보다 우선하며 관련 주체의 다른 Fact 유형·키·세계관 scope/root 경로를 자르지 않는다. 보류 참고를 현재값·연결 대상·변경/의존 참조·과거 후보 자동 승인으로 승격하지 않는다.
+- EPISODE 캐릭터 1차는 원문·metadata·schema·기존 이름/활성 STATUS와 별도의 미확정 이름/STATUS 힌트만 전달한다. 종료 false·활성 불명 null을 유지하고 원문 근거·보류 이유·일반 설정·identity evidence·전체 semantic CURRENT는 넣지 않는다. 세계관 1차는 원문·metadata·정적 규칙만 사용한다. 검증된 시간 문맥·정적 전망 분리 규칙과 BOOK의 기존 입력은 유지한다.
+- 새 Worker는 모든 내부 요청에 `X-Analysis-Reference-Selection: true`를 보낸다. `selection`과 advisory의 `selectionNames`는 고정 선택 메타데이터이며 prompt에 노출하지 않는다. 구 Backend/구 frozen 입력에는 메타데이터가 없을 수 있으므로 제공된 이름·별칭·schema만 보수적으로 사용하고 live 재조회로 보완하지 않는다.

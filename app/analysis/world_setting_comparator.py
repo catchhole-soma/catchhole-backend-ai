@@ -10,15 +10,20 @@ from uuid import UUID
 import tiktoken
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.analysis.comparison_reason import USER_FACING_REASON_INSTRUCTIONS
 from app.analysis.book_world_claims import (
-    BOOK_CLAIM_REVIEW_ERROR, BOOK_WORLD_REVIEW_INSTRUCTIONS,
-    book_claim_prompt_data, is_asserted_book_claim,
+    BOOK_CLAIM_REVIEW_ERROR,
+    BOOK_WORLD_REVIEW_INSTRUCTIONS,
+    book_claim_prompt_data,
+    is_asserted_book_claim,
 )
 from app.analysis.book_world_identity import (
-    BOOK_WORLD_IDENTITY_INSTRUCTIONS, BOOK_WORLD_SUBJECT_RESPONSE_SCHEMA, BookWorldSubjectSelection,
-    book_world_identity_retry_prompt, validate_book_world_selection,
+    BOOK_WORLD_IDENTITY_INSTRUCTIONS,
+    BOOK_WORLD_SUBJECT_RESPONSE_SCHEMA,
+    BookWorldSubjectSelection,
+    book_world_identity_retry_prompt,
+    validate_book_world_selection,
 )
+from app.analysis.comparison_reason import USER_FACING_REASON_INSTRUCTIONS
 from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
 from app.analysis.json_response import compact_error_message, request_validated_model
 from app.analysis.ordered_context import (
@@ -42,6 +47,11 @@ from app.analysis.ordered_world_diagnostics import (
     validation_diagnostics,
 )
 from app.analysis.ordered_world_rule_diagnostics import diagnose_world_rule
+from app.analysis.pending_reference_projection import (
+    select_pending_references,
+    world_comparison_scopes,
+    world_scopes,
+)
 from app.analysis.source_chronology import has_book_current, validate_current_change
 from app.analysis.world_setting_schemas import (
     WorldSettingComparisonBatchDecision,
@@ -300,6 +310,9 @@ class WorldSettingSubjectResolver:
             # No anchor and no accumulated identity evidence for an unresolved
             # topic, including old BOOK rows whose marker is absent on restart.
             return [], True
+        if not is_book:
+            unresolved_references = select_pending_references(unresolved_references,
+                world_scopes((candidate,), tuple((candidate.category, subject) for subject in subjects)))
         if not subjects and not unresolved_references:
             return [], False
         references = {f"S{index}": subject for index, subject in enumerate(subjects, 1)}
@@ -530,7 +543,12 @@ class WorldSettingComparator:
                 + "\n\n" + ORDERED_WORLD_BATCH_INSTRUCTIONS
             )
             raw_payload["unresolved_references"] = ordered_reference_data(
-                unresolved_references, domain="worldSettings",
+                (unresolved_references if (analysis_source is not None
+                 and analysis_source.source_kind == AnalysisSourceKind.SETTING_BOOK)
+                 or any(getattr(candidate, 'source', None) is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
+                        for candidate in candidates) else
+                 select_pending_references(unresolved_references,
+                     world_comparison_scopes(category, candidates, targets))), domain="worldSettings",
             )
             for target_data, target in zip(raw_payload["targets"], targets, strict=True):
                 target_data["confirmation_status"] = (

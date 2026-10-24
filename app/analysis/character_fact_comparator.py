@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-
 from app.analysis.character_fact_comparison_schemas import (
     CharacterFactComparisonBatchDecision,
     CharacterFactComparisonBatchResult,
@@ -23,7 +22,9 @@ from app.analysis.comparison_reason import (
     mask_display_names,
 )
 from app.analysis.exceptions import (
-    CharacterComparisonInputTooLargeError, ComparisonValidationError, OrderedInputContextError,
+    CharacterComparisonInputTooLargeError,
+    ComparisonValidationError,
+    OrderedInputContextError,
 )
 from app.analysis.json_response import (
     compact_error_message,
@@ -38,6 +39,10 @@ from app.analysis.ordered_context import (
     ordered_reference_data,
     ordered_state_instructions,
 )
+from app.analysis.pending_reference_projection import (
+    character_comparison_scope,
+    select_pending_references,
+)
 from app.analysis.semantic_current_context import (
     STATUS_FORECAST_CACHE_SUFFIX,
     STATUS_FORECAST_REVIEW_INSTRUCTIONS,
@@ -47,10 +52,9 @@ from app.core.config import get_settings
 from app.domain.enums import AnalysisSourceKind
 from app.domain.setting_values import normalize_setting_display_value
 from app.exceptions.failure_classification import is_candidate_comparison_failure
-from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.exceptions import LlmInputTokenCountError
+from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
-from app.usage.metering import estimate_text_input_tokens
 from app.schemas.analysis_context import WorkerAnalysisReference
 from app.schemas.worker import (
     WorkerCharacterFactComparisonBatchCandidate,
@@ -60,6 +64,7 @@ from app.schemas.worker import (
     WorkerCharacterSnapshotEntry,
     WorkerProtectedCharacterSlot,
 )
+from app.usage.metering import estimate_text_input_tokens
 
 COMPARISON_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "llm" / "prompts" / "character_fact_comparison.md"
@@ -299,6 +304,7 @@ class CharacterFactComparator:
         max_attempts_override: int | None = None,
         protected_slots=(),
         advisory_current_context=None,
+        pending_subject_scope=None,
     ) -> tuple[CharacterFactComparisonBatchResult, dict]:
         """Compare ordered candidates while projecting each accepted decision in memory."""
 
@@ -325,6 +331,7 @@ class CharacterFactComparator:
             matched_character_name, canonical_fact_type, candidates, initial_entries,
             ordered_context=ordered_context, unresolved_references=unresolved_references,
             protected_slots=protected_slots, advisory_current_context=advisory_current_context,
+            pending_subject_scope=pending_subject_scope,
         )
         input_tokens = await self._require_input_fits(system_prompt, user_prompt)
 
@@ -418,6 +425,7 @@ class CharacterFactComparator:
         unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
         protected_slots=(),
         advisory_current_context=None,
+        pending_subject_scope=None,
     ) -> bool:
         if not candidates:
             return False
@@ -430,6 +438,7 @@ class CharacterFactComparator:
             matched_character_name, canonical_fact_type, candidates, initial_entries,
             ordered_context=ordered_context, unresolved_references=unresolved_references,
             protected_slots=protected_slots, advisory_current_context=advisory_current_context,
+            pending_subject_scope=pending_subject_scope,
         )
         return await self._input_tokens(system_prompt, user_prompt) <= self.batch_max_input_tokens
 
@@ -474,6 +483,7 @@ class CharacterFactComparator:
         unresolved_references=(),
         protected_slots=(),
         advisory_current_context=None,
+        pending_subject_scope=None,
         include_candidates=True,
     ):
         initial_entries = _projection_entries(snapshot_entries)
@@ -500,7 +510,10 @@ class CharacterFactComparator:
             if _has_status_candidates(candidates, canonical_fact_type):
                 system_prompt += "\n\n" + STATUS_FORECAST_REVIEW_INSTRUCTIONS
             _add_ordered_snapshot_provenance(prompt_payload, initial_entries)
-            prompt_payload["unresolved_references"] = ordered_reference_data(unresolved_references)
+            prompt_payload["unresolved_references"] = ordered_reference_data(unresolved_references
+                if _batch_source_kind(candidates) == AnalysisSourceKind.SETTING_BOOK else
+                select_pending_references(unresolved_references, (pending_subject_scope or character_comparison_scope(
+                    matched_character_name, candidates, advisory_current_context),)))
         if not include_candidates:
             prompt_payload["candidates"] = []
         return system_prompt, json.dumps(prompt_payload, ensure_ascii=False)

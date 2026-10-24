@@ -16,8 +16,10 @@ from app.analysis.ordered_context import (
     SETTING_BOOK_INSTRUCTIONS,
     BoundedOrderedClient,
     OrderedExtractionContext,
+    ordered_provenance_data,
     ordered_state_instructions,
 )
+from app.analysis.pending_reference_projection import episode_character_hints
 from app.analysis.schemas import (
     CharacterSettingExtractionResult,
     CharacterSettingProviderResponse,
@@ -178,6 +180,8 @@ class CharacterSettingExtractor:
             episode_title=episode_title,
             schema_summary_json=schema_summary_json,
             known_characters=known_characters,
+            episode_ordered_context=ordered_context if setting_book is None else None,
+            episode_projection=setting_book is None,
         )
         prompt_cache_key = _build_schema_cache_key(schema_summary_json)
         if setting_book is not None:
@@ -190,7 +194,7 @@ class CharacterSettingExtractor:
             user_prompt = (user_prompt[:start].replace("다음 회차 청크", "다음 설정집 청크")
                            + f"metadata:\n{metadata}\n\nchunk_text:\n{chunk_text}")
             prompt_cache_key += ":setting-book-grounded-function-v2"
-        if ordered_context is not None:
+        if ordered_context is not None and setting_book is not None:
             system_prompt += "\n\n" + ordered_state_instructions(
                 AnalysisSourceKind.SETTING_BOOK if setting_book is not None else None
             )
@@ -201,11 +205,22 @@ class CharacterSettingExtractor:
             )
             prompt_cache_key += ":ordered-provisional-v1"
 
-        if semantic_current_context is not None:
+        if semantic_current_context is not None and setting_book is not None:
             system_prompt += "\n\n" + SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS
             system_prompt += "\n\n" + CURRENT_STATUS_FORECAST_INSTRUCTIONS
             user_prompt += "\n\nsemantic_current_state:\n" + semantic_current_context.character_prompt_json()
             prompt_cache_key += ":semantic-current-v1" + STATUS_FORECAST_CACHE_SUFFIX
+
+        if setting_book is None:
+            system_prompt += "\n\n" + CURRENT_STATUS_FORECAST_INSTRUCTIONS
+            prompt_cache_key += ":episode-lean-pending-v1"
+            if ordered_context is not None:
+                user_prompt += "\n\npending_character_hints:\n" + json.dumps(
+                    episode_character_hints(tuple(ordered_context.analysis_context.unresolved_references), schema_hints),
+                    ensure_ascii=False)
+                system_prompt += ("\n\npending_character_hints는 미확정 이름 표기와 STATUS 참고입니다. "
+                    "active=false는 종료 주장, null은 활성 여부 불명입니다. 현재 사실이나 동일 인물 증명이 아니며 "
+                    "이 이름이 있어도 원문의 인물 발견과 변화 근거를 독립적으로 추출하세요.")
 
         if time_context:
             user_prompt += "\n\nverified_time_context:\n" + json.dumps(
@@ -327,11 +342,17 @@ class CharacterSettingExtractor:
         episode_title: str | None,
         schema_summary_json: str,
         known_characters: tuple[KnownCharacter, ...],
+        episode_ordered_context: OrderedExtractionContext | None = None,
+        episode_projection: bool = False,
     ) -> str:
         metadata = {
             "episode_no": episode_no,
             "episode_title": episode_title,
         }
+        names = _serialize_known_character_names(known_characters)
+        statuses = _serialize_active_character_statuses(known_characters)
+        if episode_projection:
+            names, statuses = _serialize_episode_character_context(known_characters, episode_ordered_context)
         # 고정 규칙과 canonical schema를 앞에 두고 회차별 metadata·원문은 뒤에 둔다.
         return (
             "다음 회차 청크에서 캐릭터 설정 후보를 추출하세요.\n\n"
@@ -347,9 +368,9 @@ class CharacterSettingExtractor:
             "character_setting_schemas:\n"
             f"{schema_summary_json}\n\n"
             "known_character_names:\n"
-            f"{_serialize_known_character_names(known_characters)}\n\n"
+            f"{names}\n\n"
             "active_character_statuses:\n"
-            f"{_serialize_active_character_statuses(known_characters)}\n\n"
+            f"{statuses}\n\n"
             f"metadata:\n{json.dumps(metadata, ensure_ascii=False, sort_keys=True)}\n\n"
             f"chunk_text:\n{chunk_text}"
         )
@@ -543,3 +564,27 @@ def _serialize_active_character_statuses(
 def _build_schema_cache_key(schema_summary_json: str) -> str:
     schema_fingerprint = hashlib.sha256(schema_summary_json.encode("utf-8")).hexdigest()[:16]
     return f"{SETTING_EXTRACTION_CACHE_KEY_VERSION}:{schema_fingerprint}"
+
+
+def _serialize_episode_character_context(known_characters, ordered_context):
+    # Keep subjects separate internally, then project only display names/statuses.
+    ordered_known = {character.character_id: character for character in ordered_context.known_characters} if ordered_context else {}
+    characters = [ordered_known.pop(character.character_id, character) for character in known_characters]
+    characters.extend(ordered_known.values())
+    if ordered_context:
+        characters.extend(ordered_context.provisional_characters)
+    names = list(dict.fromkeys(character.name for character in characters))
+    statuses = []
+    for character in characters:
+        provisional = getattr(character, 'provisional_subject_key', None) is not None
+        for status in character.active_statuses:
+            item = {'characterName': character.name, 'factKey': status.fact_key, 'factValue': status.fact_value}
+            provenance = getattr(status, 'provenance', None)
+            if hasattr(status, 'provenance'):
+                ordered_provenance_data(provenance)
+            if provisional or provenance is not None:
+                item['confirmationStatus'] = 'PROVISIONAL' if provisional else provenance.confirmation_status
+                item['sourceEpisodeNo'] = (character.source_episode_no if provisional else provenance.source_episode_no)
+            statuses.append(item)
+    return (json.dumps(names, ensure_ascii=False, separators=(',', ':')),
+            json.dumps(statuses, ensure_ascii=False, separators=(',', ':')))
