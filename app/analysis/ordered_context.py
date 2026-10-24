@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import tiktoken
 
-from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError, OrderedPromptBudgetExceeded
 from app.domain.enums import AnalysisSourceKind, SettingBookReferenceTimeKind
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.schemas.analysis_context import (
@@ -174,7 +174,7 @@ def ensure_ordered_prompt_fits(
         + 256
     )
     if tokens > max_tokens:
-        raise OrderedInputContextError("ordered_required_context_exceeds_input_limit")
+        raise OrderedPromptBudgetExceeded("ordered_required_context_exceeds_input_limit")
     return tokens
 
 

@@ -595,7 +595,7 @@ class WorldSettingComparator:
             self.model,
         )
         if minimum_output_tokens > self.batch_max_output_tokens:
-            oversized_result = _batch_limit_review_result(candidates, references)
+            oversized_result = batch_limit_review_result(candidates, references)
             raw_result = oversized_result.model_dump(mode="json")
             raw_result["output_budget"] = {
                 "estimated_minimum_tokens": minimum_output_tokens,
@@ -795,11 +795,12 @@ def _estimate_batch_minimum_output_tokens(
     return math.ceil(measured_tokens * 1.2) + 512
 
 
-def _batch_limit_review_result(
+def batch_limit_review_result(
     candidates: list[WorkerWorldSettingComparisonBatchCandidate],
     references: list[ComparisonTargetReference],
+    *, reason: str = "비교 결과가 출력 한도를 넘어 자동 비교하지 않았습니다.",
 ) -> WorldSettingComparisonBatchResult:
-    """Hold an output-oversized batch for review without calling the provider."""
+    """Preserve each source as a local budget review without a provider decision."""
 
     target_ref = references[0].reference if len(references) == 1 else None
     decisions = [
@@ -819,9 +820,7 @@ def _batch_limit_review_result(
             proposed_scope_name=candidate.scope_name,
             proposed_setting_name=candidate.setting_name,
             proposed_value=candidate.extracted_value,
-            comparison_reason=(
-                "비교 결과가 출력 한도를 넘어 자동 비교하지 않았습니다."
-            ),
+            comparison_reason=reason,
         )
         for candidate in candidates
     ]
