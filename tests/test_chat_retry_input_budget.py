@@ -115,7 +115,7 @@ async def test_validation_retry_chooses_a_fitting_annotation_without_changing_pa
     assert all(
         estimated(request["system"], request["input"]) <= INPUT_LIMIT for request in requests
     )
-    assert [request["max_output_tokens"] for request in requests] == [3000, 3000]
+    assert [request["max_output_tokens"] for request in requests] == [4500, 6000]
     retry = requests[1]["system"]
     assert "UNOBSERVED_SUBJECT_NAME" in retry
     assert ("안전한 검증 피드백" in retry) == (form == "detailed")
@@ -157,7 +157,7 @@ async def test_truncation_keeps_its_type_and_paid_usage_when_repair_input_is_bou
     )
     assert result["usageReports"][0]["outcome"] == "FAILURE"
     assert result["usageReports"][0]["inputTokens"] == 101
-    assert result["usageReports"][0]["outputTokens"] == 3000
+    assert result["usageReports"][0]["outputTokens"] == 4500
     if recovers:
         assert not errors
         assert result["finish"]["result"]["text"] == "confirmed"

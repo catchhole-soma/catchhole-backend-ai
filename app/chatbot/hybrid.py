@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 import tiktoken
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.chatbot.answer_recovery import recover_claims
 from app.chatbot.client import ChatTransportError
 from app.chatbot.hybrid_config import HybridSettings
 from app.chatbot.hybrid_grounding import resolve_support_quotes, resolve_support_references
@@ -29,7 +30,7 @@ from app.chatbot.hybrid_items import (
 from app.chatbot.hybrid_metrics import HybridMetrics, ObservedEmbeddingClient, ObservedTextClient
 from app.chatbot.hybrid_prompts import ANSWER_PROMPT, ANSWER_VERSION, PLAN_PROMPT, PLAN_VERSION
 from app.chatbot.providers import ChatEmbeddingClient
-from app.chatbot.qa import ChatQaHandler, _Session, response_schema
+from app.chatbot.qa import ChatQaHandler, ModelTimeBudgetExceeded, _Session, response_schema
 from app.chatbot.qa_prompts import FIELD_VERSION
 from app.chatbot.qa_render import (
     AnswerRow,
@@ -46,7 +47,7 @@ from app.chatbot.qa_validation import (
     LookupClarificationRequired,
     ResponseValidationFailure,
 )
-from app.chatbot.runtime import ProviderFailure
+from app.chatbot.runtime import ProviderFailure, ProviderOutputTruncated
 from app.clients.setting_tools_client import SettingToolClientError
 from app.retrieval.evidence import compose_evidence
 from app.retrieval.search_contracts import SearchScope, SearchScopeUnavailable
@@ -179,6 +180,8 @@ class HybridQaHandler(ChatQaHandler):
                 "어떤 인물의 어떤 설정을 다시 확인할지 이름과 항목을 함께 알려주세요.",
                 session.codes,
             )
+        except ModelTimeBudgetExceeded:
+            result = Finish(failure="EXECUTION_LIMIT_EXCEEDED")
         except ProviderFailure:
             result = Finish(failure="PROVIDER_FAILURE")
         finally:
@@ -325,6 +328,7 @@ class _HybridSession(_Session):
         return (
             self.model_calls < self.hcfg.max_model_calls
             and self.execution.calls + 1 + int(embedding) <= self.execution.context.max_calls
+            and self.has_model_time()
         )
 
     async def run(self):
@@ -1650,7 +1654,28 @@ class _HybridSession(_Session):
             self.recovery_evidence = tuple(
                 e for e in self.evidences if self.source_identity(e) in hinted
             )
-            validated(answer)
+            try:
+                return validated(answer)
+            except ValueError:
+                recovered = None
+                if plan.requested_parts and not plan.per_item and not self.logical_items:
+                    recovered = recover_claims(
+                        answer,
+                        requested_facets(plan),
+                        ground_statement,
+                        evidence_refs=e_refs,
+                        row_refs=r_refs,
+                    )
+                if recovered is None:
+                    raise
+                recovered = validated(recovered)
+                self.trace(
+                    "answer_partial_recovered",
+                    round=self.rounds,
+                    kept=len(recovered.claims),
+                    removed=len(answer.claims) - len(recovered.claims),
+                )
+                return recovered
 
         attempts = min(
             self.cfg.max_attempts,
@@ -1670,6 +1695,14 @@ class _HybridSession(_Session):
                 valid,
                 max_attempts=attempts,
             )
+        except (ModelTimeBudgetExceeded, ProviderOutputTruncated) as exc:
+            # A failed expansion must not erase an earlier validated answer.
+            # With no supported snapshot the original failure still propagates.
+            if not self.supported_evidence:
+                raise
+            self.codes.append("SEARCH_LIMIT")
+            self.trace("answer_expansion_stopped", reason=type(exc).__name__, round=self.rounds)
+            return self.empty_source_answer(plan)
         except ResponseValidationFailure:
             # Reject every unverified claim, but keep the search/partial-answer
             # recovery path alive. Transport and provider failures still propagate.

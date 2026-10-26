@@ -191,9 +191,10 @@ Python 환경변수는 `.env`를 자동으로 읽지 않는다. 챗봇 전용 Co
 | LLM_API_KEY | 빈 값 | QA 활성화 시 필수; 기존 provider client 사용 |
 | CHAT_QA_MODEL / CHAT_QA_REASONING_EFFORT | gpt-6-luna / medium | 챗봇 전용 기본값; 기존 분석 Worker 모델과 독립, 로컬 사례 검증과 정식 품질 평가는 구분 |
 | CHAT_QA_MAX_ATTEMPTS | 2 | 단계별 최초 호출과 schema/참조/출력 잘림 복구를 합친 시도 수 |
-| CHAT_QA_MAX_OUTPUT_TOKENS | 1500 | CHAT_INTERPRETATION 출력 기본 상한 |
-| CHAT_QA_ANSWER_MAX_OUTPUT_TOKENS | 3000 | CHAT_ANSWER 출력 기본 상한 |
-| CHAT_QA_TRUNCATION_RETRY_MAX_OUTPUT_TOKENS | 6000 | 출력 잘림 때 해당 단계 기본값의 두 배로 재시도할 최대 상한 |
+| CHAT_QA_MAX_OUTPUT_TOKENS | 2000 | CHAT_INTERPRETATION 출력 기본 상한 |
+| CHAT_QA_ANSWER_MAX_OUTPUT_TOKENS | 4500 | CHAT_ANSWER 출력 기본 상한 |
+| CHAT_QA_TRUNCATION_RETRY_MAX_OUTPUT_TOKENS | 6000 | 출력 절단·schema/근거 복구 때 해당 단계 기본값의 두 배로 재시도할 최대 상한 |
+| CHAT_QA_FINALIZATION_RESERVE_SECONDS | 10 | 서버 deadline 안에서 최종 검증·전달에 남길 시간; 모델 대기는 이보다 먼저 취소 |
 | CHAT_QA_MAX_INPUT_TOKENS | 32000 | 프롬프트+자료+schema 입력 추정 상한 |
 | CHAT_QA_MAX_CONTEXT_CHARACTERS | 32000 | 프롬프트와 자료 문자 상한 |
 | CHAT_QA_PAGE_SIZE / CHAT_QA_MAX_PAGES | 20 / 2 | 페이지 크기 / 이름 탐색·구형 계획의 페이지 상한. 새 focus 조회는 전역 예산까지 순회 |

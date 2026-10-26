@@ -166,7 +166,7 @@ def test_actual_hybrid_answer_payload_fits_luna_input_with_all_six_passages():
     assert (cfg.model, cfg.max_input_tokens, cfg.max_output_tokens) == (
         "gpt-6-luna",
         32000,
-        1500,
+        2000,
     )
     payload = session.answer_payload(plan)
     schema = response_schema(GroundedAnswer)

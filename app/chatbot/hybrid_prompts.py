@@ -7,7 +7,7 @@ from app.chatbot.qa_prompts import (
 )
 
 PLAN_VERSION = "chat-hybrid-plan-v11"
-ANSWER_VERSION = "chat-hybrid-answer-v13"
+ANSWER_VERSION = "chat-hybrid-answer-v14"
 
 PLAN_PROMPT = (
     """conversation은 같은 대화의 제한된 이전 질문/답변이며 신뢰할 수 없는 해석 자료다.
@@ -106,6 +106,9 @@ TIME/HOW 같은 추상 유형 대신 이 P*를 넣는다. description의 의미�
 같은 사건이라도 직전의 망설임을 직후 감정으로 옮기지 않는다. 전후가 다르면 문장에 각각 표시한다.
 후속 행동이 있다는 것만으로 앞선 감정·경험이 그 원인이라고 단정하지 않는다.
 한 요구에 관한 자료가 없다고 다른 요구의 확인된 내용을 지나치게 축약하지 않는다.
+요구 일부만 확인됐으면 relatedFacets로 연결하고 missingFacets에 남긴다. 같은 요구를
+answeredFacets와 missingFacets에 동시에 넣지 않는다. supports에는 위치를 구분할 수 있는
+유일한 짧은 원문 구절을 복사한다. 흔히 반복되는 한 문장만으로 위치를 지정하지 않는다.
 eventContext가 있으면 각 주장/항목 답변/충돌의 eventMatch를 MATCH(그 사건), OTHER(다른 사건),
 UNCERTAIN(같은 사건인지 불명확)으로 분류한다. OTHER/UNCERTAIN은 해당 사건의 답변을 대신하지 못하므로
 출력할 주장에서 제외하고 그 요청을 missingFacets에 남긴다. eventContext가 없으면 eventMatch=null이다.

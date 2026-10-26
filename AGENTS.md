@@ -229,7 +229,7 @@
 - 계약·사례·한계·재현 명령은 `docs/chat-qa-v1.md`를 Java/Python에 동일하게 보관한다. 기존 `ChatResult`/조회 DTO를 재사용하며 현재값 계산과 권한 판정은 Spring이 소유한다.
 - `app/schemas/chat_qa.py`는 질문 유형·답변 목적·작품 전체 collection과 요청 내 참조만 받는다. `qa.py`/`qa_lookup.py`는 대상·경로·필터 조회, `qa_collection.py`는 모집단·페이지 token 검사, `qa_synthesis.py`는 등록 자료의 소개·조건 판정·목록/집계를 맡고 `qa_render.py`가 실제 값·검증된 근거를 표시한다. 분류는 `chat-qa-plan-v6`, 경로 선택은 `chat-qa-field-select-v1`, 구형 행 선택은 `chat-qa-select-v3`이다. 현재 계약은 `docs/chat-query-quality-v1.md`, 후속 대화는 #241을 따른다.
 - 현재값/이력의 저장 key와 scope를 모델이 추측해 조회하지 않는다. 새 분류 schema는 필수 focus로 고정 FactType과 질문의 항목 표현을 구분한다. 유형 전체는 먼저 필터하고, 동적 항목은 값 없는 FIELD 목록을 끝까지 확인한 뒤 F 참조를 선택해 실제 저장 경로로 조회한다. 필터된 결과는 전역 도구 예산까지 순회하고 모델의 10행 선택이나 입력 문맥 상한으로 자르지 않는다. 구형 기록 계획의 R 행 선택 경로만 기존 페이지/행 상한을 유지한다. 새 작품 전체 조건은 collection으로 현재 자료를 읽고 인물별 MATCH/NO_MATCH/UNKNOWN을 판정한다. 기존 CHARACTER_LIST 기록만 단일 scalar 정확 일치 경로를 유지한다. 이름은 현재 질문 또는 제한된 서버 대화 문맥에 명시된 문자열만 조회하며 복수 후보·불완전한 탐색 페이지는 추가 확인으로 끝낸다. 모델이 선택한 행의 의미적 적합성은 별도 품질 검증 대상이다.
-- `qa_config.py`의 `CHAT_QA_*` 설정은 `.env`를 읽지 않고 프로세스 환경으로 주입한다. `ENABLED=false`, `MODEL=gpt-6-luna`, `REASONING_EFFORT=medium`, `MAX_ATTEMPTS=2`, `MAX_OUTPUT_TOKENS=1500`, `ANSWER_MAX_OUTPUT_TOKENS=3000`, `TRUNCATION_RETRY_MAX_OUTPUT_TOKENS=6000`, `MAX_INPUT_TOKENS=32000`, `MAX_CONTEXT_CHARACTERS=32000`, `PAGE_SIZE=20`, `MAX_PAGES=2`, `MAX_ITEMS=80`, `MAX_TOOL_CALLS=16`, `MAX_SELECTED_ROWS=10`, `MAX_EVIDENCE_CALLS=8`, `MAX_ANSWER_CHARACTERS=12000`을 기본으로 한다. 이름 앞에는 모두 `CHAT_QA_`를 붙인다.
+- `qa_config.py`의 `CHAT_QA_*` 설정은 `.env`를 읽지 않고 프로세스 환경으로 주입한다. `ENABLED=false`, `MODEL=gpt-6-luna`, `REASONING_EFFORT=medium`, `MAX_ATTEMPTS=2`, `MAX_OUTPUT_TOKENS=2000`, `ANSWER_MAX_OUTPUT_TOKENS=4500`, `FINALIZATION_RESERVE_SECONDS=10`, `TRUNCATION_RETRY_MAX_OUTPUT_TOKENS=6000`, `MAX_INPUT_TOKENS=32000`, `MAX_CONTEXT_CHARACTERS=32000`, `PAGE_SIZE=20`, `MAX_PAGES=2`, `MAX_ITEMS=80`, `MAX_TOOL_CALLS=16`, `MAX_SELECTED_ROWS=10`, `MAX_EVIDENCE_CALLS=8`, `MAX_ANSWER_CHARACTERS=12000`을 기본으로 한다. 이름 앞에는 모두 `CHAT_QA_`를 붙인다.
 - 독립 `compose.chatbot.prod.yml`이 위 설정과 `LLM_API_KEY`를 명시적으로 전달한다. `deploy/chatbot.env.example`에 예제를 유지한다. QA 활성화 시 key가 없으면 기동을 거절하며, 기본 비활성 상태에서는 provider client를 생성하지 않는다. Spring 기능 flag와 별도여서 명시적 운영 활성화가 필요하다.
 - 질문 해석과 행 선택은 기존 `ChatTextClient`/`Execution.call()`을 사용한다. 최초 호출과 schema/참조 오류·provider 출력 절단 복구는 같은 MAX_ATTEMPTS를 공유한다. 절단은 해당 목적 기본 출력의 두 배를 복구 상한 안에서 새로 예약하며 JSON 조각을 이어 붙이지 않는다. 실패 사용량을 보존하고 모든 재시도도 새 호출로 예약·정산하며 자동 transport retry는 하지 않는다. 조회 오류를 빈 결과로 바꾸지 않으며 현재값/이력/출처 범위와 원문 확인 불가 상태를 보존한다.
 - `app/chatbot/replay.py`는 네트워크·DB·API key 없는 합성 CLI 재현기다. `tests/fixtures/chat-qa-v1.json`의 고정 모델 출력은 코드 경로 검증용이며 배포 모델 품질 측정값으로 보고하지 않는다. 실제 HTTP 검증용 `tests/support/chat_qa_stub_server.py`는 `CHAT_TEST_ONLY=true`와 localhost 제한을 유지한다.
@@ -296,7 +296,7 @@
 
 ### OPT-33 현재 등록값·후속 정정 — 2026-10-22
 
-- 현재 버전은 QA plan v9/FIELD select v2, hybrid plan v11/answer v13, 등록 설명 v4이다. `registeredCurrentRequired`는 누락을 허용하지 않는 strict boolean이며, 현재 속성·보유·등록 화면 확인의 필수 근거를 표시 옵션과 분리한다. true이면 CURRENT 계열과 sourceFallback=false를 검증한다. 원문·작중/회차 서술만 묻는 질문과 일반 개념 질문에 등록 현재값을 강제하지 않는다.
+- 현재 버전은 QA plan v9/FIELD select v2, hybrid plan v11/answer v14, 등록 설명 v4이다. `registeredCurrentRequired`는 누락을 허용하지 않는 strict boolean이며, 현재 속성·보유·등록 화면 확인의 필수 근거를 표시 옵션과 분리한다. true이면 CURRENT 계열과 sourceFallback=false를 검증한다. 원문·작중/회차 서술만 묻는 질문과 일반 개념 질문에 등록 현재값을 강제하지 않는다.
 - 현재 대상/항목이 없으면 원문이나 비슷한 이름을 현재값으로 대체하지 않는다. 혼합 질문은 실제 대상 ID·CURRENT 행·완전성으로 현재 확인 여부를 판정하고 원문과 구분해 표시한다. 원문이 충분해도 현재 미확인은 부분 답변으로 유지하며, 원문이 부족해도 확인된 현재값은 보존한다. 임의 별칭 병합·저장 구조 변경을 추가하지 않는다.
 - 값만 말한 정정은 실제 입력 표현을 focus.attribute로 보존하고 관측한 FIELD의 F 참조로 항목을 고른다. 미관측 focus/name/searchTerms는 고정 규칙·정확한 경로로 기존 최대 두 번 안에서 복구하며 요구를 삭제하지 않는다. focus 오류만 반복되면 대상/항목 명확화로 종료하고 provider/다른 schema 실패는 숨기지 않는다.
 - optional provenance의 원자료·내용 수정·확정 방식은 독립 축이며 UNKNOWN/null을 false로 바꾸지 않는다. recordedAt은 설정 기록 생성 시각이다. 일반 값 목록에는 처리정보를 반복 표시하지 않고 명시적 출처 질문은 SUMMARY에서 관련 차이만 설명한다. 구 서버의 생략 호환과 원고/설정집/사용자 입력 출처를 보존하며 내부 source ID는 모델로 투영하지 않는다. 공통 계약·회귀와 실제 모델 평가는 `docs/setting-tools-v1.md`, `docs/chat-query-quality-v1.md`에 구분해 기록한다.
@@ -319,3 +319,10 @@
 - `analysisContext`와 frozen hash/equality/source/lease 검증은 전체 입력을 유지한다. `pending_reference_projection`은 EPISODE의 모델 입력만 같은 도메인·관련 주체로 골라 직렬화·토큰 계산·재시도·분할·복구에 공통 적용한다. 비교의 알려진 실제/임시 ID 불일치는 동명보다 우선하며 관련 주체의 다른 Fact 유형·키·세계관 scope/root 경로를 자르지 않는다. 보류 참고를 현재값·연결 대상·변경/의존 참조·과거 후보 자동 승인으로 승격하지 않는다.
 - EPISODE 캐릭터 1차는 원문·metadata·schema·기존 이름/활성 STATUS와 별도의 미확정 이름/STATUS 힌트만 전달한다. 종료 false·활성 불명 null을 유지하고 원문 근거·보류 이유·일반 설정·identity evidence·전체 semantic CURRENT는 넣지 않는다. 세계관 1차는 원문·metadata·정적 규칙만 사용한다. 검증된 시간 문맥·정적 전망 분리 규칙과 BOOK의 기존 입력은 유지한다.
 - 새 Worker는 모든 내부 요청에 `X-Analysis-Reference-Selection: true`를 보낸다. `selection`과 advisory의 `selectionNames`는 고정 선택 메타데이터이며 prompt에 노출하지 않는다. 구 Backend/구 frozen 입력에는 메타데이터가 없을 수 있으므로 제공된 이름·별칭·schema만 보수적으로 사용하고 live 재조회로 보완하지 않는다.
+
+### 챗봇 실행 실패 복구 — 2026-10-26
+
+- requestedParts 일반 원문 답변은 위치 검증을 통과한 독립 claim만 복구한다. 없는/중복 인용이 포함된 claim 전체를 제외하며 일부 support만 빼서 문장을 살리지 않는다. answered/missing 중복은 related로 낮추고 missing을 유지한다. 알 수 없는 참조·항목별 완전성·충돌은 기존 검증 재시도에 맡긴다. 최종 현재값/원문/receipt 재검증을 생략하지 않는다.
+- 모든 모델 호출은 Spring deadline에서 기본10초를 최종 검증/전달에 남기고, 남은 시간이 직전 관측 호출 지연보다 짧으면 새 호출을 시작하지 않는다. 추가 답변이 soft deadline/출력 절단으로 끝나도 이전 검증 PARTIAL만 복원한다. 이전 유효 답변이 없거나 권한/자료/전송 실패이면 기존 실패 경계를 유지한다. 취소된 사용량은 UNKNOWN이며 0으로 정산하지 않는다.
+- 계획 기본 출력2,000·답변4,500, 복구 출력은 목적 기본의 두 배와6,000 중 작은 값이다. 형식/근거 복구도 같은 확대 상한을 적용하고 최초 포함2회·전체 호출/검색/입력/예약/120초 상한은 유지한다. 운영 명시 override를 자동 덮어쓰지 않는다.
+- pytest session 시작에서 o200k_base/cl100k_base를 준비해 cold cache와 테스트별 네트워크 차단의 순서 의존성을 없앤다. 캐시 준비 실패는 첫 단계에서 안내하며 테스트 본문의 네트워크 차단과 provider mock은 유지한다.

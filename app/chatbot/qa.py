@@ -1,8 +1,10 @@
 """Bounded RDB QA. LLMs classify/select; code owns queries, scope and quotations."""
 
+import asyncio
 import json
 import logging
 import re
+import time
 from collections.abc import Callable
 
 from pydantic import BaseModel, ValidationError
@@ -90,8 +92,14 @@ class ChatQaHandler:
                 "어떤 인물의 어떤 설정을 다시 확인할지 이름과 항목을 함께 알려주세요.",
                 [],
             )
+        except ModelTimeBudgetExceeded:
+            return Finish(failure="EXECUTION_LIMIT_EXCEEDED")
         except ProviderFailure:
             return Finish(failure="PROVIDER_FAILURE")
+
+
+class ModelTimeBudgetExceeded(RuntimeError):
+    """Leave time for final source checks and delivery inside the server deadline."""
 
 
 class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
@@ -154,6 +162,17 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
 
     def before_model_call(self, purpose):
         pass
+
+    def model_time_left(self):
+        return (
+            self.execution.context.deadline.timestamp()
+            - time.time()
+            - self.cfg.finalization_reserve_seconds
+        )
+
+    def has_model_time(self):
+        # Use this execution's observed latency only; never extend Spring's deadline.
+        return self.model_time_left() > max(1.0, getattr(self, "last_model_seconds", 0.0))
 
     def record_model_response(self, purpose, response):
         pass
@@ -226,17 +245,28 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                 if truncated_retry:
                     raise ProviderOutputTruncated()
                 raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
+            if not self.has_model_time():
+                raise ModelTimeBudgetExceeded()
             self.before_model_call(purpose)
-            output_cap = self.cfg.output_tokens_for(purpose, truncated_retry=truncated_retry)
+            # A schema/quote repair can also be longer than the original output.
+            # Share the same retry count and retry cap instead of adding a third call.
+            output_cap = self.cfg.output_tokens_for(
+                purpose, truncated_retry=truncated_retry or attempt > 0
+            )
             validation_failed = False
+            started = time.monotonic()
             try:
-                response = await client.create_text_response(
-                    retry_prompt,
-                    encode(payload),
-                    max_output_tokens=output_cap,
-                    prompt_cache_key=version,
-                    response_schema=schema,
-                )
+                async with asyncio.timeout(max(0, self.model_time_left())):
+                    response = await client.create_text_response(
+                        retry_prompt,
+                        encode(payload),
+                        max_output_tokens=output_cap,
+                        prompt_cache_key=version,
+                        response_schema=schema,
+                    )
+            except TimeoutError as exc:
+                # Execution.call has already queued UNKNOWN for cancelled usage.
+                raise ModelTimeBudgetExceeded() from exc
             except ProviderOutputTruncated as exc:
                 only_focus_failures = False
                 # Execution has already queued FAILURE usage. Include that measured usage in
@@ -274,13 +304,17 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                 truncated_retry = True
                 feedback = [{"code": "OUTPUT_TRUNCATED", "rule": RULES["OUTPUT_TRUNCATED"]}]
                 continue
+            finally:
+                self.last_model_seconds = time.monotonic() - started
             self.record_model_response(purpose, response)
             validation_stage = "RESPONSE_SCHEMA"
             try:
                 parsed = cls.model_validate_json(response.text)
                 if validate:
                     validation_stage = "RESPONSE_CONTRACT"
-                    validate(parsed)
+                    recovered = validate(parsed)
+                    if isinstance(recovered, cls):
+                        parsed = recovered
                 return parsed
             except (ValidationError, ValueError) as exc:
                 validation_failed = True
@@ -330,6 +364,8 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             if only_focus_failures:
                 raise LookupClarificationRequired()
             raise ResponseValidationFailure()
+        if truncated_retry:
+            raise ProviderOutputTruncated()
         raise ProviderFailure()
 
     async def query(self, request: SettingToolQuery) -> SettingToolResponse:
