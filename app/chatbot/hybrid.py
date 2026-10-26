@@ -461,6 +461,9 @@ class _HybridSession(_Session):
             if not self.current_requirement_confirmed:
                 self.codes.append("REGISTERED_CURRENT_UNCONFIRMED")
         if not self.models_available():
+            registered = await self.current_without_source(plan)
+            if registered is not None:
+                return registered
             return message(
                 "INSUFFICIENT_EVIDENCE",
                 "관련 자료를 읽었지만 이번 처리 한도 안에서 원문 답변까지 확인하지 못했습니다. 질문 범위를 좁혀 주세요.",
@@ -768,8 +771,16 @@ class _HybridSession(_Session):
 
     async def current_without_source(self, plan):
         """Preserve observed current values when the independent source request failed."""
-        current_rows = [r for r in self.chosen if r.item.kind == "CURRENT"]
+        # Only current values are retained here. Previously fetched quotations
+        # have not passed finish_answer's final source revalidation.
+        current_rows = [
+            AnswerRow(r.ref, r.item, r.domain) for r in self.chosen if r.item.kind == "CURRENT"
+        ]
         if not plan.registered_current_required or not current_rows:
+            return None
+        if self.has_collection_condition and (
+            self.uncertain_condition_rows() or not self.confirmed_condition_rows()
+        ):
             return None
         await self.revalidate_settings()
         registered = render_answer(
