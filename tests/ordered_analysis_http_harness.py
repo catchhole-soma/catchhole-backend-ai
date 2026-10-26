@@ -257,6 +257,20 @@ class DeterministicProvider:
                         "evidence_spans": [{"quote": "백탑은 색1로 빛났다."}],
                     }
                 )
+        elif cache.startswith("world-manuscript-subject-resolution:"):
+            payload = json.loads(kwargs["user_prompt"])
+            subjects = {(item["category"], item["subject_name"]): item["ref"]
+                        for item in payload["initial_subjects"]}
+            decisions = []
+            for item in payload["candidates"]:
+                key = (item["category"], item["subject_name"])
+                selected = [subjects[key]] if key in subjects else []
+                decisions.append({"candidate_ref": item["candidate_ref"],
+                                  "selected_subject_refs": selected, "ambiguous": False,
+                                  "identity_proofs": []})
+                if not selected and "new_subject_ref" in item:
+                    subjects[key] = item["new_subject_ref"]
+            result = {"decisions": decisions}
         elif cache.startswith("ordered-world-subject-resolution:"):
             result = {"selected_subject_refs": ["S1"], "ambiguous": False}
         elif cache.startswith("world-setting-comparison-batch:"):
@@ -687,7 +701,7 @@ async def run(base_url, database_url, count, mode="normal"):
     scope_review = mode == "automatic-scope-mismatch"
     preparation_failure = mode == "automatic-preparation-failure"
     general_uncertainty = mode == "automatic-general-uncertainty"
-    automatic = automatic_isolation or scope_review or character_partial or preparation_failure or general_uncertainty
+    automatic = automatic_isolation or scope_review or character_partial or preparation_failure or general_uncertainty or mode == "world-input-limit"
     spring = RecordingSpringWorkerClient(base_url, "gh180-e2e-test-only")
     provider = (GeneralUncertaintyProvider() if general_uncertainty else
                 PreparationFailureProvider() if preparation_failure else
@@ -697,13 +711,17 @@ async def run(base_url, database_url, count, mode="normal"):
                 if automatic_isolation else DeterministicProvider())
     provider.calls = []
     provider.invalid_attribute = mode == "prevalidation-failure"
-    provider.oversized_world = mode == "world-input-limit"
+    provider.oversized_world = False
     provider.dual_world_sources = mode == "normal" or scope_review or character_partial or preparation_failure or general_uncertainty
+    comparison = WorldSettingComparator(llm_client=provider, model="test-only",
+                                        max_attempts=3 if automatic else 1)
+    if mode == "world-input-limit":
+        comparison.batch_max_input_tokens = 1
     chunks = EpisodeChunkService(factory)
     worker = AnalysisJobWorker(
         spring_client=spring,
         chunking_service=EpisodeS3ChunkingService(
-            Storage(automatic_isolation or character_partial or preparation_failure or general_uncertainty,
+            Storage(automatic_isolation or character_partial or preparation_failure or general_uncertainty or mode == "world-input-limit",
                     scope_review, preparation_failure), chunks),
         episode_chunk_service=chunks,
         setting_candidate_service=SettingCandidateService(factory),
@@ -722,8 +740,7 @@ async def run(base_url, database_url, count, mode="normal"):
             spring,
             WorldSettingSubjectResolver(llm_client=provider, model="test-only",
                                         max_attempts=3 if preparation_failure else 1),
-            WorldSettingComparator(llm_client=provider, model="test-only",
-                                   max_attempts=3 if automatic else 1),
+            comparison,
         ),
         embedding_generation_enabled=False,
     )
@@ -733,7 +750,11 @@ async def run(base_url, database_url, count, mode="normal"):
             payload = await worker.claim_next()
             assert payload is not None and payload.episode.episode_no == expected
             assert payload.analysis_mode == "ORDERED_PROVISIONAL"
-            if general_uncertainty:
+            if mode == "world-input-limit":
+                assert payload.review_mode == "AUTOMATIC" and payload.provisional_characters == []
+                if expected > 1:
+                    assert len(payload.analysis_context.unresolved_references) == 1
+            elif general_uncertainty:
                 assert payload.review_mode == "AUTOMATIC" and payload.provisional_characters == []
                 if expected == 2:
                     assert len(payload.known_characters) == 1
@@ -790,22 +811,6 @@ async def run(base_url, database_url, count, mode="normal"):
             try:
                 await worker.process_claimed(payload)
             except SpringWorkerHttpError as failure:
-                if mode == "world-input-limit":
-                    assert failure.spring_error_code == "WORLD_SETTING_ORDERED_COMPARISON_FAILED"
-                    assert not any(
-                        "world-setting-comparison" in cache for _, cache in provider.calls
-                    )
-                    assert await worker.claim_next() is None
-                    print(
-                        json.dumps(
-                            {
-                                "expectedWorldInputLimitFailure": True,
-                                "worldComparisonProviderCalls": 0,
-                            }
-                        ),
-                        flush=True,
-                    )
-                    return
                 assert mode == "prevalidation-failure"
                 assert failure.spring_error_code == "SETTING_CANDIDATE_ORDERED_COMPARISON_FAILED"
                 assert not any(
@@ -828,7 +833,11 @@ async def run(base_url, database_url, count, mode="normal"):
             print(json.dumps({"episode": expected, "complete": True}), flush=True)
         assert await worker.claim_next() is None
         assert len(set(hashes)) == count
-        if general_uncertainty:
+        if mode == "world-input-limit":
+            assert not any("world-setting-comparison" in cache for _, cache in provider.calls)
+            assert not any(action == "fail" for _, action, _ in spring.world_http_events)
+            print(json.dumps({"worldInputLimitHeld": True, "worldComparisonProviderCalls": 0}), flush=True)
+        elif general_uncertainty:
             assert provider.confirmed_world_input_seen
             assert not any(action == "fail" for _, action, _ in spring.world_http_events)
             print(json.dumps({"automaticGeneralUncertaintyPreserved": True,

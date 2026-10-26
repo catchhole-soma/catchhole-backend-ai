@@ -34,7 +34,7 @@ from app.analysis.character_subject_resolver import (
     SubjectResolutionChunkContext,
 )
 from app.analysis.evidence_span_resolver import resolve_candidate_evidence_offsets
-from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError, OrderedPromptBudgetExceeded
 from app.analysis.schemas import ExtractedSettingCandidate
 from app.analysis.setting_extractor import (
     SETTING_EXTRACTION_CACHE_KEY_VERSION,
@@ -49,6 +49,7 @@ from app.analysis.world_setting_manuscript import (
 )
 from app.analysis.world_setting_comparator import (
     WORLD_SETTING_COMPARISON_BATCH_CACHE_KEY,
+    ComparisonTargetReference, batch_limit_review_result,
     WorldSettingComparator,
     WorldSettingSubjectResolver,
 )
@@ -1550,6 +1551,22 @@ async def _run_world_batches(
             for prediction in group_predictions:
                 trace.complete(prediction)
             predictions.extend(group_predictions)
+        except OrderedPromptBudgetExceeded:
+            review = batch_limit_review_result(
+                candidates,
+                [ComparisonTargetReference(reference=f"T{index}", target=target)
+                 for index, target in enumerate(target_set.targets, start=1)],
+                reason="비교 입력이 토큰 한도를 넘어 자동 비교하지 않았습니다.",
+            )
+            for decision in review.decisions:
+                item = source_by_ref[decision.source_candidate_refs[0]]
+                source_ids = list(item.source_ids or (item.source_id,))
+                prediction = _world_stage2_prediction(
+                    source_ids[0], decision, target_set,
+                    source_ids=source_ids if len(source_ids) > 1 else None,
+                )
+                trace.complete(prediction)
+                predictions.append(prediction)
         except (httpx.HTTPError, AiTokenQuotaExhaustedError, LlmIncompleteResponseError):
             raise
         except Exception as exc:

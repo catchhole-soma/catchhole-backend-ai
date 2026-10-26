@@ -1,4 +1,4 @@
-"""Mandatory ordered context limits must stop automatic runs before later batches."""
+"""World token overflow is reviewable; frozen-input violations remain fatal."""
 
 import asyncio
 import logging
@@ -38,14 +38,17 @@ def offline_dependencies(monkeypatch):
     monkeypatch.setattr(world_setting_comparator, "get_settings", lambda: SimpleNamespace())
 
 
+@pytest.mark.parametrize("allow_recovery", [False, True], ids=["schema-retry", "recovery"])
+@pytest.mark.parametrize("ordered", [False, True], ids=["confirmed", "ordered"])
+@pytest.mark.parametrize("frozen_error", [False, True], ids=["token-budget", "frozen-input"])
 @pytest.mark.parametrize("overflow_on_retry", [False, True], ids=["initial", "recovery-boundary"])
-def test_automatic_world_input_overflow_stops_before_next_batch(
-    overflow_on_retry, monkeypatch, caplog,
+def test_world_token_overflow_holds_only_the_batch_and_preserves_frozen_error_boundary(
+    overflow_on_retry, frozen_error, ordered, allow_recovery, monkeypatch, caplog,
 ):
     context = WorkerAnalysisContext(
         run_id=uuid4(), generation=1, input_state_hash="a" * 64,
         source_hash="b" * 64, format_version=1,
-    )
+    ) if ordered else None
     first = _batch().model_copy(update={"analysis_context": context})
     second = first.model_copy(update={"comparison_batch_id": uuid4()})
 
@@ -78,6 +81,8 @@ def test_automatic_world_input_overflow_stops_before_next_batch(
     def check_fixed_limit(system_prompt, user_prompt, max_tokens=64000, response_schema=None):
         nonlocal fixed_limit
         prompt_checks.append(user_prompt)
+        if frozen_error and (not overflow_on_retry or len(prompt_checks) > 1):
+            raise OrderedInputContextError("frozen_input_changed")
         if fixed_limit is None:
             first_size = ensure_ordered_prompt_fits(
                 system_prompt, user_prompt, response_schema=response_schema,
@@ -85,7 +90,7 @@ def test_automatic_world_input_overflow_stops_before_next_batch(
             fixed_limit = first_size if overflow_on_retry else first_size - 1
         elif overflow_on_retry:
             # Recovery sends a bounded fresh request without old retry feedback.
-            # Inject an input-bound failure there to verify the same fatal boundary.
+            # Make this request exceed the budget without calling the provider.
             fixed_limit = 0
         return ensure_ordered_prompt_fits(
             system_prompt, user_prompt, fixed_limit, response_schema=response_schema,
@@ -99,28 +104,51 @@ def test_automatic_world_input_overflow_stops_before_next_batch(
     )
     spring = Spring([first, second])
     pipeline = WorldSettingComparisonPipeline(spring, object(), comparator)
+    compare_batch = pipeline._compare_batch_with_fresh_context
 
-    with (
-        caplog.at_level(logging.WARNING),
-        pytest.raises(OrderedInputContextError) as caught,
-    ):
-        asyncio.run(pipeline.process_all(
-            uuid4(), uuid4(), analysis_context=context, continue_on_candidate_failure=True,
-        ))
+    async def compare_with_retry_mode(*args, **kwargs):
+        # process_all normally enables recovery. Exercise the direct comparator's
+        # schema retry too, with the same persistence and next-batch boundary.
+        kwargs["allow_recovery"] = allow_recovery
+        return await compare_batch(*args, **kwargs)
 
-    assert str(caught.value) == "ordered_required_context_exceeds_input_limit"
-    assert analysis_failure_code(caught.value) is AnalysisFailureCode.UNEXPECTED_ERROR
-    assert comparison_failure_code(caught.value) is AnalysisFailureCode.UNEXPECTED_ERROR
-    assert not is_candidate_comparison_failure(caught.value)
+    monkeypatch.setattr(pipeline, "_compare_batch_with_fresh_context", compare_with_retry_mode)
+
+    if frozen_error:
+        with caplog.at_level(logging.WARNING), pytest.raises(OrderedInputContextError) as caught:
+            asyncio.run(pipeline.process_all(
+                uuid4(), uuid4(), analysis_context=context, continue_on_candidate_failure=allow_recovery,
+            ))
+        assert str(caught.value) == "frozen_input_changed"
+        assert analysis_failure_code(caught.value) is AnalysisFailureCode.UNEXPECTED_ERROR
+        assert comparison_failure_code(caught.value) is AnalysisFailureCode.UNEXPECTED_ERROR
+        assert not is_candidate_comparison_failure(caught.value)
+        assert spring.claim_count == 1
+        assert spring.batches == [second]
+        assert spring.completions == []
+        assert len(spring.failures) == 1
+    else:
+        with caplog.at_level(logging.WARNING):
+            result = asyncio.run(pipeline.process_all(
+                uuid4(), uuid4(), analysis_context=context, continue_on_candidate_failure=allow_recovery,
+            ))
+        assert result.completed_count == 4
+        assert result.failed_count == 0
+        assert spring.claim_count == 3
+        assert spring.batches == []
+        assert spring.failures == []
+        assert len(spring.completions) == 2
+        for completion in spring.completions:
+            assert not completion.failures
+            assert [d.source_candidate_refs for d in completion.decisions] == [["C1"], ["C2"]]
+            for decision, original in zip(completion.decisions, first.candidates, strict=True):
+                assert decision.suggested_operation == "REVIEW_REQUIRED"
+                assert decision.comparison_review_reason == "BATCH_LIMIT_EXCEEDED"
+                assert decision.proposed_scope_name == original.scope_name
+                assert decision.proposed_setting_name == original.setting_name
+                assert decision.proposed_value == original.extracted_value
     assert len(client.requests) == int(overflow_on_retry)
-    assert len(prompt_checks) == 1 + int(overflow_on_retry)
+    assert len(prompt_checks) == 1 + int(overflow_on_retry) + int(not frozen_error)
     if overflow_on_retry:
-        assert "validation_feedback" not in prompt_checks[1]
-    assert spring.claim_count == 1
-    assert spring.batches == [second]
-    assert spring.completions == []
-    assert spring.failures == [(
-        first.comparison_batch_id, "ordered_required_context_exceeds_input_limit",
-        "UNEXPECTED_ERROR", None, None,
-    )]
+        assert ("validation_feedback" in prompt_checks[1]) is (not allow_recovery)
     assert first.candidates[0].evidence_spans[0].quote not in caplog.text

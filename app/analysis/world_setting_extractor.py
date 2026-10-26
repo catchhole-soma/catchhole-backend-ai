@@ -117,7 +117,7 @@ class WorldSettingExtractor:
         user_prompt = f"metadata:\n{metadata}\n\nchunk_text:\n{chunk_text}"
         if setting_book is not None and analysis_context is None:
             system_prompt += "\n\n" + SETTING_BOOK_INSTRUCTIONS
-        if analysis_context is not None:
+        if analysis_context is not None and setting_book is not None:
             system_prompt += "\n\n" + ordered_state_instructions(
                 AnalysisSourceKind.SETTING_BOOK if setting_book is not None else None
             )
@@ -132,7 +132,7 @@ class WorldSettingExtractor:
                 "unresolved_references": ordered_reference_data(analysis_context.unresolved_references) if analysis_context else [],
             }, ensure_ascii=False)
 
-        if semantic_current_context is not None:
+        if semantic_current_context is not None and setting_book is not None:
             system_prompt += "\n\n" + SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS
             if setting_book is not None:
                 payload = json.loads(user_prompt)
@@ -155,9 +155,10 @@ class WorldSettingExtractor:
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_attempts,
             prompt_cache_key=(WORLD_SETTING_EXTRACTION_CACHE_KEY
-                              + (":ordered-references-v1" if analysis_context else "")
+                              + (":ordered-references-v1" if analysis_context and setting_book else "")
                               + (":setting-book-grounded-claims-v2" if setting_book else "")
-                              + (":semantic-current-v1" if semantic_current_context is not None else "")),
+                              + (":semantic-current-v1" if semantic_current_context is not None and setting_book else "")
+                              + (":episode-lean-v1" if setting_book is None else "")),
             operation_name="World-setting extraction",
             logger=logger,
             truncation_retry_max_output_tokens=self.truncation_retry_max_output_tokens,

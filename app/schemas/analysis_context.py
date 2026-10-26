@@ -21,11 +21,27 @@ class AnalysisReferenceEvidence(BaseModel):
     end_offset: int | None = Field(default=None, alias="endOffset", ge=0)
 
 
+class AnalysisReferenceSelection(BaseModel):
+    """Frozen routing hints; never model-visible identity or mutation targets."""
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="forbid")
+
+    actual_subject_ids: tuple[UUID, ...] = Field(default=(), alias="actualSubjectIds")
+    provisional_subject_keys: tuple[str, ...] = Field(default=(), alias="provisionalSubjectKeys")
+    raw_subject_mention: str | None = Field(default=None, alias="rawSubjectMention")
+    candidate_kind: str | None = Field(default=None, alias="candidateKind")
+    fact_type: str | None = Field(default=None, alias="factType")
+    canonical_fact_key: str | None = Field(default=None, alias="canonicalFactKey")
+    value_json: dict | None = Field(default=None, alias="valueJson")
+    world_category: str | None = Field(default=None, alias="worldCategory")
+
+
 class WorkerAnalysisReference(BaseModel):
     """Unapplied earlier claims; never selectable snapshot/identity targets."""
 
     model_config = ConfigDict(populate_by_name=True, frozen=True, extra="forbid")
 
+    selection: AnalysisReferenceSelection | None = None
     domain: Literal["characters", "worldSettings"]
     subject_name: str | None = Field(default=None, alias="subjectName")
     source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo", ge=1)

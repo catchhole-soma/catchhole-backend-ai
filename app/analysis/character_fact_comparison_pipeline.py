@@ -23,8 +23,11 @@ from app.analysis.exceptions import (
     OrderedAnalysisIncompleteError,
     OrderedInputContextError,
 )
-from app.analysis.ordered_context import validate_comparison_source
 from app.analysis.narrative_time import project_advisory_narrative_time
+from app.analysis.ordered_context import validate_comparison_source
+from app.analysis.pending_reference_projection import (
+    character_comparison_scope,
+)
 from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
 from app.domain.enums import AnalysisFailureCode, CharacterFactComparisonOperation
 from app.domain.setting_values import normalize_setting_display_value
@@ -32,6 +35,7 @@ from app.exceptions.failure_classification import (
     comparison_failure_code,
     is_candidate_comparison_failure,
 )
+from app.llm.exceptions import LlmInputTokenCountError, LlmOutputTruncatedError
 from app.schemas.analysis_context import WorkerAnalysisContext, WorkerAnalysisReference
 from app.schemas.analysis_source import WorkerAnalysisSource
 from app.schemas.worker import (
@@ -47,7 +51,6 @@ from app.schemas.worker import (
     WorkerCharacterFactComparisonContextResponse,
     WorkerRemovedSnapshotEntry,
 )
-from app.llm.exceptions import LlmInputTokenCountError, LlmOutputTruncatedError
 from app.usage.metering import TextGenerationUsageSnapshot
 
 logger = logging.getLogger(__name__)
@@ -139,6 +142,7 @@ class CharacterFactBatchComparator(Protocol):
         unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
         protected_slots=(),
         advisory_current_context=None,
+        pending_subject_scope=None,
     ) -> bool | Awaitable[bool]: ...
 
     async def compare_batch(
@@ -153,6 +157,7 @@ class CharacterFactBatchComparator(Protocol):
         max_attempts_override: int | None = None,
         protected_slots=(),
         advisory_current_context=None,
+        pending_subject_scope=None,
     ) -> tuple[CharacterFactComparisonBatchResult, dict]: ...
 
 
@@ -245,6 +250,7 @@ async def execute_character_fact_comparison_batch(
     unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
     protected_slots=(),
     advisory_current_context=None,
+    pending_subject_scope=None,
 ) -> CharacterFactBatchExecutionResult:
     """Split, compare, and project one ordered character batch (including persisted legacy FactType batches).
 
@@ -277,6 +283,7 @@ async def execute_character_fact_comparison_batch(
             ordered_context=ordered_context,
             unresolved_references=unresolved_references,
             advisory_current_context=advisory_current_context,
+            **({"pending_subject_scope": pending_subject_scope} if pending_subject_scope is not None else {}),
         )
         if not segment:
             shared_overflow = not await _mandatory_context_fits(
@@ -285,6 +292,7 @@ async def execute_character_fact_comparison_batch(
                 state=state, ordered_context=ordered_context,
                 unresolved_references=unresolved_references,
                 advisory_current_context=advisory_current_context,
+                **({"pending_subject_scope": pending_subject_scope} if pending_subject_scope is not None else {}),
             )
             affected = candidates[cursor:] if shared_overflow else candidates[cursor:cursor + 1]
             error = CharacterComparisonInputTooLargeError(
@@ -306,6 +314,7 @@ async def execute_character_fact_comparison_batch(
                 **({"unresolved_references": unresolved_references} if unresolved_references else {}),
                 **({"protected_slots": state.protected_slots} if state.protected_slots else {}),
                 **({"advisory_current_context": advisory_current_context} if advisory_current_context is not None else {}),
+                **({"pending_subject_scope": pending_subject_scope} if pending_subject_scope is not None else {}),
             )
         except LlmOutputTruncatedError as exc:
             if not is_candidate_comparison_failure(exc):
@@ -352,6 +361,7 @@ async def execute_character_fact_comparison_batch(
                         **({"unresolved_references": unresolved_references} if unresolved_references else {}),
                         **({"protected_slots": state.protected_slots} if state.protected_slots else {}),
                         **({"advisory_current_context": advisory_current_context} if advisory_current_context is not None else {}),
+                        **({"pending_subject_scope": pending_subject_scope} if pending_subject_scope is not None else {}),
                     )
                     previous_entries = state.entries
                     decisions.append(
@@ -384,6 +394,7 @@ async def execute_character_fact_comparison_batch(
                         state=state, ordered_context=ordered_context,
                         unresolved_references=unresolved_references,
                         advisory_current_context=advisory_current_context,
+                        **({"pending_subject_scope": pending_subject_scope} if pending_subject_scope is not None else {}),
                     ):
                         error = CharacterComparisonInputTooLargeError(
                             "character_batch_required_context_input_limit_exceeded"
@@ -616,6 +627,8 @@ class CharacterFactComparisonPipeline:
                                        if context.analysis_context else ()),
                 protected_slots=context.protected_slots,
                 advisory_current_context=context.advisory_current_context,
+                pending_subject_scope=character_comparison_scope(context.matched_character_name, context.candidates,
+                    context.advisory_current_context, context.provisional_subject_key),
             )
             decisions = execution.decisions
             failures = execution.failures
@@ -869,6 +882,7 @@ async def _largest_fitting_segment(
     ordered_context: bool = False,
     unresolved_references: tuple[WorkerAnalysisReference, ...] = (),
     advisory_current_context=None,
+    pending_subject_scope=None,
 ) -> list[WorkerCharacterFactComparisonBatchCandidate]:
     async def fits(segment):
         result = comparator.batch_fits(
@@ -880,6 +894,7 @@ async def _largest_fitting_segment(
             **({"unresolved_references": unresolved_references} if unresolved_references else {}),
             **({"protected_slots": state.protected_slots} if state.protected_slots else {}),
             **({"advisory_current_context": advisory_current_context} if advisory_current_context is not None else {}),
+            **({"pending_subject_scope": pending_subject_scope} if pending_subject_scope is not None else {}),
         )
         return await result if isawaitable(result) else result
 
