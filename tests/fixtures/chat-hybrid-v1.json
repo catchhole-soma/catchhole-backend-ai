@@ -26,6 +26,7 @@
       "outputs": [
         {
           "disposition": "PROCEED",
+          "registeredCurrentRequired": false,
           "rdbMode": "CURRENT",
           "sourceNeed": "NONE",
           "subjects": [
@@ -62,6 +63,7 @@
       "outputs": [
         {
           "disposition": "PROCEED",
+          "registeredCurrentRequired": false,
           "rdbMode": "DIRECT_EVIDENCE",
           "sourceNeed": "SCENE",
           "subjects": [
@@ -113,6 +115,7 @@
       "outputs": [
         {
           "disposition": "PROCEED",
+          "registeredCurrentRequired": false,
           "rdbMode": "NONE",
           "sourceNeed": "SCENE",
           "subjects": [],
@@ -159,6 +162,7 @@
       "outputs": [
         {
           "disposition": "PROCEED",
+          "registeredCurrentRequired": false,
           "rdbMode": "CURRENT",
           "sourceNeed": "SCENE",
           "subjects": [
@@ -210,6 +214,7 @@
       "outputs": [
         {
           "disposition": "PROCEED",
+          "registeredCurrentRequired": false,
           "rdbMode": "CURRENT",
           "sourceNeed": "REASON",
           "subjects": [
@@ -280,6 +285,7 @@
       "outputs": [
         {
           "disposition": "PROCEED",
+          "registeredCurrentRequired": false,
           "rdbMode": "NONE",
           "sourceNeed": "SCENE",
           "subjects": [],
@@ -330,6 +336,7 @@
       "outputs": [
         {
           "disposition": "PROCEED",
+          "registeredCurrentRequired": false,
           "rdbMode": "NONE",
           "sourceNeed": "SCENE",
           "subjects": [],
@@ -381,6 +388,7 @@
       "outputs": [
         {
           "disposition": "PROCEED",
+          "registeredCurrentRequired": false,
           "rdbMode": "NONE",
           "sourceNeed": "SCENE",
           "subjects": [],
@@ -411,6 +419,7 @@
       "outputs": [
         {
           "disposition": "PAST_STATE",
+          "registeredCurrentRequired": false,
           "rdbMode": "NONE",
           "sourceNeed": "SCENE",
           "subjects": [],
@@ -439,6 +448,7 @@
       "outputs": [
         {
           "disposition": "PROCEED",
+          "registeredCurrentRequired": false,
           "rdbMode": "NONE",
           "sourceNeed": "SCENE",
           "subjects": [],

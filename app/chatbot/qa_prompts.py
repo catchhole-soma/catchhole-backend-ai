@@ -1,12 +1,24 @@
 """Versioned prompts; source data is never elevated into instructions."""
 
-PLAN_VERSION = "chat-qa-plan-v7"
+PLAN_VERSION = "chat-qa-plan-v9"
 SELECT_VERSION = "chat-qa-select-v3"
-FIELD_VERSION = "chat-qa-field-select-v1"
+FIELD_VERSION = "chat-qa-field-select-v2"
 
 ANSWER_STYLE_INSTRUCTIONS = """
 새 설명·판단 이유는 목록도 ~습니다/~요 존댓말로 쓴다. 자료의 반말을 따르지 않는다.
 이름·저장값·원문 인용·supports.quote는 보존한다.
+"""
+
+
+PROVENANCE_INSTRUCTIONS = """
+출처·내용 수정·확정 방식·기록 시각은 사용자가 그 정보를 묻거나 답변의 중요한 차이를 설명할 때만 언급한다.
+일반 값·이력 설명에 처리정보를 나열하지 않는다. 질문과 관련된 차이를 짧게 설명하고 같은 정보를 출처마다 반복하지 않는다.
+provenance가 있으면 각 source의 원자료(sourceKind), 내용 수정 여부(contentEdited), 확정 방식(applicationAction)을
+독립적으로 읽는다. 사용자 확정은 내용 수정이나 직접 입력의 증거가 아니다. false와 null/UNKNOWN을 구분한다.
+복수 출처를 하나의 출처·행위로 합치지 않는다. recordedAt은 설정 기록 생성 시각이며 수정/반영/작중 사건 시각이 아니다.
+자료에 수정·반영 시각이 없으면 확인 불가로 답한다. 회차로 시각을 추측하지 않으며 이전 답변의 값을 쓰지 않는다.
+시각을 요청한 경우에만 기록 생성 시각임을 밝히며 불필요한 소수초는 표시하지 않는다.
+provenance가 없으면 origin의 범위만 설명하고 구체 원자료·수정 여부·확정 방식·기록 시각을 추측하지 않는다.
 """
 
 SMALL_TALK_INSTRUCTIONS = """
@@ -40,16 +52,29 @@ subject.name은 질문에 나온 대상의 고유 이름이며, 이름 뒤에 �
 직전에 대상을 되물었고 이번 질문이 그 대상의 이름·종류를 보충하면 이전 요청과 합쳐 다시 조회한다.
 현재 보충으로 하나의 대상과 요청이 명확해졌다면 같은 명확화 질문을 되풀이하지 않는다.
 현재 질문의 명시적 정정·새 대상·새 요청이 우선이다. 이전 후보나 답변은 사실 근거가 아니며 다시 조회한다.
+직접 입력/내용 수정/자동 또는 사용자 확정/기록 생성 시각은 등록 자료의 출처·처리 정보 질문이다.
+현재값의 출처는 CURRENT, 보존된 처리 기록은 HISTORY로 조회하고 answerShape=SUMMARY로 필요한 차이를 설명한다.
+출처의 종류·수정·확정 방식을 묻는 것만으로 원문 인용이나 검색을 요청한 것으로 보지 않는다.
+이런 처리 정보 질문을 소설 속 사건 과정이나 원문 검색으로 바꾸지 않는다. 수정/반영 시각은 기록 생성 시각과 구분한다.
 등록 설정 조회의 각 subject.focus에는 factType과 attribute를 채운다.
 인물 factType은 PROFILE(종족·성별·소속 등), AGE(나이), LEVEL(레벨), STAT(수치 스탯),
 SKILL(스킬·능력·무공·기술), ITEM(소지품), STATUS(상태), TIME(시간) 중 질문의 유형이다.
 종류를 구분할 수 없으면 factType=null, 세계관은 항상 null이다.
 한 유형 전체(스킬 목록, 레벨 변화 등)를 요청하면 attribute=null이다.
 특정 속성/능력 또는 세계관 경로를 요청하면 attribute에 질문/명확한 대화에 등장한 항목 표현을 그대로 넣는다.
+짧은 정정이 값으로만 표현되면 그 값 표현을 attribute로 보존하고 실제 항목은 FIELD 조회에서 선택한다.
+예: '여자일 텐데?'에 성별이라는 말이 없으면 PROFILE + '여자', '스무 살 아니야?'이면 AGE + '스무 살'이다.
+대상은 명확한 이전 대화에서만 연결하고 정정한 값이 사실인지는 이번 등록 자료로 다시 확인한다.
+같은 대상의 여러 항목을 비교해도 subject는 하나다. 서로 다른 유형이면 factType=null로 두고,
+attribute에 요청한 항목들을 함께 포함하는 실제 입력의 연속 구절을 보존하여 FIELD에서 관련 경로들을 선택한다.
+항목별로 subject를 중복하거나 특정 항목 질문을 (null,null)의 전체 조회로 넓히지 않는다.
+중복 대상만 고칠 때 원래 이력/현재/원문 요구와 설명·비교 목적을 바꾸지 않는다.
 예: '마력 수치'는 STAT + '마력', '고급 주문의 소모량'은 WORLD + '고급 주문의 소모량'.
 인물 소개·전체 요약 또는 모든 설정을 묻는 경우 factType=null, attribute=null로 조회한다.
 해당 값을 고르는 저장 key나 scope는 생성하지 않는다. 서버의 실제 항목 목록을 별도로 확인한다.
 answerShape는 질문 목적이다: FACTS(값·이력), LIST(목록), COUNT(개수), SUMMARY(소개·요약), DISTINCT(값의 종류).
+값·이력의 의미나 서로 다른 항목의 차이를 설명·비교해 달라는 요청은 SUMMARY다. 단순 전체 나열 FACTS로 바꾸지 않는다.
+원문상의 이유·경위를 함께 묻는다면 별도의 원문 요구도 보존한다.
 작품 전체 인물·세계관 목록/집계/조건 질문은 subjects=[]와 collection 객체로 표현한다.
 이때 등록 현재 자료 조회인 intent/rdbMode는 CURRENT다. '작품', '등장인물', '종족' 같은 범위를 주체 이름으로 만들지 않는다.
 collection={domain,factType,worldCategory,attribute,predicate}. 저장 key/scope/ID는 만들지 않는다.
@@ -73,6 +98,9 @@ fieldRef만 반환한다. settingKey·scopeName·ID·값을 생성하지 않는�
 표시명뿐 아니라 category, settingKey, scopeName을 함께 읽어 의미를 판단한다.
 조건 검색(singleCondition=true)은 attribute/value 표현으로 찾으려는 항목 하나만 고른다.
 예: '엘프인 인물'의 '엘프'는 실제 목록의 종족 항목에 대응할 수 있다.
+이름을 지정한 후속 정정도 값 표현으로 항목을 가리킬 수 있다. '여자'는 관측된 성별 항목,
+'스무 살'은 관측된 나이 항목에 연결할 수 있다. 입력값을 등록값이라고 확정하거나 수정하지 않는다.
+여러 항목이 가능하면 CLARIFICATION이며 관측된 관련 항목이 없으면 INSUFFICIENT_EVIDENCE다.
 서로 다른 scope에 같은 이름이 있고 질문으로 구분할 수 없으면 CLARIFICATION이다.
 고급 주문의 비용을 묻는데 일반 주문의 비용만 있으면 그것으로 대체하지 않는다.
 질문과 의미가 같은 항목이 없으면 INSUFFICIENT_EVIDENCE다. 단지 하나밖에 없다고 선택하지 않는다.
@@ -97,7 +125,9 @@ CURRENT: 현재 등록 설정/능력/속성. HISTORY: 확정 설정의 변경 �
 CURRENT_AND_HISTORY: 현재값과 변경 기록을 둘 다 명시적으로 묻는 경우.
 DIRECT_EVIDENCE: 현재 등록 설정에 연결된 원문 인용을 묻는 경우.
 NEEDS_SEARCH: 장면, 사건 이유/동기, 줄거리처럼 등록 설정만으로 확인할 수 없는 질문.
-PAST_STATE: 특정 회차 당시의 전체 상태, 과거 시점 현재값, 사건 발생 시점 복원을 요구.
+PAST_STATE: 과거 시점의 등록 snapshot이나 전체 설정 상태를 재구성하는 요청.
+특정 회차의 원문에 서술된 사건·행동의 완료 여부나 진행 상황을 확인하는 것은 NEEDS_SEARCH다.
+시간 경계나 '당시/끝난 시점'이라는 표현만으로 사건 확인을 PAST_STATE로 바꾸지 않는다.
 CLARIFICATION: 대상을 더 구체적으로 알아야 함. UNSUPPORTED: 변경 요청/범위 밖 요청.
 등록 설정의 근거 질문과 임의 장면 검색을 구분한다. 시간 순서를 추측하지 않는다.
 episodeFrom/episodeTo는 질문이 명시적으로 요청한 '출처 회차' 필터일 때만 채운다.

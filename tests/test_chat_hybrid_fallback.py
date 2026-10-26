@@ -22,7 +22,7 @@ def offline_only(monkeypatch):
 
 
 def replace_keyword_evidence(search, name="weather"):
-    # Keep the default eight-reference cap: eight higher-ranked, distinct episodes evict E1.
+    # Eight higher-ranked episodes compete with the supported earlier reference.
     search.vector_chunks = [
         replace(
             source_chunk(name, method="VECTOR"),
@@ -55,7 +55,7 @@ def test_later_none_restores_partial_answer_with_its_original_evidence(tmp_path)
     assert [source["sourceEpisodeNo"] for source in finished["retrievalSources"]] == [3]
     assert "반지" in finished["retrievalSources"][0]["quote"]
     assert "비가 내렸다" not in finished["text"]
-    # The last draft saw a different E1; the receipt and final revalidation must use the old one.
+    # New passages may precede it in source order, but the old E1 remains in the payload.
     assert (
         result["raw"].requests[-1]["input"]["passages"][0]["text"] == source_chunk("weather").text
     )
@@ -68,7 +68,7 @@ def test_later_complete_answer_takes_priority_over_saved_partial(tmp_path):
     result = asyncio.run(
         replay(
             tmp_path,
-            partial_case(answer()),
+            partial_case(answer(ref="E2")),
             search_setup=lambda search: replace_keyword_evidence(search, "ring"),
         )
     )
@@ -126,7 +126,8 @@ def test_direct_partial_snapshot_is_restored_and_requeried(tmp_path, changed):
     case["outputs"][-1] = answer(coverage="NONE")
 
     def change_direct(count, spring, search):
-        if changed and count == 4:
+        # Change after the direct-source answer, before the final source requery.
+        if changed and count == 3:
             spring.catalog[0]["evidence"][0]["evidence"]["quotes"][0]["text"] = "변경된 원문"
 
     result = asyncio.run(

@@ -47,6 +47,7 @@ def parts_case(*, parts=None, event_context=EVENT):
     case["outputs"] = [
         {
             "disposition": "PROCEED",
+            "registeredCurrentRequired": False,
             "rdbMode": "NONE",
             "sourceNeed": "PROCESS",
             "subjects": [],
@@ -226,7 +227,7 @@ def test_no_answer_keyword_round_yields_context_to_lower_scored_vector_hits(
         == "E5"
     )
     assert len(result["embedding"].inputs) == 1
-    assert set(result["search"].vector_exclusions[0]) == {c.chunk_id for c in keyword}
+    assert set(result["search"].vector_exclusions[0]) == {c.chunk_id for c in keyword[:8]}
     assert [source["chunkId"] for source in response["retrievalSources"]] == [
         str(vector[4].chunk_id)
     ]
@@ -310,9 +311,8 @@ def test_complementary_partial_answers_merge_without_reusing_wrong_evidence_refs
     behavior = passage(BEHAVIOR, 8, episode=12, method="VECTOR")
     case["outputs"] += [
         answer(claim(EMOTION, EMOTION, parts=("P1",)), missing=("P2",)),
-        # Fresh vector candidates receive E1 in the second answer input. The
-        # old draft's E1 still identifies the distinct earlier emotion passage.
-        answer(claim(BEHAVIOR, BEHAVIOR, parts=("P2",)), missing=("P1",)),
+        # The supported first passage is retained as E1; the fresh one is E2.
+        answer(claim(BEHAVIOR, BEHAVIOR, ref="E2", parts=("P2",)), missing=("P1",)),
     ]
 
     result = asyncio.run(
@@ -378,6 +378,7 @@ def test_per_item_uses_the_same_requested_parts_and_rejects_missing_part(tmp_pat
     case["question"] = "미라의 각 스킬을 처음 배운 계기와 배운 뒤 생활에 준 영향을 알려줘."
     plan = case["outputs"][0]
     plan.update(
+        registeredCurrentRequired=False,
         rdbMode="CURRENT",
         perItem=True,
         subjects=[
@@ -442,6 +443,7 @@ def conflict_case():
     case = parts_case(parts=[{"ref": "P1", "description": "첫 봉화 기술을 배운 계기"}])
     case["question"] = "미라가 첫 봉화 기술을 배운 계기를 알려줘."
     case["outputs"][0].update(
+        registeredCurrentRequired=False,
         rdbMode="CURRENT",
         subjects=[
             {

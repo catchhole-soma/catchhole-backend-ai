@@ -7,7 +7,6 @@ from pydantic import Field, model_validator
 from app.schemas.chat_qa import AnswerShape, CharacterFilter, QuestionSubject, WorkCollection
 from app.schemas.setting_tools import ContractModel
 
-
 RequestedFacet = Literal["TIME", "HOW", "WHY", "SCENE", "P1", "P2", "P3", "P4"]
 EventScope = Literal["ACTUAL", "PLANNED"]
 EventStatus = Literal["OCCURRED", "PLANNED", "UNCERTAIN"]
@@ -31,6 +30,9 @@ class HybridPlan(ContractModel):
         "NONE", "CURRENT", "HISTORY", "CURRENT_AND_HISTORY", "DIRECT_EVIDENCE", "CHARACTER_LIST"
     ]
     source_need: Literal["NONE", "SCENE", "REASON", "PROCESS"]
+    # Required evidence obligation, independent of the optional presentation flag.
+    # No default: a provider response cannot silently omit this decision.
+    registered_current_required: bool = Field(strict=True)
     subjects: list[QuestionSubject] = Field(max_length=3)
     search_terms: list[str] = Field(max_length=6)
     include_evidence: bool
@@ -66,6 +68,7 @@ class HybridPlan(ContractModel):
             or self.source_fallback
             or self.per_item
             or self.include_registered_values
+            or self.registered_current_required
             or self.answer_shape != "FACTS"
         ):
             raise ValueError("Conversation replies cannot request factual lookups")
@@ -78,6 +81,14 @@ class HybridPlan(ContractModel):
         ) != len(self.subjects):
             raise ValueError("Duplicate subjects")
         if self.disposition == "PROCEED":
+            if self.registered_current_required and (
+                self.rdb_mode
+                not in {"CURRENT", "CURRENT_AND_HISTORY", "DIRECT_EVIDENCE", "CHARACTER_LIST"}
+                or self.source_fallback
+            ):
+                raise ValueError(
+                    "Required current information needs a current lookup without fallback"
+                )
             if (
                 self.rdb_mode not in {"NONE", "CHARACTER_LIST"}
                 and not self.subjects
@@ -225,8 +236,6 @@ class GroundedAnswer(ContractModel):
     def coherent(self) -> Self:
         validate_missing_explanations(self.missing_explanations, self.missing_facets)
         supported = bool(self.claims or self.conflicts or any(i.answers for i in self.item_answers))
-        if (self.coverage == "NONE") == supported:
-            raise ValueError("Coverage and grounded statements disagree")
         for claim in self.claims:
             if (
                 not claim.text.strip()
@@ -239,14 +248,23 @@ class GroundedAnswer(ContractModel):
                 raise ValueError("Invalid claim")
         if len(set(self.unanswered_row_refs)) != len(self.unanswered_row_refs):
             raise ValueError("Duplicate unanswered row references")
-        if self.coverage == "COMPLETE" and self.unanswered_row_refs:
-            raise ValueError("Unanswered rows cannot have complete coverage")
         if len({item.item_ref for item in self.item_answers}) != len(self.item_answers):
             raise ValueError("Duplicate logical item references")
-        if self.coverage == "COMPLETE" and any(i.missing_facets for i in self.item_answers):
-            raise ValueError("Unanswered facets cannot have complete coverage")
         if len(set(self.missing_facets)) != len(self.missing_facets):
             raise ValueError("Duplicate unanswered facets")
-        if self.coverage == "COMPLETE" and self.missing_facets:
-            raise ValueError("Unanswered facets cannot have complete coverage")
+        # Coverage is metadata derived from this structure, not a reason to ask
+        # the model to rewrite otherwise valid claims and lose their sources.
+        # Only contradictions decidable without the request are corrected here.
+        # Reference, source and requested-facet validation still happens before
+        # publication; an unexplained PARTIAL is not upgraded at schema parsing.
+        if not supported:
+            object.__setattr__(self, "coverage", "NONE")
+        elif (
+            self.coverage == "NONE"
+            or self.conflicts
+            or self.unanswered_row_refs
+            or self.missing_facets
+            or any(i.missing_facets for i in self.item_answers)
+        ):
+            object.__setattr__(self, "coverage", "PARTIAL")
         return self

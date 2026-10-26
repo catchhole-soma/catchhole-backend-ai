@@ -7,12 +7,13 @@ model inference and the external network do not.
 
 import asyncio
 import copy
+import socket
 from dataclasses import replace
 from hashlib import sha256
-import socket
 
 import pytest
 
+from app.chatbot.hybrid_prompts import PLAN_PROMPT
 from app.chatbot.qa import response_schema
 from app.chatbot.qa_render import NOTICES
 from app.schemas.chat_hybrid import GroundedAnswer, HybridPlan
@@ -55,6 +56,7 @@ def skill_case(*, per_item=True):
     case["outputs"] = [
         {
             "disposition": "PROCEED",
+            "registeredCurrentRequired": False,
             "rdbMode": "CURRENT",
             "sourceNeed": "PROCESS",
             "subjects": [
@@ -253,7 +255,7 @@ def test_corrected_coverage_retry_preserves_all_skills_and_is_metered(tmp_path):
     "count,value_length,config",
     [
         (101, 0, {"page_size": 50, "max_context_characters": 64000, "max_input_tokens": 32000}),
-        (3, 400, {"max_context_characters": 6000}),
+        (3, 400, {"max_context_characters": len(PLAN_PROMPT) + 1000}),
     ],
 )
 def test_oversized_per_item_request_clarifies_before_search_or_answer_generation(

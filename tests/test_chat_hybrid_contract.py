@@ -57,6 +57,7 @@ def test_malformed_receipt_is_rejected(field, value):
 def test_duplicate_subjects_and_noninteger_ranges_fail_inside_planning_schema():
     plan = dict(
         disposition="PROCEED",
+        registeredCurrentRequired=False,
         rdbMode="CURRENT",
         sourceNeed="NONE",
         subjects=[

@@ -24,6 +24,7 @@ def plan():
     return HybridPlan.model_validate(
         {
             "disposition": "PROCEED",
+            "registeredCurrentRequired": False,
             "rdbMode": "NONE",
             "sourceNeed": "PROCESS",
             "subjects": [],

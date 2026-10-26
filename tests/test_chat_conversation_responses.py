@@ -73,6 +73,7 @@ def test_conversational_plan_returns_fixed_answer_with_one_metered_call(
         plan.pop("intent")
         plan.update(
             disposition=intent,
+            registeredCurrentRequired=False,
             rdbMode="NONE",
             sourceNeed="NONE",
             searchTerms=[],

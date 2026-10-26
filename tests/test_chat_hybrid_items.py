@@ -1,9 +1,9 @@
 """Synthetic logical-item/facet regressions. No authored manuscript or model calls."""
 
 import asyncio
+import socket
 from dataclasses import replace
 from hashlib import sha256
-import socket
 from uuid import UUID
 
 import pytest
@@ -124,9 +124,7 @@ def test_current_and_history_are_one_answer_item_through_real_orchestration(tmp_
     )
 
 
-@pytest.mark.parametrize(
-    "mutation", ["unknown_item", "missing_facet", "overlap", "false_complete", "free_claim"]
-)
+@pytest.mark.parametrize("mutation", ["unknown_item", "missing_facet", "overlap", "free_claim"])
 def test_item_contract_rejects_reference_only_or_false_facet_coverage(mutation):
     data = item_answer(1)
     if mutation == "unknown_item":
@@ -138,8 +136,6 @@ def test_item_contract_rejects_reference_only_or_false_facet_coverage(mutation):
         data["itemAnswers"][0]["answers"] = [
             {"facet": "TIME", "text": "23화", "evidenceRefs": ["E1"]}
         ]
-    if mutation == "false_complete":
-        data["coverage"] = "COMPLETE"
     if mutation == "free_claim":
         data["coverage"] = "PARTIAL"
         data["claims"] = [{"text": "빛을 쓰고 싶어 한다.", "evidenceRefs": ["E1"]}]
@@ -147,6 +143,18 @@ def test_item_contract_rejects_reference_only_or_false_facet_coverage(mutation):
         validate_item_answer(
             GroundedAnswer.model_validate(data), group_items([answer_row("R1")]), ["TIME", "HOW"]
         )
+
+
+def test_false_complete_item_metadata_preserves_all_unanswered_facets():
+    data = item_answer(1)
+    data["coverage"] = "COMPLETE"
+    answer = GroundedAnswer.model_validate(data)
+
+    validate_item_answer(answer, group_items([answer_row("R1")]), ["TIME", "HOW"])
+
+    assert answer.coverage == "NONE"
+    assert answer.item_answers[0].answers == []
+    assert answer.item_answers[0].missing_facets == ["TIME", "HOW"]
 
 
 def test_conflict_retracts_previous_answer_instead_of_counting_coverage():
@@ -290,6 +298,7 @@ def test_condition_then_narrative_filters_subjects_and_rechecks_collection(
     case["question"] = "다친 인물들은 왜 다쳤어?"
     plan = case["outputs"][0]
     plan.update(
+        registeredCurrentRequired=False,
         rdbMode="CURRENT",
         sourceNeed="REASON",
         subjects=[],
@@ -440,6 +449,7 @@ def test_condition_batches_leave_one_call_for_grounded_answer(
     case.update(question="다친 인물들은 왜 다쳤어?", maxCalls=server_calls)
     plan = case["outputs"][0]
     plan.update(
+        registeredCurrentRequired=False,
         rdbMode="CURRENT",
         sourceNeed="REASON",
         subjects=[],

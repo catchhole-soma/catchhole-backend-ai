@@ -63,7 +63,7 @@ def truncated_provider(monkeypatch, *, first, repeat=False, measured=True):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(("first", "caps"), [(0, [1500, 3000, 3000]), (1, [1500, 3000, 6000])])
+@pytest.mark.parametrize(("first", "caps"), [(0, [2000, 4000, 4500]), (1, [2000, 4500, 6000])])
 async def test_truncation_recovers_once_with_stage_cap_and_preserves_paid_failure(
     monkeypatch, caplog, first, caps
 ):
@@ -96,7 +96,7 @@ async def test_second_truncation_stops_without_publishing_partial_output(monkeyp
     case, catalog = scenario()
     result = await replay_case(case, catalog, config={"max_attempts": 3})
     assert result["finish"] == {"result": None, "failure": "PROVIDER_FAILURE"}
-    assert [r["max_output_tokens"] for r in result["modelRequests"]] == [1500, 3000, 6000]
+    assert [r["max_output_tokens"] for r in result["modelRequests"]] == [2000, 4500, 6000]
     assert [r["outcome"] for r in result["usageReports"]] == ["SUCCESS", "FAILURE", "FAILURE"]
 
 
@@ -159,7 +159,7 @@ async def test_hybrid_retry_obeys_text_call_and_account_limits_and_counts_failed
     assert len(result["raw"].requests) == len(result["spring"].reservations) == 1
     assert result["spring"].reports[0]["outcome"] == "FAILURE"
     registry = result["metrics"].registry
-    for kind, value in [("text_input", 101), ("text_cached_input", 19), ("text_output", 1500)]:
+    for kind, value in [("text_input", 101), ("text_cached_input", 19), ("text_output", 2000)]:
         assert registry.get_sample_value("chat_retrieval_tokens_total", {"kind": kind}) == value
 
 
@@ -175,7 +175,7 @@ async def test_schema_feedback_contains_only_schema_fields_and_fixed_error_kinds
     assert "literal_error" in retry and "$.subjects[].domain" in retry
     assert "extra_forbidden" in retry
     assert PRIVATE not in retry
-    assert [r["max_output_tokens"] for r in result["modelRequests"]] == [1500, 1500, 3000]
+    assert [r["max_output_tokens"] for r in result["modelRequests"]] == [2000, 4000, 4500]
 
 
 def test_contract_feedback_rejects_untrusted_messages_and_supports_fixed_rule_codes():

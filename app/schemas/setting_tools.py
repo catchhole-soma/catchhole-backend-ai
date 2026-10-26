@@ -1,5 +1,6 @@
 """GH236 읽기 전용 계약. 회원·작품 ID는 모델 도구 인자가 아니다."""
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal, Self
 from uuid import UUID
@@ -126,6 +127,25 @@ class SourceReference(ContractModel):
     target_id: UUID
 
 
+class SettingSourceProvenance(ContractModel):
+    reference: SourceReference
+    source_kind: Literal["EPISODE", "SETTING_BOOK", "USER_INPUT", "UNKNOWN"]
+    content_edited: bool | None = Field(strict=True)
+    application_action: Literal["AUTOMATIC_CONFIRM", "USER_CONFIRM", "UNKNOWN"]
+    recorded_at: str | None = Field(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?$")
+
+    @model_validator(mode="after")
+    def valid_timestamp(self) -> Self:
+        if self.recorded_at is not None:
+            datetime.fromisoformat(self.recorded_at)
+        return self
+
+
+class SettingProvenance(ContractModel):
+    sources: list[SettingSourceProvenance] = Field(max_length=20)
+    sources_truncated: bool = Field(strict=True)
+
+
 class EvidenceQuote(ContractModel):
     text: str = Field(max_length=1000)
     start_offset: int | None = Field(ge=0)
@@ -178,6 +198,18 @@ class SettingToolItem(ContractModel):
     sources: list[SourceReference] = Field(max_length=20)
     sources_truncated: bool
     evidence: DirectEvidence | None
+    provenance: SettingProvenance | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def coherent_provenance(self) -> Self:
+        if self.provenance is not None and (
+            [source.reference for source in self.provenance.sources] != self.sources
+            or self.provenance.sources_truncated != self.sources_truncated
+        ):
+            raise ValueError("Provenance must match the observed source references")
+        return self
 
 
 class SettingToolPage(ContractModel):

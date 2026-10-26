@@ -1,0 +1,79 @@
+{
+  "description": "Explicit scripted RDB execution inputs, no gold fields. Not provider predictions.",
+  "catalog": [
+    {
+      "subject": {
+        "kind": "WORLD_SETTING",
+        "id": "00000000-0000-0000-0000-000000000002",
+        "subjectId": "00000000-0000-0000-0000-000000000002",
+        "subjectName": "화염술",
+        "category": "POWER_SYSTEM",
+        "scopeName": null,
+        "settingKey": null,
+        "displayName": "화염술",
+        "value": null,
+        "structuredValueJson": null,
+        "valueTruncated": false,
+        "contributesToCurrent": null,
+        "operation": null,
+        "historyOnly": null,
+        "settingVersion": null,
+        "effectiveFromEpisodeNo": null,
+        "sourceEpisodeId": null,
+        "sourceEpisodeNo": null,
+        "origin": "UNKNOWN",
+        "sources": [],
+        "sourcesTruncated": false,
+        "evidence": null
+      },
+      "current": [
+        {
+          "kind": "CURRENT",
+          "id": null,
+          "subjectId": "00000000-0000-0000-0000-000000000002",
+          "subjectName": "화염술",
+          "category": "POWER_SYSTEM",
+          "scopeName": null,
+          "settingKey": "mana_cost",
+          "displayName": "소모 마력",
+          "value": "42",
+          "structuredValueJson": null,
+          "valueTruncated": false,
+          "contributesToCurrent": true,
+          "operation": null,
+          "historyOnly": false,
+          "settingVersion": 3,
+          "effectiveFromEpisodeNo": null,
+          "sourceEpisodeId": null,
+          "sourceEpisodeNo": null,
+          "origin": "USER_INPUT",
+          "sources": [],
+          "sourcesTruncated": false,
+          "evidence": null
+        }
+      ],
+      "history": [],
+      "evidence": []
+    }
+  ],
+  "outputs": [
+    {
+      "intent": "CURRENT",
+      "subjects": [
+        {
+          "domain": "WORLD",
+          "name": "화염술"
+        }
+      ],
+      "includeEvidence": false,
+      "episodeFrom": null,
+      "episodeTo": null
+    },
+    {
+      "outcome": "ANSWER",
+      "rowRefs": [
+        "R1"
+      ]
+    }
+  ]
+}

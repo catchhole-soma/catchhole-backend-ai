@@ -8,7 +8,7 @@ from app.chatbot.client import ChatTransportError
 from app.chatbot.qa import _Session
 from app.chatbot.qa_validation import ResponseValidationFailure
 from app.chatbot.replay import ScriptedTextClient, replay_case
-from app.chatbot.runtime import ProviderFailure
+from app.chatbot.runtime import ProviderFailure, ProviderOutputTruncated
 from tests.test_chat_response_recovery import PRIVATE, scenario, truncated_provider
 
 
@@ -106,8 +106,8 @@ async def test_final_truncation_keeps_provider_failure_and_paid_usage(
 
     assert result["finish"]["failure"] == "PROVIDER_FAILURE"
     assert len(model_errors) == 1
-    assert type(model_errors[0]) is ProviderFailure
     assert len(result["reservations"]) == len(result["usageReports"]) == 2
+    assert type(model_errors[0]) is ProviderOutputTruncated
     assert result["usageReports"][-1]["outcome"] == "FAILURE"
     assert result["usageReports"][-1]["inputTokens"] == 101
 

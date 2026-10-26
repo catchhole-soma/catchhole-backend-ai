@@ -11,8 +11,8 @@ class ChatQaSettings(BaseSettings):
     model: str = Field(default="gpt-6-luna", min_length=1, max_length=100)
     reasoning_effort: str = "medium"
     max_attempts: int = Field(default=2, ge=1, le=3)
-    max_output_tokens: int = Field(default=1500, ge=128, le=8000)
-    answer_max_output_tokens: int = Field(default=3000, ge=128, le=8000)
+    max_output_tokens: int = Field(default=2000, ge=128, le=8000)
+    answer_max_output_tokens: int = Field(default=4500, ge=128, le=8000)
     truncation_retry_max_output_tokens: int = Field(default=6000, ge=128, le=16000)
     max_input_tokens: int = Field(default=32000, ge=1000, le=32000)
     max_context_characters: int = Field(default=32000, ge=2000, le=64000)
@@ -23,6 +23,7 @@ class ChatQaSettings(BaseSettings):
     max_selected_rows: int = Field(default=10, ge=1, le=20)
     max_evidence_calls: int = Field(default=8, ge=0, le=50)
     max_answer_characters: int = Field(default=12000, ge=1000, le=16000)
+    finalization_reserve_seconds: float = Field(default=10, ge=1, le=30)
 
     @model_validator(mode="after")
     def output_budgets(self):

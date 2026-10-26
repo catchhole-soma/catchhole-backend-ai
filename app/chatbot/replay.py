@@ -234,6 +234,7 @@ class ReplaySpring:
                         continue
                     identity = (item["category"], item["scopeName"], item["settingKey"])
                     field = copy.deepcopy(item)
+                    field.pop("provenance", None)
                     field.update(
                         kind="FIELD",
                         id=None,

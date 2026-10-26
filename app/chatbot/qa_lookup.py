@@ -6,8 +6,8 @@ references, but cannot invent a storage key, subject ID, or authority scope.
 
 import unicodedata
 
-from app.chatbot.qa_prompts import FIELD_PROMPT, FIELD_VERSION
 from app.chatbot.qa_collection import CATEGORY_LABELS
+from app.chatbot.qa_prompts import FIELD_PROMPT, FIELD_VERSION
 from app.chatbot.qa_render import (
     AnswerRow,
     current_changed,
@@ -15,6 +15,7 @@ from app.chatbot.qa_render import (
     render_character_list,
     safe_text,
 )
+from app.chatbot.qa_validation import ChatResponseContractError
 from app.clients.setting_tools_client import SettingToolClientError
 from app.schemas.chat_qa import FieldSelection, SettingFocus
 
@@ -114,6 +115,9 @@ class FocusedLookup:
     def validate_focus(self, plan):
         observed = self.observed_question_text()
         terms = [s.focus.attribute for s in plan.subjects if s.focus and s.focus.attribute]
+        if any(not term.strip() or term.strip().casefold() not in observed for term in terms):
+            raise ChatResponseContractError("UNOBSERVED_FOCUS_ATTRIBUTE")
+        terms = []
         condition = plan.character_filter
         collection = getattr(plan, "collection", None)
         if collection:
@@ -298,6 +302,8 @@ class FocusedLookup:
                     collected.extend(items)
             if filters and not collected and complete:
                 self.lookup_gaps.add("NO_VALUES")
+            if mode == "CURRENT" and not complete:
+                self.incomplete_current_subjects.add((subject.domain, target))
             if mode == "HISTORY":
                 self.codes.append("HISTORY_IS_NOT_A_STATE_SNAPSHOT")
                 # Each field is already server ordered. Merge different fields by source

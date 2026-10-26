@@ -14,7 +14,6 @@ from app.chatbot.replay import (
     replay_case,
 )
 
-
 FIXTURE = load_fixture(Path(__file__).parent / "fixtures/chat-qa-v1.json")
 PRIVATE = "private-response-원문-89e11c19-1d84-436c-b528-e071343b29df"
 
@@ -100,7 +99,9 @@ async def test_contract_retry_is_distinct_from_schema_failure(caplog):
     assert records[0].validation_stage == "RESPONSE_CONTRACT"
     assert records[0].error_category == "CONTRACT_VALIDATION"
     assert records[0].origin.startswith("app.chatbot.qa.validate_plan:")
-    assert records[0].validation_errors == [{"code": "UNOBSERVED_LOOKUP_TERM", "path": "$"}]
+    assert records[0].validation_errors == [
+        {"code": "UNOBSERVED_SUBJECT_NAME", "path": "$.subjects[].name"}
+    ]
     assert len(result["reservations"]) == len(result["usageReports"]) == 3
 
 

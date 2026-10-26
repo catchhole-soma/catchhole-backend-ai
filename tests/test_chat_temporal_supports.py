@@ -59,7 +59,7 @@ def test_authored_temporal_answer_preserves_before_after_and_requested_causal_sc
         case["outputs"] += [
             answer(observation, missing=("P2",)),
             answer(
-                claim(temporal_answer, f"{before} {after}", ref="E2", parts=("P1",)),
+                claim(temporal_answer, f"{before} {after}", ref="E1", parts=("P1",)),
                 missing=("P2",),
             ),
         ]
