@@ -23,6 +23,7 @@ def recover_claims(answer, requested, ground, *, evidence_refs, row_refs):
         return None
 
     kept, changed = [], False
+    uncertain = set(missing)
     for claim in answer.claims:
         try:
             claim = ground(claim)
@@ -32,10 +33,19 @@ def recover_claims(answer, requested, ground, *, evidence_refs, row_refs):
             # Reject the whole statement, including any otherwise valid quotes.
             # Removing just the bad quote could leave unsupported words published.
             changed = True
+            uncertain.update(claim.answered_facets)
             continue
-        uncertain = set(claim.answered_facets) & missing
-        if uncertain:
-            changed = True
+        kept.append(claim)
+    if not changed and not any(set(c.answered_facets) & uncertain for c in kept):
+        return None
+    if not kept:
+        return None
+    # A single facet can represent several requested facts. If any contributing
+    # claim was dropped, another claim with the same facet cannot certify that the
+    # entire request survived. Retain its verified context as related instead.
+    normalized = []
+    for claim in kept:
+        if set(claim.answered_facets) & uncertain:
             claim = claim.model_copy(
                 update={
                     "answered_facets": [f for f in claim.answered_facets if f not in uncertain],
@@ -49,9 +59,8 @@ def recover_claims(answer, requested, ground, *, evidence_refs, row_refs):
                     ),
                 }
             )
-        kept.append(claim)
-    if not changed or not kept:
-        return None
+        normalized.append(claim)
+    kept = normalized
     covered = {f for c in kept for f in c.answered_facets}
     remaining = [f for f in requested if f not in covered]
     return GroundedAnswer.model_validate(

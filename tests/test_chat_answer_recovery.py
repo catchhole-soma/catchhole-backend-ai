@@ -77,6 +77,31 @@ def test_overlapping_answered_and_missing_is_related_not_complete(tmp_path):
     assert len(result["raw"].requests) == 2
 
 
+def test_dropped_claim_invalidates_shared_facet_until_new_evidence_fills_it(tmp_path):
+    case = parts_case(parts=[{"ref": "P1", "description": "감정과 이후 행동의 연결"}])
+    case["outputs"] += [
+        answer(
+            claim(EMOTION, EMOTION, parts=("P1",)),
+            claim(BEHAVIOR, "찾을 수 없는 인용", parts=("P1",)),
+        ),
+        answer(claim(f"{EMOTION} {BEHAVIOR}", f"{EMOTION} {BEHAVIOR}", ref="E2", parts=("P1",))),
+    ]
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            search_setup=search_with(
+                keyword=[passage(EMOTION, 1)],
+                vector=[passage(f"{EMOTION} {BEHAVIOR}", 2, episode=24, method="VECTOR")],
+            ),
+        )
+    )
+    response = assert_answer(result)
+    assert EMOTION in response["text"] and BEHAVIOR in response["text"]
+    assert len(result["embedding"].inputs) == 1
+    assert len(result["raw"].requests) == 3
+
+
 @pytest.mark.parametrize("bad", ["all_quotes", "unknown_ref", "unknown_part"])
 def test_recovery_never_accepts_unknown_references_or_all_invalid_claims(tmp_path, bad):
     case = parts_case()

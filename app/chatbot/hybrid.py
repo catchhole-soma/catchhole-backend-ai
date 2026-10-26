@@ -1296,7 +1296,7 @@ class _HybridSession(_Session):
         priority = [
             *protected_chunks,
             *recovery,
-            *fresh[: max(1, (available - len(protected_chunks)) // 2)],
+            *fresh,
         ]
         bundle = compose_evidence(
             [*protected_chunks, *recovery, *candidates],
@@ -1309,9 +1309,9 @@ class _HybridSession(_Session):
                 if self.source_from is not None and self.source_from == self.source_to
                 else min(self.hcfg.per_episode, self.hcfg.max_evidence - len(direct))
             ),
-            # Reserve a bounded share for the expansion's strongest new hits;
-            # lexical and cosine scores are not directly comparable. The prior
-            # supported draft remains separately available as a fallback.
+            # After verified/recovery evidence, prioritize new hits in their own
+            # rank order. Old unproven lexical scores must not crowd out vector
+            # hits; the common item/token/episode caps still bound this context.
             priority_chunk_ids=[c.chunk_id for c in priority],
             episode_round_robin=not bool(self.plan and self.plan.requested_parts),
         )

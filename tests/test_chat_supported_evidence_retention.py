@@ -111,6 +111,29 @@ def test_low_rank_supported_source_survives_fresh_hits_and_input_trim_then_merge
     assert result["spring"].receipts[-1]["sources"] == response["retrievalSources"]
 
 
+def test_expansion_prioritizes_all_new_ranks_after_verified_evidence(tmp_path, monkeypatch):
+    keyword, vector = candidates()
+    vector[0] = replace(
+        passage("다른 사건의 기록", 420, episode=120, method="VECTOR"), score=vector[0].score
+    )
+    vector[3] = replace(passage(BEHAVIOR, 423, episode=123, method="VECTOR"), score=vector[3].score)
+    case = parts_case()
+    case["outputs"] += [
+        answer(claim(EMOTION, EMOTION, ref="E8", parts=("P1",)), missing=("P2",)),
+        answer(claim(BEHAVIOR, BEHAVIOR, ref="E5", parts=("P2",)), missing=("P1",)),
+    ]
+    limit_expansion_context(monkeypatch, 5)
+    result = asyncio.run(
+        replay(tmp_path, case, search_setup=search_with(keyword=keyword, vector=vector))
+    )
+    response = assert_answer(result)
+    assert EMOTION in response["text"] and BEHAVIOR in response["text"]
+    refs = input_refs(result["raw"].requests[2])
+    assert refs["E1"] == EMOTION and refs["E5"] == BEHAVIOR
+    assert len(refs) == 5
+    assert len(result["raw"].requests) == 3
+
+
 @pytest.mark.parametrize("adjacent_anchor", [False, True])
 def test_invalid_draft_retains_located_quote_candidate_but_never_its_rejected_claim(
     tmp_path, adjacent_anchor
