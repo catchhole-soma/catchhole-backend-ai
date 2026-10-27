@@ -52,10 +52,19 @@ class EpisodeChunkService:
                         session, analysis_job_id=analysis_job_id, work_id=work_id,
                         write_context=ordered_write_context, chunks_only=True,
                     )
-                # 해당 회차의 기존 chunk를 전부 삭제(다시 분석하는 상황 고려)
-                repository.delete_by_episode_id(episode_id)
-                # 새로 생성한 chunk들을 저장 대상으로 세션에 등록
-                saved_chunks = repository.save_all(chunks)
+                existing = repository.find_by_episode_id(episode_id)
+                # Confirmed narrative evidence retains these IDs. Reanalysis of the same
+                # source and boundaries must not invalidate those references or embeddings.
+                if len(existing) == len(chunks) and all(
+                    _same_source_chunk(previous, current)
+                    for previous, current in zip(existing, chunks, strict=True)
+                ):
+                    for chunk in existing:
+                        chunk.metadata_json = metadata_json
+                    saved_chunks = existing
+                else:
+                    repository.delete_by_episode_id(episode_id)
+                    saved_chunks = repository.save_all(chunks)
                 # 삭제 + 저장 작업을 하나의 트랜잭션으로 확정
                 session.commit()
             except Exception:
@@ -68,3 +77,13 @@ class EpisodeChunkService:
     def get_episode_chunks(self, episode_id: UUID) -> list[EpisodeChunk]:
         with self.session_factory() as session:
             return self.repository_factory(session).find_by_episode_id(episode_id)
+
+
+def _same_source_chunk(previous: EpisodeChunk, current: EpisodeChunk) -> bool:
+    return all(
+        getattr(previous, field) == getattr(current, field)
+        for field in (
+            "episode_id", "chunk_index", "chunk_text", "start_offset", "end_offset",
+            "paragraph_start_index", "paragraph_end_index",
+        )
+    )
