@@ -69,6 +69,49 @@ def test_replace_episode_chunks_rolls_back_when_save_fails() -> None:
     assert session.rolled_back is True
 
 
+def test_same_source_reanalysis_preserves_chunk_ids_and_embeddings() -> None:
+    episode_id = uuid4()
+    session = FakeSession()
+    repository = FakeEpisodeChunkRepository(session)
+    service = EpisodeChunkService(lambda: session, lambda _: repository)
+    content = "🌱첫 번째 문단입니다.\r\n\r\n두 번째 문단입니다."
+    initial = service.replace_episode_chunks(episode_id, content)
+    initial[0].embedding = [0.5, 0.25]
+    initial[0].embedding_model = "synthetic-model"
+    repository.deleted_episode_id = None
+
+    repeated = service.replace_episode_chunks(episode_id, content, {"source": "reanalysis"})
+
+    assert repeated[0].id == initial[0].id
+    assert repeated[0].embedding == [0.5, 0.25]
+    assert repeated[0].embedding_model == "synthetic-model"
+    assert repeated[0].metadata_json == {"source": "reanalysis"}
+    assert repository.deleted_episode_id is None
+
+
+@pytest.mark.parametrize("change", ["text", "offset", "paragraph", "index"])
+def test_changed_source_or_boundaries_replace_existing_chunks(change) -> None:
+    episode_id = uuid4()
+    session = FakeSession()
+    repository = FakeEpisodeChunkRepository(session)
+    service = EpisodeChunkService(lambda: session, lambda _: repository)
+    content = "첫 번째 문단입니다."
+    initial = service.replace_episode_chunks(episode_id, content)
+    if change == "text":
+        content = "새로운 원문입니다."
+    elif change == "offset":
+        initial[0].end_offset -= 1
+    elif change == "paragraph":
+        initial[0].paragraph_end_index += 1
+    else:
+        initial[0].chunk_index += 1
+
+    repeated = service.replace_episode_chunks(episode_id, content)
+
+    assert repeated[0].id != initial[0].id
+    assert repository.deleted_episode_id == episode_id
+
+
 def _repository(
     session: "FakeSession",
     repositories: list["FakeEpisodeChunkRepository"],
@@ -103,6 +146,9 @@ class FakeEpisodeChunkRepository:
         self.session = session
         self.deleted_episode_id = None
         self.saved_chunks: list[EpisodeChunk] = []
+
+    def find_by_episode_id(self, episode_id):
+        return [chunk for chunk in self.saved_chunks if chunk.episode_id == episode_id]
 
     def delete_by_episode_id(self, episode_id) -> None:
         self.deleted_episode_id = episode_id
