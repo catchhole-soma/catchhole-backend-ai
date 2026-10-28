@@ -1,0 +1,191 @@
+"""Independent read-only typo checking over one authenticated frozen manuscript."""
+
+import asyncio
+import json
+from pathlib import Path
+from typing import Literal
+
+import httpx
+from pydantic import Field, ValidationError
+
+from app.llm.exceptions import (
+    LlmIncompleteResponseError,
+    LlmInputTokenCountError,
+    LlmOutputTruncatedError,
+    LlmResponseValidationError,
+)
+from app.llm.openai_client import OpenAIResponsesClient
+from app.llm.protocols import LlmCallOptions, LlmResponseSchema
+from app.usage.metering import MeteredTextGenerationClient
+from app.validation.contracts import (
+    BudgetState,
+    Contract,
+    IncompleteInspection,
+    InvocationBudget,
+    SegmentCoverage,
+    Span,
+    TypoCheckInput,
+    TypoCheckResult,
+    TypoSuggestion,
+    split_segments,
+    validate_span,
+)
+from app.validation.data import ValidationDataClient
+
+
+class ClassifiedTypoSuggestion(TypoSuggestion):
+    """GH309-local additive classification; the shared suggestion stays unchanged."""
+
+    category: Literal["SPELLING", "SPACING", "TYPO"]
+    reason: str = Field(min_length=1)
+
+
+class ClassifiedTypoCheckResult(TypoCheckResult):
+    suggestions: list[ClassifiedTypoSuggestion]
+
+
+class _TypoBatch(Contract):
+    segments: list[SegmentCoverage]
+    suggestions: list[ClassifiedTypoSuggestion]
+
+
+_SCHEMA = LlmResponseSchema("typo_check_v1", _TypoBatch.model_json_schema())
+_PROMPT = (Path(__file__).resolve().parents[1] / "llm/prompts/typo_check.md").read_text()
+_OPTIONS = LlmCallOptions(reasoning_effort="low")
+_MODEL = "gpt-6.1-terra"
+
+
+async def _call(state, operation, *args, kind=None, **kwargs):
+    if kind is not None:
+        state.consume(kind)
+    try:
+        async with asyncio.timeout(state.remaining()):
+            return await operation(*args, **kwargs)
+    except TimeoutError:
+        raise IncompleteInspection("BUDGET_EXHAUSTED") from None
+    except (IncompleteInspection, LlmResponseValidationError, LlmInputTokenCountError,
+            httpx.HTTPError):
+        raise
+    except Exception:  # noqa: BLE001 - external I/O failures must not expose arbitrary details
+        raise IncompleteInspection("UNEXPECTED_ERROR") from None
+
+
+def _validated_batch(response, segment, text, accepted):
+    try:
+        batch = _TypoBatch.model_validate_json(response.text, strict=True)
+    except ValidationError:
+        raise IncompleteInspection("TYPO_RESPONSE_INVALID") from None
+    probe = ClassifiedTypoCheckResult(target_hash="", status="COMPLETED", segments=batch.segments,
+                                      suggestions=batch.suggestions, failure_code=None)
+    try:
+        probe.require_coverage([segment.ref])
+    except ValueError:
+        raise IncompleteInspection("TYPO_COVERAGE_INVALID") from None
+    if (batch.segments[0].status == "PLANNED") != bool(batch.suggestions):
+        raise IncompleteInspection("TYPO_COVERAGE_INVALID")
+    ordered = sorted(batch.suggestions, key=lambda suggestion: suggestion.span.start)
+    for index, suggestion in enumerate(ordered):
+        span = suggestion.span
+        try:
+            validate_span(span, text)
+        except ValueError:
+            raise IncompleteInspection("INVALID_EXACT_SPAN") from None
+        if not segment.start <= span.start < segment.end or span.end > segment.context_end:
+            raise IncompleteInspection("TYPO_SPAN_OUTSIDE_SEGMENT")
+        if not suggestion.reason.strip() or suggestion.replacement == span.quote:
+            raise IncompleteInspection("TYPO_SUGGESTION_INVALID")
+        if (index and ordered[index - 1].span.end > span.start
+                or any(previous.span.start < span.end and previous.span.end > span.start
+                       for previous in accepted)):
+            raise IncompleteInspection("TYPO_SUGGESTIONS_OVERLAP")
+    return batch.segments[0], ordered
+
+
+async def _inspect(llm, state, prompt):
+    request = {"system_prompt": _PROMPT, "user_prompt": prompt, "model": _MODEL,
+               "response_schema": _SCHEMA, "call_options": _OPTIONS}
+    if state.model_calls >= state.limits.model_calls:
+        raise IncompleteInspection("BUDGET_EXHAUSTED")
+    try:
+        count = await _call(state, llm.count_input_tokens, **request)
+        if type(count) is not int or count < 0:
+            raise IncompleteInspection("INPUT_TOKEN_COUNT_FAILED")
+        if count > state.limits.input_tokens:
+            raise IncompleteInspection("INPUT_BUDGET_EXCEEDED")
+        return await _call(state, llm.create_text_response, **request, kind="model",
+                           max_output_tokens=state.limits.output_tokens)
+    except LlmInputTokenCountError:
+        raise IncompleteInspection("INPUT_TOKEN_COUNT_FAILED") from None
+    except LlmOutputTruncatedError:
+        raise IncompleteInspection("LLM_OUTPUT_TRUNCATED") from None
+    except LlmIncompleteResponseError:
+        raise IncompleteInspection("LLM_INCOMPLETE_RESPONSE") from None
+    except LlmResponseValidationError:
+        raise IncompleteInspection("TYPO_RESPONSE_INVALID") from None
+    except httpx.HTTPStatusError as exc:
+        code = "LLM_PROVIDER_REJECTED" if exc.response.status_code < 500 else "LLM_PROVIDER_ERROR"
+        raise IncompleteInspection(code) from None
+    except httpx.HTTPError:
+        raise IncompleteInspection("LLM_PROVIDER_ERROR") from None
+
+
+async def check_typos(
+    data: ValidationDataClient, llm: OpenAIResponsesClient | MeteredTextGenerationClient,
+    *, budget: InvocationBudget,
+) -> ClassifiedTypoCheckResult:
+    """Return suggestions only; orchestration, billing and persistence are caller-owned."""
+    state = BudgetState(budget)
+    try:
+        # Closed injection boundary: unknown/nested wrappers may hide retries or double metering.
+        if not (type(llm) is OpenAIResponsesClient or (
+            type(llm) is MeteredTextGenerationClient and llm.max_retries == 0
+            and type(llm.delegate) is OpenAIResponsesClient
+        )):
+            raise IncompleteInspection("LLM_CLIENT_CONFIGURATION_INVALID")
+        frozen = await _call(state, data.read_input, kind="lookup")
+        source = await _call(state, data.read_source, frozen.target, kind="lookup")
+    except IncompleteInspection as exc:
+        return ClassifiedTypoCheckResult(target_hash=data.context.target_hash, status="INCOMPLETE",
+                                         segments=[], suggestions=[], failure_code=exc.code)
+    segments = split_segments(source.text, core_chars=budget.segment_chars,
+                              context_chars=budget.context_chars)
+    check_input = TypoCheckInput(target_hash=frozen.context.target_hash, spans=[
+        Span(source_ref="T1", start=segment.start, end=segment.end,
+             quote=source.text[segment.start:segment.end]) for segment in segments
+    ])
+    coverage = [SegmentCoverage(segment_ref=segment.ref, status="UNPROCESSED", reason="NOT_PROCESSED")
+                for segment in segments]
+    suggestions, failure_code = [], None
+    for index, (segment, core) in enumerate(zip(segments, check_input.spans, strict=True)):
+        context = Span(source_ref="T1", start=segment.context_start, end=segment.context_end,
+                       quote=source.text[segment.context_start:segment.context_end])
+        prompt = json.dumps({"segment_ref": segment.ref, "core": core.model_dump(),
+                             "context": context.model_dump()}, ensure_ascii=False)
+        try:
+            response = await _inspect(llm, state, prompt)
+            checked, found = _validated_batch(response, segment, source.text, suggestions)
+            coverage[index] = checked
+            suggestions.extend(found)
+        except IncompleteInspection as exc:
+            failure_code = failure_code or exc.code
+            coverage[index] = SegmentCoverage(segment_ref=segment.ref, status="UNPROCESSED",
+                                              reason=exc.code)
+            if exc.code in {"BUDGET_EXHAUSTED", "LLM_PROVIDER_REJECTED", "UNEXPECTED_ERROR"}:
+                for pending in range(index + 1, len(segments)):
+                    coverage[pending] = SegmentCoverage(segment_ref=segments[pending].ref,
+                                                       status="UNPROCESSED", reason=exc.code)
+                break
+    try:
+        await _call(state, data.validate, kind="lookup")
+        state.remaining()
+    except IncompleteInspection as exc:
+        # A prior success is not valid after source loss/change or failed revalidation.
+        failure_code, suggestions = exc.code, []
+        coverage = [SegmentCoverage(segment_ref=segment.ref, status="UNPROCESSED", reason=exc.code)
+                    for segment in segments]
+    result = ClassifiedTypoCheckResult(
+        target_hash=check_input.target_hash, status="INCOMPLETE" if failure_code else "COMPLETED",
+        segments=coverage, suggestions=suggestions, failure_code=failure_code,
+    )
+    result.require_coverage([segment.ref for segment in segments])
+    return result
