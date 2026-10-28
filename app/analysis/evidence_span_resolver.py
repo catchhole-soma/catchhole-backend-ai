@@ -3,10 +3,10 @@ from dataclasses import dataclass
 from app.analysis.schemas import ExtractedEvidenceSpan, ExtractedSettingCandidate
 
 
-# 공백 정규화된 문자열과, 정규화된 각 문자가 원문에서 어느 범위였는지 함께 들고 있는 값 객체
+# 검색 정규화된 문자열과 각 문자가 원문에서 어느 범위였는지 함께 들고 있는 값 객체
 @dataclass(frozen=True)
 class _NormalizedText:
-    # 공백이 정규화된 문자열
+    # 검색용으로 정규화된 문자열
     text: str
 
     # 정규화된 text의 각 문자마다 원문 기준 (start, end) 범위를 저장
@@ -106,7 +106,14 @@ def resolve_evidence_span_offsets(
         exact_span = span.model_copy(update={"quote": chunk_text[start:end]})
         return _with_offsets(exact_span, chunk_start_offset, normalized_range)
 
-    # exact match도 실패하고, 공백 정규화 match도 실패한 경우.
+    # 3차: 큰따옴표의 누락/종류 차이만 추가로 허용하고 원문 구간을 복원한다.
+    quote_normalized_range = _find_quote_normalized_range(chunk_text, span.quote)
+    if quote_normalized_range is not None:
+        start, end = quote_normalized_range
+        exact_span = span.model_copy(update={"quote": chunk_text[start:end]})
+        return _with_offsets(exact_span, chunk_start_offset, quote_normalized_range)
+
+    # 모든 검색에서 유일한 원문 구간을 찾지 못한 경우.
     # quote의 위치를 확정할 수 없으므로 offset을 None으로 비운다.
     return span.model_copy(update={"start_offset": None, "end_offset": None})
 
@@ -170,6 +177,38 @@ def _find_whitespace_normalized_range(chunk_text: str, quote: str) -> tuple[int,
 
     # 최종적으로 원문 chunk_text 기준의 (start, end)를 반환한다.
     return start, end
+
+
+def _find_quote_normalized_range(chunk_text: str, quote: str) -> tuple[int, int] | None:
+    normalized_chunk = _normalize_quotes_with_ranges(chunk_text)
+    normalized_quote = _normalize_quotes_with_ranges(quote).text
+    if not normalized_quote.strip():
+        return None
+
+    start = normalized_chunk.text.find(normalized_quote)
+    if start < 0 or normalized_chunk.text.find(normalized_quote, start + 1) >= 0:
+        return None
+
+    end = start + len(normalized_quote)
+    # 정규화 후 남은 문자 범위만 사용하며 바깥 큰따옴표를 임의로 확장하지 않는다.
+    return normalized_chunk.ranges[start][0], normalized_chunk.ranges[end - 1][1]
+
+
+def _normalize_quotes_with_ranges(text: str) -> _NormalizedText:
+    chars: list[str] = []
+    ranges: list[tuple[int, int]] = []
+    for index, char in enumerate(text):
+        # 검색용으로만 이 세 큰따옴표를 제거한다. 다른 부호와 글자는 그대로 둔다.
+        if char in '\"“”':
+            continue
+        if char.isspace():
+            if chars and chars[-1] == " ":
+                ranges[-1] = (ranges[-1][0], index + 1)
+                continue
+            char = " "
+        chars.append(char)
+        ranges.append((index, index + 1))
+    return _NormalizedText(text="".join(chars), ranges=ranges)
 
 
 def _normalize_whitespace_with_ranges(text: str) -> _NormalizedText:

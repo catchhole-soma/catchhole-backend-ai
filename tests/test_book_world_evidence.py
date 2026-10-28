@@ -69,6 +69,28 @@ def test_unique_whitespace_difference_is_restored_to_exact_unicode_source_slice(
         assert source[span.start_offset - 37:span.end_offset - 37] == span.quote
 
 
+def test_book_world_quote_recovery_reaches_publication_with_exact_unicode_source_slices():
+    source = '[도구 / 기록등]\n🧭보관 장소: “도서관\t보관실” 안쪽\n'
+    quote = '보관 장소: "도서관 보관실" 안쪽'
+    expected_quote = '보관 장소: “도서관\t보관실” 안쪽'
+    result, client = extract(source, [output(quote)], attempts=1)
+    candidate = result.candidates[0]
+    original = candidate.model_dump()
+    chunk = EpisodeChunk(id=uuid4(), episode_id=uuid4(), chunk_index=0, chunk_text=source,
+                         start_offset=37, end_offset=37 + len(source))
+
+    published = WorldSettingCandidateMapper.to_publish_item(candidate, chunk)
+
+    assert len(client.requests) == 1
+    span = published.evidence_spans[0]
+    assert span.quote == expected_quote
+    assert span.start_offset == 37 + source.index(expected_quote)
+    assert span.end_offset == span.start_offset + len(expected_quote)
+    for span in published.evidence_spans:
+        assert source[span.start_offset - 37:span.end_offset - 37] == span.quote
+    assert candidate.model_dump() == original
+
+
 def test_exact_repeated_source_quote_remains_valid_with_ambiguous_offsets():
     source = "보관 장소: 도서관 보관실\n보관 장소: 도서관 보관실\n"
     result, _ = extract(source, [output("보관 장소: 도서관 보관실")])
