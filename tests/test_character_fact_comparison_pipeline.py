@@ -490,6 +490,8 @@ class FakeSpringApi:
         lease_token,
         error_message,
         failure_code,
+        *,
+        failure_diagnostics=None,
     ):
         self.failures.append((candidate_id, error_message, failure_code.value))
 
@@ -580,3 +582,16 @@ def _context(
         ],
         context_token=context_token,
     )
+
+
+def test_first_failure_code_keeps_its_own_diagnostics_after_a_different_second_failure():
+    from app.exceptions.failure_classification import failure_diagnostics
+    from app.llm.exceptions import LlmOutputTruncatedError
+    first = httpx.ReadTimeout("PRIVATE", request=httpx.Request("POST", "https://provider.example"))
+    second = LlmOutputTruncatedError("PRIVATE", incomplete_reason="max_output_tokens", max_output_tokens=5)
+    spring = FakeSpringApi([CANDIDATE_ID, UUID(int=5)])
+    pipeline = CharacterFactComparisonPipeline(spring, FakeComparator([first, second]))
+    result = asyncio.run(pipeline.process_all(ANALYSIS_JOB_ID, LEASE_TOKEN))
+    assert result.first_failure_code is AnalysisFailureCode.LLM_NETWORK_ERROR
+    assert result.first_failure_diagnostics == failure_diagnostics(first, stage="CHARACTER_COMPARE")
+    assert result.first_failure_diagnostics.reason_code == "LLM_TIMEOUT"

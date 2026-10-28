@@ -256,3 +256,39 @@ def _http_status_error(
             spring_reason_code=reason_code,
         )
     return error_type("request failed", request=request, response=response)
+
+
+def test_safe_provider_diagnostics_do_not_change_coarse_failure_or_retry_scope():
+    from app.exceptions.failure_classification import failure_diagnostics
+    response = httpx.Response(429, request=httpx.Request("POST", "https://provider.example/responses"),
+                              headers={"x-request-id": "request_123"}, json={"error": {
+                                  "code": "rate_limit_exceeded", "message": "PRIVATE_MANUSCRIPT"}})
+    error = httpx.HTTPStatusError("PRIVATE_MESSAGE", request=response.request, response=response)
+    diagnostic = failure_diagnostics(error, stage="WORLD_COMPARE")
+    assert diagnostic.origin == "PROVIDER" and diagnostic.reason_code == "LLM_RATE_LIMIT"
+    assert diagnostic.http_status == 429 and diagnostic.request_id == "request_123"
+    assert diagnostic.source_error_code == "rate_limit_exceeded"
+    assert "PRIVATE" not in diagnostic.model_dump_json()
+    assert comparison_failure_code(error) is AnalysisFailureCode.LLM_PROVIDER_ERROR
+    assert is_candidate_comparison_failure(error)
+
+
+def test_safe_diagnostics_ignore_untyped_exception_metadata_and_cyclic_causes():
+    from app.exceptions.failure_classification import failure_diagnostics
+    error = RuntimeError("PRIVATE_MESSAGE")
+    error.failure_diagnostics = {"reasonCode": "PRIVATE_REASON"}
+    error.__cause__ = error
+    diagnostic = failure_diagnostics(error, stage="FINALIZE")
+    assert diagnostic.reason_code == "UNKNOWN"
+    assert diagnostic.stage == "FINALIZE"
+    assert "PRIVATE" not in diagnostic.model_dump_json()
+
+
+def test_quota_diagnostic_preserves_spring_origin_without_making_quota_retryable():
+    from app.exceptions.failure_classification import failure_diagnostics
+    error = AiTokenQuotaExhaustedError(status_code=409, spring_error_code="AI_TOKEN_QUOTA_EXHAUSTED")
+    diagnostic = failure_diagnostics(error, stage="CHARACTER_COMPARE")
+    assert diagnostic.origin == "SPRING" and diagnostic.http_status == 409
+    assert diagnostic.source_error_code == "AI_TOKEN_QUOTA_EXHAUSTED"
+    assert analysis_failure_code(error) is AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED
+    assert not is_candidate_comparison_failure(error)

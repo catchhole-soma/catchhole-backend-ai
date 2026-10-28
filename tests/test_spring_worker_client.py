@@ -1141,3 +1141,23 @@ def _empty_success_response(
             "timestamp": "2026-06-25T00:00:00",
         },
     )
+
+
+def test_all_fail_endpoints_serialize_shared_diagnostics_without_lease_payload():
+    from app.schemas.worker import WorkerFailureDiagnostics
+    requests = []
+    client = _client(lambda request: _empty_success_response(request, requests))
+    diagnostic = WorkerFailureDiagnostics(origin="SPRING", stage="CHARACTER_CONTEXT",
+        reasonCode="CURRENT_EVIDENCE_OFFSET_INVALID", sourceAnalysisJobId=ANALYSIS_JOB_ID)
+
+    async def run():
+        await client.fail(ANALYSIS_JOB_ID, LEASE_TOKEN, "synthetic", failure_diagnostics=diagnostic)
+        for method in [client.fail_character_fact_comparison, client.fail_character_fact_comparison_batch,
+                       client.fail_world_setting_comparison, client.fail_world_setting_comparison_batch]:
+            await method(ANALYSIS_JOB_ID, BATCH_ID, LEASE_TOKEN, "synthetic", failure_diagnostics=diagnostic)
+    asyncio.run(run())
+    assert len(requests) == 5
+    for request in requests:
+        payload = json.loads(request.content)
+        assert payload["failureDiagnostics"] == diagnostic.model_dump(by_alias=True, mode="json", exclude_none=True)
+        assert str(LEASE_TOKEN) not in request.content.decode()

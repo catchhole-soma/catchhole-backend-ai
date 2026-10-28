@@ -1495,6 +1495,8 @@ class FakeBatchSpring:
         lease_token,
         error_message,
         failure_code,
+        *,
+        failure_diagnostics=None,
     ):
         self.failures.append((comparison_batch_id, error_message, failure_code.value))
 

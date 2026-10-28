@@ -381,6 +381,8 @@ class FakeSpringApi:
         failure_code,
         source_error_code=None,
         source_reason_code=None,
+        *,
+        failure_diagnostics=None,
     ):
         self.failures.append(
             (

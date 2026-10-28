@@ -61,6 +61,7 @@ from app.embeddings.services.episode_chunk_embedding import (
     EpisodeChunkEmbeddingService,
 )
 from app.exceptions.failure_classification import (
+    failure_diagnostics,
     COMPARISON_CANDIDATE_FAILURE_CODES,
     analysis_failure_code,
 )
@@ -72,6 +73,7 @@ from app.models.setting_book_chunk import SettingBookChunk
 from app.monitoring.worker_tracing import worker_span
 from app.schemas.analysis_context import WorkerAnalysisContext
 from app.schemas.worker import (
+    WorkerFailureDiagnostics,
     WorkerAnalysisJobPayload,
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingCandidatePublishItem,
@@ -165,6 +167,8 @@ class SpringWorkerApi(
         lease_token: UUID,
         error_message: str,
         failure_code: AnalysisFailureCode,
+        *,
+        failure_diagnostics: WorkerFailureDiagnostics | None = None,
     ) -> None: ...
 
     async def publish_world_setting_candidates(
@@ -409,6 +413,7 @@ class AnalysisJobWorker:
                     lease_token=payload.lease_token,
                     error_message=self._error_message(exc),
                     failure_code=analysis_failure_code(exc),
+                    failure_diagnostics=failure_diagnostics(exc, stage="EXTRACTION"),
                 )
             except Exception:
                 logger.exception(
@@ -982,7 +987,8 @@ class AnalysisJobWorker:
             or result.first_failure_code not in COMPARISON_CANDIDATE_FAILURE_CODES
         ):
             raise OrderedAnalysisIncompleteError(
-                result.first_failure_code or AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
+                result.first_failure_code or AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+                failure_diagnostics=result.first_failure_diagnostics,
             )
         # 개별 후보의 실패는 fail endpoint에 기록됐으므로 세계관 단계는 계속 수행한다.
         if not finished:
@@ -1094,7 +1100,8 @@ class AnalysisJobWorker:
             or result.first_failure_code not in COMPARISON_CANDIDATE_FAILURE_CODES
         ):
             raise OrderedAnalysisIncompleteError(
-                result.first_failure_code or AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
+                result.first_failure_code or AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+                failure_diagnostics=result.first_failure_diagnostics,
             )
         if not finished:
             await self.spring_client.report_progress(

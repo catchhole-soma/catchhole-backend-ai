@@ -14,8 +14,9 @@ from app.analysis.ordered_world_batch_contract import OrderedWorldPropertyBatchR
 from app.analysis.ordered_world_diagnostics import restore_selected_properties
 from app.analysis.world_setting_schemas import WorldSettingComparisonBatchResult
 from app.domain.enums import AnalysisFailureCode, WorldSettingOperation
-from app.exceptions.failure_classification import comparison_failure_code, is_candidate_comparison_failure
+from app.exceptions.failure_classification import comparison_failure_code, is_candidate_comparison_failure, failure_diagnostics
 from app.schemas.worker import (
+    WorkerFailureDiagnostics,
     WorkerWorldSettingComparisonBatchFailure,
     WorkerWorldSettingComparisonDiagnostic,
     WorkerWorldSettingDiagnosticProperty,
@@ -106,6 +107,7 @@ class _Group:
     candidates: list
     decisions: list = field(default_factory=list)
     failure_code: AnalysisFailureCode | None = None
+    failure_diagnostics: WorkerFailureDiagnostics | None = None
     diagnostics: list = field(default_factory=list)
     generated_scopes: set = field(default_factory=set)
     dependency_reads: set = field(default_factory=set)
@@ -185,6 +187,7 @@ def _failure(group, history):
     return WorkerWorldSettingComparisonBatchFailure(
         source_candidate_refs=group.refs,
         failure_code=group.failure_code or AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+        failure_diagnostics=group.failure_diagnostics,
         error_message="재비교에서도 안전한 반영 결과를 확정하지 못해 해당 설정 비교가 실패했습니다.",
         diagnostics=diagnostics,
     )
@@ -329,8 +332,9 @@ async def recover_world_batch(comparator, category, candidates, targets, initial
     allowed = {item.candidate_ref: item for item in candidates}
     calls = 0
 
-    def fail(group, rule, code=AnalysisFailureCode.COMPARISON_VALIDATION_FAILED):
+    def fail(group, rule, code=AnalysisFailureCode.COMPARISON_VALIDATION_FAILED, error=None):
         group.failure_code = code
+        group.failure_diagnostics = failure_diagnostics(error or ComparisonValidationError(rule), stage="WORLD_COMPARE")
         diagnostic = WorkerWorldSettingComparisonDiagnostic(
             attempt=min(30, max(1, initial_attempts + calls)), rule=rule,
             candidate_refs=group.refs, phase="RECOVERY",
@@ -361,6 +365,7 @@ async def recover_world_batch(comparator, category, candidates, targets, initial
             group.decisions = _validate_group(result, group.candidates, references, ordered_context,
                                                analysis_source=analysis_source).decisions
             group.failure_code = None
+            group.failure_diagnostics = None
             group.dependency_reads.clear()
             group.dependency_writes.clear()
             group.generated_scopes.clear()
@@ -380,7 +385,7 @@ async def recover_world_batch(comparator, category, candidates, targets, initial
                     group, row, getattr(error, "world_batch_request_payload", {}), references,
                 )
             group.decisions = []
-            fail(group, comparison_failure_code(error).value, comparison_failure_code(error))
+            fail(group, comparison_failure_code(error).value, comparison_failure_code(error), error)
             history.extend(exception_diagnostics(error, group.candidates, targets, attempt_offset=offset))
         return group
 

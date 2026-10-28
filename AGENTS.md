@@ -19,6 +19,8 @@
 
 ## Spring Worker API
 
+- 선택적 `failureDiagnostics`는 Java/Python 공통 v1 고정 코드 계약이다. 원문·예외 메시지·URL·lease/인증값은 넣지 않으며 실제 관측한 HTTP 상태와 요청/trace ID만 전달한다. Spring 오류의 부가 진단 파싱 실패는 원래 HTTP 실패와 분리하고 `first_failure_code`와 그 실패의 `first_failure_diagnostics`를 묶어 batch→run→Job 실패 보고까지 운반한다. 새 실패에서 이전 시도의 진단을 재사용하거나 상세 원인으로 기존 격리·재시도 분류를 바꾸지 않는다.
+
 - 기본 `analysis` Worker는 `supportsFrozenComparisonEvidence=true`를 claim에 전송한다. `ORDERED_PROVISIONAL` 응답의 `comparisonEvidenceContract.formatVersion`이 정수 1인지 progress·heartbeat·원문/저장·provider 호출 전에 확인하고, 누락·잘못된 타입·미지원 버전은 기존 lease 기반 fail로 보고한다. 구 `CONFIRMED_ONLY`와 두 hidden 재비교 Worker의 광고는 유지한다.
 
 - 설정집 출처는 명시적인 `sourceKind=SETTING_BOOK`과 `settingBook`의 고정 리비전으로 선택한다. 회차 null 여부로 출처를 추측하거나 회차 번호·첫 등장 회차를 만들지 않는다. 세 Worker 모두 `supportedSourceKinds=[EPISODE,SETTING_BOOK]`과 `supportsSettingBookReferenceTime=true`를 광고한다. 책 종류 지원만 광고한 구 Worker는 기준시점 입력을 claim하지 않는다.

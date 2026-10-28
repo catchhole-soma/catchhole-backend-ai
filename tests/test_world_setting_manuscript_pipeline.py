@@ -11,7 +11,7 @@ from app.analysis.world_setting_comparator import WorldSettingComparator
 from app.analysis.world_setting_manuscript import WorldSettingManuscriptComparator
 from app.schemas.worker import WorkerWorldSettingComparisonBatchPayload, WorkerWorldSettingComparisonBatchContextResponse
 from app.llm.responses import LlmTextResponse
-from app.analysis.exceptions import ComparisonValidationError
+from app.analysis.exceptions import ComparisonValidationError, OrderedAnalysisIncompleteError
 from app.schemas.analysis_context import WorkerAnalysisContext
 
 
@@ -147,7 +147,7 @@ def test_manual_ordered_failure_stops_before_saving_prefetched_later_success():
     comparator = WorldSettingComparator(llm_client=provider, model="gpt-6.1-sol", max_attempts=1)
     pipeline = WorldSettingComparisonPipeline(spring, None, comparator,
         manuscript_comparator=WorldSettingManuscriptComparator(comparator))
-    with pytest.raises(ComparisonValidationError):
+    with pytest.raises(OrderedAnalysisIncompleteError):
         asyncio.run(pipeline.process_all(UUID(int=900), UUID(int=901), analysis_context=context))
     assert [identifier.int for identifier, _ in spring.completions] == [101]
     assert spring.completions[0][1].failures[0].source_candidate_refs == ["C1"]
@@ -215,3 +215,37 @@ def test_oversized_single_group_is_held_and_next_group_still_calls_provider():
     assert first.decisions[0].proposed_value == batch(1).candidates[0].extracted_value
     assert first.context_versions[0].version == 1
     assert second.decisions[0].suggested_operation == "ADD"
+
+
+def test_manual_stop_keeps_first_provider_failure_pair_and_stays_job_blocking():
+    from app.analysis.exceptions import OrderedAnalysisIncompleteError
+    from app.exceptions.failure_classification import analysis_failure_code, is_candidate_comparison_failure
+    from app.llm.exceptions import LlmOutputTruncatedError
+    from app.domain.enums import AnalysisFailureCode
+    context = WorkerAnalysisContext(run_id=UUID(int=700), generation=1,
+        input_state_hash="a" * 64, source_hash="b" * 64, format_version=1)
+    items = [batch(i).model_copy(update={"analysis_context": context}) for i in (1, 2)]
+
+    class OrderedSpring(Spring):
+        async def get_world_setting_comparison_batch_context(self, *args, **kwargs):
+            value = await super().get_world_setting_comparison_batch_context(*args, **kwargs)
+            return value.model_copy(update={"analysis_context": context, "context_token": "c" * 64})
+
+    class TruncatedProvider(Provider):
+        async def create_text_response(self, **kwargs):
+            raise LlmOutputTruncatedError("synthetic", incomplete_reason="max_output_tokens", max_output_tokens=5)
+
+    spring = OrderedSpring(items)
+    comparator = WorldSettingComparator(llm_client=TruncatedProvider(), model="gpt-6.1-sol", max_attempts=1)
+    pipeline = WorldSettingComparisonPipeline(spring, None, comparator,
+        manuscript_comparator=WorldSettingManuscriptComparator(comparator))
+    with pytest.raises(OrderedAnalysisIncompleteError) as caught:
+        asyncio.run(pipeline.process_all(UUID(int=900), UUID(int=901), analysis_context=context))
+    assert analysis_failure_code(caught.value) is AnalysisFailureCode.LLM_OUTPUT_TRUNCATED
+    assert not is_candidate_comparison_failure(caught.value)
+    assert caught.value.failure_diagnostics.reason_code == "LLM_OUTPUT_TRUNCATED"
+    assert caught.value.failure_diagnostics.origin == "PROVIDER"
+    assert [identifier.int for identifier, _ in spring.completions] == [101]
+    failure = spring.completions[0][1].failures[0]
+    assert failure.failure_code is caught.value.failure_code
+    assert failure.failure_diagnostics == caught.value.failure_diagnostics

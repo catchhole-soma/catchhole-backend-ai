@@ -131,7 +131,8 @@ class FakeSpringApi:
         self.complete_calls.append(analysis_job_id)
         self.complete_summaries.append(kwargs.get("summary_json"))
 
-    async def fail(self, analysis_job_id, lease_token, error_message, failure_code):
+    async def fail(self, analysis_job_id, lease_token, error_message, failure_code, *, failure_diagnostics=None):
+        self.failure_diagnostics = failure_diagnostics
         self.fail_calls.append((analysis_job_id, failure_code.value))
 
 
@@ -170,3 +171,14 @@ def _run_once(worker: WorldSettingComparisonWorker):
             await worker.aclose()
 
     return asyncio.run(scenario())
+
+
+def test_first_failure_diagnostics_survive_worker_summary_wrapper():
+    from app.schemas.worker import WorkerFailureDiagnostics
+    diagnostic = WorkerFailureDiagnostics(origin="SPRING", stage="CHARACTER_CONTEXT", reasonCode="CURRENT_EVIDENCE_OFFSET_INVALID")
+    spring = FakeSpringApi(_payload())
+    worker = WorldSettingComparisonWorker(spring_client=spring, comparison_pipeline=FakePipeline(
+        WorldSettingComparisonRunResult(0, 1, AnalysisFailureCode.UNEXPECTED_ERROR, first_failure_diagnostics=diagnostic)))
+    with pytest.raises(RuntimeError):
+        _run_once(worker)
+    assert spring.failure_diagnostics == diagnostic

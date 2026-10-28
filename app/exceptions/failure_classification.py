@@ -19,6 +19,8 @@ from app.llm.exceptions import (
     LlmResponseValidationError,
 )
 
+from app.schemas.worker import WorkerFailureDiagnostics, PROVIDER_DIAGNOSTIC_CODES
+
 TException = TypeVar("TException", bound=BaseException)
 
 COMPARISON_CANDIDATE_FAILURE_CODES = frozenset({
@@ -183,3 +185,66 @@ def _find_exception(
         visited.add(id(current))
         current = current.__cause__ or current.__context__
     return None
+
+
+def failure_diagnostics(exc: BaseException, *, stage: str) -> WorkerFailureDiagnostics | None:
+    """Return the most specific safe cause metadata without changing retry policy."""
+    chain = []
+    visited = set()
+    current = exc
+    while current is not None and id(current) not in visited:
+        chain.append(current)
+        visited.add(id(current))
+        current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+    for error in reversed(chain):
+        stored = getattr(error, "failure_diagnostics", None)
+        if isinstance(stored, WorkerFailureDiagnostics):
+            return stored.model_copy(update={
+                "stage": stage if stored.stage == "UNKNOWN" else stored.stage,
+                "trace_id": stored.trace_id or _current_trace_id(),
+            })
+    for error in reversed(chain):
+        if isinstance(error, SpringWorkerHttpError):
+            return WorkerFailureDiagnostics(origin="SPRING", stage=stage, reasonCode="INTERNAL_API_HTTP_ERROR",
+                sourceErrorCode=error.spring_error_code, httpStatus=error.status_code,
+                requestId=error.response.headers.get("X-Request-ID"))
+        if isinstance(error, SpringWorkerTransportError):
+            return WorkerFailureDiagnostics(origin="SPRING", stage=stage, reasonCode="INTERNAL_API_TRANSPORT_ERROR")
+        if isinstance(error, AiTokenQuotaExhaustedError):
+            return WorkerFailureDiagnostics(origin="SPRING", stage=stage,
+                reasonCode="INTERNAL_API_HTTP_ERROR" if error.status_code is not None else "UNKNOWN",
+                sourceErrorCode=error.spring_error_code or error.error_code, httpStatus=error.status_code)
+        if isinstance(error, httpx.HTTPStatusError):
+            response = error.response
+            code = "UNKNOWN"
+            try:
+                detail = response.json().get("error", {})
+                if isinstance(detail, dict):
+                    code = next((detail[key] for key in ("code", "type")
+                                 if isinstance(detail.get(key), str) and detail[key] in PROVIDER_DIAGNOSTIC_CODES), "UNKNOWN")
+            except (ValueError, AttributeError):
+                pass
+            return WorkerFailureDiagnostics(origin="PROVIDER", stage=stage,
+                reasonCode="LLM_RATE_LIMIT" if response.status_code == 429 else "LLM_PROVIDER_ERROR",
+                sourceErrorCode=code, httpStatus=response.status_code,
+                requestId=response.headers.get("x-request-id"), traceId=_current_trace_id())
+        if isinstance(error, LlmOutputTruncatedError):
+            return WorkerFailureDiagnostics(origin="PROVIDER", stage=stage, reasonCode="LLM_OUTPUT_TRUNCATED", traceId=_current_trace_id())
+        if isinstance(error, LlmIncompleteResponseError) and error.response is not None:
+            return WorkerFailureDiagnostics(origin="PROVIDER", stage=stage, reasonCode="LLM_PROVIDER_ERROR",
+                httpStatus=error.response.status_code, requestId=error.response.headers.get("x-request-id"), traceId=_current_trace_id())
+        if isinstance(error, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, LlmIncompleteResponseError)):
+            return WorkerFailureDiagnostics(origin="PROVIDER", stage=stage,
+                reasonCode="LLM_TIMEOUT" if isinstance(error, httpx.TimeoutException) else "LLM_PROVIDER_ERROR", traceId=_current_trace_id())
+        if isinstance(error, (ComparisonValidationError, LlmResponseValidationError, LlmExtractionError)):
+            return WorkerFailureDiagnostics(origin="WORKER", stage=stage, reasonCode="COMPARISON_RESULT_INVALID", traceId=_current_trace_id())
+    return WorkerFailureDiagnostics(origin="WORKER", stage=stage, reasonCode="UNKNOWN", traceId=_current_trace_id())
+
+
+def _current_trace_id():
+    try:
+        from opentelemetry import trace
+        context = trace.get_current_span().get_span_context()
+        return format(context.trace_id, "032x") if context.is_valid else None
+    except Exception:
+        return None

@@ -3,7 +3,10 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
-from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError, OrderedPromptBudgetExceeded
+from app.analysis.exceptions import (
+    ComparisonValidationError, OrderedInputContextError, OrderedPromptBudgetExceeded,
+    OrderedAnalysisIncompleteError,
+)
 from app.analysis.book_world_claims import is_asserted_book_claim
 from app.analysis.ordered_context import validate_comparison_source
 from app.analysis.world_setting_batch_recovery import (
@@ -17,6 +20,7 @@ from app.analysis.world_setting_comparator import (
 from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpError
 from app.domain.enums import AnalysisFailureCode, AnalysisSourceKind, WorldSettingCategory
 from app.exceptions.failure_classification import (
+    failure_diagnostics,
     comparison_failure_code,
     is_candidate_comparison_failure,
     spring_failure_source,
@@ -25,6 +29,7 @@ from app.mappers.world_setting_candidate_mapper import normalize_world_setting_n
 from app.schemas.analysis_context import AnalysisStateProvenance, WorkerAnalysisContext
 from app.schemas.analysis_source import WorkerAnalysisSource
 from app.schemas.worker import (
+    WorkerFailureDiagnostics,
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingComparisonBatchCandidate,
     WorkerWorldSettingComparisonBatchCompleteRequest,
@@ -104,6 +109,8 @@ class WorldSettingComparisonSpringApi(Protocol):
         source_error_code: str | None = None,
         source_reason_code: str | None = None,
         diagnostics: list[WorkerWorldSettingComparisonDiagnostic] | None = None,
+        *,
+        failure_diagnostics: WorkerFailureDiagnostics | None = None,
     ) -> None: ...
 
     async def claim_next_world_setting_comparison(
@@ -146,6 +153,8 @@ class WorldSettingComparisonSpringApi(Protocol):
         failure_code: AnalysisFailureCode,
         source_error_code: str | None = None,
         source_reason_code: str | None = None,
+        *,
+        failure_diagnostics: WorkerFailureDiagnostics | None = None,
     ) -> None: ...
 
 
@@ -219,6 +228,7 @@ class WorldSettingComparisonRunResult:
     )
     batch_usages: tuple[WorldSettingComparisonBatchUsage, ...] = ()
     cluster_usages: tuple[WorldSettingComparisonClusterUsage, ...] = ()
+    first_failure_diagnostics: WorkerFailureDiagnostics | None = None
 
     def summary_metrics(self) -> dict[str, object]:
         candidate_count = self.completed_count + self.failed_count
@@ -294,6 +304,7 @@ class _BatchComparisonStats:
     stale_retry_count: int
     failed_count: int = 0
     first_failure_code: AnalysisFailureCode | None = None
+    first_failure_diagnostics: WorkerFailureDiagnostics | None = None
 
 
 class WorldSettingComparisonPipeline:
@@ -514,6 +525,7 @@ class WorldSettingComparisonPipeline:
                             AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
                             source_error_code=source_error_code,
                             source_reason_code=source_reason_code,
+                            failure_diagnostics=failure_diagnostics(exc, stage="WORLD_COMPARE"),
                         )
                         raise
                     target_ids = [
@@ -539,6 +551,7 @@ class WorldSettingComparisonPipeline:
         completed_count = 0
         failed_count = 0
         first_failure_code: AnalysisFailureCode | None = None
+        first_failure_diagnostics: WorkerFailureDiagnostics | None = None
         while True:
             candidate = await self.spring_client.claim_next_world_setting_comparison(
                 analysis_job_id,
@@ -549,19 +562,22 @@ class WorldSettingComparisonPipeline:
                     completed_count,
                     failed_count,
                     first_failure_code,
+                    first_failure_diagnostics=first_failure_diagnostics,
                 )
             validate_comparison_source(candidate.source, None, analysis_source)
-            failure_code = await self._process_claimed_candidate(
+            failure = await self._process_claimed_candidate(
                 analysis_job_id,
                 lease_token,
                 candidate,
             )
-            if failure_code is None:
+            if failure is None:
                 completed_count += 1
             else:
+                failure_code, diagnostic = failure
                 failed_count += 1
                 if first_failure_code is None:
                     first_failure_code = failure_code
+                    first_failure_diagnostics = diagnostic
 
     async def _process_all_batches(
         self,
@@ -575,6 +591,7 @@ class WorldSettingComparisonPipeline:
         completed_count = 0
         failed_count = 0
         first_failure_code: AnalysisFailureCode | None = None
+        first_failure_diagnostics: WorkerFailureDiagnostics | None = None
         batch_count = 0
         decision_count = 0
         cluster_count = 0
@@ -598,6 +615,7 @@ class WorldSettingComparisonPipeline:
                     completed_count=completed_count,
                     failed_count=failed_count,
                     first_failure_code=first_failure_code,
+                    first_failure_diagnostics=first_failure_diagnostics,
                     batch_count=batch_count,
                     decision_count=decision_count,
                     cluster_count=cluster_count,
@@ -636,6 +654,7 @@ class WorldSettingComparisonPipeline:
                     source_reason_code=source_reason_code,
                     **({"diagnostics": exc.world_comparison_diagnostics}
                        if getattr(exc, "world_comparison_diagnostics", None) else {}),
+                    failure_diagnostics=failure_diagnostics(exc, stage="WORLD_COMPARE"),
                 )
                 raise
             except Exception as exc:
@@ -713,12 +732,14 @@ class WorldSettingComparisonPipeline:
                     source_reason_code=source_reason_code,
                     **({"diagnostics": exc.world_comparison_diagnostics}
                        if getattr(exc, "world_comparison_diagnostics", None) else {}),
+                    failure_diagnostics=failure_diagnostics(exc, stage="WORLD_COMPARE"),
                 )
                 failed_count += len(batch.candidates)
                 if failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED:
                     batch_validation_failure_count += 1
                 if first_failure_code is None:
                     first_failure_code = failure_code
+                    first_failure_diagnostics = failure_diagnostics(exc, stage="WORLD_COMPARE")
                 usage = self._usage_snapshot().since(usage_before)
                 batch_usages.append(
                     _batch_usage(
@@ -745,6 +766,7 @@ class WorldSettingComparisonPipeline:
             failed_count += stats.failed_count
             if first_failure_code is None and stats.first_failure_code is not None:
                 first_failure_code = stats.first_failure_code
+                first_failure_diagnostics = stats.first_failure_diagnostics
             if stats.first_failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED:
                 batch_validation_failure_count += 1
             decision_count += stats.decision_count
@@ -763,7 +785,10 @@ class WorldSettingComparisonPipeline:
             )
             if (window is not None and stats.failed_count and analysis_context is not None
                     and not continue_on_candidate_failure):
-                raise ComparisonValidationError("Ordered manual world comparison stopped after candidate failure.")
+                raise OrderedAnalysisIncompleteError(
+                    stats.first_failure_code or AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+                    failure_diagnostics=stats.first_failure_diagnostics,
+                )
 
     def _usage_snapshot(self) -> TextGenerationUsageSnapshot:
         return _component_usage_snapshot(self.subject_resolver) + _component_usage_snapshot(
@@ -775,7 +800,7 @@ class WorldSettingComparisonPipeline:
         analysis_job_id: UUID,
         lease_token: UUID,
         candidate: WorkerWorldSettingCandidatePayload,
-    ) -> AnalysisFailureCode | None:
+    ) -> tuple[AnalysisFailureCode, WorkerFailureDiagnostics | None] | None:
         try:
             await self._compare_with_fresh_context(analysis_job_id, lease_token, candidate)
             return None
@@ -789,6 +814,7 @@ class WorldSettingComparisonPipeline:
                 AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
                 source_error_code=source_error_code,
                 source_reason_code=source_reason_code,
+                failure_diagnostics=failure_diagnostics(exc, stage="WORLD_COMPARE"),
             )
             raise
         except Exception as exc:
@@ -803,13 +829,14 @@ class WorldSettingComparisonPipeline:
                 failure_code,
                 source_error_code=source_error_code,
                 source_reason_code=source_reason_code,
+                failure_diagnostics=failure_diagnostics(exc, stage="WORLD_COMPARE"),
             )
             logger.exception(
                 "World-setting comparison failed. analysis_job_id=%s candidate_id=%s",
                 analysis_job_id,
                 candidate.candidate_id,
             )
-            return failure_code
+            return failure_code, failure_diagnostics(exc, stage="WORLD_COMPARE")
 
     async def _compare_with_fresh_context(
         self,
@@ -1156,6 +1183,7 @@ class WorldSettingComparisonPipeline:
                 stale_retry_count=stale_retry_count,
                 failed_count=sum(len(failure.source_candidate_refs) for failure in failures),
                 first_failure_code=failures[0].failure_code if failures else None,
+                first_failure_diagnostics=failures[0].failure_diagnostics if failures else None,
             )
         raise AssertionError("Unreachable batch comparison attempt loop.")
 

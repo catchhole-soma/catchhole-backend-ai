@@ -986,6 +986,8 @@ class FakeSpringWorkerClient:
         lease_token: UUID,
         error_message: str,
         failure_code,
+        *,
+        failure_diagnostics=None,
     ) -> None:
         self.fail_calls.append((analysis_job_id, error_message, failure_code.value))
 
