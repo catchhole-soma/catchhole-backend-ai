@@ -203,13 +203,14 @@ def failure_diagnostics(exc: BaseException, *, stage: str) -> WorkerFailureDiagn
                 "stage": stage if stored.stage == "UNKNOWN" else stored.stage,
                 "trace_id": stored.trace_id or _current_trace_id(),
             })
+    # A typed Spring boundary owns its generic httpx transport cause.
+    if any(isinstance(error, SpringWorkerTransportError) for error in chain):
+        return WorkerFailureDiagnostics(origin="SPRING", stage=stage, reasonCode="INTERNAL_API_TRANSPORT_ERROR")
     for error in reversed(chain):
         if isinstance(error, SpringWorkerHttpError):
             return WorkerFailureDiagnostics(origin="SPRING", stage=stage, reasonCode="INTERNAL_API_HTTP_ERROR",
                 sourceErrorCode=error.spring_error_code, httpStatus=error.status_code,
                 requestId=error.response.headers.get("X-Request-ID"))
-        if isinstance(error, SpringWorkerTransportError):
-            return WorkerFailureDiagnostics(origin="SPRING", stage=stage, reasonCode="INTERNAL_API_TRANSPORT_ERROR")
         if isinstance(error, AiTokenQuotaExhaustedError):
             return WorkerFailureDiagnostics(origin="SPRING", stage=stage,
                 reasonCode="INTERNAL_API_HTTP_ERROR" if error.status_code is not None else "UNKNOWN",

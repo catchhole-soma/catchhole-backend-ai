@@ -292,3 +292,50 @@ def test_quota_diagnostic_preserves_spring_origin_without_making_quota_retryable
     assert diagnostic.source_error_code == "AI_TOKEN_QUOTA_EXHAUSTED"
     assert analysis_failure_code(error) is AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED
     assert not is_candidate_comparison_failure(error)
+
+
+@pytest.mark.parametrize("error_type", [httpx.ReadTimeout, httpx.ConnectError, httpx.RemoteProtocolError])
+def test_typed_spring_transport_boundary_owns_generic_httpx_cause(error_type):
+    from app.exceptions.failure_classification import failure_diagnostics
+    request = httpx.Request("POST", "http://spring.private/internal?secret=PRIVATE_QUERY")
+    cause = error_type("PRIVATE_TRANSPORT_MESSAGE", request=request)
+    transport = SpringWorkerTransportError("Spring request failed before response.")
+    transport.__cause__ = cause
+    wrapper = RuntimeError("Job failed")
+    wrapper.__cause__ = transport
+
+    diagnostic = failure_diagnostics(wrapper, stage="WORLD_CONTEXT")
+    assert diagnostic.origin == "SPRING"
+    assert diagnostic.reason_code == "INTERNAL_API_TRANSPORT_ERROR"
+    assert diagnostic.stage == "WORLD_CONTEXT"
+    assert diagnostic.http_status is None and diagnostic.request_id is None
+    assert "PRIVATE" not in diagnostic.model_dump_json()
+    assert "spring.private" not in diagnostic.model_dump_json()
+    assert analysis_failure_code(wrapper) is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert comparison_failure_code(wrapper) is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert not is_candidate_comparison_failure(wrapper)
+
+
+@pytest.mark.parametrize("error_type", [httpx.ReadTimeout, httpx.ConnectError, httpx.RemoteProtocolError])
+def test_genuine_provider_transport_causes_keep_provider_diagnostics(error_type):
+    from app.exceptions.failure_classification import failure_diagnostics
+    provider = error_type("PRIVATE", request=httpx.Request("POST", "https://provider.example"))
+    wrapper = RuntimeError("comparison failed")
+    wrapper.__cause__ = provider
+    diagnostic = failure_diagnostics(wrapper, stage="CHARACTER_COMPARE")
+    assert diagnostic.origin == "PROVIDER"
+    assert diagnostic.reason_code == ("LLM_TIMEOUT" if error_type is httpx.ReadTimeout else "LLM_PROVIDER_ERROR")
+    assert comparison_failure_code(wrapper) is AnalysisFailureCode.LLM_NETWORK_ERROR
+    assert is_candidate_comparison_failure(wrapper)
+
+
+def test_specific_stored_diagnostic_survives_spring_transport_boundary():
+    from app.exceptions.failure_classification import failure_diagnostics
+    from app.schemas.worker import WorkerFailureDiagnostics
+    specific = WorkerFailureDiagnostics(origin="SPRING", stage="CHARACTER_CONTEXT",
+        reasonCode="CURRENT_EVIDENCE_SOURCE_READ_FAILED", httpStatus=503,
+        requestId="11111111-1111-4111-8111-111111111111")
+    transport = SpringWorkerTransportError("Spring request failed.")
+    transport.failure_diagnostics = specific
+    transport.__cause__ = httpx.ReadTimeout("PRIVATE", request=httpx.Request("POST", "http://spring.private"))
+    assert failure_diagnostics(transport, stage="FINALIZE") == specific

@@ -507,7 +507,10 @@ def test_spring_worker_http_failure_discards_unsafe_error_code() -> None:
 def test_spring_worker_transport_failure_is_typed_by_source(
     error_type: type[httpx.TransportError],
 ) -> None:
+    requests = []
+
     def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         raise error_type("Spring transport failed", request=request)
 
     client = _client(handler)
@@ -522,6 +525,14 @@ def test_spring_worker_transport_failure_is_typed_by_source(
         )
 
     assert isinstance(exc_info.value.__cause__, error_type)
+
+    from app.exceptions.failure_classification import analysis_failure_code, failure_diagnostics, is_candidate_comparison_failure
+    diagnostic = failure_diagnostics(exc_info.value, stage="EXTRACTION")
+    assert diagnostic.origin == "SPRING" and diagnostic.reason_code == "INTERNAL_API_TRANSPORT_ERROR"
+    assert diagnostic.http_status is None and diagnostic.request_id is None
+    assert analysis_failure_code(exc_info.value) is AnalysisFailureCode.UNEXPECTED_ERROR
+    assert not is_candidate_comparison_failure(exc_info.value)
+    assert len(requests) == 1
 
 
 def test_ai_token_settlement_retries_temporary_spring_transport_failure() -> None:
