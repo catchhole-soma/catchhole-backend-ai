@@ -10,6 +10,8 @@
 
 ## AI Logic Version Records
 
+- GH306 `app/validation`은 고정 검수 입력을 읽는 호출형 검사기이며 Worker/lease·결과 저장·추출 release는 GH310/312가 소유한다. `ValidationDataClient`의 expected baseline/target/source fingerprint와 전체/부분 원문의 정확한 Unicode 범위를 유지하며 live setting tool로 대체하지 않는다. 검수는 Terra의 호출별 frozen `LlmCallOptions`를 사용하고 count와 생성에 같은 옵션/schema를 전달한다. 일반 추출/챗봇 기본 설정을 바꾸거나 검수에 가짜 AnalysisJob/lease를 만들지 않는다. 연결·예산·출처/완료 검증과 실제/합성 평가의 구분은 `docs/setting-validation-v1.md`를 따른다.
+
 - 결과에 영향을 주는 추출·주체 해소·비교·후처리·프롬프트·제품 모델/실행 설정 변경 PR마다 `docs/ai-logic-versions/vNNNN.md`(사람용 요약), `docs/ai-logic-versions/details/vNNNN.md`(AI용 상세), 목록을 함께 갱신한다. 작성 절차와 근거 항목은 `docs/ai-logic-versions/details/README.md`를 따른다.
 - 사람용 요약은 변경 이유·점수 표·남은 문제를 중심으로 20~35줄 안팎으로 쓴다. 전체 SHA·해시·실행 옵션·과거 평가·반복 지침은 상세에 둔다. 상세를 먼저 기록하고 요약의 수치·조건·상태를 맞춘다.
 - 기본 품질 평가는 다단계 `FIXED` 모드에서 추출 `gpt-5.6-sol`·주체 해소 `gpt-5.6-terra`·비교 `gpt-5.6-sol`, 제품 `LLM_REASONING_EFFORT=medium`으로 실행한다. `LLM_MODEL` fallback은 `gpt-5.6-terra`, judge는 Sol·medium이다. 로컬 CLI에도 명시하고 실제 사용값을 기록한다.
