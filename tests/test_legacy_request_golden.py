@@ -125,4 +125,8 @@ def test_confirmed_only_http_request_preserves_upstream_transport_and_authorized
     assert set(episode_projection) == {"extraction", "world_extraction"}
     assert all(set(row) == {"sha256", "system_sha256", "prompt_cache_key"} for row in episode_projection.values())
     authorized = {**authorized, **episode_projection.get(purpose, {})}
+    current_evidence = json.loads((ROOT / "tests/fixtures/gh304_current_evidence_request_overrides_20261028.json").read_text())["overrides"]
+    assert set(current_evidence) == {"character_batch"}
+    assert set(current_evidence["character_batch"]) == changing
+    authorized = {**authorized, **current_evidence.get(purpose, {})}
     assert actual[purpose] == {**expected, **authorized}
