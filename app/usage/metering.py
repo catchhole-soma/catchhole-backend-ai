@@ -27,7 +27,7 @@ from app.llm.exceptions import (
     LlmOutputTruncatedError,
     LlmResponseValidationError,
 )
-from app.llm.protocols import LlmResponseSchema, TextGenerationClient
+from app.llm.protocols import LlmCallOptions, LlmResponseSchema, TextGenerationClient
 from app.llm.responses import LlmTextResponse
 from app.monitoring.worker_metrics import (
     PURPOSES,
@@ -185,6 +185,7 @@ class MeteredTextGenerationClient:
         user_prompt: str,
         model: str | None = None,
         response_schema: LlmResponseSchema | None = None,
+        call_options: LlmCallOptions | None = None,
     ) -> int:
         count = getattr(self.delegate, "count_input_tokens", None)
         if not callable(count):
@@ -193,6 +194,7 @@ class MeteredTextGenerationClient:
             tokens = await count(
                 system_prompt=system_prompt, user_prompt=user_prompt,
                 model=model or self.default_model, response_schema=response_schema,
+                **({"call_options": call_options} if call_options is not None else {}),
             )
         except LlmInputTokenCountError:
             raise
@@ -210,6 +212,7 @@ class MeteredTextGenerationClient:
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
         response_schema: LlmResponseSchema | None = None,
+        call_options: LlmCallOptions | None = None,
     ) -> LlmTextResponse:
         trace_attributes: TraceAttributes = {
             "llm.purpose": _bounded(self.purpose, PURPOSES),
@@ -225,6 +228,7 @@ class MeteredTextGenerationClient:
                 max_output_tokens=max_output_tokens,
                 prompt_cache_key=prompt_cache_key,
                 response_schema=response_schema,
+                call_options=call_options,
                 trace_attributes=trace_attributes,
             )
             span.set_outcome("success")
@@ -239,12 +243,13 @@ class MeteredTextGenerationClient:
         prompt_cache_key: str | None,
         response_schema: LlmResponseSchema | None,
         trace_attributes: TraceAttributes,
+        call_options: LlmCallOptions | None = None,
     ) -> LlmTextResponse:
         effective_model = model or self.default_model
         if self.purpose == "CHARACTER_FACT_COMPARISON" and effective_model.startswith("gpt-6.1-sol"):
             # Fit/preflight already counted this identity; the provider cache avoids another HTTP call.
             reserved_tokens = await self.count_input_tokens(
-                system_prompt, user_prompt, effective_model, response_schema,
+                system_prompt, user_prompt, effective_model, response_schema, call_options,
             ) + max_output_tokens
         else:
             reserved_tokens = _estimate_text_token_upper_bound(
@@ -286,6 +291,7 @@ class MeteredTextGenerationClient:
                                     max_output_tokens=max_output_tokens,
                                     prompt_cache_key=prompt_cache_key,
                                     response_schema=response_schema,
+                                    **({"call_options": call_options} if call_options is not None else {}),
                                 )
                             finally:
                                 provider_latency_ns = max(
