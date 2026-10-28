@@ -151,6 +151,10 @@
 
 ## LLM Runtime
 
+- #309 독립 오탈자 검사는 `app.validation.typo.check_typos`와 `app/validation/README.md`를 따른다. 공통 frozen reader·Unicode 위치·구간·예산을 재사용하고, `gpt-6.1-terra`/호출별 `low`를 count와 생성에 동일하게 전달한다. 주입은 raw OpenAIResponsesClient 또는 그 raw를 직접 감싼 MeteredTextGenerationClient(max_retries=0) 한 층만 허용해 숨은 재시도로 생성 예산을 우회하지 않는다. 공유 client/추출·챗봇 기본값을 변경하지 않는다.
+- #309의 category는 공통 schema를 수정하지 않은 local subtype이다. 구간별 응답 전체를 검증한 성공만 보존하며 실패/누락을 정상 0건으로 만들지 않는다. 최종 frozen 재검증 실패 시 이전 제안 전체를 무효화한다. 원문·사전·작가 판단·추출 쓰기와 Worker/lease 연결은 후속 범위다.
+- #309 로직은 `v0027` 요약/상세에 기록한다. #306의 `v0026`은 AI PR #99로 main에 머지됐으며 공통 계약은 main을 기준으로 소비한다. PR/merge 시 최신 main과 번호 충돌·구현 복원 SHA를 재확인한다.
+
 - 다단계 평가의 새 예측은 `processingVersion=1`로 표시하고 후처리 최종 후보마다 처리 기록을 정확히 하나 남긴다. 답지 대응과 실행 상태를 분리하며 누락·중복·decision 모순은 검증 오류로 처리한다. `diagnostics.json`과 Markdown은 같은 허용 필드만 사용하고, 구형 기록에서 확인할 수 없는 사유는 재실행 필요로 표시한다.
 - 평가의 provider 중단은 후보가 없어도 회차 단위 `executionFailure`에 회차·단계·실제 호출 모델/용도·HTTP 상태·오류 코드/유형·매개변수·요청 ID·미완료 상태를 남기고 CLI와 공개 진단에 함께 표시한다. provider 메타데이터는 수집과 공개 시 허용 목록으로 정제하며 error.message·원문·응답 본문·요청 헤더를 기록하지 않는다. 알 수 없는 오류 식별자는 추측하지 않고 UNRECOGNIZED로 표시한다.
 - 평가의 API 진단에는 실제 httpx 네트워크 예외 종류, 경과 시간, 출력 상한, 프롬프트 문자/UTF-8 바이트 수, 스키마 바이트 수와 입력 SHA-256을 남긴다. 오류 메시지는 알려진 원인 문구를 고정 요약으로 변환하고 원문을 보존하지 않는다. 시작/완료 로그와 실패 진단은 같은 입력 식별 기준을 사용하며 재현 실험에서 모델·입력·출력 상한을 동시에 바꾸지 않는다.
