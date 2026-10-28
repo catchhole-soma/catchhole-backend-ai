@@ -51,6 +51,6 @@ FIXED는 회차별 정답 시작 상태를 고정하는 평가 모드다. 실제
 
 ## 병렬 브랜치의 보존 이력
 
-- #309의 [v0027](v0027.md)은 #306 AI PR #99가 머지된 main `22ea1dc`에 전용 변경만 통합해 PR을 준비한다. 최초 공통 v2 patch/snapshot은 역사로 보존하며 PR/merge 시 최신 main 번호와 최종 복원 SHA를 확인한다.
+- #309의 [v0027](v0027.md)은 #306 AI PR #99가 머지된 main `22ea1dc`에 전용 변경을 통합한 [AI PR #100](https://github.com/catchhole-soma/catchhole-backend-ai/pull/100)의 구현이다. 최초 공통 v2 patch/snapshot은 역사로 보존하며 구현 복원 SHA는 상세에 기록한다.
 
 [#221 통합 전 문서](branches/gh-221/INDEX.md)는 당시 v0006~v0010의 원본과 원래 커밋을 보존한다. 현재 목록의 같은 번호와 구분한다.
