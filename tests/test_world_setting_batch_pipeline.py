@@ -549,6 +549,8 @@ class FakeBatchSpringApi:
         failure_code,
         source_error_code=None,
         source_reason_code=None,
+        *,
+        failure_diagnostics=None,
     ):
         self.failures.append(
             (
@@ -627,6 +629,8 @@ class PreparingBatchSpringApi(FakeBatchSpringApi):
         failure_code,
         source_error_code=None,
         source_reason_code=None,
+        *,
+        failure_diagnostics=None,
     ):
         self.candidate_failures.append(
             (

@@ -88,3 +88,57 @@ def test_fields_are_bounded_and_constraints_are_not_inferred_from_messages():
     )
     assert "constraint" not in str(caught.value)
     assert "PRIVATE" not in str(caught.value)
+
+
+def test_failure_diagnostics_contract_fixture_and_untrusted_fields():
+    import json
+    from pathlib import Path
+    from app.schemas.worker import WorkerFailureDiagnostics
+    fixture = json.loads((Path(__file__).parent / "fixtures/analysis-failure-diagnostics-v1.json").read_text())
+    result = WorkerFailureDiagnostics.model_validate(fixture)
+    assert result.model_dump(mode="json", by_alias=True) == fixture
+    malicious = {**fixture, "sourceErrorCode": "PRIVATE_CODE", "requestId": "@everyone https://private.example",
+                 "traceId": "x" * 1000, "errorMessage": "PRIVATE_MANUSCRIPT", "leaseToken": "PRIVATE_TOKEN"}
+    result = WorkerFailureDiagnostics.model_validate(malicious).model_dump(mode="json", by_alias=True)
+    assert result["sourceErrorCode"] == "UNKNOWN"
+    assert result["requestId"] is None and result["traceId"] is None
+    assert "PRIVATE" not in json.dumps(result)
+
+
+def test_spring_specific_diagnostics_survive_generic_wrapper_and_invalid_optional_metadata():
+    from app.exceptions.failure_classification import failure_diagnostics
+    response = rejected("ANALYSIS_CURRENT_EVIDENCE_INVALID", status=409)
+    payload = response.json()
+    payload["error"]["context"] = {"failureDiagnostics": {
+        "schemaVersion": 1, "origin": "SPRING", "stage": "CHARACTER_CONTEXT",
+        "reasonCode": "CURRENT_EVIDENCE_OFFSET_INVALID", "sourceErrorCode": "ANALYSIS_CURRENT_EVIDENCE_INVALID",
+    }}
+    response = httpx.Response(409, request=response.request, json=payload,
+                             headers={"X-Request-ID": "11111111-1111-4111-8111-111111111111"})
+    with pytest.raises(SpringWorkerHttpError) as caught:
+        _raise_for_spring_status(response)
+    wrapper = RuntimeError("generic")
+    wrapper.__cause__ = caught.value
+    diagnostic = failure_diagnostics(wrapper, stage="FINALIZE")
+    assert diagnostic.reason_code == "CURRENT_EVIDENCE_OFFSET_INVALID"
+    assert diagnostic.stage == "CHARACTER_CONTEXT" and diagnostic.http_status == 409
+    assert diagnostic.request_id == "11111111-1111-4111-8111-111111111111"
+    payload["error"]["context"]["failureDiagnostics"] = ["invalid"]
+    with pytest.raises(SpringWorkerHttpError) as malformed:
+        _raise_for_spring_status(httpx.Response(500, request=response.request, json=payload))
+    assert failure_diagnostics(malformed.value, stage="WORLD_CONTEXT").reason_code == "INTERNAL_API_HTTP_ERROR"
+
+
+@pytest.mark.parametrize("optional", [None, [], "PRIVATE", {"schemaVersion": 2}, {"schemaVersion": True}])
+def test_malformed_or_legacy_spring_diagnostics_do_not_replace_http_failure(optional):
+    from app.exceptions.failure_classification import failure_diagnostics
+    request = httpx.Request("POST", "https://internal.example/character-fact-comparison-context")
+    response = httpx.Response(500, request=request, json={"error": {"code": "COMMON_INTERNAL_SERVER_ERROR",
+        "context": {"failureDiagnostics": optional}}}, headers={"X-Request-ID": "11111111-1111-4111-8111-111111111111"})
+    with pytest.raises(SpringWorkerHttpError) as caught:
+        _raise_for_spring_status(response)
+    diagnostic = failure_diagnostics(caught.value, stage="FINALIZE")
+    assert diagnostic.origin == "SPRING" and diagnostic.stage == "CHARACTER_CONTEXT"
+    assert diagnostic.http_status == 500 and diagnostic.reason_code == "INTERNAL_API_HTTP_ERROR"
+    assert diagnostic.request_id == "11111111-1111-4111-8111-111111111111"
+    assert comparison_failure_code(caught.value).value == "UNEXPECTED_ERROR"

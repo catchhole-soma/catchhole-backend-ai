@@ -23,6 +23,7 @@ class OrderedPromptBudgetExceeded(OrderedInputContextError):
 class OrderedAnalysisIncompleteError(Exception):
     """Stop an ordered run after a reported batch failure without losing its code."""
 
-    def __init__(self, failure_code):
+    def __init__(self, failure_code, *, failure_diagnostics=None):
         super().__init__("Ordered analysis stopped at an incomplete comparison batch.")
         self.failure_code = failure_code
+        self.failure_diagnostics = failure_diagnostics

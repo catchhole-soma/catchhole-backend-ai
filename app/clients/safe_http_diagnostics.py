@@ -7,6 +7,7 @@ import re
 # Only reviewed server-owned codes enter messages/logs. The original typed code
 # stays on SpringWorkerHttpError for existing control flow, even if not listed.
 SAFE_ERROR_CODES = frozenset({
+    "ANALYSIS_CURRENT_EVIDENCE_INVALID", "ANALYSIS_CURRENT_EVIDENCE_SOURCE_UNAVAILABLE",
     "REQUEST_VALIDATION_FAILED", "REQUEST_INVALID_ARGUMENT", "COMMON_INTERNAL_SERVER_ERROR",
     "AUTH_UNAUTHORIZED", "AUTH_FORBIDDEN", "RESOURCE_NOT_FOUND", "CONFLICT",
     "SETTING_CANDIDATE_COMPARISON_TARGET_INVALID", "SETTING_CANDIDATE_COMPARISON_BATCH_RESPONSE_INVALID",
@@ -64,3 +65,29 @@ def error_message(status: int, code: str | None, reason: str | None, fields: tup
     if fields:
         metadata["validation_fields"] = list(fields)
     return "Spring Worker API request rejected: " + json.dumps(metadata, separators=(",", ":"))
+
+
+def spring_failure_diagnostics(response):
+    from app.schemas.worker import WorkerFailureDiagnostics
+    try:
+        payload = response.json()
+        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+        error = error if isinstance(error, dict) else {}
+        context = error.get("context", {})
+        raw = context.get("failureDiagnostics") if isinstance(context, dict) else None
+        if isinstance(raw, dict) and type(raw.get("schemaVersion")) is int and raw["schemaVersion"] == 1:
+            # The actual HTTP envelope owns status/correlation; response prose is ignored.
+            return WorkerFailureDiagnostics.model_validate({
+                **raw, "origin": "SPRING", "httpStatus": response.status_code,
+                "requestId": response.headers.get("X-Request-ID", raw.get("requestId")),
+            })
+    except (ValueError, TypeError, AttributeError):
+        error = {}
+    path = response.request.url.path
+    stage = ("CLAIM_INPUT" if path.endswith("/claim") else
+             "CHARACTER_CONTEXT" if "character-fact" in path and "context" in path else
+             "WORLD_CONTEXT" if "world-setting" in path and "context" in path else
+             "FINALIZE" if path.endswith("/complete") else "UNKNOWN")
+    return WorkerFailureDiagnostics(origin="SPRING", stage=stage, reasonCode="INTERNAL_API_HTTP_ERROR",
+        sourceErrorCode=error.get("code"), httpStatus=response.status_code,
+        requestId=response.headers.get("X-Request-ID"))

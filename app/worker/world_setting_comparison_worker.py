@@ -6,7 +6,7 @@ from app.analysis.world_setting_pipeline import WorldSettingComparisonPipeline
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import get_settings
 from app.domain.enums import AnalysisFailureCode, AnalysisJobType, AnalysisSourceKind, AnalysisStep
-from app.exceptions.failure_classification import analysis_failure_code
+from app.exceptions.failure_classification import analysis_failure_code, failure_diagnostics
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
 from app.monitoring.worker_tracing import worker_span
@@ -98,6 +98,7 @@ class WorldSettingComparisonWorker:
         payload: WorkerAnalysisJobPayload,
     ) -> WorkerRunResult:
         candidate_failure_code: AnalysisFailureCode | None = None
+        candidate_failure_diagnostics = None
         try:
             self._validate_payload(payload)
             await self.spring_client.report_progress(
@@ -123,6 +124,7 @@ class WorldSettingComparisonWorker:
                     _record_comparison_span(span, result)
             if result.failed_count:
                 candidate_failure_code = result.first_failure_code
+                candidate_failure_diagnostics = result.first_failure_diagnostics
                 raise RuntimeError("World-setting candidate recomparison failed.")
             with worker_span("analysis.finalize"):
                 await self.spring_client.complete(
@@ -144,6 +146,8 @@ class WorldSettingComparisonWorker:
                     payload.lease_token,
                     (str(exc) or exc.__class__.__name__)[:1000],
                     candidate_failure_code or analysis_failure_code(exc),
+                    failure_diagnostics=(candidate_failure_diagnostics if candidate_failure_code is not None
+                                         else failure_diagnostics(exc, stage="WORLD_COMPARE")),
                 )
             except Exception:
                 logger.exception(

@@ -682,7 +682,53 @@ def test_batch_comparator_projects_in_order_and_hides_transport_ids() -> None:
     assert "`matched_character_name`" in request["system_prompt"]
     assert str(WORK_ID) not in serialized
     assert str(EPISODE_ID) not in serialized
-    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v10"
+    assert request["prompt_cache_key"] == "character-fact-comparison-batch:v11"
+
+
+def test_unavailable_retained_evidence_reaches_prompt_and_keeps_current_value_for_review() -> None:
+    client = FakeTextClient({"decisions": [_decision_payload(
+        "C1", operation="REVIEW_REQUIRED", resolved_key="status.다리_상태", value=None,
+        reason="새 관측의 근거가 부족하여 확인이 필요합니다.",
+    )]})
+    advisory = {
+        "currentNarrativeTime": None,
+        "currentSlots": [{
+            "factType": "STATUS", "factKey": "status.다리_상태", "factValue": "기존 확정값",
+            "valueJson": {"active": True},
+            "supportingSources": [{
+                "sourceCandidateId": "10000000-0000-4000-8000-000000000001",
+                "sourceAnalysisJobId": "10000000-0000-4000-8000-000000000002",
+                "availability": "UNAVAILABLE", "unavailableReason": "QUOTE_NOT_FOUND",
+                "candidateWasEdited": False, "evidenceSpans": [], "quoteRelation": "SOURCE_CONTEXT_ONLY",
+                "source": {"sourceKind": "EPISODE", "episodeNo": 1}, "narrativeTime": None,
+            }],
+        }],
+        "historyFacts": [],
+    }
+
+    result, _ = asyncio.run(CharacterFactComparator(llm_client=client, max_attempts=1).compare_batch(
+        matched_character_name="합성 인물", canonical_fact_type="STATUS",
+        candidates=[_candidate("C1", "Q1", "새 관측")],
+        snapshot_entries=[_batch_snapshot("P1", "status.다리_상태", "기존 확정값")],
+        advisory_current_context=advisory,
+    ))
+
+    assert result.decisions[0].operation == "REVIEW_REQUIRED"
+    assert result.decisions[0].proposed_fact_value is None
+    assert len(client.requests) == 1
+    request = client.requests[0]
+    prompt = json.loads(request["user_prompt"])
+    current = prompt["advisory_current_context"]["currentSlots"][0]
+    assert current["factValue"] == "기존 확정값"
+    origin = current["supportingSources"][0]
+    assert origin["availability"] == "UNAVAILABLE"
+    assert origin["unavailableReason"] == "QUOTE_NOT_FOUND"
+    assert origin["evidenceSpans"] == []
+    assert origin["sourceRef"] == "S1"
+    assert "10000000-0000-4000-8000" not in request["user_prompt"]
+    assert "UNAVAILABLE" in request["system_prompt"]
+    assert "QUOTE_NOT_FOUND" in request["system_prompt"]
+    assert "현재값이 틀렸다는 뜻" in request["system_prompt"]
 
 
 def test_batch_pipeline_falls_back_to_singletons_without_losing_projection() -> None:
@@ -1449,6 +1495,8 @@ class FakeBatchSpring:
         lease_token,
         error_message,
         failure_code,
+        *,
+        failure_diagnostics=None,
     ):
         self.failures.append((comparison_batch_id, error_message, failure_code.value))
 

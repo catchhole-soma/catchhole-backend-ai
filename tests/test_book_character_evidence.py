@@ -65,6 +65,30 @@ def test_character_book_grounding_exhaustion_is_failure_and_episode_behavior_sta
     assert episode.candidates[0].evidence_spans[0].quote == "없는 인용문"
 
 
+@pytest.mark.parametrize("quote", [
+    '손의 기능: "정상" — 재진에서 회복 확인',
+    '손의 기능: “정상 — 재진에서 회복 확인',
+], ids=["extra-quotes", "unpaired-quote"])
+def test_book_character_quote_recovery_publishes_exact_source_without_changing_provider_payload(quote):
+    raw = response(quote)
+    original = json.loads(json.dumps(raw))
+    client = RecordingClient(raw)
+    result = extract(client, attempts=1)
+    resolved = resolve_candidate_evidence_offsets(result.candidates, TEXT, 29)[0]
+    source = WorkerAnalysisSource.model_validate(SOURCE)
+    published = SettingCandidateMapper.to_entity(work_id=uuid4(), episode_id=None, source_content_s3_key=None,
+        analysis_job_id=uuid4(), candidate=resolved, source_kind=source.source_kind,
+        setting_book_id=source.setting_book_id, setting_book_revision_id=source.revision_id)
+
+    assert len(client.requests) == 1
+    span = published.evidence_spans[0]
+    assert span["quote"] == QUOTE
+    assert span["start_offset"] == 29 + TEXT.index(QUOTE)
+    assert span["end_offset"] == span["start_offset"] + len(QUOTE)
+    assert TEXT[span["start_offset"] - 29:span["end_offset"] - 29] == span["quote"]
+    assert raw == original
+
+
 def test_positive_book_normal_function_survives_extraction_publish_comparison_and_empty_projection():
     result = extract(RecordingClient(response("손의 기능: 정상 — 재진에서 회복 확인")), attempts=1)
     chunk = EpisodeChunk(id=CHUNK_ID, episode_id=uuid4(), chunk_index=0, chunk_text=TEXT,

@@ -29,6 +29,79 @@ from app.domain.enums import (
 from app.schemas.analysis_context import AnalysisStateProvenance, WorkerAnalysisContext
 from app.schemas.analysis_source import SettingBookReferenceTime, WorkerAnalysisSource
 
+FAILURE_DIAGNOSTIC_REASONS = frozenset({
+    "CURRENT_EVIDENCE_BINDING_INVALID", "CURRENT_EVIDENCE_MANIFEST_INVALID", "CURRENT_EVIDENCE_STRUCTURE_INVALID",
+    "CURRENT_EVIDENCE_OFFSET_INVALID", "CURRENT_EVIDENCE_SOURCE_HASH_MISMATCH", "CURRENT_EVIDENCE_SOURCE_READ_FAILED",
+    "CURRENT_EVIDENCE_QUOTE_NOT_FOUND", "INTERNAL_API_HTTP_ERROR", "INTERNAL_API_TRANSPORT_ERROR",
+    "LLM_RATE_LIMIT", "LLM_TIMEOUT", "LLM_PROVIDER_ERROR", "LLM_OUTPUT_TRUNCATED", "COMPARISON_RESULT_INVALID", "UNKNOWN",
+})
+FAILURE_DIAGNOSTIC_STAGES = frozenset({
+    "CLAIM_INPUT", "CHARACTER_CONTEXT", "CHARACTER_COMPARE", "WORLD_CONTEXT", "WORLD_COMPARE", "EXTRACTION", "FINALIZE", "UNKNOWN",
+})
+PROVIDER_DIAGNOSTIC_CODES = frozenset({
+    "rate_limit_exceeded", "server_error", "timeout", "invalid_request_error", "insufficient_quota", "billing_hard_limit_reached",
+    "billing_not_active", "quota_exceeded", "usage_limit_reached", "max_output_tokens", "content_filter", "UNKNOWN",
+})
+
+
+class WorkerFailureDiagnostics(BaseModel):
+    """Safe v1 failure metadata. Optional malformed fields never contain prose."""
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    schema_version: Literal[1] = Field(default=1, alias="schemaVersion")
+    origin: Literal["SPRING", "PROVIDER", "WORKER"]
+    stage: str
+    reason_code: str = Field(alias="reasonCode")
+    source_error_code: str = Field(default="UNKNOWN", alias="sourceErrorCode")
+    http_status: int | None = Field(default=None, alias="httpStatus")
+    request_id: str | None = Field(default=None, alias="requestId")
+    trace_id: str | None = Field(default=None, alias="traceId")
+    source_analysis_job_id: UUID | None = Field(default=None, alias="sourceAnalysisJobId")
+    source_candidate_id: UUID | None = Field(default=None, alias="sourceCandidateId")
+    source_episode_id: UUID | None = Field(default=None, alias="sourceEpisodeId")
+    source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo")
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def supported_version(cls, value):
+        if type(value) is not int or value != 1:
+            raise ValueError("Unsupported failure diagnostic version.")
+        return value
+
+    @field_validator("stage", "reason_code", "source_error_code", mode="before")
+    @classmethod
+    def safe_code(cls, value, info):
+        from app.clients.safe_http_diagnostics import SAFE_ERROR_CODES
+        allowed = {"stage": FAILURE_DIAGNOSTIC_STAGES, "reason_code": FAILURE_DIAGNOSTIC_REASONS,
+                   "source_error_code": SAFE_ERROR_CODES | PROVIDER_DIAGNOSTIC_CODES}[info.field_name]
+        return value if isinstance(value, str) and value in allowed else "UNKNOWN"
+
+    @field_validator("http_status", "source_episode_no", mode="before")
+    @classmethod
+    def safe_number(cls, value, info):
+        if type(value) is not int:
+            return None
+        return value if (100 <= value <= 599 if info.field_name == "http_status" else 1 <= value <= 2147483647) else None
+
+    @field_validator("request_id", "trace_id", mode="before")
+    @classmethod
+    def safe_identifier(cls, value, info):
+        import re
+        if not isinstance(value, str):
+            return None
+        pattern = r"[0-9a-f]{32}" if info.field_name == "trace_id" else (
+            r"[A-Za-z0-9_-]{1,128}" if info.data.get("origin") == "PROVIDER" else
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+        return value if re.fullmatch(pattern, value) else None
+
+    @field_validator("source_analysis_job_id", "source_candidate_id", "source_episode_id", mode="before")
+    @classmethod
+    def safe_source_uuid(cls, value):
+        try:
+            return UUID(str(value)) if value is not None else None
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+
 # Spring AI 토큰 원장 계약에서 허용하는 호출 목적과 종료 결과
 AiTokenPurpose = Literal[
     "SETTING_EXTRACTION",
@@ -118,6 +191,7 @@ class WorkerAnalysisJobCompleteRequest(BaseModel):
 # Worker가 분석 실패를 Spring에 보고할 때 쓰는 DTO
 class WorkerAnalysisJobFailRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+    failure_diagnostics: WorkerFailureDiagnostics | None = Field(default=None, alias="failureDiagnostics")
     failure_code: AnalysisFailureCode = Field(alias="failureCode")
     # 실패 사유
     error_message: str = Field(alias="errorMessage", min_length=1)
@@ -819,6 +893,7 @@ class WorkerWorldSettingComparisonDiagnostic(BaseModel):
 
 class WorkerWorldSettingComparisonBatchFailure(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    failure_diagnostics: WorkerFailureDiagnostics | None = Field(default=None, alias="failureDiagnostics")
 
     source_candidate_refs: list[str] = Field(alias="sourceCandidateRefs", min_length=1, max_length=20)
     failure_code: AnalysisFailureCode = Field(alias="failureCode")
@@ -854,6 +929,7 @@ class WorkerWorldSettingComparisonBatchCompleteRequest(BaseModel):
 
 class WorkerWorldSettingComparisonFailRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+    failure_diagnostics: WorkerFailureDiagnostics | None = Field(default=None, alias="failureDiagnostics")
 
     failure_code: AnalysisFailureCode = Field(alias="failureCode")
     error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
@@ -1109,6 +1185,7 @@ class WorkerCharacterFactComparisonBatchDecision(BaseModel):
 
 class WorkerCharacterFactComparisonBatchFailure(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+    failure_diagnostics: WorkerFailureDiagnostics | None = Field(default=None, alias="failureDiagnostics")
 
     candidate_ref: str = Field(
         alias="candidateRef",
@@ -1148,6 +1225,7 @@ class WorkerCharacterFactComparisonBatchCompleteRequest(BaseModel):
 
 class WorkerCharacterFactComparisonBatchFailRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+    failure_diagnostics: WorkerFailureDiagnostics | None = Field(default=None, alias="failureDiagnostics")
 
     failure_code: AnalysisFailureCode = Field(alias="failureCode")
     error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)
@@ -1267,6 +1345,7 @@ class WorkerCharacterFactComparisonCompleteRequest(BaseModel):
 
 class WorkerCharacterFactComparisonFailRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+    failure_diagnostics: WorkerFailureDiagnostics | None = Field(default=None, alias="failureDiagnostics")
 
     failure_code: AnalysisFailureCode = Field(alias="failureCode")
     error_message: str = Field(alias="errorMessage", min_length=1, max_length=1000)

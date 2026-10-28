@@ -32,6 +32,7 @@ from app.clients.exceptions import AiTokenQuotaExhaustedError, SpringWorkerHttpE
 from app.domain.enums import AnalysisFailureCode, CharacterFactComparisonOperation
 from app.domain.setting_values import normalize_setting_display_value
 from app.exceptions.failure_classification import (
+    failure_diagnostics,
     comparison_failure_code,
     is_candidate_comparison_failure,
 )
@@ -39,6 +40,7 @@ from app.llm.exceptions import LlmInputTokenCountError, LlmOutputTruncatedError
 from app.schemas.analysis_context import WorkerAnalysisContext, WorkerAnalysisReference
 from app.schemas.analysis_source import WorkerAnalysisSource
 from app.schemas.worker import (
+    WorkerFailureDiagnostics,
     WorkerCharacterFactComparisonBatchCandidate,
     WorkerCharacterFactComparisonBatchCompleteRequest,
     WorkerCharacterFactComparisonBatchContextResponse,
@@ -95,6 +97,8 @@ class CharacterFactComparisonSpringApi(Protocol):
         lease_token: UUID,
         error_message: str,
         failure_code: AnalysisFailureCode,
+        *,
+        failure_diagnostics: WorkerFailureDiagnostics | None = None,
     ) -> None: ...
 
     async def claim_next_character_fact_comparison(
@@ -125,6 +129,8 @@ class CharacterFactComparisonSpringApi(Protocol):
         lease_token: UUID,
         error_message: str,
         failure_code: AnalysisFailureCode,
+        *,
+        failure_diagnostics: WorkerFailureDiagnostics | None = None,
     ) -> None: ...
 
 
@@ -173,6 +179,7 @@ class CharacterFactComparisonRunResult:
     batch_validation_failure_count: int = 0
     stale_batch_retry_count: int = 0
     usage: TextGenerationUsageSnapshot = field(default_factory=TextGenerationUsageSnapshot)
+    first_failure_diagnostics: WorkerFailureDiagnostics | None = None
 
     def summary_metrics(self) -> dict[str, object]:
         candidate_count = self.completed_count + self.failed_count
@@ -224,6 +231,7 @@ class _CharacterBatchStats:
     singleton_fallback_count: int
     batch_validation_failure_count: int
     stale_retry_count: int
+    first_failure_diagnostics: WorkerFailureDiagnostics | None = None
 
 
 @dataclass(frozen=True)
@@ -473,6 +481,7 @@ class CharacterFactComparisonPipeline:
         completed_count = 0
         failed_count = 0
         first_failure_code: AnalysisFailureCode | None = None
+        first_failure_diagnostics: WorkerFailureDiagnostics | None = None
         while True:
             claimed = await self.spring_client.claim_next_character_fact_comparison(
                 analysis_job_id,
@@ -483,18 +492,21 @@ class CharacterFactComparisonPipeline:
                     completed_count,
                     failed_count,
                     first_failure_code,
+                    first_failure_diagnostics=first_failure_diagnostics,
                 )
-            failure_code = await self._process_claimed_candidate(
+            failure = await self._process_claimed_candidate(
                 analysis_job_id,
                 lease_token,
                 claimed.candidate_id, analysis_source,
             )
-            if failure_code is None:
+            if failure is None:
                 completed_count += 1
             else:
+                failure_code, diagnostic = failure
                 failed_count += 1
                 if first_failure_code is None:
                     first_failure_code = failure_code
+                    first_failure_diagnostics = diagnostic
 
     async def _process_all_batches(
         self,
@@ -507,6 +519,7 @@ class CharacterFactComparisonPipeline:
         completed_count = 0
         failed_count = 0
         first_failure_code: AnalysisFailureCode | None = None
+        first_failure_diagnostics: WorkerFailureDiagnostics | None = None
         batch_count = 0
         max_candidates_per_batch = 0
         provider_segment_count = 0
@@ -524,6 +537,7 @@ class CharacterFactComparisonPipeline:
                     completed_count=completed_count,
                     failed_count=failed_count,
                     first_failure_code=first_failure_code,
+                    first_failure_diagnostics=first_failure_diagnostics,
                     batch_count=batch_count,
                     max_candidates_per_batch=max_candidates_per_batch,
                     provider_segment_count=provider_segment_count,
@@ -550,6 +564,7 @@ class CharacterFactComparisonPipeline:
                     lease_token,
                     (str(exc) or exc.__class__.__name__)[:1000],
                     AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
+                    failure_diagnostics=failure_diagnostics(exc, stage="CHARACTER_COMPARE"),
                 )
                 raise
             except Exception as exc:
@@ -560,10 +575,12 @@ class CharacterFactComparisonPipeline:
                     lease_token,
                     (str(exc) or exc.__class__.__name__)[:1000],
                     failure_code,
+                    failure_diagnostics=failure_diagnostics(exc, stage="CHARACTER_COMPARE"),
                 )
                 failed_count += len(batch.candidates)
                 if first_failure_code is None:
                     first_failure_code = failure_code
+                    first_failure_diagnostics = failure_diagnostics(exc, stage="CHARACTER_COMPARE")
                 if failure_code is AnalysisFailureCode.COMPARISON_VALIDATION_FAILED:
                     batch_validation_failure_count += 1
                 logger.exception(
@@ -587,9 +604,11 @@ class CharacterFactComparisonPipeline:
             stale_batch_retry_count += stats.stale_retry_count
             if first_failure_code is None:
                 first_failure_code = stats.first_failure_code
+                first_failure_diagnostics = stats.first_failure_diagnostics
             if analysis_context is not None and stats.failed_count and not continue_on_candidate_failure:
                 raise OrderedAnalysisIncompleteError(
-                    stats.first_failure_code or AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
+                    stats.first_failure_code or AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+                    failure_diagnostics=stats.first_failure_diagnostics,
                 )
 
     async def _compare_batch_with_fresh_context(
@@ -678,6 +697,7 @@ class CharacterFactComparisonPipeline:
                 completed_count=len(decisions),
                 failed_count=len(failures),
                 first_failure_code=first_failure_code,
+                first_failure_diagnostics=failures[0].failure_diagnostics if failures else None,
                 provider_segment_count=total_provider_segment_count,
                 singleton_fallback_count=total_singleton_fallback_count,
                 batch_validation_failure_count=total_validation_failure_count,
@@ -691,7 +711,7 @@ class CharacterFactComparisonPipeline:
         lease_token: UUID,
         candidate_id: UUID,
         analysis_source: WorkerAnalysisSource | None = None,
-    ) -> AnalysisFailureCode | None:
+    ) -> tuple[AnalysisFailureCode, WorkerFailureDiagnostics | None] | None:
         try:
             await self._compare_with_fresh_context(
                 analysis_job_id,
@@ -706,6 +726,7 @@ class CharacterFactComparisonPipeline:
                 lease_token,
                 (str(exc) or exc.__class__.__name__)[:1000],
                 AnalysisFailureCode.AI_TOKEN_QUOTA_EXHAUSTED,
+                failure_diagnostics=failure_diagnostics(exc, stage="CHARACTER_COMPARE"),
             )
             raise
         except OrderedInputContextError:
@@ -719,6 +740,7 @@ class CharacterFactComparisonPipeline:
                 lease_token,
                 error_message,
                 failure_code,
+                failure_diagnostics=failure_diagnostics(exc, stage="CHARACTER_COMPARE"),
             )
             logger.exception(
                 "Character-fact comparison failed. analysis_job_id=%s candidate_id=%s",
@@ -727,7 +749,7 @@ class CharacterFactComparisonPipeline:
             )
             if isinstance(exc, LlmInputTokenCountError):
                 raise
-            return failure_code
+            return failure_code, failure_diagnostics(exc, stage="CHARACTER_COMPARE")
 
     async def _compare_with_fresh_context(
         self,
@@ -965,6 +987,7 @@ def _candidate_failure(
     return WorkerCharacterFactComparisonBatchFailure(
         candidate_ref=candidate_ref,
         failure_code=comparison_failure_code(failure),
+        failure_diagnostics=failure_diagnostics(failure, stage="CHARACTER_COMPARE"),
         error_message=(str(failure) or failure.__class__.__name__)[:1000],
     )
 

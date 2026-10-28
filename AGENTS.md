@@ -19,6 +19,11 @@
 
 ## Spring Worker API
 
+- 선택적 `failureDiagnostics`는 Java/Python 공통 v1 고정 코드 계약이다. 원문·예외 메시지·URL·lease/인증값은 넣지 않으며 실제 관측한 HTTP 상태와 요청/trace ID만 전달한다. Spring 오류의 부가 진단 파싱 실패는 원래 HTTP 실패와 분리하고 `first_failure_code`와 그 실패의 `first_failure_diagnostics`를 묶어 batch→run→Job 실패 보고까지 운반한다. 새 실패에서 이전 시도의 진단을 재사용하거나 상세 원인으로 기존 격리·재시도 분류를 바꾸지 않는다.
+
+- 인용 offset 복원은 exact·공백 검색 다음에 `U+0022/U+201C/U+201D` 큰따옴표 차이만 허용하고 유일하게 찾은 원문 slice와 Unicode code point offset을 함께 저장한다. 의미 문자·다른 부호·모호한 반복을 보정하지 않는다. 현재값과 `UNAVAILABLE/QUOTE_NOT_FOUND`인 과거 근거는 별개이며 빈 근거를 만들거나 VERIFIED로 승격하지 않는다.
+- GH304 내부 진단 수신·additive schema는 Backend부터 배포하고 AI 진단 전송을 뒤에 둔다. 구 Backend는 추가 필드를 무시하므로 실패 처리는 호환되지만 상세 진단은 보존되지 않는다. rollback은 nullable 열을 남긴 코드 복구이며 운영 작업을 자동 재실행하지 않는다. 합성 Java HTTP 연결은 Backend `ComparisonEvidenceHttpPostgresIntegrationTest`와 `tests/support/comparison_evidence_http_client.py`를 사용하고 AI checkout과 기존 venv 경로를 분리한다.
+
 - 기본 `analysis` Worker는 `supportsFrozenComparisonEvidence=true`를 claim에 전송한다. `ORDERED_PROVISIONAL` 응답의 `comparisonEvidenceContract.formatVersion`이 정수 1인지 progress·heartbeat·원문/저장·provider 호출 전에 확인하고, 누락·잘못된 타입·미지원 버전은 기존 lease 기반 fail로 보고한다. 구 `CONFIRMED_ONLY`와 두 hidden 재비교 Worker의 광고는 유지한다.
 
 - 설정집 출처는 명시적인 `sourceKind=SETTING_BOOK`과 `settingBook`의 고정 리비전으로 선택한다. 회차 null 여부로 출처를 추측하거나 회차 번호·첫 등장 회차를 만들지 않는다. 세 Worker 모두 `supportedSourceKinds=[EPISODE,SETTING_BOOK]`과 `supportsSettingBookReferenceTime=true`를 광고한다. 책 종류 지원만 광고한 구 Worker는 기준시점 입력을 claim하지 않는다.
