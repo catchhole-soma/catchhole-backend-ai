@@ -81,6 +81,14 @@
 - `NUMBER`/`BOOLEAN` 후보는 Pydantic 경계에서 `value_json.value`의 JSON 타입을 검증하고 Mapper가 저장 `attribute_value`를 그 값의 canonical 표현(NUMBER 숫자 문자열, BOOLEAN 소문자 `true`/`false`)으로 만든다. LLM이 보낸 원래 표시 문구는 Mapper 변환 전 payload로 `raw_ai_result_json`에 보존하고, 비교 proposal도 Spring에 보내기 전 같은 canonical 규칙을 적용한다. 표시값과 snapshot 대표값이 다른 상태를 새로 저장하지 않기 위함이다.
 - 캐릭터 단건·batch 비교의 `STRING` proposal은 `proposed_value_json.value`가 JSON 문자열인지 응답 재시도 경계에서 검증한다. 잘못된 값을 임의로 문자열로 바꾸지 않으며, 재시도 소진 시 기존 후보별 typed failure로 처리해 평가 최종 결과 생성까지 오류를 넘기지 않는다.
 
+## Episode Relationship Graph (GH323)
+
+- 관계는 EPISODE/SETTING_EXTRACTION에서만 `supportsRelationshipAnalysis=true`와 서버 v1 계약으로 활성화한다. 계약이 없으면 관계 API/모델을 호출하지 않는다. 캐릭터·세계관 prompt/schema/model/평가 Gold는 변경하지 않는다.
+- 관계 1차와 2차는 별도 Terra/medium client, input 64k/output 16k, metering 재시도 0이다. 1차는 기존 두 추출과 병렬, 2차는 기존 세계관 비교와 병렬이며 전역 semaphore·계량을 공유한다.
+- 1차 원문 조각 ID에서 quote·Unicode offset을 복원하고 2차에는 요청별 N/R/O/H 참조만 전달한다. Python은 DB 관계를 직접 쓰지 않으며 lease·원문·권한·quota·Spring 오류를 의미 실패로 숨기지 않는다.
+- ADD/MERGE/UPDATE/END/EXCLUDE/HOLD의 coverage·시점·참조·중복을 검증한다. 보류는 내부 상태로 저장하고 필수 사용자 검토 큐를 만들지 않는다. 이름 없는 1인칭/역할을 주인공으로 추정하지 않으며 자동 해소를 보장하지 않는다.
+- PREPARED는 추출을 재호출하지 않고 COMPLETED/FAILED는 관계 모델을 재호출하지 않는다. 회차 이력/무효화/실제 반영은 Spring 계약을 따른다. 공통 `docs/episode-relationships.md`를 Java·프론트와 동기화하며 실제 모델·합성 매핑·DB 검증을 구분한다.
+
 ## Async Worker Runtime
 
 - `ORDERED_PROVISIONAL`은 claim의 명시적 `analysisMode`와 고정 `analysisContext`가 있을 때만 사용한다. Worker는 `supportedAnalysisModes`로 지원을 광고하고 누적 모드를 파일 수·남은 Job 수·임시 데이터 존재 여부로 추론하지 않는다. `CONFIRMED_ONLY`의 기존 모델·입력 의미와 구버전 응답 기본값을 유지한다. 최신 main의 공통 prompt를 기준으로 자연어 이유·세계관 주체 연결·일반 검토 지침만 더한다. main #65의 세계관 추출·분류 기준을 유지한다. user payload·schema·모델 계약은 유지하며 과거 80d 기준과 main 05d9c2d 기준은 별도 golden으로 보존한다.
