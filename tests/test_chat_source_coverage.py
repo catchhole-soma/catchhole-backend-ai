@@ -309,3 +309,33 @@ def test_explicit_episode_hint_preserves_other_candidates_and_authorized_order()
         passage("후속 대목", 63, episode=7),
     )
     assert explicit_episode_seeds(request, [other, target, last]) == [target, other, last]
+
+
+@pytest.mark.parametrize("total", [5, 8])
+def test_verified_scene_can_expand_past_initial_episode_share_within_shared_budget(total):
+    from unittest.mock import Mock
+
+    from app.chatbot.hybrid import _Evidence
+    from tests.test_chat_evidence_budget import answer_context
+
+    state, _, _ = answer_context()
+    state.plan = plan()
+    state.hcfg = state.hcfg.model_copy(update={"max_evidence": total})
+    state.metrics = Mock()
+    first = [
+        passage(f"확인한 사실 {i}", 101 + i, episode=11, index=i, offset=i * 100) for i in range(3)
+    ]
+    other = passage("별도 요구의 확인 근거", 110, episode=12)
+    state.supported_evidence = tuple(
+        _Evidence(f"E{i}", c.text, c.episode_no, chunk=c) for i, c in enumerate([*first, other], 1)
+    )
+    state.evidences = list(state.supported_evidence)
+    extra = [
+        passage(f"뒤에 이어진 새 조건 {i}", 120 + i, episode=11, index=i + 3, offset=(i + 3) * 100)
+        for i in range(4)
+    ]
+    state.add_search_evidence(extra, fresh=extra)
+    selected = {e.chunk.chunk_id for e in state.evidences}
+    assert {c.chunk_id for c in [*first, other, extra[0]]} <= selected
+    assert len(selected) <= total
+    assert state.evidence_token_count(state.evidences) <= state.hcfg.evidence_tokens

@@ -151,7 +151,7 @@ class Corpus:
             connection.execute(
                 text("""UPDATE retrieval_sources SET chunk_count=
                 (SELECT count(*) FROM retrieval_chunks WHERE episode_id=:episode) WHERE episode_id=:episode"""),
-                dict(episode=episode),
+                {"episode": episode},
             )
         return ids
 

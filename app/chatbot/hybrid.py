@@ -19,8 +19,8 @@ from app.chatbot.hybrid_items import (
     event_matches,
     group_items,
     merge_item_answers,
-    part_event_scopes,
     merge_missing_explanations,
+    part_event_scopes,
     render_item_answers,
     render_missing_explanations,
     request_labels,
@@ -1445,6 +1445,13 @@ class _HybridSession(_Session):
             *recovery,
             *fresh,
         ]
+        episode_cap = self.hcfg.per_episode
+        if protected_chunks and self.plan and self.plan.requested_parts:
+            # A partial answer can already occupy the episode's initial slots.
+            # Allow the next scene window to add context without evicting the
+            # verified facts. Total references/tokens and other protected scenes
+            # remain bounded; this is allocation, never a new source-range filter.
+            episode_cap += self.hcfg.neighbor_radius * 2
         bundle = compose_evidence(
             [*protected_chunks, *recovery, *candidates],
             max_items=available,
@@ -1455,7 +1462,7 @@ class _HybridSession(_Session):
                 self.hcfg.max_evidence - len(direct)
                 if focused_episode is not None
                 or (self.source_from is not None and self.source_from == self.source_to)
-                else min(self.hcfg.per_episode, self.hcfg.max_evidence - len(direct))
+                else min(episode_cap, self.hcfg.max_evidence - len(direct))
             ),
             # After verified/recovery evidence, prioritize new hits in their own
             # rank order. Old unproven lexical scores must not crowd out vector
