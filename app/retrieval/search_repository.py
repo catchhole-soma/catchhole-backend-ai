@@ -92,7 +92,7 @@ class RetrievalSearchRepository:
             "DIRECT",
         )
 
-    def keyword(self, query, *, limit=20, preferred_episode_ids=()):
+    def keyword(self, query, *, limit=20, preferred_episode_ids=(), cover_terms=False):
         validate_query(query)
         validate_limit(limit)
         validate_ids(preferred_episode_ids)
@@ -106,6 +106,28 @@ class RetrievalSearchRepository:
         }
         matches = [f"c.chunk_text ILIKE :pattern_{n} ESCAPE '\\'" for n in range(len(terms))]
         score = " + ".join(f"CASE WHEN {match} THEN 1.0 ELSE 0.0 END" for match in matches)
+        if cover_terms:
+            # A long list can otherwise exhaust top-k on one facet: two common
+            # terms outrank the only passage containing a separately requested term.
+            # Rank on the authorized corpus once, then reserve each term's best hit.
+            # This remains a bounded search, not a claim of exhaustive coverage.
+            hits = ",".join(
+                f"CASE WHEN {match} THEN {n} END" for n, match in enumerate(matches)
+            )
+            return self._rows(
+                f"WITH scored AS MATERIALIZED (SELECT {FIELDS},"
+                f"({score})/{len(terms)} AS score,"
+                f"array_remove(ARRAY[{hits}],NULL) AS terms,"
+                "(e.id=ANY(CAST(:preferred AS uuid[]))) AS preferred "
+                f"{self.from_clause} AND ({' OR '.join(matches)})), "
+                "winners AS (SELECT DISTINCT ON (term) id FROM scored "
+                "CROSS JOIN LATERAL unnest(terms) AS term "
+                "ORDER BY term,score DESC,preferred DESC,episode_no,chunk_index,id) "
+                "SELECT * FROM scored ORDER BY (id IN (SELECT id FROM winners)) DESC,"
+                "score DESC,preferred DESC,episode_no,chunk_index,id LIMIT :limit",
+                {**params, "limit": limit, "preferred": list(dict.fromkeys(preferred_episode_ids))},
+                "KEYWORD",
+            )
         return self._rows(
             f"SELECT {FIELDS},({score})/{len(terms)} AS score {self.from_clause} "
             f"AND ({' OR '.join(matches)}) "

@@ -134,13 +134,21 @@ def test_grounded_answer_preserves_source_before_old_conversation(tmp_path, boun
         chunk, text=text, end_offset=len(text), chunk_hash=sha256(text.encode()).hexdigest()
     )
 
+    # Source-only instructions are shorter than the planner. Two passages make
+    # this an answer-context overflow while the full planning history still fits.
+    other = source_chunk("weather")
+    other_text = other.text + " other scene detail " * 160
+    other = replace(other, text=other_text, end_offset=len(other_text),
+                    episode_no=chunk.episode_no + 1,
+                    chunk_hash=sha256(other_text.encode()).hexdigest())
+
     def run(budget):
         return asyncio.run(
             replay(
                 tmp_path,
                 scenario("lexical_scene"),
                 spring_setup=long_history,
-                search_setup=lambda s: setattr(s, "keyword_chunks", [chunk]),
+                search_setup=lambda s: setattr(s, "keyword_chunks", [chunk, other]),
                 config={"max_context_characters": budget},
             )
         )

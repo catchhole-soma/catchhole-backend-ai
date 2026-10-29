@@ -195,6 +195,22 @@ def test_keyword_wildcards_are_literal_bound_values(corpus):
     assert corpus.read("keyword", "' OR 1=1 --") == []
 
 
+def test_keyword_can_cover_a_separate_requested_term_before_top_k(corpus):
+    first, later = corpus.episode(1), corpus.episode(2)
+    repeated = corpus.chunks(first, [f"hero ice regeneration {i}" for i in range(14)])
+    training = corpus.chunks(later, ["hero sword-training begins tomorrow"])[0]
+    query = "hero ice regeneration sword-training"
+    assert training not in {c.chunk_id for c in corpus.read("keyword", query, limit=12)}
+    covered = corpus.read("keyword", query, limit=12, cover_terms=True)
+    assert len(covered) == 12
+    assert covered[0].chunk_id == repeated[0]
+    assert covered[1].chunk_id == training
+    assert len({c.chunk_id for c in covered}) == 12
+    scoped = corpus.read("keyword", query, limit=12, cover_terms=True,
+                         scope=replace(corpus.scope, episode_to=1))
+    assert training not in {c.chunk_id for c in scoped}
+
+
 def test_vector_expansion_excludes_prior_hits_before_top_k_through_the_service(corpus):
     first, second = corpus.episode(1), corpus.episode(2)
     prior = corpus.chunks(first, [f"needle seed {index}" for index in range(12)], ready=True)

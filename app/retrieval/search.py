@@ -37,13 +37,18 @@ class RetrievalSearchService:
             chunks = tuple(getattr(repository, method)(*args, limit=limit, **kwargs))
             return SearchResult(chunks, readiness, limited=len(chunks) >= limit)
 
-    async def keyword(self, scope, query, limit=20, preferred_episode_ids=()):
+    async def keyword(self, scope, query, limit=20, preferred_episode_ids=(), *, cover_terms=False):
         validate_query(query)
         validate_limit(limit)
         validate_ids(preferred_episode_ids)
         result = await self.blocking_runner(
             lambda: self._read(
-                scope, "keyword", query, limit=limit, preferred_episode_ids=preferred_episode_ids
+                scope,
+                "keyword",
+                query,
+                limit=limit,
+                preferred_episode_ids=preferred_episode_ids,
+                **({"cover_terms": True} if cover_terms else {}),
             )
         )
         if len(set(query.strip().split())) > 12:

@@ -28,7 +28,14 @@ from app.chatbot.hybrid_items import (
     validate_item_answer,
 )
 from app.chatbot.hybrid_metrics import HybridMetrics, ObservedEmbeddingClient, ObservedTextClient
-from app.chatbot.hybrid_prompts import ANSWER_PROMPT, ANSWER_VERSION, PLAN_PROMPT, PLAN_VERSION
+from app.chatbot.hybrid_prompts import (
+    ANSWER_PROMPT,
+    ANSWER_VERSION,
+    PLAN_PROMPT,
+    PLAN_VERSION,
+    SOURCE_ANSWER_PROMPT,
+    SOURCE_ANSWER_VERSION,
+)
 from app.chatbot.providers import ChatEmbeddingClient
 from app.chatbot.qa import ChatQaHandler, ModelTimeBudgetExceeded, _Session, response_schema
 from app.chatbot.qa_prompts import FIELD_VERSION
@@ -473,12 +480,12 @@ class _HybridSession(_Session):
             self.logical_items = group_items(
                 self.chosen, current_targets=plan.rdb_mode == "CURRENT_AND_HISTORY"
             )
-        answer_schema = response_schema(GroundedAnswer)
+        answer_prompt, _, answer_schema = self.answer_contract(plan)
         self.trim_conversation_to_fit(
-            ANSWER_PROMPT, lambda: self.answer_payload(plan), answer_schema
+            answer_prompt, lambda: self.answer_payload(plan), answer_schema
         )
         if (plan.per_item and len(self.logical_items) > 100) or not self.fits(
-            ANSWER_PROMPT, self.answer_payload(plan), answer_schema
+            answer_prompt, self.answer_payload(plan), answer_schema
         ):
             return message(
                 "CLARIFICATION",
@@ -537,7 +544,11 @@ class _HybridSession(_Session):
                     )
                 )
                 found = await self.search(
-                    "keyword", query, limit=self.hcfg.keyword_top_k, preferred_episode_ids=hints
+                    "keyword",
+                    query,
+                    limit=self.hcfg.keyword_top_k,
+                    preferred_episode_ids=hints,
+                    cover_terms=bool(plan.requested_parts),
                 )
             else:
                 if self.hcfg.max_query_embeddings == 0:
@@ -578,9 +589,7 @@ class _HybridSession(_Session):
             elif found and self.hcfg.neighbor_radius:
                 self.codes.append("SEARCH_LIMIT")
             previous = self.evidence_identity()
-            self.add_search_evidence(
-                candidates, fresh=found if round_no > 1 and plan.requested_parts else ()
-            )
+            self.add_search_evidence(candidates, fresh=found if plan.requested_parts else ())
             if self.evidence_identity() == previous:
                 continue
             await self.register([e.chunk for e in self.evidences if e.chunk])
@@ -1248,6 +1257,21 @@ class _HybridSession(_Session):
         else:
             missing = set(draft.missing_facets)
         descriptions = [p.description for p in plan.requested_parts if p.ref in missing]
+        if draft is not None and descriptions and missing < set(requested_facets(plan)):
+            # Once one part is answered, repeating the whole question/keyword bag
+            # pulls the vector search back to that part. Keep the missing need and
+            # event identity, never model-authored claims or invented search facts.
+            return " ".join(
+                filter(
+                    None,
+                    [
+                        *[s.name for s in plan.subjects],
+                        *descriptions,
+                        plan.event_context,
+                        query if item_ref is not None else None,
+                    ],
+                )
+            )[:1000]
         return " ".join(
             filter(
                 None,
@@ -1510,10 +1534,30 @@ class _HybridSession(_Session):
             )
         )
 
+    def answer_contract(self, plan):
+        source_only = plan.rdb_mode == "NONE" and not self.chosen and not self.logical_items
+        prompt = SOURCE_ANSWER_PROMPT if source_only else ANSWER_PROMPT
+        version = SOURCE_ANSWER_VERSION if source_only else ANSWER_VERSION
+        schema = response_schema(GroundedAnswer)
+        # Tell the provider the same conditional requirement enforced locally.
+        # Null is not a valid event judgement when the request identifies an event.
+        for definition in schema.schema.get("$defs", {}).values():
+            properties = definition.get("properties", {})
+            for field, required in (
+                ("eventMatch", plan.event_context is not None),
+                ("eventStatus", plan.event_scope is not None),
+            ):
+                if required and field in properties:
+                    variants = properties[field].get("anyOf", [])
+                    choices = [v for v in variants if v.get("type") != "null"]
+                    if len(choices) == 1:
+                        properties[field] = choices[0]
+        return prompt, version, schema
+
     async def answer(self, plan):
         self.answer_validation_failed = False
         self.recovery_evidence = ()
-        schema = response_schema(GroundedAnswer)
+        prompt, version, schema = self.answer_contract(plan)
         protected = {self.source_identity(e) for e in self.supported_evidence}
         if not protected <= {self.source_identity(e) for e in self.evidences}:
             # A new complete answer must not silently replace a supported snapshot
@@ -1521,8 +1565,8 @@ class _HybridSession(_Session):
             self.codes.append("EVIDENCE_CONTEXT_LIMIT")
             self.trace("supported_context_unavailable", round=self.rounds)
             return self.empty_source_answer(plan)
-        self.trim_conversation_to_fit(ANSWER_PROMPT, lambda: self.answer_payload(plan), schema)
-        while self.evidences and not self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema):
+        self.trim_conversation_to_fit(prompt, lambda: self.answer_payload(plan), schema)
+        while self.evidences and not self.fits(prompt, self.answer_payload(plan), schema):
             removable = next(
                 (
                     index
@@ -1669,7 +1713,11 @@ class _HybridSession(_Session):
                 return validated(answer)
             except ValueError:
                 recovered = None
-                if plan.requested_parts and not plan.per_item and not self.logical_items:
+                if (
+                    plan.requested_parts
+                    and not self.logical_items
+                    and (not plan.per_item or not self.chosen)
+                ):
                     recovered = recover_claims(
                         answer,
                         requested_facets(plan),
@@ -1699,12 +1747,13 @@ class _HybridSession(_Session):
                 raise ResponseValidationFailure()
             answer = await self.model(
                 GroundedAnswer,
-                ANSWER_PROMPT,
+                prompt,
                 payload,
                 "CHAT_ANSWER",
-                ANSWER_VERSION,
+                version,
                 valid,
                 max_attempts=attempts,
+                response_contract=schema,
             )
         except (ModelTimeBudgetExceeded, ProviderOutputTruncated) as exc:
             # A failed expansion must not erase an earlier validated answer.

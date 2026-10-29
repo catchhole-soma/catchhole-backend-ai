@@ -217,8 +217,9 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         validate: Callable | None = None,
         *,
         max_attempts=None,
+        response_contract=None,
     ):
-        schema = response_schema(cls)
+        schema = response_contract or response_schema(cls)
         if not self.fits(prompt, payload, schema):
             raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         client = ChatTextClient(
@@ -629,7 +630,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             text = {
                 "GREETING": "안녕하세요! 작품에서 궁금한 내용을 물어보세요.",
                 "THANKS": "천만에요. 더 궁금한 내용이 있으면 말씀해 주세요.",
-                "HELP": "작품의 인물이나 세계관 설정에 대해 물어보세요. 확인할 대상과 궁금한 내용을 함께 알려주시면 도움이 돼요.",
+                "HELP": "작품의 인물·세계관 설정, 변화 이력, 원문 속 장면을 물어보실 수 있어요. 예를 들어 ‘주인공의 현재 등록된 능력과 그 능력을 얻은 과정을 알려 주세요’처럼 질문해 보세요. 주인공 대신 작품 속 인물 이름을 넣으면 돼요.",
             }[plan.intent]
             return message("ANSWER", text, [])
         self.include_sources = plan.include_evidence or plan.intent == "DIRECT_EVIDENCE"
