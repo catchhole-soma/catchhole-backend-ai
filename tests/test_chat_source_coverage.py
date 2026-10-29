@@ -194,7 +194,8 @@ def test_scene_window_does_not_jump_an_unread_chunk():
 
 
 @pytest.mark.parametrize("room", [False, True])
-def test_final_search_repairs_one_bad_quote_before_losing_new_information(tmp_path, room):
+@pytest.mark.parametrize("first_round", [False, True])
+def test_search_repairs_one_bad_quote_before_losing_new_information(tmp_path, room, first_round):
     case = parts_case()
     bad = answer(
         claim(EMOTION, EMOTION, parts=("P1",)), claim(BEHAVIOR, "인용에 없는 문장", parts=("P2",))
@@ -206,14 +207,17 @@ def test_final_search_repairs_one_bad_quote_before_losing_new_information(tmp_pa
             tmp_path,
             case,
             hybrid={"max_model_calls": 3 if room else 2},
-            search_setup=search_with(keyword=[], vector=[passage(f"{EMOTION} {BEHAVIOR}", 1)]),
+            search_setup=search_with(
+                keyword=[passage(f"{EMOTION} {BEHAVIOR}", 1)] if first_round else [],
+                vector=[] if first_round else [passage(f"{EMOTION} {BEHAVIOR}", 1)],
+            ),
         )
     )
     text = result["finish"]["result"]["text"]
     assert EMOTION in text and "인용에 없는 문장" not in text
     assert (BEHAVIOR in text) is room
     assert len(result["raw"].requests) == (3 if room else 2)
-    assert len(result["embedding"].inputs) == 1
+    assert len(result["embedding"].inputs) == (0 if first_round else 1)
     assert result["search"].calls[-1] == "revalidate"
 
 

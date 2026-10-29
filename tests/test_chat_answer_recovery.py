@@ -79,11 +79,13 @@ def test_overlapping_answered_and_missing_is_related_not_complete(tmp_path):
 
 def test_dropped_claim_invalidates_shared_facet_until_new_evidence_fills_it(tmp_path):
     case = parts_case(parts=[{"ref": "P1", "description": "감정과 이후 행동의 연결"}])
+    incomplete = answer(
+        claim(EMOTION, EMOTION, parts=("P1",)),
+        claim(BEHAVIOR, "찾을 수 없는 인용", parts=("P1",)),
+    )
     case["outputs"] += [
-        answer(
-            claim(EMOTION, EMOTION, parts=("P1",)),
-            claim(BEHAVIOR, "찾을 수 없는 인용", parts=("P1",)),
-        ),
+        incomplete,
+        incomplete,  # Repair cannot invent the missing source; search must still run.
         answer(claim(f"{EMOTION} {BEHAVIOR}", f"{EMOTION} {BEHAVIOR}", ref="E2", parts=("P1",))),
     ]
     result = asyncio.run(
@@ -99,7 +101,7 @@ def test_dropped_claim_invalidates_shared_facet_until_new_evidence_fills_it(tmp_
     response = assert_answer(result)
     assert EMOTION in response["text"] and BEHAVIOR in response["text"]
     assert len(result["embedding"].inputs) == 1
-    assert len(result["raw"].requests) == 3
+    assert len(result["raw"].requests) == 4  # Plan, answer, bounded repair, expanded answer.
 
 
 @pytest.mark.parametrize("bad", ["all_quotes", "unknown_ref", "unknown_part"])

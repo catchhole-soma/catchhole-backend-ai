@@ -1887,17 +1887,15 @@ class _HybridSession(_Session):
                 recovered = validated(recovered)
                 recovered_fallback = recovered
                 if (
-                    self.rounds == self.hcfg.max_rounds
-                    and self.rounds > 1
-                    and answer.coverage == "COMPLETE"
+                    answer.coverage == "COMPLETE"
                     and validation_attempts < attempts
                     and self.has_model_time()
                 ):
-                    # The final search already found a potentially complete
-                    # answer. Spend an existing repair slot on its bad quote
-                    # before downgrading and restoring an older partial answer.
+                    # Search already found a potentially complete answer. Repair
+                    # its quote in this context before a new search displaces it.
+                    # This uses the existing stage/call/time budget, in any round.
                     # Keep the verified subset if repair cannot be completed.
-                    self.trace("answer_final_quote_repair", round=self.rounds)
+                    self.trace("answer_quote_repair", round=self.rounds)
                     raise
                 self.trace(
                     "answer_partial_recovered",
