@@ -29,7 +29,7 @@ def missing_scope(plan, draft, scope):
     return replace(scope, episode_from=episode, episode_to=episode)
 
 
-def scene_priority(seeds, neighbors):
+def scene_priority(seeds, neighbors, retained=()):
     """Keep two independent hits and a small coherent window around the best hit.
 
     Neighbors were authorized/revalidated by retrieval. Reserve at most two slots
@@ -45,4 +45,13 @@ def scene_priority(seeds, neighbors):
         and abs(c.chunk_index - anchor.chunk_index) == 1
     ]
     adjacent.sort(key=lambda c: c.chunk_index)
-    return [*seeds[:2], *adjacent[:2], *seeds[2:]]
+    continuation = [
+        c
+        for c in [*seeds, *neighbors]
+        if any(
+            c.source_fingerprint == old.source_fingerprint
+            and abs(c.chunk_index - old.chunk_index) == 1
+            for old in retained
+        )
+    ]
+    return [*continuation, *seeds[:2], *adjacent[:2], *seeds[2:]]

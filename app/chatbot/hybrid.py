@@ -604,7 +604,16 @@ class _HybridSession(_Session):
             previous = self.evidence_identity()
             self.add_search_evidence(
                 candidates,
-                fresh=scene_priority(found, neighbors) if plan.requested_parts else (),
+                fresh=scene_priority(
+                    found, neighbors, [e.chunk for e in self.supported_evidence if e.chunk]
+                )
+                if plan.requested_parts
+                else (),
+                focused_episode=(
+                    search_scope.episode_from
+                    if search_scope.episode_from == search_scope.episode_to
+                    else None
+                ),
             )
             if self.evidence_identity() == previous:
                 continue
@@ -1308,7 +1317,7 @@ class _HybridSession(_Session):
             )
         )[:1000]
 
-    def add_search_evidence(self, candidates, *, fresh=()):
+    def add_search_evidence(self, candidates, *, fresh=(), focused_episode=None):
         protected = {self.source_identity(e) for e in self.supported_evidence}
         direct = [e for e in self.evidences if e.direct_ref]
         direct.sort(key=lambda e: self.source_identity(e) not in protected)
@@ -1364,7 +1373,8 @@ class _HybridSession(_Session):
             # one episode should be able to use the shared evidence budget there.
             per_episode=(
                 self.hcfg.max_evidence - len(direct)
-                if self.source_from is not None and self.source_from == self.source_to
+                if focused_episode is not None
+                or (self.source_from is not None and self.source_from == self.source_to)
                 else min(self.hcfg.per_episode, self.hcfg.max_evidence - len(direct))
             ),
             # After verified/recovery evidence, prioritize new hits in their own

@@ -474,3 +474,14 @@ def test_matching_item_and_context_outrank_a_generic_linked_episode(corpus):
     corpus.chunks(linked, ["스승을 기다리는 장면"], ready=True)
     found = corpus.read("keyword", "잔광 스승", preferred_episode_ids=[linked], limit=1)
     assert [chunk.chunk_id for chunk in found] == [relevant_id]
+
+
+def test_keyword_score_ties_keep_the_episode_with_a_stronger_event_anchor(corpus):
+    early, event = corpus.episode(1), corpus.episode(9)
+    generic = corpus.chunks(early, ["문을 보았다"], ready=True)[0]
+    event_ids = corpus.chunks(event, ["유리 성에서 문을 열었다", "문을 지나 길을 찾았다"], ready=True)
+    query = "유리 성 문"
+    ordinary = corpus.read("keyword", query, limit=2)
+    assert [c.chunk_id for c in ordinary] == [event_ids[0], generic]
+    covered = corpus.read("keyword", query, limit=2, cover_terms=True)
+    assert [c.chunk_id for c in covered] == event_ids

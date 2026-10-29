@@ -42,6 +42,7 @@ c.chunk_hash,s.source_key,s.source_version,s.source_hash,s.chunk_policy"""
 
 class RetrievalSearchRepository:
     from_clause = CURRENT_FROM
+
     def __init__(self, session, scope: SearchScope, spec: IndexSpec):
         self.session, self.scope, self.spec = session, scope, spec
         self.params = dict(
@@ -111,20 +112,19 @@ class RetrievalSearchRepository:
             # terms outrank the only passage containing a separately requested term.
             # Rank on the authorized corpus once, then reserve each term's best hit.
             # This remains a bounded search, not a claim of exhaustive coverage.
-            hits = ",".join(
-                f"CASE WHEN {match} THEN {n} END" for n, match in enumerate(matches)
-            )
+            hits = ",".join(f"CASE WHEN {match} THEN {n} END" for n, match in enumerate(matches))
             return self._rows(
                 f"WITH scored AS MATERIALIZED (SELECT {FIELDS},"
                 f"({score})/{len(terms)} AS score,"
                 f"array_remove(ARRAY[{hits}],NULL) AS terms,"
                 "(e.id=ANY(CAST(:preferred AS uuid[]))) AS preferred "
                 f"{self.from_clause} AND ({' OR '.join(matches)})), "
-                "winners AS (SELECT DISTINCT ON (term) id FROM scored "
+                "ranked AS (SELECT *,max(score) OVER (PARTITION BY episode_id) AS episode_score "
+                "FROM scored), winners AS (SELECT DISTINCT ON (term) id FROM ranked "
                 "CROSS JOIN LATERAL unnest(terms) AS term "
-                "ORDER BY term,score DESC,preferred DESC,episode_no,chunk_index,id) "
-                "SELECT * FROM scored ORDER BY (id IN (SELECT id FROM winners)) DESC,"
-                "score DESC,preferred DESC,episode_no,chunk_index,id LIMIT :limit",
+                "ORDER BY term,score DESC,preferred DESC,episode_score DESC,episode_no,chunk_index,id) "
+                "SELECT * FROM ranked ORDER BY (id IN (SELECT id FROM winners)) DESC,"
+                "score DESC,preferred DESC,episode_score DESC,episode_no,chunk_index,id LIMIT :limit",
                 {**params, "limit": limit, "preferred": list(dict.fromkeys(preferred_episode_ids))},
                 "KEYWORD",
             )

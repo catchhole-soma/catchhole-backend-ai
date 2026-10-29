@@ -130,3 +130,42 @@ def test_scene_priority_keeps_two_hits_and_the_first_scenes_continuation():
         after.chunk_id,
         noise.chunk_id,
     ]
+    assert scene_priority([noise, before], [], retained=[anchor])[0] == before
+
+
+def test_targeted_missing_chapter_uses_remaining_shared_evidence_budget(tmp_path):
+    case = parts_case()
+    case["question"] = "12화 봉화 이후 감정과 25화 이후 행동을 설명해줘"
+    case["outputs"][0]["episodeFrom"] = 12
+    case["outputs"][0]["episodeTo"] = 25
+    for part, episode in zip(case["outputs"][0]["requestedParts"], [12, 25], strict=True):
+        part["sourceEpisodeNo"] = episode
+    case["outputs"] += [
+        answer(claim(EMOTION, EMOTION, parts=("P1",)), missing=("P2",)),
+        answer(
+            claim(EMOTION, EMOTION, parts=("P1",)),
+            claim(BEHAVIOR, BEHAVIOR, ref="E8", parts=("P2",)),
+        ),
+    ]
+    initial = passage(EMOTION, 1, episode=12)
+    extra = [
+        passage(f"새 회차 대목 {i}", 10 + i, episode=25, offset=i * 100, index=i) for i in range(6)
+    ]
+    extra.append(passage(BEHAVIOR, 16, episode=25, offset=600, index=6))
+    scopes = []
+
+    def setup(search):
+        search_with(keyword=[initial], vector=extra)(search)
+        original = search.vector
+
+        async def vector(scope, *args, **kwargs):
+            scopes.append(scope)
+            return await original(scope, *args, **kwargs)
+
+        search.vector = vector
+
+    result = asyncio.run(replay(tmp_path, case, search_setup=setup))
+    assert scopes[0].episode_from == scopes[0].episode_to == 25
+    assert BEHAVIOR in result["finish"]["result"]["text"]
+    passages = result["raw"].requests[-1]["input"]["passages"]
+    assert sum(len(p["references"]) for p in passages) == 8
