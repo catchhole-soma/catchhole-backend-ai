@@ -21,6 +21,8 @@
 
 ## Spring Worker API
 
+- 분석 상태 API의 read 한도는 `SPRING_WORKER_READ_TIMEOUT_SECONDS`(기본 120초)로 요청별 적용한다. 연결·쓰기·pool과 heartbeat·token 원장의 기존 30초 한도, heartbeat 실패 시 소유 작업 취소, lease 검증은 유지한다. read 한도는 요청 전체 deadline이 아니며 일반 분석 POST를 자동 재전송하지 않는다.
+
 - 선택적 `failureDiagnostics`는 Java/Python 공통 v1 고정 코드 계약이다. 원문·예외 메시지·URL·lease/인증값은 넣지 않으며 실제 관측한 HTTP 상태와 요청/trace ID만 전달한다. Spring 오류의 부가 진단 파싱 실패는 원래 HTTP 실패와 분리하고 `first_failure_code`와 그 실패의 `first_failure_diagnostics`를 묶어 batch→run→Job 실패 보고까지 운반한다. 새 실패에서 이전 시도의 진단을 재사용하거나 상세 원인으로 기존 격리·재시도 분류를 바꾸지 않는다.
 
 - 인용 offset 복원은 exact·공백 검색 다음에 `U+0022/U+201C/U+201D` 큰따옴표 차이만 허용하고 유일하게 찾은 원문 slice와 Unicode code point offset을 함께 저장한다. 의미 문자·다른 부호·모호한 반복을 보정하지 않는다. 현재값과 `UNAVAILABLE/QUOTE_NOT_FOUND`인 과거 근거는 별개이며 빈 근거를 만들거나 VERIFIED로 승격하지 않는다.

@@ -121,9 +121,25 @@ sudo docker run --rm \
 ```dotenv
 SPRING_INTERNAL_API_BASE_URL=http://replace-with-api-private-ip:8080
 SPRING_INTERNAL_API_KEY=replace-with-the-same-internal-api-key-as-the-api-server
+SPRING_WORKER_READ_TIMEOUT_SECONDS=120
 ```
 
 `SPRING_INTERNAL_API_KEY`는 API 서버 `api.env`의 `INTERNAL_API_KEY`와 정확히 같은 값이어야 한다.
+
+`SPRING_WORKER_READ_TIMEOUT_SECONDS`는 분석 상태 API가 서버에서 상태 재구성·저장을
+수행하는 동안 응답을 기다릴 read 한도다. 기본 120초이며 유한한 양수만 허용한다.
+최초 claim, 후보 게시/비교 claim, 문맥 조회, progress, complete, fail에 적용한다.
+연결·쓰기·connection pool 대기와 heartbeat·token 원장의 read 한도는 각각 기존 30초다.
+Compose의 세 Worker 서비스는 같은 설정을 사용한다. 일반 분석 POST 재전송은 추가하지 않는다.
+
+120초는 HTTPX가 응답 헤더/다음 바이트를 기다리는 한 번의 읽기 제한이다.
+요청 전체나 Job 완료의 절대 시간 보장이 아니다. heartbeat는 기존 60초 주기,
+최대 3회 시도와 재시도 간격 2/4초를 유지하며 최종 실패하면 소유 Job을 취소한다.
+예를 들어 같은 Job의 DB 잠금으로 heartbeat도 매번 read 30초를 소진하면,
+첫 heartbeat 시도부터 약 96초 뒤 취소할 수 있다(다른 I/O 대기는 별도).
+read를 늘려도 lease 소유권 검사·회수와 이 취소 경계는 바꾸지 않는다.
+운영 적용 후 timeout 수뿐 아니라 claim/context/complete 시간, heartbeat 실패,
+SQL·상태 재구성 시간을 함께 확인한다. HTTP 여유는 서버 병목 최적화를 대신하지 않는다.
 
 Worker 서버에서 실제 주소로 연결을 확인한다.
 
