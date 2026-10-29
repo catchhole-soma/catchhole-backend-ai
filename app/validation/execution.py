@@ -36,6 +36,8 @@ class ValidationLedger:
         self.client, self.claim, self.gate = client, claim, gate
         self.requests = set()
         self._locks, self._settled = {}, set()
+        self._metering_tasks = set()
+        self._drain_task = None
         self.query_input = None
         self.query_request_id = None
 
@@ -69,6 +71,27 @@ class ValidationLedger:
             await self.client.leased(self.claim, f"usage/{request_id}", late=True,
                 kind="UNKNOWN", inputTokens=None, cachedInputTokens=None, outputTokens=None, outcome=None)
             self.requests.discard(request_id)
+
+    def track_metering_task(self, task):
+        # Includes reservation-response -> UNKNOWN chains, not just the current HTTP coroutine.
+        self._metering_tasks.add(task)
+
+    async def drain(self):
+        self.gate.stop()
+        if self._drain_task is None:
+            self._drain_task = asyncio.create_task(self._drain())
+        await asyncio.shield(self._drain_task)
+
+    async def _drain(self):
+        failures = []
+        while self._metering_tasks:
+            pending = tuple(self._metering_tasks)
+            results = await asyncio.gather(*pending, return_exceptions=True)
+            self._metering_tasks.difference_update(pending)
+            failures.extend(result for result in results if isinstance(result, BaseException))
+        if failures:
+            raise failures[0]
+        await self.mark_unknown()
 
     async def mark_unknown(self):
         for request_id in tuple(self.requests):

@@ -34,18 +34,37 @@ class EpisodeValidationWorker:
         self.search = FrozenRetrievalSearchService(readonly_sessions, self.spec) if readonly_sessions else None
         self.embedding = embedding_client
         self._active = set()
+        self._operations, self._ledgers = set(), set()
+        self._close_task = None
+
+    async def _run_owned(self, action, *args):
+        if self._close_task is not None:
+            raise IncompleteInspection("EXECUTION_STOPPED")
+        operation = asyncio.create_task(action(*args))
+        self._operations.add(operation)
+        try:
+            return await operation
+        finally:
+            self._operations.discard(operation)
 
     async def claim_next(self):
+        return await self._run_owned(self._claim_next)
+
+    async def _claim_next(self):
         claim = await self.client.claim_next(self.worker_id)
         if claim is not None:
             claim_budgets(claim)
         return claim
 
     async def process_claimed(self, payload):
+        return await self._run_owned(self._process_claimed, payload)
+
+    async def _process_claimed(self, payload):
         claim = payload if isinstance(payload, ValidationClaim) else ValidationClaim.from_wire(payload)
         limits = claim_budgets(claim)
         gate = ExecutionGate()
         ledger = ValidationLedger(self.client, claim, gate)
+        self._ledgers.add(ledger)
         roles = ValidationRoleClients(self.raw_model, ledger, claim)
         embedding = metered_embedding(self.embedding, ledger, claim, self.spec)
         view = await self.client.load_checkpoint(claim, gate)
@@ -95,8 +114,9 @@ class EpisodeValidationWorker:
                     task.cancel()
             await asyncio.gather(*children, heartbeat, stopped, return_exceptions=True)
             self._active.difference_update(children)
-            # Cancellation finalizers may already be in flight; UNKNOWN is idempotent and preserves late SETTLE.
-            await asyncio.shield(ledger.mark_unknown())
+            # Metering registers detached reservation/finalization chains before children finish.
+            await ledger.drain()
+            self._ledgers.discard(ledger)
 
     async def _heartbeat(self, claim, gate):
         expires = datetime.fromisoformat(claim.wire["leaseExpiresAt"])
@@ -111,7 +131,32 @@ class EpisodeValidationWorker:
             gate.stop()
 
     async def aclose(self):
+        if self._close_task is None:
+            for ledger in self._ledgers:
+                ledger.gate.stop()
+            # Stop registered work before yielding to the shutdown coordinator.
+            for task in self._operations | self._active:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            self._close_task = asyncio.create_task(self._close())
+        if asyncio.current_task() in self._operations | self._active:
+            # Inline shutdown cannot await its own execution. The coordinator still drains it.
+            raise asyncio.CancelledError()
+        await asyncio.shield(self._close_task)
+
+    async def _close(self):
+        operations = tuple(self._operations)
+        for task in operations:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        await asyncio.gather(*operations, return_exceptions=True)
+        # A repeated external cancellation may interrupt an execution's finally; retain its ledger.
         for task in tuple(self._active):
-            task.cancel()
+            if not task.done() and not task.cancelling():
+                task.cancel()
         await asyncio.gather(*self._active, return_exceptions=True)
+        results = await asyncio.gather(*(ledger.drain() for ledger in self._ledgers), return_exceptions=True)
         await self.client.aclose()
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result

@@ -572,6 +572,7 @@ async def _reserve_tokens_cancellation_safe(
         _detach_ledger_task(
             cleanup_task,
             f"AI token reservation cleanup failed. request_id={request_id}",
+            ledger=ledger,
         )
         raise
 
@@ -599,6 +600,7 @@ async def _complete_ledger_call_on_cancellation(
     *,
     span_name: str = "llm.tokens.finalize",
     trace_attributes: TraceAttributes | None = None,
+    ledger: AiTokenLedgerApi | None = None,
 ) -> None:
     """Observe ledger completion without delaying owning Job cancellation."""
 
@@ -608,7 +610,7 @@ async def _complete_ledger_call_on_cancellation(
     try:
         await asyncio.shield(ledger_task)
     except asyncio.CancelledError:
-        _detach_ledger_task(ledger_task, "Detached AI token ledger call failed.")
+        _detach_ledger_task(ledger_task, "Detached AI token ledger call failed.", ledger=ledger)
         raise
 
 
@@ -625,7 +627,14 @@ async def _cleanup_cancelled_reservation(
     )
 
 
-def _detach_ledger_task(task: asyncio.Task[None], failure_message: str) -> None:
+def _detach_ledger_task(
+    task: asyncio.Task[None], failure_message: str, *, ledger: AiTokenLedgerApi | None = None,
+) -> None:
+    # Register the complete cleanup chain before cancellation reaches its owner.
+    # Only an explicitly opting-in ledger owns shutdown draining; ordinary defaults stay unchanged.
+    track = getattr(ledger, "track_metering_task", None)
+    if track is not None:
+        track(task)
     _detached_ledger_tasks.add(task)
 
     def consume_result(completed: asyncio.Task[None]) -> None:
@@ -654,6 +663,7 @@ def _detach_failed_provider_finalization(
     _detach_ledger_task(
         cleanup_task,
         f"Cancelled provider request cleanup failed. request_id={request_id}",
+        ledger=ledger,
     )
 
 
@@ -669,6 +679,7 @@ async def _finalize_successful_text_request(
             ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE"),
             span_name="llm.tokens.release",
             trace_attributes=_ledger_attributes(trace_attributes, "USAGE_UNAVAILABLE"),
+            ledger=ledger,
         )
         return
     await _complete_ledger_call_on_cancellation(
@@ -680,6 +691,7 @@ async def _finalize_successful_text_request(
             outcome="SUCCESS",
         ),
         trace_attributes=_ledger_attributes(trace_attributes, "SUCCESS"),
+        ledger=ledger,
     )
 
 
@@ -690,7 +702,7 @@ async def _finalize_successful_embedding_request(
 ) -> None:
     if response.input_token_count is None:
         await _complete_ledger_call_on_cancellation(
-            ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE")
+            ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE"), ledger=ledger,
         )
         return
     await _complete_ledger_call_on_cancellation(
@@ -700,7 +712,8 @@ async def _finalize_successful_embedding_request(
             cached_input_tokens=0,
             output_tokens=0,
             outcome="SUCCESS",
-        )
+        ),
+        ledger=ledger,
     )
 
 
@@ -871,11 +884,13 @@ async def _finalize_failed_provider_request(
                 ledger.release_ai_tokens(request_id, "USAGE_UNAVAILABLE"),
                 span_name="llm.tokens.release",
                 trace_attributes=_ledger_attributes(trace_attributes, "USAGE_UNAVAILABLE"),
+                ledger=ledger,
             )
         else:
             await _complete_ledger_call_on_cancellation(
                 ledger.settle_ai_tokens(request_id, *usage, outcome="FAILURE"),
                 trace_attributes=_ledger_attributes(trace_attributes, "FAILURE"),
+                ledger=ledger,
             )
     except asyncio.CancelledError:
         raise
