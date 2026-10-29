@@ -3,15 +3,15 @@
 import json
 import socket
 from types import SimpleNamespace
-import httpx
 
+import httpx
 import pytest
+from pydantic import ValidationError
 
 from app.chatbot.qa_collection import WorkLookup
 from app.chatbot.qa_render import AnswerRow
 from app.chatbot.replay import replay_case
 from app.schemas.setting_tools import SettingToolItem, SettingToolQuery
-from pydantic import ValidationError
 from tests.test_chat_focused_lookup import (
     answer,
     case,
@@ -147,6 +147,64 @@ async def test_semantic_condition_keeps_structured_states_and_unknown_population
     prompt = result["modelRequests"][1]["input"]
     assert json.loads(prompt["items"][0]["rows"][0]["structuredValue"])["active"] is True
 
+
+@pytest.mark.anyio
+async def test_deceased_collection_does_not_count_undead_or_missing_state_as_confirmed_death():
+    # These are deliberately clean stored states. The authored UNKNOWN judgment
+    # verifies transport/counting, not the real model's interpretation of undeath.
+    catalog = [
+        catalog_subject(
+            n,
+            name,
+            current=[
+                item(
+                    n,
+                    name,
+                    category="STATUS",
+                    key="status.state",
+                    label="상태",
+                    structured={"value": state, "active": True},
+                )
+            ],
+        )
+        for n, name, state in [(1, "라온", "사망"), (2, "서우", "생존"), (3, "도하", "언데드")]
+    ]
+    catalog.append(catalog_subject(4, "이설"))
+    judgment = {
+        "decisions": [
+            {
+                "itemRef": "I1",
+                "verdict": "MATCH",
+                "rowRefs": ["R1"],
+                "explanation": "현재 사망 상태입니다.",
+            },
+            {
+                "itemRef": "I2",
+                "verdict": "NO_MATCH",
+                "rowRefs": ["R2"],
+                "explanation": "현재 생존 상태입니다.",
+            },
+            {
+                "itemRef": "I3",
+                "verdict": "UNKNOWN",
+                "rowRefs": ["R3"],
+                "explanation": "언데드라는 정보만으로 현재 사망 조건을 확정하기 어렵습니다.",
+            },
+        ]
+    }
+    result = await replay_case(
+        case(
+            "현재 사망한 인물 몇 명?",
+            work_plan(shape="COUNT", fact_type="STATUS", predicate="사망"),
+            judgment,
+        ),
+        catalog,
+    )
+    text = answer(result)["text"]
+    assert "확인한 인물은 1명" in text
+    assert "2명" not in text and "3명" not in text and "4명" in text
+    assert len(tool_queries(result, "CHARACTER_CURRENT_COLLECTION")) == 2
+    assert tool_queries(result, "CHARACTER_CURRENT_COLLECTION")[-1]["readToken"]
 
 @pytest.mark.anyio
 async def test_collection_reads_beyond_two_pages_and_checks_token_without_llm_per_page():
