@@ -57,6 +57,7 @@ from app.chatbot.qa_validation import (
 )
 from app.chatbot.runtime import ProviderFailure, ProviderOutputTruncated
 from app.chatbot.source_search import (
+    boundary_continuations,
     explicit_episode_seeds,
     missing_scope,
     scene_priority,
@@ -546,6 +547,7 @@ class _HybridSession(_Session):
             self.codes.append("SEARCH_QUERY_LIMIT")
             query = query[:1000]
         candidates = []
+        boundary_hints = []
         for round_no in range(1, self.hcfg.max_rounds + 1):
             if not self.tools_available(4) or not self.models_available(embedding=round_no > 1):
                 self.codes.append("SEARCH_LIMIT")
@@ -597,6 +599,13 @@ class _HybridSession(_Session):
             else:
                 candidates.extend(found)
             scene_seeds = explicit_episode_seeds(plan, found)
+            if plan.requested_parts and boundary_hints:
+                # Continue a chapter transition already read in this execution.
+                # The hint is not protected evidence and establishes no coverage.
+                scene_seeds = list(
+                    {c.chunk_id: c for c in [*boundary_hints, *scene_seeds]}.values()
+                )
+                candidates.extend(boundary_hints)
             retained_chunks = [e.chunk for e in self.supported_evidence if e.chunk]
             neighbor_seeds = (
                 list({c.chunk_id: c for c in [*retained_chunks, *scene_seeds]}.values())
@@ -627,6 +636,11 @@ class _HybridSession(_Session):
                     if search_scope.episode_from == search_scope.episode_to
                     else None
                 ),
+            )
+            boundary_hints = (
+                boundary_continuations(scene_seeds, [e.chunk for e in self.evidences if e.chunk])
+                if plan.requested_parts
+                else []
             )
             if self.evidence_identity() == previous:
                 continue

@@ -533,3 +533,19 @@ def test_episode_edge_does_not_jump_missing_chapters_or_trust_a_changed_seed(cor
     ]
     corpus.mutate("UPDATE episodes SET content_hash=:hash WHERE id=:id", hash="b" * 64, id=one)
     assert corpus.read("neighbors", seeds, include_episode_edges=True) == []
+
+
+def test_neighbor_radius_counts_chunk_steps_across_one_episode_boundary(corpus):
+    one, two, three = [corpus.episode(n) for n in [30, 31, 32]]
+    old = corpus.chunks(one, ["old zero", "old one", "old two"])
+    next_ids = corpus.chunks(two, ["next zero", "next one", "next two"])
+    too_far = corpus.chunks(three, ["too far"])[0]
+    seeds = corpus.read("direct", [old[1]])
+    near = corpus.read("neighbors", seeds, radius=2, include_episode_edges=True)
+    assert next_ids[0] in {c.chunk_id for c in near}
+    assert not {next_ids[1], next_ids[2], too_far} & {c.chunk_id for c in near}
+    reverse = corpus.read(
+        "neighbors", corpus.read("direct", [next_ids[1]]), radius=2, include_episode_edges=True
+    )
+    assert old[-1] in {c.chunk_id for c in reverse}
+    assert old[1] not in {c.chunk_id for c in reverse}

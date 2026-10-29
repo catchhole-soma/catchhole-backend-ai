@@ -11,7 +11,7 @@ class HybridSettings(BaseSettings):
     embedding_version: str = Field(default="v1", min_length=1, max_length=50)
     keyword_top_k: int = Field(default=12, ge=1, le=50)
     vector_top_k: int = Field(default=12, ge=1, le=50)
-    neighbor_radius: int = Field(default=1, ge=0, le=2)
+    neighbor_radius: int = Field(default=2, ge=0, le=2)
     max_neighbors: int = Field(default=6, ge=1, le=20)
     max_evidence: int = Field(default=8, ge=1, le=12)
     per_episode: int = Field(default=3, ge=1, le=12)

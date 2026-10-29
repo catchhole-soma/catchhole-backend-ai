@@ -37,6 +37,19 @@ def explicit_episode_seeds(plan, seeds):
     return sorted(seeds, key=lambda c: c.episode_no not in episodes)
 
 
+def boundary_continuations(seeds, selected):
+    """A read chapter boundary is a search hint, never a verified event/claim."""
+    if not seeds or seeds[0].chunk_id not in {c.chunk_id for c in selected}:
+        return []
+    episode = seeds[0].episode_no
+    following = [c for c in selected if c.episode_no == episode + 1 and "NEIGHBOR" in c.methods]
+    preceding = [c for c in selected if c.episode_no == episode - 1 and "NEIGHBOR" in c.methods]
+    return [
+        *([max(following, key=lambda c: c.chunk_index)] if following else []),
+        *([min(preceding, key=lambda c: c.chunk_index)] if preceding else []),
+    ]
+
+
 def scene_priority(seeds, neighbors, retained=()):
     """Read a small continuous scene before another mention of the same event.
 
@@ -60,12 +73,7 @@ def scene_priority(seeds, neighbors, retained=()):
                 result.append(candidate)
         # Cross-source neighbors are only returned at actual chapter boundaries
         # by the opt-in repository path. Keep their separate source identities.
-        result.extend(
-            c
-            for c in neighbors
-            if abs(c.episode_no - seed.episode_no) == 1
-            and (seed.chunk_index == 0 or c.chunk_index == 0)
-        )
+        result.extend(c for c in neighbors if abs(c.episode_no - seed.episode_no) == 1)
         return result
 
     adjacent = window(anchor)

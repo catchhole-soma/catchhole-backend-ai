@@ -192,8 +192,8 @@ Python 환경변수는 `.env`를 자동으로 읽지 않는다. 챗봇 전용 Co
 | CHAT_QA_MODEL / CHAT_QA_REASONING_EFFORT | gpt-6-luna / medium | 챗봇 전용 기본값; 기존 분석 Worker 모델과 독립, 로컬 사례 검증과 정식 품질 평가는 구분 |
 | CHAT_QA_MAX_ATTEMPTS | 2 | 단계별 최초 호출과 schema/참조/출력 잘림 복구를 합친 시도 수 |
 | CHAT_QA_MAX_OUTPUT_TOKENS | 2000 | CHAT_INTERPRETATION 출력 기본 상한 |
-| CHAT_QA_ANSWER_MAX_OUTPUT_TOKENS | 4500 | CHAT_ANSWER 출력 기본 상한 |
-| CHAT_QA_TRUNCATION_RETRY_MAX_OUTPUT_TOKENS | 6000 | 출력 절단·schema/근거 복구 때 해당 단계 기본값의 두 배로 재시도할 최대 상한 |
+| CHAT_QA_ANSWER_MAX_OUTPUT_TOKENS | 6000 | CHAT_ANSWER 출력 기본 상한 |
+| CHAT_QA_TRUNCATION_RETRY_MAX_OUTPUT_TOKENS | 7000 | 출력 절단·schema/근거 복구 때 해당 단계 기본값의 두 배로 재시도할 최대 상한 |
 | CHAT_QA_FINALIZATION_RESERVE_SECONDS | 10 | 서버 deadline 안에서 최종 검증·전달에 남길 시간; 모델 대기는 이보다 먼저 취소 |
 | CHAT_QA_MAX_INPUT_TOKENS | 32000 | 프롬프트+자료+schema 입력 추정 상한 |
 | CHAT_QA_MAX_CONTEXT_CHARACTERS | 32000 | 프롬프트와 자료 문자 상한 |
@@ -213,7 +213,7 @@ LLM 요청은 기존 `OpenAIResponsesClient`의 Responses API structured output�
 
 현재 tiktoken은 `gpt-6-luna`의 tokenizer를 식별하지 못하므로 기존 UTF-8 byte 보수 상한(+512)을 유지한다. 이를 실제 모델 토큰 수나 tokenizer 이름으로 해석하지 않는다. 8,000 입력 상한에서는 짧은 hybrid 계획의 프롬프트·schema도 초과하므로 입력 추정 상한과 문자 상한을 32,000으로 맞췄다. 해석 출력 1,500·답변 출력 3,000은 별도이며 모델 자체의 context window를 모두 쓰는 설정이 아니다. 출력 잘림 복구는 해석 3,000·답변 6,000까지 허용하되 기본 총 2회 시도 안에서만 수행한다. 실제 사용량은 실패·잘림도 provider 응답으로 정산한다.
 
-Spring의 `CHAT_ATTEMPT_TOKEN_BUDGET=240000`과 함께 적용한다. 보수적으로 텍스트 최대 6회 × (입력 추정 32,000 + 복구 출력 상한 6,000) + 검색 임베딩 1회(최대 1,000 Unicode 문자 × 4 bytes + 256) = 232,256의 **누적 예약**을 수용한다. 실제 모든 호출이 복구 상한을 사용하는 것은 아니다. 모델 호출 횟수·도구 횟수·회원 잔액 검증은 유지한다. 예약 예산 증가는 실제 차감량 증가를 뜻하지 않지만, 보수적 예약 때문에 호출 시작에 필요한 회원 잔액은 실제 사용량보다 클 수 있다.
+Spring의 `CHAT_ATTEMPT_TOKEN_BUDGET=240000`과 함께 적용한다. 보수적으로 텍스트 최대 6회 × (입력 추정 32,000 + 복구 출력 상한 7,000) + 검색 임베딩 1회(최대 1,000 Unicode 문자 × 4 bytes + 256) = 238,256의 **누적 예약**을 수용한다. 실제 모든 호출이 복구 상한을 사용하는 것은 아니다. 모델 호출 횟수·도구 횟수·회원 잔액 검증은 유지한다. 예약 예산 증가는 실제 차감량 증가를 뜻하지 않지만, 보수적 예약 때문에 호출 시작에 필요한 회원 잔액은 실제 사용량보다 클 수 있다.
 
 운영 env가 기존 숫자를 명시하면 코드/Compose 기본값보다 우선한다. 챗봇 모델과 위 QA 값, `CHAT_RETRIEVAL_EVIDENCE_TOKENS=6000`, API 서버의 실행 예산을 함께 확인한다. 정확한 사전 토큰 계산은 [OpenAI input token count API](https://developers.openai.com/api/docs/guides/token-counting)를 통한 후속 최적화 대상이며 이번 변경은 추가 네트워크 호출을 만들지 않는다.
 

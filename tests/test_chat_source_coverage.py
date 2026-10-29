@@ -339,3 +339,17 @@ def test_verified_scene_can_expand_past_initial_episode_share_within_shared_budg
     assert {c.chunk_id for c in [*first, other, extra[0]]} <= selected
     assert len(selected) <= total
     assert state.evidence_token_count(state.evidences) <= state.hcfg.evidence_tokens
+
+
+def test_read_boundary_is_a_bounded_hint_even_without_a_supported_answer():
+    from app.chatbot.source_search import boundary_continuations
+
+    anchor = passage("문으로 들어갔다.", 201, episode=3, index=8)
+    following = passage("다음 장면이 이어진다.", 202, episode=4, index=0, method="NEIGHBOR")
+    following_end = passage("낯선 대상을 만난다.", 203, episode=4, index=1, method="NEIGHBOR")
+    gap = passage("관련 없는 회차", 204, episode=6, method="NEIGHBOR")
+    assert boundary_continuations([anchor], [anchor, following, following_end, gap]) == [
+        following_end
+    ]
+    assert boundary_continuations([anchor], [following]) == []
+    assert boundary_continuations([anchor], [anchor, replace(following, methods=("VECTOR",))]) == []
