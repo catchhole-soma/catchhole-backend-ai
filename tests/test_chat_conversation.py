@@ -108,6 +108,7 @@ def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, 
                     ["CONVERSATION_LIMIT"], include_conversation_limit=True
                 )
             budget = max(budget, len(request["system"]) + len(encode(recent)))
+        budget = max(budget, len(requests[0]["system"]) + len(encode(requests[0]["input"])) + 1)
         assert len(requests[0]["system"]) + len(encode(requests[0]["input"])) < budget
         assert budget < full  # Full selection history must actually exceed this bound.
         result, requests = run(budget)
