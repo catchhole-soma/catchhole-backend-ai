@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import replace
+from itertools import zip_longest
 
 from app.chatbot.qa_validation import ChatResponseContractError
 
@@ -48,6 +49,19 @@ def explicit_episode_seeds(plan, seeds):
     return sorted(seeds, key=lambda c: c.episode_no not in episodes)
 
 
+def independent_scene_seeds(seeds):
+    """Give independent scenes a neighbor turn before repeated hits in one source."""
+    seen, anchors = set(), []
+    for seed in seeds:
+        if seed.source_fingerprint not in seen:
+            anchors.append(seed)
+            seen.add(seed.source_fingerprint)
+        if len(anchors) == 3:
+            break
+    selected = {c.chunk_id for c in anchors}
+    return [*anchors, *(c for c in seeds if c.chunk_id not in selected)]
+
+
 def scene_priority(seeds, neighbors, retained=()):
     """Read a small continuous scene before another mention of the same event.
 
@@ -71,13 +85,25 @@ def scene_priority(seeds, neighbors, retained=()):
                 result.append(candidate)
         # Cross-source neighbors are only returned at actual chapter boundaries
         # by the opt-in repository path. Keep their separate source identities.
-        result.extend(c for c in neighbors if abs(c.episode_no - seed.episode_no) == 1)
+        result.extend(
+            c
+            for c in neighbors
+            if "NEIGHBOR" in c.methods and abs(c.episode_no - seed.episode_no) == 1
+        )
         return result
 
-    adjacent = window(anchor)
-    independent = next(
-        (c for c in seeds[1:] if c.source_fingerprint != anchor.source_fingerprint), None
-    )
+    # Share the bounded context among a few independent scenes. One leading
+    # scene must not consume every neighbor slot before another ranked hit gets
+    # its surrounding sentence. Extra bare hits still keep their original rank.
+    anchors = [anchor]
+    for seed in independent_scene_seeds(seeds)[1:3]:
+        if any(c.source_fingerprint == seed.source_fingerprint for c in anchors):
+            continue
+        if len(anchors) == 1 or window(seed):
+            anchors.append(seed)
+        if len(anchors) == 3:
+            break
+    adjacent = [c for group in zip_longest(*(window(s) for s in anchors)) for c in group if c]
     continuation = [
         c
         for c in [*seeds, *neighbors]
@@ -92,8 +118,7 @@ def scene_priority(seeds, neighbors, retained=()):
             c.chunk_id: c
             for c in [
                 *continuation,
-                anchor,
-                *([independent] if independent else []),
+                *anchors,
                 *adjacent,
                 *seeds,
             ]

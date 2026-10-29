@@ -7,8 +7,8 @@ from app.chatbot.qa_prompts import (
 )
 
 PLAN_VERSION = "chat-hybrid-plan-v16"
-ANSWER_VERSION = "chat-hybrid-answer-v18"
-SOURCE_ANSWER_VERSION = "chat-source-answer-v5"
+ANSWER_VERSION = "chat-hybrid-answer-v19"
+SOURCE_ANSWER_VERSION = "chat-source-answer-v6"
 
 SOURCE_REASONING_INSTRUCTIONS = """
 question이 요구의 원본이다. plan 요약 때문에 주체·대상 범주·관계·부정·최초 조건을 바꾸지 않는다.
@@ -16,6 +16,8 @@ eventMatch는 주제의 유사성이 아니라 바로 그 사건인지 판정한
 첫/마지막/특정 사건이라는 연결 근거가 없으면 UNCERTAIN이다. 다른 사건의 감정·후속 행동으로
 빈 요구를 채우거나, 회상 뒤의 현재 행동을 과거 사건 직후로 옮기지 않는다. 사건은 식별되지만
 일부 이유·행동이 빠졌다면 MATCH와 PARTIAL을 함께 사용한다.
+eventMatch는 claim이 답하는 요구의 사건을 기준으로 한다. 한 요구의 작품 전체 최초 여부가
+불명확해도, 다른 독립 요구의 특정 행동 전후 비교까지 불명확하다고 취급하지 않는다.
 행위 주체를 유지한다. 한 인물의 첫 행동 여부를 다른 인물이 먼저 행동했다는 사실로 부정하지 않는다.
 대상 범주가 다르면 OTHER다. 적/사람, 획득/사용, 예정/실행을 서로 대체하지 않는다.
 requestedParts.eventScope가 요구별 발생 조건이다. ACTUAL은 실제 사건, PLANNED는 계획,
@@ -56,7 +58,7 @@ evidenceRef는 해당 passage에 속한 E*, evidenceRefs는 사용한 구절의 
 
 plan.eventContext가 있으면 모든 claim.eventMatch에 MATCH/OTHER/UNCERTAIN을 반드시 채운다.
 다른 사건·동일 사건인지 불명확한 내용은 요청의 답변으로 쓰지 않는다. 없으면 eventMatch=null이다.
-plan.eventScope가 있으면 eventStatus에 OCCURRED/PLANNED/UNCERTAIN을 채운다. 없으면 null이다.
+해당 요구의 eventScope가 있으면 eventStatus에 OCCURRED/PLANNED/UNCERTAIN을 채운다.
 ACTUAL 요청에는 실제 발생한 사건만 answeredFacets로 인정한다. 계획·약속·의향은 발생과 구분해
 설명하고 미확인 요구를 남긴다. 사용/보유만으로 획득 과정이나 시점을 증명하지 않는다.
 발생 여부를 물었고 원문이 '아직 하지 않았다/준비만 했다'고 명시하면 그 미실행 상태도 답이다.

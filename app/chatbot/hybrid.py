@@ -58,6 +58,7 @@ from app.chatbot.qa_validation import (
 from app.chatbot.runtime import ProviderFailure, ProviderOutputTruncated
 from app.chatbot.source_search import (
     explicit_episode_seeds,
+    independent_scene_seeds,
     missing_scope,
     scene_priority,
     validate_part_episodes,
@@ -599,7 +600,12 @@ class _HybridSession(_Session):
             scene_seeds = explicit_episode_seeds(plan, found)
             retained_chunks = [e.chunk for e in self.supported_evidence if e.chunk]
             neighbor_seeds = (
-                list({c.chunk_id: c for c in [*retained_chunks, *scene_seeds]}.values())
+                list(
+                    {
+                        c.chunk_id: c
+                        for c in [*retained_chunks, *independent_scene_seeds(scene_seeds)]
+                    }.values()
+                )
                 if plan.requested_parts
                 else scene_seeds
             )

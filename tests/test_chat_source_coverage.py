@@ -193,6 +193,34 @@ def test_scene_window_does_not_jump_an_unread_chunk():
     assert distant not in scene_priority([start, other], [distant])
 
 
+def test_ranked_third_scene_keeps_its_continuation_inside_shared_budget():
+    from app.chatbot.source_search import independent_scene_seeds
+    from app.retrieval.evidence import compose_evidence
+
+    anchors = [
+        passage(f"별도 장면 {i}", 60 + i, episode=10 + i, index=3, offset=300) for i in range(3)
+    ]
+    neighbors = [
+        passage(f"그 장면의 뒤 문장 {i}", 70 + i, episode=10 + i, index=4, offset=400)
+        for i in range(3)
+    ]
+    repeated = passage("첫 장면의 다른 검색 일치", 80, episode=10, index=8, offset=800)
+    noise = [passage(f"낮은 순위 후보 {i}", 90 + i, episode=20 + i) for i in range(8)]
+    seeds = [anchors[0], repeated, *anchors[1:], *noise]
+    # The repository's bounded neighbor result must reach distinct sources even
+    # if the first source contributes several lexical matches.
+    assert independent_scene_seeds(seeds)[:3] == anchors
+    ordered = scene_priority(seeds, neighbors)
+    bundle = compose_evidence(
+        [*seeds, *neighbors],
+        max_items=8,
+        per_episode=3,
+        priority_chunk_ids=[c.chunk_id for c in ordered],
+    )
+    assert {c.chunk_id for c in [*anchors, *neighbors]} <= {c.chunk_id for c in bundle.chunks}
+    assert len(bundle.chunks) <= 8
+
+
 @pytest.mark.parametrize("room", [False, True])
 def test_final_search_repairs_one_bad_quote_before_losing_new_information(tmp_path, room):
     case = parts_case()
