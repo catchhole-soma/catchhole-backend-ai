@@ -221,6 +221,56 @@ def test_ranked_third_scene_keeps_its_continuation_inside_shared_budget():
     assert len(bundle.chunks) <= 8
 
 
+@pytest.mark.parametrize("match", ["UNCERTAIN", "OTHER", "MATCH"])
+def test_only_located_uncertainty_guides_a_continuous_source_passage(match):
+    from tests.test_chat_requested_parts_merge import evidence
+
+    state = session()
+    state.logical_items = []
+    left = evidence("E1", "앞문장.", 201, episode=9, index=1, offset=0)
+    middle = evidence("E2", "찾은문장.", 202, episode=9, index=2, offset=4)
+    right = evidence("E3", "뒷문장.", 203, episode=9, index=3, offset=9)
+    distant = evidence("E4", "멀리 떨어진 다른 장면.", 204, episode=9, index=20, offset=1000)
+    state.evidences = [left, middle, right, distant]
+    draft = previous_answer("찾은문장.", ["E2"], ["P1"], "E2", "찾은문장.")
+    draft.claims[0] = draft.claims[0].model_copy(update={"event_match": match})
+    state.remember_related_scene(draft, state.evidence_passages(state.evidences), plan())
+    assert state.related_scene_context == (
+        tuple(e.chunk for e in [left, middle, right]) if match == "UNCERTAIN" else ()
+    )
+
+
+def test_uncertain_scene_can_guide_next_read_without_publishing_its_claim(tmp_path):
+    from app.retrieval.search_contracts import SearchResult
+
+    case = parts_case()
+    located = passage("미라는 봉화 앞에 서 있었다.", 205, episode=9, index=2)
+    following = passage(f"{EMOTION} {BEHAVIOR}", 206, episode=9, index=3, offset=100)
+    noise = passage("다른 지역의 순찰 기록.", 207, episode=20, method="VECTOR")
+    rejected = "이것이 첫 사건이라고 확정한다."
+    case["outputs"] += [
+        answer(claim(rejected, located.text, event_match="UNCERTAIN")),
+        answer(claim(EMOTION, EMOTION, ref="E3"), claim(BEHAVIOR, BEHAVIOR, ref="E3")),
+    ]
+    calls = []
+
+    def setup(search):
+        search_with(keyword=[located], vector=[noise])(search)
+
+        async def neighbors(scope, seeds, **kwargs):
+            calls.append(seeds)
+            return SearchResult((following,) if len(calls) == 2 else (), search.readiness)
+
+        search.neighbors = neighbors
+
+    result = asyncio.run(replay(tmp_path, case, search_setup=setup))
+    assert calls[1][0] == located
+    text = result["finish"]["result"]["text"]
+    assert EMOTION in text and BEHAVIOR in text and rejected not in text
+    assert len(result["embedding"].inputs) == 1
+    assert len(result["raw"].requests) == 3
+
+
 @pytest.mark.parametrize("room", [False, True])
 def test_final_search_repairs_one_bad_quote_before_losing_new_information(tmp_path, room):
     case = parts_case()

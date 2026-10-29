@@ -240,6 +240,7 @@ class _HybridSession(_Session):
         self.current_requirement_targets = set()
         self.current_requirement_resolved = False
         self.supported_evidence = ()
+        self.related_scene_context = ()
         self.source_snapshot = None
         self.recovery_evidence = ()
         self.answer_validation_failed = False
@@ -599,11 +600,25 @@ class _HybridSession(_Session):
                 candidates.extend(found)
             scene_seeds = explicit_episode_seeds(plan, found)
             retained_chunks = [e.chunk for e in self.supported_evidence if e.chunk]
+            related = list(self.related_scene_context) if plan.requested_parts else []
+            # A located passage can guide the next read without proving the
+            # requested event. Read past its exposed boundary, not the same center.
+            frontiers = []
+            for source in dict.fromkeys(c.source_fingerprint for c in related):
+                chunks = sorted(
+                    (c for c in related if c.source_fingerprint == source),
+                    key=lambda c: c.chunk_index,
+                )
+                frontiers.extend([chunks[-1], chunks[0]])
             neighbor_seeds = (
                 list(
                     {
                         c.chunk_id: c
-                        for c in [*retained_chunks, *independent_scene_seeds(scene_seeds)]
+                        for c in [
+                            *retained_chunks,
+                            *frontiers,
+                            *independent_scene_seeds(scene_seeds),
+                        ]
                     }.values()
                 )
                 if plan.requested_parts
@@ -622,10 +637,32 @@ class _HybridSession(_Session):
                 candidates.extend(neighbors)
             elif found and self.hcfg.neighbor_radius:
                 self.codes.append("SEARCH_LIMIT")
+            if related:
+                seen = {c.chunk_id for c in related}
+                sources = {c.source_fingerprint for c in related}
+                episodes = {c.episode_no for c in related}
+                if not any(
+                    c.chunk_id not in seen
+                    and (
+                        c.source_fingerprint in sources
+                        or (
+                            "NEIGHBOR" in c.methods
+                            and any(abs(c.episode_no - n) == 1 for n in episodes)
+                        )
+                    )
+                    for c in neighbors
+                ):
+                    # No new surrounding text: do not let an uncertain old scene
+                    # displace fresh semantic hits just by repeating its hint.
+                    related, frontiers = [], []
+                    self.related_scene_context = ()
+            candidates.extend(related)
             previous = self.evidence_identity()
             self.add_search_evidence(
                 candidates,
-                fresh=scene_priority(scene_seeds, neighbors, retained_chunks)
+                fresh=scene_priority(
+                    [*frontiers, *related, *scene_seeds], neighbors, retained_chunks
+                )
                 if plan.requested_parts
                 else (),
                 focused_episode=(
@@ -1070,6 +1107,36 @@ class _HybridSession(_Session):
             )
         return claims
 
+    def remember_related_scene(self, answer, passages, plan):
+        """Use located uncertainty only as a bounded retrieval hint, never an answer."""
+        self.related_scene_context = ()
+        if not plan.requested_parts or self.logical_items or plan.rdb_mode != "NONE":
+            return
+        refs = {
+            ref
+            for claim in answer.claims
+            if claim.event_match == "UNCERTAIN" and claim.supports
+            for ref in claim.evidence_refs
+        }
+        # Expand only the continuous passage containing a located support. Do not
+        # sweep every hit in its episode, or reuse an unvalidated draft's claim.
+        wanted = {
+            ref["evidenceRef"]
+            for passage in passages
+            if refs & {r["evidenceRef"] for r in passage["references"]}
+            for ref in passage["references"]
+        }
+        sources, chunks = set(), []
+        for evidence in self.evidences:
+            if evidence.ref not in wanted or evidence.chunk is None:
+                continue
+            source = evidence.chunk.source_fingerprint
+            if source not in sources and len(sources) >= 2:
+                continue
+            sources.add(source)
+            chunks.append(evidence.chunk)
+        self.related_scene_context = tuple(chunks)
+
     def merge_partial_snapshot(self, previous, latest, plan):
         """Combine independent requested facets with a fresh, unambiguous E map."""
         old_answer, old_evidence = previous
@@ -1452,7 +1519,11 @@ class _HybridSession(_Session):
             *fresh,
         ]
         episode_cap = self.hcfg.per_episode
-        if protected_chunks and self.plan and self.plan.requested_parts:
+        if (
+            (protected_chunks or getattr(self, "related_scene_context", ()))
+            and self.plan
+            and self.plan.requested_parts
+        ):
             # A partial answer can already occupy the episode's initial slots.
             # Allow the next scene window to add context without evicting the
             # verified facts. Total references/tokens and other protected scenes
@@ -1715,6 +1786,7 @@ class _HybridSession(_Session):
     async def answer(self, plan):
         self.answer_validation_failed = False
         self.recovery_evidence = ()
+        self.related_scene_context = ()
         prompt, version, schema = self.answer_contract(plan)
         protected = {self.source_identity(e) for e in self.supported_evidence}
         if not protected <= {self.source_identity(e) for e in self.evidences}:
@@ -1953,6 +2025,7 @@ class _HybridSession(_Session):
         if recovered_fallback is not None and answer.coverage == "NONE":
             answer = recovered_fallback
         answer = validated(answer)
+        self.remember_related_scene(answer, payload["passages"], plan)
         answer = apply_event_scope(
             answer,
             plan.event_scope,
