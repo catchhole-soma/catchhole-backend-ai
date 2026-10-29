@@ -63,7 +63,7 @@ slot은 두 노드 + axis + kind + direction이다. DIRECTED는 순서를 보존
 
 실패 요청은 `{formatVersion:1,sourceHash,contextToken,failureCode}`다. failureCode는 INVALID_RESPONSE, EXTRACTION_FAILED, COMPARISON_FAILED, INPUT_TOO_LARGE다.
 
-한 prepare 최대 신규 관측 384개, 관측당 인용 1~12개, 한 인용 480 code point 이하, 관측당 인용 총 4000 code point 이하, 이름/mention 100 이하, 관측 summary 300 이하. 관계 설명 summary는 500 이하. 완료 결정 최대 512개, label 60 이하, reason 500 이하. 관련 H가 384개를 초과하면 자르지 않고 FAILED/INPUT_TOO_LARGE Context를 저장해 반환한다. `rejectedObservationCount`는 검증 탈락을 성공한 빈 결과로 숨기지 않기 위한 비음수 개수다.
+한 prepare 최대 신규 관측 384개, 관측당 인용 1~12개, 한 인용 480 code point 이하, 관측당 인용 총 4000 code point 이하, 이름/mention 100 이하, 관측 summary 300 이하. 관계 설명 summary는 500 이하. 완료 결정 최대 512개, label 60 이하, reason 500 이하. 관련 H가 384개 또는 비교 문맥의 노드/관계가 각각 1536개를 초과하면 자르지 않고 FAILED/INPUT_TOO_LARGE Context를 저장해 반환한다. `rejectedObservationCount`는 검증 탈락을 성공한 빈 결과로 숨기지 않기 위한 비음수 개수다.
 
 ## 공개 API
 
@@ -97,3 +97,11 @@ Flyway V92가 `relationship_graph_analyses/nodes/edges/events`와 `analysis_jobs
 `EpisodeRelationshipGraphRulesTest`: Unicode 근거, coverage, END+ADD, 모호한 주체, 재활성화, 잘못된 참조/과거 쓰기.
 `EpisodeRelationshipGraphIntegrationTest`: H2의 회차 cutoff, 멱등, 설명 수정/삭제 억제, 실패 격리, 병렬 수동 작업, HOLD 재사용/소비, 원문 version 및 파기.
 `EpisodeRelationshipGraphPostgresIntegrationTest`: 같은 시나리오를 V1~V92 Flyway와 JPA validate를 사용하는 격리 PostgreSQL에서 검증한다(Docker 필요).
+
+### 2026-10-29 최종 검증 기록
+
+- `./gradlew test bootJar --console=plain`: 성공(4분 10초). Gradle HTML/XML 기준 4,139개 중 3,880개 통과, 259개 건너뜀, 실패/오류 0. 조건부 테스트를 전부 실행했다고 해석하지 않는다. 이번 신규 관계 규칙 6개, H2 통합 12개, 실제 PostgreSQL/Flyway 통합 12개는 모두 실행·통과했다.
+- 마지막 공백 정돈 뒤 `./gradlew bootJar --console=plain` 재생성 성공, `git diff --check` 통과. 산출물은 `build/libs/CatchHole-Backend-0.0.1-SNAPSHOT.jar`다.
+- `EpisodeRelationshipGraphBrowserFixtureTest`는 고정된 격리 로컬 DB만 사용하는 명시적 실행용 합성 fixture이며 일반 suite에서는 건너뛴다. 이 검증에서는 별도로 실행해 성공했다. 실제 Spring/JWT/SDK/브라우저/PostgreSQL 연결로 1화의 동행 1개와 2화의 관계 3개, 회차 이후 인물·종료 상태의 숨김, 원문 근거, 설명 PATCH, 연결 DELETE, 새로고침 뒤 반영을 확인했다.
+- 브라우저 인증은 서버가 발급한 임시 합성 사용자 access token을 주입했다. 로그인 UI와 refresh cookie는 이번 실제 연결 검증 범위가 아니다. DB에서 DISTRUST의 `corrected_summary`와 version 증가, FRIENDSHIP의 `suppressed=true`를 별도로 조회해 저장을 확인했다.
+- 검증 종료 후 전용 Spring 서버(18233), 전용 PostgreSQL 컨테이너(18232), 임시 토큰 파일을 제거했다. 기존 로컬 DB/앱은 사용하거나 수정하지 않았다. 원고와 실제 사용자 자료는 fixture에 포함하지 않는다. 화면 기록은 프론트 저장소의 `docs/screens/gh323/episode-relationships-live-episode-1.png`, `episode-relationships-live-correction.png`에 있다.
