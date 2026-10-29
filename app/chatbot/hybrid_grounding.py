@@ -139,7 +139,8 @@ def resolve_support_quotes(
     existing answer payload's text/references array, with Unicode code point offsets.
     The supplied evidence_ref may identify a neighboring chunk in a merged passage:
     the exact quote determines which original chunks are actually cited. Quotes must
-    occur once in that passage. A line break rendered as a space may be recovered
+    occur once in that passage, or once within the explicitly anchored original
+    chunk when the merged passage repeats them. A line break rendered as a space may be recovered
     only when it maps to a unique original span; the returned quote is always the
     exact original text. Equal text in another passage cannot be substituted,
     but does not invalidate an otherwise unambiguous, explicitly anchored source.
@@ -159,7 +160,22 @@ def resolve_support_quotes(
         if not isinstance(quote, str) or not quote.strip():
             raise ValueError("GROUNDING_QUOTE_NOT_FOUND")
         passage = indexed[support.evidence_ref]
-        start, end = _quote_span(passage.text, quote)
+        try:
+            start, end = _quote_span(passage.text, quote)
+        except ValueError as exc:
+            if str(exc) != "GROUNDING_AMBIGUOUS_QUOTE":
+                raise
+            # Merging adjacent chunks must not invalidate a quote whose explicit
+            # source still identifies one exact occurrence. Never choose another
+            # chunk to resolve ambiguity, or accept repetition within this one.
+            anchor = next(r for r in passage.references if r.ref == support.evidence_ref)
+            try:
+                local_start, local_end = _quote_span(
+                    passage.text[anchor.start : anchor.end], quote
+                )
+            except ValueError:
+                raise exc from None
+            start, end = anchor.start + local_start, anchor.start + local_end
         refs = _cover_span(passage, start, end, support.evidence_ref)
         resolved.append(ResolvedSupport(passage.text[start:end], tuple(refs)))
     return resolved

@@ -95,6 +95,37 @@ def test_repeated_or_overlapping_quote_occurrences_are_ambiguous(text, quote):
         resolve_support_references([Support("E1", quote)], [data])
 
 
+@pytest.mark.parametrize("anchor", ["E1", "E2"])
+def test_merged_repetition_preserves_the_unique_explicit_original_chunk(anchor):
+    text = "승인했다. 첫 제안이었다. 승인했다. 최종 조건이었다."
+    split = text.index("승인했다.", 1)
+    data = passage(text, ("E1", 0, split), ("E2", split, len(text)))
+
+    resolved = resolve_support_quotes([Support(anchor, "승인했다.")], [data])
+
+    assert resolved[0].quote == "승인했다."
+    assert resolved[0].evidence_refs == (anchor,)
+
+
+def test_repeated_quote_cannot_be_reanchored_when_named_chunk_does_not_contain_it():
+    text = "시작. 반복. 반복."
+    data = passage(text, ("E1", 0, 3), ("E2", 3, len(text)))
+
+    with pytest.raises(ValueError, match="^GROUNDING_AMBIGUOUS_QUOTE$"):
+        resolve_support_quotes([Support("E1", "반복.")], [data])
+
+
+def test_merged_line_break_repetition_restores_exact_text_in_the_named_chunk():
+    text = "🙂문이\n닫혔다. 문이\r\n닫혔다."
+    split = text.index("문이", 2)
+    data = passage(text, ("E1", 0, split), ("E2", split, len(text)))
+
+    resolved = resolve_support_quotes([Support("E2", "문이 닫혔다.")], [data])
+
+    assert resolved[0].quote == "문이\r\n닫혔다."
+    assert resolved[0].evidence_refs == ("E2",)
+
+
 @pytest.mark.parametrize("quote", ["", " \n", "문을  닫았다.", "문을 닫았다..."])
 def test_blank_or_altered_quotes_are_not_normalized_into_matches(quote):
     text = "그는 문을 닫았다."
