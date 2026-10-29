@@ -131,7 +131,7 @@ async def _inspect(llm, state, prompt):
 
 async def check_typos(
     data: ValidationDataClient, llm: OpenAIResponsesClient | MeteredTextGenerationClient,
-    *, budget: InvocationBudget,
+    *, budget: InvocationBudget, checkpoint=None,
 ) -> ClassifiedTypoCheckResult:
     """Return suggestions only; orchestration, billing and persistence are caller-owned."""
     state = BudgetState(budget)
@@ -143,6 +143,8 @@ async def check_typos(
         )):
             raise IncompleteInspection("LLM_CLIENT_CONFIGURATION_INVALID")
         frozen = await _call(state, data.read_input, kind="lookup")
+        if checkpoint:
+            checkpoint.bind_sources(frozen)
         source = await _call(state, data.read_source, frozen.target, kind="lookup")
     except IncompleteInspection as exc:
         return ClassifiedTypoCheckResult(target_hash=data.context.target_hash, status="INCOMPLETE",
@@ -162,8 +164,17 @@ async def check_typos(
         prompt = json.dumps({"segment_ref": segment.ref, "core": core.model_dump(),
                              "context": context.model_dump()}, ensure_ascii=False)
         try:
-            response = await _inspect(llm, state, prompt)
+            saved = checkpoint.stage("TYPO_SEGMENT", segment.ref) if checkpoint else None
+            if saved is None:
+                response = await _inspect(llm, state, prompt)
+            else:
+                from app.llm.responses import LlmTextResponse
+                response = LlmTextResponse(text=json.dumps({"segments": saved["segments"],
+                    "suggestions": saved["suggestions"]}), input_token_count=0, output_token_count=0)
             checked, found = _validated_batch(response, segment, source.text, suggestions)
+            if checkpoint and saved is None:
+                await checkpoint.typo(segment.ref, {"segments": [checked.model_dump()],
+                    "suggestions": [row.model_dump() for row in found], "failure_code": None})
             coverage[index] = checked
             suggestions.extend(found)
         except IncompleteInspection as exc:

@@ -147,8 +147,12 @@ class MeteredTextGenerationClient:
         jitter_max_seconds: float = 1.0,
         monotonic_ns: Callable[[], int] = perf_counter_ns,
         metrics: WorkerMetrics | None = None,
+        exact_input_reservation: bool = False,
     ) -> None:
         _validate_retry_configuration(max_retries, retry_base_seconds, jitter_max_seconds)
+        if exact_input_reservation and (not purpose.startswith("VALIDATION_") or max_retries != 0):
+            raise ValueError("Validation exact preflight requires explicit purpose and one-shot provider.")
+        self.exact_input_reservation = exact_input_reservation
         self.delegate = delegate
         self.ledger = ledger
         self.analysis_job_id = analysis_job_id
@@ -246,7 +250,9 @@ class MeteredTextGenerationClient:
         call_options: LlmCallOptions | None = None,
     ) -> LlmTextResponse:
         effective_model = model or self.default_model
-        if self.purpose == "CHARACTER_FACT_COMPARISON" and effective_model.startswith("gpt-6.1-sol"):
+        if self.exact_input_reservation or (
+            self.purpose == "CHARACTER_FACT_COMPARISON" and effective_model.startswith("gpt-6.1-sol")
+        ):
             # Fit/preflight already counted this identity; the provider cache avoids another HTTP call.
             reserved_tokens = await self.count_input_tokens(
                 system_prompt, user_prompt, effective_model, response_schema, call_options,
@@ -417,8 +423,12 @@ class MeteredEmbeddingClient:
         sleeper: AsyncSleeper = asyncio.sleep,
         random_source: RandomSource = random.random,
         jitter_max_seconds: float = 1.0,
+        purpose: str = "CHUNK_EMBEDDING",
     ) -> None:
         _validate_retry_configuration(max_retries, retry_base_seconds, jitter_max_seconds)
+        if purpose not in {"CHUNK_EMBEDDING", "VALIDATION_QUERY_EMBEDDING"}:
+            raise ValueError("Unsupported embedding metering purpose.")
+        self.purpose = purpose
         self.delegate = delegate
         self.ledger = ledger
         self.analysis_job_id = analysis_job_id
@@ -443,7 +453,7 @@ class MeteredEmbeddingClient:
                     ledger=self.ledger,
                     request_id=request_id,
                     analysis_job_id=self.analysis_job_id,
-                    purpose="CHUNK_EMBEDDING",
+                    purpose=self.purpose,
                     attempt=self._attempt,
                     model_name=self.model_name,
                     reserved_tokens=reserved_tokens,
