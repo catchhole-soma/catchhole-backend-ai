@@ -111,6 +111,8 @@ AiTokenPurpose = Literal[
     "WORLD_SETTING_EXTRACTION",
     "WORLD_SETTING_SUBJECT_RESOLUTION",
     "WORLD_SETTING_COMPARISON",
+    "RELATIONSHIP_EXTRACTION",
+    "RELATIONSHIP_COMPARISON",
 ]
 AiTokenUsageOutcome = Literal[
     "SUCCESS",
@@ -160,6 +162,9 @@ class WorkerAnalysisJobClaimRequest(BaseModel):
     )
     supports_frozen_comparison_evidence: bool | None = Field(
         default=None, alias="supportsFrozenComparisonEvidence",
+    )
+    supports_relationship_analysis: bool | None = Field(
+        default=None, alias="supportsRelationshipAnalysis", strict=True,
     )
 
 
@@ -398,6 +403,9 @@ class WorkerAnalysisJobPayload(BaseModel):
     # Keep an unsupported contract until the claimed lease can be failed explicitly.
     comparison_evidence_contract: Any | None = Field(
         default=None, alias="comparisonEvidenceContract", exclude_if=lambda value: value is None,
+    )
+    relationship_analysis_contract: Any | None = Field(
+        default=None, alias="relationshipAnalysisContract", exclude_if=lambda value: value is None,
     )
     provisional_characters: list[WorkerAnalysisProvisionalCharacterPayload] = Field(
         default_factory=list, alias="provisionalCharacters"

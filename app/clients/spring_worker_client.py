@@ -11,7 +11,11 @@ from app.clients.exceptions import (
     SpringWorkerTransportError,
     WorkerLeaseExpiredError,
 )
-from app.clients.safe_http_diagnostics import spring_failure_diagnostics, error_message, validation_fields
+from app.clients.safe_http_diagnostics import (
+    error_message,
+    spring_failure_diagnostics,
+    validation_fields,
+)
 from app.core.config import Settings, get_settings
 from app.domain.enums import (
     AnalysisFailureCode,
@@ -28,7 +32,6 @@ from app.schemas.worker import (
     AiTokenReleaseRequest,
     AiTokenReserveRequest,
     AiTokenSettleRequest,
-    WorkerFailureDiagnostics,
     WorkerAnalysisJobClaimRequest,
     WorkerAnalysisJobCompleteRequest,
     WorkerAnalysisJobFailRequest,
@@ -43,6 +46,7 @@ from app.schemas.worker import (
     WorkerCharacterFactComparisonCompleteRequest,
     WorkerCharacterFactComparisonContextResponse,
     WorkerCharacterFactComparisonFailRequest,
+    WorkerFailureDiagnostics,
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingCandidatePublishItem,
     WorkerWorldSettingCandidatePublishRequest,
@@ -107,6 +111,7 @@ class SpringWorkerClient:
         supports_setting_book_reference_time: bool | None = None,
         supports_semantic_current_context: bool | None = None,
         supports_frozen_comparison_evidence: bool | None = None,
+        supports_relationship_analysis: bool | None = None,
     ) -> WorkerAnalysisJobPayload | None:
         request = WorkerAnalysisJobClaimRequest(
             model_name=model_name,
@@ -118,6 +123,7 @@ class SpringWorkerClient:
             supports_setting_book_reference_time=supports_setting_book_reference_time,
             supports_semantic_current_context=supports_semantic_current_context,
             supports_frozen_comparison_evidence=supports_frozen_comparison_evidence,
+            supports_relationship_analysis=supports_relationship_analysis,
         )
         response = await self._request(
             "POST",
@@ -131,6 +137,38 @@ class SpringWorkerClient:
             return None
         _raise_for_spring_status(response)
         return WorkerAnalysisJobPayload.model_validate(response.json()["data"])
+
+    async def get_relationship_analysis(self, analysis_job_id: UUID, lease_token: UUID) -> dict | None:
+        response = await self._request(
+            "GET", self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/relationship-analysis"),
+            headers=self._headers(lease_token),
+        )
+        if response.status_code == 204:
+            return None
+        _raise_for_spring_status(response)
+        return response.json()["data"]
+
+    async def prepare_relationship_analysis(self, analysis_job_id: UUID, lease_token: UUID, request: dict) -> dict:
+        response = await self._request(
+            "POST", self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/relationship-analysis/prepare"),
+            headers=self._headers(lease_token), json=request,
+        )
+        _raise_for_spring_status(response)
+        return response.json()["data"]
+
+    async def complete_relationship_analysis(self, analysis_job_id: UUID, lease_token: UUID, request: dict) -> None:
+        response = await self._request(
+            "POST", self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/relationship-analysis/complete"),
+            headers=self._headers(lease_token), json=request,
+        )
+        _raise_for_spring_status(response)
+
+    async def fail_relationship_analysis(self, analysis_job_id: UUID, lease_token: UUID, request: dict) -> None:
+        response = await self._request(
+            "POST", self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/relationship-analysis/fail"),
+            headers=self._headers(lease_token), json=request,
+        )
+        _raise_for_spring_status(response)
 
     # Spring에 보낼 진행 상태 보고 요청 DTO
     async def report_progress(
