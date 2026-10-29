@@ -169,3 +169,53 @@ def test_targeted_missing_chapter_uses_remaining_shared_evidence_budget(tmp_path
     assert BEHAVIOR in result["finish"]["result"]["text"]
     passages = result["raw"].requests[-1]["input"]["passages"]
     assert sum(len(p["references"]) for p in passages) == 8
+
+
+@pytest.mark.parametrize("room", [False, True])
+def test_final_search_repairs_one_bad_quote_before_losing_new_information(tmp_path, room):
+    case = parts_case()
+    bad = answer(
+        claim(EMOTION, EMOTION, parts=("P1",)), claim(BEHAVIOR, "인용에 없는 문장", parts=("P2",))
+    )
+    good = answer(claim(EMOTION, EMOTION, parts=("P1",)), claim(BEHAVIOR, BEHAVIOR, parts=("P2",)))
+    case["outputs"] += [bad, good] if room else [bad]
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            hybrid={"max_model_calls": 3 if room else 2},
+            search_setup=search_with(keyword=[], vector=[passage(f"{EMOTION} {BEHAVIOR}", 1)]),
+        )
+    )
+    text = result["finish"]["result"]["text"]
+    assert EMOTION in text and "인용에 없는 문장" not in text
+    assert (BEHAVIOR in text) is room
+    assert len(result["raw"].requests) == (3 if room else 2)
+    assert len(result["embedding"].inputs) == 1
+    assert result["search"].calls[-1] == "revalidate"
+
+
+@pytest.mark.parametrize("retry_empty", [False, True])
+def test_final_quote_repair_failure_keeps_the_verified_subset(tmp_path, retry_empty):
+    case = parts_case()
+    first = answer(
+        claim(EMOTION, EMOTION, parts=("P1",)), claim(BEHAVIOR, "원문에 없는 인용", parts=("P2",))
+    )
+    second = (
+        answer(coverage="NONE", missing=("P1", "P2"))
+        if retry_empty
+        else answer(claim("거절할 주장", "또 없는 인용"))
+    )
+    case["outputs"] += [first, second]
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            hybrid={"max_model_calls": 3},
+            search_setup=search_with(keyword=[], vector=[passage(EMOTION, 1)]),
+        )
+    )
+    text = result["finish"]["result"]["text"]
+    assert EMOTION in text and "거절할 주장" not in text
+    assert len(result["raw"].requests) == 3
+    assert result["search"].calls[-1] == "revalidate"

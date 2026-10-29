@@ -1723,7 +1723,12 @@ class _HybridSession(_Session):
                 )
             return answer
 
+        recovered_fallback = None
+        validation_attempts = 0
+
         def valid(answer):
+            nonlocal recovered_fallback, validation_attempts
+            validation_attempts += 1
             # A location-checked quote from a rejected response can prioritize a
             # source candidate in recovery. It never makes that response publishable.
             hinted = {self.source_identity(e) for e in self.recovery_evidence}
@@ -1761,6 +1766,20 @@ class _HybridSession(_Session):
                 if recovered is None:
                     raise
                 recovered = validated(recovered)
+                recovered_fallback = recovered
+                if (
+                    self.rounds == self.hcfg.max_rounds
+                    and self.rounds > 1
+                    and answer.coverage == "COMPLETE"
+                    and validation_attempts < attempts
+                    and self.has_model_time()
+                ):
+                    # The final search already found a potentially complete
+                    # answer. Spend an existing repair slot on its bad quote
+                    # before downgrading and restoring an older partial answer.
+                    # Keep the verified subset if repair cannot be completed.
+                    self.trace("answer_final_quote_repair", round=self.rounds)
+                    raise
                 self.trace(
                     "answer_partial_recovered",
                     round=self.rounds,
@@ -1791,17 +1810,23 @@ class _HybridSession(_Session):
         except (ModelTimeBudgetExceeded, ProviderOutputTruncated) as exc:
             # A failed expansion must not erase an earlier validated answer.
             # With no supported snapshot the original failure still propagates.
-            if not self.supported_evidence:
+            if not self.supported_evidence and recovered_fallback is None:
                 raise
             self.codes.append("SEARCH_LIMIT")
             self.trace("answer_expansion_stopped", reason=type(exc).__name__, round=self.rounds)
-            return self.empty_source_answer(plan)
+            if recovered_fallback is None:
+                return self.empty_source_answer(plan)
+            answer = recovered_fallback
         except ResponseValidationFailure:
             # Reject every unverified claim, but keep the search/partial-answer
             # recovery path alive. Transport and provider failures still propagate.
             self.trace("answer_validation_exhausted", round=self.rounds)
-            self.answer_validation_failed = True
-            return self.empty_source_answer(plan)
+            if recovered_fallback is None:
+                self.answer_validation_failed = True
+                return self.empty_source_answer(plan)
+            answer = recovered_fallback
+        if recovered_fallback is not None and answer.coverage == "NONE":
+            answer = recovered_fallback
         answer = validated(answer)
         answer = apply_event_scope(
             answer, plan.event_scope, requested_facets(plan), event_context=plan.event_context

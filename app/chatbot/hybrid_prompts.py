@@ -8,7 +8,7 @@ from app.chatbot.qa_prompts import (
 
 PLAN_VERSION = "chat-hybrid-plan-v12"
 ANSWER_VERSION = "chat-hybrid-answer-v15"
-SOURCE_ANSWER_VERSION = "chat-source-answer-v1"
+SOURCE_ANSWER_VERSION = "chat-source-answer-v2"
 
 # Source-only requests have no registered rows or logical items. Do not spend
 # their context budget repeating instructions for those absent data structures.
@@ -38,6 +38,9 @@ plan.eventContext가 있으면 모든 claim.eventMatch에 MATCH/OTHER/UNCERTAIN�
 plan.eventScope가 있으면 eventStatus에 OCCURRED/PLANNED/UNCERTAIN을 채운다. 없으면 null이다.
 ACTUAL 요청에는 실제 발생한 사건만 answeredFacets로 인정한다. 계획·약속·의향은 발생과 구분해
 설명하고 미확인 요구를 남긴다. 사용/보유만으로 획득 과정이나 시점을 증명하지 않는다.
+발생 여부를 물었고 원문이 '아직 하지 않았다/준비만 했다'고 명시하면 그 미실행 상태도 답이다.
+확인된 결정·현재의 미실행 상태는 OCCURRED로, 이후에 실행할 계획은 PLANNED로 나누어 설명한다.
+질문한 시점의 미실행을 확인하고도 '실행했는지 알 수 없다'고 뒤집지 않는다.
 
 출처 회차는 사건 발생 시점과 다를 수 있다. 회상·관찰·자기진술·추측·가정·계획을 구분한다.
 시점을 물으면 확인한 sourceEpisodeNo를 답하되 첫 검색 결과를 작품 전체 최초라고 단정하지 않는다.
