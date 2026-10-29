@@ -121,7 +121,10 @@ class FocusedLookup:
         condition = plan.character_filter
         collection = getattr(plan, "collection", None)
         if collection:
-            terms.extend(t for t in [collection.attribute, collection.predicate] if t)
+            for field in ("attribute", "predicate"):
+                value = getattr(collection, field)
+                if value and (not value.strip() or value.strip().casefold() not in observed):
+                    raise ChatResponseContractError(f"UNOBSERVED_COLLECTION_{field.upper()}")
         if condition:
             terms.extend([condition.attribute, condition.value])
         if any(not term.strip() or term.strip().casefold() not in observed for term in terms):

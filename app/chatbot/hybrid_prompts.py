@@ -6,7 +6,7 @@ from app.chatbot.qa_prompts import (
     SMALL_TALK_INSTRUCTIONS,
 )
 
-PLAN_VERSION = "chat-hybrid-plan-v12"
+PLAN_VERSION = "chat-hybrid-plan-v13"
 ANSWER_VERSION = "chat-hybrid-answer-v15"
 SOURCE_ANSWER_VERSION = "chat-source-answer-v2"
 
@@ -140,6 +140,11 @@ includeRegisteredValues는 원문 설명과 함께 현재 등록값 자체도 �
 """
     + LINKED_EVIDENCE_INSTRUCTIONS
     + FOCUS_INSTRUCTIONS
+    + """
+collection.predicate는 여러 조건도 포함한 입력의 연속 구절 그대로다. 조건을 요약·재작성하거나
+문장들을 세미콜론으로 합치지 않는다. 필요하면 조건이 담긴 질문 전체를 그대로 사용한다.
+작품 전체 비교 목록에서 기준 인물이 언급되어도 subjects=[]를 유지하고 그 이름은 predicate에 보존한다.
+"""
     + SMALL_TALK_INSTRUCTIONS
 )
 

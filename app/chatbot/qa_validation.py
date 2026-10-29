@@ -22,6 +22,9 @@ class LookupClarificationRequired(ResponseValidationFailure):
 
 
 RULES = {
+    "UNOBSERVED_COLLECTION_PREDICATE": "collection.predicate는 이번 질문 또는 명확한 대화의 연속된 조건 구절을 그대로 복사하세요. 여러 조건을 재작성하거나 세미콜론으로 합치지 말고, 필요하면 조건들을 포함한 질문 전체를 그대로 사용하세요. collection의 범위·유형과 subjects=[]를 유지하고 조건을 삭제하거나 비교 기준 인물을 subjects에 추가하지 마세요.",
+    "UNOBSERVED_COLLECTION_ATTRIBUTE": "collection.attribute는 이번 질문 또는 명확한 대화의 실제 연속 표현만 사용하세요. 조건은 predicate에 보존하고 collection 조회를 단일 인물 조회로 바꾸지 마세요.",
+    "PLAN_COLLECTION": "작품 전체 조건·비교 조회는 collection과 CURRENT, subjects=[], characterFilter=null을 함께 사용하세요. 비교 기준으로 언급된 인물을 subjects에 추가하지 말고 조건 구절을 collection.predicate에 보존하세요. 단일 인물 조회와 collection을 동시에 만들지 마세요.",
     "UNOBSERVED_PART_EPISODE": "requestedParts.sourceEpisodeNo는 현재 질문에 N화로 직접 명시된 출처 회차만 사용하세요. 이전 대화나 작품 지식으로 추정하지 말고 명시되지 않은 부분은 null로 두세요. 요청의 내용은 유지하세요.",
     "REQUESTED_PARTS_INCOMPLETE": "requestedParts의 모든 P*를 실제 답한 claims.answeredFacets와 미확인 missingFacets로 빠짐없이 나누고 두 목록을 겹치지 마세요. 현재값/원문 비교는 confirmed=true인 실제 CURRENT R* 값과 E* 원문을 구분해 답하면 두 요구를 함께 표시할 수 있습니다. 원문만으로 현재값을 확정하지 말고 확인하지 못한 요구는 missingFacets에 남기세요. 요구를 삭제하지 마세요.",
     "ANSWER_COVERAGE_MISMATCH": "답한 요청 부분과 근거·conflicts는 유지하고 coverage를 고치세요. conflicts가 있으면 모든 요구를 답해도 PARTIAL입니다. 미답 행/facet이 있어도 근거 있는 주장·관측·충돌이 있으면 PARTIAL이고, 그런 내용이 전혀 없으면 NONE입니다. 모든 요구를 답하고 conflicts·미답 행/facet이 모두 없을 때만 COMPLETE입니다. COMPLETE를 맞추려고 충돌·미확인 요구를 삭제하지 마세요.",
@@ -148,6 +151,7 @@ _MESSAGES = {
     ),
     "PLAN_INFORMATION_NEED": ("No information need",),
     "PLAN_SUBJECTS": ("Duplicate subjects",),
+    "PLAN_COLLECTION": ("Work collections query current registered information",),
 }
 _MESSAGE_CODES = {message: code for code, messages in _MESSAGES.items() for message in messages}
 _MESSAGE_CODES.update({code: code for code in RULES})
@@ -164,8 +168,11 @@ _RULE_FIELDS = {
     "PLAN_RDB_SUBJECT": "subjects",
     "PLAN_INFORMATION_NEED": "rdbMode",
     "PLAN_SUBJECTS": "subjects",
+    "PLAN_COLLECTION": "collection",
 }
 _RULE_PATHS = {
+    "UNOBSERVED_COLLECTION_PREDICATE": "$.collection.predicate",
+    "UNOBSERVED_COLLECTION_ATTRIBUTE": "$.collection.attribute",
     "UNOBSERVED_PART_EPISODE": "$.requestedParts[].sourceEpisodeNo",
     "REQUESTED_PARTS_INCOMPLETE": "$.missingFacets",
     "ANSWER_COVERAGE_MISMATCH": "$.coverage",

@@ -23,6 +23,80 @@ from tests.test_chat_requested_parts import (
 )
 
 PRIVATE = "rejected-private-value-5cfaf980-8f54-4b0a-a8c6-01e9daff9f61"
+
+
+@pytest.mark.parametrize(
+    "field,code,path",
+    [
+        ("predicate", "UNOBSERVED_COLLECTION_PREDICATE", "$.collection.predicate"),
+        ("attribute", "UNOBSERVED_COLLECTION_ATTRIBUTE", "$.collection.attribute"),
+        ("subjects", "PLAN_COLLECTION", "$.collection"),
+    ],
+)
+def test_collection_repair_keeps_comparison_scope_and_original_condition(
+    tmp_path, caplog, field, code, path
+):
+    case = current_case()
+    case["question"] = "세린보다 레벨이 높은 인물만 알려줘. 빈 레벨은 추측하지 마."
+    valid = case["outputs"][0]
+    valid.update(
+        subjects=[],
+        searchTerms=[],
+        answerShape="LIST",
+        collection={
+            "domain": "CHARACTER",
+            "factType": "LEVEL",
+            "worldCategory": None,
+            "attribute": None,
+            "predicate": case["question"],
+        },
+    )
+    invalid = copy.deepcopy(valid)
+    if field == "subjects":
+        invalid["subjects"] = [{"domain": "CHARACTER", "name": PRIVATE}]
+    else:
+        invalid["collection"][field] = PRIVATE
+    verdict = {
+        "decisions": [
+            {
+                "itemRef": "I1",
+                "verdict": "NO_MATCH",
+                "rowRefs": ["R1"],
+                "explanation": "비교 기준입니다.",
+            },
+            {
+                "itemRef": "I2",
+                "verdict": "MATCH",
+                "rowRefs": ["R2"],
+                "explanation": "레벨이 높습니다.",
+            },
+        ]
+    }
+    case["outputs"] = [invalid, valid, verdict]
+
+    def setup(spring):
+        spring.catalog = [
+            catalog_subject(
+                n,
+                name,
+                current=[item(n, name, category="LEVEL", key="level", label="레벨", value=str(n))],
+            )
+            for n, name in [(1, "세린"), (2, "도윤")]
+        ]
+
+    with caplog.at_level(logging.WARNING, logger="app.chatbot.qa"):
+        result = asyncio.run(replay(tmp_path, case, spring_setup=setup))
+    assert result["finish"]["failure"] is None
+    assert "도윤" in result["finish"]["result"]["text"]
+    assert len(result["spring"].queries) == 2
+    assert all(q["tool"] == "CHARACTER_CURRENT_COLLECTION" for q in result["spring"].queries)
+    assert result["spring"].queries[-1]["readToken"]
+    feedback = result["raw"].requests[1]["system"]
+    assert code in feedback and path in feedback and RULES[code] in feedback
+    assert PRIVATE not in feedback and PRIVATE not in caplog.text
+    assert len(result["raw"].requests) == len(result["spring"].reservations) == 3
+
+
 REGISTERED_PLAN = {
     "registeredCurrentRequired": False,
     "rdbMode": "CURRENT",
