@@ -22,6 +22,7 @@ class LookupClarificationRequired(ResponseValidationFailure):
 
 
 RULES = {
+    "MIXED_PART_SOURCE_RANGE": "일부 요구만 단일 회차를 지정했는데 episodeFrom/To로 질문 전체를 그 회차에 가두었습니다. 다른 요구가 처음/이후 사건을 찾는다면 전체 범위는 null로 두고 명시된 부분의 sourceEpisodeNo만 유지하세요. 질문 전체가 한 회차로 제한된 경우에만 모든 요구를 그 회차로 맞추세요. 원래 요구를 삭제하지 마세요.",
     "UNOBSERVED_COLLECTION_PREDICATE": "collection.predicate는 이번 질문 또는 명확한 대화의 연속된 조건 구절을 그대로 복사하세요. 여러 조건을 재작성하거나 세미콜론으로 합치지 말고, 필요하면 조건들을 포함한 질문 전체를 그대로 사용하세요. collection의 범위·유형과 subjects=[]를 유지하고 조건을 삭제하거나 비교 기준 인물을 subjects에 추가하지 마세요.",
     "UNOBSERVED_COLLECTION_ATTRIBUTE": "collection.attribute는 이번 질문 또는 명확한 대화의 실제 연속 표현만 사용하세요. 조건은 predicate에 보존하고 collection 조회를 단일 인물 조회로 바꾸지 마세요.",
     "PLAN_COLLECTION": "작품 전체 조건·비교 조회는 collection과 CURRENT, subjects=[], characterFilter=null을 함께 사용하세요. 비교 기준으로 언급된 인물을 subjects에 추가하지 말고 조건 구절을 collection.predicate에 보존하세요. 단일 인물 조회와 collection을 동시에 만들지 마세요.",
@@ -174,6 +175,7 @@ _RULE_PATHS = {
     "UNOBSERVED_COLLECTION_PREDICATE": "$.collection.predicate",
     "UNOBSERVED_COLLECTION_ATTRIBUTE": "$.collection.attribute",
     "UNOBSERVED_PART_EPISODE": "$.requestedParts[].sourceEpisodeNo",
+    "MIXED_PART_SOURCE_RANGE": "$.episodeFrom",
     "REQUESTED_PARTS_INCOMPLETE": "$.missingFacets",
     "ANSWER_COVERAGE_MISMATCH": "$.coverage",
     "UNOBSERVED_FOCUS_ATTRIBUTE": "$.subjects[].focus.attribute",

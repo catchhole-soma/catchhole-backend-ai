@@ -6,7 +6,7 @@ from app.chatbot.qa_prompts import (
     SMALL_TALK_INSTRUCTIONS,
 )
 
-PLAN_VERSION = "chat-hybrid-plan-v15"
+PLAN_VERSION = "chat-hybrid-plan-v16"
 ANSWER_VERSION = "chat-hybrid-answer-v17"
 SOURCE_ANSWER_VERSION = "chat-source-answer-v4"
 

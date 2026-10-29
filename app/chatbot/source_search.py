@@ -13,6 +13,17 @@ def validate_part_episodes(plan, question):
     for part in plan.requested_parts:
         if part.source_episode_no is not None and part.source_episode_no not in observed:
             raise ChatResponseContractError("UNOBSERVED_PART_EPISODE")
+    episodes = {p.source_episode_no for p in plan.requested_parts}
+    if (
+        plan.episode_from is not None
+        and plan.episode_from == plan.episode_to
+        and plan.episode_from in episodes
+        and None in episodes
+    ):
+        # A single chapter cannot simultaneously be a whole-question filter and
+        # only one part's bound. Ask the planner to resolve its own contradiction;
+        # never widen a user scope or assign the missing part a chapter ourselves.
+        raise ChatResponseContractError("MIXED_PART_SOURCE_RANGE")
 
 
 def missing_scope(plan, draft, scope):
@@ -35,19 +46,6 @@ def explicit_episode_seeds(plan, seeds):
         p.source_episode_no for p in plan.requested_parts if p.source_episode_no is not None
     }
     return sorted(seeds, key=lambda c: c.episode_no not in episodes)
-
-
-def boundary_continuations(seeds, selected):
-    """A read chapter boundary is a search hint, never a verified event/claim."""
-    if not seeds or seeds[0].chunk_id not in {c.chunk_id for c in selected}:
-        return []
-    episode = seeds[0].episode_no
-    following = [c for c in selected if c.episode_no == episode + 1 and "NEIGHBOR" in c.methods]
-    preceding = [c for c in selected if c.episode_no == episode - 1 and "NEIGHBOR" in c.methods]
-    return [
-        *([max(following, key=lambda c: c.chunk_index)] if following else []),
-        *([min(preceding, key=lambda c: c.chunk_index)] if preceding else []),
-    ]
 
 
 def scene_priority(seeds, neighbors, retained=()):

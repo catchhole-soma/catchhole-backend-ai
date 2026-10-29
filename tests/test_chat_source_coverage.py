@@ -341,15 +341,53 @@ def test_verified_scene_can_expand_past_initial_episode_share_within_shared_budg
     assert state.evidence_token_count(state.evidences) <= state.hcfg.evidence_tokens
 
 
-def test_read_boundary_is_a_bounded_hint_even_without_a_supported_answer():
-    from app.chatbot.source_search import boundary_continuations
+def test_mixed_chapter_requirements_reject_a_contradictory_global_filter():
+    request = plan().model_copy(update={"episode_from": 12, "episode_to": 12})
+    request.requested_parts[0] = request.requested_parts[0].model_copy(
+        update={"source_episode_no": 12}
+    )
+    with pytest.raises(ChatResponseContractError, match="MIXED_PART_SOURCE_RANGE"):
+        validate_part_episodes(request, "12화의 계획과 실제 실행한 장면을 구분해 줘")
+    unbounded = request.model_copy(update={"episode_from": None, "episode_to": None})
+    validate_part_episodes(unbounded, "12화의 계획과 실제 실행한 장면을 구분해 줘")
+    request = request.model_copy(
+        update={
+            "requested_parts": [
+                p.model_copy(update={"source_episode_no": 12}) for p in request.requested_parts
+            ]
+        }
+    )
+    validate_part_episodes(request, "12화 안에서 계획과 실행을 구분해 줘")
 
-    anchor = passage("문으로 들어갔다.", 201, episode=3, index=8)
-    following = passage("다음 장면이 이어진다.", 202, episode=4, index=0, method="NEIGHBOR")
-    following_end = passage("낯선 대상을 만난다.", 203, episode=4, index=1, method="NEIGHBOR")
-    gap = passage("관련 없는 회차", 204, episode=6, method="NEIGHBOR")
-    assert boundary_continuations([anchor], [anchor, following, following_end, gap]) == [
-        following_end
+
+def test_mixed_source_range_repairs_before_any_scoped_search(tmp_path):
+    import copy
+
+    case = parts_case()
+    case["question"] = "12화의 봉화를 켠 이유와 이후 행동을 구분해 줘"
+    wrong = case["outputs"][0]
+    wrong["episodeFrom"] = wrong["episodeTo"] = 12
+    wrong["requestedParts"][0]["sourceEpisodeNo"] = 12
+    corrected = copy.deepcopy(wrong)
+    corrected["episodeFrom"] = corrected["episodeTo"] = None
+    case["outputs"] += [
+        corrected,
+        answer(
+            claim(EMOTION, EMOTION, parts=("P1",)),
+            claim(BEHAVIOR, BEHAVIOR, ref="E2", parts=("P2",)),
+        ),
     ]
-    assert boundary_continuations([anchor], [following]) == []
-    assert boundary_continuations([anchor], [anchor, replace(following, methods=("VECTOR",))]) == []
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            search_setup=search_with(
+                keyword=[passage(EMOTION, 1, episode=12), passage(BEHAVIOR, 2, episode=25)]
+            ),
+        )
+    )
+    assert result["finish"]["failure"] is None
+    assert len(result["raw"].requests) == 3
+    assert "MIXED_PART_SOURCE_RANGE" in result["raw"].requests[1]["system"]
+    assert result["raw"].requests[-1]["input"]["plan"]["episodeFrom"] is None
+    assert BEHAVIOR in result["finish"]["result"]["text"]
