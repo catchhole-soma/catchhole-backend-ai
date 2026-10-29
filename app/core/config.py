@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -190,6 +190,10 @@ class Settings(BaseSettings):
     # Spring 내부 API 주소와 내부 API key를 읽음
     spring_internal_api_base_url: str = "http://localhost:8080"
     spring_internal_api_key: str = ""
+    # 분석 상태 API의 응답 대기만 늘린다. heartbeat/원장과 연결·쓰기·pool은 기존 한도다.
+    spring_worker_read_timeout_seconds: float = Field(
+        default=120.0, gt=0, allow_inf_nan=False,
+    )
 
 
 @lru_cache
