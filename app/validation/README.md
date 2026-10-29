@@ -1,4 +1,27 @@
-# 독립 오탈자 검사 (#309)
+# 검수 실행과 호출형 검사 (#306/#309/#310)
+
+`EpisodeValidationWorker`는 실제 Java ValidationJob과 leased HTTP를 사용해 설정/오탈자를 독립 실행한다.
+`SettingValidationService(...).inspect()`와 `check_typos(...)`의 기존 callable API도 유지한다.
+전용 실행/기본 OFF·명시 예산/복원/원장/수동 검증은 [실행 계약](../../docs/validation-execution-v1.md)을 따른다.
+Worker는 서버 projectionVersion/modelSettings/modelSourceCatalogue와 clueVersion/modelClues만 사용하며
+로컬 projection/CL fallback은 Job 없는 callable에만 남긴다. authorCorrectionProofs는 실제 편집 transport이며
+canonical author_correction=null을 자유 문자열 서사 시점·조건의 권위로 바꾸지 않는다.
+
+PLANNER/선정 전체 page/COVERAGE/각 BOOK_SOURCE/BOOK_COVERAGE를 즉시 저장하고 MERGED_PLAN의
+서버 check UUID/revision/digest로 판정한다. 성공 NO_CONFLICT와 오탈자 segment도 즉시 저장한다.
+같은 입력의 crash/reclaim은 성공 단계·판정·구간을 재호출하지 않고, FOLLOW_UP은 영향 revision을 원자 변경한다.
+첫 책 검토를 저장한 뒤 다음 책을 읽고 재개 시 미완료 rule만 source 범위로 읽는다.
+전체 책이나 저장 stage/decision을 checkpoint에 중복 복사하지 않는다. 원문 교체·파기는 모든 사본을 지운다.
+
+두 분기는 한쪽 실패·질문0으로 취소하지 않는다. 역할 cap/예약 실패와 공유 lease/input/source 손실을 구분하며,
+공유 무효화 때 양쪽의 새 예약·게시를 막고 기존 실제 사용량은 UNKNOWN/늦은 SETTLE로 정산한다.
+SELECT 전용 session factory를 명시하면 기존 frozen RAG를 사용한다. optional embedding은 실제 index와
+model/version/1536 차원·명시 cap이 일치할 때만 실행하고, exact query/input/manifest/index proof가
+원 호출 원장에 맞는 성공 VECTOR receipt를 재사용한다. 미준비 vector는 정상 빈 결과가 아니다.
+
+기본 추출·챗봇 모델/재시도, 추출 Job·후보·자동 확정/철회는 바꾸지 않는다. #312/#314는 별도 범위다.
+
+## 독립 오탈자 검사 (#309)
 
 `await check_typos(data, llm, budget=budget)`는 인증된 `ValidationDataClient`에서 같은
 고정 원고를 읽고, 전체 핵심 구간을 검사한 `ClassifiedTypoCheckResult`를 반환한다.
@@ -29,7 +52,7 @@ async def inspect(context: ValidationContext, base_url, internal_key, llm, budge
 호출 전에 `LLM_CLIENT_CONFIGURATION_INVALID`로 거절한다. 숨은 재시도와 이중 계량 때문에
 model_calls 상한을 우회하지 않게 하기 위함이다. 호출 전 전용 wrapper를 max_retries=0으로
 만들며 공유 인스턴스/전역 기본값을 실행 중 바꾸지 않는다.
-이 허용을 위해 검수에 가짜 AnalysisJob/lease를 만들지 않는다. 검수 실행·계량 연결은 #310 책임이다.
+이 허용을 위해 검수에 가짜 AnalysisJob/lease를 만들지 않는다. 검수 실행·계량은 전용 #310 Worker가 실제 ValidationJob 원장 adapter로 연결한다.
 호출자는 `InvocationBudget`의 모든 수치를 명시한다.
 `model_calls`는 생성 시도 수, `lookups`는 frozen reader 요청 수이며 정상 경로는 3회다.
 `input_tokens`와 `output_tokens`는 각각 한 요청의 실제 입력 상한과 생성 출력 상한이다.

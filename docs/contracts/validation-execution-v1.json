@@ -2237,8 +2237,9 @@
         "dimensions": 1536
       },
       "versionSource": "Existing chat.retrieval-embedding-version, including explicit override; dimensions are existing retrieval_chunks vector(1536).",
-      "reuse": "Authenticated v1 semantic checkpoint receipt for the current exact VECTOR obligation, SUCCEEDED/READY with complete current index scope, original SETTLED SUCCESS query usage with exactly matching queryInput, current input/manifest/model/version/dimensions. JUDGE-only retry consumes zero extra embedding calls.",
-      "deny": "Failed/partial/unready/incompatible/changed-query/input/manifest/index proof cannot bypass an exhausted role cap; retry responds 409 VALIDATION_EXECUTION_LIMIT_EXCEEDED before queueing."
+      "reuse": "Authenticated v1 semantic checkpoint receipt for the current exact VECTOR obligation, SUCCEEDED/READY with complete authenticated index scope at the original lookup, original SETTLED SUCCESS query usage with exactly matching queryInput, current input/manifest/model/version/dimensions. JUDGE-only retry consumes zero extra embedding calls.",
+      "deny": "Originally failed/partial/not-ready or incompatible/changed-query/input/manifest/index proof cannot bypass an exhausted role cap; retry responds 409 VALIDATION_EXECUTION_LIMIT_EXCEEDED before queueing.",
+      "indexLifecycle": "A verified successful original VECTOR lookup is frozen with its evidence. Temporary live-index rebuild/FAILED/embedding-null does not create a new lookup obligation for JUDGE-only resume; current input/source/hash and original proof compatibility are still revalidated."
     },
     "semanticCheckpoint": {
       "version": 1,
