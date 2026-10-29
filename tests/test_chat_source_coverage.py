@@ -2,9 +2,16 @@
 
 import asyncio
 from dataclasses import replace
+from types import SimpleNamespace
+from uuid import UUID
+
+import pytest
 
 from app.chatbot.hybrid_prompts import ANSWER_PROMPT, SOURCE_ANSWER_PROMPT
 from app.chatbot.qa import response_schema
+from app.chatbot.qa_validation import ChatResponseContractError
+from app.chatbot.source_search import missing_scope, scene_priority, validate_part_episodes
+from app.retrieval.search_contracts import SearchScope
 from app.schemas.chat_hybrid import GroundedAnswer
 from tests.test_chat_answer_recovery import offline_only  # noqa: F401
 from tests.test_chat_hybrid import replay
@@ -84,3 +91,42 @@ def test_expansion_does_not_repeat_answered_keyword_bag():
 def test_source_only_contract_leaves_more_budget_for_evidence():
     # This checks the cause of input pruning without changing the model/token caps.
     assert len(SOURCE_ANSWER_PROMPT.encode()) < len(ANSWER_PROMPT.encode()) * 0.55
+
+
+def test_missing_part_can_only_narrow_the_authorized_range():
+    request = plan()
+    request.requested_parts[0] = request.requested_parts[0].model_copy(
+        update={"source_episode_no": 12}
+    )
+    request.requested_parts[1] = request.requested_parts[1].model_copy(
+        update={"source_episode_no": 25}
+    )
+    scope = SearchScope(1, UUID(int=1), 12, 25)
+    validate_part_episodes(request, "12화의 원인과 25화의 해결 방법을 알려줘")
+    missing = SimpleNamespace(missing_facets=["P2"])
+    assert missing_scope(request, missing, scope) == replace(scope, episode_from=25)
+    assert missing_scope(request, SimpleNamespace(missing_facets=["P1", "P2"]), scope) == scope
+    assert missing_scope(request, SimpleNamespace(missing_facets=["P3"]), scope) == scope
+    request.requested_parts[1] = request.requested_parts[1].model_copy(
+        update={"source_episode_no": 26}
+    )
+    assert missing_scope(request, missing, scope) == scope  # Never widen the trusted scope.
+    with pytest.raises(ChatResponseContractError, match="UNOBSERVED_PART_EPISODE"):
+        validate_part_episodes(request, "12화의 원인과 25화의 해결 방법을 알려줘")
+
+
+def test_scene_priority_keeps_two_hits_and_the_first_scenes_continuation():
+    before = passage("전투를 시작했다.", 1, episode=3, index=0)
+    anchor = passage("주문을 썼다.", 2, episode=3, index=1)
+    after = passage("전투가 끝났다.", 3, episode=3, index=2)
+    other = passage("별도 요청의 근거다.", 4, episode=7)
+    noise = passage("다른 장면이다.", 5, episode=9)
+    wrong_version = replace(after, chunk_id=UUID(int=6), source_hash="different")
+    ordered = scene_priority([anchor, other, noise], [before, wrong_version, after])
+    assert [c.chunk_id for c in ordered] == [
+        anchor.chunk_id,
+        other.chunk_id,
+        before.chunk_id,
+        after.chunk_id,
+        noise.chunk_id,
+    ]

@@ -15,6 +15,10 @@ EventStatus = Literal["OCCURRED", "PLANNED", "UNCERTAIN"]
 class RequestedPart(ContractModel):
     ref: Literal["P1", "P2", "P3", "P4"]
     description: str = Field(min_length=1, max_length=160)
+    # A literal source chapter in the current question, never an inferred event date.
+    source_episode_no: int | None = Field(
+        default=None, ge=1, le=2147483647, strict=True, exclude_if=lambda value: value is None
+    )
 
 
 class EvidenceSupport(ContractModel):

@@ -6,7 +6,7 @@ from app.chatbot.qa_prompts import (
     SMALL_TALK_INSTRUCTIONS,
 )
 
-PLAN_VERSION = "chat-hybrid-plan-v11"
+PLAN_VERSION = "chat-hybrid-plan-v12"
 ANSWER_VERSION = "chat-hybrid-answer-v15"
 SOURCE_ANSWER_VERSION = "chat-source-answer-v1"
 
@@ -47,6 +47,8 @@ ACTUAL 요청에는 실제 발생한 사건만 answeredFacets로 인정한다. �
 상태 진입 조건·도중 소비·종료 조건·성공 후 보상을 사건 순서대로 구분한다.
 
 원문에 없는 사실·원인·대사·최초·부재를 만들지 않는다. 검색되지 않은 것과 존재하지 않는 것은 다르다.
+질문의 가정과 다른 이유·사건이 원문에 명시되어 있으면 그 차이를 답한다. 틀린 전제 자체를
+입증하지 못했다는 이유로 이미 설명된 요구를 미확인 처리하거나 모든 가능성의 부재를 요구하지 않는다.
 missingExplanations에는 각 미확인 facet의 한계를 질문에 맞는 짧고 완결된 존댓말로 설명한다.
 요구 제목을 기계적으로 붙이거나 검색 횟수·문맥 한도·포괄적 면책 문구를 답에 쓰지 않는다.
 예: '다만 이 장면이 최초 사용인지는 확인하지 못했어요.' 확인한 사실과 미확인 설명을 반복하지 않는다.
@@ -82,6 +84,8 @@ HISTORY 등 필요한 등록 기록과 함께 sourceNeed=SCENE/REASON으로 원�
 저장 분류나 숫자 순서만으로 같은 개념의 증가·감소를 단정하지 않는다. 단순 값·이력 나열이나
 연결 인용을 첨부하는 요청은 기존 sourceNeed=NONE 경로로 유지한다.
 등록값·이력·항목 목록 자체를 요구하지 않는 원문 사건·이유·과정 질문은 rdbMode=NONE이다.
+이야기 속 협상 전후의 권리·물건·조건 변화는 원문 사건 비교이며 DB 변경 이력 요청이 아니다.
+원문에서 얻은 물건과 약속받은 권리를 구분하는 요청도 NONE+SCENE/PROCESS다.
 관련 인물이 등장한다는 이유만으로 그 인물의 전체 CURRENT 설정을 읽지 않는다.
 현재값·이력·항목 목록과 원문을 함께 요구할 때만 필요한 등록 범위와 sourceNeed를 결합한다.
 단순 현재값/이력과 연결 인용은 sourceNeed=NONE이다. 근거 요청이 없으면 includeEvidence=false다.
@@ -104,6 +108,8 @@ subjects는 현재 질문 또는 명확히 연결된 conversation에 그대로 �
 묶는 것은 허용하지만 단어 자체의 동의어·새 활용형·새 이름을 만들지 않는다.
 검색어는 인물·사건·대상 표현을 우선한다. '어떤/이후/때/처음' 같은 질문 조건만으로
 무관한 장면을 늘리지 말고, 첫 사건 등의 조건은 eventContext에 보존한다.
+검색은 글자 그대로의 부분 일치다. 고유 이름에 붙은 조사나 '전/전투'를 떼고 입력에 실제로 있는
+이름 부분을 선택한다. 회차 번호나 '첫/두/번째' 같은 순서 표현은 검색어 대신 회차·사건 조건에 둔다.
 UUID, 회원/작품 ID, SQL, settingKey, scopeName을 생성하지 않는다.
 episodeFrom/To는 질문에 명시된 출처 회차만 정수로, 없으면 null. 서버 허용 범위를 넓히지 않는다.
 사건이 일어난 시간과 그 장면이 서술된 출처 회차를 동일시하지 않는다.
@@ -113,12 +119,16 @@ requestedParts는 독립된 요구를 최대4개로 보존한다. ref는 순서�
 '사건 직후 감정'/'그 경험이 이후 행동에 준 영향'처럼 주체·대상·전후·인과 범위를 보존한다.
 경험 전체의 영향을 감정의 영향만으로 좁히거나, 감정의 영향을 경험 전체의 결과로 넓히지 않는다.
 시점 요구에는 확인 가능한 출처 회차도 포함한다. perItem이면 항목마다 같은 요구를 적용한다.
+각 requestedPart.sourceEpisodeNo는 현재 질문에서 그 요구의 출처를 'N화'로 명시한 단일 회차만
+정수로 채운다. 예: '12화의 원인과 25화의 해결 방법'은 각 부분에 12, 25다. 범위·최초 시점·
+회상 속 사건 시점·이전 답변에서 추정한 회차는 null이다. 회차를 명시하지 않은 부분도 null이다.
 sourceNeed가 NONE이어도 sourceFallback=true이면 보완할 원래 요구를 requestedParts에 하나 이상 담는다.
 둘 다 원문 확인이 필요 없을 때만 []다. 구형 호환 requestedFacets는 항상 []다.
 유형 전체의 최초 획득 질문은 focus.factType만 지정하고 attribute=null이다.
 최초 획득 자체는 sourceNeed=PROCESS로 원문을 확인하고 최초·습득 조건을 requestedParts/eventContext에 보존한다.
-처음 습득한 항목을 찾을 때는 HISTORY로 초기 기록을 확인한다. 현재 보유 목록을 명시적으로
-물었을 때만 CURRENT를 사용하며, 가장 이른 등록 기록을 실제 최초 습득이라고 단정하지 않는다.
+처음 습득한 장면·경위 자체는 NONE+PROCESS로 찾는다. 등록된 초기 이력·항목 목록도 함께
+요청할 때만 HISTORY로 확인한다. 현재 보유 목록을 명시적으로 물었을 때만 CURRENT를 사용하며,
+가장 이른 등록 기록을 실제 최초 습득이라고 단정하지 않는다.
 sourceNeed=NONE의 보완 계획은 eventContext=null이다. 질문에 없는 항목명을 attribute에 만들지 않는다.
 eventScope는 언제/어떻게 질문이 이미 이루어진 사건·획득을 묻는다면 ACTUAL, 앞으로의 실행 계획을
 묻는다면 PLANNED다. 실행 여부를 구분할 필요가 없는 장면·설명 질문과 sourceNeed NONE은 null이다.

@@ -22,6 +22,7 @@ class LookupClarificationRequired(ResponseValidationFailure):
 
 
 RULES = {
+    "UNOBSERVED_PART_EPISODE": "requestedParts.sourceEpisodeNo는 현재 질문에 N화로 직접 명시된 출처 회차만 사용하세요. 이전 대화나 작품 지식으로 추정하지 말고 명시되지 않은 부분은 null로 두세요. 요청의 내용은 유지하세요.",
     "REQUESTED_PARTS_INCOMPLETE": "requestedParts의 모든 P*를 실제 답한 claims.answeredFacets와 미확인 missingFacets로 빠짐없이 나누고 두 목록을 겹치지 마세요. 현재값/원문 비교는 confirmed=true인 실제 CURRENT R* 값과 E* 원문을 구분해 답하면 두 요구를 함께 표시할 수 있습니다. 원문만으로 현재값을 확정하지 말고 확인하지 못한 요구는 missingFacets에 남기세요. 요구를 삭제하지 마세요.",
     "ANSWER_COVERAGE_MISMATCH": "답한 요청 부분과 근거·conflicts는 유지하고 coverage를 고치세요. conflicts가 있으면 모든 요구를 답해도 PARTIAL입니다. 미답 행/facet이 있어도 근거 있는 주장·관측·충돌이 있으면 PARTIAL이고, 그런 내용이 전혀 없으면 NONE입니다. 모든 요구를 답하고 conflicts·미답 행/facet이 모두 없을 때만 COMPLETE입니다. COMPLETE를 맞추려고 충돌·미확인 요구를 삭제하지 마세요.",
     "EVENT_CONTEXT_REQUIRED": "원문에서 관측한 사건이 질문의 실제 사건·계획·가정 문맥과 일치하는지 명시적으로 판정하세요.",
@@ -165,6 +166,7 @@ _RULE_FIELDS = {
     "PLAN_SUBJECTS": "subjects",
 }
 _RULE_PATHS = {
+    "UNOBSERVED_PART_EPISODE": "$.requestedParts[].sourceEpisodeNo",
     "REQUESTED_PARTS_INCOMPLETE": "$.missingFacets",
     "ANSWER_COVERAGE_MISMATCH": "$.coverage",
     "UNOBSERVED_FOCUS_ATTRIBUTE": "$.subjects[].focus.attribute",

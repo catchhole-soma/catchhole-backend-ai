@@ -55,6 +55,7 @@ from app.chatbot.qa_validation import (
     ResponseValidationFailure,
 )
 from app.chatbot.runtime import ProviderFailure, ProviderOutputTruncated
+from app.chatbot.source_search import missing_scope, scene_priority, validate_part_episodes
 from app.clients.setting_tools_client import SettingToolClientError
 from app.retrieval.evidence import compose_evidence
 from app.retrieval.search_contracts import SearchScope, SearchScopeUnavailable
@@ -275,10 +276,18 @@ class _HybridSession(_Session):
             ctx.member_id, ctx.work_id, self.source_from or 1, self.source_to or 2147483647
         )
 
-    async def search(self, method, *args, **kwargs):
+    async def search(self, method, *args, search_scope=None, **kwargs):
         self.consume(method)
+        scope = search_scope or self.scope
+        if (
+            scope.member_id != self.scope.member_id
+            or scope.work_id != self.scope.work_id
+            or scope.episode_from < self.scope.episode_from
+            or scope.episode_to > self.scope.episode_to
+        ):
+            raise SearchScopeUnavailable()
         with self.metrics.latency.labels(method).time():
-            result = await getattr(self.handler.search, method)(self.scope, *args, **kwargs)
+            result = await getattr(self.handler.search, method)(scope, *args, **kwargs)
         self.codes.extend(result.readiness.limitations)
         if result.readiness.partial:
             self.codes.append("INDEX_PARTIAL")
@@ -345,6 +354,7 @@ class _HybridSession(_Session):
 
         def valid(plan):
             self.validate_focus(plan)
+            validate_part_episodes(plan, ctx.question)
             explicit = self.observed_question_text()
             if any(s.name.strip().casefold() not in explicit for s in plan.subjects):
                 raise ChatResponseContractError("UNOBSERVED_SUBJECT_NAME")
@@ -534,6 +544,7 @@ class _HybridSession(_Session):
                 self.codes.append("SEARCH_LIMIT")
                 break
             self.rounds = round_no
+            search_scope = self.scope if round_no == 1 else missing_scope(plan, draft, self.scope)
             if round_no == 1:
                 hints = tuple(
                     dict.fromkeys(
@@ -559,6 +570,7 @@ class _HybridSession(_Session):
                     self.expansion_query(plan, draft, query),
                     _QueryEmbedding(self),
                     limit=self.hcfg.vector_top_k,
+                    search_scope=search_scope,
                     # A returned candidate may have been omitted by context limits.
                     # Only passages actually exposed to the answer model were read.
                     excluded_chunk_ids=tuple(
@@ -577,19 +589,23 @@ class _HybridSession(_Session):
                 candidates = list(found)
             else:
                 candidates.extend(found)
+            neighbors = ()
             if found and self.hcfg.neighbor_radius and self.tools_available(4):
-                candidates.extend(
-                    await self.search(
-                        "neighbors",
-                        found,
-                        radius=self.hcfg.neighbor_radius,
-                        limit=self.hcfg.max_neighbors,
-                    )
+                neighbors = await self.search(
+                    "neighbors",
+                    found,
+                    radius=self.hcfg.neighbor_radius,
+                    limit=self.hcfg.max_neighbors,
+                    search_scope=search_scope,
                 )
+                candidates.extend(neighbors)
             elif found and self.hcfg.neighbor_radius:
                 self.codes.append("SEARCH_LIMIT")
             previous = self.evidence_identity()
-            self.add_search_evidence(candidates, fresh=found if plan.requested_parts else ())
+            self.add_search_evidence(
+                candidates,
+                fresh=scene_priority(found, neighbors) if plan.requested_parts else (),
+            )
             if self.evidence_identity() == previous:
                 continue
             await self.register([e.chunk for e in self.evidences if e.chunk])
@@ -1257,7 +1273,7 @@ class _HybridSession(_Session):
         else:
             missing = set(draft.missing_facets)
         descriptions = [p.description for p in plan.requested_parts if p.ref in missing]
-        if draft is not None and descriptions and missing < set(requested_facets(plan)):
+        if draft is not None and descriptions and draft.coverage == "PARTIAL":
             # Once one part is answered, repeating the whole question/keyword bag
             # pulls the vector search back to that part. Keep the missing need and
             # event identity, never model-authored claims or invented search facts.
@@ -1271,6 +1287,13 @@ class _HybridSession(_Session):
                         query if item_ref is not None else None,
                     ],
                 )
+            )[:1000]
+        if item_ref is None and plan.requested_parts:
+            # Repeating the same event in the question, part descriptions and
+            # keyword bag dilutes the semantic query. Preserve the user's question
+            # once; a referential follow-up still gets its resolved event identity.
+            return " ".join(
+                filter(None, [self.execution.context.question, plan.event_context or query])
             )[:1000]
         return " ".join(
             filter(
