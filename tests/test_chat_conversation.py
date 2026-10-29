@@ -46,7 +46,7 @@ def long_history(spring):
     spring.context = spring.context.model_copy(
         update={
             "conversation": [
-                ConversationTurn(question="past details " * 150, answer="이전 답변"),
+                ConversationTurn(question="past details " * 250, answer="이전 답변"),
                 ConversationTurn(question="아리아의 능력과 반지는?", answer="최근 답변"),
             ]
         }

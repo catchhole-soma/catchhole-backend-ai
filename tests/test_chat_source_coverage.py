@@ -126,8 +126,8 @@ def test_scene_priority_keeps_two_hits_and_the_first_scenes_continuation():
     assert [c.chunk_id for c in ordered] == [
         anchor.chunk_id,
         other.chunk_id,
-        before.chunk_id,
         after.chunk_id,
+        before.chunk_id,
         noise.chunk_id,
     ]
     assert scene_priority([noise, before], [], retained=[anchor])[0] == before
@@ -169,6 +169,28 @@ def test_targeted_missing_chapter_uses_remaining_shared_evidence_budget(tmp_path
     assert BEHAVIOR in result["finish"]["result"]["text"]
     passages = result["raw"].requests[-1]["input"]["passages"]
     assert sum(len(p["references"]) for p in passages) == 8
+
+
+def test_scene_window_includes_adjacent_search_hits_before_a_distant_summary():
+    from app.retrieval.evidence import compose_evidence
+
+    start = passage("첫 부품은 37원에 샀다.", 21, episode=4, index=3, offset=300)
+    middle = passage("다음 가게로 이동했다.", 22, episode=4, index=4, offset=400)
+    end = passage("둘째 부품은 58원에 샀다.", 23, episode=4, index=5, offset=500)
+    summary = passage("부품 값은 백 원쯤이라고 말했다.", 24, episode=4, index=9, offset=900)
+    seeds = [start, summary, middle]
+    ordered = scene_priority(seeds, [end])
+    bundle = compose_evidence(
+        [*seeds, end], max_items=3, per_episode=3, priority_chunk_ids=[c.chunk_id for c in ordered]
+    )
+    assert {c.chunk_id for c in bundle.chunks} == {start.chunk_id, middle.chunk_id, end.chunk_id}
+
+
+def test_scene_window_does_not_jump_an_unread_chunk():
+    start = passage("시작", 25, episode=4, index=3)
+    distant = passage("두 칸 뒤", 26, episode=4, index=5)
+    other = passage("다른 요구", 27, episode=5)
+    assert distant not in scene_priority([start, other], [distant])
 
 
 @pytest.mark.parametrize("room", [False, True])

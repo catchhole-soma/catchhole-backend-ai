@@ -233,6 +233,7 @@ class _HybridSession(_Session):
         self.current_requirement_targets = set()
         self.current_requirement_resolved = False
         self.supported_evidence = ()
+        self.source_snapshot = None
         self.recovery_evidence = ()
         self.answer_validation_failed = False
 
@@ -1009,6 +1010,37 @@ class _HybridSession(_Session):
         used = answer_evidence_refs(answer)
         # This includes every original chunk covering a cross-boundary support.
         self.supported_evidence = tuple(e for e in evidences if e.ref in used)
+        self.source_snapshot = (answer, self.supported_evidence)
+
+    def previous_source_claims(self):
+        """Rebind this execution's validated draft to the current source identities."""
+        if not getattr(self, "source_snapshot", None):
+            return []
+        answer, sources = self.source_snapshot
+        current = {self.source_identity(e): e.ref for e in self.evidences}
+        refs = {
+            e.ref: current[self.source_identity(e)]
+            for e in sources
+            if self.source_identity(e) in current
+        }
+        claims = []
+        for claim in answer.claims:
+            if not set(claim.evidence_refs) <= refs.keys() or any(
+                s.evidence_ref not in refs for s in claim.supports
+            ):
+                continue
+            claims.append(
+                claim.model_copy(
+                    update={
+                        "evidence_refs": [refs[r] for r in claim.evidence_refs],
+                        "supports": [
+                            s.model_copy(update={"evidence_ref": refs[s.evidence_ref]})
+                            for s in claim.supports
+                        ],
+                    }
+                ).model_dump(by_alias=True)
+            )
+        return claims
 
     def merge_partial_snapshot(self, previous, latest, plan):
         """Combine independent requested facets with a fresh, unambiguous E map."""
@@ -1064,7 +1096,33 @@ class _HybridSession(_Session):
             row in current and requested <= current[row] and row not in latest.unanswered_row_refs
             for row in old_answer.unanswered_row_refs
         )
-        if old_answer.conflicts or not (new_facets - old_facets or row_progress):
+        if old_answer.conflicts:
+            return previous
+        if not (new_facets - old_facets or row_progress):
+            # Same PARTIAL coverage can still contain new verified details of a
+            # multi-step requirement. Prefer a complete rewritten draft only if
+            # it retains the old source proofs and adds new ones. Do not blindly
+            # concatenate competing interpretations or guess quality from length.
+            def proofs(answer, sources):
+                by_ref = {e.ref: self.source_identity(e) for e in sources}
+                passages = self.evidence_passages(sources)
+                return {
+                    (by_ref[ref], support.quote)
+                    for claim in answer.claims
+                    for support in claim.supports
+                    for ref in resolve_support_references([support], passages)
+                }
+
+            before_proofs = proofs(old_answer, old_evidence)
+            after_proofs = proofs(latest, self.evidences)
+            if (
+                before_proofs
+                and before_proofs < after_proofs
+                and old_facets <= new_facets
+                and not (set(latest.unanswered_row_refs) - set(old_answer.unanswered_row_refs))
+                and all(facets <= current.get(row, set()) for row, facets in before.items())
+            ):
+                return latest, tuple(self.evidences)
             return previous
 
         def superseded(claim):
@@ -1474,6 +1532,7 @@ class _HybridSession(_Session):
             "previousItemAnswers": []
             if self.item_draft is None
             else [i.model_dump(by_alias=True) for i in self.item_draft.item_answers if i.answers],
+            "previousSourceClaims": self.previous_source_claims(),
             "passages": self.evidence_passages(self.evidences),
             "limitations": notices(self.codes, include_conversation_limit=True),
         }

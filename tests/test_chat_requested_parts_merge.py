@@ -182,3 +182,38 @@ def test_missing_part_hint_survives_a_long_expansion_query():
     query = state.expansion_query(plan(), previous, "긴 검색 표현 " * 200)
     assert len(query) <= 1000
     assert "실제 이후 행동" in query and "동료의 반응" in query
+
+
+@pytest.mark.parametrize("retain_old_proof", [False, True])
+def test_same_unfinished_part_keeps_new_detail_only_with_previous_proofs(retain_old_proof):
+    state = session()
+    first = evidence("E1", "협상은 시작됐다.", 110, episode=4)
+    second = evidence("E2", "운송 권리는 공동으로 갖는다.", 111, episode=5)
+    old = answer("협상 시작", ["E1"], [], "E1", first.text)
+    old.claims[0] = old.claims[0].model_copy(update={"related_facets": ["P1"]})
+    new = answer(second.text, ["E2"], [], "E2", second.text)
+    new.claims[0] = new.claims[0].model_copy(update={"related_facets": ["P1"]})
+    if retain_old_proof:
+        new.claims.insert(0, old.claims[0].model_copy(deep=True))
+    state.evidences = [first, second]
+    merged, _ = state.merge_partial_snapshot((old, (first,)), new, plan())
+    assert merged.coverage == "PARTIAL"
+    assert merged.missing_facets == old.missing_facets
+    assert (second.text in " ".join(c.text for c in merged.claims)) is retain_old_proof
+
+
+def test_previous_source_draft_rebinds_identity_and_never_reuses_missing_sources():
+    state = session()
+    original = evidence("E1", "원래 확인한 사실", 112, episode=4)
+    other = evidence("E1", "다른 자료", 113, episode=5)
+    old = answer("원래 확인한 사실", ["E1"], ["P1"], "E1", original.text)
+    state.preserve_supported_evidence(old, [original])
+    state.evidences = [
+        other,
+        original.__class__("E2", original.text, original.episode, chunk=original.chunk),
+    ]
+    claims = state.previous_source_claims()
+    assert claims[0]["evidenceRefs"] == ["E2"]
+    assert claims[0]["supports"][0]["evidenceRef"] == "E2"
+    state.evidences = [other]
+    assert state.previous_source_claims() == []

@@ -30,21 +30,32 @@ def missing_scope(plan, draft, scope):
 
 
 def scene_priority(seeds, neighbors, retained=()):
-    """Keep two independent hits and a small coherent window around the best hit.
+    """Read a small continuous scene before another mention of the same event.
 
-    Neighbors were authorized/revalidated by retrieval. Reserve at most two slots
-    for the leading scene, leaving the remaining rank order and all caps intact.
+    Adjacent hits can already be in seeds (and thus absent from neighbors). They
+    still belong in the scene window. Only returned, authorized candidates are
+    ordered here; source order never proves narrative chronology.
     """
     if not seeds:
         return []
     anchor = seeds[0]
-    adjacent = [
-        c
-        for c in neighbors
-        if c.source_fingerprint == anchor.source_fingerprint
-        and abs(c.chunk_index - anchor.chunk_index) == 1
-    ]
-    adjacent.sort(key=lambda c: c.chunk_index)
+    pool = list({c.chunk_id: c for c in [*seeds, *neighbors]}.values())
+
+    def window(seed):
+        same = {c.chunk_index: c for c in pool if c.source_fingerprint == seed.source_fingerprint}
+        result = []
+        for direction in (1, -1):
+            for distance in (1, 2):
+                candidate = same.get(seed.chunk_index + direction * distance)
+                if candidate is None:
+                    break  # Never bridge an unread chunk.
+                result.append(candidate)
+        return result
+
+    adjacent = window(anchor)
+    independent = next(
+        (c for c in seeds[1:] if c.source_fingerprint != anchor.source_fingerprint), None
+    )
     continuation = [
         c
         for c in [*seeds, *neighbors]
@@ -54,4 +65,15 @@ def scene_priority(seeds, neighbors, retained=()):
             for old in retained
         )
     ]
-    return [*continuation, *seeds[:2], *adjacent[:2], *seeds[2:]]
+    return list(
+        {
+            c.chunk_id: c
+            for c in [
+                *continuation,
+                anchor,
+                *([independent] if independent else []),
+                *adjacent,
+                *seeds,
+            ]
+        }.values()
+    )
