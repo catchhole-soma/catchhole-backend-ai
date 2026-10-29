@@ -15,6 +15,10 @@ PLANNER/선정 전체 page/COVERAGE/각 BOOK_SOURCE/BOOK_COVERAGE를 즉시 저�
 
 두 분기는 한쪽 실패·질문0으로 취소하지 않는다. 역할 cap/예약 실패와 공유 lease/input/source 손실을 구분하며,
 공유 무효화 때 양쪽의 새 예약·게시를 막고 기존 실제 사용량은 UNKNOWN/늦은 SETTLE로 정산한다.
+`await worker.aclose()`는 등록된 claim·초기화·두 분기 실행을 멈춘 뒤 해당 실행과 원장 정리를 모두 기다리고 HTTP를 닫는다.
+취소 뒤 분리된 예약 응답·UNKNOWN·SETTLE도 검수 ledger가 소유하며, 이미 측정한 실제 사용량을 유지한다.
+동시·반복 close는 한 번의 종료를 공유하고 한 호출자의 취소가 나머지 정산을 중단하지 않는다.
+새 예약·provider 호출·게시를 시작하지 않으며 원래 API timeout/cancellation 계약을 사용한다.
 SELECT 전용 session factory를 명시하면 기존 frozen RAG를 사용한다. optional embedding은 실제 index와
 model/version/1536 차원·명시 cap이 일치할 때만 실행하고, exact query/input/manifest/index proof가
 원 호출 원장에 맞는 성공 VECTOR receipt를 재사용한다. 미준비 vector는 정상 빈 결과가 아니다.
