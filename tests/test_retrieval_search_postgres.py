@@ -549,3 +549,18 @@ def test_neighbor_radius_counts_chunk_steps_across_one_episode_boundary(corpus):
     )
     assert old[-1] in {c.chunk_id for c in reverse}
     assert old[1] not in {c.chunk_id for c in reverse}
+
+
+@pytest.mark.parametrize("broken", ["seed", "neighbor"])
+def test_episode_boundary_requires_consistent_chunk_count_metadata(corpus, broken):
+    one, two = corpus.episode(40), corpus.episode(41)
+    old = corpus.chunks(one, ["old first", "old last"])
+    corpus.chunks(two, ["next first", "next last"])
+    seeds = corpus.read("direct", [old[-1]])
+    corpus.mutate(
+        "UPDATE retrieval_sources SET chunk_count=0 WHERE episode_id=:id",
+        id=one if broken == "seed" else two,
+    )
+    found = corpus.read("neighbors", seeds, radius=2, include_episode_edges=True)
+    assert {c.episode_no for c in found} == {40}
+    assert all(c.score > 0 for c in found)
