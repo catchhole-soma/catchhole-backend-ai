@@ -303,3 +303,13 @@ Python AI 서버의 실패 응답은 Spring 서버가 해석하기 쉽도록 공
 성공 응답은 FastAPI response model을 우선 사용하고, Spring API의 사용자-facing 응답은 Spring 서버에서 정리합니다.
 
 - [채팅 실행·인증·사용량 계약 v1](docs/chat-execution-v1.md) — #237, 기본 비활성; 자연어 orchestration은 #238.
+
+
+### 검수 전용 Worker (#310)
+
+설정/오탈자를 독립 실행하고 저장된 계획·정상 판정·성공 구간을 같은 입력에서 재개한다.
+기본 비활성이며 `PYTHONPATH=. python scripts/run_validation_worker.py --enable --once
+--backend-url "$VALIDATION_BACKEND_URL" --worker-id validation-explicit`로만 명시 시작한다.
+서버의 모든 역할/분기 예산과 기존 secret 환경이 필요하다. 이 명령은 실제 provider를 호출할 수 있다.
+실제 실행/복구·SELECT 전용 검색·optional embedding cap·로컬 합성 검증은
+[검수 실행 계약](docs/validation-execution-v1.md)을 따른다. 추출 Job·후보·자동 확정은 만들지 않는다.

@@ -19,6 +19,10 @@ class FrozenSearchScope(SearchScope):
     report_id: UUID = field(kw_only=True)
     baseline_hash: str = field(kw_only=True)
     target_hash: str = field(kw_only=True)
+    job_id: UUID | None = field(default=None, kw_only=True)
+    lease_token: UUID | None = field(default=None, kw_only=True, repr=False)
+    generation: int | None = field(default=None, kw_only=True)
+    input_digest: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
         super().__post_init__()
@@ -35,13 +39,19 @@ JOIN works rw ON rw.id=r.work_id JOIN members rm ON rm.id=rw.member_id
 JOIN episodes target ON target.id=r.episode_id AND target.work_id=r.work_id
 WHERE r.id=:report AND r.work_id=:work AND r.member_id=:member AND rw.member_id=:member
  AND rw.lifecycle_status='ACTIVE' AND rm.status='ACTIVE'
+ AND r.is_current=true AND target.content_revision=r.source_content_revision
+ AND ((CAST(:job AS uuid) IS NULL AND NOT EXISTS (SELECT 1 FROM validation_jobs j WHERE j.report_id=r.id))
+      OR EXISTS (SELECT 1 FROM validation_jobs j WHERE j.report_id=r.id AND j.id=CAST(:job AS uuid)
+          AND j.status='RUNNING' AND j.lease_token=CAST(:lease AS uuid) AND j.lease_expires_at>now()
+          AND j.generation=:generation AND j.input_digest=:input_digest))
  AND r.baseline_hash=:baseline AND r.source_content_hash=:target_hash
  AND r.baseline_status='READY' AND r.status<>'INVALIDATED'
  AND r.baseline_seed IS NOT NULL AND r.baseline_entries IS NOT NULL
  AND target.content_hash=r.source_content_hash AND target.content_s3_key=r.source_content_s3_key
  AND target.content_s3_version IS NOT DISTINCT FROM r.source_content_s3_version
  AND target.episode_no=r.source_episode_no AND target.status<>'ARCHIVED'
- AND NOT EXISTS (SELECT 1 FROM episode_source_purge_requests p WHERE p.episode_id=target.id)
+ AND NOT EXISTS (SELECT 1 FROM episode_source_purge_requests p WHERE p.episode_id=target.id
+     AND (p.retained_content_key IS NULL OR p.retained_content_key<>target.content_s3_key))
 """
 
 FROZEN_FILTER = f"""
@@ -51,6 +61,7 @@ FROZEN_FILTER = f"""
   AND b.source_manifest->>'sourceKind'='EPISODE'
   AND b.source_manifest->>'episodeId'=e.id::text
   AND b.source_manifest->>'episodeNo'=e.episode_no::text
+  AND COALESCE((b.source_manifest->>'contentRevision')::bigint,0)=e.content_revision
   AND b.source_manifest->>'contentHash'=s.source_hash
   AND b.source_manifest->>'contentS3Key'=s.source_key
   AND b.source_manifest->>'contentS3Version' IS NOT DISTINCT FROM s.source_version))
@@ -58,14 +69,19 @@ FROZEN_FILTER = f"""
 
 
 class FrozenRetrievalRepository(RetrievalSearchRepository):
-    from_clause = CURRENT_FROM + FROZEN_FILTER
+    from_clause = CURRENT_FROM.replace(
+        "WHERE p.episode_id=e.id)",
+        "WHERE p.episode_id=e.id AND (p.retained_content_key IS NULL OR p.retained_content_key<>e.content_s3_key))",
+    ) + FROZEN_FILTER
 
     def __init__(self, session, scope: FrozenSearchScope, spec):
         if not isinstance(scope, FrozenSearchScope):
             raise TypeError("Frozen search scope required")
         super().__init__(session, scope, spec)
         self.params.update(
-            report=scope.report_id, baseline=scope.baseline_hash, target_hash=scope.target_hash
+            report=scope.report_id, baseline=scope.baseline_hash, target_hash=scope.target_hash,
+            job=scope.job_id, lease=scope.lease_token, generation=scope.generation,
+            input_digest=scope.input_digest
         )
 
     def readiness(self):
@@ -145,14 +161,16 @@ class FrozenRetrievalSearchService:
             context.work_id,
             report_id=context.report_id,
             baseline_hash=context.baseline_hash,
-            target_hash=context.target_hash,
+            target_hash=context.target_hash, job_id=context.job_id, lease_token=context.lease_token,
+            generation=context.generation, input_digest=context.input_digest,
         )
         try:
             if intent.operation == "KEYWORD":
                 result = await self.service.keyword(scope, intent.query, limit=limit)
             else:
                 readiness = await self.service.readiness(scope)
-                if readiness.vector_chunks == 0 or embedding_client is None:
+                if (readiness.vector_chunks == 0 or readiness.vector_ready_sources < readiness.source_count
+                        or embedding_client is None):
                     raise IncompleteInspection("VECTOR_NOT_READY")
                 result = await self.service.vector(
                     scope, intent.query, embedding_client, limit=limit

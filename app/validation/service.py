@@ -1,4 +1,4 @@
-"""Callable GH306 inspection. No Worker claims, extraction writes or result persistence."""
+"""Frozen inspection with optional durable semantic checkpoints; no extraction writes."""
 
 import asyncio
 import json
@@ -93,9 +93,10 @@ def _settings(entries, sources=()):
 
 
 class SettingValidationService:
-    def __init__(self, data_client, model_client, budget, *, search=None, embedding_client=None):
+    def __init__(self, data_client, model_client, budget, *, search=None, embedding_client=None, checkpoint=None):
         self.data, self.model, self.limits = data_client, model_client, budget
         self.search, self.embedding_client = search, embedding_client
+        self.checkpoint = checkpoint
 
     async def inspect(self):
         budget = BudgetState(self.limits)
@@ -106,7 +107,19 @@ class SettingValidationService:
                 budget.consume("lookup")
                 return await asyncio.wait_for(action(*args), budget.remaining())
 
+            async def stage(role, ref, payload, response_type, validate, *, model_role=None):
+                saved = self.checkpoint.stage(role, ref) if self.checkpoint else None
+                value = response_type.model_validate(saved) if saved is not None else await call_role(
+                    self.model, model_role or role, payload, response_type, budget
+                )
+                validate(value)
+                if self.checkpoint and saved is None:
+                    await self.checkpoint.save_stage(role, ref, value.model_dump())
+                return value
+
             frozen = await read(self.data.read_input)
+            if self.checkpoint and hasattr(self.checkpoint, "bind_sources"):
+                self.checkpoint.bind_sources(frozen)
             target_read = await read(self.data.read_source, frozen.target)
             target = target_read.text
             if (
@@ -130,7 +143,8 @@ class SettingValidationService:
                 {row["entryRef"] for row in entries}
             ) != len(entries):
                 raise IncompleteInspection("INCOMPLETE_CATALOGUE")
-            settings = _settings(entries, frozen.sources)
+            execution = getattr(self.data, "execution", False)
+            settings = self.data.model_settings if execution else _settings(entries, frozen.sources)
             source_catalogue = [
                 dict(
                     source_ref=source.ref,
@@ -148,6 +162,8 @@ class SettingValidationService:
                 )
                 for source in frozen.sources
             ]
+            if execution:
+                source_catalogue = frozen.model_source_catalogue
             subjects = {row["subject_ref"] for row in settings}
             catalogue = [
                 {key: row[key] for key in ("entry_ref", "subject_ref", "domain", "name", "aliases")}
@@ -162,6 +178,8 @@ class SettingValidationService:
             clues = collect_clues(
                 target, [name for row in catalogue for name in [row["name"], *row["aliases"]]]
             )
+            if execution:
+                clues = target_read.model_clues
             coverage = [
                 {
                     "role": role,
@@ -179,7 +197,7 @@ class SettingValidationService:
                 search=self.search,
                 embedding_client=self.embedding_client,
             )
-            book_rules, book_origins, book_coverage = [], {}, {}
+            book_origins, book_coverage = {}, {}
             books = [source for source in frozen.sources if source.kind == "SETTING_BOOK"]
             for source in books:
                 book_coverage[source.ref] = len(coverage)
@@ -194,44 +212,7 @@ class SettingValidationService:
                         "completed_checks": 0,
                     }
                 )
-            for source in books:
-                raw = await read(self.data.read_source, source)
-                if raw.start != 0 or raw.end != raw.total_code_points:
-                    raise IncompleteInspection("BOOK_NOT_COMPLETE")
-                count = (len(raw.text) + self.limits.segment_chars - 1) // self.limits.segment_chars
-                source_coverage = coverage[book_coverage[source.ref]]
-                source_coverage.update(
-                    source_read_status="READY",
-                    planned_checks=count * len(segments),
-                    reason="BOOK_REVIEW_PENDING",
-                )
-                # Every raw-book segment needs a high review. Do not allocate/omit excess work.
-                if (len(book_rules) + count) * len(segments) + 2 * len(
-                    segments
-                ) > self.limits.model_calls:
-                    raise IncompleteInspection("BUDGET_EXHAUSTED")
-                for index, book_segment in enumerate(
-                    split_segments(
-                        raw.text,
-                        core_chars=self.limits.segment_chars,
-                        context_chars=self.limits.context_chars,
-                    )
-                ):
-                    budget.remaining()
-                    start, end = book_segment.context_start, book_segment.context_end
-                    ref = corpus.register(source, start, end, raw.text[start:end], "BOOK_REVIEW")
-                    book_rules.append(
-                        {
-                            **corpus.evidence[ref],
-                            "evidence_ref": ref,
-                            "ref": f"{source.ref}SEG{index + 1}",
-                            "core_start": book_segment.start,
-                            "core_end": book_segment.end,
-                        }
-                    )
-                if not count:
-                    source_coverage.update(status="PROCESSED", reason="EMPTY_SOURCE_READ")
-            drafts = []
+            drafts, segment_inputs = [], {}
             for segment in segments:
                 common = {
                     "segment": asdict(segment),
@@ -244,27 +225,23 @@ class SettingValidationService:
                         for row in catalogue
                     ],
                 }
-                first = await call_role(self.model, "PLANNER", common, QuestionBatch, budget)
-                validate_batch(first, [segment], subjects, [], target)
+                segment_inputs[segment.ref] = common
+                first = await stage("PLANNER", segment.ref, common, QuestionBatch,
+                                    lambda value, segment=segment: validate_batch(value, [segment], subjects, [], target))
                 coverage = self._record_coverage(coverage, "PLANNER", first)
                 drafts.extend((question, f"PLANNER:{segment.ref}") for question in first.questions)
                 selected = set()
                 for index in range(0, len(catalogue), self.limits.catalogue_page_size):
                     page = catalogue[index : index + self.limits.catalogue_page_size]
-                    selection = await call_role(
-                        self.model,
-                        "RELATED_SELECTION",
+                    selection = await stage(
+                        "RELATED_SELECTION", f"{segment.ref}:PAGE{index // self.limits.catalogue_page_size + 1}",
                         {
                             **common,
                             "catalogue": page,
                         },
                         RelatedSelection,
-                        budget,
+                        lambda value, page=page: self._validate_selection(value, page),
                     )
-                    if len(selection.entries) != len(page) or {
-                        entry.entry_ref for entry in selection.entries
-                    } != {row["entry_ref"] for row in page}:
-                        raise IncompleteInspection("RELATED_SELECTION_INCOMPLETE")
                     selected.update(
                         entry.entry_ref for entry in selection.entries if entry.selected
                     )
@@ -279,87 +256,108 @@ class SettingValidationService:
                 relevant_clues = [
                     clue for clue in clues if segment.start <= clue["span"]["start"] < segment.end
                 ]
-                second = await call_role(
-                    self.model,
-                    "COVERAGE",
+                second = await stage(
+                    "COVERAGE", segment.ref,
                     {
                         **common,
                         "settings": relevant,
                         "mechanical_clues": relevant_clues,
                     },
                     QuestionBatch,
-                    budget,
+                    lambda value, segment=segment, selected=selected, clues=relevant_clues: self._validate_coverage(
+                        value, segment, subjects, selected, target, clues),
                 )
-                validate_batch(second, [segment], subjects, selected, target)
-                if (
-                    len(second.clue_checks) != len(relevant_clues)
-                    or {row.entry_ref for row in second.clue_checks}
-                    != {row["ref"] for row in relevant_clues}
-                    or any(row.status == "UNPROCESSED" for row in second.clue_checks)
-                ):
-                    raise IncompleteInspection("CLUE_COVERAGE_INCOMPLETE")
                 coverage = self._record_coverage(coverage, "COVERAGE", second)
                 drafts.extend(
                     (question, f"COVERAGE:{segment.ref}") for question in second.questions
                 )
-                # Fixed BOOK raw is inspected independently even when DB/planner have no questions.
-                for rule in book_rules:
-                    coverage_index = len(coverage)
-                    coverage.append(
-                        {
-                            "role": "BOOK_COVERAGE",
-                            "segment_ref": segment.ref,
-                            "rule_ref": rule["ref"],
-                            "source_ref": rule["source_ref"],
-                            "status": "UNPROCESSED",
-                            "reason": "NOT_RUN",
-                        }
-                    )
-                    batch = await call_role(
-                        self.model,
-                        "COVERAGE",
-                        {
-                            **common,
-                            "settings": [],
-                            "raw_rules": [rule],
-                            "mechanical_clues": [],
-                        },
-                        QuestionBatch,
-                        budget,
-                    )
-                    validate_batch(batch, [segment], subjects, [rule["ref"]], target)
-                    coverage[coverage_index].update(
-                        status=batch.segments[0].status,
-                        reason=batch.segments[0].reason,
-                        rules=[row.model_dump() for row in batch.rules],
-                    )
-                    source_coverage = coverage[book_coverage[rule["source_ref"]]]
-                    source_coverage["completed_checks"] += 1
-                    if source_coverage["completed_checks"] == source_coverage["planned_checks"]:
-                        source_coverage.update(
-                            status="PROCESSED", reason="INDEPENDENT_BOOK_REVIEW_COMPLETE"
-                        )
-                    origin = f"BOOK_COVERAGE:{segment.ref}:{rule['ref']}"
-                    book_origins[origin] = rule["evidence_ref"]
-                    drafts.extend((question, origin) for question in batch.questions)
-                    if batch.questions:
-                        for record in coverage:
-                            if (
-                                record.get("role") == "COVERAGE"
-                                and record.get("segment_ref") == segment.ref
-                            ):
-                                record.update(
-                                    status="PLANNED", reason="INDEPENDENT_BOOK_QUESTION_ADDED"
-                                )
+            restored = self.checkpoint.load_state() if self.checkpoint else None
+            saved_planning = (restored or {}).get("planning", restored or {})
+            corpus.evidence.update({row["ref"]: row for row in saved_planning.get("evidence", [])})
+            book_origins.update(saved_planning.get("book_origins", {}))
+            for source in books:
+                saved_book = self.checkpoint.stage("BOOK_SOURCE", source.ref) if self.checkpoint else None
+                raw = None
+                source_coverage = coverage[book_coverage[source.ref]]
+                if saved_book is not None:
+                    source_coverage.update(saved_book)
+                    parts = self.checkpoint.book_segments(source.ref)
+                else:
+                    raw = await read(self.data.read_source, source)
+                    if raw.start != 0 or raw.end != raw.total_code_points:
+                        raise IncompleteInspection("BOOK_NOT_COMPLETE")
+                    parts = [{"ref": part.ref, "start": part.start, "end": part.end,
+                              "contextStart": part.context_start, "contextEnd": part.context_end}
+                             for part in split_segments(raw.text, core_chars=self.limits.segment_chars,
+                                                        context_chars=self.limits.context_chars)]
+                    source_coverage.update(source_read_status="READY", planned_checks=len(parts) * len(segments),
+                                           reason="BOOK_REVIEW_PENDING")
+                    if not parts:
+                        source_coverage.update(status="PROCESSED", reason="EMPTY_SOURCE_READ")
+                    if self.checkpoint:
+                        await self.checkpoint.save_stage("BOOK_SOURCE", source.ref, dict(source_coverage))
+                # Finish each ready book before attempting the next one. Unknown books remain required.
+                for segment in segments:
+                    common = segment_inputs[segment.ref]
+                    for index, part in enumerate(parts):
+                        rule_ref = f"{source.ref}SEG{index + 1}"
+                        stage_ref = f"{segment.ref}:{rule_ref}"
+                        origin = "BOOK_COVERAGE:" + stage_ref
+                        cached = self.checkpoint.stage("BOOK_COVERAGE", stage_ref) if self.checkpoint else None
+                        if cached is None:
+                            start, end = part["contextStart"], part["contextEnd"]
+                            quote = raw.text[start:end] if raw is not None else (
+                                await read(self.data.read_source, source, start, end)).text
+                            evidence_ref = corpus.register(source, start, end, quote, "BOOK_REVIEW")
+                            rule = {**corpus.evidence[evidence_ref], "evidence_ref": evidence_ref,
+                                    "ref": rule_ref, "core_start": part["start"], "core_end": part["end"]}
+                            batch = await call_role(self.model, "COVERAGE", {**common, "settings": [],
+                                "raw_rules": [rule], "mechanical_clues": []}, QuestionBatch, budget)
+                        else:
+                            batch = QuestionBatch.model_validate(cached)
+                        validate_batch(batch, [segment], subjects, [rule_ref], target)
+                        if batch.questions:
+                            if cached is None:
+                                book_origins[origin] = evidence_ref
+                                saved_planning["book_origins"] = dict(book_origins)
+                                saved_planning["evidence"] = [row for ref, row in corpus.evidence.items()
+                                                              if ref in set(book_origins.values())]
+                                if self.checkpoint:
+                                    await self.checkpoint.save_state({"phase": "PLANNING", **saved_planning})
+                            if origin not in book_origins or book_origins[origin] not in corpus.evidence:
+                                raise IncompleteInspection("BOOK_EVIDENCE_INCOMPLETE")
+                        if self.checkpoint and cached is None:
+                            await self.checkpoint.save_stage("BOOK_COVERAGE", stage_ref, batch.model_dump())
+                        coverage.append({"role": "BOOK_COVERAGE", "segment_ref": segment.ref,
+                            "rule_ref": rule_ref, "source_ref": source.ref, "status": batch.segments[0].status,
+                            "reason": batch.segments[0].reason, "rules": [row.model_dump() for row in batch.rules]})
+                        source_coverage["completed_checks"] += 1
+                        drafts.extend((question, origin) for question in batch.questions)
+                        if batch.questions:
+                            for record in coverage:
+                                if record.get("role") == "COVERAGE" and record.get("segment_ref") == segment.ref:
+                                    record.update(status="PLANNED", reason="INDEPENDENT_BOOK_QUESTION_ADDED")
+                if source_coverage["completed_checks"] == source_coverage["planned_checks"]:
+                    source_coverage.update(status="PROCESSED", reason="INDEPENDENT_BOOK_REVIEW_COMPLETE")
+            # Only questions' actual book context survives. Unquestioned full books are never checkpoint blobs.
+            corpus.evidence = {ref: row for ref, row in corpus.evidence.items() if ref in set(book_origins.values())}
             questions = merge_questions(drafts)
-            queue = list(questions)
+            checks = await self.checkpoint.merge(questions) if self.checkpoint else {}
+            decisions = {ref: ValidationDecision.model_validate(value["decision"])
+                         for ref, value in checks.items() if value.get("outcome") is not None}
+            queue = [q for q in questions if q.ref not in decisions]
             by_ref = {question.ref: question for question in questions}
             pending = {
                 question.ref: [(intent, False) for intent in question.draft.lookup_intents]
                 for question in questions
             }
+            for ref, check in checks.items():
+                if check.get("outcome") is None:
+                    pending[ref] = [(LookupIntent.model_validate(row), False)
+                                    for row in check.get("state", {}).get("lookup_obligations", [])]
             own_receipts = {question.ref: [] for question in questions}
-            revisions = {question.ref: 1 for question in questions}
+            revisions = {question.ref: checks.get(question.ref, {}).get("revision", 1)
+                         for question in questions}
             target_context_reads = {question.ref: [] for question in questions}
             baseline_selections = {
                 question.ref: {
@@ -370,6 +368,46 @@ class SettingValidationService:
                 for question in questions
             }
             seen = {}
+            if restored and restored.get("phase") == "JUDGING":
+                runtime = restored["runtime"]
+                corpus.evidence = {row["ref"]: row for row in runtime["evidence"]}
+                receipts = [self._receipt(row) for row in runtime["receipts"]]
+                own_receipts = {ref: [self._receipt(row) for row in values]
+                                for ref, values in runtime["own_receipts"].items()}
+                own_receipts = {ref: [row for row in values if row.status == "SUCCEEDED"]
+                                for ref, values in own_receipts.items()}
+                pending = {ref: [(LookupIntent.model_validate(row[0]), row[1]) for row in values]
+                           for ref, values in runtime["pending"].items()}
+                target_context_reads = runtime["target_context_reads"]
+                baseline_selections = {ref: set(values) for ref, values in runtime["baseline_selections"].items()}
+                for ref, values in own_receipts.items():
+                    for value in values:
+                        if value.status == "SUCCEEDED":
+                            seen[ref, value.intent.model_dump_json(exclude={"ref"})] = value
+                # A revise response can be durable before the following checkpoint write.
+                for ref, check in checks.items():
+                    if check.get("revision", 1) > runtime["revisions"].get(ref, 1):
+                        completed_intents = [row.intent for row in own_receipts[ref]]
+                        pending[ref] = [(LookupIntent.model_validate(row), True)
+                                       for row in check["state"]["lookup_obligations"]
+                                       if LookupIntent.model_validate(row) not in completed_intents]
+            for ref, check in checks.items():
+                if check.get("outcome") is not None:
+                    bundles[ref] = check.get("bundle", check.get("decision", {}).get("evidence_bundle", {}))
+
+            async def save_runtime():
+                if self.checkpoint:
+                    await self.checkpoint.save_state({"phase": "JUDGING", "planning": saved_planning,
+                        "runtime": {"evidence": list(corpus.evidence.values()),
+                            "receipts": [self._receipt_wire(row) for row in receipts],
+                            "own_receipts": {ref: [self._receipt_wire(row) for row in values]
+                                             for ref, values in own_receipts.items()},
+                            "pending": {ref: [[row.model_dump(), follow] for row, follow in values]
+                                        for ref, values in pending.items()},
+                            "target_context_reads": target_context_reads,
+                            "baseline_selections": {ref: sorted(values) for ref, values in baseline_selections.items()},
+                            "revisions": revisions}})
+
             while queue:
                 question = queue.pop(0)
                 qref, draft = question.ref, question.draft
@@ -421,7 +459,7 @@ class SettingValidationService:
                         receipts.append(receipt)
                         own_receipts[qref].append(receipt)
                 while pending[qref]:
-                    intent, from_follow_up = pending[qref].pop(0)
+                    intent, from_follow_up = pending[qref][0]
                     signature = (qref, intent.model_dump_json(exclude={"ref"}))
                     if signature in seen:
                         if from_follow_up:
@@ -438,6 +476,8 @@ class SettingValidationService:
                         )
                         receipts.append(reused)
                         own_receipts[qref].append(reused)
+                        pending[qref].pop(0)
+                        await save_runtime()
                         continue
                     try:
                         if intent.operation == "BASELINE":
@@ -464,7 +504,7 @@ class SettingValidationService:
                                     "source_ref": "T1",
                                     "start": start,
                                     "end": end,
-                                    "quote": target[start:end],
+                                    ("text" if execution else "quote"): target[start:end],
                                 }
                             )
                             refs, limited = ("T1",), False
@@ -481,7 +521,8 @@ class SettingValidationService:
                             else None,
                         )
                         receipts.append(receipt)
-                        own_receipts[qref].append(receipt)
+                        # Failed receipts remain diagnostic; never reuse them as successful reads.
+                        await save_runtime()
                         raise
                     receipt = LookupReceipt(
                         f"L{len(receipts) + 1}",
@@ -497,6 +538,8 @@ class SettingValidationService:
                     receipts.append(receipt)
                     own_receipts[qref].append(receipt)
                     seen[signature] = receipt
+                    pending[qref].pop(0)
+                    await save_runtime()
                 evidence_refs = {
                     ref for receipt in own_receipts[qref] for ref in receipt.evidence_refs
                 }
@@ -531,6 +574,7 @@ class SettingValidationService:
                     json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
                 ).hexdigest()
                 bundles[qref] = payload
+                await save_runtime()
                 judgment = await call_role(self.model, "JUDGE", payload, ValidationDecision, budget)
                 if judgment.action == "FOLLOW_UP":
                     if (
@@ -542,6 +586,10 @@ class SettingValidationService:
                     affected = set(judgment.affected_question_refs) | {qref}
                     if not affected <= set(by_ref):
                         raise IncompleteInspection("UNKNOWN_QUESTION_REFERENCE")
+                    if self.checkpoint:
+                        next_pending = {ref: [intent for intent, _ in pending[ref]] + judgment.follow_ups
+                                        for ref in affected}
+                        checks = await self.checkpoint.revise(affected, next_pending, by_ref, "NEW_CLUE")
                     for ref in affected:
                         decisions.pop(ref, None)
                         bundles.pop(ref, None)
@@ -549,10 +597,13 @@ class SettingValidationService:
                         pending[ref].extend((intent, True) for intent in judgment.follow_ups)
                         if by_ref[ref] not in queue:
                             queue.append(by_ref[ref])
+                    await save_runtime()
                     continue
                 judgment = self._validate_decision(
                     judgment, question, relevant, evidence, own_receipts[qref], target
                 )
+                if self.checkpoint:
+                    await self.checkpoint.decide(qref, judgment, payload)
                 decisions[qref] = judgment
             await read(self.data.validate)
             await corpus.revalidate()
@@ -599,6 +650,29 @@ class SettingValidationService:
                 tuple(coverage),
                 "BUDGET_EXHAUSTED",
             )
+
+    @staticmethod
+    def _receipt_wire(row):
+        return asdict(row) | {"intent": row.intent.model_dump()}
+
+    @staticmethod
+    def _receipt(row):
+        return LookupReceipt(**{**row, "intent": LookupIntent.model_validate(row["intent"]),
+                                "evidence_refs": tuple(row["evidence_refs"])})
+
+    @staticmethod
+    def _validate_selection(selection, page):
+        if len(selection.entries) != len(page) or {row.entry_ref for row in selection.entries} != {
+            row["entry_ref"] for row in page}:
+            raise IncompleteInspection("RELATED_SELECTION_INCOMPLETE")
+
+    @staticmethod
+    def _validate_coverage(batch, segment, subjects, selected, target, clues):
+        validate_batch(batch, [segment], subjects, selected, target)
+        if (len(batch.clue_checks) != len(clues)
+                or {row.entry_ref for row in batch.clue_checks} != {row["ref"] for row in clues}
+                or any(row.status == "UNPROCESSED" for row in batch.clue_checks)):
+            raise IncompleteInspection("CLUE_COVERAGE_INCOMPLETE")
 
     @staticmethod
     def _record_coverage(coverage, role, batch):
