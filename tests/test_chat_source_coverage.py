@@ -241,3 +241,71 @@ def test_final_quote_repair_failure_keeps_the_verified_subset(tmp_path, retry_em
     assert EMOTION in text and "거절할 주장" not in text
     assert len(result["raw"].requests) == 3
     assert result["search"].calls[-1] == "revalidate"
+
+
+def test_mixed_planned_route_and_actual_resource_reason_have_independent_scopes():
+    from app.chatbot.hybrid_items import apply_event_scope, part_event_scopes
+    from app.schemas.chat_hybrid import RequestedPart
+
+    request = plan().model_copy(update={"event_scope": "PLANNED"})
+    request.requested_parts[0] = RequestedPart(
+        ref="P1", description="예정 경로", eventScope="PLANNED"
+    )
+    request.requested_parts[1] = RequestedPart(
+        ref="P2", description="부족한 자원의 현재 수량", eventScope=None
+    )
+    parsed = GroundedAnswer.model_validate(
+        answer(
+            {
+                **claim("동쪽으로 갈 계획입니다.", "동쪽으로 갈 계획", parts=("P1",)),
+                "eventStatus": "PLANNED",
+            },
+            {
+                **claim("식량이 세 상자 남았습니다.", "식량이 세 상자", parts=("P2",)),
+                "eventStatus": "OCCURRED",
+            },
+        )
+    )
+    guarded = apply_event_scope(
+        parsed, "PLANNED", ["P1", "P2"], part_scopes=part_event_scopes(request)
+    )
+    assert guarded.coverage == "COMPLETE" and not guarded.missing_facets
+    assert [c.event_status for c in guarded.claims] == ["PLANNED", "OCCURRED"]
+    # An actual-execution requirement still rejects the same planned claim.
+    guarded = apply_event_scope(
+        parsed, None, ["P1", "P2"], part_scopes={"P1": "ACTUAL", "P2": None}
+    )
+    assert guarded.coverage == "PARTIAL" and guarded.missing_facets == ["P1"]
+    # Legacy omission retains the old whole-plan guard; explicit null is distinct.
+    assert "eventScope" not in RequestedPart(ref="P1", description="경로").model_dump(by_alias=True)
+    assert request.requested_parts[1].model_dump(by_alias=True)["eventScope"] is None
+
+
+def test_source_contract_forbids_nonexistent_rows_without_changing_registered_contract():
+    state = session()
+    state.chosen = []
+    state.logical_items = []
+    request = plan()
+    _, _, source = state.answer_contract(request)
+    for field in ("conflicts", "unansweredRowRefs", "itemAnswers"):
+        assert source.schema["properties"][field]["maxItems"] == 0
+    assert "ItemAnswer" not in source.schema["$defs"]
+    assert source.schema["$defs"]["GroundedClaim"]["properties"]["rowRefs"]["maxItems"] == 0
+    _, _, registered = state.answer_contract(request.model_copy(update={"rdb_mode": "CURRENT"}))
+    assert registered.schema["properties"]["itemAnswers"]["maxItems"] > 0
+    assert registered.schema["$defs"]["GroundedClaim"]["properties"]["rowRefs"]["maxItems"] > 0
+
+
+def test_explicit_episode_hint_preserves_other_candidates_and_authorized_order():
+    from app.chatbot.source_search import explicit_episode_seeds
+
+    request = plan()
+    request.requested_parts[0] = request.requested_parts[0].model_copy(
+        update={"source_episode_no": 6}
+    )
+    other, target, last = (
+        passage("다른 대목", 61, episode=20),
+        passage("지정 대목", 62, episode=6),
+        passage("후속 대목", 63, episode=7),
+    )
+    assert explicit_episode_seeds(request, [other, target, last]) == [target, other, last]

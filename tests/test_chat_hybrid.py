@@ -110,7 +110,7 @@ class FakeSearch:
         chunks = [c for c in self.vector_chunks if c.chunk_id not in excluded_chunk_ids]
         return SearchResult(tuple(chunks[:limit]), self.readiness, self.limited)
 
-    async def neighbors(self, scope, seeds, radius, limit):
+    async def neighbors(self, scope, seeds, radius, limit, *, include_episode_edges=False):
         self.record("neighbors", scope)
         return SearchResult(tuple(self.neighbor_chunks[:limit]), self.readiness, self.limited)
 

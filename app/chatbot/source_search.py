@@ -29,6 +29,14 @@ def missing_scope(plan, draft, scope):
     return replace(scope, episode_from=episode, episode_to=episode)
 
 
+def explicit_episode_seeds(plan, seeds):
+    """Priority hint only: never filter away other parts or widen authorized scope."""
+    episodes = {
+        p.source_episode_no for p in plan.requested_parts if p.source_episode_no is not None
+    }
+    return sorted(seeds, key=lambda c: c.episode_no not in episodes)
+
+
 def scene_priority(seeds, neighbors, retained=()):
     """Read a small continuous scene before another mention of the same event.
 
@@ -50,6 +58,14 @@ def scene_priority(seeds, neighbors, retained=()):
                 if candidate is None:
                     break  # Never bridge an unread chunk.
                 result.append(candidate)
+        # Cross-source neighbors are only returned at actual chapter boundaries
+        # by the opt-in repository path. Keep their separate source identities.
+        result.extend(
+            c
+            for c in neighbors
+            if abs(c.episode_no - seed.episode_no) == 1
+            and (seed.chunk_index == 0 or c.chunk_index == 0)
+        )
         return result
 
     adjacent = window(anchor)

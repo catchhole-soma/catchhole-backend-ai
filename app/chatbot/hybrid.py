@@ -19,6 +19,7 @@ from app.chatbot.hybrid_items import (
     event_matches,
     group_items,
     merge_item_answers,
+    part_event_scopes,
     merge_missing_explanations,
     render_item_answers,
     render_missing_explanations,
@@ -55,7 +56,12 @@ from app.chatbot.qa_validation import (
     ResponseValidationFailure,
 )
 from app.chatbot.runtime import ProviderFailure, ProviderOutputTruncated
-from app.chatbot.source_search import missing_scope, scene_priority, validate_part_episodes
+from app.chatbot.source_search import (
+    explicit_episode_seeds,
+    missing_scope,
+    scene_priority,
+    validate_part_episodes,
+)
 from app.clients.setting_tools_client import SettingToolClientError
 from app.retrieval.evidence import compose_evidence
 from app.retrieval.search_contracts import SearchScope, SearchScopeUnavailable
@@ -590,14 +596,22 @@ class _HybridSession(_Session):
                 candidates = list(found)
             else:
                 candidates.extend(found)
+            scene_seeds = explicit_episode_seeds(plan, found)
+            retained_chunks = [e.chunk for e in self.supported_evidence if e.chunk]
+            neighbor_seeds = (
+                list({c.chunk_id: c for c in [*retained_chunks, *scene_seeds]}.values())
+                if plan.requested_parts
+                else scene_seeds
+            )
             neighbors = ()
-            if found and self.hcfg.neighbor_radius and self.tools_available(4):
+            if neighbor_seeds and self.hcfg.neighbor_radius and self.tools_available(4):
                 neighbors = await self.search(
                     "neighbors",
-                    found,
+                    neighbor_seeds,
                     radius=self.hcfg.neighbor_radius,
                     limit=self.hcfg.max_neighbors,
                     search_scope=search_scope,
+                    **({"include_episode_edges": True} if plan.requested_parts else {}),
                 )
                 candidates.extend(neighbors)
             elif found and self.hcfg.neighbor_radius:
@@ -605,9 +619,7 @@ class _HybridSession(_Session):
             previous = self.evidence_identity()
             self.add_search_evidence(
                 candidates,
-                fresh=scene_priority(
-                    found, neighbors, [e.chunk for e in self.supported_evidence if e.chunk]
-                )
+                fresh=scene_priority(scene_seeds, neighbors, retained_chunks)
                 if plan.requested_parts
                 else (),
                 focused_episode=(
@@ -857,7 +869,12 @@ class _HybridSession(_Session):
         if self.evidences:
             draft = await self.answer(plan)
             self.item_draft = merge_item_answers(
-                self.item_draft, draft, self.logical_items, facets, event_scope=plan.event_scope
+                self.item_draft,
+                draft,
+                self.logical_items,
+                facets,
+                event_scope=plan.event_scope,
+                part_scopes=part_event_scopes(plan),
             )
             self.preserve_supported_evidence(self.item_draft, self.evidence_registry.values())
             if self.item_draft.coverage == "COMPLETE":
@@ -960,7 +977,12 @@ class _HybridSession(_Session):
             await self.register([e.chunk for e in self.evidences if e.chunk])
             draft = await self.answer(plan)
             self.item_draft = merge_item_answers(
-                self.item_draft, draft, self.logical_items, facets, event_scope=plan.event_scope
+                self.item_draft,
+                draft,
+                self.logical_items,
+                facets,
+                event_scope=plan.event_scope,
+                part_scopes=part_event_scopes(plan),
             )
             self.preserve_supported_evidence(self.item_draft, self.evidence_registry.values())
             if self.item_draft.coverage == "COMPLETE":
@@ -1631,13 +1653,44 @@ class _HybridSession(_Session):
         prompt = SOURCE_ANSWER_PROMPT if source_only else ANSWER_PROMPT
         version = SOURCE_ANSWER_VERSION if source_only else ANSWER_VERSION
         schema = response_schema(GroundedAnswer)
+        if source_only:
+            # No rows/items exist in this stage. A large but meaningless item
+            # answer can otherwise consume the output budget before validation.
+            for field in ("conflicts", "unansweredRowRefs", "itemAnswers"):
+                schema.schema["properties"][field] = {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 0,
+                }
+            schema.schema["$defs"]["GroundedClaim"]["properties"]["rowRefs"]["maxItems"] = 0
+            reachable = set()
+
+            def visit(node):
+                if isinstance(node, dict):
+                    ref = node.get("$ref", "").removeprefix("#/$defs/")
+                    if ref in schema.schema["$defs"] and ref not in reachable:
+                        reachable.add(ref)
+                        visit(schema.schema["$defs"][ref])
+                    for value in node.values():
+                        visit(value)
+                elif isinstance(node, list):
+                    for value in node:
+                        visit(value)
+
+            visit(schema.schema["properties"])
+            schema.schema["$defs"] = {
+                key: value for key, value in schema.schema["$defs"].items() if key in reachable
+            }
         # Tell the provider the same conditional requirement enforced locally.
         # Null is not a valid event judgement when the request identifies an event.
         for definition in schema.schema.get("$defs", {}).values():
             properties = definition.get("properties", {})
             for field, required in (
                 ("eventMatch", plan.event_context is not None),
-                ("eventStatus", plan.event_scope is not None),
+                (
+                    "eventStatus",
+                    plan.event_scope is not None or any(part_event_scopes(plan).values()),
+                ),
             ):
                 if required and field in properties:
                     variants = properties[field].get("anyOf", [])
@@ -1888,7 +1941,11 @@ class _HybridSession(_Session):
             answer = recovered_fallback
         answer = validated(answer)
         answer = apply_event_scope(
-            answer, plan.event_scope, requested_facets(plan), event_context=plan.event_context
+            answer,
+            plan.event_scope,
+            requested_facets(plan),
+            event_context=plan.event_context,
+            part_scopes=part_event_scopes(plan),
         )
         answer = self.apply_condition_guard(answer, plan)
         self.trace(
@@ -1979,7 +2036,18 @@ class _HybridSession(_Session):
                     "UNCERTAIN": "발생 여부가 불확실한 기록: ",
                     "OCCURRED": "발생 사실로 확인된 내용: ",
                 }[claim.event_status]
-                if claim.event_status and not event_matches(claim.event_status, self.event_scope)
+                if claim.event_status
+                and not any(
+                    event_matches(
+                        claim.event_status, part_event_scopes(self.plan).get(f, self.event_scope)
+                    )
+                    for f in claim.answered_facets + claim.related_facets
+                )
+                and not (
+                    not claim.answered_facets
+                    and not claim.related_facets
+                    and event_matches(claim.event_status, self.event_scope)
+                )
                 else ""
             )
             parts.append(f"- {prefix}{safe_text(claim.text)} (근거 {numbers})")

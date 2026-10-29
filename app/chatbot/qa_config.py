@@ -12,8 +12,8 @@ class ChatQaSettings(BaseSettings):
     reasoning_effort: str = "medium"
     max_attempts: int = Field(default=2, ge=1, le=3)
     max_output_tokens: int = Field(default=2000, ge=128, le=8000)
-    answer_max_output_tokens: int = Field(default=4500, ge=128, le=8000)
-    truncation_retry_max_output_tokens: int = Field(default=6000, ge=128, le=16000)
+    answer_max_output_tokens: int = Field(default=6000, ge=128, le=8000)
+    truncation_retry_max_output_tokens: int = Field(default=7000, ge=128, le=16000)
     max_input_tokens: int = Field(default=32000, ge=1000, le=32000)
     max_context_characters: int = Field(default=32000, ge=2000, le=64000)
     page_size: int = Field(default=20, ge=1, le=50)

@@ -166,7 +166,7 @@ class RetrievalSearchRepository:
             "VECTOR",
         )
 
-    def neighbors(self, seeds, *, radius=1, limit=20):
+    def neighbors(self, seeds, *, radius=1, limit=20, include_episode_edges=False):
         validate_limit(limit)
         validate_ids([seed.chunk_id for seed in seeds])
         if isinstance(radius, bool) or not isinstance(radius, int) or not 0 <= radius <= 3:
@@ -178,18 +178,26 @@ class RetrievalSearchRepository:
         # neighbors tie on score and early episodes exhaust the expansion budget.
         # Pick each neighbor's earliest supporting seed before applying the limit.
         return self._rows(
-            f"WITH valid AS MATERIALIZED (SELECT {FIELDS} {self.from_clause}), "
+            f"WITH valid AS MATERIALIZED (SELECT {FIELDS},s.chunk_count AS source_chunk_count {self.from_clause}), "
             "neighbors AS (SELECT DISTINCT ON (v.id) v.*,"
             "array_position(CAST(:ids AS uuid[]),seed.id) AS seed_rank,"
-            "abs(v.chunk_index-seed.chunk_index) AS distance "
-            "FROM valid v JOIN valid seed ON seed.episode_id=v.episode_id "
-            "AND abs(v.chunk_index-seed.chunk_index)<=:radius "
+            "CASE WHEN v.episode_id=seed.episode_id THEN abs(v.chunk_index-seed.chunk_index) ELSE 1 END AS distance "
+            "FROM valid v JOIN valid seed ON (seed.episode_id=v.episode_id "
+            "AND abs(v.chunk_index-seed.chunk_index)<=:radius) "
+            "OR (:edges AND :radius>0 AND ("
+            "(seed.chunk_index=seed.source_chunk_count-1 AND v.episode_no=seed.episode_no+1 AND v.chunk_index=0) OR "
+            "(seed.chunk_index=0 AND v.episode_no=seed.episode_no-1 AND v.chunk_index=v.source_chunk_count-1))) "
             "WHERE seed.id=ANY(CAST(:ids AS uuid[])) "
             "AND NOT (v.id=ANY(CAST(:ids AS uuid[]))) "
             "ORDER BY v.id,seed_rank,distance) "
             "SELECT neighbors.*,1.0/(1+distance) AS score FROM neighbors "
             "ORDER BY seed_rank,distance,episode_no,chunk_index,id LIMIT :limit",
-            dict(ids=list(dict.fromkeys(c.chunk_id for c in current)), radius=radius, limit=limit),
+            dict(
+                ids=list(dict.fromkeys(c.chunk_id for c in current)),
+                radius=radius,
+                limit=limit,
+                edges=include_episode_edges,
+            ),
             "NEIGHBOR",
         )
 

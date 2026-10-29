@@ -206,8 +206,9 @@ def test_keyword_can_cover_a_separate_requested_term_before_top_k(corpus):
     assert covered[0].chunk_id == repeated[0]
     assert covered[1].chunk_id == training
     assert len({c.chunk_id for c in covered}) == 12
-    scoped = corpus.read("keyword", query, limit=12, cover_terms=True,
-                         scope=replace(corpus.scope, episode_to=1))
+    scoped = corpus.read(
+        "keyword", query, limit=12, cover_terms=True, scope=replace(corpus.scope, episode_to=1)
+    )
     assert training not in {c.chunk_id for c in scoped}
 
 
@@ -479,9 +480,56 @@ def test_matching_item_and_context_outrank_a_generic_linked_episode(corpus):
 def test_keyword_score_ties_keep_the_episode_with_a_stronger_event_anchor(corpus):
     early, event = corpus.episode(1), corpus.episode(9)
     generic = corpus.chunks(early, ["문을 보았다"], ready=True)[0]
-    event_ids = corpus.chunks(event, ["유리 성에서 문을 열었다", "문을 지나 길을 찾았다"], ready=True)
+    event_ids = corpus.chunks(
+        event, ["유리 성에서 문을 열었다", "문을 지나 길을 찾았다"], ready=True
+    )
     query = "유리 성 문"
     ordinary = corpus.read("keyword", query, limit=2)
     assert [c.chunk_id for c in ordinary] == [event_ids[0], generic]
     covered = corpus.read("keyword", query, limit=2, cover_terms=True)
     assert [c.chunk_id for c in covered] == event_ids
+
+
+@pytest.mark.parametrize("edge", ["start", "end"])
+def test_opt_in_episode_edge_reads_only_adjacent_authorized_current_sources(corpus, edge):
+    previous, middle, following = [corpus.episode(n) for n in [10, 11, 12]]
+    prior_ids = corpus.chunks(previous, ["previous first", "previous last"])
+    mid_ids = corpus.chunks(middle, ["middle first", "middle last"])
+    next_ids = corpus.chunks(following, ["following first", "following last"])
+    seed_id = mid_ids[0 if edge == "start" else 1]
+    seeds = corpus.read("direct", [seed_id])
+    default = corpus.read("neighbors", seeds)
+    assert {c.episode_no for c in default} == {11}
+    expanded = corpus.read("neighbors", seeds, include_episode_edges=True)
+    expected_edge = prior_ids[-1] if edge == "start" else next_ids[0]
+    assert expected_edge in {c.chunk_id for c in expanded}
+    assert len(expanded) == 2
+    assert len(corpus.read("neighbors", seeds, include_episode_edges=True, limit=1)) == 1
+    narrow = replace(corpus.scope, episode_from=11, episode_to=11)
+    assert {
+        c.episode_no
+        for c in corpus.read("neighbors", seeds, scope=narrow, include_episode_edges=True)
+    } == {11}
+    assert corpus.read("neighbors", seeds, include_episode_edges=True, radius=0) == []
+    corpus.mutate(
+        "UPDATE episodes SET status='ARCHIVED' WHERE id=:id",
+        id=previous if edge == "start" else following,
+    )
+    assert expected_edge not in {
+        c.chunk_id for c in corpus.read("neighbors", seeds, include_episode_edges=True)
+    }
+
+
+def test_episode_edge_does_not_jump_missing_chapters_or_trust_a_changed_seed(corpus):
+    one, three = corpus.episode(1), corpus.episode(3)
+    ids = corpus.chunks(one, ["first"])
+    corpus.chunks(three, ["third"])
+    seeds = corpus.read("direct", ids)
+    assert corpus.read("neighbors", seeds, include_episode_edges=True) == []
+    two = corpus.episode(2)
+    corpus.chunks(two, ["second"])
+    assert [c.episode_no for c in corpus.read("neighbors", seeds, include_episode_edges=True)] == [
+        2
+    ]
+    corpus.mutate("UPDATE episodes SET content_hash=:hash WHERE id=:id", hash="b" * 64, id=one)
+    assert corpus.read("neighbors", seeds, include_episode_edges=True) == []

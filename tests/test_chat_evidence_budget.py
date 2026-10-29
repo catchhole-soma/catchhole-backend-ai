@@ -202,8 +202,8 @@ def test_six_maximum_text_reservations_and_one_embedding_fit_server_budget_contr
         hcfg.max_model_calls * maximum_text_reservation
         + hcfg.max_query_embeddings * embedding_reservation
     )
-    assert maximum_text_reservation == 38000
-    assert maximum_attempt_reservation == 232256
+    assert maximum_text_reservation == 39000
+    assert maximum_attempt_reservation == 238256
     # Mirror the explicitly agreed Spring attempt budget, without requiring a sibling checkout.
     server_attempt_budget = 240000
     assert maximum_attempt_reservation <= server_attempt_budget

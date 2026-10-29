@@ -6,11 +6,15 @@ from app.chatbot.qa_prompts import (
     SMALL_TALK_INSTRUCTIONS,
 )
 
-PLAN_VERSION = "chat-hybrid-plan-v14"
-ANSWER_VERSION = "chat-hybrid-answer-v16"
-SOURCE_ANSWER_VERSION = "chat-source-answer-v3"
+PLAN_VERSION = "chat-hybrid-plan-v15"
+ANSWER_VERSION = "chat-hybrid-answer-v17"
+SOURCE_ANSWER_VERSION = "chat-source-answer-v4"
 
 SOURCE_REASONING_INSTRUCTIONS = """
+requestedParts의 eventScope는 요구별 발생 조건이다. ACTUAL은 실제 사건, PLANNED는 계획,
+null은 발생/계획 구분 자체를 요구하지 않는 이유·가격·상태 등이다. 혼합 질문에서 전체
+plan.eventScope를 모든 요구에 적용하지 않는다. eventStatus는 각 주장 자체의 발생 상태를 보존한다.
+
 question이 요구의 원본이다. plan의 요약 때문에 대상 범주·관계·부정·최초 조건을 바꾸지 않는다.
 예를 들어 '첫 적'을 '처음 만난 사람'으로, '획득'을 '사용'으로, '내려가려던 경로'를
 '실제로 내려간 경로'로 치환하지 않는다. 먼저 원래 요구와 인용의 대상을 대조한 뒤 eventMatch를 정한다.
@@ -132,7 +136,9 @@ subjects는 현재 질문 또는 명확히 연결된 conversation에 그대로 �
 검색은 글자 그대로의 부분 일치다. 고유 이름에 붙은 조사나 '전/전투'를 떼고 입력에 실제로 있는
 이름 부분을 선택한다. 회차 번호나 '첫/두/번째' 같은 순서 표현은 검색어 대신 회차·사건 조건에 둔다.
 UUID, 회원/작품 ID, SQL, settingKey, scopeName을 생성하지 않는다.
-episodeFrom/To는 질문에 명시된 출처 회차만 정수로, 없으면 null. 서버 허용 범위를 넓히지 않는다.
+episodeFrom/To는 질문 전체를 제한하는 명시적 출처 회차만 정수로, 없으면 null이다.
+한 부분만 특정 회차를 언급하고 다른 부분은 처음/이후 사건을 찾으면 전체 범위를 그 회차에
+가두지 않는다. 부분의 회차는 requestedPart.sourceEpisodeNo에 둔다. 서버 허용 범위를 넓히지 않는다.
 사건이 일어난 시간과 그 장면이 서술된 출처 회차를 동일시하지 않는다.
 설정집·과거 원문 버전·정보 수정·작품 전체 모순 판정은 지원하지 않는다.
 각 항목의 이유/과정을 묻는 질문은 perItem=true로 지정한다. 그 외에는 false다.
@@ -143,6 +149,10 @@ requestedParts는 독립된 요구를 최대4개로 보존한다. ref는 순서�
 개념으로 바꾸지 않는다. 검색어에도 사건의 핵심 대상·행동을 포함한다.
 전후 권리, 실제 받은 물건, 합계처럼 따로 확인 가능한 요구를 한 P에 모두 몰지 말고 나눈다.
 각 대상의 선택 이유와 정확 계산도 독립 요구다. 최대4개를 넘으면 남은 세부 조건을 description에 보존한다.
+각 requestedPart.eventScope는 그 요구가 실제 실행을 묻는 경우 ACTUAL, 계획 자체를 묻는 경우
+PLANNED, 발생 여부가 쟁점이 아닌 이유·가격·배경·현재 상태는 null이다. 전체 eventScope와
+개별 요구를 구별한다. 계획의 경로와 그 이유인 자원 부족을 함께 묻더라도 자원 부족을 계획으로
+분류하지 않는다. 현재 질문에 없는 상대방/목적/실행 조건을 요구 설명에 추가하지 않는다.
 시점 요구에는 확인 가능한 출처 회차도 포함한다. perItem이면 항목마다 같은 요구를 적용한다.
 각 requestedPart.sourceEpisodeNo는 현재 질문에서 그 요구의 출처를 'N화'로 명시한 단일 회차만
 정수로 채운다. 예: '12화의 원인과 25화의 해결 방법'은 각 부분에 12, 25다. 범위·최초 시점·

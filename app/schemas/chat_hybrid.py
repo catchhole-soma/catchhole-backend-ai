@@ -2,7 +2,7 @@
 
 from typing import Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 
 from app.schemas.chat_qa import AnswerShape, CharacterFilter, QuestionSubject, WorkCollection
 from app.schemas.setting_tools import ContractModel
@@ -15,10 +15,21 @@ EventStatus = Literal["OCCURRED", "PLANNED", "UNCERTAIN"]
 class RequestedPart(ContractModel):
     ref: Literal["P1", "P2", "P3", "P4"]
     description: str = Field(min_length=1, max_length=160)
+    # Explicit null means this requirement does not demand occurrence/planning.
+    # Omitted legacy fields inherit the plan-wide scope.
+    event_scope: EventScope | None = None
     # A literal source chapter in the current question, never an inferred event date.
     source_episode_no: int | None = Field(
         default=None, ge=1, le=2147483647, strict=True, exclude_if=lambda value: value is None
     )
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_scope(self, handler):
+        data = handler(self)
+        if "event_scope" not in self.model_fields_set:
+            data.pop("eventScope", None)
+            data.pop("event_scope", None)
+        return data
 
 
 class EvidenceSupport(ContractModel):

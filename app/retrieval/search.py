@@ -62,10 +62,17 @@ class RetrievalSearchService:
             lambda: self._read(scope, "direct", chunk_ids, limit=limit)
         )
 
-    async def neighbors(self, scope, seeds, radius=1, limit=20):
+    async def neighbors(self, scope, seeds, radius=1, limit=20, *, include_episode_edges=False):
         validate_limit(limit)
         return await self.blocking_runner(
-            lambda: self._read(scope, "neighbors", seeds, radius=radius, limit=limit)
+            lambda: self._read(
+                scope,
+                "neighbors",
+                seeds,
+                radius=radius,
+                limit=limit,
+                **({"include_episode_edges": True} if include_episode_edges else {}),
+            )
         )
 
     async def readiness(self, scope):

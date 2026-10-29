@@ -241,7 +241,7 @@
 - 계약·사례·한계·재현 명령은 `docs/chat-qa-v1.md`를 Java/Python에 동일하게 보관한다. 기존 `ChatResult`/조회 DTO를 재사용하며 현재값 계산과 권한 판정은 Spring이 소유한다.
 - `app/schemas/chat_qa.py`는 질문 유형·답변 목적·작품 전체 collection과 요청 내 참조만 받는다. `qa.py`/`qa_lookup.py`는 대상·경로·필터 조회, `qa_collection.py`는 모집단·페이지 token 검사, `qa_synthesis.py`는 등록 자료의 소개·조건 판정·목록/집계를 맡고 `qa_render.py`가 실제 값·검증된 근거를 표시한다. 분류는 `chat-qa-plan-v6`, 경로 선택은 `chat-qa-field-select-v1`, 구형 행 선택은 `chat-qa-select-v3`이다. 현재 계약은 `docs/chat-query-quality-v1.md`, 후속 대화는 #241을 따른다.
 - 현재값/이력의 저장 key와 scope를 모델이 추측해 조회하지 않는다. 새 분류 schema는 필수 focus로 고정 FactType과 질문의 항목 표현을 구분한다. 유형 전체는 먼저 필터하고, 동적 항목은 값 없는 FIELD 목록을 끝까지 확인한 뒤 F 참조를 선택해 실제 저장 경로로 조회한다. 필터된 결과는 전역 도구 예산까지 순회하고 모델의 10행 선택이나 입력 문맥 상한으로 자르지 않는다. 구형 기록 계획의 R 행 선택 경로만 기존 페이지/행 상한을 유지한다. 새 작품 전체 조건은 collection으로 현재 자료를 읽고 인물별 MATCH/NO_MATCH/UNKNOWN을 판정한다. 기존 CHARACTER_LIST 기록만 단일 scalar 정확 일치 경로를 유지한다. 이름은 현재 질문 또는 제한된 서버 대화 문맥에 명시된 문자열만 조회하며 복수 후보·불완전한 탐색 페이지는 추가 확인으로 끝낸다. 모델이 선택한 행의 의미적 적합성은 별도 품질 검증 대상이다.
-- `qa_config.py`의 `CHAT_QA_*` 설정은 `.env`를 읽지 않고 프로세스 환경으로 주입한다. `ENABLED=false`, `MODEL=gpt-6-luna`, `REASONING_EFFORT=medium`, `MAX_ATTEMPTS=2`, `MAX_OUTPUT_TOKENS=2000`, `ANSWER_MAX_OUTPUT_TOKENS=4500`, `FINALIZATION_RESERVE_SECONDS=10`, `TRUNCATION_RETRY_MAX_OUTPUT_TOKENS=6000`, `MAX_INPUT_TOKENS=32000`, `MAX_CONTEXT_CHARACTERS=32000`, `PAGE_SIZE=20`, `MAX_PAGES=2`, `MAX_ITEMS=80`, `MAX_TOOL_CALLS=16`, `MAX_SELECTED_ROWS=10`, `MAX_EVIDENCE_CALLS=8`, `MAX_ANSWER_CHARACTERS=12000`을 기본으로 한다. 이름 앞에는 모두 `CHAT_QA_`를 붙인다.
+- `qa_config.py`의 `CHAT_QA_*` 설정은 `.env`를 읽지 않고 프로세스 환경으로 주입한다. `ENABLED=false`, `MODEL=gpt-6-luna`, `REASONING_EFFORT=medium`, `MAX_ATTEMPTS=2`, `MAX_OUTPUT_TOKENS=2000`, `ANSWER_MAX_OUTPUT_TOKENS=6000`, `FINALIZATION_RESERVE_SECONDS=10`, `TRUNCATION_RETRY_MAX_OUTPUT_TOKENS=7000`, `MAX_INPUT_TOKENS=32000`, `MAX_CONTEXT_CHARACTERS=32000`, `PAGE_SIZE=20`, `MAX_PAGES=2`, `MAX_ITEMS=80`, `MAX_TOOL_CALLS=16`, `MAX_SELECTED_ROWS=10`, `MAX_EVIDENCE_CALLS=8`, `MAX_ANSWER_CHARACTERS=12000`을 기본으로 한다. 이름 앞에는 모두 `CHAT_QA_`를 붙인다.
 - 독립 `compose.chatbot.prod.yml`이 위 설정과 `LLM_API_KEY`를 명시적으로 전달한다. `deploy/chatbot.env.example`에 예제를 유지한다. QA 활성화 시 key가 없으면 기동을 거절하며, 기본 비활성 상태에서는 provider client를 생성하지 않는다. Spring 기능 flag와 별도여서 명시적 운영 활성화가 필요하다.
 - 질문 해석과 행 선택은 기존 `ChatTextClient`/`Execution.call()`을 사용한다. 최초 호출과 schema/참조 오류·provider 출력 절단 복구는 같은 MAX_ATTEMPTS를 공유한다. 절단은 해당 목적 기본 출력의 두 배를 복구 상한 안에서 새로 예약하며 JSON 조각을 이어 붙이지 않는다. 실패 사용량을 보존하고 모든 재시도도 새 호출로 예약·정산하며 자동 transport retry는 하지 않는다. 조회 오류를 빈 결과로 바꾸지 않으며 현재값/이력/출처 범위와 원문 확인 불가 상태를 보존한다.
 - `app/chatbot/replay.py`는 네트워크·DB·API key 없는 합성 CLI 재현기다. `tests/fixtures/chat-qa-v1.json`의 고정 모델 출력은 코드 경로 검증용이며 배포 모델 품질 측정값으로 보고하지 않는다. 실제 HTTP 검증용 `tests/support/chat_qa_stub_server.py`는 `CHAT_TEST_ONLY=true`와 localhost 제한을 유지한다.
@@ -343,10 +343,12 @@
 
 ### GH319 정상 자료 기반 챗봇 근거 선택 — 2026-10-29
 
-- hybrid plan v13/answer v15, 순수 원문 전용 answer v2다. QA plan v9/FIELD select v2/등록 설명 v4는 유지한다. 원문 전용 프롬프트는 `rdbMode=NONE`이며 등록 행·논리 항목이 없는 경우만 사용한다. 기존 현재값 권한·수동 수정 보호·원문/현재값 최종 재검증을 우회하지 않는다.
+- hybrid plan v15/answer v17, 순수 원문 전용 answer v2다. QA plan v9/FIELD select v2/등록 설명 v4는 유지한다. 원문 전용 프롬프트는 `rdbMode=NONE`이며 등록 행·논리 항목이 없는 경우만 사용한다. 기존 현재값 권한·수동 수정 보호·원문/현재값 최종 재검증을 우회하지 않는다.
 - requestedParts 원문 검색만 `cover_terms=true`로 키워드별 대표 후보를 먼저 배분한다. 권한/현재 원문 필터는 순위·LIMIT보다 먼저 적용하고, 기본값 false인 공용 검색 소비자는 기존 정렬을 유지한다. 새 full-text 인덱스나 전수 확인 보장은 아니다.
 - 검색 후보는 검증된 기존 근거를 보존하고 독립된 상위 후보와 작은 인접 장면을 우선한다. 추가 벡터 검색은 미확인 요구를 중심으로 만든다. `requestedParts.sourceEpisodeNo`는 이번 질문에 직접 명시된 출처 회차만 허용하고, 미확인 부분들이 같은 회차를 요구할 때만 신뢰 서버 범위를 좁힌다. 이전 답의 회차나 모델이 추정한 사건 시점으로 제한하지 않는다.
 - 단일 회차로 좁힌 검색은 기존 공통 근거 예산의 남은 몫을 해당 회차에 사용할 수 있다. 전체 근거8·본문6,000토큰·검색2라운드·쿼리 임베딩1회·모델6회·120초 경계는 유지한다. 범위가 넓은 검색의 기본 회차별3개 제한은 유지한다.
 - 마지막 검색 답변이 COMPLETE를 제안했지만 일부 정확 인용 검증에 실패하면 기존 재시도·시간 예산 안에서 한 번 복구할 수 있다. 실패 시 독립적으로 검증된 부분만 보존하며 권한/전송 오류를 정상 답변으로 숨기지 않는다. 모델의 COMPLETE나 정확한 문자열 위치만으로 의미 정답을 인정하지 않는다.
 - collection 조건은 입력의 연속 표현을 보존하고, 재시도에서 비교 기준 인물을 단일 조회 subject로 바꾸지 않도록 필드별 고정 안내를 준다. 거절된 조건/원문/ID를 재시도 지침이나 로그에 복사하지 않는다.
 - 실제 원문·정상 등록값 질문과 합성 경계 회귀를 구분한다. 잘못 추출된 등급/레벨·동명 ID·계획/보유 의미는 Java #320이며 챗봇이 교정하지 않는다. 실행·의미·미해결/후퇴 사례와 복원 SHA는 `docs/ai-logic-versions/details/v0028.md`에 기록한다. #319와 누적 #247은 일부 개선만으로 종료하지 않는다.
+
+- GH319 원문 요구별 `eventScope`는 명시적 null(발생 여부 무관)과 legacy 생략(전체 scope 상속)을 구분한다. 계획의 근거인 현재 사실을 계획 여부로 거절하지 않으며 ACTUAL 요구는 계속 실제 발생만 인정한다. 후속 검색은 검증된 장면의 인접 문맥을 같은 예산으로 우선 읽고, 회차 경계는 현재·권한·범위 검사를 통과한 바로 앞/뒤 회차만 opt-in 조회한다. 출처 순서를 사건 순서로 단정하지 않는다.

@@ -63,7 +63,7 @@ def truncated_provider(monkeypatch, *, first, repeat=False, measured=True):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(("first", "caps"), [(0, [2000, 4000, 4500]), (1, [2000, 4500, 6000])])
+@pytest.mark.parametrize(("first", "caps"), [(0, [2000, 4000, 6000]), (1, [2000, 6000, 7000])])
 async def test_truncation_recovers_once_with_stage_cap_and_preserves_paid_failure(
     monkeypatch, caplog, first, caps
 ):
@@ -96,7 +96,7 @@ async def test_second_truncation_stops_without_publishing_partial_output(monkeyp
     case, catalog = scenario()
     result = await replay_case(case, catalog, config={"max_attempts": 3})
     assert result["finish"] == {"result": None, "failure": "PROVIDER_FAILURE"}
-    assert [r["max_output_tokens"] for r in result["modelRequests"]] == [2000, 4500, 6000]
+    assert [r["max_output_tokens"] for r in result["modelRequests"]] == [2000, 6000, 7000]
     assert [r["outcome"] for r in result["usageReports"]] == ["SUCCESS", "FAILURE", "FAILURE"]
 
 
@@ -175,7 +175,7 @@ async def test_schema_feedback_contains_only_schema_fields_and_fixed_error_kinds
     assert "literal_error" in retry and "$.subjects[].domain" in retry
     assert "extra_forbidden" in retry
     assert PRIVATE not in retry
-    assert [r["max_output_tokens"] for r in result["modelRequests"]] == [2000, 4000, 4500]
+    assert [r["max_output_tokens"] for r in result["modelRequests"]] == [2000, 4000, 6000]
 
 
 def test_contract_feedback_rejects_untrusted_messages_and_supports_fixed_rule_codes():

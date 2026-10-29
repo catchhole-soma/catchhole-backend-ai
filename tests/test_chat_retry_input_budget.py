@@ -115,7 +115,7 @@ async def test_validation_retry_chooses_a_fitting_annotation_without_changing_pa
     assert all(
         estimated(request["system"], request["input"]) <= INPUT_LIMIT for request in requests
     )
-    assert [request["max_output_tokens"] for request in requests] == [4500, 6000]
+    assert [request["max_output_tokens"] for request in requests] == [6000, 7000]
     retry = requests[1]["system"]
     assert "UNOBSERVED_SUBJECT_NAME" in retry
     assert ("안전한 검증 피드백" in retry) == (form == "detailed")
@@ -157,11 +157,11 @@ async def test_truncation_keeps_its_type_and_paid_usage_when_repair_input_is_bou
     )
     assert result["usageReports"][0]["outcome"] == "FAILURE"
     assert result["usageReports"][0]["inputTokens"] == 101
-    assert result["usageReports"][0]["outputTokens"] == 4500
+    assert result["usageReports"][0]["outputTokens"] == 6000
     if recovers:
         assert not errors
         assert result["finish"]["result"]["text"] == "confirmed"
-        assert result["modelRequests"][1]["max_output_tokens"] == 6000
+        assert result["modelRequests"][1]["max_output_tokens"] == 7000
         assert "OUTPUT_TRUNCATED" in result["modelRequests"][1]["system"]
         assert result["modelRequests"][1]["input"] == payload
         assert estimated(result["modelRequests"][1]["system"], payload) <= INPUT_LIMIT
@@ -214,7 +214,9 @@ async def test_hybrid_validation_without_retry_room_continues_search(monkeypatch
     async def bounded_answer(self, cls, prompt, payload, *args, **kwargs):
         previous = self.cfg
         if cls.__name__ == "GroundedAnswer":
-            cap = estimated(prompt, payload, response_schema(cls))
+            cap = estimated(
+                prompt, payload, kwargs.get("response_contract") or response_schema(cls)
+            )
             assert 1000 <= cap <= INPUT_LIMIT
             self.cfg = previous.model_copy(update={"max_input_tokens": cap})
         try:

@@ -107,6 +107,14 @@ def event_matches(status, scope):
     return scope is None or status == {"ACTUAL": "OCCURRED", "PLANNED": "PLANNED"}[scope]
 
 
+def part_event_scopes(plan):
+    return {
+        part.ref: part.event_scope
+        for part in plan.requested_parts
+        if "event_scope" in part.model_fields_set
+    }
+
+
 def merge_missing_explanations(missing, *answers):
     """Retain notes for unresolved facets, preferring the latest supplied note.
 
@@ -119,24 +127,29 @@ def merge_missing_explanations(missing, *answers):
     return [by_facet[facet] for facet in missing if facet in by_facet]
 
 
-def apply_event_scope(answer, scope, facets, *, event_context=None):
+def apply_event_scope(answer, scope, facets, *, event_context=None, part_scopes=None):
     """A planned or uncertain event cannot satisfy a request for an actual event.
 
     This verifies the declared event classification, not the model's semantic
     reading of the source. Keep classified observations to explain the gap once.
     Omitted statuses are compatible only when the recorded plan has no scope.
     """
-    if scope is None and event_context is None:
+    part_scopes = part_scopes or {}
+    if scope is None and event_context is None and not any(part_scopes.values()):
         return answer
+
+    def matches(status, facet):
+        return event_matches(status, part_scopes.get(facet, scope))
+
     items = []
     for item in answer.item_answers:
         observations = [
             a
             for a in item.answers
-            if (scope is None or a.event_status is not None)
+            if (part_scopes.get(a.facet, scope) is None or a.event_status is not None)
             and (event_context is None or a.event_match == "MATCH")
         ]
-        covered = {a.facet for a in observations if event_matches(a.event_status, scope)}
+        covered = {a.facet for a in observations if matches(a.event_status, a.facet)}
         missing = [f for f in facets if f not in covered]
         removed_facets = {a.facet for a in item.answers if a not in observations}
         items.append(
@@ -154,7 +167,14 @@ def apply_event_scope(answer, scope, facets, *, event_context=None):
     retained_claims = [
         claim
         for claim in answer.claims
-        if (scope is None or claim.event_status is not None)
+        if (
+            claim.event_status is not None
+            or any(
+                part_scopes.get(f, scope) is None
+                for f in claim.answered_facets + claim.related_facets
+            )
+            or (not claim.answered_facets and not claim.related_facets and scope is None)
+        )
         and (event_context is None or claim.event_match == "MATCH")
     ]
     removed_facets = {
@@ -166,9 +186,9 @@ def apply_event_scope(answer, scope, facets, *, event_context=None):
     claims = [
         claim.model_copy(
             update={
-                "answered_facets": claim.answered_facets
-                if event_matches(claim.event_status, scope)
-                else []
+                "answered_facets": [
+                    f for f in claim.answered_facets if matches(claim.event_status, f)
+                ]
             }
         )
         for claim in retained_claims
@@ -220,12 +240,13 @@ def validate_item_answer(answer, items, facets):
         raise ValueError("Coverage must describe requested facets, not reference presence")
 
 
-def merge_item_answers(previous, latest, items, facets, *, event_scope=None):
+def merge_item_answers(previous, latest, items, facets, *, event_scope=None, part_scopes=None):
     """Keep independently supported facets; explicit conflicts invalidate older facets.
 
     The caller keeps all previously used E references in the next model context and
     revalidates the final union. Missing new evidence alone is not a retraction.
     """
+    part_scopes = part_scopes or {}
     old = {i.item_ref: i for i in previous.item_answers}
     new = {i.item_ref: i for i in latest.item_answers}
     conflict_rows = {r for c in latest.conflicts for r in c.row_refs}
@@ -239,14 +260,19 @@ def merge_item_answers(previous, latest, items, facets, *, event_scope=None):
                 # A later mention of a plan does not erase an earlier occurrence.
                 if (
                     prior is None
-                    or event_matches(candidate.event_status, event_scope)
-                    or not event_matches(prior.event_status, event_scope)
+                    or event_matches(
+                        candidate.event_status, part_scopes.get(candidate.facet, event_scope)
+                    )
+                    or not event_matches(
+                        prior.event_status, part_scopes.get(candidate.facet, event_scope)
+                    )
                 ):
                     answers[candidate.facet] = candidate
         missing = [
             f
             for f in facets
-            if f not in answers or not event_matches(answers[f].event_status, event_scope)
+            if f not in answers
+            or not event_matches(answers[f].event_status, part_scopes.get(f, event_scope))
         ]
         merged.append(
             ItemAnswer(
