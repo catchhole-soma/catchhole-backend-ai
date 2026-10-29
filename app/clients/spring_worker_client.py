@@ -11,7 +11,7 @@ from app.clients.exceptions import (
     SpringWorkerTransportError,
     WorkerLeaseExpiredError,
 )
-from app.clients.safe_http_diagnostics import error_message, validation_fields
+from app.clients.safe_http_diagnostics import spring_failure_diagnostics, error_message, validation_fields
 from app.core.config import Settings, get_settings
 from app.domain.enums import (
     AnalysisFailureCode,
@@ -28,6 +28,7 @@ from app.schemas.worker import (
     AiTokenReleaseRequest,
     AiTokenReserveRequest,
     AiTokenSettleRequest,
+    WorkerFailureDiagnostics,
     WorkerAnalysisJobClaimRequest,
     WorkerAnalysisJobCompleteRequest,
     WorkerAnalysisJobFailRequest,
@@ -184,8 +185,11 @@ class SpringWorkerClient:
         lease_token: UUID,
         error_message: str,
         failure_code: AnalysisFailureCode = AnalysisFailureCode.UNEXPECTED_ERROR,
+        *,
+        failure_diagnostics: WorkerFailureDiagnostics | None = None,
     ) -> None:
         request = WorkerAnalysisJobFailRequest(
+            failure_diagnostics=failure_diagnostics,
             failure_code=failure_code,
             error_message=error_message,
         )
@@ -193,7 +197,7 @@ class SpringWorkerClient:
             "POST",
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/fail"),
             headers=self._headers(lease_token),
-            json=request.model_dump(by_alias=True),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
         _raise_for_spring_status(response)
 
@@ -318,8 +322,11 @@ class SpringWorkerClient:
         lease_token: UUID,
         error_message: str,
         failure_code: AnalysisFailureCode = AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+        *,
+        failure_diagnostics: WorkerFailureDiagnostics | None = None,
     ) -> None:
         request = WorkerCharacterFactComparisonBatchFailRequest(
+            failure_diagnostics=failure_diagnostics,
             failure_code=failure_code,
             error_message=error_message,
         )
@@ -330,7 +337,7 @@ class SpringWorkerClient:
                 f"/character-fact-comparison-batches/{comparison_batch_id}/fail"
             ),
             headers=self._headers(lease_token),
-            json=request.model_dump(by_alias=True, mode="json"),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
         _raise_for_spring_status(response)
 
@@ -376,8 +383,11 @@ class SpringWorkerClient:
         lease_token: UUID,
         error_message: str,
         failure_code: AnalysisFailureCode = AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
+        *,
+        failure_diagnostics: WorkerFailureDiagnostics | None = None,
     ) -> None:
         request = WorkerCharacterFactComparisonFailRequest(
+            failure_diagnostics=failure_diagnostics,
             failure_code=failure_code,
             error_message=error_message,
         )
@@ -388,7 +398,7 @@ class SpringWorkerClient:
                 f"/setting-candidates/{candidate_id}/character-fact-comparison-fail"
             ),
             headers=self._headers(lease_token),
-            json=request.model_dump(by_alias=True),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
         _raise_for_spring_status(response)
 
@@ -557,8 +567,11 @@ class SpringWorkerClient:
         source_error_code: str | None = None,
         source_reason_code: str | None = None,
         diagnostics: list[WorkerWorldSettingComparisonDiagnostic] | None = None,
+        *,
+        failure_diagnostics: WorkerFailureDiagnostics | None = None,
     ) -> None:
         request = WorkerWorldSettingComparisonFailRequest(
+            failure_diagnostics=failure_diagnostics,
             failure_code=failure_code,
             error_message=error_message,
             source_error_code=source_error_code,
@@ -642,8 +655,11 @@ class SpringWorkerClient:
         failure_code: AnalysisFailureCode = AnalysisFailureCode.COMPARISON_VALIDATION_FAILED,
         source_error_code: str | None = None,
         source_reason_code: str | None = None,
+        *,
+        failure_diagnostics: WorkerFailureDiagnostics | None = None,
     ) -> None:
         request = WorkerWorldSettingComparisonFailRequest(
+            failure_diagnostics=failure_diagnostics,
             failure_code=failure_code,
             error_message=error_message,
             source_error_code=source_error_code,
@@ -656,7 +672,7 @@ class SpringWorkerClient:
                 f"/world-setting-candidates/{candidate_id}/comparison-fail"
             ),
             headers=self._headers(lease_token),
-            json=request.model_dump(by_alias=True, exclude_none=True),
+            json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
         _raise_for_spring_status(response)
 
@@ -710,6 +726,7 @@ class SpringWorkerClient:
                         status_code=response.status_code,
                         spring_error_code=spring_error.code,
                         spring_reason_code=spring_error.reason_code,
+                        failure_diagnostics=spring_failure_diagnostics(response),
                     )
                 _raise_for_spring_status(response)
                 return
@@ -808,4 +825,5 @@ def _raise_for_spring_status(response: httpx.Response) -> None:
             spring_error_code=spring_error.code,
             spring_reason_code=spring_error.reason_code,
             validation_fields=spring_error.validation_fields,
+            failure_diagnostics=spring_failure_diagnostics(response),
         ) from None

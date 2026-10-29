@@ -124,7 +124,8 @@ class FakeSpringApi:
     async def complete(self, analysis_job_id, lease_token, **kwargs):
         self.complete_calls.append(analysis_job_id)
 
-    async def fail(self, analysis_job_id, lease_token, error_message, failure_code):
+    async def fail(self, analysis_job_id, lease_token, error_message, failure_code, *, failure_diagnostics=None):
+        self.failure_diagnostics = failure_diagnostics
         self.fail_calls.append((analysis_job_id, failure_code.value))
 
 
@@ -163,3 +164,14 @@ def _run_once(worker: CharacterFactComparisonWorker):
             await worker.aclose()
 
     return asyncio.run(scenario())
+
+
+def test_first_failure_diagnostics_survive_worker_summary_wrapper():
+    from app.schemas.worker import WorkerFailureDiagnostics
+    diagnostic = WorkerFailureDiagnostics(origin="SPRING", stage="CHARACTER_CONTEXT", reasonCode="CURRENT_EVIDENCE_OFFSET_INVALID")
+    spring = FakeSpringApi(_payload())
+    worker = CharacterFactComparisonWorker(spring_client=spring, comparison_pipeline=FakePipeline(
+        CharacterFactComparisonRunResult(0, 1, AnalysisFailureCode.UNEXPECTED_ERROR, first_failure_diagnostics=diagnostic)))
+    with pytest.raises(RuntimeError):
+        _run_once(worker)
+    assert spring.failure_diagnostics == diagnostic

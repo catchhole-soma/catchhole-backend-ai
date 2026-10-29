@@ -12,7 +12,7 @@ from app.llm.exceptions import (
     LlmOutputTruncatedError,
     LlmResponseValidationError,
 )
-from app.llm.protocols import LlmResponseSchema
+from app.llm.protocols import LlmCallOptions, LlmResponseSchema
 from app.llm.responses import LlmTextResponse
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,7 @@ class OpenAIResponsesClient:
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
         response_schema: LlmResponseSchema | None = None,
+        call_options: LlmCallOptions | None = None,
     ) -> LlmTextResponse:
         if not self.api_key:
             raise ValueError("LLM_API_KEY is required.")
@@ -74,7 +75,7 @@ class OpenAIResponsesClient:
         # system_prompt는 역할/규칙, user_prompt는 실제 청크 입력을 담음
         effective_model = model or self.model
         request_body = self._input_request_body(
-            system_prompt, user_prompt, effective_model, response_schema,
+            system_prompt, user_prompt, effective_model, response_schema, call_options,
         )
         request_body.update(store=self.store_responses, max_output_tokens=max_output_tokens)
         # 같은 정적 prefix를 공유하는 요청만 동일한 key를 사용해 cache routing을 돕는다.
@@ -192,10 +193,11 @@ class OpenAIResponsesClient:
         user_prompt: str,
         model: str | None = None,
         response_schema: LlmResponseSchema | None = None,
+        call_options: LlmCallOptions | None = None,
     ) -> int:
         """Count the same input sent to generation, including roles and text format."""
         request_body = self._input_request_body(
-            system_prompt, user_prompt, model or self.model, response_schema,
+            system_prompt, user_prompt, model or self.model, response_schema, call_options,
         )
         cache_key = sha256(json.dumps(
             request_body, ensure_ascii=False, separators=(",", ":"),
@@ -228,7 +230,8 @@ class OpenAIResponsesClient:
             self._input_token_counts.popitem(last=False)
         return count
 
-    def _input_request_body(self, system_prompt, user_prompt, model, response_schema):
+    def _input_request_body(self, system_prompt, user_prompt, model, response_schema,
+                            call_options=None):
         body = {
             "model": model,
             "input": [
@@ -241,7 +244,9 @@ class OpenAIResponsesClient:
                 "type": "json_schema", "name": response_schema.name,
                 "schema": response_schema.schema, "strict": response_schema.strict,
             }}
-        reasoning_effort = _resolve_reasoning_effort(model, self.reasoning_effort)
+        reasoning_effort = _resolve_reasoning_effort(
+            model, call_options.reasoning_effort if call_options is not None else self.reasoning_effort,
+        )
         if reasoning_effort is not None:
             body["reasoning"] = {"effort": reasoning_effort}
         return body

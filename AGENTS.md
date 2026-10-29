@@ -10,6 +10,8 @@
 
 ## AI Logic Version Records
 
+- GH306 `app/validation`은 고정 검수 입력을 읽는 호출형 검사기이며 Worker/lease·결과 저장·추출 release는 GH310/312가 소유한다. `ValidationDataClient`의 expected baseline/target/source fingerprint와 전체/부분 원문의 정확한 Unicode 범위를 유지하며 live setting tool로 대체하지 않는다. 검수는 Terra의 호출별 frozen `LlmCallOptions`를 사용하고 count와 생성에 같은 옵션/schema를 전달한다. 일반 추출/챗봇 기본 설정을 바꾸거나 검수에 가짜 AnalysisJob/lease를 만들지 않는다. 연결·예산·출처/완료 검증과 실제/합성 평가의 구분은 `docs/setting-validation-v1.md`를 따른다.
+
 - 결과에 영향을 주는 추출·주체 해소·비교·후처리·프롬프트·제품 모델/실행 설정 변경 PR마다 `docs/ai-logic-versions/vNNNN.md`(사람용 요약), `docs/ai-logic-versions/details/vNNNN.md`(AI용 상세), 목록을 함께 갱신한다. 작성 절차와 근거 항목은 `docs/ai-logic-versions/details/README.md`를 따른다.
 - 사람용 요약은 변경 이유·점수 표·남은 문제를 중심으로 20~35줄 안팎으로 쓴다. 전체 SHA·해시·실행 옵션·과거 평가·반복 지침은 상세에 둔다. 상세를 먼저 기록하고 요약의 수치·조건·상태를 맞춘다.
 - 기본 품질 평가는 다단계 `FIXED` 모드에서 추출 `gpt-5.6-sol`·주체 해소 `gpt-5.6-terra`·비교 `gpt-5.6-sol`, 제품 `LLM_REASONING_EFFORT=medium`으로 실행한다. `LLM_MODEL` fallback은 `gpt-5.6-terra`, judge는 Sol·medium이다. 로컬 CLI에도 명시하고 실제 사용값을 기록한다.
@@ -18,6 +20,11 @@
 - 문서·테스트만의 변경은 버전을 올리지 않는다. 채점기·Gold·judge만 바뀌면 같은 로직의 상세에 실행을 추가하고 요약을 갱신한다. 예전 로직 복원도 최신 main에서 새 PR과 다음 버전으로 남긴다.
 
 ## Spring Worker API
+
+- 선택적 `failureDiagnostics`는 Java/Python 공통 v1 고정 코드 계약이다. 원문·예외 메시지·URL·lease/인증값은 넣지 않으며 실제 관측한 HTTP 상태와 요청/trace ID만 전달한다. Spring 오류의 부가 진단 파싱 실패는 원래 HTTP 실패와 분리하고 `first_failure_code`와 그 실패의 `first_failure_diagnostics`를 묶어 batch→run→Job 실패 보고까지 운반한다. 새 실패에서 이전 시도의 진단을 재사용하거나 상세 원인으로 기존 격리·재시도 분류를 바꾸지 않는다.
+
+- 인용 offset 복원은 exact·공백 검색 다음에 `U+0022/U+201C/U+201D` 큰따옴표 차이만 허용하고 유일하게 찾은 원문 slice와 Unicode code point offset을 함께 저장한다. 의미 문자·다른 부호·모호한 반복을 보정하지 않는다. 현재값과 `UNAVAILABLE/QUOTE_NOT_FOUND`인 과거 근거는 별개이며 빈 근거를 만들거나 VERIFIED로 승격하지 않는다.
+- GH304 내부 진단 수신·additive schema는 Backend부터 배포하고 AI 진단 전송을 뒤에 둔다. 구 Backend는 추가 필드를 무시하므로 실패 처리는 호환되지만 상세 진단은 보존되지 않는다. rollback은 nullable 열을 남긴 코드 복구이며 운영 작업을 자동 재실행하지 않는다. 합성 Java HTTP 연결은 Backend `ComparisonEvidenceHttpPostgresIntegrationTest`와 `tests/support/comparison_evidence_http_client.py`를 사용하고 AI checkout과 기존 venv 경로를 분리한다.
 
 - 기본 `analysis` Worker는 `supportsFrozenComparisonEvidence=true`를 claim에 전송한다. `ORDERED_PROVISIONAL` 응답의 `comparisonEvidenceContract.formatVersion`이 정수 1인지 progress·heartbeat·원문/저장·provider 호출 전에 확인하고, 누락·잘못된 타입·미지원 버전은 기존 lease 기반 fail로 보고한다. 구 `CONFIRMED_ONLY`와 두 hidden 재비교 Worker의 광고는 유지한다.
 
@@ -144,6 +151,10 @@
 - 신규 청크 임베딩 생성은 `EMBEDDING_GENERATION_ENABLED`로 제어하며 MVP 기본값은 `false`다. 비활성화 시 Embeddings client를 생성·호출하지 않고 설정 후보 추출과 Job 완료를 계속하며, pgvector schema와 임베딩 service·검색 코드는 후속 재활성화를 위해 유지한다.
 
 ## LLM Runtime
+
+- #309 독립 오탈자 검사는 `app.validation.typo.check_typos`와 `app/validation/README.md`를 따른다. 공통 frozen reader·Unicode 위치·구간·예산을 재사용하고, `gpt-6.1-terra`/호출별 `low`를 count와 생성에 동일하게 전달한다. 주입은 raw OpenAIResponsesClient 또는 그 raw를 직접 감싼 MeteredTextGenerationClient(max_retries=0) 한 층만 허용해 숨은 재시도로 생성 예산을 우회하지 않는다. 공유 client/추출·챗봇 기본값을 변경하지 않는다.
+- #309의 category는 공통 schema를 수정하지 않은 local subtype이다. 구간별 응답 전체를 검증한 성공만 보존하며 실패/누락을 정상 0건으로 만들지 않는다. 최종 frozen 재검증 실패 시 이전 제안 전체를 무효화한다. 원문·사전·작가 판단·추출 쓰기와 Worker/lease 연결은 후속 범위다.
+- #309 로직은 `v0027` 요약/상세에 기록한다. #306의 `v0026`은 AI PR #99로 main에 머지됐으며 공통 계약은 main을 기준으로 소비한다. PR/merge 시 최신 main과 번호 충돌·구현 복원 SHA를 재확인한다.
 
 - 다단계 평가의 새 예측은 `processingVersion=1`로 표시하고 후처리 최종 후보마다 처리 기록을 정확히 하나 남긴다. 답지 대응과 실행 상태를 분리하며 누락·중복·decision 모순은 검증 오류로 처리한다. `diagnostics.json`과 Markdown은 같은 허용 필드만 사용하고, 구형 기록에서 확인할 수 없는 사유는 재실행 필요로 표시한다.
 - 평가의 provider 중단은 후보가 없어도 회차 단위 `executionFailure`에 회차·단계·실제 호출 모델/용도·HTTP 상태·오류 코드/유형·매개변수·요청 ID·미완료 상태를 남기고 CLI와 공개 진단에 함께 표시한다. provider 메타데이터는 수집과 공개 시 허용 목록으로 정제하며 error.message·원문·응답 본문·요청 헤더를 기록하지 않는다. 알 수 없는 오류 식별자는 추측하지 않고 UNRECOGNIZED로 표시한다.

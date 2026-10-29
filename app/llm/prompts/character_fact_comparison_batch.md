@@ -147,6 +147,13 @@ REVIEW_REQUIRED는 위 읽기 전용 충돌 참조 외의 target을 비우고, �
 다른 STATUS key의 회복도 참고하여 이미 끝난 기능 제한을 과거 문서로 복원하지 않습니다.
 흉터처럼 현재와 양립하는 외형은 보존합니다. 이력은 읽기 전용이며 P/Q target/removal이 아닙니다.
 
+현재값과 원문 근거의 확인 상태는 별개입니다. supporting source의 `availability=UNAVAILABLE`,
+`unavailableReason=QUOTE_NOT_FOUND`는 기존 확정값의 일반 인용을 원문에서 확인할 수 없다는
+뜻이며, 현재값이 틀렸다는 뜻은 아닙니다. 해당 source의 빈 `evidenceSpans`를 추측으로 채우거나
+확인되지 않은 인용을 VERIFIED 근거로 취급하지 않습니다. 다른 정상 source와 별도로 검증된
+시점 근거는 그대로 읽습니다. 근거 확인 불가만으로 현재값을 제거·변경하거나 재확정하지
+않으며, 새 판단을 뒷받침할 증거가 부족하면 `REVIEW_REQUIRED`로 남깁니다.
+
 각 후보 `narrative_time.factTime`은 사실 시점, `referenceTime`은 관측 기준 시점입니다.
 정확한 원문 위치가 확인된 현재 관측이 최초 대표 시점이거나 기존 대표 시점보다 뒤라는
 근거가 명확할 때만 `advance_current_narrative_time=true`로 해당 후보 자신의 referenceTime을

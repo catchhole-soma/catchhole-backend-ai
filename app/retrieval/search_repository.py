@@ -41,6 +41,7 @@ c.chunk_hash,s.source_key,s.source_version,s.source_hash,s.chunk_policy"""
 
 
 class RetrievalSearchRepository:
+    from_clause = CURRENT_FROM
     def __init__(self, session, scope: SearchScope, spec: IndexSpec):
         self.session, self.scope, self.spec = session, scope, spec
         self.params = dict(
@@ -84,7 +85,7 @@ class RetrievalSearchRepository:
         if not chunk_ids:
             return []
         return self._rows(
-            f"SELECT {FIELDS},1.0 AS score {CURRENT_FROM} "
+            f"SELECT {FIELDS},1.0 AS score {self.from_clause} "
             "AND c.id=ANY(CAST(:ids AS uuid[])) "
             "ORDER BY array_position(CAST(:ids AS uuid[]),c.id),c.id LIMIT :limit",
             dict(ids=list(dict.fromkeys(chunk_ids)), limit=limit),
@@ -106,7 +107,7 @@ class RetrievalSearchRepository:
         matches = [f"c.chunk_text ILIKE :pattern_{n} ESCAPE '\\'" for n in range(len(terms))]
         score = " + ".join(f"CASE WHEN {match} THEN 1.0 ELSE 0.0 END" for match in matches)
         return self._rows(
-            f"SELECT {FIELDS},({score})/{len(terms)} AS score {CURRENT_FROM} "
+            f"SELECT {FIELDS},({score})/{len(terms)} AS score {self.from_clause} "
             f"AND ({' OR '.join(matches)}) "
             "ORDER BY score DESC,(e.id=ANY(CAST(:preferred AS uuid[]))) DESC,"
             "e.episode_no,c.chunk_index,c.id LIMIT :limit",
@@ -130,7 +131,7 @@ class RetrievalSearchRepository:
         # The current view applies lifecycle fencing as well as READY/vector availability.
         return self._rows(
             f"SELECT {FIELDS},1.0-(c.embedding <=> CAST(:vector AS vector)) AS score "
-            f"{CURRENT_FROM} AND c.id IN (SELECT id FROM retrieval_current_chunks) "
+            f"{self.from_clause} AND c.id IN (SELECT id FROM retrieval_current_chunks) "
             "AND c.embedding_model=:model AND c.embedding_version=:version "
             "AND NOT (c.id=ANY(CAST(:excluded AS uuid[]))) "
             "ORDER BY c.embedding <=> CAST(:vector AS vector),e.episode_no,c.chunk_index,c.id "
@@ -155,7 +156,7 @@ class RetrievalSearchRepository:
         # neighbors tie on score and early episodes exhaust the expansion budget.
         # Pick each neighbor's earliest supporting seed before applying the limit.
         return self._rows(
-            f"WITH valid AS MATERIALIZED (SELECT {FIELDS} {CURRENT_FROM}), "
+            f"WITH valid AS MATERIALIZED (SELECT {FIELDS} {self.from_clause}), "
             "neighbors AS (SELECT DISTINCT ON (v.id) v.*,"
             "array_position(CAST(:ids AS uuid[]),seed.id) AS seed_rank,"
             "abs(v.chunk_index-seed.chunk_index) AS distance "
@@ -196,7 +197,7 @@ class RetrievalSearchRepository:
         row = (
             self.session.execute(
                 text(
-                    f"WITH valid AS MATERIALIZED (SELECT c.episode_id,c.status,c.embedding {CURRENT_FROM}), "
+                    f"WITH valid AS MATERIALIZED (SELECT c.episode_id,c.status,c.embedding {self.from_clause}), "
                     "counts AS (SELECT episode_id,count(*) AS texts,"
                     "count(*) FILTER (WHERE status='READY' AND embedding IS NOT NULL) AS vectors "
                     "FROM valid GROUP BY episode_id) "

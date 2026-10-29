@@ -11,6 +11,10 @@ LLM에 전달할 prompt 템플릿을 관리하는 패키지입니다.
 
 ## 현재 파일
 
+- `typo_check.md`
+  - #309 독립 오탈자 검사 전용이다. 원고 전체 핵심 구간과 문맥을 받아 짧은 맞춤법·띄어쓰기·명백한 중복/누락 제안을 정확한 위치와 분류로 반환한다.
+  - 고유명사·방언·의도한 말투·윤문은 제외하고 원문 명령을 비신뢰 자료로 취급한다. 원문 수정·작가 판단·설정 추출을 수행하지 않는다.
+
 - `character_setting_extraction.md`
   - 웹소설 회차 청크에서 캐릭터 중심 설정 후보와 명시적 신규 캐릭터 발견 후보를 추출하기 위한 prompt입니다.
   - `setting_candidates` 저장 구조를 고려해 `candidate_kind`, `entity_type`, `attribute_name`, `value_json`, `evidence_spans` 등을 반환하도록 요구합니다.

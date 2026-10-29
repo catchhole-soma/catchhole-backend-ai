@@ -1,0 +1,10 @@
+{
+  "reason": "GH304: verified CURRENT source quotes and unavailable source warnings use the approved character comparison v11 prompt.",
+  "overrides": {
+    "character_batch": {
+      "sha256": "d9aa7f61953523f5eb2d5922b198986a980637c1568f8d9c859042ff63343aca",
+      "system_sha256": "f1f1cf1a1c5c7fabc1073bd06649522ee4e63a7916466edf96203256f767ce8f",
+      "prompt_cache_key": "character-fact-comparison-batch:v11"
+    }
+  }
+}

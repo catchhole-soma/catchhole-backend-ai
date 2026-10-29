@@ -1,5 +1,7 @@
 from uuid import UUID
 
+import pytest
+
 from app.analysis.evidence_span_resolver import (
     resolve_candidate_evidence_offsets,
     resolve_evidence_span_offsets,
@@ -54,6 +56,126 @@ def test_resolve_evidence_span_offsets_with_whitespace_normalized_match() -> Non
 
     assert resolved.start_offset == 20
     assert resolved.end_offset == 33
+    assert resolved.quote == "카엘은\n12레벨   검사"
+
+
+@pytest.mark.parametrize(
+    ("source", "quote", "expected_quote", "local_start"),
+    [
+        (
+            '아린이 물었다. "지금 갈까?" 라온이 고개를 끄덕였다.',
+            '아린이 물었다. "지금 갈까? 라온이 고개를 끄덕였다.',
+            '아린이 물었다. "지금 갈까?" 라온이 고개를 끄덕였다.',
+            0,
+        ),
+        (
+            '그는 “문이 닫혔다”고 말했다.', '그는 "문이 닫혔다"고 말했다.',
+            '그는 “문이 닫혔다”고 말했다.', 0,
+        ),
+        (
+            '그는 "문이 닫혔다"고 말했다.', '그는 “문이 닫혔다”고 말했다.',
+            '그는 "문이 닫혔다"고 말했다.', 0,
+        ),
+        (
+            '그는 “안전하다”고 말했다.', "그는 안전하다고 말했다.",
+            '그는 “안전하다”고 말했다.', 0,
+        ),
+        (
+            "그는 안전하다고 말했다.", '그는 “안전하다”고 말했다.',
+            "그는 안전하다고 말했다.", 0,
+        ),
+        (
+            '그는 \t“\n문이  닫혔다”고 말했다.', '그는 "문이 닫혔다"고 말했다.',
+            '그는 \t“\n문이  닫혔다”고 말했다.', 0,
+        ),
+        ("앞. “갈까?” 뒤.", '"갈까?"', "갈까?", 4),
+        (
+            '🧭 앞. 그는 “문이 닫혔다”고 말했다. 뒤.', '그는 "문이 닫혔다"고 말했다.',
+            '그는 “문이 닫혔다”고 말했다.', 5,
+        ),
+    ],
+    ids=[
+        "missing-dialogue-close", "curly-source", "ascii-source", "missing-quotes",
+        "extra-quotes", "whitespace-around-quotes", "minimal-source-range", "emoji-prefix",
+    ],
+)
+def test_quote_differences_restore_exact_source_slice_and_unicode_offsets(
+    source, quote, expected_quote, local_start,
+) -> None:
+    span = ExtractedEvidenceSpan(quote=quote, start_offset=999, end_offset=1000)
+    original = span.model_dump()
+
+    resolved = resolve_evidence_span_offsets(span, source, 100)
+
+    assert resolved.quote == expected_quote
+    assert resolved.start_offset == 100 + local_start
+    assert resolved.end_offset == 100 + local_start + len(expected_quote)
+    assert resolved.quote == source[resolved.start_offset - 100:resolved.end_offset - 100]
+    assert span.model_dump() == original
+
+
+@pytest.mark.parametrize(
+    ("source", "quote"),
+    [
+        (
+            '그는 “문이 닫혔다”고 말했다. 그는 "문이 닫혔다"고 말했다.',
+            "그는 문이 닫혔다고 말했다.",
+        ),
+        ('가“가”가', '"가가"'),
+        ("문장.", '"“”'),
+        ("문장.", '" \t“\n”"'),
+        ('그는 “12층”에 있었다.', '그는 "13층"에 있었다.'),
+        ('그는 “안전하지 않다”고 말했다.', '그는 "안전하다"고 말했다.'),
+        ('그는 “빛”과 \'문\'을 보았다.', '그는 "빛"과 문을 보았다.'),
+        ('그는 “빛”과 ‘문’을 보았다.', '그는 "빛"과 \'문\'을 보았다.'),
+        ('그는 “가자!”고 말했다.', '그는 "가자?"고 말했다.'),
+        ('그는 “빛, 문”을 보았다.', '그는 "빛 문"을 보았다.'),
+        ('그는 “-3도”라고 말했다.', '그는 "3도"라고 말했다.'),
+        ('그는 “마법사”였다.', '그는 "검사"였다.'),
+        ('그는 “문이', '그는 "문이 닫혔다"고 말했다.'),
+    ],
+    ids=[
+        "repeated", "overlapping", "quotes-only", "quotes-and-whitespace-only", "number",
+        "negation", "missing-single-quotes", "single-quote-style", "punctuation",
+        "missing-comma", "minus-sign", "changed-word", "crosses-chunk-end",
+    ],
+)
+def test_quote_normalization_keeps_invalid_evidence_unlocated(source, quote) -> None:
+    span = ExtractedEvidenceSpan(quote=quote, start_offset=999, end_offset=1000)
+    original = span.model_dump()
+
+    resolved = resolve_evidence_span_offsets(span, source, 100)
+
+    assert resolved.quote == quote
+    assert resolved.start_offset is None
+    assert resolved.end_offset is None
+    assert span.model_dump() == original
+
+
+@pytest.mark.parametrize(
+    ("source", "quote", "expected_quote"),
+    [
+        (
+            '그는 "문이 닫혔다"고 말했다. 그는 “문이 닫혔다”고 말했다.',
+            '그는 "문이 닫혔다"고 말했다.',
+            '그는 "문이 닫혔다"고 말했다.',
+        ),
+        (
+            '그는  “문이\n닫혔다”고 말했다. 그는 "문이 닫혔다"고 말했다.',
+            '그는 “문이 닫혔다”고 말했다.',
+            '그는  “문이\n닫혔다”고 말했다.',
+        ),
+    ],
+    ids=["exact", "whitespace"],
+)
+def test_existing_matches_keep_priority_over_quote_normalization(
+    source, quote, expected_quote,
+) -> None:
+    resolved = resolve_evidence_span_offsets(ExtractedEvidenceSpan(quote=quote), source, 20)
+
+    assert resolved.quote == expected_quote
+    assert resolved.start_offset == 20
+    assert resolved.end_offset == 20 + len(expected_quote)
 
 
 def test_resolve_evidence_span_offsets_keeps_null_offsets_when_quote_is_not_found() -> None:
@@ -190,6 +312,32 @@ def test_resolve_candidate_evidence_offsets_keeps_unmatched_spans_in_input_order
     ]
     assert all(span.start_offset is None for span in resolved_candidate.evidence_spans)
     assert all(span.end_offset is None for span in resolved_candidate.evidence_spans)
+
+
+def test_recovered_spans_are_ordered_and_deduplicated_without_changing_raw_input() -> None:
+    source = '🌙 그는 “문이 닫혔다”고 말했다. 그녀가 "다시 확인할까?"라고 물었다.'
+    first_quote = '그는 “문이 닫혔다”고 말했다.'
+    second_quote = '그녀가 "다시 확인할까?"라고 물었다.'
+    candidate = _candidate_with_spans(
+        ExtractedEvidenceSpan(quote='그녀가 "다시 확인할까?라고 물었다.'),
+        ExtractedEvidenceSpan(quote="원문에 없는 근거", start_offset=1, end_offset=5),
+        ExtractedEvidenceSpan(quote='그는 "문이 닫혔다"고 말했다.'),
+        ExtractedEvidenceSpan(quote="그는 문이 닫혔다고 말했다."),
+    )
+    original = candidate.model_dump()
+
+    resolved = resolve_candidate_evidence_offsets([candidate], source, 70)[0]
+
+    assert [span.quote for span in resolved.evidence_spans] == [
+        first_quote, second_quote, "원문에 없는 근거",
+    ]
+    for span in resolved.evidence_spans[:2]:
+        assert span.start_offset == 70 + source.index(span.quote)
+        assert span.end_offset == span.start_offset + len(span.quote)
+        assert source[span.start_offset - 70:span.end_offset - 70] == span.quote
+    assert resolved.evidence_spans[2].start_offset is None
+    assert resolved.evidence_spans[2].end_offset is None
+    assert candidate.model_dump() == original
 
 
 def _candidate_with_spans(

@@ -5,6 +5,17 @@ from app.llm.responses import LlmTextResponse
 
 
 @dataclass(frozen=True)
+class LlmCallOptions:
+    """공유 client를 변경하지 않는 호출별 추론 설정. 생략하면 기존 기본값을 유지한다."""
+
+    reasoning_effort: str
+
+    def __post_init__(self):
+        if self.reasoning_effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+            raise ValueError("Unsupported reasoning effort")
+
+
+@dataclass(frozen=True)
 class LlmResponseSchema:
     """Provider 호출 하나에만 적용할 structured output 계약."""
 
@@ -24,4 +35,5 @@ class TextGenerationClient(Protocol):
         max_output_tokens: int = 1500,
         prompt_cache_key: str | None = None,
         response_schema: LlmResponseSchema | None = None,
+        call_options: LlmCallOptions | None = None,
     ) -> LlmTextResponse: ...
