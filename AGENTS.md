@@ -23,6 +23,7 @@
 - 검수는 stage/check/현재 revision을 Java에서 복원하고 성공 질문·오탈자 구간을 즉시 게시한다. checkpoint는 남은 queue/typed receipt/필요 근거만 보존하며 전체 책 본문·저장 결정의 중복 blob으로 만들지 않는다. FOLLOW_UP은 모든 영향 check를 먼저 원자 revise하고 source/report 파기는 모든 사본을 지운다.
 - 검수 metering은 exact count opt-in과 raw one-shot 직접 경계를 유지한다. 역할은 trusted call_role/schema로 고르고 role quota/CAS 실패를 공유 lease/source 무효화와 구분한다. optional query embedding은 SELECT 전용 frozen RAG와 원장에 고정한 exact UTF-8 query/input/manifest/index identity가 맞는 성공 receipt만 재사용한다. 새 색인·백필·cap 자동 증액·validation DB 직접 쓰기를 하지 않는다.
 - GH314 검수 기본 사례는 합성 원고만 담은 `tests/fixtures/episode_validation_cases.json`(형식 검사 `tests/test_episode_validation_cases_fixture.py`, 모델 호출 없음)과 `docs/episode-validation-evaluation.md`가 기준이다. 실제 Terra 호출 결과는 모델을 대체한 연결 테스트와 분리해 사례별 기대/실제·FP/FN·사용량·지연으로 기록하고, 진단 보정을 거친 실행은 main 그대로의 결과와 구분한다.
+- GH331 검수 모델 출력은 검증·저장 전에 Worker가 결정적으로만 정규화한다: 대상 span·TARGET_CONTEXT의 `TSEGn`→`T1`, quote 기준 위치 재계산(구간 안에서 가장 가까운 유일한 정확 위치, 없는 quote·동률은 거절), FOLLOW_UP의 판정 필드·NO_CONFLICT의 영향 등급 무시, `required_reads`는 실제 성공 receipt 전체, DECIDED `target_spans`는 질문 span(원고에 없는 인용만 거절). 판정·사유·등급 자체는 바꾸지 않는다. 역할별 strict schema(`validation_<role>_v2`)는 참조 종류를 제한하고(COVERAGE·선정은 선택 항목 enum, PLANNER·JUDGE는 prompt cache를 위해 보고서 안에서 고정한 종류별 pattern), frozen RAG가 없으면 VECTOR를 제안하지 않으며, 읽을 수 없는 조회 의무는 저장 전에 거절한다. 분류 코드 아래 원인 코드·단계를 로그와 Complete `failureCode`에 남긴다. 계약은 `docs/setting-validation-v1.md` GH331 절을 따른다.
 
 ## Spring Worker API
 

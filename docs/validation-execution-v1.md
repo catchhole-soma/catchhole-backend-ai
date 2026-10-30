@@ -164,6 +164,9 @@ report ID/revision, target contentRevision/hash/key/version, baseline revision/h
 | `POST /{jobId}/usage/{requestId}` | Usage: SETTLE/UNKNOWN/RELEASE, 원래 예약 Scope와 lease |
 
 표의 `/{jobId}` 접두사는 `/api/internal/v1/validation-jobs`다.
+Complete의 `failureCode`는 wire 형태를 바꾸지 않고, 실패한 분기의 가장 구체적인 안전 코드(`[A-Z][A-Z0-9_]{0,99}`)를 보낸다(GH331).
+설정 분기는 Python 분류 코드(`INVALID_INSPECTION_CONTRACT`, `INVALID_DECISION` 등) 대신 원인 코드(`INVALID_EXACT_SPAN`, `INVALID_DECISION_REQUIRED_READS` 등)가 있으면 그것을 보내며,
+분류·단계·정규화 횟수는 Worker 로그에 남긴다. 원문·예외 메시지·URL은 넣지 않는다. Backend는 기존처럼 저장만 하며 해석하지 않는다.
 공개 `GET /api/v1/works/{workId}/episode-validations/{reportId}/results`는 상태·처리 수·coverage 요약,
 현재 check 요약·finding·검증된 인용만 반환한다. 실행 중/중단 후 모두 읽기 전용이다.
 내부 전체 evidence_bundle/catalogue/checkpoint/lease/호출 원장 상세는 공개 응답에 내보내지 않는다.
