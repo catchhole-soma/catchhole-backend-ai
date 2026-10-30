@@ -5,9 +5,9 @@ Six moderate Korean passages exercise roughly 4,000 cl100k tokens, not the full
 arithmetic contract check, not a Java ledger integration or measured API cost.
 """
 
+import socket
 from collections import Counter
 from hashlib import sha256
-import socket
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -15,6 +15,7 @@ import pytest
 import tiktoken
 
 from app.chatbot.hybrid import _Evidence, _HybridSession
+from app.chatbot.hybrid_config import HybridSettings
 from app.chatbot.hybrid_items import group_items
 from app.chatbot.hybrid_prompts import ANSWER_PROMPT
 from app.chatbot.qa import encode, response_schema
@@ -134,8 +135,8 @@ def answer_context():
 def test_six_korean_passages_fit_new_evidence_budget_without_raising_item_caps():
     chunks = korean_chunks()
     cfg = hybrid_settings()
-    assert cfg.evidence_tokens == 6000
-    assert (cfg.max_evidence, cfg.per_episode) == (8, 3)
+    assert cfg.evidence_tokens == 9000
+    assert (cfg.max_evidence, cfg.per_episode) == (12, 4)
     encoding = tiktoken.get_encoding("cl100k_base")
     individual = [len(encoding.encode(chunk.text, disallowed_special=())) for chunk in chunks]
     assert all(600 <= count <= 800 for count in individual)
@@ -189,8 +190,8 @@ def test_actual_hybrid_answer_payload_fits_luna_input_with_all_six_passages():
 
 
 def test_six_maximum_text_reservations_and_one_embedding_fit_server_budget_contract():
-    cfg, hcfg = offline_settings(), hybrid_settings()
-    assert (hcfg.max_model_calls, hcfg.max_query_embeddings) == (6, 1)
+    cfg, hcfg = offline_settings(), HybridSettings(enabled=False)
+    assert (hcfg.max_model_calls, hcfg.max_query_embeddings, hcfg.max_rounds) == (6, 2, 3)
     # The orchestrator slices every query-embedding input to 1,000 Unicode code points.
     # Four-byte code points bound the existing UTF-8-based embedding reservation.
     query_upper_bound = "😀" * 1000
@@ -203,7 +204,7 @@ def test_six_maximum_text_reservations_and_one_embedding_fit_server_budget_contr
         + hcfg.max_query_embeddings * embedding_reservation
     )
     assert maximum_text_reservation == 38000
-    assert maximum_attempt_reservation == 232256
+    assert maximum_attempt_reservation == 236512
     # Mirror the explicitly agreed Spring attempt budget, without requiring a sibling checkout.
     server_attempt_budget = 240000
     assert maximum_attempt_reservation <= server_attempt_budget

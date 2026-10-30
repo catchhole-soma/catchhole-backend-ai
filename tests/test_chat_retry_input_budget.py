@@ -23,7 +23,9 @@ class RepairAnswer(ContractModel):
 
 PROMPT = "Answer from the supplied evidence. Preserve every requested part and return the schema."
 SCHEMA = response_schema(RepairAnswer)
-MODEL = "gpt-6-luna"
+# 입력 예산 산술 검사용 합성 모델명. 알려지지 않은 이름은 UTF-8 byte 상한을 쓰므로 글자 수와 단조 대응한다.
+# (gpt-5.6·gpt-6 계열은 o200k tokenizer로 추정하므로 "x" 채움 문자열이 글자 수와 비례하지 않는다.)
+MODEL = "synthetic-byte-bound-model"
 INPUT_LIMIT = 32000
 
 
@@ -91,7 +93,7 @@ async def model_replay(monkeypatch, payload, *, outputs=None, max_calls=8):
         case,
         catalog,
         outputs=outputs if outputs is not None else [{"value": PRIVATE}, {"value": "confirmed"}],
-        config={"max_context_characters": 64000, "max_input_tokens": INPUT_LIMIT},
+        config={"model": MODEL, "max_context_characters": 64000, "max_input_tokens": INPUT_LIMIT},
     )
     return result, errors
 
@@ -229,6 +231,7 @@ async def test_hybrid_validation_without_retry_room_continues_search(monkeypatch
     result = await replay(
         tmp_path,
         case,
+        config={"model": MODEL},
         search_setup=search_with(
             keyword=[passage("합성 장면에서 날씨를 이야기했다.", 1)],
             vector=[passage(text, 2, episode=24, method="VECTOR")],

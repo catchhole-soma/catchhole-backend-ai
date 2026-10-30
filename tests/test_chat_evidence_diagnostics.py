@@ -30,7 +30,10 @@ def offline_only(monkeypatch):
 
 def session_with(chunks=(), **limits):
     session, plan, _ = answer_context()
-    session.hcfg = session.hcfg.model_copy(update=limits)
+    # 생략 진단 회귀는 상한 도달 산술을 검사하므로 예전 8개·회차당 3개·6,000토큰 예산을 고정한다.
+    session.hcfg = session.hcfg.model_copy(
+        update={"max_evidence": 8, "per_episode": 3, "evidence_tokens": 6000, **limits}
+    )
     session.metrics = HybridMetrics()
     session.evidences = [
         _Evidence(f"E{index}", chunk.text, chunk.episode_no, chunk=chunk)
@@ -211,7 +214,8 @@ def test_success_omits_blanket_disclaimer_but_preserves_gaps_and_index_warning(t
         replay(
             tmp_path,
             case,
-            hybrid={"max_rounds": 1},
+            # 생략 2건 산술은 예전 8개 상한 기준이다.
+            hybrid={"max_rounds": 1, "max_evidence": 8, "per_episode": 3},
             search_setup=limited_search,
         )
     )

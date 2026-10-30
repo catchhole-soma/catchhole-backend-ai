@@ -6,9 +6,18 @@ Java/Python 저장소에 같은 내용으로 보관하며, [공통 JSON fixture]
 
 이 문서는 구현된 공통 조회·인용 계약과 질문 조율을 설명한다. 최종 통합 검증 결과는 아래 기록에서 구분하며, 구현이나 합성 테스트 통과가 운영 활성화 또는 실제 모델 품질 측정을 뜻하지 않는다.
 
+## 2026-10-30 입력 추정·도구 예약·장면 확장·정렬 검색 보완 (#319)
+
+- 입력 추정: `gpt-6`·`gpt-5.6` 계열 모델명은 tiktoken이 모르는 별칭이라 `o200k_base`로 센다. 이전에는 UTF-8 byte 상한으로 돌아가 한글 입력이 실제의 3~4배로 잡혔고, 그 결과 선택한 근거 8개 중 1~2개가 `INPUT_LIMIT`로 모델 입력에서 빠지고 대화 문맥도 불필요하게 잘렸다. 알려지지 않은 모델명은 기존 byte 상한을 유지한다. 32,000 입력 상한과 6,000 근거 토큰·8개 한도는 바꾸지 않았다.
+- 도구 예약: 원문 검색이 필요한 계획(`sourceNeed != NONE`)에서 집중 조회가 아닌 인물별 등록 조회는 `3 * max_rounds + 2`(기본 8) 도구를 남기고, 남은 여유를 인물 수로 나눠 페이지를 읽는다. 등록 이력 페이지가 도구 예산을 소진해 원문 검색이 시작되지 않던 경로를 막기 위함이다. 비집중 페이지 조회가 예약 때문에 멈추면 `PARTIAL_RESULTS`를 표시한다. 첫 페이지는 기존처럼 시도하며 집중 조회·등록 전용 계획·collection 조회의 예약은 그대로다.
+- 장면 확장: 1라운드 답이 PARTIAL이면 2라운드에서 전역 벡터 후보와 기본 이웃 다음에, 검증된 초안이 인용한 청크를 seed로 `focus_radius`(기본 2) 이웃을 한 번 더 읽어 우선 배치하고 그 라운드의 회차별 몫을 2개 늘린다. 회차는 맞췄지만 세부가 빠진 PARTIAL이 대상이며 전체 근거 8개·6,000토큰·도구/모델 상한은 유지한다. trace `focus`를 남긴다.
+- 정렬 검색: 계획 `ordering`(`NONE|EARLIEST|LATEST`, plan v12)은 질문이 처음/최초/첫 사건·등장·획득을 물으면 `EARLIEST`, 마지막/최근을 물으면 `LATEST`다. `sourceNeed != NONE`인 1라운드에서 일반 keyword 검색 뒤 `keyword_ordered`를 한 번 더 호출해, 질문의 인물명(계획이 허용하는 최대 3개, **모두** 포함 필수)과 대상 단어(집중 항목 `focus.attribute`의 단어, 없으면 인물명을 뺀 검색어 단어; 최대 4개, **절반 이상** 포함)를 만족하는 청크를 출처 회차·청크 순서(`ASC`/`DESC`)로 `keyword_top_k`개 읽는다. 점수는 반환 순서를 보존하는 `1.0 - rank/10000`이라 일반 keyword 후보보다 먼저 배치되되, 앞의 `ordered_top_k`(기본 4)개만 앞에 두고 나머지는 버린다(초반 언급이 질문과 더 밀접한 keyword 후보를 근거 상한 밖으로 밀어내지 않게 하기 위함). 이후 `_rank`·회차별 몫·근거 8개·6,000토큰 상한은 그대로 적용된다. 답변 입력에는 `searchOrdering {order, anchors, boundaryEpisode, truncated}`를 추가하고(answer v15) 모델은 "확인한 범위에서 가장 이른(늦은) 장면"으로 설명하되 작중 최초 사건 자체는 원문 서술로 뒷받침한다. `boundaryEpisode`는 anchor가 등장하는 첫/마지막 출처 회차이며 `truncated`는 그 뒤 언급이 상한을 넘었다는 뜻이다. 2라운드 의미 검색은 정렬 계획에서 후보 상한을 `vector_top_k`의 3배(최대 100)로 넓히고 그중 출처 회차가 가장 이른/늦은 `ordered_top_k`개를 유사도 순서보다 먼저 선택한다(임베딩 호출 수는 그대로, trace `ordered_vector`). 활용형 차이로 keyword 정렬 검색이 비는 경우를 의미 검색으로 보완하기 위함이다. 사용자 안내 `ORDERED_SEARCH_EARLIEST/LATEST`를 limitations에 남기고 도구 예약에 1개를 더한다. 처음 조회된 사용 장면을 최초 획득으로 단정하지 않는 기존 답변 규칙은 유지한다.
+- 예산 확대·3라운드(2026-10-30 2차): 비통과 21사례의 Gold 근거 54개가 모두 색인에 있었지만 26개는 모델 입력에 들어가지 못했다(올바른 회차를 찾고도 회차당 3개 상한·전역 후보 12개에 걸림). keyword/vector 후보 16개, 이웃 8개, 근거 12개·회차당 4개·9,000토큰, 집중 반경 3(집중 라운드의 회차 몫 +`max_evidence//3`=4)으로 넓혔다. 앞 라운드가 PARTIAL/NONE이면 3라운드를 한 번 더 돌되 `extra_round_affordable`(남은 모델 시간 > 마지막 모델 지연×2 + 10초)일 때만 시작하고 두 번째 질의 임베딩을 허용한다(`max_query_embeddings=2`). 모델 호출 6회·입력 32,000토큰·Spring 시도 예산 240,000(6×38,000 + 2×4,256 = 236,512)은 유지하며 도구 예약은 처음 두 라운드 몫만 잡는다. answer v16은 passages가 서술하는 요구는 반드시 claim으로 답하고 본문에서 답한 사실을 다시 확정 불가로 설명하지 않게 한다(답하고도 PARTIAL로 표시한 자기모순 4사례). 운영 Compose 기본값도 같은 값으로 바꿨고 환경변수로 되돌릴 수 있다.
+- 합성 회귀는 `tests/test_chat_source_focus_and_budget.py`, `tests/test_chat_source_ordering.py`, 실제 PostgreSQL SQL은 `tests/test_retrieval_search_postgres.py`의 `keyword_ordered` 사례다. 실제 모델 평가는 별도 버전 기록으로 남긴다.
+
 ## 2026-10-23 근거 보존·응답 복구 보완
 
-현재 계획/답변 프롬프트는 `chat-hybrid-plan-v11`/`chat-hybrid-answer-v14`이다. 아래 OPT-31의 버전·실행 결과는 당시 기록으로 보존한다. 같은 v0023에서 근거 보존·coverage 복구에 이어 10/26 실행 실패 복구를 추가했다. 모델·검색 라운드·입력/근거/전체 호출 상한·Spring wire 계약은 유지하고 단계 출력과 종료 여유를 아래처럼 변경한다. 새 실제 평가 결과는 별도로 기록한다.
+현재 계획/답변 프롬프트는 `chat-hybrid-plan-v12`/`chat-hybrid-answer-v16`다(2026-10-30 정렬 검색 추가 전까지는 v11/v14). 아래 OPT-31의 버전·실행 결과는 당시 기록으로 보존한다. 같은 v0023에서 근거 보존·coverage 복구에 이어 10/26 실행 실패 복구를 추가했다. 모델·검색 라운드·입력/근거/전체 호출 상한·Spring wire 계약은 유지하고 단계 출력과 종료 여유를 아래처럼 변경한다. 새 실제 평가 결과는 별도로 기록한다.
 
 검증을 통과한 부분 답변이 사용한 원본 근거는 검색 청크 fingerprint 또는 직접 근거 identity로 보존한다. 재검색 결과를 조합할 때 이 근거를 우선하고, 모델 입력량을 맞출 때도 먼저 다른 후보를 제외한다. 필요한 보호 근거를 모두 담지 못하면 새 답변을 생성해 기존 답변을 대체하지 않고, 기존 부분 답변을 최종 재검증하는 경로로 돌아간다. 라운드별 E 번호는 다시 매기며 원본 identity와 혼동하지 않는다. 상세 선택·복구 규칙은 아래 요청 부분·근거 합성 절을 따른다.
 
@@ -191,7 +200,7 @@ Python의 `RetrievalSearchService`는 `readiness`, `keyword`, `direct`, `neighbo
 | `CHAT_RETRIEVAL_KEYWORD_TOP_K` / `VECTOR_TOP_K` | `12` / `12` | 라운드별 검색 결과 상한 |
 | `CHAT_RETRIEVAL_NEIGHBOR_RADIUS` / `MAX_NEIGHBORS` | `1` / `6` | 인접 범위와 반환 수 상한 |
 | `CHAT_RETRIEVAL_MAX_EVIDENCE` / `PER_EPISODE` | `8` / `3` | 최종 자료 수와 검색 회차별 상한; 직접 근거도 전체 개수에 포함 |
-| `CHAT_RETRIEVAL_EVIDENCE_TOKENS` | `6000` | 직접 인용과 검색 문맥의 본문 토큰 상한; 겹친 검색 slice는 병합 후 계산 |
+| `CHAT_RETRIEVAL_EVIDENCE_TOKENS` | `9000`(2026-10-30 전 `6000`) | 직접 인용과 검색 문맥의 본문 토큰 상한; 겹친 검색 slice는 병합 후 계산 |
 | `CHAT_RETRIEVAL_MAX_ROUNDS` | `2` | 키워드 다음 벡터까지의 최대 검색 라운드 |
 | `CHAT_RETRIEVAL_MAX_MODEL_CALLS` | `6` | 계획·선택·답변과 schema/참조 오류·출력 절단 복구를 포함한 모델 호출 상한 |
 | `CHAT_RETRIEVAL_MAX_QUERY_EMBEDDINGS` | `1` | 질문 embedding 호출 상한; 0이면 벡터 단계를 생략 |

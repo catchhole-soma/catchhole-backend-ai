@@ -415,12 +415,14 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         self.last_collection = None
         page_limit = 10001 if exhaustive else self.cfg.max_pages
         for page in range(page_limit):
-            if (
-                exhaustive
-                and self.tool_count
-                >= min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls) - reserve
-            ):
+            limit = min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls)
+            if (exhaustive or page > 0) and self.tool_count >= limit - reserve:
+                # 예약된 도구 호출(원문 검색·이웃·영수증·재검증) 몫을 남기기 위해 추가 페이지를 멈춘다.
+                # 첫 페이지는 기존처럼 시도해, 예산이 실제로 바닥난 경우는 실행 한도 오류로 드러나게 한다.
+                # 집중 조회가 아닌 경우는 등록 정보가 일부만 확인됐음을 알린다.
                 complete = False
+                if not exhaustive:
+                    self.codes.append("PARTIAL_RESULTS")
                 break
             history = tool.endswith("_HISTORY")
             fields = tool.endswith("_FIELDS")
@@ -629,7 +631,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             text = {
                 "GREETING": "안녕하세요! 작품에서 궁금한 내용을 물어보세요.",
                 "THANKS": "천만에요. 더 궁금한 내용이 있으면 말씀해 주세요.",
-                "HELP": "작품의 인물이나 세계관 설정에 대해 물어보세요. 확인할 대상과 궁금한 내용을 함께 알려주시면 도움이 돼요.",
+                "HELP": "작품의 인물이나 세계관 설정에 대해 물어보세요. 예를 들어 '주인공의 현재 레벨은?'이나 '3화에서 주인공이 왜 떠났어?'처럼 확인할 대상과 궁금한 내용을 함께 알려주시면 도움이 돼요.",
             }[plan.intent]
             return message("ANSWER", text, [])
         self.include_sources = plan.include_evidence or plan.intent == "DIRECT_EVIDENCE"
