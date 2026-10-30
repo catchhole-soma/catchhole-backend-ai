@@ -6,6 +6,7 @@
 
 import asyncio
 import socket
+from dataclasses import replace
 
 import pytest
 from pydantic import ValidationError
@@ -185,3 +186,20 @@ def test_ordered_plans_widen_round_two_vector_search_and_select_the_earliest(tmp
     # 유사도 순서는 ring(3화)이 먼저지만 가장 이른 weather(1화)를 먼저 고른다.
     assert [p["sourceEpisodeNo"] for p in request["passages"]] == [1]
     assert [source["sourceEpisodeNo"] for source in finished["retrievalSources"]] == [1]
+
+
+def test_first_round_keeps_ordered_hits_ahead_of_full_score_keyword_hits(tmp_path):
+    case = scenario("lexical_scene")
+    case["outputs"][0].update({"ordering": "LATEST", "searchTerms": ["반지"]})
+
+    def setup(search):
+        # 이른 회차의 keyword 후보가 점수 1.0으로 정렬 후보와 동률이면 회차 오름차순에 밀린다.
+        search.keyword_chunks = [replace(source_chunk("weather"), score=1.0)]
+        search.ordered_chunks = [source_chunk("ring")]
+
+    result = asyncio.run(
+        replay(tmp_path, case, search_setup=setup, hybrid={"max_evidence": 1, "per_episode": 1})
+    )
+    request = result["raw"].requests[-1]["input"]
+    assert [p["sourceEpisodeNo"] for p in request["passages"]] == [3]
+    assert result["finish"]["result"]["outcome"] == "ANSWER"

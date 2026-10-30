@@ -12,6 +12,7 @@ import pytest
 import tiktoken
 
 from app.chatbot.qa_render import notices
+from app.schemas.chat_qa import SettingFocus
 from app.schemas.setting_tools import SettingToolResponse
 from app.usage.metering import _estimate_text_token_byte_upper_bound, estimate_text_input_tokens
 from tests.test_chat_evidence_budget import answer_context
@@ -54,8 +55,10 @@ def test_row_page_reserve_shares_remaining_tools_across_unfocused_subjects():
     session, plan, _ = answer_context()
     session.execution.context.max_tool_calls = 20
     limit = session.cfg.max_tool_calls
+    # 새 schema의 focus는 항상 객체다. 유형·항목이 비어 있어야 비집중 조회다.
     focused = plan.subjects[0]
-    unfocused = focused.model_copy(update={"focus": None})
+    assert focused.focus.fact_type is not None
+    unfocused = focused.model_copy(update={"focus": SettingFocus(fact_type=None, attribute=None)})
     three = plan.model_copy(update={"subjects": [unfocused] * 3})
     # 집중 조회·등록 전용 계획은 기존 예약(base)을 그대로 쓴다.
     assert session.row_page_reserve(plan, focused, 0, base=5) == 5
@@ -228,3 +231,24 @@ def test_source_tool_reserve_counts_only_the_first_two_rounds():
     assert session.extra_round_affordable() is False
     session.model_time_left = lambda: 35.0
     assert session.extra_round_affordable() is True
+
+
+def test_third_round_stops_without_error_when_embedding_allowance_is_spent(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.chatbot.hybrid._HybridSession.model_time_left", lambda self: 100.0)
+    case = partial_case(later=answer(coverage="NONE"))
+    case["vector"] = ["ring", "raon"]
+    case["outputs"].append(answer(ref="E1"))
+    # 라운드만 3으로 늘리고 임베딩 허용량은 1로 둔 설정: 3라운드는 실행 오류 없이 건너뛴다.
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            hybrid={"max_rounds": 3, "max_query_embeddings": 1},
+            search_setup=one_vector_hit_per_round,
+        )
+    )
+    assert result["finish"].get("failure") is None
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    assert result["search"].calls.count("vector") == 1
+    assert len(result["embedding"].inputs) == 1
+    assert len(result["raw"].requests) == 3

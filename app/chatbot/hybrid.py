@@ -228,6 +228,7 @@ class _HybridSession(_Session):
         self.recovery_evidence = ()
         self.answer_validation_failed = False
         self.ordered_coverage = None
+        self.ordered_kept = ()
 
     def trace(self, stage, **data):
         # No questions, source text, model output, member/work IDs or secrets.
@@ -316,7 +317,9 @@ class _HybridSession(_Session):
 
     def row_page_reserve(self, plan, subject, index, *, base):
         """인물별 등록 조회가 남길 도구 수. 집중 조회와 등록 전용 계획은 기존 예약을 유지한다."""
-        if subject.focus is not None or plan.source_need == "NONE":
+        # 새 schema는 focus 객체를 항상 채우므로 내용(유형·항목)이 비어 있는지로 집중 여부를 본다.
+        focused = subject.focus.fact_type is not None or subject.focus.attribute is not None
+        if focused or plan.source_need == "NONE":
             return base
         limit = min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls)
         floor = max(base, self.source_tool_reserve(plan))
@@ -369,6 +372,7 @@ class _HybridSession(_Session):
         # 순서상 앞의 몇 개만 우선 배치한다. 전부 앞에 두면 점수 1.0 근처의 초반 언급이
         # 질문과 더 밀접한 일반 keyword 후보를 근거 상한 밖으로 밀어낸다.
         kept = list(ordered[: self.hcfg.ordered_top_k])
+        self.ordered_kept = tuple(kept)
         self.trace(
             "ordered", round=self.rounds, anchors=len(anchors), found=len(ordered), kept=len(kept)
         )
@@ -655,7 +659,8 @@ class _HybridSession(_Session):
                 if plan.ordering != "NONE":
                     found = await self.ordered_search(plan, found)
             else:
-                if self.hcfg.max_query_embeddings == 0:
+                if self.embedding_calls >= self.hcfg.max_query_embeddings:
+                    # 설정으로 라운드 수만 늘리고 임베딩 허용량을 그대로 둔 경우도 실행 오류 없이 멈춘다.
                     self.codes.append("SEARCH_LIMIT")
                     break
                 vector_limit = self.hcfg.vector_top_k
@@ -698,8 +703,12 @@ class _HybridSession(_Session):
             elif found and self.hcfg.neighbor_radius:
                 self.codes.append("SEARCH_LIMIT")
             ordered_head = ()
-            if round_no > 1 and plan.ordering != "NONE":
-                ordered_head = self.episode_ordered_head(plan, found)
+            if plan.ordering != "NONE":
+                # 1라운드는 정렬 검색이 남긴 청크를, 이후 라운드는 의미 검색의 가장 이른/늦은 후보를
+                # 조합 우선순위로 넘긴다. 점수만으로는 1.0 keyword 후보와 회차 오름차순에 밀린다.
+                ordered_head = (
+                    self.ordered_kept if round_no == 1 else self.episode_ordered_head(plan, found)
+                )
             focus = ()
             if round_no > 1 and partial_snapshot is not None:
                 # 앞 라운드가 일부만 답했다면 그 장면의 이어지는 대목을 새 전역 후보보다 먼저 읽는다.
