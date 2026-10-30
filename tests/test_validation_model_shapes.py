@@ -405,6 +405,28 @@ def test_remaining_decision_rules_stay_strict_with_specific_causes(change, cause
     assert (result.status, result.failure_code, result.failure_cause) == ("INCOMPLETE", "INVALID_DECISION", cause)
 
 
+def test_judge_echo_that_omits_question_spans_is_completed_but_foreign_spans_are_rejected():
+    class Partial(RecordedTerra):
+        def __init__(self, extra=False):
+            super().__init__()
+            self.extra = extra
+
+        def judge(self, payload):
+            value = super().judge(payload)
+            if value["action"] == "DECIDED" and payload["question_ref"] == "Q1":
+                spans = payload["question"]["target_spans"]
+                value["target_spans"] = spans[:0] + ([span(POST)] if self.extra else [])
+            return value
+
+    checkpoint = RecordingCheckpoint()
+    result = inspect(Partial(), checkpoint)
+    assert result.status == "COMPLETED" and result.normalizations["TARGET_SPANS_COMPLETED"] == 1
+    decided = {ref: decision for ref, decision, _ in checkpoint.decided}
+    assert decided["Q1"].target_spans == result.questions[0].draft.target_spans
+    foreign = inspect(Partial(extra=True))
+    assert (foreign.failure_code, foreign.failure_cause) == ("INVALID_DECISION", "INVALID_DECISION_TARGET_SPANS")
+
+
 def test_model_contract_and_provider_failures_keep_a_class_level_cause_only():
     class Literal(RecordedTerra):
         def judge(self, payload):
