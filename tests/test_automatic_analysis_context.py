@@ -97,7 +97,8 @@ def test_unresolved_reference_contract_defaults_and_rejects_internal_metadata():
 def test_extraction_reads_aliases_review_source_and_unresolved_as_separate_context():
     character = WorkerAnalysisKnownCharacterPayload(
         character_id=uuid4(), name="에르웬", aliases=["에르웬 미샤"],
-        identity_evidence=[{"quote": "에르웬이 이름을 밝혔다."}],
+        identity_evidence=[{"quote": "에르웬이 이름을 밝혔다.", "startOffset": 0,
+                            "endOffset": len("에르웬이 이름을 밝혔다.")}],
         provenance=AnalysisStateProvenance(confirmation_status="CONFIRMED", review_source="AUTOMATIC"),
     )
     context = OrderedExtractionContext(_context(), (character,), (_temporary_character(),))

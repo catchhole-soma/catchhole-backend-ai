@@ -685,7 +685,8 @@ def test_batch_comparator_projects_in_order_and_hides_transport_ids() -> None:
     assert request["prompt_cache_key"] == "character-fact-comparison-batch:v11"
 
 
-def test_unavailable_retained_evidence_reaches_prompt_and_keeps_current_value_for_review() -> None:
+@pytest.mark.parametrize("reason", ["QUOTE_NOT_FOUND", "OFFSETS_UNAVAILABLE", "INVALID_OFFSETS", "EVIDENCE_UNAVAILABLE"])
+def test_unavailable_retained_evidence_reaches_prompt_and_keeps_current_value_for_review(reason) -> None:
     client = FakeTextClient({"decisions": [_decision_payload(
         "C1", operation="REVIEW_REQUIRED", resolved_key="status.다리_상태", value=None,
         reason="새 관측의 근거가 부족하여 확인이 필요합니다.",
@@ -698,7 +699,7 @@ def test_unavailable_retained_evidence_reaches_prompt_and_keeps_current_value_fo
             "supportingSources": [{
                 "sourceCandidateId": "10000000-0000-4000-8000-000000000001",
                 "sourceAnalysisJobId": "10000000-0000-4000-8000-000000000002",
-                "availability": "UNAVAILABLE", "unavailableReason": "QUOTE_NOT_FOUND",
+                "availability": "UNAVAILABLE", "unavailableReason": reason,
                 "candidateWasEdited": False, "evidenceSpans": [], "quoteRelation": "SOURCE_CONTEXT_ONLY",
                 "source": {"sourceKind": "EPISODE", "episodeNo": 1}, "narrativeTime": None,
             }],
@@ -722,7 +723,7 @@ def test_unavailable_retained_evidence_reaches_prompt_and_keeps_current_value_fo
     assert current["factValue"] == "기존 확정값"
     origin = current["supportingSources"][0]
     assert origin["availability"] == "UNAVAILABLE"
-    assert origin["unavailableReason"] == "QUOTE_NOT_FOUND"
+    assert origin["unavailableReason"] == reason
     assert origin["evidenceSpans"] == []
     assert origin["sourceRef"] == "S1"
     assert "10000000-0000-4000-8000" not in request["user_prompt"]

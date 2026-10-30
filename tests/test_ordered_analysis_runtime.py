@@ -831,6 +831,9 @@ def test_character_subject_input_keeps_prior_identity_evidence_and_settings_with
     from app.analysis.ordered_character_subjects import initial_ordered_subjects
 
     character = _temporary_character()
+    span = character.identity_evidence[0]
+    character = character.model_copy(update={"identity_evidence": [
+        span.model_copy(update={"end_offset": span.start_offset + len(span.quote)})]})
     targets = initial_ordered_subjects(OrderedExtractionContext(_input_context(), (), (character,)))
     (_, _), client = _resolve_subjects(
         {"resolutions": [{"candidate_ref": "C1", "target_ref": "K1"}]},

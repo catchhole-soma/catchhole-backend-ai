@@ -14,6 +14,7 @@ from app.analysis.character_name_resolver import (
 )
 from app.analysis.character_subject_resolver import SubjectResolutionChunkContext
 from app.analysis.exceptions import ComparisonValidationError
+from app.analysis.evidence_projection import located_evidence_quotes
 from app.analysis.json_response import request_validated_model
 from app.analysis.ordered_context import (
     BoundedOrderedClient,
@@ -231,7 +232,7 @@ def initial_ordered_subjects(context: OrderedExtractionContext) -> list[OrderedS
             name=item.name,
             actual_character_id=item.character_id,
             aliases=tuple(item.aliases),
-            evidence=tuple(span.quote for span in item.identity_evidence),
+            evidence=tuple(located_evidence_quotes(item.identity_evidence)),
             active_statuses=tuple(item.active_statuses),
             review_source=item.provenance.review_source if item.provenance else None,
             provenance=item.provenance,
@@ -245,7 +246,7 @@ def initial_ordered_subjects(context: OrderedExtractionContext) -> list[OrderedS
             source_episode_no=item.source_episode_no,
             provenance=AnalysisStateProvenance.from_source(confirmation_status="PROVISIONAL",
                 source_episode_no=item.source_episode_no, source=item.source),
-            evidence=tuple(span.quote for span in item.identity_evidence),
+            evidence=tuple(located_evidence_quotes(item.identity_evidence)),
             active_statuses=tuple(item.active_statuses),
         )
         for item in context.provisional_characters

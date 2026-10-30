@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.analysis.evidence_projection import located_evidence_quotes
+
 from app.domain.enums import (
     AnalysisSourceKind,
     CharacterFactTemporalScope,
@@ -73,7 +75,8 @@ class WorkerAnalysisReference(BaseModel):
             "reason": self.reason,
             "setting_name": self.setting_name,
             "value": self.value,
-            "evidence": [span.quote for span in self.evidence_spans],
+            "evidence": (located_evidence_quotes(self.evidence_spans) if self.domain == "characters"
+                         else [span.quote for span in self.evidence_spans]),
             "confirmation_status": "UNRESOLVED",
             "applied_to_current_state": False,
             **({"source": self.source.prompt_data()} if self.source is not None else {}),

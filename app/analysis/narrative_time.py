@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.analysis.evidence_projection import evidence_offset_issue
+
 
 class NarrativeTimeEvidence(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
@@ -96,6 +98,32 @@ def time_context_prompt_data(time_context) -> list[dict]:
                                  for index, point in enumerate(time_context, 1)])
 
 
+def _supporting_source_prompt_data(source: dict) -> dict:
+    """Do not promote unlocated legacy/candidate quotes into CURRENT evidence.
+
+    This is a display projection only. Exact source/hash validation belongs to
+    Spring; having plausible offsets alone never grants VERIFIED status here.
+    """
+    source = dict(source)
+    spans = source.get("evidenceSpans", [])
+    if source.get("availability") == "UNAVAILABLE":
+        source["evidenceSpans"] = []
+        return source
+    located = []
+    reasons = set()
+    for span in spans:
+        issue = evidence_offset_issue(span)
+        if issue is not None:
+            reasons.add(issue)
+        else:
+            located.append(span)
+    source["evidenceSpans"] = located
+    if not located:
+        source["availability"] = "UNAVAILABLE"
+        source["unavailableReason"] = next(iter(reasons)) if len(reasons) == 1 else "EVIDENCE_UNAVAILABLE"
+    return source
+
+
 def narrative_prompt_data(value: Any) -> Any:
     """Keep all semantic/evidence rows; replace backend identities with local refs."""
     identities: dict[tuple[str, str], str] = {}
@@ -110,6 +138,8 @@ def narrative_prompt_data(value: Any) -> Any:
             return [project(row) for row in item]
         if not isinstance(item, dict):
             return item
+        if "evidenceSpans" in item and ("availability" in item or "quoteRelation" in item):
+            item = _supporting_source_prompt_data(item)
         projected = {}
         for key, child in item.items():
             if key in omitted:
@@ -166,10 +196,10 @@ def project_advisory_narrative_time(context, candidate, decision, *, fact_type=N
                         "supportingSources": [] if prior is None else prior.get("supportingSources", [])})
         slots[:] = [row for row in slots if not (row.get("factType") == entry.fact_type and row.get("factKey") == entry.fact_key)]
     time = None if candidate.narrative_time is None else candidate.narrative_time.storage_data()
-    source = {"sourceCandidateRef": candidate.candidate_ref, "quoteRelation": "SOURCE_CONTEXT_ONLY",
+    source = _supporting_source_prompt_data({"sourceCandidateRef": candidate.candidate_ref, "quoteRelation": "SOURCE_CONTEXT_ONLY",
               "source": None if candidate.source is None else candidate.source.prompt_data(),
               "evidenceSpans": [span.model_dump(mode="json", by_alias=True) for span in candidate.evidence_spans],
-              "narrativeTime": time}
+              "narrativeTime": time})
     if operation in {"ADD", "UPDATE", "MERGE"}:
         prior = next((row for row in slots if row.get("factType") == fact_type and row.get("factKey") == decision.resolved_canonical_fact_key), None)
         supporting = [*(prior.get("supportingSources", []) if prior and operation == "MERGE" else []), source]
