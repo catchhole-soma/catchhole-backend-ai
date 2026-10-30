@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from app.chatbot.qa_render import notices
 from app.schemas.chat_hybrid import HybridPlan
 from tests.test_chat_evidence_budget import answer_context
-from tests.test_chat_hybrid import answer, replay, scenario, source_chunk
+from tests.test_chat_hybrid import answer, hybrid_settings, replay, scenario, source_chunk
 
 
 @pytest.fixture(autouse=True)
@@ -180,7 +180,7 @@ def test_ordered_plans_widen_round_two_vector_search_and_select_the_earliest(tmp
     finished = result["finish"]["result"]
     assert finished["outcome"] == "ANSWER"
     # 임베딩 1회는 그대로이고 후보 상한만 3배로 넓힌다.
-    assert limits == [36] and len(result["embedding"].inputs) == 1
+    assert limits == [3 * hybrid_settings().vector_top_k] and len(result["embedding"].inputs) == 1
     request = result["raw"].requests[-1]["input"]
     # 유사도 순서는 ring(3화)이 먼저지만 가장 이른 weather(1화)를 먼저 고른다.
     assert [p["sourceEpisodeNo"] for p in request["passages"]] == [1]

@@ -29,14 +29,17 @@ def test_vector_can_recover_a_keyword_hit_omitted_before_the_model_reads_it(tmp_
         answer(missing=("P1", "P2"), coverage="NONE"),
         answer(claim(useful_text, useful_text)),
     ]
-    result = asyncio.run(replay(
-        tmp_path, case,
-        hybrid={"per_episode": 1},
-        search_setup=search_with(
-            keyword=[unrelated, useful],
-            vector=[replace(useful, methods=("VECTOR",))],
-        ),
-    ))
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            hybrid={"per_episode": 1},
+            search_setup=search_with(
+                keyword=[unrelated, useful],
+                vector=[replace(useful, methods=("VECTOR",))],
+            ),
+        )
+    )
     response = assert_answer(result)
     assert result["search"].vector_exclusions == [(unrelated.chunk_id,)]
     assert useful_text not in str(result["raw"].requests[1]["input"]["passages"])
@@ -45,7 +48,9 @@ def test_vector_can_recover_a_keyword_hit_omitted_before_the_model_reads_it(tmp_
     assert len(result["embedding"].inputs) == 1
 
 
-@pytest.mark.parametrize("source_range,expected_count", [((12, 12), 4), ((11, 12), 3), ((None, None), 3)])
+@pytest.mark.parametrize(
+    "source_range,expected_count", [((12, 12), 4), ((11, 12), 3), ((None, None), 3)]
+)
 def test_single_episode_can_supply_more_than_diversity_cap_without_more_total_evidence(
     tmp_path, source_range, expected_count
 ):
@@ -56,12 +61,21 @@ def test_single_episode_can_supply_more_than_diversity_cap_without_more_total_ev
         else "12화에서 미라가 첫 봉화를 켠 뒤 어떤 감정과 행동 변화가 있었어?"
     )
     case["outputs"][0].update(episodeFrom=source_range[0], episodeTo=source_range[1])
-    candidates = [passage(f"봉화의 합성 기록 {i}입니다.", 200+i, episode=12,
-                          offset=i*1000, index=i) for i in range(4)]
-    chosen = candidates[expected_count-1]
+    candidates = [
+        passage(f"봉화의 합성 기록 {i}입니다.", 200 + i, episode=12, offset=i * 1000, index=i)
+        for i in range(4)
+    ]
+    chosen = candidates[expected_count - 1]
     case["outputs"].append(answer(claim(chosen.text, chosen.text, ref=f"E{expected_count}")))
-    result = asyncio.run(replay(tmp_path, case,
-        search_setup=search_with(keyword=candidates), hybrid={"max_rounds": 1}))
+    # 회차 다양성 상한 예외의 산술은 예전 8개·회차당 3개 예산 기준이다.
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            search_setup=search_with(keyword=candidates),
+            hybrid={"max_rounds": 1, "max_evidence": 8, "per_episode": 3},
+        )
+    )
     assert_answer(result)
     passages = result["raw"].requests[1]["input"]["passages"]
     assert len(passages) == expected_count
@@ -73,10 +87,18 @@ def test_single_episode_still_obeys_total_reference_cap(tmp_path):
     case = parts_case()
     case["question"] = "12화에서 미라가 첫 봉화를 켠 뒤 어떤 감정과 행동 변화가 있었어?"
     case["outputs"][0].update(episodeFrom=12, episodeTo=12)
-    candidates = [passage(f"봉화의 합성 기록 {i}입니다.", 300+i, episode=12,
-                          offset=i*1000, index=i) for i in range(4)]
+    candidates = [
+        passage(f"봉화의 합성 기록 {i}입니다.", 300 + i, episode=12, offset=i * 1000, index=i)
+        for i in range(4)
+    ]
     case["outputs"].append(answer(claim(candidates[1].text, candidates[1].text, ref="E2")))
-    result = asyncio.run(replay(tmp_path, case, hybrid={"max_evidence": 2, "per_episode": 1},
-        search_setup=search_with(keyword=candidates)))
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            hybrid={"max_evidence": 2, "per_episode": 1},
+            search_setup=search_with(keyword=candidates),
+        )
+    )
     assert_answer(result)
     assert len(result["raw"].requests[1]["input"]["passages"]) == 2

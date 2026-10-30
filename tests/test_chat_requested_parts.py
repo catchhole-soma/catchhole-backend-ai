@@ -211,8 +211,14 @@ def test_no_answer_keyword_round_yields_context_to_lower_scored_vector_hits(
         answer(claim(supported, supported, ref="E5")),
     ]
 
+    # 후보 8개씩 비교하는 산술은 예전 근거 8개 예산 기준이다.
     result = asyncio.run(
-        replay(tmp_path, case, search_setup=search_with(keyword=keyword, vector=vector))
+        replay(
+            tmp_path,
+            case,
+            search_setup=search_with(keyword=keyword, vector=vector),
+            hybrid={"max_evidence": 8, "per_episode": 3},
+        )
     )
 
     response = assert_answer(result)
