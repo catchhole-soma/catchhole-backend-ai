@@ -221,11 +221,19 @@ class FocusedLookup:
             valid,
         )
         if selected.outcome == "CLARIFICATION":
-            return [], message(
-                "CLARIFICATION",
-                "같은 이름의 항목이나 범위가 있습니다. 어떤 설정을 뜻하는지 알려주세요.",
-                self.codes,
-            )
+            labels = [normalized(item.display_name or "") for item in candidates.values()]
+            duplicated = len(labels) != len(set(labels))
+            if condition or domain != "CHARACTER" or duplicated:
+                # 조건 검색, 세계관의 같은 경로명(루트/범위), 같은 표시명이 둘 이상인 인물 항목은 되묻는 편이 맞다.
+                return [], message(
+                    "CLARIFICATION",
+                    "같은 이름의 항목이나 범위가 있습니다. 어떤 설정을 뜻하는지 알려주세요.",
+                    self.codes,
+                )
+            # 항목 이름만으로 하나를 고르지 못하면 되묻는 대신 그 유형의 현재값을 읽어 선택 모델이
+            # 실제 값으로 고르게 한다('주무기' ↔ 쌍검/창, 여러 요구를 한 번에 묻는 질문).
+            self.lookup_gaps.add("FIELD_AMBIGUOUS")
+            return [], None
         if selected.outcome == "INSUFFICIENT_EVIDENCE":
             self.lookup_gaps.add("NO_RELEVANT_FIELDS")
         return [item for ref, item in candidates.items() if ref in selected.field_refs], None
@@ -310,7 +318,9 @@ class FocusedLookup:
                     }
                     for item in fields
                 ]
-                relevant_missing = "NO_RELEVANT_FIELDS" in (self.lookup_gaps - gaps_before)
+                relevant_missing = bool(
+                    {"NO_RELEVANT_FIELDS", "FIELD_AMBIGUOUS"} & (self.lookup_gaps - gaps_before)
+                )
                 # 원문 보완(sourceFallback)이 허용된 계획은 기존대로 값을 읽지 않고 원문으로 넘어간다.
                 if (
                     not fields

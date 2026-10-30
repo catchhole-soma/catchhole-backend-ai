@@ -330,6 +330,53 @@ async def test_unmatched_field_name_falls_back_to_type_values_for_selection():
 
 
 @pytest.mark.anyio
+async def test_ambiguous_character_field_choice_reads_values_instead_of_asking():
+    # '주무기'처럼 항목 이름만으로 하나를 고르지 못하면 되묻지 않고 그 유형의 현재값을 읽어 선택 모델이 고른다.
+    catalog = [
+        catalog_subject(
+            160,
+            "미샤",
+            current=[
+                item(
+                    160,
+                    "미샤",
+                    category="ITEM",
+                    key="item.twin",
+                    label="쌍검",
+                    value="리치 70% 쌍검",
+                ),
+                item(
+                    160,
+                    "미샤",
+                    category="ITEM",
+                    key="item.spear",
+                    label="창",
+                    value="예비 창",
+                    number=161,
+                ),
+            ],
+        )
+    ]
+    result = await replay_case(
+        case(
+            "미샤가 지금 쓰는 주무기는 뭐야?",
+            plan("미샤", fact_type="ITEM", attribute="주무기"),
+            {"outcome": "CLARIFICATION", "fieldRefs": []},
+            {"outcome": "ANSWER", "rowRefs": ["R1"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    assert actual["outcome"] == "ANSWER" and "쌍검" in actual["text"]
+    assert [q["tool"] for q in result["queries"]] == [
+        "FIND_CHARACTERS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_CURRENT",
+    ]
+    assert NOTICES["FOCUS_FALLBACK"] in actual["limitations"]
+
+
+@pytest.mark.anyio
 async def test_missing_type_widens_field_discovery_then_selects_over_type_values():
     # 질문한 유형(STAT)의 항목이 없으면 모든 유형의 항목 목록에서 다시 고르고, 그래도 관련 항목이 없으면
     # 현재값 전체를 선택 모델에 넘긴 뒤 없음으로 끝낸다. 집중 행처럼 무조건 답에 넣지는 않는다.
@@ -793,7 +840,7 @@ async def test_incomplete_field_catalog_never_resolves_from_only_the_first_page(
     result = await replay_case(
         case("여울의 정신력은?", plan("여울", fact_type="STAT", attribute="정신력")),
         catalog,
-        config={"page_size": 5, "max_tool_calls": 3},
+        config={"page_size": 5, "fields_page_size": 5, "max_tool_calls": 3},
     )
     assert answer(result)["outcome"] == "CLARIFICATION"
     assert NOTICES["PARTIAL_RESULTS"] in answer(result)["limitations"]

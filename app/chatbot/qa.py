@@ -438,7 +438,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     world_category=world_category,
                     read_token=read_token,
                     page=page,
-                    size=self.cfg.page_size,
+                    size=self.cfg.fields_page_size if fields else self.cfg.page_size,
                     episode_from=self.source_from if history or source_range else None,
                     episode_to=self.source_to if history or source_range else None,
                 )
