@@ -236,6 +236,9 @@ class SettingValidationService:
                 embedding_client=self.embedding_client,
             )
             segment_refs = frozenset(segment.ref for segment in segments)
+            # One JUDGE schema per report: an identical system+schema prefix stays provider-cacheable.
+            judge_schema = decision_schema(entry_refs=entry_refs, source_refs=source_refs,
+                                           search_operations=search_operations)
 
             def intent_refs():
                 return IntentRefs(frozenset(entry_refs), frozenset(source_refs),
@@ -247,11 +250,12 @@ class SettingValidationService:
                 return lambda value: normalize_batch(value, target, aliases=segment_refs,
                                                      accept=inside, stats=stats)
 
-            def batch_schema(segment, rule_refs=(), clue_refs=(), evidence_refs=()):
+            def batch_schema(segment, rule_refs=(), clue_refs=(), evidence_refs=(), *, cacheable=False):
                 return question_batch_schema(
                     segment_refs=[segment.ref], subject_refs=subject_order, rule_refs=list(rule_refs),
                     clue_refs=list(clue_refs), entry_refs=entry_refs, source_refs=source_refs,
-                    evidence_refs=list(evidence_refs), search_operations=search_operations)
+                    evidence_refs=list(evidence_refs), search_operations=search_operations,
+                    cacheable=cacheable)
             book_origins, book_coverage = {}, {}
             books = [source for source in frozen.sources if source.kind == "SETTING_BOOK"]
             for source in books:
@@ -287,7 +291,8 @@ class SettingValidationService:
                 first = await stage("PLANNER", segment.ref, common, QuestionBatch,
                                     lambda value, segment=segment: validate_batch(
                                         value, [segment], subjects, [], target, intent_refs=intent_refs()),
-                                    schema=batch_schema(segment), prepare=batch_prepare(segment))
+                                    schema=batch_schema(segment, cacheable=True),
+                                    prepare=batch_prepare(segment))
                 coverage = self._record_coverage(coverage, "PLANNER", first)
                 drafts.extend((question, f"PLANNER:{segment.ref}") for question in first.questions)
                 selected = set()
@@ -648,15 +653,8 @@ class SettingValidationService:
                 bundles[qref] = payload
                 await save_runtime()
                 where["stage"] = f"JUDGE:{qref}"
-                schema = decision_schema(
-                    known_refs=[TARGET_REF, *(row["entry_ref"] for row in relevant),
-                                *(row["ref"] for row in evidence)],
-                    receipt_refs=[receipt.ref for receipt in own_receipts[qref]],
-                    question_refs=list(by_ref), fact_refs=[row["entry_ref"] for row in relevant],
-                    evidence_refs=[row["ref"] for row in evidence], entry_refs=entry_refs,
-                    source_refs=source_refs, search_operations=search_operations)
                 judgment = await call_role(self.model, "JUDGE", payload, ValidationDecision, budget,
-                                           schema=schema)
+                                           schema=judge_schema)
                 judgment = self._prepare_judgment(judgment, target, segment_refs, stats)
                 if judgment.action == "FOLLOW_UP":
                     if not judgment.follow_ups:

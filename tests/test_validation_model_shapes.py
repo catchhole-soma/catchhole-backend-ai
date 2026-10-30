@@ -151,24 +151,36 @@ def test_coverage_schema_offers_only_t1_selected_rules_and_operation_specific_re
     assert variants[("KEYWORD", "VECTOR")]["query"] == {"type": "string", "minLength": 1}
 
 
-def test_judge_schema_allows_null_completion_and_requires_cited_real_receipts():
-    schema = decision_schema(known_refs=["T1", "B1", "E1"], receipt_refs=["L1", "L2"], question_refs=["Q1", "Q2"],
-                             fact_refs=["B1"], evidence_refs=["E1"], entry_refs=["B1"], source_refs=["R1"])
+def test_judge_and_planner_schemas_constrain_reference_kinds_and_stay_identical_per_report():
+    schema = decision_schema(entry_refs=["B1", "B2"], source_refs=["R1"])
     _assert_strict(schema, schema["$defs"])
     properties, defs = schema["properties"], schema["$defs"]
     assert {"type": "null"} in properties["completion"]["anyOf"]
     assert {"type": "null"} in properties["impact"]["anyOf"]
     assessment = defs["Assessment"]["properties"]
-    assert assessment["receipt_refs"] == {"type": "array", "items": {"type": "string", "enum": ["L1", "L2"]},
+    assert assessment["receipt_refs"] == {"type": "array", "items": {"type": "string", "pattern": "^(L[1-9][0-9]*)$"},
                                           "minItems": 1}
-    assert assessment["evidence_refs"]["items"]["enum"] == ["T1", "B1", "E1"]
-    assert _variants(properties["follow_ups"])[("NEIGHBORS",)]["evidence_refs"]["items"]["enum"] == ["E1"]
-    # Large catalogues never produce oversized enums; the validators stay authoritative.
-    big = decision_schema(known_refs=["T1"], receipt_refs=["L1"], question_refs=["Q1"], fact_refs=[],
-                          evidence_refs=[], entry_refs=[f"B{n}" for n in range(1, 151)], source_refs=[])
-    baseline = _variants(big["properties"]["follow_ups"])[("BASELINE",)]
+    assert assessment["evidence_refs"]["items"]["pattern"] == "^(T1|B[1-9][0-9]*|E[1-9][0-9]*)$"
+    follow_ups = _variants(properties["follow_ups"])
+    assert follow_ups[("NEIGHBORS",)]["evidence_refs"]["items"]["pattern"] == "^(E[1-9][0-9]*)$"
+    assert follow_ups[("DIRECT",)]["source_ref"]["pattern"] == "^(R[1-9][0-9]*)$"
+    assert follow_ups[("BASELINE",)]["evidence_refs"]["items"]["pattern"] == "^(B[1-9][0-9]*)$"
+    # A real ref of an unexpected shape is never made unwritable; the validator still decides.
+    odd = decision_schema(entry_refs=["entry-1"], source_refs=["R1"])
+    assert _variants(odd["properties"]["follow_ups"])[("BASELINE",)]["evidence_refs"]["items"] == {"type": "string"}
+    planner = [question_batch_schema(segment_refs=[ref], subject_refs=subjects, rule_refs=[], clue_refs=[],
+                                     entry_refs=entries, source_refs=["R1", "R2"], cacheable=True)
+               for ref, subjects, entries in (("TSEG1", ["S1"], ["B1"]), ("TSEG2", ["S1", "S2"], ["B1", "B7"]))]
+    assert planner[0] == planner[1]
+    assert ("NEIGHBORS",) not in _variants(planner[0]["$defs"]["QuestionDraft"]["properties"]["lookup_intents"])
+
+
+def test_coverage_enums_are_capped_for_large_catalogues():
+    big = question_batch_schema(segment_refs=["TSEG1"], subject_refs=[], rule_refs=[f"B{n}" for n in range(1, 151)],
+                                clue_refs=[], entry_refs=[f"B{n}" for n in range(1, 151)], source_refs=[])
+    assert big["$defs"]["RuleCoverage"]["properties"]["entry_ref"] == {"type": "string"}
+    baseline = _variants(big["$defs"]["QuestionDraft"]["properties"]["lookup_intents"])[("BASELINE",)]
     assert baseline["evidence_refs"]["items"] == {"type": "string"}
-    assert ("NEIGHBORS",) not in _variants(big["properties"]["follow_ups"])
 
 
 # --- recorded real-model shapes through the full validation path ------------------------------------
@@ -322,6 +334,8 @@ def test_recorded_real_terra_shapes_are_accepted_after_normalization(caplog):
     assert planner["target_source_ref"] == coverage["target_source_ref"] == "T1"
     assert "catalogue" not in coverage and coverage["rule_refs"] == ["B1"]
     assert [row["entry_ref"] for row in coverage["subject_catalogue"]] == ["B1"]
+    judge_schemas = [kwargs["response_schema"].schema for role, _, kwargs in model.calls if role == "JUDGE"]
+    assert len(judge_schemas) == 6 and all(schema == judge_schemas[0] for schema in judge_schemas)
     names = {kwargs["response_schema"].name for _, _, kwargs in model.calls}
     assert names == {"validation_planner_v2", "validation_related_selection_v2", "validation_coverage_v2",
                      "validation_judge_v2"}
