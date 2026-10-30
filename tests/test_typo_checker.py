@@ -147,7 +147,8 @@ def test_short_corrections_are_located_classified_and_do_not_write_source():
       "suggestions": []}, "TYPO_COVERAGE_INVALID"),
     ({"segments": batch()["segments"], "suggestions": [suggestion(0, "됬다", "됐다")]},
      "TYPO_COVERAGE_INVALID"),
-    (batch(suggestions=[suggestion(1, "됬다", "됐다")]), "INVALID_EXACT_SPAN"),
+    # GH331: offsets are re-anchored on the model's own quote, so only an absent quote is rejected.
+    (batch(suggestions=[suggestion(1, "됬어", "됐어")]), "INVALID_EXACT_SPAN"),
     (batch(suggestions=[suggestion(0, "됐다", "됐다")]), "INVALID_EXACT_SPAN"),
     (batch(suggestions=[{**suggestion(0, "됬다", "됐다"),
                          "span": {"source_ref": "T2", "start": 0, "end": 2, "quote": "됬다"}}]),
@@ -162,8 +163,11 @@ def test_short_corrections_are_located_classified_and_do_not_write_source():
     ({**batch(), "author_decision": "KEEP_ORIGINAL"}, "TYPO_RESPONSE_INVALID"),
     ("not a JSON object", "TYPO_RESPONSE_INVALID"),
     # A valid first suggestion must not be salvaged from an invalid response batch.
-    (batch(suggestions=[suggestion(0, "됬다", "됐다"), suggestion(20, "됬다", "됐다")]),
+    (batch(suggestions=[suggestion(0, "됬다", "됐다"), suggestion(20, "없다", "있다")]),
      "INVALID_EXACT_SPAN"),
+    # The same typo reported twice collapses onto one place and is rejected, never merged.
+    (batch(suggestions=[suggestion(0, "됬다", "됐다"), suggestion(2, "됬다", "됐다")]),
+     "TYPO_SUGGESTIONS_OVERLAP"),
 ])
 def test_invalid_batch_never_becomes_success_or_partially_salvaged(reply, code):
     fixture = OfflineRun("됬다.", {"TSEG1": reply})
@@ -171,6 +175,35 @@ def test_invalid_batch_never_becomes_success_or_partially_salvaged(reply, code):
     assert (result.status, result.failure_code, result.suggestions) == ("INCOMPLETE", code, [])
     assert [(s.segment_ref, s.status) for s in result.segments] == [("TSEG1", "UNPROCESSED")]
     result.require_coverage(["TSEG1"])
+
+
+def test_off_by_n_offsets_are_reanchored_on_the_exact_quote_inside_the_segment():
+    """GH331 S2: real Terra kept the exact quote but drifted 1~4 code points."""
+    text = "소란 때문에 시험은 잠시 중단됬다. 숨을 고를수 있었다."
+    fixture = OfflineRun(text, {"TSEG1": batch(suggestions=[
+        suggestion(text.index("중단됬다") + 4, "중단됬다", "중단됐다"),
+        {**suggestion(text.index("고를수") - 2, "고를수", "고를 수", "SPACING"),
+         "span": {"source_ref": "TSEG1", "start": text.index("고를수") - 2,
+                  "end": text.index("고를수") + 1, "quote": "고를수"}},
+    ])})
+    result = asyncio.run(fixture.run())
+    assert (result.status, result.failure_code) == ("COMPLETED", None)
+    assert [(s.span.source_ref, s.span.start, s.span.end, s.span.quote) for s in result.suggestions] == [
+        ("T1", text.index("중단됬다"), text.index("중단됬다") + 4, "중단됬다"),
+        ("T1", text.index("고를수"), text.index("고를수") + 3, "고를수"),
+    ]
+    assert all(text[s.span.start:s.span.end] == s.span.quote for s in result.suggestions)
+
+
+def test_reanchoring_never_moves_a_quote_into_another_segment_or_breaks_a_tie():
+    # The only "됬다" lies in TSEG2's core, so TSEG1 cannot claim it; TSEG1 fails exact.
+    fixture = OfflineRun("가나다라마. 됬다.", {"TSEG1": batch("TSEG1", [suggestion(1, "됬다", "됐다")])})
+    result = asyncio.run(fixture.run(limits(segment_chars=6, context_chars=0)))
+    assert (result.status, result.failure_code) == ("INCOMPLETE", "INVALID_EXACT_SPAN")
+    # Equidistant repeated quotes are ambiguous and stay rejected.
+    tie = OfflineRun("됬다  됬다", {"TSEG1": batch(suggestions=[suggestion(2, "됬다", "됐다")])})
+    tied = asyncio.run(tie.run(limits(segment_chars=10)))
+    assert (tied.status, tied.failure_code) == ("INCOMPLETE", "INVALID_EXACT_SPAN")
 
 
 def test_emoji_repeated_quotes_keep_their_distinct_code_point_positions():

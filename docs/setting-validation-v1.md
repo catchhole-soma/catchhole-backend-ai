@@ -36,6 +36,10 @@ Fact 출처의 ID/hash가 manifest와 맞을 때만 원문 참조로 연결한�
 
 원문 위치는 Unicode code point `[start,end)`다. Python slice와 동일하고 Java는 code point↔UTF-16 변환을 사용한다.
 반복 구절도 정확한 위치로 구분하며 인용을 다른 위치로 옮기거나 존재하지 않는 문장으로 보정하지 않는다.
+예외(GH331): 모델이 쓴 대상 원고 span은 검증 전에 Worker가 정규화한다. 대상 segment 별칭 `TSEGn`은 `T1`으로 바꾸고,
+quote가 정확하지 않은 위치에 있으면 **모델 자신의 quote**가 정확히 나타나는 위치 중 모델 start에 가장 가까운 곳으로 start/end를 다시 계산한다.
+후보는 해당 구간 범위(설정: 구간 문맥, 오탈자: 핵심 구간 start·문맥 end) 안으로 제한한다. 이미 정확한 span은 옮기지 않으며
+원고에 없는 quote, 같은 거리의 반복(모호), 알 수 없는 참조(`T2`, `R1` 등)는 바꾸지 않고 기존처럼 `INVALID_EXACT_SPAN`으로 거절한다.
 기본 전문 읽기는 반드시 0..totalCodePoints이고 전체 실제 UTF-8 SHA-256을 확인한다.
 명시 부분 읽기는 요청과 응답의 범위가 같아야 한다. malformed envelope/text/position은 typed 미완료다.
 
@@ -73,6 +77,25 @@ BOOK_SOURCE의 예정/완료 점검 수와 BOOK_COVERAGE의 구간/규칙 처리
 5. 질문별 실제 고정 DB/target 조회 영수증과 추가 조회를 묶는다. Terra medium은 FOLLOW_UP 또는 DECIDED를 반환한다. 새 단서가 영향을 주는 기존 질문을 재개하고 revision/input_digest를 갱신한다.
 6. 코드가 실제 제공 참조·정확한 모든 target 위치·성공 receipt·필수 읽기 처리·후속 단서 미처리 없음·실행 입력을 검사한다. 모델의 true 네 개를 그대로 완료 조건으로 쓰지 않는다.
 
+GH331 모델 입력·출력 계약(실제 Terra 관측 반영):
+
+- PLANNER/COVERAGE 입력은 `target_source_ref: "T1"`과 대상 식별용 `subject_catalogue`를 준다. COVERAGE는 선택한 `settings`와 그 entry_ref 목록 `rule_refs`를 따로 받고
+  rules에는 rule_refs만 기록한다. RELATED_SELECTION은 기존처럼 page의 `catalogue`만 받는다.
+- 역할별 strict schema(`validation_<role>_v2`)는 span `source_ref=T1`과 연산별 lookup intent anyOf(BASELINE=B, TARGET_CONTEXT=T1/null, DIRECT=R 필수,
+  KEYWORD/VECTOR=query 필수, NEIGHBORS=E만)를 쓴다. COVERAGE·BOOK_COVERAGE·RELATED_SELECTION은 선택 rule·CL·page 참조를 enum으로 열거한다(항목당 100·schema당 500개까지, 넘으면 문자열).
+  PLANNER·JUDGE는 같은 system prompt로 여러 번 호출되므로 provider prompt cache가 유지되도록 보고서 안에서 schema를 고정한다. 참조는 종류별 pattern(B/R/E/L/Q/S/TSEG/CL)으로만 제한하고
+  실제 ref 형식이 다르면 일반 문자열로 둔다. 정확한 소속은 검증기가 판단한다.
+- frozen RAG 검색이 주입되지 않았고 회차 출처가 있으면 VECTOR는 항상 `VECTOR_NOT_READY`로 끝나므로 schema가 KEYWORD만 제안하고, 남은 VECTOR 의무는 저장 전에 거절한다.
+  검색이 주입된 실행과 설정집만 있는 실행은 기존 VECTOR 경로(색인 readiness 검사·책 raw fallback)를 그대로 쓴다.
+- strict mode는 root 조건부 필드를 표현할 수 없으므로 판정 조건은 prompt와 검증기가 맡는다. FOLLOW_UP의 outcome/basis/impact/impact_reason/completion은 사용하지 않으므로 무시(null)하고,
+  NO_CONFLICT의 impact/impact_reason도 finding이 아니어서 null로 둔다. 나머지 판정의 impact 누락 등은 그대로 거절한다.
+- `completion.required_reads.receipt_refs`는 Worker가 질문의 실제 성공 receipt 전체로 확정한다. 모델이 인용한 receipt/근거가 실제로 없으면 거절하고, 빠진 receipt만 채운다.
+  다른 세 completion 항목은 근거·receipt를 하나 이상 인용해야 한다.
+- DECIDED의 `target_spans`도 질문 span 자체다(Backend가 같은 집합을 요구). 모델이 되풀이한 span은 위치 재계산 뒤 원고의 정확한 인용인지만 확인하고 질문 span으로 확정한다.
+  원고에 없는 인용은 `INVALID_EXACT_SPAN`으로 거절한다.
+- PLANNER/COVERAGE/BOOK_COVERAGE의 조회 의무와 JUDGE FOLLOW_UP은 저장·revision 전에 읽을 수 있는 참조인지 검사한다(`UNKNOWN_BASELINE_REFERENCE`, `UNKNOWN_SOURCE_REFERENCE`,
+  `UNKNOWN_EVIDENCE_REFERENCE`, `INVALID_TARGET_CONTEXT_REQUEST`, `INVALID_SEARCH_REQUEST`). 저장되지 않으므로 같은 입력 재시도는 모델을 다시 호출한다.
+
 결과는 CONFLICT / SUSPECTED_CONFLICT / NEEDS_CONTEXT / NO_CONFLICT이며 실패는 INCOMPLETE로 별도다.
 SUSPECTED_CONFLICT/CHANGE_NOT_FOUND는 실제 성공한 변화/예외 keyword/vector 검색 receipt가 있어야 한다.
 DB/직접 입력과 이미 확보한 근거가 충분하면 추가 검색을 생략할 수 있으나 대상·시점·조건·변화/예외 설명과 실제 자료 참조가 필요하다.
@@ -84,6 +107,8 @@ DB↔원문 불일치는 두 참조를 유지하고 명시 정정의 정확한 �
 영향 SEVERE/CAUTION/REFERENCE와 작가 판단은 별개이며 NO_CONFLICT에는 영향 등급을 붙이지 않는다.
 
 `InspectionResult`에는 status, questions, decisions, receipts, coverage, failure_code와 evidence_bundles가 있다.
+GH331부터 `failure_cause`(분류 코드 아래의 구체 고정 코드, 예: `INVALID_INSPECTION_CONTRACT` 아래 `INVALID_EXACT_SPAN`, `INVALID_DECISION` 아래 `INVALID_DECISION_REQUIRED_READS`),
+`failure_stage`(`PLANNER:TSEG1`, `JUDGE:Q3` 같은 단계), `normalizations`(정규화 종류별 횟수)도 함께 반환하고 같은 값을 로그에 남긴다. 원문·예외 메시지·ID는 넣지 않는다.
 미완료는 정상 0건으로 집계하지 않는다. 입력/출처 변경·파기를 감지하면 이전의 게시 가능한 질문/판정/근거를 반환하지 않는다.
 일반 읽기/모델 실패는 완료된 독립 범위를 보존할 수 있지만 전체 status는 INCOMPLETE다. 영속 재시도 정책은 GH310에서 연결한다.
 

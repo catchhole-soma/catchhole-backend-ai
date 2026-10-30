@@ -22,6 +22,16 @@ from app.validation.typo import check_typos
 _SHARED_FAILURES = {"INPUT_CHANGED", "SOURCE_CHANGED", "SOURCE_PURGED", "EXECUTION_STOPPED"}
 
 
+def reported_failure_code(result):
+    """Complete.failureCode: the most specific safe code of a failed branch (GH331).
+
+    A setting inspection keeps its stable category in ``failure_code`` (for example
+    INVALID_INSPECTION_CONTRACT) and the underlying rule in ``failure_cause`` (for example
+    INVALID_EXACT_SPAN). The Backend stores the cause so a collapsed failure never hides it.
+    """
+    return getattr(result, "failure_cause", None) or result.failure_code
+
+
 class EpisodeValidationWorker:
     def __init__(self, client, raw_model, *, enabled=False, worker_id="validation-worker",
                  readonly_sessions=None, embedding_client=None, index_spec=None):
@@ -102,7 +112,7 @@ class EpisodeValidationWorker:
                     if result.failure_code in _SHARED_FAILURES:
                         gate.stop()
                         raise IncompleteInspection(result.failure_code)
-                    failure = failure or result.failure_code
+                    failure = failure or reported_failure_code(result)
             gate.require()
             return await self.client.leased(claim, "complete", gate=gate,
                 idempotencyKey=payload_key("complete", {"generation": claim.scope.generation,
