@@ -6,7 +6,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.analysis.evidence_projection import located_evidence_quotes
-
 from app.domain.enums import (
     AnalysisSourceKind,
     CharacterFactTemporalScope,

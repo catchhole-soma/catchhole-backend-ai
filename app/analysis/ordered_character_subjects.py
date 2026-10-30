@@ -13,8 +13,8 @@ from app.analysis.character_name_resolver import (
     normalize_character_name,
 )
 from app.analysis.character_subject_resolver import SubjectResolutionChunkContext
-from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.evidence_projection import located_evidence_quotes
+from app.analysis.exceptions import ComparisonValidationError
 from app.analysis.json_response import request_validated_model
 from app.analysis.ordered_context import (
     BoundedOrderedClient,

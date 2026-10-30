@@ -10,11 +10,16 @@ import pytest
 from app.analysis.narrative_time import narrative_prompt_data, project_advisory_narrative_time
 from app.analysis.ordered_character_subjects import initial_ordered_subjects
 from app.analysis.ordered_context import OrderedExtractionContext
-from app.analysis.semantic_current_context import SemanticCurrentContext, prepare_semantic_current_context
+from app.analysis.semantic_current_context import (
+    SemanticCurrentContext,
+    prepare_semantic_current_context,
+)
 from app.schemas.analysis_context import WorkerAnalysisContext, WorkerAnalysisReference
 from app.schemas.worker import (
-    WorkerAnalysisKnownCharacterPayload, WorkerAnalysisProvisionalCharacterPayload,
-    WorkerCharacterFactComparisonBatchCandidate, WorkerCharacterFactComparisonCandidatePayload,
+    WorkerAnalysisKnownCharacterPayload,
+    WorkerAnalysisProvisionalCharacterPayload,
+    WorkerCharacterFactComparisonBatchCandidate,
+    WorkerCharacterFactComparisonCandidatePayload,
     WorkerEvidenceSpan,
 )
 
