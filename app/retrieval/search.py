@@ -79,6 +79,15 @@ class RetrievalSearchService:
 
         return await self.blocking_runner(read)
 
+    async def keyword_ordered(self, scope, required, optional, *, order, limit=20):
+        validate_query(" ".join(str(a) for a in [*required, *optional]))
+        validate_limit(limit)
+        return await self.blocking_runner(
+            lambda: self._read(
+                scope, "keyword_ordered", required, optional, order=order, limit=limit
+            )
+        )
+
     async def vector(self, scope, query, embedding_client, limit=20, excluded_chunk_ids=()):
         validate_query(query)
         validate_limit(limit)

@@ -81,6 +81,8 @@ class FakeSearch:
             source_chunk(name, method="VECTOR") for name in case.get("vector", [])
         ]
         self.neighbor_chunks = []
+        self.ordered_chunks = []
+        self.ordered_calls = []
         self.readiness = SearchReadiness(3, 3, 3, 3, 3)
         if case.get("readiness") == "partial":
             self.readiness = SearchReadiness(
@@ -101,6 +103,18 @@ class FakeSearch:
     async def keyword(self, scope, query, limit, **kwargs):
         self.record("keyword", scope)
         return SearchResult(tuple(self.keyword_chunks[:limit]), self.readiness, self.limited)
+
+    async def keyword_ordered(self, scope, required, optional, order, limit):
+        self.record("keyword_ordered", scope)
+        self.ordered_calls.append((tuple(required), tuple(optional), order))
+        chunks = sorted(
+            self.ordered_chunks or self.keyword_chunks,
+            key=lambda c: (c.episode_no, c.chunk_index),
+            reverse=order == "LATEST",
+        )
+        # 저장소 계약과 같이 반환 순서를 보존하는 1.0 이하 점수를 매긴다.
+        ranked = [replace(c, score=1.0 - index / 10000) for index, c in enumerate(chunks[:limit])]
+        return SearchResult(tuple(ranked), self.readiness, self.limited)
 
     async def vector(self, scope, query, embedding_client, limit, excluded_chunk_ids=()):
         self.record("vector", scope)
@@ -174,6 +188,8 @@ class HybridSpring(ReplaySpring):
 
 def hybrid_settings(**overrides):
     values = {name: field.default for name, field in HybridSettings.model_fields.items()}
+    # 기존 합성 시나리오는 2라운드·임베딩 1회 계약을 전제한다. 3라운드는 전용 회귀에서 켠다.
+    values.update(max_rounds=2, max_query_embeddings=1)
     return HybridSettings(**{**values, "enabled": False, **overrides})
 
 

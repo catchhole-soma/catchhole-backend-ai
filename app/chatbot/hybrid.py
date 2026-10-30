@@ -227,6 +227,8 @@ class _HybridSession(_Session):
         self.supported_evidence = ()
         self.recovery_evidence = ()
         self.answer_validation_failed = False
+        self.ordered_coverage = None
+        self.ordered_kept = ()
 
     def trace(self, stage, **data):
         # No questions, source text, model output, member/work IDs or secrets.
@@ -304,6 +306,119 @@ class _HybridSession(_Session):
             self.execution.dispatch, self.execution.runner, [wire_reference(c) for c in chunks]
         )
 
+    def source_tool_reserve(self, plan):
+        # 원문 검색이 필요한 계획은 등록 조회가 도구 예산을 다 쓰지 않도록
+        # 검색·이웃·영수증·재검증 몫(라운드당 3 + 마무리 2)을 미리 남긴다.
+        if plan.source_need == "NONE":
+            return 0
+        # 3라운드는 선택적이라 처음 두 라운드 몫만 예약한다.
+        rounds = min(self.hcfg.max_rounds, 2)
+        return 3 * rounds + 2 + (1 if plan.ordering != "NONE" else 0)
+
+    def row_page_reserve(self, plan, subject, index, *, base):
+        """인물별 등록 조회가 남길 도구 수. 집중 조회와 등록 전용 계획은 기존 예약을 유지한다."""
+        # 새 schema는 focus 객체를 항상 채우므로 내용(유형·항목)이 비어 있는지로 집중 여부를 본다.
+        focused = subject.focus.fact_type is not None or subject.focus.attribute is not None
+        if focused or plan.source_need == "NONE":
+            return base
+        limit = min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls)
+        floor = max(base, self.source_tool_reserve(plan))
+        remaining = len(plan.subjects) - index
+        # 뒤에 남은 인물들의 조회(FIND 1회씩)와 원문 검색 몫을 뺀 나머지를 인물 수로 나눠 쓴다.
+        spare = max(0, limit - self.tool_count - floor - (remaining - 1))
+        share = max(1, spare // remaining) if spare else 0
+        return limit - self.tool_count - share
+
+    def ordering_anchors(self, plan, objects=None):
+        """최초/최후 탐색의 기준 표현. 인물명은 필수, 대상·사건 단어는 절반 이상 일치로 요구한다.
+
+        인물명을 빼면 '스킬' 같은 일반 단어의 작품 첫 언급으로 흘러가고, 대상 단어를 모두
+        요구하면 활용형 차이로 0건이 된다. 대상 표현은 집중 항목이 있으면 그것, 없으면 인물명을
+        뺀 검색어다.
+        """
+        # 계획은 인물을 최대 3명 허용하므로 모두 필수 표현으로 보존한다.
+        required = list(dict.fromkeys(s.name.strip() for s in plan.subjects if s.name.strip()))[:3]
+        lowered = {n.casefold() for n in required}
+        focus = [s.focus.attribute for s in plan.subjects if s.focus.attribute]
+        if objects is None:
+            objects = focus or [t for t in plan.search_terms if t.strip().casefold() not in lowered]
+        optional = list(
+            dict.fromkeys(
+                w for term in objects for w in term.split() if w and w.casefold() not in lowered
+            )
+        )[:4]
+        return required, optional
+
+    async def ordered_search(self, plan, found, objects=None):
+        """검색어가 등장하는 출처 회차를 처음/마지막부터 읽어 일반 keyword 후보 앞에 둔다."""
+        required, optional = self.ordering_anchors(plan, objects)
+        anchors = [*required, *optional]
+        # 이번 라운드의 남은 비용: 정렬 검색 1 + 이웃 1 + 영수증 1 + 최종 재검증 1
+        if not anchors or not self.tools_available(4):
+            self.codes.append("SEARCH_LIMIT")
+            return found
+        ordered = await self.search(
+            "keyword_ordered",
+            required,
+            optional,
+            order=plan.ordering,
+            limit=self.hcfg.keyword_top_k,
+        )
+        self.codes.append(f"ORDERED_SEARCH_{plan.ordering}")
+        self.ordered_coverage = {
+            "order": plan.ordering,
+            "anchors": anchors,
+            "boundaryEpisode": ordered[0].episode_no if ordered else None,
+            "truncated": len(ordered) >= self.hcfg.keyword_top_k,
+        }
+        # 순서상 앞의 몇 개만 우선 배치한다. 전부 앞에 두면 점수 1.0 근처의 초반 언급이
+        # 질문과 더 밀접한 일반 keyword 후보를 근거 상한 밖으로 밀어낸다.
+        kept = list(ordered[: self.hcfg.ordered_top_k])
+        self.ordered_kept = tuple(kept)
+        self.trace(
+            "ordered", round=self.rounds, anchors=len(anchors), found=len(ordered), kept=len(kept)
+        )
+        seen = {c.chunk_id for c in kept}
+        return [*kept, *(c for c in found if c.chunk_id not in seen)]
+
+    def extra_round_affordable(self):
+        """3라운드는 검색·답변·마무리를 서버 마감 안에 끝낼 시간이 남아 있을 때만 시작한다."""
+        last = max(10.0, getattr(self, "last_model_seconds", 0.0))
+        affordable = self.model_time_left() > 2 * last + 10.0
+        self.trace("extra_round", round=self.rounds + 1, affordable=affordable)
+        return affordable
+
+    def episode_ordered_head(self, plan, found):
+        """정렬 질문의 의미 검색 후보 중 가장 이른/늦은 ordered_top_k개. 유사도 순서보다 앞에 둔다."""
+        head = sorted(
+            found,
+            key=lambda c: (c.episode_no, c.chunk_index, str(c.chunk_id)),
+            reverse=plan.ordering == "LATEST",
+        )[: self.hcfg.ordered_top_k]
+        self.trace(
+            "ordered_vector",
+            round=self.rounds,
+            found=len(found),
+            kept=len(head),
+            boundary=head[0].episode_no if head else None,
+        )
+        return head
+
+    async def focus_neighbors(self):
+        """PARTIAL 초안이 인용한 장면의 앞뒤를 더 읽는다. 회차는 맞췄지만 세부가 빠진 경우용."""
+        seeds = [e.chunk for e in self.supported_evidence if e.chunk]
+        if not seeds or not self.hcfg.focus_radius:
+            return ()
+        # 이번 라운드의 남은 비용: 이웃 1 + 영수증 1 + 최종 재검증 1 + 최종 영수증 1
+        if not self.tools_available(4):
+            self.codes.append("SEARCH_LIMIT")
+            return ()
+        found = await self.search(
+            "neighbors", seeds, radius=self.hcfg.focus_radius, limit=self.hcfg.max_neighbors
+        )
+        self.trace("focus", round=self.rounds, seeds=len(seeds), found=len(found))
+        return found
+
     def tools_available(self, cost, *, direct_checks=True):
         reserved = max(
             self.fallback_direct_checks,
@@ -365,6 +480,7 @@ class _HybridSession(_Session):
             source=plan.source_need,
             parts=len(plan.requested_parts),
             event=plan.event_context is not None,
+            ordering=plan.ordering,
             registered_current_required=plan.registered_current_required,
         )
         # Old saved planner records keep their earlier rendering contract. New
@@ -526,6 +642,9 @@ class _HybridSession(_Session):
             if not self.tools_available(4) or not self.models_available(embedding=round_no > 1):
                 self.codes.append("SEARCH_LIMIT")
                 break
+            if round_no >= 3 and not self.extra_round_affordable():
+                self.codes.append("SEARCH_LIMIT")
+                break
             self.rounds = round_no
             if round_no == 1:
                 hints = tuple(
@@ -539,15 +658,23 @@ class _HybridSession(_Session):
                 found = await self.search(
                     "keyword", query, limit=self.hcfg.keyword_top_k, preferred_episode_ids=hints
                 )
+                if plan.ordering != "NONE":
+                    found = await self.ordered_search(plan, found)
             else:
-                if self.hcfg.max_query_embeddings == 0:
+                if self.embedding_calls >= self.hcfg.max_query_embeddings:
+                    # 설정으로 라운드 수만 늘리고 임베딩 허용량을 그대로 둔 경우도 실행 오류 없이 멈춘다.
                     self.codes.append("SEARCH_LIMIT")
                     break
+                vector_limit = self.hcfg.vector_top_k
+                if plan.ordering != "NONE":
+                    # 의미 검색은 활용형 차이를 넘어 장면을 찾으므로 정렬 질문은 더 넓게 읽고
+                    # 그중 가장 이른/늦은 몇 개를 앞세운다. 임베딩 호출 수는 그대로다.
+                    vector_limit = min(vector_limit * 3, 100)
                 found = await self.search(
                     "vector",
                     self.expansion_query(plan, draft, query),
                     _QueryEmbedding(self),
-                    limit=self.hcfg.vector_top_k,
+                    limit=vector_limit,
                     # A returned candidate may have been omitted by context limits.
                     # Only passages actually exposed to the answer model were read.
                     excluded_chunk_ids=tuple(
@@ -577,9 +704,24 @@ class _HybridSession(_Session):
                 )
             elif found and self.hcfg.neighbor_radius:
                 self.codes.append("SEARCH_LIMIT")
+            ordered_head = ()
+            if plan.ordering != "NONE":
+                # 1라운드는 정렬 검색이 남긴 청크를, 이후 라운드는 의미 검색의 가장 이른/늦은 후보를
+                # 조합 우선순위로 넘긴다. 점수만으로는 1.0 keyword 후보와 회차 오름차순에 밀린다.
+                ordered_head = (
+                    self.ordered_kept if round_no == 1 else self.episode_ordered_head(plan, found)
+                )
+            focus = ()
+            if round_no > 1 and partial_snapshot is not None:
+                # 앞 라운드가 일부만 답했다면 그 장면의 이어지는 대목을 새 전역 후보보다 먼저 읽는다.
+                focus = await self.focus_neighbors()
+                candidates.extend(focus)
             previous = self.evidence_identity()
             self.add_search_evidence(
-                candidates, fresh=found if round_no > 1 and plan.requested_parts else ()
+                candidates,
+                fresh=found if round_no > 1 and plan.requested_parts else (),
+                focus=focus,
+                ordered=ordered_head,
             )
             if self.evidence_identity() == previous:
                 continue
@@ -721,7 +863,7 @@ class _HybridSession(_Session):
             return stop
         targets = set()
         self.current_requirement_resolved = bool(plan.subjects)
-        for subject in plan.subjects:
+        for index, subject in enumerate(plan.subjects):
             item, stop = await self.resolve_subject(subject, allow_missing=True)
             if stop:
                 return stop
@@ -738,7 +880,12 @@ class _HybridSession(_Session):
                 subject,
                 item.subject_id,
                 modes,
-                reserve=4 + (len(plan.subjects) if "CURRENT" in modes else 0),
+                reserve=self.row_page_reserve(
+                    plan,
+                    subject,
+                    index,
+                    base=4 + (len(plan.subjects) if "CURRENT" in modes else 0),
+                ),
             )
             if stop:
                 return stop
@@ -875,6 +1022,9 @@ class _HybridSession(_Session):
                     if not self.models_available(embedding=True):
                         self.codes.append("SEARCH_LIMIT")
                         continue
+                    vector_limit = self.hcfg.vector_top_k
+                    if plan.ordering != "NONE":
+                        vector_limit = min(vector_limit * 3, 100)
                     found = await self.search(
                         "vector",
                         self.expansion_query(
@@ -884,11 +1034,20 @@ class _HybridSession(_Session):
                             item_ref=item.ref,
                         ),
                         _QueryEmbedding(self),
-                        limit=self.hcfg.vector_top_k,
+                        limit=vector_limit,
                         excluded_chunk_ids=tuple(
                             e.chunk.chunk_id for e in self.evidences if e.chunk
                         ),
                     )
+                    if plan.ordering != "NONE" and found:
+                        # 항목 문맥 배분은 점수 등급으로 고르므로 가장 이른/늦은 후보를 최상위 등급에 둔다.
+                        head = self.episode_ordered_head(plan, found)
+                        kept = {c.chunk_id for c in head}
+                        top = max(c.score for c in found)
+                        found = [
+                            *(replace(c, score=top) for c in head),
+                            *(c for c in found if c.chunk_id not in kept),
+                        ]
                 elif not previous_attempts:
                     found = await self.search(
                         "keyword",
@@ -896,6 +1055,9 @@ class _HybridSession(_Session):
                         limit=self.hcfg.keyword_top_k,
                         preferred_episode_ids=hints,
                     )
+                    if plan.ordering != "NONE":
+                        # 항목별 질문도 최초/최후 장면을 항목 표현 기준으로 회차 순서로 읽는다.
+                        found = await self.ordered_search(plan, found, objects=[query])
                 else:
                     continue
                 found_by_item.append((item.ref, found))
@@ -1261,7 +1423,7 @@ class _HybridSession(_Session):
             )
         )[:1000]
 
-    def add_search_evidence(self, candidates, *, fresh=()):
+    def add_search_evidence(self, candidates, *, fresh=(), focus=(), ordered=()):
         protected = {self.source_identity(e) for e in self.supported_evidence}
         direct = [e for e in self.evidences if e.direct_ref]
         direct.sort(key=lambda e: self.source_identity(e) not in protected)
@@ -1307,6 +1469,8 @@ class _HybridSession(_Session):
         priority = [
             *protected_chunks,
             *recovery,
+            *focus,
+            *ordered,
             *fresh,
         ]
         bundle = compose_evidence(
@@ -1318,7 +1482,11 @@ class _HybridSession(_Session):
             per_episode=(
                 self.hcfg.max_evidence - len(direct)
                 if self.source_from is not None and self.source_from == self.source_to
-                else min(self.hcfg.per_episode, self.hcfg.max_evidence - len(direct))
+                # 검증된 장면을 더 읽는 라운드는 같은 회차 몫을 늘려 장면을 이어 읽게 한다.
+                else min(
+                    self.hcfg.per_episode + (max(2, self.hcfg.max_evidence // 3) if focus else 0),
+                    self.hcfg.max_evidence - len(direct),
+                )
             ),
             # After verified/recovery evidence, prioritize new hits in their own
             # rank order. Old unproven lexical scores must not crowd out vector
@@ -1418,6 +1586,7 @@ class _HybridSession(_Session):
             if self.item_draft is None
             else [i.model_dump(by_alias=True) for i in self.item_draft.item_answers if i.answers],
             "passages": self.evidence_passages(self.evidences),
+            **({"searchOrdering": self.ordered_coverage} if self.ordered_coverage else {}),
             "limitations": notices(self.codes, include_conversation_limit=True),
         }
 
