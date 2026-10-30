@@ -82,6 +82,8 @@ eventScope는 언제/어떻게 질문이 이미 이루어진 사건·획득을 �
 묻는다면 PLANNED다. 실행 여부를 구분할 필요가 없는 장면·설명 질문과 sourceNeed NONE은 null이다.
 includeRegisteredValues는 원문 설명과 함께 현재 등록값 자체도 명시적으로 요청한 경우만 true다.
 현재 가진 항목의 경위를 물으면 CURRENT를 사용한다. CURRENT_AND_HISTORY의 이력은 현재 항목의 보조 자료다.
+현재 속성·보유 목록을 묻거나 두 인물의 현재 속성을 비교하는 질문은 CURRENT만 조회하고, HISTORY는 변화·이력·
+과거 시점을 물을 때만 더한다. 획득 과정·이유·장면을 묻지 않으면 sourceNeed=NONE이다. 불필요한 조회는 답변을 길게 만든다.
 """
     + LINKED_EVIDENCE_INSTRUCTIONS
     + FOCUS_INSTRUCTIONS
