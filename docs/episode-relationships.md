@@ -88,7 +88,7 @@ PATCH 입력은 `{expectedVersion,summary}`이며 summary는 앞뒤 공백 없�
 
 ## 저장과 삭제
 
-Flyway V92가 `relationship_graph_analyses/nodes/edges/events`와 `analysis_jobs.relationship_analysis_enabled`를 추가한다. 관계 event는 analysis+edge마다 하나이며 회차별 읽기는 최신 유효 분석만 사용한다. 관계 edge와 node는 재분석 후에도 ID를 보존해 사용자 수정과 삭제를 유지한다.
+Flyway V101이 `relationship_graph_analyses/nodes/edges/events`와 `analysis_jobs.relationship_analysis_enabled`를 추가한다. 관계 event는 analysis+edge마다 하나이며 회차별 읽기는 최신 유효 분석만 사용한다. 관계 edge와 node는 재분석 후에도 ID를 보존해 사용자 수정과 삭제를 유지한다.
 
 작품 파기는 관계 event→edge→node→analysis 순서로 삭제한다. 회차 원문 파기는 해당 회차 이후의 동결 Context/decision/binding과 복사된 인용을 지우고 후행 결과를 무효화한다. 캐릭터 삭제는 노드의 profile FK만 null로 만들고 관계 이력을 보존한다.
 
@@ -96,7 +96,7 @@ Flyway V92가 `relationship_graph_analyses/nodes/edges/events`와 `analysis_jobs
 
 `EpisodeRelationshipGraphRulesTest`: Unicode 근거, coverage, END+ADD, 모호한 주체, 재활성화, 잘못된 참조/과거 쓰기.
 `EpisodeRelationshipGraphIntegrationTest`: H2의 회차 cutoff, 멱등, 설명 수정/삭제 억제, 실패 격리, 병렬 수동 작업, HOLD 재사용/소비, 원문 version 및 파기.
-`EpisodeRelationshipGraphPostgresIntegrationTest`: 같은 시나리오를 V1~V92 Flyway와 JPA validate를 사용하는 격리 PostgreSQL에서 검증한다(Docker 필요).
+`EpisodeRelationshipGraphPostgresIntegrationTest`: 같은 시나리오를 V1~V101 Flyway와 JPA validate를 사용하는 격리 PostgreSQL에서 검증한다(Docker 필요).
 
 ### 2026-10-29 최종 검증 기록
 
@@ -105,3 +105,16 @@ Flyway V92가 `relationship_graph_analyses/nodes/edges/events`와 `analysis_jobs
 - `EpisodeRelationshipGraphBrowserFixtureTest`는 고정된 격리 로컬 DB만 사용하는 명시적 실행용 합성 fixture이며 일반 suite에서는 건너뛴다. 이 검증에서는 별도로 실행해 성공했다. 실제 Spring/JWT/SDK/브라우저/PostgreSQL 연결로 1화의 동행 1개와 2화의 관계 3개, 회차 이후 인물·종료 상태의 숨김, 원문 근거, 설명 PATCH, 연결 DELETE, 새로고침 뒤 반영을 확인했다.
 - 브라우저 인증은 서버가 발급한 임시 합성 사용자 access token을 주입했다. 로그인 UI와 refresh cookie는 이번 실제 연결 검증 범위가 아니다. DB에서 DISTRUST의 `corrected_summary`와 version 증가, FRIENDSHIP의 `suppressed=true`를 별도로 조회해 저장을 확인했다.
 - 검증 종료 후 전용 Spring 서버(18233), 전용 PostgreSQL 컨테이너(18232), 임시 토큰 파일을 제거했다. 기존 로컬 DB/앱은 사용하거나 수정하지 않았다. 원고와 실제 사용자 자료는 fixture에 포함하지 않는다. 화면 기록은 프론트 저장소의 `docs/screens/gh323/episode-relationships-live-episode-1.png`, `episode-relationships-live-correction.png`에 있다.
+
+## 최신 main 통합과 배포 순서 — 2026-10-30
+
+main의 검수 실행·검토 종료 기능이 V92~V100을 사용하므로, 운영 미배포 관계도 migration은
+`V101__add_episode_relationship_graph.sql`로 옮겼다. 기존 migration 내용은 바꾸지 않았다.
+이전 V92 관계도 migration을 적용한 개인 로컬 예시 DB는 이 버전의 검증 대상으로 재사용하지 않는다.
+공유·운영 DB의 Flyway 이력을 수정하거나 repair로 덮지 않고 새 격리 DB에서 전체 migration을 검증한다.
+
+배포 순서는 Java API/DB, 지원 AI Worker, Front다. Java는 지원 광고가 없는 Worker에 관계 계약을
+주지 않으며, 이미 관계 분석이 활성화된 Job은 지원 Worker만 재개할 수 있다. 기능 플래그를 끄면
+신규 활성화만 멈추므로, 진행 중 관계 Job이 남은 상태의 Worker 롤백은 별도 확인이 필요하다.
+기존 작품 전체의 자동 유료 백필은 추가하지 않는다. 일반 인용의 위치가 불확실한 경우에는
+[일반 인용 정책](https://github.com/catchhole-soma/catchhole-backend-java/blob/main/docs/analysis-continuity.md)의 GH323 정책으로 인용만 숨기고 설정값을 유지한다.
