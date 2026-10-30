@@ -429,6 +429,7 @@ class _HybridSession(_Session):
             source=plan.source_need,
             parts=len(plan.requested_parts),
             event=plan.event_context is not None,
+            ordering=plan.ordering,
             registered_current_required=plan.registered_current_required,
         )
         # Old saved planner records keep their earlier rendering contract. New
