@@ -58,6 +58,16 @@ def long_history(spring):
 def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, engine, bounded):
     def setup(spring):
         long_history(spring)
+        # 선택 요청의 전체 이력이 뒤따르는 답변 요청(근거·프롬프트 포함)보다 충분히 크게 둔다.
+        # 프롬프트 길이가 조금 바뀌어도 "이력을 잘라야 맞는다"는 전제가 유지되게 하기 위함이다.
+        spring.context = spring.context.model_copy(
+            update={
+                "conversation": [
+                    ConversationTurn(question="past details " * 260, answer="이전 답변"),
+                    *spring.context.conversation[1:],
+                ]
+            }
+        )
         spring.catalog[0]["current"][0]["value"] = "화염구 " + "현재 능력 설명 " * 200
         spring.catalog[0]["current"][0]["structuredValueJson"] = json.dumps(
             {"description": "Additional current explanation " * 45}, ensure_ascii=False
