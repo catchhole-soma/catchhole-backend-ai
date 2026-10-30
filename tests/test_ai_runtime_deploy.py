@@ -42,6 +42,15 @@ def runtime(tmp_path, monkeypatch):
             "ai-world-comparison-worker": {
                 "environment": {"DATABASE_POOL_SIZE": "1", "DATABASE_POOL_MAX_OVERFLOW": "0"}
             },
+            "ai-relationship-worker": {
+                "environment": {
+                    **common,
+                    "AI_WORKER_CONCURRENCY": "1", "LLM_MAX_CONCURRENT_REQUESTS": "1",
+                    "EMBEDDING_GENERATION_ENABLED": "false", "RETRIEVAL_PREPARATION_ENABLED": "false",
+                },
+                "command": ["python", "scripts/run_analysis_worker.py", "--worker-kind", "relationship"],
+                "deploy": {"replicas": 1},
+            },
         },
         "chatbot": {
             "chatbot": {
@@ -77,6 +86,28 @@ def test_total_connection_budget_counts_both_new_processes(runtime):
     assert obj.validate()["databaseConnections"] == 31
     configs["retrieval"]["retrieval-index"]["environment"]["AI_RUNTIME_DB_CONNECTION_BUDGET"] = "27"
     with pytest.raises(deploy.DeploymentError, match="DATABASE_CONNECTION_BUDGET"):
+        obj.validate()
+
+
+@pytest.mark.parametrize("key,value", [
+    ("AI_WORKER_CONCURRENCY", "2"), ("LLM_MAX_CONCURRENT_REQUESTS", "2"),
+    ("EMBEDDING_GENERATION_ENABLED", "true"), ("RETRIEVAL_PREPARATION_ENABLED", "true"),
+])
+def test_relationship_worker_isolation_blocks_deployment_before_mutation(runtime, monkeypatch, key, value):
+    obj, configs = runtime
+    configs["worker"]["ai-relationship-worker"]["environment"][key] = value
+    calls = []
+    monkeypatch.setattr(obj, "compose", lambda *args, **kwargs: calls.append(args))
+    with pytest.raises(deploy.DeploymentError, match="RELATIONSHIP_WORKER_ISOLATION_REQUIRED"):
+        obj.deploy()
+    assert calls == []
+
+
+@pytest.mark.parametrize("field,value", [("deploy", {"replicas": 2}), ("command", ["python", "general-worker.py"])])
+def test_relationship_worker_cannot_scale_or_switch_to_core_analysis(runtime, field, value):
+    obj, configs = runtime
+    configs["worker"]["ai-relationship-worker"][field] = value
+    with pytest.raises(deploy.DeploymentError, match="RELATIONSHIP_WORKER_ISOLATION_REQUIRED"):
         obj.validate()
 
 
@@ -251,7 +282,7 @@ def test_all_worker_kinds_accept_explicit_private_otlp(runtime, address):
             "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": f"http://{address}:4318/v1/traces",
         })
     assert obj.validate()["tracingWorkerServices"] == [
-        "ai-worker", "ai-character-comparison-worker", "ai-world-comparison-worker",
+        "ai-worker", "ai-character-comparison-worker", "ai-world-comparison-worker", "ai-relationship-worker",
     ]
 
 

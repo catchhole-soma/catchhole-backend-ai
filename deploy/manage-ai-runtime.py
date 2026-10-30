@@ -122,12 +122,22 @@ class Runtime:
         tracing_services = [
             name for name in (
                 "ai-worker", "ai-character-comparison-worker", "ai-world-comparison-worker",
+                "ai-relationship-worker",
             )
             if validate_worker_tracing(worker[name]["environment"])
         ]
         chat = self.config("chatbot")["chatbot"]
         index = self.config("retrieval")["retrieval-index"]
         w = worker["ai-worker"]["environment"]
+        relation = worker["ai-relationship-worker"]
+        relation_env = relation["environment"]
+        if (relation.get("command") != ["python", "scripts/run_analysis_worker.py", "--worker-kind", "relationship"]
+                or str(relation.get("deploy", {}).get("replicas")) != "1"
+                or str(relation_env.get("AI_WORKER_CONCURRENCY")) != "1"
+                or str(relation_env.get("LLM_MAX_CONCURRENT_REQUESTS")) != "1"
+                or enabled(relation_env.get("EMBEDDING_GENERATION_ENABLED"))
+                or enabled(relation_env.get("RETRIEVAL_PREPARATION_ENABLED"))):
+            raise DeploymentError("RELATIONSHIP_WORKER_ISOLATION_REQUIRED")
         c, r = chat["environment"], index["environment"]
         if not enabled(c.get("CHAT_QA_ENABLED")):
             raise DeploymentError("CHAT_QA_ENABLED_REQUIRED")
@@ -138,6 +148,7 @@ class Runtime:
         for env, keys in (
             (c, common),
             (r, (*common, "DATABASE_URL", "AWS_REGION", "AWS_S3_BUCKET")),
+            (relation_env, (*common, "AWS_REGION", "AWS_S3_BUCKET")),
         ):
             for key in keys:
                 if not w.get(key):
@@ -172,6 +183,7 @@ class Runtime:
             api_pool = int(required(r, "AI_RUNTIME_API_DB_POOL_SIZE"))
             budget = int(required(r, "AI_RUNTIME_DB_CONNECTION_BUDGET"))
             connections = api_pool + replicas * pool + comparisons
+            # The relationship-only worker uses S3 + Spring APIs, never a DB session.
             connections += 2 * enabled(c.get("CHAT_RETRIEVAL_ENABLED")) + 2 * indexing
             # Read-only preflight probes need one temporary connection alongside old runtime.
             if min(replicas, pool, api_pool, budget) < 1 or connections + 1 > budget:
@@ -245,6 +257,7 @@ class Runtime:
                 "ai-worker": configuration["analysisReplicas"],
                 "ai-character-comparison-worker": 1,
                 "ai-world-comparison-worker": 1,
+                "ai-relationship-worker": 1,
             }
             if all(
                 len(self.compose("worker", "ps", "--status", "running", "-q", name).split())

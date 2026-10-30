@@ -96,3 +96,24 @@ services:
       LLM_MAX_CONCURRENT_REQUESTS: 1
       AI_WORKER_BLOCKING_MAX_WORKERS: 1
       EMBEDDING_GENERATION_ENABLED: "false"
+
+  ai-relationship-worker:
+    <<: *worker-service
+    ports:
+      - "${AI_WORKER_METRICS_BIND_ADDRESS:-127.0.0.1}:${AI_RELATIONSHIP_METRICS_PORT:-9109}:9102"
+    deploy:
+      replicas: 1
+    command: ["python", "scripts/run_analysis_worker.py", "--worker-kind", "relationship"]
+    environment:
+      <<: *worker-environment
+      AI_WORKER_TRACING_ENABLED: ${AI_RELATIONSHIP_TRACING_ENABLED:-${AI_WORKER_TRACING_ENABLED:-false}}
+      # Settings retain the shared DSN, but this worker opens no database sessions.
+      DATABASE_POOL_SIZE: 1
+      DATABASE_POOL_MAX_OVERFLOW: 0
+      AI_WORKER_CONCURRENCY: 1
+      LLM_MAX_CONCURRENT_REQUESTS: 1
+      AI_WORKER_BLOCKING_MAX_WORKERS: 1
+      EMBEDDING_GENERATION_ENABLED: "false"
+      RETRIEVAL_PREPARATION_ENABLED: "false"
+      RELATIONSHIP_WORKER_MAX_SOURCE_BYTES: ${RELATIONSHIP_WORKER_MAX_SOURCE_BYTES:-2000000}
+      RELATIONSHIP_WORKER_MAX_CHUNKS: ${RELATIONSHIP_WORKER_MAX_CHUNKS:-12}

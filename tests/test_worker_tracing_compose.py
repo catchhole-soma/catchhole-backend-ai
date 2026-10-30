@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICES = ("ai-worker", "ai-character-comparison-worker", "ai-world-comparison-worker")
+SERVICES = ("ai-worker", "ai-character-comparison-worker", "ai-world-comparison-worker", "ai-relationship-worker")
 
 
 @pytest.fixture(scope="module")
@@ -26,24 +26,25 @@ def compose_cli():
 
 
 @pytest.mark.parametrize(("flags", "expected"), [
-    ({}, ("false", "false", "false")),
+    ({}, ("false", "false", "false", "false")),
     ({
         "AI_WORKER_TRACING_ENABLED": "false",
         "AI_ANALYSIS_TRACING_ENABLED": "false",
         "AI_CHARACTER_COMPARISON_TRACING_ENABLED": "true",
         "AI_WORLD_COMPARISON_TRACING_ENABLED": "false",
-    }, ("false", "true", "false")),
-    ({"AI_WORKER_TRACING_ENABLED": "true"}, ("true", "true", "true")),
+    }, ("false", "true", "false", "false")),
+    ({"AI_WORKER_TRACING_ENABLED": "true"}, ("true", "true", "true", "true")),
     ({
         "AI_WORKER_TRACING_ENABLED": "true",
         "AI_ANALYSIS_TRACING_ENABLED": "false",
         "AI_CHARACTER_COMPARISON_TRACING_ENABLED": "false",
         "AI_WORLD_COMPARISON_TRACING_ENABLED": "false",
-    }, ("false", "false", "false")),
+        "AI_RELATIONSHIP_TRACING_ENABLED": "false",
+    }, ("false", "false", "false", "false")),
     ({
         "AI_WORKER_TRACING_ENABLED": "true",
         "AI_ANALYSIS_TRACING_ENABLED": "",
-    }, ("true", "true", "true")),
+    }, ("true", "true", "true", "true")),
 ])
 def test_tracing_rollout_flags_preserve_worker_capacity(
     compose_cli, tmp_path, monkeypatch, flags, expected,
@@ -89,3 +90,9 @@ def test_tracing_rollout_flags_preserve_worker_capacity(
         assert env["LLM_MAX_CONCURRENT_REQUESTS"] == ("10" if name == "ai-worker" else "1")
         assert services[name]["stop_grace_period"] == "3m30s"
         assert all(port["target"] == 9102 for port in services[name]["ports"])
+
+    relationship = services["ai-relationship-worker"]
+    assert relationship["deploy"]["replicas"] == 1
+    assert relationship["command"] == ["python", "scripts/run_analysis_worker.py", "--worker-kind", "relationship"]
+    assert relationship["environment"]["EMBEDDING_GENERATION_ENABLED"] == "false"
+    assert relationship["environment"]["RETRIEVAL_PREPARATION_ENABLED"] == "false"
