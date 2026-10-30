@@ -227,6 +227,7 @@ class _HybridSession(_Session):
         self.supported_evidence = ()
         self.recovery_evidence = ()
         self.answer_validation_failed = False
+        self.ordered_coverage = None
 
     def trace(self, stage, **data):
         # No questions, source text, model output, member/work IDs or secrets.
@@ -309,7 +310,7 @@ class _HybridSession(_Session):
         # 검색·이웃·영수증·재검증 몫(라운드당 3 + 마무리 2)을 미리 남긴다.
         if plan.source_need == "NONE":
             return 0
-        return 3 * self.hcfg.max_rounds + 2
+        return 3 * self.hcfg.max_rounds + 2 + (1 if plan.ordering != "NONE" else 0)
 
     def row_page_reserve(self, plan, subject, index, *, base):
         """인물별 등록 조회가 남길 도구 수. 집중 조회와 등록 전용 계획은 기존 예약을 유지한다."""
@@ -322,6 +323,35 @@ class _HybridSession(_Session):
         spare = max(0, limit - self.tool_count - floor - (remaining - 1))
         share = max(1, spare // remaining) if spare else 0
         return limit - self.tool_count - share
+
+    def ordering_anchors(self, plan):
+        """최초/최후 탐색의 기준 표현. 질문의 대상 항목을 우선하고 없으면 인물명을 뺀 검색어를 쓴다."""
+        names = {s.name.strip().casefold() for s in plan.subjects}
+        focus = [s.focus.attribute for s in plan.subjects if s.focus.attribute]
+        terms = focus or [t for t in plan.search_terms if t.strip().casefold() not in names]
+        words = [w for term in (terms or plan.search_terms) for w in term.split()]
+        return list(dict.fromkeys(w for w in words if w))[:4]
+
+    async def ordered_search(self, plan, found):
+        """검색어가 등장하는 출처 회차를 처음/마지막부터 읽어 일반 keyword 후보 앞에 둔다."""
+        anchors = self.ordering_anchors(plan)
+        # 이번 라운드의 남은 비용: 정렬 검색 1 + 이웃 1 + 영수증 1 + 최종 재검증 1
+        if not anchors or not self.tools_available(4):
+            self.codes.append("SEARCH_LIMIT")
+            return found
+        ordered = await self.search(
+            "keyword_ordered", anchors, order=plan.ordering, limit=self.hcfg.keyword_top_k
+        )
+        self.codes.append(f"ORDERED_SEARCH_{plan.ordering}")
+        self.ordered_coverage = {
+            "order": plan.ordering,
+            "anchors": anchors,
+            "boundaryEpisode": ordered[0].episode_no if ordered else None,
+            "truncated": len(ordered) >= self.hcfg.keyword_top_k,
+        }
+        self.trace("ordered", round=self.rounds, anchors=len(anchors), found=len(ordered))
+        seen = {c.chunk_id for c in ordered}
+        return [*ordered, *(c for c in found if c.chunk_id not in seen)]
 
     async def focus_neighbors(self):
         """PARTIAL 초안이 인용한 장면의 앞뒤를 더 읽는다. 회차는 맞췄지만 세부가 빠진 경우용."""
@@ -573,6 +603,8 @@ class _HybridSession(_Session):
                 found = await self.search(
                     "keyword", query, limit=self.hcfg.keyword_top_k, preferred_episode_ids=hints
                 )
+                if plan.ordering != "NONE":
+                    found = await self.ordered_search(plan, found)
             else:
                 if self.hcfg.max_query_embeddings == 0:
                     self.codes.append("SEARCH_LIMIT")
@@ -1469,6 +1501,7 @@ class _HybridSession(_Session):
             if self.item_draft is None
             else [i.model_dump(by_alias=True) for i in self.item_draft.item_answers if i.answers],
             "passages": self.evidence_passages(self.evidences),
+            **({"searchOrdering": self.ordered_coverage} if self.ordered_coverage else {}),
             "limitations": notices(self.codes, include_conversation_limit=True),
         }
 

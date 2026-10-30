@@ -42,6 +42,7 @@ c.chunk_hash,s.source_key,s.source_version,s.source_hash,s.chunk_policy"""
 
 class RetrievalSearchRepository:
     from_clause = CURRENT_FROM
+
     def __init__(self, session, scope: SearchScope, spec: IndexSpec):
         self.session, self.scope, self.spec = session, scope, spec
         self.params = dict(
@@ -112,6 +113,35 @@ class RetrievalSearchRepository:
             "ORDER BY score DESC,(e.id=ANY(CAST(:preferred AS uuid[]))) DESC,"
             "e.episode_no,c.chunk_index,c.id LIMIT :limit",
             {**params, "limit": limit, "preferred": list(dict.fromkeys(preferred_episode_ids))},
+            "KEYWORD",
+        )
+
+    def keyword_ordered(self, anchors, *, order, limit=20):
+        """anchor 표현을 모두 포함하는 청크를 출처 회차 순서로 읽는다. 최초/최후 장면 탐색용.
+
+        점수는 반환 순서를 그대로 보존하는 1.0 이하 값이라 일반 keyword 후보보다 먼저 배치된다.
+        """
+        validate_limit(limit)
+        if order not in {"EARLIEST", "LATEST"}:
+            raise ValueError("Ordered search direction must be EARLIEST or LATEST")
+        terms = [t for t in dict.fromkeys(str(a).strip() for a in anchors) if t][:6]
+        validate_query(" ".join(terms))
+        params = {
+            f"anchor_{n}": "%"
+            + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            + "%"
+            for n, term in enumerate(terms)
+        }
+        must = " AND ".join(
+            f"c.chunk_text ILIKE :anchor_{n} ESCAPE '\\'" for n in range(len(terms))
+        )
+        direction = "ASC" if order == "EARLIEST" else "DESC"
+        ordering = f"e.episode_no {direction},c.chunk_index {direction},c.id"
+        return self._rows(
+            f"SELECT {FIELDS},CAST(1.0-(ROW_NUMBER() OVER (ORDER BY {ordering})-1)/10000.0 "
+            f"AS double precision) AS score {self.from_clause} AND ({must}) "
+            f"ORDER BY {ordering} LIMIT :limit",
+            {**params, "limit": limit},
             "KEYWORD",
         )
 

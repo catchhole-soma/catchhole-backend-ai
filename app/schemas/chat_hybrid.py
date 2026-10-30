@@ -48,6 +48,8 @@ class HybridPlan(ContractModel):
     requested_parts: list[RequestedPart] = Field(default_factory=list, max_length=4)
     event_context: str | None = Field(default=None, min_length=1, max_length=200)
     source_fallback: bool = False
+    # 최초/최후 장면 질문의 원문 검색 순서. 서버가 검색어 등장 회차를 이 순서로 읽는다.
+    ordering: Literal["NONE", "EARLIEST", "LATEST"] = "NONE"
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
@@ -68,6 +70,7 @@ class HybridPlan(ContractModel):
             or self.source_fallback
             or self.per_item
             or self.include_registered_values
+            or self.ordering != "NONE"
             or self.registered_current_required
             or self.answer_shape != "FACTS"
         ):

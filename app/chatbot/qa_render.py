@@ -29,6 +29,8 @@ NOTICES = {
     "TEXT_INDEX_PARTIAL": "일부 회차의 검색용 원문 청크가 없거나 현재 원문과 다릅니다.",
     "VECTOR_INDEX_PARTIAL": "일부 회차의 임베딩이 없거나 모델·버전이 달라 의미 검색에서 제외됐습니다.",
     "SEARCH_LIMIT": "검색 후보·검색 라운드 상한이 적용되어 모든 관련 원문을 확인한 것은 아닙니다.",
+    "ORDERED_SEARCH_EARLIEST": "검색어가 처음 등장하는 회차부터 순서대로 원문을 확인했습니다.",
+    "ORDERED_SEARCH_LATEST": "검색어가 마지막으로 등장하는 회차부터 거슬러 원문을 확인했습니다.",
     "SEARCH_QUERY_LIMIT": "검색어 길이 한도로 질문의 일부만 검색에 사용했습니다.",
     "EVIDENCE_CONTEXT_LIMIT": "답변에 참고할 원문 분량을 제한해 일부 검색 후보를 검토하지 못했습니다.",
     "PARTIAL_ANSWER": "확인한 근거로 질문의 일부만 답변했습니다.",
