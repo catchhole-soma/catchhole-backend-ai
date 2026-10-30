@@ -38,6 +38,35 @@ from app.validation.schemas import decision_schema, question_batch_schema, selec
 
 logger = logging.getLogger(__name__)
 _DECISION_FIELDS = ("outcome", "basis", "impact", "impact_reason", "completion")
+# GH341: marks the single change search the Worker itself issues before accepting SUSPECTED_CONFLICT.
+WORKER_CHANGE_SEARCH_PURPOSE = "Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색"
+_SEARCH_QUERY_LIMIT = 1000  # corpus.lookup/validate_intents reject empty or longer queries
+
+
+def _is_change_search(receipt):
+    """A successful CHANGES_EXCEPTIONS KEYWORD/VECTOR read: what SUSPECTED_CONFLICT/CHANGE_NOT_FOUND needs."""
+    return (receipt.status == "SUCCEEDED" and receipt.intent.kind == "CHANGES_EXCEPTIONS"
+            and receipt.intent.operation in {"KEYWORD", "VECTOR"})
+
+
+def _needs_worker_change_search(judgment, receipts, pending):
+    """SUSPECTED_CONFLICT without a successful change search, and no Worker search issued for it yet.
+
+    Once only: a Worker search that is pending, resumed from a checkpoint or already read is never re-issued,
+    so a search that keeps failing ends the inspection with its own failure instead of looping.
+    """
+    if judgment.action != "DECIDED" or judgment.outcome != "SUSPECTED_CONFLICT":
+        return False
+    if any(_is_change_search(receipt) for receipt in receipts):
+        return False
+    issued = [receipt.intent for receipt in receipts] + list(pending)
+    return not any(intent.purpose == WORKER_CHANGE_SEARCH_PURPOSE for intent in issued)
+
+
+def change_search_query(draft):
+    """Deterministic KEYWORD query: unique non-empty subject mentions, then the property; '' if none."""
+    parts = dict.fromkeys(text.strip() for text in (*draft.subject_mentions, draft.property_or_rule))
+    return " ".join(part for part in parts if part)[:_SEARCH_QUERY_LIMIT].strip()
 
 
 def _contract_cause(exc):
@@ -484,6 +513,20 @@ class SettingValidationService:
                             "baseline_selections": {ref: sorted(values) for ref, values in baseline_selections.items()},
                             "revisions": revisions}})
 
+            async def reopen(affected, intents):
+                """New obligations: atomic durable revise of every affected check first, then re-queue."""
+                if self.checkpoint:
+                    next_pending = {ref: [intent for intent, _ in pending[ref]] + intents for ref in affected}
+                    await self.checkpoint.revise(affected, next_pending, by_ref, "NEW_CLUE")
+                for ref in affected:
+                    decisions.pop(ref, None)
+                    bundles.pop(ref, None)
+                    revisions[ref] += 1
+                    pending[ref].extend((intent, True) for intent in intents)
+                    if by_ref[ref] not in queue:
+                        queue.append(by_ref[ref])
+                await save_runtime()
+
             while queue:
                 question = queue.pop(0)
                 qref, draft = question.ref, question.draft
@@ -667,18 +710,21 @@ class SettingValidationService:
                     affected = set(judgment.affected_question_refs) | {qref}
                     if not affected <= set(by_ref):
                         raise IncompleteInspection("UNKNOWN_QUESTION_REFERENCE")
-                    if self.checkpoint:
-                        next_pending = {ref: [intent for intent, _ in pending[ref]] + judgment.follow_ups
-                                        for ref in affected}
-                        checks = await self.checkpoint.revise(affected, next_pending, by_ref, "NEW_CLUE")
-                    for ref in affected:
-                        decisions.pop(ref, None)
-                        bundles.pop(ref, None)
-                        revisions[ref] += 1
-                        pending[ref].extend((intent, True) for intent in judgment.follow_ups)
-                        if by_ref[ref] not in queue:
-                            queue.append(by_ref[ref])
-                    await save_runtime()
+                    await reopen(affected, list(judgment.follow_ups))
+                    continue
+                needed = _needs_worker_change_search(judgment, own_receipts[qref],
+                                                     [intent for intent, _ in pending[qref]])
+                query = change_search_query(draft) if needed else ""
+                if query:
+                    # GH341: the obligation is only known after JUDGE answers; run it once and ask again.
+                    intent = LookupIntent(ref=f"{qref}-CHANGES_EXCEPTIONS", kind="CHANGES_EXCEPTIONS",
+                                          operation="KEYWORD", purpose=WORKER_CHANGE_SEARCH_PURPOSE, query=query)
+                    try:
+                        validate_intents([intent], intent_refs())
+                    except ValueError as exc:
+                        raise IncompleteInspection(exc.args[0]) from None
+                    stats["CHANGE_SEARCH_INSERTED"] += 1
+                    await reopen({qref}, [intent])
                     continue
                 judgment = self._validate_decision(
                     judgment, question, relevant, evidence, own_receipts[qref], target, stats
@@ -848,6 +894,22 @@ class SettingValidationService:
                 "completion": value.completion.model_copy(update={"required_reads": filled})})
             if stats is not None:
                 stats["REQUIRED_READS_COMPLETED"] += 1
+        changes = value.completion.changes_exceptions
+        searches = [receipt for receipt in receipts if _is_change_search(receipt)]
+        if value.outcome == "SUSPECTED_CONFLICT" and searches and not any(
+            ref in real_receipts and _is_change_search(real_receipts[ref]) for ref in changes.receipt_refs
+        ):
+            # GH341: "a successful change search exists" is a Worker fact, like required_reads. Only real
+            # own receipts/known refs are added; the model's own citations stay and are still checked below.
+            filled = changes.model_copy(update={
+                "receipt_refs": list(dict.fromkeys([*changes.receipt_refs, *(row.ref for row in searches)])),
+                "evidence_refs": list(dict.fromkeys([*changes.evidence_refs, *(
+                    ref for row in searches for ref in row.evidence_refs if ref in known)])) or [TARGET_REF],
+            })
+            value = value.model_copy(update={
+                "completion": value.completion.model_copy(update={"changes_exceptions": filled})})
+            if stats is not None:
+                stats["CHANGE_SEARCH_RECEIPT_FILLED"] += 1
         for field_name in ("comparison_context", "changes_exceptions", "no_pending_clues", "required_reads"):
             assessment = getattr(value.completion, field_name)
             if (

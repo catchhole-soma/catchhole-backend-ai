@@ -495,3 +495,74 @@ def test_vector_is_offered_only_when_the_worker_can_execute_it():
     assert (result.failure_code, result.failure_cause, result.failure_stage) == (
         "INVALID_INSPECTION_CONTRACT", "VECTOR_NOT_READY", "PLANNER:TSEG1")
     assert not checkpoint.saved  # never persisted as an obligation that every retry would repeat
+
+
+# --- GH341: the SUSPECTED_CONFLICT change-search citation is a Worker fact -------------------------
+
+def _change_case(outcome="SUSPECTED_CONFLICT", basis="CHANGE_NOT_FOUND", *, changes=None, operation="KEYWORD",
+                 search_refs=("E1",), searched=True):
+    from app.validation.contracts import (
+        LookupReceipt,
+        MergedQuestion,
+        QuestionDraft,
+        ValidationDecision,
+    )
+
+    target_span = span(WAKE, ref="T1")
+    draft = QuestionDraft.model_validate(question("wake", [target_span], "새벽 기상"))
+    receipts = [
+        LookupReceipt("L1", LookupIntent(ref="Q1-BASELINE", kind="COMPARISON_CONTEXT", operation="BASELINE",
+                                         purpose="비교"), "SUCCEEDED", ("B1",)),
+        LookupReceipt("L2", LookupIntent(ref="Q1-TARGET_CONTEXT", kind="COMPARISON_CONTEXT",
+                                         operation="TARGET_CONTEXT", purpose="비교"), "SUCCEEDED", ("T1",)),
+    ]
+    if searched:
+        receipts.append(LookupReceipt("L3", LookupIntent(ref="change", kind="CHANGES_EXCEPTIONS", operation=operation,
+                                                         purpose="변화 검색", query="미나 새벽"),
+                                      "SUCCEEDED", tuple(search_refs)))
+    cited = {"reason": "같은 대상과 시점을 확인했다", "evidence_refs": ["T1", "B1"], "receipt_refs": ["L1", "L2"]}
+    value = ValidationDecision.model_validate({
+        "action": "DECIDED", "outcome": outcome, "basis": basis, "reason": "합성 판정", "impact": "CAUTION",
+        "impact_reason": "설정 이해에 영향", "target_spans": [target_span], "evidence_refs": ["T1", "B1"],
+        "completion": {"comparison_context": cited, "no_pending_clues": cited, "required_reads": cited,
+                       "changes_exceptions": cited if changes is None else changes},
+        "follow_ups": [], "affected_question_refs": [], "disagreements": []})
+    settings = [{"entry_ref": "B1"}]
+    evidence = [{"ref": "E1", "source_ref": "R1"}]
+    return value, MergedQuestion("Q1", draft, ("PLANNER:TSEG1:wake",)), settings, evidence, receipts
+
+
+def _validate(case):
+    from app.validation.service import SettingValidationService
+
+    value, merged, settings, evidence, receipts = case
+    stats = Counter()
+    return SettingValidationService._validate_decision(value, merged, settings, evidence, receipts, B2, stats), stats
+
+
+@pytest.mark.parametrize("operation", ["KEYWORD", "VECTOR"])
+def test_suspected_conflict_cites_the_real_successful_change_search(operation):
+    decided, stats = _validate(_change_case(operation=operation))
+    changes = decided.completion.changes_exceptions
+    assert (changes.receipt_refs, changes.evidence_refs) == (["L1", "L2", "L3"], ["T1", "B1", "E1"])
+    assert stats["CHANGE_SEARCH_RECEIPT_FILLED"] == 1
+    # An empty successful search still counts, and an empty citation gets the target as its evidence.
+    empty = _change_case(changes={"reason": "변화 없음", "evidence_refs": [], "receipt_refs": []}, search_refs=())
+    decided, stats = _validate(empty)
+    changes = decided.completion.changes_exceptions
+    assert (changes.receipt_refs, changes.evidence_refs) == (["L3"], ["T1"])
+    assert stats["CHANGE_SEARCH_RECEIPT_FILLED"] == 1
+
+
+def test_change_search_fill_never_invents_a_search_or_hides_a_forged_citation():
+    with pytest.raises(IncompleteInspection) as missing:
+        _validate(_change_case(searched=False))
+    assert missing.value.cause == "INVALID_DECISION_CHANGE_SEARCH_MISSING"
+    forged = {"reason": "변화 없음", "evidence_refs": ["T1"], "receipt_refs": ["L99"]}
+    with pytest.raises(IncompleteInspection) as rejected:
+        _validate(_change_case(changes=forged))
+    assert rejected.value.cause == "INVALID_DECISION_CHANGES_EXCEPTIONS"
+    # Only SUSPECTED_CONFLICT needs the search; other outcomes keep the model's citation as given.
+    decided, stats = _validate(_change_case("CONFLICT", "DIRECT_CONTRADICTION"))
+    assert decided.completion.changes_exceptions.receipt_refs == ["L1", "L2"]
+    assert "CHANGE_SEARCH_RECEIPT_FILLED" not in stats

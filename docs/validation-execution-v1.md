@@ -236,6 +236,8 @@ CONFLICT/SUSPECTED_CONFLICT의 외부 비교 근거가 될 수 없고 frozen fac
 T1 자체 문맥·인용 저장은 유지한다.
 새 FOLLOW_UP은 영향을 받는 모든 check를 한 트랜잭션에서 revision 변경하고 옛 완료를 집계에서 제외한다.
 원 상태/판정과 changeReason은 check history에 남겨 #312가 변경된 질문을 구분할 수 있다.
+GH341에서 Worker가 SUSPECTED_CONFLICT 전에 넣는 변화·예외 KEYWORD 검색도 그 질문 하나의 일반 revision(`revisions`, `reason=NEW_CLUE`)으로
+lookup_obligations에 추가되고 checkpoint pending/receipts에 남아 재개 때 다시 넣지 않는다([설정 검사 계약](setting-validation-v1.md)).
 
 종료 상태는 현재 revision의 완료 check(NO_CONFLICT 포함), 완료 typo segment(제안 0개 포함),
 필수 PLANNER/selection/COVERAGE/book/CL이 모두 저장되고 미해결 질문이 없는 NO_CHECK segment로 결정한다.
