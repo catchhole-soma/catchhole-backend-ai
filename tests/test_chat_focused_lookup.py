@@ -330,7 +330,9 @@ async def test_unmatched_field_name_falls_back_to_type_values_for_selection():
 
 
 @pytest.mark.anyio
-async def test_missing_field_metadata_does_not_fall_back_to_unfiltered_values():
+async def test_missing_type_widens_field_discovery_then_selects_over_type_values():
+    # 질문한 유형(STAT)의 항목이 없으면 모든 유형의 항목 목록에서 다시 고르고, 그래도 관련 항목이 없으면
+    # 현재값 전체를 선택 모델에 넘긴 뒤 없음으로 끝낸다. 집중 행처럼 무조건 답에 넣지는 않는다.
     catalog = [
         catalog_subject(
             107,
@@ -341,11 +343,60 @@ async def test_missing_field_metadata_does_not_fall_back_to_unfiltered_values():
         )
     ]
     result = await replay_case(
-        case("수오의 정신력은?", plan("수오", fact_type="STAT", attribute="정신력")),
+        case(
+            "수오의 정신력은?",
+            plan("수오", fact_type="STAT", attribute="정신력"),
+            {"outcome": "INSUFFICIENT_EVIDENCE", "fieldRefs": []},
+            {"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": []},
+        ),
         catalog,
     )
-    assert answer(result)["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert [q["tool"] for q in result["queries"]] == ["FIND_CHARACTERS", "CHARACTER_FIELDS"]
+    actual = answer(result)
+    assert actual["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert [q["tool"] for q in result["queries"]] == [
+        "FIND_CHARACTERS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_CURRENT",
+    ]
+    assert tool_queries(result, "CHARACTER_FIELDS")[1]["factType"] is None
+    assert NOTICES["FOCUS_TYPE_WIDENED"] in actual["limitations"]
+
+
+@pytest.mark.anyio
+async def test_wrong_type_guess_still_finds_the_item_after_widening():
+    catalog = [
+        catalog_subject(
+            150,
+            "드왈키",
+            current=[
+                item(
+                    150,
+                    "드왈키",
+                    category="PROFILE",
+                    key="profile.occupation",
+                    label="직업",
+                    value="8급 마법사",
+                ),
+            ],
+        )
+    ]
+    result = await replay_case(
+        case(
+            "드왈키는 몇 급 마법사야?",
+            plan("드왈키", fact_type="LEVEL", attribute="몇 급"),
+            {"outcome": "ANSWER", "fieldRefs": ["F1"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    assert actual["outcome"] == "ANSWER" and "8급" in actual["text"]
+    assert [q["tool"] for q in result["queries"]] == [
+        "FIND_CHARACTERS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_CURRENT",
+    ]
 
 
 def world_catalog():

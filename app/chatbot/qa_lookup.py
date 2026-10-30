@@ -273,6 +273,30 @@ class FocusedLookup:
                 )
                 if stop:
                     return stop
+                source_fallback = bool(
+                    getattr(getattr(self, "plan", None), "source_fallback", False)
+                )
+                if (
+                    not fields
+                    and "NO_FIELDS" in (self.lookup_gaps - gaps_before)
+                    and focus.fact_type is not None
+                    and not source_fallback
+                    and not mixed_range
+                ):
+                    # 질문의 유형 추정('몇 급'→LEVEL)이 틀려 그 유형의 항목이 없으면 모든 유형의 항목
+                    # 목록에서 다시 고른다. 값은 여전히 선택된 항목만 읽는다.
+                    self.codes.append("FOCUS_TYPE_WIDENED")
+                    focus = focus.model_copy(update={"fact_type": None})
+                    gaps_before = set(self.lookup_gaps)
+                    fields, stop = await self.fields(
+                        subject.domain,
+                        target,
+                        focus,
+                        history=modes == ["HISTORY"],
+                        reserve=reserve + guard_reserve,
+                    )
+                    if stop:
+                        return stop
                 if cached_current is not None:
                     selected_paths = {_field_key(item) for item in fields}
                     cached_current = [
@@ -288,9 +312,6 @@ class FocusedLookup:
                 ]
                 relevant_missing = "NO_RELEVANT_FIELDS" in (self.lookup_gaps - gaps_before)
                 # 원문 보완(sourceFallback)이 허용된 계획은 기존대로 값을 읽지 않고 원문으로 넘어간다.
-                source_fallback = bool(
-                    getattr(getattr(self, "plan", None), "source_fallback", False)
-                )
                 if (
                     not fields
                     and relevant_missing
