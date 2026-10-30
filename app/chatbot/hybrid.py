@@ -310,7 +310,9 @@ class _HybridSession(_Session):
         # 검색·이웃·영수증·재검증 몫(라운드당 3 + 마무리 2)을 미리 남긴다.
         if plan.source_need == "NONE":
             return 0
-        return 3 * self.hcfg.max_rounds + 2 + (1 if plan.ordering != "NONE" else 0)
+        # 3라운드는 선택적이라 처음 두 라운드 몫만 예약한다.
+        rounds = min(self.hcfg.max_rounds, 2)
+        return 3 * rounds + 2 + (1 if plan.ordering != "NONE" else 0)
 
     def row_page_reserve(self, plan, subject, index, *, base):
         """인물별 등록 조회가 남길 도구 수. 집중 조회와 등록 전용 계획은 기존 예약을 유지한다."""
@@ -372,6 +374,13 @@ class _HybridSession(_Session):
         )
         seen = {c.chunk_id for c in kept}
         return [*kept, *(c for c in found if c.chunk_id not in seen)]
+
+    def extra_round_affordable(self):
+        """3라운드는 검색·답변·마무리를 서버 마감 안에 끝낼 시간이 남아 있을 때만 시작한다."""
+        last = max(10.0, getattr(self, "last_model_seconds", 0.0))
+        affordable = self.model_time_left() > 2 * last + 10.0
+        self.trace("extra_round", round=self.rounds + 1, affordable=affordable)
+        return affordable
 
     def episode_ordered_head(self, plan, found):
         """정렬 질문의 의미 검색 후보 중 가장 이른/늦은 ordered_top_k개. 유사도 순서보다 앞에 둔다."""
@@ -625,6 +634,9 @@ class _HybridSession(_Session):
         candidates = []
         for round_no in range(1, self.hcfg.max_rounds + 1):
             if not self.tools_available(4) or not self.models_available(embedding=round_no > 1):
+                self.codes.append("SEARCH_LIMIT")
+                break
+            if round_no >= 3 and not self.extra_round_affordable():
                 self.codes.append("SEARCH_LIMIT")
                 break
             self.rounds = round_no
@@ -1444,9 +1456,9 @@ class _HybridSession(_Session):
             per_episode=(
                 self.hcfg.max_evidence - len(direct)
                 if self.source_from is not None and self.source_from == self.source_to
-                # 검증된 장면을 더 읽는 라운드는 같은 회차 몫을 조금 늘린다.
+                # 검증된 장면을 더 읽는 라운드는 같은 회차 몫을 늘려 장면을 이어 읽게 한다.
                 else min(
-                    self.hcfg.per_episode + (2 if focus else 0),
+                    self.hcfg.per_episode + (max(2, self.hcfg.max_evidence // 3) if focus else 0),
                     self.hcfg.max_evidence - len(direct),
                 )
             ),
