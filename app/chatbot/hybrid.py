@@ -1492,7 +1492,9 @@ class _HybridSession(_Session):
             # rank order. Old unproven lexical scores must not crowd out vector
             # hits; the common item/token/episode caps still bound this context.
             priority_chunk_ids=[c.chunk_id for c in priority],
-            episode_round_robin=not bool(self.plan and self.plan.requested_parts),
+            # 요구 항목이 있어도 전수·개수 질문은 회차를 고루 읽어야 서로 다른 인물·종류가 근거에 들어온다.
+            episode_round_robin=not bool(self.plan and self.plan.requested_parts)
+            or bool(self.plan and self.plan.answer_shape in {"LIST", "COUNT", "DISTINCT"}),
         )
         self.evidences = [replace(e, ref=f"E{index}") for index, e in enumerate(direct, 1)]
         for chunk in bundle.chunks:

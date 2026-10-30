@@ -6,7 +6,7 @@ from app.chatbot.qa_prompts import (
     SMALL_TALK_INSTRUCTIONS,
 )
 
-PLAN_VERSION = "chat-hybrid-plan-v12"
+PLAN_VERSION = "chat-hybrid-plan-v13"
 ANSWER_VERSION = "chat-hybrid-answer-v16"
 
 PLAN_PROMPT = (
@@ -59,6 +59,9 @@ subjects는 현재 질문 또는 명확히 연결된 conversation에 그대로 �
 무관한 장면을 늘리지 말고, 첫 사건 등의 조건은 eventContext에 보존한다.
 ordering은 질문이 처음/최초/첫/가장 먼저 일어난 사건·등장·획득을 물으면 EARLIEST, 마지막/최근/최후를
 물으면 LATEST, 그 외와 sourceNeed=NONE은 NONE이다. 서버가 검색어가 등장하는 출처 회차를 그 순서로 읽는다.
+같은 이름의 인물이 몇 명인지·각각 누구인지 묻는 동명이인 질문과 '모두/전부/각각/몇 종류' 전수 질문은
+등록값만으로 단정하지 않는다. subjects는 비우고 rdbMode=NONE, sourceNeed=SCENE, searchTerms에 그 이름·대상,
+ordering=EARLIEST, answerShape=LIST 또는 COUNT로 표현하며 requestedParts에 '몇 명'과 '각각 누구'를 나눠 둔다.
 UUID, 회원/작품 ID, SQL, settingKey, scopeName을 생성하지 않는다.
 episodeFrom/To는 질문에 명시된 출처 회차만 정수로, 없으면 null. 서버 허용 범위를 넓히지 않는다.
 사건이 일어난 시간과 그 장면이 서술된 출처 회차를 동일시하지 않는다.
