@@ -30,6 +30,7 @@
 - 선택적 `failureDiagnostics`는 Java/Python 공통 v1 고정 코드 계약이다. 원문·예외 메시지·URL·lease/인증값은 넣지 않으며 실제 관측한 HTTP 상태와 요청/trace ID만 전달한다. Spring 오류의 부가 진단 파싱 실패는 원래 HTTP 실패와 분리하고 `first_failure_code`와 그 실패의 `first_failure_diagnostics`를 묶어 batch→run→Job 실패 보고까지 운반한다. 새 실패에서 이전 시도의 진단을 재사용하거나 상세 원인으로 기존 격리·재시도 분류를 바꾸지 않는다.
 
 - 인용 offset 복원은 exact·공백 검색 다음에 `U+0022/U+201C/U+201D` 큰따옴표 차이만 허용하고 유일하게 찾은 원문 slice와 Unicode code point offset을 함께 저장한다. 의미 문자·다른 부호·모호한 반복을 보정하지 않는다. 현재값과 `UNAVAILABLE/QUOTE_NOT_FOUND`인 과거 근거는 별개이며 빈 근거를 만들거나 VERIFIED로 승격하지 않는다.
+- 일반 캐릭터 인용의 위치가 없거나 잘못되어 Spring이 `UNAVAILABLE`로 내린 경우에도 내용·현재값과 분석은 유지한다. `OFFSETS_UNAVAILABLE/INVALID_OFFSETS/EVIDENCE_UNAVAILABLE`를 provider에 보존하고 빈 인용을 복원하지 않는다. 과거 frozen CURRENT·identity·캐릭터 보류 참고의 null/불완전 offset도 provider 투영에서만 제외하며 DTO/hash/raw 기록을 바꾸지 않는다. 로컬 비교 projection은 위치 유무만으로 VERIFIED를 부여하지 않는다. 원문/hash/소유권 경계와 별도 서사시점·관계 근거 검증은 유지한다.
 - GH304 내부 진단 수신·additive schema는 Backend부터 배포하고 AI 진단 전송을 뒤에 둔다. 구 Backend는 추가 필드를 무시하므로 실패 처리는 호환되지만 상세 진단은 보존되지 않는다. rollback은 nullable 열을 남긴 코드 복구이며 운영 작업을 자동 재실행하지 않는다. 합성 Java HTTP 연결은 Backend `ComparisonEvidenceHttpPostgresIntegrationTest`와 `tests/support/comparison_evidence_http_client.py`를 사용하고 AI checkout과 기존 venv 경로를 분리한다.
 
 - 기본 `analysis` Worker는 `supportsFrozenComparisonEvidence=true`를 claim에 전송한다. `ORDERED_PROVISIONAL` 응답의 `comparisonEvidenceContract.formatVersion`이 정수 1인지 progress·heartbeat·원문/저장·provider 호출 전에 확인하고, 누락·잘못된 타입·미지원 버전은 기존 lease 기반 fail로 보고한다. 구 `CONFIRMED_ONLY`와 두 hidden 재비교 Worker의 광고는 유지한다.
@@ -86,6 +87,14 @@
 - 캐릭터 비교의 canonical `REMOVE`는 `target_ref=null`, `removed_snapshot_refs` 1개 이상, proposal 없음으로 출력한다. candidate와 같은 key 또는 다른 key의 의미상 관련된 현재 STATUS를 요청 로컬 `P*` 참조로 하나 이상 끝낼 수 있지만 non-STATUS·unknown ref·비현재 후보는 거절한다. 기존 `REMOVE + targetRef` 하위 호환 정규화는 먼저 배포되는 Spring이 담당하며 Python은 신규 형식만 생성한다.
 - `NUMBER`/`BOOLEAN` 후보는 Pydantic 경계에서 `value_json.value`의 JSON 타입을 검증하고 Mapper가 저장 `attribute_value`를 그 값의 canonical 표현(NUMBER 숫자 문자열, BOOLEAN 소문자 `true`/`false`)으로 만든다. LLM이 보낸 원래 표시 문구는 Mapper 변환 전 payload로 `raw_ai_result_json`에 보존하고, 비교 proposal도 Spring에 보내기 전 같은 canonical 규칙을 적용한다. 표시값과 snapshot 대표값이 다른 상태를 새로 저장하지 않기 위함이다.
 - 캐릭터 단건·batch 비교의 `STRING` proposal은 `proposed_value_json.value`가 JSON 문자열인지 응답 재시도 경계에서 검증한다. 잘못된 값을 임의로 문자열로 바꾸지 않으며, 재시도 소진 시 기존 후보별 typed failure로 처리해 평가 최종 결과 생성까지 오류를 넘기지 않는다.
+
+## Episode Relationship Graph (GH323)
+
+- 관계는 EPISODE/SETTING_EXTRACTION에서만 `supportsRelationshipAnalysis=true`와 서버 v1 계약으로 활성화한다. 계약이 없으면 관계 API/모델을 호출하지 않는다. 캐릭터·세계관 prompt/schema/model/평가 Gold는 변경하지 않는다.
+- 관계 1차와 2차는 별도 Terra/medium client, input 64k/output 16k, metering 재시도 0이다. 1차는 기존 두 추출과 병렬, 2차는 기존 세계관 비교와 병렬이며 전역 semaphore·계량을 공유한다.
+- 1차 원문 조각 ID에서 quote·Unicode offset을 복원하고 2차에는 요청별 N/R/O/H 참조만 전달한다. Python은 DB 관계를 직접 쓰지 않으며 lease·원문·권한·quota·Spring 오류를 의미 실패로 숨기지 않는다.
+- ADD/MERGE/UPDATE/END/EXCLUDE/HOLD의 coverage·시점·참조·중복을 검증한다. 보류는 내부 상태로 저장하고 필수 사용자 검토 큐를 만들지 않는다. 이름 없는 1인칭/역할을 주인공으로 추정하지 않으며 자동 해소를 보장하지 않는다.
+- PREPARED는 추출을 재호출하지 않고 COMPLETED/FAILED는 관계 모델을 재호출하지 않는다. 회차 이력/무효화/실제 반영은 Spring 계약을 따른다. 공통 `docs/episode-relationships.md`를 Java·프론트와 동기화하며 실제 모델·합성 매핑·DB 검증을 구분한다.
 
 ## Async Worker Runtime
 

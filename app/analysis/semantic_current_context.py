@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.analysis.evidence_projection import located_evidence_quotes
 from app.analysis.exceptions import OrderedInputContextError
 from app.domain.enums import WorldSettingCategory
 
@@ -211,7 +212,7 @@ def prepare_semantic_current_context(
         ref, identity = identities[_owner(item.character_id, item.provisional_subject_key)]
         characters.append({
             "ref": ref, "name": identity.name, "aliases": list(identity.aliases),
-            "identity_evidence": [span.quote for span in identity.identity_evidence],
+            "identity_evidence": located_evidence_quotes(identity.identity_evidence),
             "current_slots": [{
                 "fact_type": slot.fact_type, "fact_key": slot.fact_key,
                 "fact_value": slot.fact_value, "value_json": slot.value_json,

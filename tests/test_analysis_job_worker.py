@@ -949,6 +949,7 @@ class FakeSpringWorkerClient:
         supports_setting_book_reference_time=None,
         supports_semantic_current_context=None,
         supports_frozen_comparison_evidence=None,
+        supports_relationship_analysis=None,
     ) -> WorkerAnalysisJobPayload | None:
         self.claim_called = True
         self.claim_model_name = model_name
