@@ -63,14 +63,22 @@ class HybridPlan(ContractModel):
             return data
         required = data.get("registeredCurrentRequired", data.get("registered_current_required"))
         fallback_key = "sourceFallback" if "sourceFallback" in data else "source_fallback"
+        parts_key = "requestedParts" if "requestedParts" in data else "requested_parts"
+        need = data.get("sourceNeed", data.get("source_need", "NONE"))
         if required is True and data.get(fallback_key) is True:
             data = dict(data)
             data[fallback_key] = False
-            need = data.get("sourceNeed", data.get("source_need", "NONE"))
             if need == "NONE":
                 # 원문 요구가 없으면 보완용으로만 적은 요구 항목도 함께 비운다.
-                parts_key = "requestedParts" if "requestedParts" in data else "requested_parts"
                 data[parts_key] = []
+        # 흔한 계약 위반 두 가지도 재시도 대신 바로잡는다: 원문 요구·보완이 없는데 요구 항목만 남긴 경우,
+        # 보완은 켰는데 보완할 요구 항목이 없는 경우. 둘 다 계획기의 재호출만 늘리던 오류다.
+        if need == "NONE" and data.get(fallback_key) is not True and data.get(parts_key):
+            data = dict(data)
+            data[parts_key] = []
+        if data.get(fallback_key) is True and not data.get(parts_key):
+            data = dict(data)
+            data[fallback_key] = False
         return data
 
     @model_validator(mode="after")

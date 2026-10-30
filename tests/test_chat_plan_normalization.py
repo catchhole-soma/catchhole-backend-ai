@@ -55,3 +55,17 @@ def test_other_contract_errors_are_still_rejected():
         HybridPlan.model_validate(
             plan(registeredCurrentRequired=False, rdbMode="NONE", sourceNeed="NONE")
         )
+
+
+def test_stray_requested_parts_without_source_need_are_dropped():
+    # PLAN_PARTS_MODE: 원문 요구도 보완도 없는데 요구 항목만 남긴 응답은 재시도 대신 항목을 비운다.
+    result = HybridPlan.model_validate(plan(registeredCurrentRequired=False, sourceFallback=False))
+    assert result.requested_parts == [] and result.source_fallback is False
+
+
+def test_fallback_without_parts_is_turned_off():
+    # PLAN_FALLBACK_PARTS_REQUIRED: 보완할 요구 항목이 없으면 보완을 끈다.
+    result = HybridPlan.model_validate(
+        plan(registeredCurrentRequired=False, sourceFallback=True, requestedParts=[])
+    )
+    assert result.source_fallback is False
