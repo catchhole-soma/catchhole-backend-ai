@@ -51,15 +51,12 @@ def offline_only(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect_ex", reject)
 
 
+# 등록 전용 계획에 남은 requestedParts(PLAN_PARTS_MODE)와 요구 항목 없는 sourceFallback
+# (PLAN_FALLBACK_PARTS_REQUIRED)은 재시도 대신 정규화한다 — tests/test_chat_plan_normalization.py.
 @pytest.mark.parametrize(
     ("changes", "code", "path"),
     [
         ({"requestedFacets": ["TIME"]}, "PLAN_PARTS_MODE", "$.requestedParts"),
-        (
-            {**REGISTERED_PLAN, "requestedParts": [{"ref": "P1", "description": PRIVATE}]},
-            "PLAN_PARTS_MODE",
-            "$.requestedParts",
-        ),
         ({"requestedParts": []}, "PLAN_PARTS_REQUIRED", "$.requestedParts"),
         (
             {"requestedParts": [{"ref": "P2", "description": PRIVATE}]},
@@ -82,11 +79,6 @@ def offline_only(monkeypatch):
             "$.eventContext",
         ),
         ({"eventContext": " "}, "PLAN_EVENT_CONTEXT", "$.eventContext"),
-        (
-            {**REGISTERED_PLAN, "sourceFallback": True},
-            "PLAN_FALLBACK_PARTS_REQUIRED",
-            "$.requestedParts",
-        ),
         ({"disposition": "GREETING"}, "PLAN_CONVERSATION_ONLY", "$"),
     ],
 )
