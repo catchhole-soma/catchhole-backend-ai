@@ -364,9 +364,14 @@ class _HybridSession(_Session):
             "boundaryEpisode": ordered[0].episode_no if ordered else None,
             "truncated": len(ordered) >= self.hcfg.keyword_top_k,
         }
-        self.trace("ordered", round=self.rounds, anchors=len(anchors), found=len(ordered))
-        seen = {c.chunk_id for c in ordered}
-        return [*ordered, *(c for c in found if c.chunk_id not in seen)]
+        # 순서상 앞의 몇 개만 우선 배치한다. 전부 앞에 두면 점수 1.0 근처의 초반 언급이
+        # 질문과 더 밀접한 일반 keyword 후보를 근거 상한 밖으로 밀어낸다.
+        kept = list(ordered[: self.hcfg.ordered_top_k])
+        self.trace(
+            "ordered", round=self.rounds, anchors=len(anchors), found=len(ordered), kept=len(kept)
+        )
+        seen = {c.chunk_id for c in kept}
+        return [*kept, *(c for c in found if c.chunk_id not in seen)]
 
     async def focus_neighbors(self):
         """PARTIAL 초안이 인용한 장면의 앞뒤를 더 읽는다. 회차는 맞췄지만 세부가 빠진 경우용."""
