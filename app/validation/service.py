@@ -819,15 +819,14 @@ class SettingValidationService:
             raise fail("COMPLETION_MISSING")
         if value.outcome is None or value.basis is None:
             raise fail("OUTCOME_MISSING")
-        if not set(value.target_spans) <= set(question.draft.target_spans):
-            raise fail("TARGET_SPANS")  # a span outside the judged question is never accepted
+        for span in value.target_spans:
+            validate_span(span, target)  # an echoed span must still be real target text
         if set(value.target_spans) != set(question.draft.target_spans):
-            # GH331: the judged spans are the question's spans; an echo that omits some is completed.
+            # GH331: the judged spans are the question's own spans (Backend requires exactly those).
+            # The echo carries no decision; omitted or other exact target spans are replaced, not trusted.
             value = value.model_copy(update={"target_spans": list(question.draft.target_spans)})
             if stats is not None:
-                stats["TARGET_SPANS_COMPLETED"] += 1
-        for span in value.target_spans:
-            validate_span(span, target)
+                stats["TARGET_SPANS_REPLACED"] += 1
         facts = {row["entry_ref"]: row for row in settings}
         actual = {row["ref"]: row for row in evidence}
         known = {TARGET_REF} | set(facts) | set(actual)

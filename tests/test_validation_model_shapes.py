@@ -405,26 +405,28 @@ def test_remaining_decision_rules_stay_strict_with_specific_causes(change, cause
     assert (result.status, result.failure_code, result.failure_cause) == ("INCOMPLETE", "INVALID_DECISION", cause)
 
 
-def test_judge_echo_that_omits_question_spans_is_completed_but_foreign_spans_are_rejected():
-    class Partial(RecordedTerra):
-        def __init__(self, extra=False):
+def test_judge_span_echo_is_replaced_by_the_question_spans_but_invented_quotes_are_rejected():
+    """Final re-run: JUDGE echoed fewer or neighbouring exact spans (INVALID_DECISION_TARGET_SPANS)."""
+    class Echo(RecordedTerra):
+        def __init__(self, spans):
             super().__init__()
-            self.extra = extra
+            self.spans = spans
 
         def judge(self, payload):
             value = super().judge(payload)
             if value["action"] == "DECIDED" and payload["question_ref"] == "Q1":
-                spans = payload["question"]["target_spans"]
-                value["target_spans"] = spans[:0] + ([span(POST)] if self.extra else [])
+                value["target_spans"] = self.spans
             return value
 
-    checkpoint = RecordingCheckpoint()
-    result = inspect(Partial(), checkpoint)
-    assert result.status == "COMPLETED" and result.normalizations["TARGET_SPANS_COMPLETED"] == 1
-    decided = {ref: decision for ref, decision, _ in checkpoint.decided}
-    assert decided["Q1"].target_spans == result.questions[0].draft.target_spans
-    foreign = inspect(Partial(extra=True))
-    assert (foreign.failure_code, foreign.failure_cause) == ("INVALID_DECISION", "INVALID_DECISION_TARGET_SPANS")
+    for spans in ([], [span(POST)]):  # omitted, or another exact sentence of the target
+        checkpoint = RecordingCheckpoint()
+        result = inspect(Echo(spans), checkpoint)
+        assert result.status == "COMPLETED" and result.normalizations["TARGET_SPANS_REPLACED"] == 1
+        decided = {ref: decision for ref, decision, _ in checkpoint.decided}
+        assert decided["Q1"].target_spans == result.questions[0].draft.target_spans
+    invented = inspect(Echo([{"source_ref": "T1", "start": 0, "end": 5, "quote": "없는 인용"}]))
+    assert (invented.failure_code, invented.failure_cause, invented.failure_stage) == (
+        "INVALID_INSPECTION_CONTRACT", "INVALID_EXACT_SPAN", "JUDGE:Q1")
 
 
 def test_model_contract_and_provider_failures_keep_a_class_level_cause_only():
