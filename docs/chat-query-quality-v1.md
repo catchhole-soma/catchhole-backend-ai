@@ -4,7 +4,7 @@
 
 ## 현재 등록값의 필수 근거와 후속 정정 — OPT-33
 
-현재 프롬프트는 QA plan v9, FIELD select v2, hybrid plan v11/answer v14, 등록 설명 v4이다. 아래 OPT-31의 실행·버전 기록은 당시 결과로 보존한다. 이번 실제 모델 평가는 별도 고정 질문 실행으로 기록하며, 합성 응답 통과를 계획 분류나 자연어 정확도로 계산하지 않는다.
+현재 프롬프트는 QA plan v9, FIELD select v2, hybrid plan v12/answer v16, 등록 설명 v4이다. 아래 OPT-31의 실행·버전 기록은 당시 결과로 보존한다. 이번 실제 모델 평가는 별도 고정 질문 실행으로 기록하며, 합성 응답 통과를 계획 분류나 자연어 정확도로 계산하지 않는다.
 
 `HybridPlan.registeredCurrentRequired`는 표시 옵션과 독립된 필수 boolean이다. 누락·문자열·숫자를 거절하며 서버에서 기본값을 채우지 않는다. 인물의 지금/현재 속성·보유·상태 또는 등록 화면·직접 수정값을 확인하는 질문은 현재 자료를 확인하도록 계획한다. 원문·작중·특정 출처 회차의 서술만 요청하면 원문 경로로 분리한다. “현재”라는 단어만으로 이야기 시간을 등록값으로 해석하지 않으며, 일반 개념 질문에 현재 조회를 강제하지 않는다. 이 의미 분류는 실제 모델 검증 대상이다.
 
@@ -147,7 +147,7 @@ flowchart TD
 | 각 능력을 언제 어떻게 얻었는지 | CURRENT + PROCESS, perItem=true, requestedParts=P1(시점)/P2(경위) | 현재 논리 항목별 검색 → 시점·경위 각각 답변 또는 미확인 |
 | 앞서 물은 사건 뒤의 감정과 행동 영향 | 원문 경로 + eventContext + requestedParts=P1(감정)/P2(행동 영향) | 같은 사건인지 다시 확인 → 요청 부분별 설명과 실제 지원 구절 연결 |
 
-새 strict 모델 schema는 `focus`, `collection`, `answerShape`, `requestedParts`, `requestedFacets`, `eventContext`, `eventScope`, `includeRegisteredValues`, `sourceFallback`, `registeredCurrentRequired` 등 해당 계획의 필드를 명시하게 한다. 이름을 지정한 대상에도 `worldCategory`를 명시하며 해당하지 않으면 null을 사용한다. 현재 prompt 버전은 QA plan v9, FIELD select v2, 구형 행 select v3, hybrid plan v11/answer v14이다. 등록 설명과 현재 조건 판정은 각각 `chat-registered-answer-v4`, `chat-current-condition-v2`를 사용한다. 이력 사건의 판정은 `chat-history-condition-v2`로 구분한다.
+새 strict 모델 schema는 `focus`, `collection`, `answerShape`, `requestedParts`, `requestedFacets`, `eventContext`, `eventScope`, `includeRegisteredValues`, `sourceFallback`, `registeredCurrentRequired` 등 해당 계획의 필드를 명시하게 한다. 이름을 지정한 대상에도 `worldCategory`를 명시하며 해당하지 않으면 null을 사용한다. 현재 prompt 버전은 QA plan v9, FIELD select v2, 구형 행 select v3, hybrid plan v12/answer v16이다. 등록 설명과 현재 조건 판정은 각각 `chat-registered-answer-v4`, `chat-current-condition-v2`를 사용한다. 이력 사건의 판정은 `chat-history-condition-v2`로 구분한다.
 
 - `focus`의 FactType은 정해진 유형이고 attribute는 현재 질문 또는 제한된 대화에 실제 나온 항목 표현이다. 동적 경로는 값 없는 FIELD 목록을 끝까지 확인한 뒤 관측된 F 참조로 고른다. 불완전한 FIELD 목록을 유일한 경로라고 확정하지 않는다.
 - 이름을 지정한 세계관 대상과 collection의 `worldCategory`는 같은 분류를 뜻한다. RDB·hybrid 공통 `resolve_subject`가 FIND 필터를 적용하며 동명 대상의 다른 분류를 합치지 않는다. CHARACTER에는 category를 넣지 않는다. 복수 후보·불완전한 탐색은 명확화를 요청하고, 분류와 다른 응답은 계약 오류로 처리한다. 분류 조회 실패를 무필터 조회로 자동 우회하지 않는다.
@@ -326,3 +326,12 @@ input/cached/output과 실패 사용량을 따로 확인한다.
 기본 계획 출력2,000·답변4,500토큰, 재시도는 목적 기본의 두 배와6,000 중 작은 값이다. 형식/근거 복구에도 확대 상한을 적용하며 최초 포함2회·전체 모델6회·임베딩1회·검색2라운드·120초·누적 예약240,000은 늘리지 않는다. 운영 환경에 명시한 값은 자동 덮어쓰지 않는다. 실제 실패 질문과 기본/현재값 회귀는 같은 Gold로 별도 재평가한다.
 
 추가 회귀에서 제거된 claim과 남은 claim이 같은 요구를 공유하면, 그 요구 전체를 확인한 것으로 처리하지 않고 남은 문장을 related로 낮춰 missing을 유지한다. 또한 검증/복구 근거 뒤에는 새 벡터 후보 전체를 검색 순위대로 우선 배치해, 미확인 옛 키워드 후보 점수가 새 결과를 밀어내지 않게 한다. 전체 입력·근거 수·회차·토큰 상한은 유지한다.
+
+## 2026-10-30 #319 실제 모델 재측정 — 60발화·고정본 DB
+
+- 조건: 「테스트2」 1~80화 고정본 DB(71~80화 재분석·색인, 핵심 인물 큐레이션) 위에서 baseline 66발화 중 controls 6을 뺀 55문항/60발화를 main `5f036ef`과 브랜치 `3ddb8d4`로 각각 실행했다. 같은 Java·DB·질문·동시성 2, 챗봇 gpt-6-luna/medium, 블라인드 서브에이전트 채점(규약 동일). 원문·Gold·개별 답변은 비공개 보관.
+- 결과: main 38 PASS/17 PARTIAL/5 FAIL → 브랜치 39/15/6, 실행 실패 0(토큰 잔액 소진 2건은 재실행 치환). `INPUT_LIMIT` 44발화 → 0. 개선 4(세부 누락 3·이유 1), 후퇴 4(모델 변동 2, 검색 변동 1, 정렬 검색 v1 결함 1).
+- 정렬 검색 v1의 결함(일반 단어 초반 언급이 관련 후보를 밀어냄)은 anchor 완화·`ordered_top_k`·의미 검색 확장으로 고쳤고 최종 build `00964b3`의 5문항 보조 재실행에서 FAIL 0·PASS 1·PARTIAL 4(후퇴 0)였다. 60발화 전체 재측정은 아직 하지 않았다.
+- 2차(근거 12개·회차당 4·9,000토큰, 후보 16·이웃 8, 집중 반경 3, PARTIAL 뒤 3라운드·임베딩 2회, answer v16) `46ba9e9`: 같은 60발화 **45 PASS/14 PARTIAL/1 FAIL**(main 대비 개선 10·후퇴 2). Gold 근거 발췌의 모델 입력 포함률 76.6% → 85.9%. 평균 소요 30.8초, 입력 토큰 +22%.
+- B축 controls(등록값 수정→재조회→사용자 정정 거절→원문/등록 구분→이름 변경 후 미확인) 두 build 모두 6/6 기대 동작.
+- 남은 비통과 유형: 같은 장면 안의 세부 누락 PARTIAL, 비교 조건(`CHARACTER_LIST`는 정확 일치만), 이유 미발견, 동명이인 판단 보류, 자기모순 안내. 상세와 SHA·사용량은 AI `docs/ai-logic-versions/v0031.md`를 따른다.

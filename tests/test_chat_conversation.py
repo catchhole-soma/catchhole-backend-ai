@@ -85,6 +85,8 @@ def test_row_selection_preserves_current_rows_before_old_conversation(tmp_path, 
                 scenario("mixed_current_and_scene"),
                 spring_setup=setup,
                 config={"max_context_characters": budget},
+                # 대화 절단 산술은 예전 근거 8개·6,000토큰 예산의 요청 크기를 전제한다.
+                hybrid={"max_evidence": 8, "per_episode": 3, "evidence_tokens": 6000},
             )
         )
         return result, result["raw"].requests
