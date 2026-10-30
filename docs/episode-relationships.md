@@ -10,6 +10,8 @@
 
 이름이 원문에 확인되지만 프로필이 없는 인물은 독립 노드가 될 수 있다. 모델에 DB UUID를 보내지 않는다. 노드 이름은 관계 분석 시점의 이름을 보존한다. 캐릭터 등록 여부도 연결된 회차 이후에만 true다. 프론트는 현재 캐릭터/프로필/사진 API를 호출해 과거 관계도에 덧씌우지 않는다. 짧은 이름/전체 이름을 자동으로 합치는 별칭 해소는 하지 않는다. 서로 다른 노드가 될 수 있다. 동일 이름·대명사의 어려운 해소는 보수적으로 보류하며 이 기능은 캐릭터 추출의 identity 정책을 대체하지 않는다.
 
+수동 분석에서 뒤 회차의 prepare가 먼저 실행돼도, 앞 회차 원문에 같은 정확한 이름이 확인되고 작품 전체의 해당 노드가 하나라면 기존 ID를 재사용한다. 최초 관측 회차만 앞당기고 프로필 연결 회차는 유지한다. 현재 고정 인물 ID와 충돌하거나 동명 노드가 여러 개면 추측 병합하거나 새 중복 노드를 만들지 않고 보류한다. 이번 원문에 없는 미래 이름은 비교 문맥에 넣지 않으며, 기존 관계 ID·사용자 정정·삭제 억제와 후행 문맥 무효화 정책은 유지한다. 이미 서로 다른 UUID로 저장된 동명 노드를 자동 합치는 데이터 보정은 하지 않는다.
+
 ## 활성화와 작업 수명
 
 `RELATIONSHIP_GRAPH_ENABLED`(기본 true)는 신규 claim의 기능 활성화를 제어한다. Worker는 claim에 `supportsRelationshipAnalysis: true`를 광고해야 한다. 서버는 활성화한 EPISODE/SETTING_EXTRACTION Job에만 `relationshipAnalysisContract: {formatVersion: 1}`을 반환한다. 메타데이터가 없으면 Worker는 관계 API를 호출하지 않는다. 설정집/비교 전용 작업에는 기능을 붙이지 않는다. 한 번 활성화된 Job 재시도는 지원 Worker만 claim할 수 있다.
@@ -95,7 +97,7 @@ Flyway V101이 `relationship_graph_analyses/nodes/edges/events`와 `analysis_job
 ## 검증
 
 `EpisodeRelationshipGraphRulesTest`: Unicode 근거, coverage, END+ADD, 모호한 주체, 재활성화, 잘못된 참조/과거 쓰기.
-`EpisodeRelationshipGraphIntegrationTest`: H2의 회차 cutoff, 멱등, 설명 수정/삭제 억제, 실패 격리, 병렬 수동 작업, HOLD 재사용/소비, 원문 version 및 파기.
+`EpisodeRelationshipGraphIntegrationTest`: H2의 회차 cutoff, 멱등, 설명 수정/삭제 억제, 실패 격리, 병렬·역순 수동 작업의 노드 ID 보존과 미래 프로필 비노출, 동명·고정 인물 충돌, HOLD 재사용/소비, 원문 version 및 파기.
 `EpisodeRelationshipGraphPostgresIntegrationTest`: 같은 시나리오를 V1~V101 Flyway와 JPA validate를 사용하는 격리 PostgreSQL에서 검증한다(Docker 필요).
 
 ### 2026-10-29 최종 검증 기록
