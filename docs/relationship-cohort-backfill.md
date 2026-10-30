@@ -41,7 +41,7 @@ flowchart TD
   A[Java PR을 main에 머지] --> B[테스트 후 같은 SHA의 API 이미지 발행]
   B --> C[Publish 성공을 받은 Deploy API workflow]
   C --> D[자동 SSM 배포 후 API health 확인]
-  D --> E[Flyway V102가 캠페인·대기열 구조 생성]
+  D --> E[Flyway V103가 캠페인·대기열 구조 생성]
   E --> F[Spring scheduler가 고정 계정의 회차 대기열 등록]
   G[AI PR을 main에 머지] --> H[테스트 후 같은 SHA의 Worker 이미지 발행]
   H --> I[API 배포 상태를 확인하고 Worker 배포]
@@ -56,7 +56,7 @@ flowchart TD
    `.github/workflows/deploy-api-ec2.yml`은 성공한 발행 run의 SHA가 현재 main인지 확인한 뒤
    그 SHA의 Compose와 이미지를 배포한다. 배포 도구 내부에서 SSM을 쓰지만 사람이 SSM에
    접속해서 SQL/백필 명령을 입력할 필요는 없다.
-2. `V102__add_relationship_cohort_backfill.sql`은 테이블·열·인덱스를 만든다.
+2. `V103__add_relationship_cohort_backfill.sql`은 테이블·열·인덱스를 만든다.
    SQL migration 안에서 원문을 읽거나 모델을 호출하지 않는다. API는 migration 이후 기동한다.
 3. 운영 `application-prod.yml`/`compose.api.prod.yml`은 기능을 기본 활성화한다. 기본
    10초 간격 scheduler가 `RelationshipBackfillCoordinator.bootstrap()`을 호출한다.
@@ -96,7 +96,7 @@ Worker는5→6→…→10→11 순서로 이전 관계를 참고한다. 앞 회�
 |---|---|---|
 | 고정 대상 | Java `relationship-backfill-20261030-v1.json`, `RelationshipBackfillManifest` | 명단과 선정시각을 검증하며 대상을 동적으로 늘리지 않음 |
 | 실행 등록·순서 | Java `RelationshipBackfillScheduler`, `RelationshipBackfillCoordinator` | 초기화, 순서, 임대, 완료, 차단, 공개 전환 |
-| 저장 구조 | Java `V102__add_relationship_cohort_backfill.sql` | 캠페인/작품/회차 상태와 관계 세대 |
+| 저장 구조 | Java `V103__add_relationship_cohort_backfill.sql` | 캠페인/작품/회차 상태와 관계 세대 |
 | 기존 분석 연결 | Java `AnalysisJobWorkerServiceImpl` | 관리 중 작품의 inline 관계를 미루고 핵심 분석 완료 후 관계만 enqueue |
 | 관계 문맥·공개 | Java `RelationshipGraphServiceImpl` | Worker는 만드는 세대, 화면은 공개된 세대를 읽음 |
 | 토큰 경계 | Java `AiTokenServiceImpl` | 서비스 부담 여부, 목적, lease, 누적 예약 상한 검사 |
