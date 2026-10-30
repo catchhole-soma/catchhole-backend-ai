@@ -304,6 +304,25 @@ class _HybridSession(_Session):
             self.execution.dispatch, self.execution.runner, [wire_reference(c) for c in chunks]
         )
 
+    def source_tool_reserve(self, plan):
+        # 원문 검색이 필요한 계획은 등록 조회가 도구 예산을 다 쓰지 않도록
+        # 검색·이웃·영수증·재검증 몫(라운드당 3 + 마무리 2)을 미리 남긴다.
+        if plan.source_need == "NONE":
+            return 0
+        return 3 * self.hcfg.max_rounds + 2
+
+    def row_page_reserve(self, plan, subject, index, *, base):
+        """인물별 등록 조회가 남길 도구 수. 집중 조회와 등록 전용 계획은 기존 예약을 유지한다."""
+        if subject.focus is not None or plan.source_need == "NONE":
+            return base
+        limit = min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls)
+        floor = max(base, self.source_tool_reserve(plan))
+        remaining = len(plan.subjects) - index
+        # 뒤에 남은 인물들의 조회(FIND 1회씩)와 원문 검색 몫을 뺀 나머지를 인물 수로 나눠 쓴다.
+        spare = max(0, limit - self.tool_count - floor - (remaining - 1))
+        share = max(1, spare // remaining) if spare else 0
+        return limit - self.tool_count - share
+
     def tools_available(self, cost, *, direct_checks=True):
         reserved = max(
             self.fallback_direct_checks,
@@ -721,7 +740,7 @@ class _HybridSession(_Session):
             return stop
         targets = set()
         self.current_requirement_resolved = bool(plan.subjects)
-        for subject in plan.subjects:
+        for index, subject in enumerate(plan.subjects):
             item, stop = await self.resolve_subject(subject, allow_missing=True)
             if stop:
                 return stop
@@ -738,7 +757,12 @@ class _HybridSession(_Session):
                 subject,
                 item.subject_id,
                 modes,
-                reserve=4 + (len(plan.subjects) if "CURRENT" in modes else 0),
+                reserve=self.row_page_reserve(
+                    plan,
+                    subject,
+                    index,
+                    base=4 + (len(plan.subjects) if "CURRENT" in modes else 0),
+                ),
             )
             if stop:
                 return stop

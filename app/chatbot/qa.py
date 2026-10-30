@@ -415,12 +415,14 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         self.last_collection = None
         page_limit = 10001 if exhaustive else self.cfg.max_pages
         for page in range(page_limit):
-            if (
-                exhaustive
-                and self.tool_count
-                >= min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls) - reserve
-            ):
+            limit = min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls)
+            if (exhaustive or page > 0) and self.tool_count >= limit - reserve:
+                # 예약된 도구 호출(원문 검색·이웃·영수증·재검증) 몫을 남기기 위해 추가 페이지를 멈춘다.
+                # 첫 페이지는 기존처럼 시도해, 예산이 실제로 바닥난 경우는 실행 한도 오류로 드러나게 한다.
+                # 집중 조회가 아닌 경우는 등록 정보가 일부만 확인됐음을 알린다.
                 complete = False
+                if not exhaustive:
+                    self.codes.append("PARTIAL_RESULTS")
                 break
             history = tool.endswith("_HISTORY")
             fields = tool.endswith("_FIELDS")
