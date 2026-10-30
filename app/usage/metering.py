@@ -806,8 +806,9 @@ def estimate_text_input_tokens(
 
 @lru_cache
 def _encoding_for_model(model: str):
-    # tiktoken 0.13.0은 GPT-5.6 별칭을 아직 알지 못하므로 공식 계열 tokenizer를 명시한다.
-    if model.startswith("gpt-5.6"):
+    # tiktoken 0.13.0은 GPT-5.6·GPT-6 계열 이름을 아직 알지 못하므로 공식 계열 tokenizer를 명시한다.
+    # 모르는 이름을 UTF-8 byte 상한으로 돌리면 한글 입력이 실제의 3~4배로 잡혀 근거 문맥이 불필요하게 잘린다.
+    if model.startswith(("gpt-5.6", "gpt-6")):
         return tiktoken.get_encoding("o200k_base")
     return tiktoken.encoding_for_model(model)
 
