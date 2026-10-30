@@ -323,6 +323,21 @@ class _HybridSession(_Session):
         share = max(1, spare // remaining) if spare else 0
         return limit - self.tool_count - share
 
+    async def focus_neighbors(self):
+        """PARTIAL 초안이 인용한 장면의 앞뒤를 더 읽는다. 회차는 맞췄지만 세부가 빠진 경우용."""
+        seeds = [e.chunk for e in self.supported_evidence if e.chunk]
+        if not seeds or not self.hcfg.focus_radius:
+            return ()
+        # 이번 라운드의 남은 비용: 이웃 1 + 영수증 1 + 최종 재검증 1
+        if not self.tools_available(3):
+            self.codes.append("SEARCH_LIMIT")
+            return ()
+        found = await self.search(
+            "neighbors", seeds, radius=self.hcfg.focus_radius, limit=self.hcfg.max_neighbors
+        )
+        self.trace("focus", round=self.rounds, seeds=len(seeds), found=len(found))
+        return found
+
     def tools_available(self, cost, *, direct_checks=True):
         reserved = max(
             self.fallback_direct_checks,
@@ -596,9 +611,16 @@ class _HybridSession(_Session):
                 )
             elif found and self.hcfg.neighbor_radius:
                 self.codes.append("SEARCH_LIMIT")
+            focus = ()
+            if round_no > 1 and partial_snapshot is not None:
+                # 앞 라운드가 일부만 답했다면 그 장면의 이어지는 대목을 새 전역 후보보다 먼저 읽는다.
+                focus = await self.focus_neighbors()
+                candidates.extend(focus)
             previous = self.evidence_identity()
             self.add_search_evidence(
-                candidates, fresh=found if round_no > 1 and plan.requested_parts else ()
+                candidates,
+                fresh=found if round_no > 1 and plan.requested_parts else (),
+                focus=focus,
             )
             if self.evidence_identity() == previous:
                 continue
@@ -1285,7 +1307,7 @@ class _HybridSession(_Session):
             )
         )[:1000]
 
-    def add_search_evidence(self, candidates, *, fresh=()):
+    def add_search_evidence(self, candidates, *, fresh=(), focus=()):
         protected = {self.source_identity(e) for e in self.supported_evidence}
         direct = [e for e in self.evidences if e.direct_ref]
         direct.sort(key=lambda e: self.source_identity(e) not in protected)
@@ -1331,6 +1353,7 @@ class _HybridSession(_Session):
         priority = [
             *protected_chunks,
             *recovery,
+            *focus,
             *fresh,
         ]
         bundle = compose_evidence(
@@ -1342,7 +1365,11 @@ class _HybridSession(_Session):
             per_episode=(
                 self.hcfg.max_evidence - len(direct)
                 if self.source_from is not None and self.source_from == self.source_to
-                else min(self.hcfg.per_episode, self.hcfg.max_evidence - len(direct))
+                # 검증된 장면을 더 읽는 라운드는 같은 회차 몫을 조금 늘린다.
+                else min(
+                    self.hcfg.per_episode + (2 if focus else 0),
+                    self.hcfg.max_evidence - len(direct),
+                )
             ),
             # After verified/recovery evidence, prioritize new hits in their own
             # rank order. Old unproven lexical scores must not crowd out vector

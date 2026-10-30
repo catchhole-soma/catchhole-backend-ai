@@ -12,6 +12,8 @@ class HybridSettings(BaseSettings):
     keyword_top_k: int = Field(default=12, ge=1, le=50)
     vector_top_k: int = Field(default=12, ge=1, le=50)
     neighbor_radius: int = Field(default=1, ge=0, le=2)
+    # PARTIAL 초안이 인용한 장면의 앞뒤를 2라운드에서 더 넓게 읽는 반경. 회차는 맞췄지만 세부가 빠진 경우용.
+    focus_radius: int = Field(default=2, ge=1, le=3)
     max_neighbors: int = Field(default=6, ge=1, le=20)
     max_evidence: int = Field(default=8, ge=1, le=12)
     per_episode: int = Field(default=3, ge=1, le=12)
