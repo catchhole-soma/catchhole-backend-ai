@@ -228,8 +228,6 @@ class _HybridSession(_Session):
         self.recovery_evidence = ()
         self.answer_validation_failed = False
         self.ordered_coverage = None
-        self.repair_request = None
-        self.repair_done = False
 
     def trace(self, stage, **data):
         # No questions, source text, model output, member/work IDs or secrets.
@@ -718,16 +716,6 @@ class _HybridSession(_Session):
                 continue
             await self.register([e.chunk for e in self.evidences if e.chunk])
             draft = await self.answer(plan)
-            if (
-                draft.coverage == "PARTIAL"
-                and draft.missing_facets
-                and plan.requested_parts
-                and not plan.per_item
-                and self.hcfg.repair_missing_parts
-                and not self.repair_done
-                and self.models_available()
-            ):
-                draft = await self.repair_missing_parts(plan, draft)
             if self.source_answer_ready(plan, draft):
                 return await self.finish_answer(draft)
             # Equal PARTIAL coverage does not establish an improvement. Keep the first
@@ -1573,7 +1561,6 @@ class _HybridSession(_Session):
             else [i.model_dump(by_alias=True) for i in self.item_draft.item_answers if i.answers],
             "passages": self.evidence_passages(self.evidences),
             **({"searchOrdering": self.ordered_coverage} if self.ordered_coverage else {}),
-            **({"repair": self.repair_request} if self.repair_request else {}),
             "limitations": notices(self.codes, include_conversation_limit=True),
         }
 
@@ -1666,44 +1653,7 @@ class _HybridSession(_Session):
             )
         )
 
-    async def answer(self, plan, *, repair=None):
-        self.repair_request = repair
-        try:
-            return await self.answer_once(plan)
-        finally:
-            self.repair_request = None
-
-    async def repair_missing_parts(self, plan, draft):
-        """같은 근거로 빠진 요구만 다시 묻는다.
-
-        필요한 근거가 이미 입력에 있었는데도 답에서 빠진 경우(2차 측정에서 비통과의 절반)를 위한
-        추가 호출 한 번이다. 이전 claims를 유지하지 못하거나 아무 근거도 못 대면 원래 답을 유지한다.
-        """
-        self.repair_done = True
-        missing = list(draft.missing_facets)
-        repair = {
-            "missingParts": missing,
-            "previousClaims": [
-                {
-                    "text": c.text,
-                    "evidenceRefs": list(c.evidence_refs),
-                    "answeredFacets": list(c.answered_facets),
-                }
-                for c in draft.claims
-            ],
-        }
-        self.trace("repair", round=self.rounds, missing=missing)
-        state = (self.answer_validation_failed, self.recovery_evidence)
-        repaired = await self.answer(plan, repair=repair)
-        before = {f for c in draft.claims for f in c.answered_facets}
-        after = {f for c in repaired.claims for f in c.answered_facets}
-        if repaired.coverage == "NONE" or not before <= after:
-            self.trace("repair_rejected", round=self.rounds, coverage=repaired.coverage)
-            self.answer_validation_failed, self.recovery_evidence = state
-            return draft
-        return repaired
-
-    async def answer_once(self, plan):
+    async def answer(self, plan):
         self.answer_validation_failed = False
         self.recovery_evidence = ()
         schema = response_schema(GroundedAnswer)
