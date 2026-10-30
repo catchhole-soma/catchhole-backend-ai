@@ -153,3 +153,35 @@ def test_only_the_first_ordered_chunks_precede_the_lexical_hits(tmp_path):
     assert passages[:2] == [1, 3]
     assert source_chunk("raon").text not in [p["text"] for p in request["passages"]]
     assert request["searchOrdering"]["truncated"] is False
+
+
+def test_ordered_plans_widen_round_two_vector_search_and_select_the_earliest(tmp_path):
+    case = scenario("lexical_scene")
+    case["outputs"][0].update({"ordering": "EARLIEST", "searchTerms": ["반지"]})
+    case["vector"] = ["ring", "weather"]
+    # 1라운드는 답하지 못하고 2라운드 의미 검색으로 넘어간다.
+    case["outputs"][1] = answer(coverage="NONE")
+    case["outputs"].append(answer(ref="E1", claim="그날 아침에는 비가 내렸다."))
+    limits = []
+
+    def setup(search):
+        original = search.vector
+
+        async def vector(scope, query, embedding_client, limit, excluded_chunk_ids=()):
+            limits.append(limit)
+            return await original(scope, query, embedding_client, limit, excluded_chunk_ids)
+
+        search.vector = vector
+
+    # 근거 자리를 하나로 줄이면 선택 우선순위가 그대로 드러난다.
+    result = asyncio.run(
+        replay(tmp_path, case, search_setup=setup, hybrid={"max_evidence": 1, "per_episode": 1})
+    )
+    finished = result["finish"]["result"]
+    assert finished["outcome"] == "ANSWER"
+    # 임베딩 1회는 그대로이고 후보 상한만 3배로 넓힌다.
+    assert limits == [36] and len(result["embedding"].inputs) == 1
+    request = result["raw"].requests[-1]["input"]
+    # 유사도 순서는 ring(3화)이 먼저지만 가장 이른 weather(1화)를 먼저 고른다.
+    assert [p["sourceEpisodeNo"] for p in request["passages"]] == [1]
+    assert [source["sourceEpisodeNo"] for source in finished["retrievalSources"]] == [1]
