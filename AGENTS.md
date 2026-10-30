@@ -10,7 +10,7 @@
 
 ## AI Logic Version Records
 
-- GH306 `app/validation`은 고정 검수 입력을 읽는 호출형 검사기이며 Worker/lease·결과 저장·추출 release는 GH310/312가 소유한다. `ValidationDataClient`의 expected baseline/target/source fingerprint와 전체/부분 원문의 정확한 Unicode 범위를 유지하며 live setting tool로 대체하지 않는다. 검수는 Terra의 호출별 frozen `LlmCallOptions`를 사용하고 count와 생성에 같은 옵션/schema를 전달한다. 일반 추출/챗봇 기본 설정을 바꾸거나 검수에 가짜 AnalysisJob/lease를 만들지 않는다. 연결·예산·출처/완료 검증과 실제/합성 평가의 구분은 `docs/setting-validation-v1.md`를 따른다.
+- GH306/309 `app/validation`의 호출형 API는 유지하며 GH310 전용 Worker가 실제 Java ValidationJob/lease·의미 저장·사용량을 연결한다. 추출 release는 GH312 범위다. `ValidationDataClient`의 expected baseline/target/source fingerprint와 전체/부분 원문의 정확한 Unicode 범위를 유지하며 live setting tool로 대체하지 않는다. 검수는 Terra의 호출별 frozen `LlmCallOptions`를 사용하고 count와 생성에 같은 옵션/schema를 전달한다. 일반 추출/챗봇 기본 설정을 바꾸거나 검수에 가짜 AnalysisJob/lease를 만들지 않는다. 연결·예산·출처/완료 검증과 실제/합성 평가의 구분은 `docs/setting-validation-v1.md`를 따른다.
 
 - 결과에 영향을 주는 추출·주체 해소·비교·후처리·프롬프트·제품 모델/실행 설정 변경 PR마다 `docs/ai-logic-versions/vNNNN.md`(사람용 요약), `docs/ai-logic-versions/details/vNNNN.md`(AI용 상세), 목록을 함께 갱신한다. 작성 절차와 근거 항목은 `docs/ai-logic-versions/details/README.md`를 따른다.
 - 사람용 요약은 변경 이유·점수 표·남은 문제를 중심으로 20~35줄 안팎으로 쓴다. 전체 SHA·해시·실행 옵션·과거 평가·반복 지침은 상세에 둔다. 상세를 먼저 기록하고 요약의 수치·조건·상태를 맞춘다.
@@ -19,7 +19,13 @@
 - 미측정·실패·부분 완료는 사유·담당자·재평가 계획을 기록하면 머지를 허용한다. 오류·미판정과 필요한 다음 조치는 요약에도 남긴다. 원문·정답·개별 예측·비밀값은 요약과 상세 모두에 복사하지 않는다.
 - 문서·테스트만의 변경은 버전을 올리지 않는다. 채점기·Gold·judge만 바뀌면 같은 로직의 상세에 실행을 추가하고 요약을 갱신한다. 예전 로직 복원도 최신 main에서 새 PR과 다음 버전으로 남긴다.
 
+- 검수 runner는 `scripts/run_validation_worker.py --enable`과 서버가 명시한 모든 분기/역할 예산을 요구하며 기본 비활성이다. 일반 analysis runner·추출/챗봇 설정은 바꾸지 않는다. HTTP wire와 운영 경계는 `docs/validation-execution-v1.md`/동일 이름의 공통 JSON fixture를 양쪽 repository에서 함께 맞춘다.
+- 검수는 stage/check/현재 revision을 Java에서 복원하고 성공 질문·오탈자 구간을 즉시 게시한다. checkpoint는 남은 queue/typed receipt/필요 근거만 보존하며 전체 책 본문·저장 결정의 중복 blob으로 만들지 않는다. FOLLOW_UP은 모든 영향 check를 먼저 원자 revise하고 source/report 파기는 모든 사본을 지운다.
+- 검수 metering은 exact count opt-in과 raw one-shot 직접 경계를 유지한다. 역할은 trusted call_role/schema로 고르고 role quota/CAS 실패를 공유 lease/source 무효화와 구분한다. optional query embedding은 SELECT 전용 frozen RAG와 원장에 고정한 exact UTF-8 query/input/manifest/index identity가 맞는 성공 receipt만 재사용한다. 새 색인·백필·cap 자동 증액·validation DB 직접 쓰기를 하지 않는다.
+
 ## Spring Worker API
+
+- 분석 상태 API의 read 한도는 `SPRING_WORKER_READ_TIMEOUT_SECONDS`(기본 120초)로 요청별 적용한다. 연결·쓰기·pool과 heartbeat·token 원장의 기존 30초 한도, heartbeat 실패 시 소유 작업 취소, lease 검증은 유지한다. read 한도는 요청 전체 deadline이 아니며 일반 분석 POST를 자동 재전송하지 않는다.
 
 - 선택적 `failureDiagnostics`는 Java/Python 공통 v1 고정 코드 계약이다. 원문·예외 메시지·URL·lease/인증값은 넣지 않으며 실제 관측한 HTTP 상태와 요청/trace ID만 전달한다. Spring 오류의 부가 진단 파싱 실패는 원래 HTTP 실패와 분리하고 `first_failure_code`와 그 실패의 `first_failure_diagnostics`를 묶어 batch→run→Job 실패 보고까지 운반한다. 새 실패에서 이전 시도의 진단을 재사용하거나 상세 원인으로 기존 격리·재시도 분류를 바꾸지 않는다.
 

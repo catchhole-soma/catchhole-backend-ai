@@ -1,3 +1,4 @@
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -87,10 +88,21 @@ class SpringWorkerClient:
         base_url: str,
         internal_api_key: str,
         http_client: httpx.AsyncClient | None = None,
+        *,
+        read_timeout_seconds: float = 120.0,
     ) -> None:
+        if not math.isfinite(read_timeout_seconds) or read_timeout_seconds <= 0:
+            raise ValueError("read_timeout_seconds must be finite and greater than zero.")
         self.base_url = base_url.rstrip("/")
         self.internal_api_key = internal_api_key
         self.http_client = http_client or httpx.AsyncClient(timeout=30)
+        # Request-local override: concurrent heartbeat/token requests keep the client defaults.
+        self._processing_timeout = httpx.Timeout(
+            read_timeout_seconds,
+            connect=self.http_client.timeout.connect,
+            write=self.http_client.timeout.write,
+            pool=self.http_client.timeout.pool,
+        )
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "SpringWorkerClient":
@@ -98,6 +110,7 @@ class SpringWorkerClient:
         return cls(
             base_url=settings.spring_internal_api_base_url,
             internal_api_key=settings.spring_internal_api_key,
+            read_timeout_seconds=settings.spring_worker_read_timeout_seconds,
         )
 
     async def claim(
@@ -273,6 +286,7 @@ class SpringWorkerClient:
         response = await self._request(
             "POST",
             self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/heartbeat"),
+            processing_request=False,
             headers=self._headers(lease_token),
         )
         _raise_for_spring_status(response)
@@ -755,6 +769,7 @@ class SpringWorkerClient:
                 response = await self._request(
                     "POST",
                     self._url(path),
+                    processing_request=False,
                     headers=self._headers(lease_token),
                     json=payload,
                 )
@@ -784,10 +799,13 @@ class SpringWorkerClient:
         await self.http_client.aclose()
 
     async def _request(
-        self, method: str, url: str, *, trace_request: bool = True, **kwargs: Any,
+        self, method: str, url: str, *, trace_request: bool = True,
+        processing_request: bool = True, **kwargs: Any,
     ) -> httpx.Response:
         with spring_http_span(method, url, enabled=trace_request) as span:
             request_kwargs = dict(kwargs)
+            if processing_request:
+                request_kwargs["timeout"] = self._processing_timeout
             request_kwargs["headers"] = safe_inject_traceparent(
                 kwargs.get("headers"), enabled=trace_request,
             )
