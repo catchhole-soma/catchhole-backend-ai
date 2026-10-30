@@ -131,3 +131,25 @@ def test_ordering_without_tool_budget_keeps_the_plain_keyword_round(tmp_path):
     assert "keyword_ordered" not in result["search"].calls
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert "searchOrdering" not in result["raw"].requests[-1]["input"]
+
+
+def test_only_the_first_ordered_chunks_precede_the_lexical_hits(tmp_path):
+    case = scenario("lexical_scene")
+    case["outputs"][0].update({"ordering": "EARLIEST", "searchTerms": ["반지"]})
+    case["outputs"][1] = answer(ref="E2")
+
+    def setup(search):
+        # 정렬 검색이 1화·3화·3화 순으로 셋을 돌려주지만 상한 1개만 keyword 후보 앞에 둔다.
+        search.ordered_chunks = [
+            source_chunk("weather"),
+            source_chunk("ring"),
+            source_chunk("raon"),
+        ]
+
+    result = asyncio.run(replay(tmp_path, case, search_setup=setup, hybrid={"ordered_top_k": 1}))
+    request = result["raw"].requests[-1]["input"]
+    passages = [p["sourceEpisodeNo"] for p in request["passages"]]
+    # 1화 정렬 후보가 먼저, 그 뒤는 일반 keyword 후보(3화 ring)이며 상한 밖 raon은 끼어들지 않는다.
+    assert passages[:2] == [1, 3]
+    assert source_chunk("raon").text not in [p["text"] for p in request["passages"]]
+    assert request["searchOrdering"]["truncated"] is False
