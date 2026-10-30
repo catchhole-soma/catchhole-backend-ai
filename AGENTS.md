@@ -22,6 +22,7 @@
 - 검수 runner는 `scripts/run_validation_worker.py --enable`과 서버가 명시한 모든 분기/역할 예산을 요구하며 기본 비활성이다. 일반 analysis runner·추출/챗봇 설정은 바꾸지 않는다. HTTP wire와 운영 경계는 `docs/validation-execution-v1.md`/동일 이름의 공통 JSON fixture를 양쪽 repository에서 함께 맞춘다.
 - 검수는 stage/check/현재 revision을 Java에서 복원하고 성공 질문·오탈자 구간을 즉시 게시한다. checkpoint는 남은 queue/typed receipt/필요 근거만 보존하며 전체 책 본문·저장 결정의 중복 blob으로 만들지 않는다. FOLLOW_UP은 모든 영향 check를 먼저 원자 revise하고 source/report 파기는 모든 사본을 지운다.
 - 검수 metering은 exact count opt-in과 raw one-shot 직접 경계를 유지한다. 역할은 trusted call_role/schema로 고르고 role quota/CAS 실패를 공유 lease/source 무효화와 구분한다. optional query embedding은 SELECT 전용 frozen RAG와 원장에 고정한 exact UTF-8 query/input/manifest/index identity가 맞는 성공 receipt만 재사용한다. 새 색인·백필·cap 자동 증액·validation DB 직접 쓰기를 하지 않는다.
+- GH314 검수 기본 사례는 합성 원고만 담은 `tests/fixtures/episode_validation_cases.json`(형식 검사 `tests/test_episode_validation_cases_fixture.py`, 모델 호출 없음)과 `docs/episode-validation-evaluation.md`가 기준이다. 실제 Terra 호출 결과는 모델을 대체한 연결 테스트와 분리해 사례별 기대/실제·FP/FN·사용량·지연으로 기록하고, 진단 보정을 거친 실행은 main 그대로의 결과와 구분한다.
 
 ## Spring Worker API
 
