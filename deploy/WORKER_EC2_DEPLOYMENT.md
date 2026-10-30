@@ -130,7 +130,7 @@ SPRING_WORKER_READ_TIMEOUT_SECONDS=120
 수행하는 동안 응답을 기다릴 read 한도다. 기본 120초이며 유한한 양수만 허용한다.
 최초 claim, 후보 게시/비교 claim, 문맥 조회, progress, complete, fail에 적용한다.
 연결·쓰기·connection pool 대기와 heartbeat·token 원장의 read 한도는 각각 기존 30초다.
-Compose의 세 Worker 서비스는 같은 설정을 사용한다. 일반 분석 POST 재전송은 추가하지 않는다.
+Compose의 네 Worker 서비스는 같은 설정을 사용한다. 일반 분석 POST 재전송은 추가하지 않는다.
 
 120초는 HTTPX가 응답 헤더/다음 바이트를 기다리는 한 번의 읽기 제한이다.
 요청 전체나 Job 완료의 절대 시간 보장이 아니다. heartbeat는 기존 60초 주기,
@@ -195,7 +195,7 @@ AI_WORKER_BLOCKING_MAX_WORKERS=3
 - 설정 추출 Worker 컨테이너는 5개다.
 - 각 컨테이너는 동시에 최대 10개 분석 작업을 실행한다.
 - 설정 추출 작업 슬롯은 `5 × 10 = 50`개다.
-- 캐릭터 비교 Worker와 세계관 비교 Worker는 각각 1개이며 동시 작업과 언어 모델 요청을 각각 1개로 고정한다.
+- 캐릭터 비교 Worker, 세계관 비교 Worker, 관계 전용 Worker는 각각 1개이며 동시 작업과 언어 모델 요청을 각각 1개로 고정한다. 관계 전용 Worker는 SQLAlchemy 세션을 사용하지 않는다.
 - `LLM_MAX_CONCURRENT_REQUESTS=10`은 각 설정 추출 Worker 컨테이너 안의 상한이다. 전체 서버 또는 OpenAI 계정에 대한 전역 상한은 아니다.
 
 ## 데이터베이스 연결 수 예산
@@ -206,6 +206,7 @@ AI_WORKER_BLOCKING_MAX_WORKERS=3
 | 설정 추출 Worker | 5 | 3 | 15 |
 | 캐릭터 비교 Worker | 1 | 1 | 1 |
 | 세계관 비교 Worker | 1 | 1 | 1 |
+| 관계 전용 Worker | 1 | 0 | 0 |
 | 전체 |  |  | 27 |
 
 SQLAlchemy의 `DATABASE_POOL_MAX_OVERFLOW=0`은 기본 연결 풀을 넘는 임시 연결 생성을 막는다. 전체 애플리케이션의 이론상 최대 연결 수는 27개로, NVM-315의 40개 이하 기준을 만족한다.
@@ -340,7 +341,7 @@ cd /opt/catchhole
 ```
 
 ```bash
-sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml stop -t 210 ai-worker ai-character-comparison-worker ai-world-comparison-worker
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml stop -t 210 ai-worker ai-character-comparison-worker ai-world-comparison-worker ai-relationship-worker
 ```
 
 ```bash
@@ -414,12 +415,12 @@ GitHub Actions가 사용하는 AWS Identity and Access Management 사용자 또�
 Python CLI의 같은 프로세스에서 `prometheus_client.start_http_server`가 HTTP thread를 제공한다. 별도 FastAPI 서버는 필요 없다. 앱의 기본값은 비활성·127.0.0.1:9102이며 운영 Compose는 활성화와 컨테이너 내부 0.0.0.0:9102를 명시한다. 호스트 publish의 기본값은 localhost다.
 
 - `AI_WORKER_METRICS_ENABLED=true`: CLI exporter 활성화.
-- `AI_WORKER_METRICS_BIND_ADDRESS`: 최초 localhost, 모니터링 SG만 TCP 9102–9108 접근하도록 적용한 뒤 Worker EC2 사설 IPv4로 변경.
+- `AI_WORKER_METRICS_BIND_ADDRESS`: 최초 localhost, 모니터링 SG만 TCP 9102–9109 접근하도록 적용한 뒤 Worker EC2 사설 IPv4로 변경.
 - `AI_WORKER_METRICS_PORT_RANGE=9102-9106`: 분석 replica 5개에 각기 다른 host port를 할당. 같은 host 고정 port 하나를 모든 replica에 지정하면 충돌한다.
-- 캐릭터 비교 host 9107 / 세계관 비교 host 9108, 각 컨테이너 내부는 동일 9102.
+- 캐릭터 비교 host 9107 / 세계관 비교 host 9108 / 관계 전용 host 9109, 각 컨테이너 내부는 동일 9102.
 - Worker 5×10, 비교 각 1의 동시성과 180/210초 graceful shutdown은 변경하지 않는다. scale을 바꿀 때 port range 용량과 target 예상 수·SG를 함께 검토한다.
 
-[generate_worker_targets.py](generate_worker_targets.py)는 Docker inspect의 실제 mapping을 확인하고 일곱 개 endpoint를 생성한다. 부족한 프로세스, duplicate 주소/replica, wildcard·localhost·public host bind를 발견하면 실패한다. **운영 사설 수집용**이며 localhost 개발용 target 생성기는 아니다. 이 파일은 같은 배포 SHA의 코드와 함께 Worker 서버에 설치한다.
+[generate_worker_targets.py](generate_worker_targets.py)는 Docker inspect의 실제 mapping을 확인하고 여덟 개 endpoint를 생성한다. 부족한 프로세스, duplicate 주소/replica, wildcard·localhost·public host bind를 발견하면 실패한다. **운영 사설 수집용**이며 localhost 개발용 target 생성기는 아니다. 이 파일은 같은 배포 SHA의 코드와 함께 Worker 서버에 설치한다.
 
 ```bash
 cd /opt/catchhole
@@ -452,7 +453,7 @@ python -m unittest discover -s deploy/tests -p 'test_worker_targets.py'
 
 이 절차는 운영 적용을 위한 설정과 확인 항목이다. 파일을 추가하거나 기본값으로 배포한
 것만으로 트레이스가 켜지지 않으며, 실제 운영 활성화·데이터 조회는 별도로 확인한다.
-세 Worker 서비스가 공통 설정을 상속하고 종류별 활성화 값을 우선 적용한다.
+네 Worker 서비스가 공통 설정을 상속하고 종류별 활성화 값을 우선 적용한다.
 분석 replica별 포트 추가나 프로세스 수 변경은 필요 없다.
 
 ```text
@@ -489,17 +490,18 @@ AI_WORKER_TRACING_ENABLED=false
 AI_ANALYSIS_TRACING_ENABLED=false
 AI_CHARACTER_COMPARISON_TRACING_ENABLED=true
 AI_WORLD_COMPARISON_TRACING_ENABLED=false
+AI_RELATIONSHIP_TRACING_ENABLED=false
 OTEL_SERVICE_NAME=catchhole-ai-worker
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://<MONITORING_PRIVATE_IPV4>:4318/v1/traces
 ```
 
-세 종류별 값은 지정하지 않거나 비워 두면 공통 `AI_WORKER_TRACING_ENABLED`를 따른다.
+네 종류별 값은 지정하지 않거나 비워 두면 공통 `AI_WORKER_TRACING_ENABLED`를 따른다.
 명시한 `true`/`false`는 공통값보다 우선한다. 따라서 공통값만 `false`로 변경해도 명시적
 `true` override는 꺼지지 않는다는 점에 주의한다. 환경 파일에는 같은 키를 중복 추가하지
 않고 기존 값을 수정한다.
 
-`OTEL_SERVICE_NAME`은 세 Worker에서 동일하게 유지한다. Trace resource의 `worker.kind`는
-`analysis`, `character-comparison`, `world-comparison`으로 구분되고,
+`OTEL_SERVICE_NAME`은 네 Worker에서 동일하게 유지한다. Trace resource의 `worker.kind`는
+`analysis`, `character-comparison`, `world-comparison`, `relationship`으로 구분되고,
 `deployment.environment.name=prod`, `service.instance.id`는 프로세스별 UUID다.
 컨테이너를 다시 만들면 instance ID도 바뀐다. chatbot·검색 backfill은 이번 범위에 없다.
 
@@ -515,7 +517,7 @@ python3 /opt/catchhole/releases/<FULL_COMMIT_SHA>/manage-ai-runtime.py validate 
 ```
 
 첫 canary에서 결과의 `tracingWorkerServices`에는 `ai-character-comparison-worker`
-하나만 있어야 한다. 세 종류를 모두 켠 뒤에는 세 서비스 이름이 나온다.
+하나만 있어야 한다. 네 종류를 모두 켠 뒤에는 네 서비스 이름이 나온다.
 검사는 `true|false`와 활성화 시 HTTP·RFC1918 IPv4·4318·`/v1/traces`를 요구하며,
 인증 정보·query·fragment가 붙은 주소를 거절한다. 실패 출력에는 주소나 비밀값을 복사하지
 않는다. 기존 자동배포의 preflight에도 같은 검사를 적용하므로 잘못된 설정은 pull/readiness/
@@ -534,7 +536,7 @@ python3 /opt/catchhole/releases/<FULL_COMMIT_SHA>/manage-ai-runtime.py validate 
 | Docker 종료 여유 | 기존 `stop_grace_period: 210s` 유지 |
 
 SDK에 explicit 값을 전달하므로 `OTEL_BSP_*`만 추가해도 이 제한이 바뀌지는 않는다.
-기본 프로세스 7개의 완료 Span 큐는 합계 최대 7,168개지만, 진행 중 Span·export 중 batch를
+기본 프로세스 8개의 완료 Span 큐는 합계 최대 8,192개지만, 진행 중 Span·export 중 batch를
 포함한 전체 메모리 상한은 아니다. Collector 장애·큐 포화·SIGKILL에는 Span이 유실될 수
 있다. flush timeout도 프로세스 종료의 엄격한 시간 보장이나 Tempo 저장 보장이 아니다.
 장기 작업의 마지막 root가 늦게 도착할 수 있으므로 Tail sampling을 자동으로 켜지 않는다.
@@ -574,3 +576,24 @@ python -m pytest -q tests/test_ai_runtime_deploy.py tests/test_worker_tracing.py
 
 외부 endpoint·운영 DB·유료 LLM은 호출하지 않는다. 합성 Trace 실험과 확인된 한계는
 [worker-tracing.md](../docs/worker-tracing.md)를 참고한다.
+
+## 선정 계정 관계 백필 (GH332)
+
+[전체 실행 계약](../docs/relationship-cohort-backfill.md)을 먼저 확인한다. Java API의 고정
+대상 목록과 DB 대기열이 실행 권한을 소유하며, Worker에 회원 목록이나 운영 SQL을 넣지 않는다.
+Java 배포 후 이 AI 변경을 main에 머지하면 기존 Publish/Deploy workflow가 같은 SHA의
+`ai-relationship-worker`를 자동 시작한다. 운영자가 SSM에서 백필 명령을 실행할 필요는 없다.
+
+- 실행: `--worker-kind relationship`. Compose는 `AI_WORKER_CONCURRENCY=1`,
+  `LLM_MAX_CONCURRENT_REQUESTS=1`을 전달하고 Worker도 동시성을1로 제한한다.
+- HTTP: `/api/internal/v1/relationship-jobs/claim` 및 전용 heartbeat/complete/fail.
+- 원문: 고정 S3 key/version/hash, 최대 `RELATIONSHIP_WORKER_MAX_SOURCE_BYTES=2000000`,
+  `RELATIONSHIP_WORKER_MAX_CHUNKS=12`. 초과 시 잘라 분석하지 않고 실패를 보고한다.
+- 기존 Terra 관계 추출/비교만 실행한다. 캐릭터/세계관 추출, 청크 DB 저장, 임베딩을 하지 않는다.
+- `PREPARED` 이상 재개는 저장된 관측/결정을 사용해 원문 읽기와 추출 호출을 반복하지 않는다.
+- 관계 전용 metrics는 호스트 9109이며 새 SG 허용이 없으면 외부 수집은 되지 않을 수 있다.
+  백필 실행 자체는 기존 내부 API·S3·제공자 통신을 사용한다.
+- 프로세스 검증은 설정 추출 5 + 캐릭터 비교 1 + 세계관 비교 1 + 관계 1 = 8개다.
+  관계 Worker는 DB 연결 0이므로 기존 DB 연결 예산 27개를 늘리지 않는다.
+- 중단은 API의 `RELATIONSHIP_BACKFILL_ENABLED=false` 배포로 새 claim을 멈춘다.
+  진행 중 호출의 즉시 취소가 아니며 작업 상태와 공개 중인 관계도는 DB에 남는다.

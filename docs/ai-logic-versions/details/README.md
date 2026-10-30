@@ -86,5 +86,5 @@ run URL만 남기지 말고 **실제 조건과 집계 숫자도 상세 MD에 보
 
 운영 적용은 [Worker 배포 안내](../../../deploy/WORKER_EC2_DEPLOYMENT.md)와
 [실제 배포 workflow](../../../.github/workflows/deploy-worker-ec2.yml)를 함께 확인한다.
-실행 중 Job 정리, Spring 호환 확인, 이미지·Compose SHA 일치와 분석/캐릭터 비교/세계관 비교
-세 Worker의 적용 여부를 확인한 뒤 새 버전 기록에 배포 결과를 덧붙인다.
+실행 중 Job 정리, Spring 호환 확인, 이미지·Compose SHA 일치와 분석/캐릭터 비교/세계관 비교/관계
+네 Worker의 적용 여부를 확인한 뒤 새 버전 기록에 배포 결과를 덧붙인다.

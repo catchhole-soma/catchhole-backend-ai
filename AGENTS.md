@@ -225,7 +225,7 @@
 ## Application Metrics (GH206)
 
 - `app.monitoring.worker_metrics`는 CLI 프로세스별 독립 registry/exporter를 관리한다. `AI_WORKER_METRICS_ENABLED=false`, `AI_WORKER_METRICS_HOST=127.0.0.1`, `AI_WORKER_METRICS_PORT=9102`가 앱 기본값이며 운영 Compose가 명시적으로 활성화한다. 별도 FastAPI 실행 없이 같은 프로세스의 HTTP thread에서 `/metrics`를 제공한다.
-- 공통 custom label은 `application=catchhole-ai`, `environment=local|prod`와 `worker_kind=analysis|character-comparison|world-comparison`이다. purpose/job_type/error/outcome은 고정 목록, model은 기동 설정/CLI의 허용 목록으로 제한하고 미등록 값은 other로 정규화한다. Job·작품·회원 ID/원고/prompt/응답/예외 원문/비밀값을 label에 넣지 않는다.
+- 공통 custom label은 `application=catchhole-ai`, `environment=local|prod`와 `worker_kind=analysis|character-comparison|world-comparison|relationship`이다. purpose/job_type/error/outcome은 고정 목록, model은 기동 설정/CLI의 허용 목록으로 제한하고 미등록 값은 other로 정규화한다. Job·작품·회원 ID/원고/prompt/응답/예외 원문/비밀값을 label에 넣지 않는다.
 - LLM HTTP 오류의 `error_type`은 400·401·403을 각각 고정 label로 기록하고 나머지 4xx는 `4xx`로 묶는다. 기존 429는 `429`, 408은 `timeout`, 500~599는 `5xx`를 유지한다. HTTP status 전체나 provider error code/message를 동적 label로 확장하지 않는다.
 - 개별 LLM Histogram은 delegate 한 호출만 측정한다. semaphore·token 예약/정산·retry sleep을 제외하고 기존 providerLatencyMs 누적값을 하나의 호출로 기록하지 않는다. retries는 기존 transport loop의 실제 추가 호출이며 바깥 schema/truncation 재시도를 추정하지 않는다. cached input은 input의 일부, usage 누락은 별도 Counter로 기록한다.
 - process_claimed 실행 시도와 canonical 회차 결과 준비는 다른 지표다. 후속 비교/부분 성공/사용자 재시도·lease recovery의 DB 결과는 Spring이 소유한다. 계측 오류는 기존 분석/ledger/slot 정리를 바꾸지 않는다.
@@ -356,3 +356,12 @@
 - pytest session 시작에서 o200k_base/cl100k_base를 준비해 cold cache와 테스트별 네트워크 차단의 순서 의존성을 없앤다. 캐시 준비 실패는 첫 단계에서 안내하며 테스트 본문의 네트워크 차단과 provider mock은 유지한다.
 
 추가 회귀에서 제거된 claim과 남은 claim이 같은 요구를 공유하면, 그 요구 전체를 확인한 것으로 처리하지 않고 남은 문장을 related로 낮춰 missing을 유지한다. 또한 검증/복구 근거 뒤에는 새 벡터 후보 전체를 검색 순위대로 우선 배치해, 미확인 옛 키워드 후보 점수가 새 결과를 밀어내지 않게 한다. 전체 입력·근거 수·회차·토큰 상한은 유지한다.
+
+## GH332 선정 계정 관계 전용 작업
+
+- 선정 계정·작품·회차 순서는 Spring의 고정 fingerprint manifest/캠페인 대기열이 소유한다. Python은 대상 SQL이나 회원 목록을 복제하지 않는다.
+- `relationship` Worker는 `/api/internal/v1/relationship-jobs/*`에서 `RELATIONSHIP_EXTRACTION`, `EPISODE`, `CONFIRMED_ONLY`, 정수 `relationshipAnalysisContract.formatVersion=1`만 처리한다. 일반 분석 claim/complete와 혼용하지 않는다.
+- 기존 관계 pipeline/extractor/comparator를 재사용하되 S3 고정 key/version/hash와 순수 청킹만 사용한다. SQLAlchemy 세션, 후보·프로필·청크 저장, retrieval embedding을 호출하지 않는다.
+- PREPARED/COMPLETED 재개는 저장 관측·결정을 쓰며 원문 재읽기와 재추출을 생략한다. 근거 원문 검증·lease·토큰 예약은 우회하지 않는다. 입력 상한 초과는 자르지 않고 실패한다.
+- 운영 `ai-relationship-worker`는 1프로세스·1Job·1LLM, DB 연결0, metrics host9109다. 런타임/targets/tracing 검사에 네 번째 종류를 포함하되 일반 분석 5×10과 비교 각1은 유지한다.
+- Java API/Flyway를 먼저, AI Worker를 다음에 배포한다. merge 자체가 provider 호출이 아니라 이미지 발행·배포 성공 후 claim이 시작점이다. 원칙/동기화 대상은 `docs/relationship-cohort-backfill.md`와 `docs/episode-relationships.md`다.

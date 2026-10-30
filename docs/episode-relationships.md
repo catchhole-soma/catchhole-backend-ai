@@ -24,7 +24,7 @@
 
 ORDERED_PROVISIONAL은 기존 회차 순서를 따른다. CONFIRMED_ONLY/수동 작업이 병렬 실행되는 경우에도 prepare가 읽은 앞 회차 상태와 사용자 수정·삭제 상태를 동결한다. complete/finalize 때 의존성이 바뀌었으면 409로 거절한다. 뒤 회차가 먼저 완료됐더라도 앞 회차가 반영되면 후행 관계 결과를 무효화한다. 조용히 이전 문맥으로 합치지 않는다. 의존성이 바뀐 PREPARED/COMPLETED는 GET 재개와 같은 prepare 재전송부터 409로 거절해 유료 비교를 다시 호출하지 않게 한다. 같은 Job의 자동 재시도로 문맥을 바꾸지 않으며 새 분석 Job이 필요하다.
 
-같은 회차를 다시 분석하면 기존 해당 회차와 후행 관계 결과는 INVALIDATED가 된다. 원문 hash뿐 아니라 key/version/회차 번호·보관·파기 여부를 검사한다. 원문이 바뀌었거나 INVALIDATED인 최초 회차 뒤의 결과도 공개하지 않는다. 다시 유효하게 만들려면 해당 회차부터 순서대로 분석해야 한다. 이 기능은 무효화된 후행 회차를 자동 유료 재분석하거나 과거 모든 회차를 백필하지 않는다. 이전 성공 회차를 표시하는 경우에도 `analysisStatus`와 `partial`로 누락 상태를 함께 반환한다.
+같은 회차를 다시 분석하면 기존 해당 회차와 후행 관계 결과는 INVALIDATED가 된다. 원문 hash뿐 아니라 key/version/회차 번호·보관·파기 여부를 검사한다. 원문이 바뀌었거나 INVALIDATED인 최초 회차 뒤의 결과도 공개하지 않는다. 다시 유효하게 만들려면 해당 회차부터 순서대로 분석해야 한다. 일반 분석은 무효화된 후행 회차를 자동 유료 재분석하거나 과거 모든 회차를 백필하지 않는다. GH332의 고정 선정 계정은 별도 관계 전용 캠페인에서만 과거 회차를 순서대로 백필한다([실행 계약](relationship-cohort-backfill.md)). 이전 성공 회차를 표시하는 경우에도 `analysisStatus`와 `partial`로 누락 상태를 함께 반환한다.
 
 ## 내부 Worker API
 
@@ -120,5 +120,5 @@ main의 검수 실행·검토 종료 기능이 V92~V100을 사용하므로, 운�
 배포 순서는 Java API/DB, 지원 AI Worker, Front다. Java는 지원 광고가 없는 Worker에 관계 계약을
 주지 않으며, 이미 관계 분석이 활성화된 Job은 지원 Worker만 재개할 수 있다. 기능 플래그를 끄면
 신규 활성화만 멈추므로, 진행 중 관계 Job이 남은 상태의 Worker 롤백은 별도 확인이 필요하다.
-기존 작품 전체의 자동 유료 백필은 추가하지 않는다. 일반 인용의 위치가 불확실한 경우에는
+기존 작품 전체의 자동 유료 백필은 하지 않는다. GH332는 [고정 선정 계정의 관계 전용 캠페인](relationship-cohort-backfill.md)만 운영 배포 후 자동 시작한다. 일반 인용의 위치가 불확실한 경우에는
 [일반 인용 정책](https://github.com/catchhole-soma/catchhole-backend-java/blob/main/docs/analysis-continuity.md)의 GH323 정책으로 인용만 숨기고 설정값을 유지한다.
