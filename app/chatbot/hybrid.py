@@ -325,22 +325,37 @@ class _HybridSession(_Session):
         return limit - self.tool_count - share
 
     def ordering_anchors(self, plan):
-        """최초/최후 탐색의 기준 표현. 질문의 대상 항목을 우선하고 없으면 인물명을 뺀 검색어를 쓴다."""
-        names = {s.name.strip().casefold() for s in plan.subjects}
+        """최초/최후 탐색의 기준 표현. 인물명은 필수, 대상·사건 단어는 절반 이상 일치로 요구한다.
+
+        인물명을 빼면 '스킬' 같은 일반 단어의 작품 첫 언급으로 흘러가고, 대상 단어를 모두
+        요구하면 활용형 차이로 0건이 된다. 대상 표현은 집중 항목이 있으면 그것, 없으면 인물명을
+        뺀 검색어다.
+        """
+        required = list(dict.fromkeys(s.name.strip() for s in plan.subjects if s.name.strip()))[:2]
+        lowered = {n.casefold() for n in required}
         focus = [s.focus.attribute for s in plan.subjects if s.focus.attribute]
-        terms = focus or [t for t in plan.search_terms if t.strip().casefold() not in names]
-        words = [w for term in (terms or plan.search_terms) for w in term.split()]
-        return list(dict.fromkeys(w for w in words if w))[:4]
+        objects = focus or [t for t in plan.search_terms if t.strip().casefold() not in lowered]
+        optional = list(
+            dict.fromkeys(
+                w for term in objects for w in term.split() if w and w.casefold() not in lowered
+            )
+        )[:4]
+        return required, optional
 
     async def ordered_search(self, plan, found):
         """검색어가 등장하는 출처 회차를 처음/마지막부터 읽어 일반 keyword 후보 앞에 둔다."""
-        anchors = self.ordering_anchors(plan)
+        required, optional = self.ordering_anchors(plan)
+        anchors = [*required, *optional]
         # 이번 라운드의 남은 비용: 정렬 검색 1 + 이웃 1 + 영수증 1 + 최종 재검증 1
         if not anchors or not self.tools_available(4):
             self.codes.append("SEARCH_LIMIT")
             return found
         ordered = await self.search(
-            "keyword_ordered", anchors, order=plan.ordering, limit=self.hcfg.keyword_top_k
+            "keyword_ordered",
+            required,
+            optional,
+            order=plan.ordering,
+            limit=self.hcfg.keyword_top_k,
         )
         self.codes.append(f"ORDERED_SEARCH_{plan.ordering}")
         self.ordered_coverage = {

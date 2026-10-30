@@ -116,30 +116,39 @@ class RetrievalSearchRepository:
             "KEYWORD",
         )
 
-    def keyword_ordered(self, anchors, *, order, limit=20):
-        """anchor 표현을 모두 포함하는 청크를 출처 회차 순서로 읽는다. 최초/최후 장면 탐색용.
+    def keyword_ordered(self, required, optional, *, order, limit=20):
+        """필수 표현을 모두, 선택 표현을 절반 이상 포함하는 청크를 출처 회차 순서로 읽는다.
 
-        점수는 반환 순서를 그대로 보존하는 1.0 이하 값이라 일반 keyword 후보보다 먼저 배치된다.
+        최초/최후 장면 탐색용이다. 인물명은 필수, 대상·사건 단어는 활용형 차이를 허용하기 위해
+        절반 이상(최소 1개) 일치로 둔다. 점수는 반환 순서를 보존하는 1.0 이하 값이라 일반 keyword
+        후보보다 먼저 배치된다.
         """
         validate_limit(limit)
         if order not in {"EARLIEST", "LATEST"}:
             raise ValueError("Ordered search direction must be EARLIEST or LATEST")
-        terms = [t for t in dict.fromkeys(str(a).strip() for a in anchors) if t][:6]
-        validate_query(" ".join(terms))
-        params = {
-            f"anchor_{n}": "%"
-            + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            + "%"
-            for n, term in enumerate(terms)
-        }
-        must = " AND ".join(
-            f"c.chunk_text ILIKE :anchor_{n} ESCAPE '\\'" for n in range(len(terms))
-        )
+        required = [t for t in dict.fromkeys(str(a).strip() for a in required) if t][:2]
+        optional = [
+            t for t in dict.fromkeys(str(a).strip() for a in optional) if t and t not in required
+        ][:4]
+        validate_query(" ".join([*required, *optional]))
+
+        def pattern(term):
+            return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+        params = {f"required_{n}": pattern(t) for n, t in enumerate(required)}
+        params.update({f"optional_{n}": pattern(t) for n, t in enumerate(optional)})
+        conditions = [f"c.chunk_text ILIKE :required_{n} ESCAPE '\\'" for n in range(len(required))]
+        if optional:
+            matched = " + ".join(
+                f"CASE WHEN c.chunk_text ILIKE :optional_{n} ESCAPE '\\' THEN 1 ELSE 0 END"
+                for n in range(len(optional))
+            )
+            conditions.append(f"({matched}) >= {max(1, (len(optional) + 1) // 2)}")
         direction = "ASC" if order == "EARLIEST" else "DESC"
         ordering = f"e.episode_no {direction},c.chunk_index {direction},c.id"
         return self._rows(
             f"SELECT {FIELDS},CAST(1.0-(ROW_NUMBER() OVER (ORDER BY {ordering})-1)/10000.0 "
-            f"AS double precision) AS score {self.from_clause} AND ({must}) "
+            f"AS double precision) AS score {self.from_clause} AND {' AND '.join(conditions)} "
             f"ORDER BY {ordering} LIMIT :limit",
             {**params, "limit": limit},
             "KEYWORD",
