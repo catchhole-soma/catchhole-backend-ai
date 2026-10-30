@@ -348,6 +348,10 @@ PYTHONPATH=. python scripts/run_validation_worker.py --enable --once \
 INTERNAL_API_KEY/LLM_API_KEY는 기존 secret 환경으로 주입한다. 이 명령은 실제 provider를 호출할 수 있으므로
 운영 검증은 별도 승인 절차에서 수행한다. --enable이 없거나 claim의 역할/분기 예산이 빠지면 시작하지 않는다.
 연속 실행에는 --poll-seconds를 명시한다. .env를 읽거나 운영 환경을 자동 수정하지 않는다.
+연속 실행은 Job 단위로 실패를 격리한다(GH340): 한 claim의 IncompleteInspection(EXECUTION_STOPPED 등)이나
+예기치 않은 예외는 고정 코드/예외 종류와 jobId·reportId만 로그에 남기고 다음 claim을 계속하며, 연속 실패는
+poll×2^n(최대 60초)만큼 기다렸다가 정상 반복 뒤 초기화한다. 취소와 종료 중인 Worker는 루프를 끝내고,
+--once는 claim 하나만 처리하며 실패를 로그 뒤 다시 던져 0이 아닌 코드로 종료한다.
 검색은 --readonly-url-env에 SELECT 전용 DB URL 환경변수명을 주면 실제 frozen RAG adapter에 연결된다.
 connection은 default_transaction_read_only=on이고 index model/version/1536 차원을 검증한다.
 --query-embedding은 서버의 별도 cap/model과 기존 준비 index가 모두 있을 때만 사용한다.
