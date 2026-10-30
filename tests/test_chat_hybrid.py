@@ -189,7 +189,7 @@ class HybridSpring(ReplaySpring):
 def hybrid_settings(**overrides):
     values = {name: field.default for name, field in HybridSettings.model_fields.items()}
     # 기존 합성 시나리오는 2라운드·임베딩 1회 계약을 전제한다. 3라운드는 전용 회귀에서 켠다.
-    values.update(max_rounds=2, max_query_embeddings=1, repair_missing_parts=False)
+    values.update(max_rounds=2, max_query_embeddings=1)
     return HybridSettings(**{**values, "enabled": False, **overrides})
 
 
