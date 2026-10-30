@@ -4,7 +4,7 @@
 
 ## 현재 등록값의 필수 근거와 후속 정정 — OPT-33
 
-현재 프롬프트는 QA plan v9, FIELD select v2, hybrid plan v12/answer v17, 등록 설명 v4이다. 아래 OPT-31의 실행·버전 기록은 당시 결과로 보존한다. 이번 실제 모델 평가는 별도 고정 질문 실행으로 기록하며, 합성 응답 통과를 계획 분류나 자연어 정확도로 계산하지 않는다.
+현재 프롬프트는 QA plan v9, FIELD select v2, hybrid plan v12/answer v16, 등록 설명 v4이다. 아래 OPT-31의 실행·버전 기록은 당시 결과로 보존한다. 이번 실제 모델 평가는 별도 고정 질문 실행으로 기록하며, 합성 응답 통과를 계획 분류나 자연어 정확도로 계산하지 않는다.
 
 `HybridPlan.registeredCurrentRequired`는 표시 옵션과 독립된 필수 boolean이다. 누락·문자열·숫자를 거절하며 서버에서 기본값을 채우지 않는다. 인물의 지금/현재 속성·보유·상태 또는 등록 화면·직접 수정값을 확인하는 질문은 현재 자료를 확인하도록 계획한다. 원문·작중·특정 출처 회차의 서술만 요청하면 원문 경로로 분리한다. “현재”라는 단어만으로 이야기 시간을 등록값으로 해석하지 않으며, 일반 개념 질문에 현재 조회를 강제하지 않는다. 이 의미 분류는 실제 모델 검증 대상이다.
 
@@ -147,7 +147,7 @@ flowchart TD
 | 각 능력을 언제 어떻게 얻었는지 | CURRENT + PROCESS, perItem=true, requestedParts=P1(시점)/P2(경위) | 현재 논리 항목별 검색 → 시점·경위 각각 답변 또는 미확인 |
 | 앞서 물은 사건 뒤의 감정과 행동 영향 | 원문 경로 + eventContext + requestedParts=P1(감정)/P2(행동 영향) | 같은 사건인지 다시 확인 → 요청 부분별 설명과 실제 지원 구절 연결 |
 
-새 strict 모델 schema는 `focus`, `collection`, `answerShape`, `requestedParts`, `requestedFacets`, `eventContext`, `eventScope`, `includeRegisteredValues`, `sourceFallback`, `registeredCurrentRequired` 등 해당 계획의 필드를 명시하게 한다. 이름을 지정한 대상에도 `worldCategory`를 명시하며 해당하지 않으면 null을 사용한다. 현재 prompt 버전은 QA plan v9, FIELD select v2, 구형 행 select v3, hybrid plan v12/answer v17이다. 등록 설명과 현재 조건 판정은 각각 `chat-registered-answer-v4`, `chat-current-condition-v2`를 사용한다. 이력 사건의 판정은 `chat-history-condition-v2`로 구분한다.
+새 strict 모델 schema는 `focus`, `collection`, `answerShape`, `requestedParts`, `requestedFacets`, `eventContext`, `eventScope`, `includeRegisteredValues`, `sourceFallback`, `registeredCurrentRequired` 등 해당 계획의 필드를 명시하게 한다. 이름을 지정한 대상에도 `worldCategory`를 명시하며 해당하지 않으면 null을 사용한다. 현재 prompt 버전은 QA plan v9, FIELD select v2, 구형 행 select v3, hybrid plan v12/answer v16이다. 등록 설명과 현재 조건 판정은 각각 `chat-registered-answer-v4`, `chat-current-condition-v2`를 사용한다. 이력 사건의 판정은 `chat-history-condition-v2`로 구분한다.
 
 - `focus`의 FactType은 정해진 유형이고 attribute는 현재 질문 또는 제한된 대화에 실제 나온 항목 표현이다. 동적 경로는 값 없는 FIELD 목록을 끝까지 확인한 뒤 관측된 F 참조로 고른다. 불완전한 FIELD 목록을 유일한 경로라고 확정하지 않는다.
 - 이름을 지정한 세계관 대상과 collection의 `worldCategory`는 같은 분류를 뜻한다. RDB·hybrid 공통 `resolve_subject`가 FIND 필터를 적용하며 동명 대상의 다른 분류를 합치지 않는다. CHARACTER에는 category를 넣지 않는다. 복수 후보·불완전한 탐색은 명확화를 요청하고, 분류와 다른 응답은 계약 오류로 처리한다. 분류 조회 실패를 무필터 조회로 자동 우회하지 않는다.
