@@ -100,12 +100,18 @@ def test_required_current_decision_is_strict_and_cannot_silently_default():
         HybridPlan.model_validate(plan)
 
 
-@pytest.mark.parametrize(
-    "changes", [{"sourceFallback": True}, {"rdbMode": "NONE"}, {"rdbMode": "HISTORY"}]
-)
+@pytest.mark.parametrize("changes", [{"rdbMode": "NONE"}, {"rdbMode": "HISTORY"}])
 def test_current_requirement_cannot_use_an_incompatible_route(changes):
     with pytest.raises(ValidationError, match="Required current information"):
         HybridPlan.model_validate({**current_case(mixed=True)["outputs"][0], **changes})
+
+
+def test_current_requirement_drops_source_fallback_instead_of_rejecting():
+    # 계획기가 등록값 확인 요구에 원문 보완까지 붙이면 거절(실행 실패)이 아니라 보완만 끈다.
+    plan = HybridPlan.model_validate(
+        {**current_case(mixed=True)["outputs"][0], "sourceFallback": True}
+    )
+    assert plan.registered_current_required is True and plan.source_fallback is False
 
 
 def test_current_value_uses_manual_snapshot_without_manuscript_fallback(tmp_path):

@@ -51,6 +51,28 @@ class HybridPlan(ContractModel):
     # 최초/최후 장면 질문의 원문 검색 순서. 서버가 검색어 등장 회차를 이 순서로 읽는다.
     ordering: Literal["NONE", "EARLIEST", "LATEST"] = "NONE"
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_current_requirement(cls, data):
+        """현재 등록값 확인이 필수인 계획에 원문 보완을 함께 적은 응답을 거절 대신 정규화한다.
+
+        계획기가 '종족이 같아? 각자 정수는?'처럼 등록값 질문에 sourceFallback=true를 반복해 붙이면
+        같은 거절이 두 번 이어져 실행 전체가 실패했다. 등록값 확인 요구가 우선이므로 보완만 끈다.
+        """
+        if not isinstance(data, dict):
+            return data
+        required = data.get("registeredCurrentRequired", data.get("registered_current_required"))
+        fallback_key = "sourceFallback" if "sourceFallback" in data else "source_fallback"
+        if required is True and data.get(fallback_key) is True:
+            data = dict(data)
+            data[fallback_key] = False
+            need = data.get("sourceNeed", data.get("source_need", "NONE"))
+            if need == "NONE":
+                # 원문 요구가 없으면 보완용으로만 적은 요구 항목도 함께 비운다.
+                parts_key = "requestedParts" if "requestedParts" in data else "requested_parts"
+                data[parts_key] = []
+        return data
+
     @model_validator(mode="after")
     def coherent(self) -> Self:
         if self.disposition in {"GREETING", "THANKS", "HELP"} and (
