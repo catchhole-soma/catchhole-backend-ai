@@ -2,27 +2,51 @@
 
 import asyncio
 import json
+import logging
 import re
+from collections import Counter
 from dataclasses import asdict
 from hashlib import sha256
 
+from pydantic import ValidationError
+
 from app.validation.clues import collect_clues
 from app.validation.contracts import (
+    TARGET_REF,
     BudgetState,
     IncompleteInspection,
     InspectionResult,
+    IntentRefs,
     LookupIntent,
     LookupReceipt,
     QuestionBatch,
     RelatedSelection,
     ValidationDecision,
+    anchor_span,
     merge_questions,
+    normalize_batch,
+    normalize_intent,
+    safe_code,
     split_segments,
     validate_batch,
+    validate_intents,
     validate_span,
 )
 from app.validation.corpus import ValidationCorpus
 from app.validation.models import call_role
+from app.validation.schemas import decision_schema, question_batch_schema, selection_schema
+
+logger = logging.getLogger(__name__)
+_DECISION_FIELDS = ("outcome", "basis", "impact", "impact_reason", "completion")
+
+
+def _contract_cause(exc):
+    """Specific safe code behind a collapsed contract failure; never the exception message."""
+    if isinstance(exc, ValidationError):
+        return "CONTRACT_MODEL_INVALID"
+    if isinstance(exc, ValueError):
+        return safe_code(exc.args[0] if exc.args else None, "CONTRACT_VALUE_INVALID")
+    return "CONTRACT_KEY_MISSING" if isinstance(exc, KeyError) else "CONTRACT_TYPE_INVALID"
 
 
 def _model_state(value, sources=()):
@@ -101,17 +125,23 @@ class SettingValidationService:
     async def inspect(self):
         budget = BudgetState(self.limits)
         questions, decisions, receipts, coverage, bundles = (), {}, [], [], {}
+        # GH331 diagnostics: where a failure happened and how often normalization fired.
+        stats, where = Counter(), {"stage": "INPUT"}
         try:
 
             async def read(action, *args):
                 budget.consume("lookup")
                 return await asyncio.wait_for(action(*args), budget.remaining())
 
-            async def stage(role, ref, payload, response_type, validate, *, model_role=None):
+            async def stage(role, ref, payload, response_type, validate, *, schema=None, prepare=None):
+                where["stage"] = f"{role}:{ref}"
                 saved = self.checkpoint.stage(role, ref) if self.checkpoint else None
                 value = response_type.model_validate(saved) if saved is not None else await call_role(
-                    self.model, model_role or role, payload, response_type, budget
+                    self.model, role, payload, response_type, budget, schema=schema
                 )
+                if prepare is not None:
+                    # Normalized before validation and before the durable save the Backend checks.
+                    value = prepare(value)
                 validate(value)
                 if self.checkpoint and saved is None:
                     await self.checkpoint.save_stage(role, ref, value.model_dump())
@@ -165,6 +195,9 @@ class SettingValidationService:
             if execution:
                 source_catalogue = frozen.model_source_catalogue
             subjects = {row["subject_ref"] for row in settings}
+            subject_order = list(dict.fromkeys(row["subject_ref"] for row in settings))
+            entry_refs = [row["entry_ref"] for row in settings]
+            source_refs = [source.ref for source in frozen.sources]
             catalogue = [
                 {key: row[key] for key in ("entry_ref", "subject_ref", "domain", "name", "aliases")}
                 | {"paths": list(row["state"].get("slots", row["state"].get("propertiesJson", {})))}
@@ -197,6 +230,23 @@ class SettingValidationService:
                 search=self.search,
                 embedding_client=self.embedding_client,
             )
+            segment_refs = frozenset(segment.ref for segment in segments)
+
+            def intent_refs():
+                return IntentRefs(frozenset(entry_refs), frozenset(source_refs),
+                                  frozenset(corpus.evidence), len(target))
+
+            def batch_prepare(segment):
+                def inside(start, end):
+                    return segment.context_start <= start and end <= segment.context_end
+                return lambda value: normalize_batch(value, target, aliases=segment_refs,
+                                                     accept=inside, stats=stats)
+
+            def batch_schema(segment, rule_refs=(), clue_refs=(), evidence_refs=()):
+                return question_batch_schema(
+                    segment_refs=[segment.ref], subject_refs=subject_order, rule_refs=list(rule_refs),
+                    clue_refs=list(clue_refs), entry_refs=entry_refs, source_refs=source_refs,
+                    evidence_refs=list(evidence_refs))
             book_origins, book_coverage = {}, {}
             books = [source for source in frozen.sources if source.kind == "SETTING_BOOK"]
             for source in books:
@@ -213,21 +263,26 @@ class SettingValidationService:
                     }
                 )
             drafts, segment_inputs = [], {}
+            # Identification only. Selection below pages independently over all settings.
+            subject_catalogue = [
+                {key: row[key] for key in ("entry_ref", "subject_ref", "name", "aliases")}
+                for row in catalogue
+            ]
             for segment in segments:
-                common = {
+                base = {
                     "segment": asdict(segment),
                     "text": target[segment.context_start : segment.context_end],
                     "text_start": segment.context_start,
+                    # GH331: segments are TSEGn; spans and TARGET_CONTEXT always name the target T1.
+                    "target_source_ref": TARGET_REF,
                     "source_catalogue": source_catalogue,
-                    # Identification only. Selection below pages independently over all settings.
-                    "catalogue": [
-                        {key: row[key] for key in ("entry_ref", "subject_ref", "name", "aliases")}
-                        for row in catalogue
-                    ],
                 }
+                common = {**base, "subject_catalogue": subject_catalogue}
                 segment_inputs[segment.ref] = common
                 first = await stage("PLANNER", segment.ref, common, QuestionBatch,
-                                    lambda value, segment=segment: validate_batch(value, [segment], subjects, [], target))
+                                    lambda value, segment=segment: validate_batch(
+                                        value, [segment], subjects, [], target, intent_refs=intent_refs()),
+                                    schema=batch_schema(segment), prepare=batch_prepare(segment))
                 coverage = self._record_coverage(coverage, "PLANNER", first)
                 drafts.extend((question, f"PLANNER:{segment.ref}") for question in first.questions)
                 selected = set()
@@ -236,11 +291,12 @@ class SettingValidationService:
                     selection = await stage(
                         "RELATED_SELECTION", f"{segment.ref}:PAGE{index // self.limits.catalogue_page_size + 1}",
                         {
-                            **common,
+                            **base,
                             "catalogue": page,
                         },
                         RelatedSelection,
                         lambda value, page=page: self._validate_selection(value, page),
+                        schema=selection_schema(entry_refs=[row["entry_ref"] for row in page]),
                     )
                     selected.update(
                         entry.entry_ref for entry in selection.entries if entry.selected
@@ -256,16 +312,21 @@ class SettingValidationService:
                 relevant_clues = [
                     clue for clue in clues if segment.start <= clue["span"]["start"] < segment.end
                 ]
+                rule_refs = [row["entry_ref"] for row in relevant]
                 second = await stage(
                     "COVERAGE", segment.ref,
                     {
                         **common,
+                        # GH331 S3: rules are reported only for these selected settings.
                         "settings": relevant,
+                        "rule_refs": rule_refs,
                         "mechanical_clues": relevant_clues,
                     },
                     QuestionBatch,
                     lambda value, segment=segment, selected=selected, clues=relevant_clues: self._validate_coverage(
-                        value, segment, subjects, selected, target, clues),
+                        value, segment, subjects, selected, target, clues, intent_refs()),
+                    schema=batch_schema(segment, rule_refs, [clue["ref"] for clue in relevant_clues]),
+                    prepare=batch_prepare(segment),
                 )
                 coverage = self._record_coverage(coverage, "COVERAGE", second)
                 drafts.extend(
@@ -304,6 +365,7 @@ class SettingValidationService:
                         stage_ref = f"{segment.ref}:{rule_ref}"
                         origin = "BOOK_COVERAGE:" + stage_ref
                         cached = self.checkpoint.stage("BOOK_COVERAGE", stage_ref) if self.checkpoint else None
+                        where["stage"] = "BOOK_COVERAGE:" + stage_ref
                         if cached is None:
                             start, end = part["contextStart"], part["contextEnd"]
                             quote = raw.text[start:end] if raw is not None else (
@@ -312,10 +374,13 @@ class SettingValidationService:
                             rule = {**corpus.evidence[evidence_ref], "evidence_ref": evidence_ref,
                                     "ref": rule_ref, "core_start": part["start"], "core_end": part["end"]}
                             batch = await call_role(self.model, "COVERAGE", {**common, "settings": [],
-                                "raw_rules": [rule], "mechanical_clues": []}, QuestionBatch, budget)
+                                "rule_refs": [rule_ref], "raw_rules": [rule], "mechanical_clues": []},
+                                QuestionBatch, budget,
+                                schema=batch_schema(segment, [rule_ref], evidence_refs=[evidence_ref]))
                         else:
                             batch = QuestionBatch.model_validate(cached)
-                        validate_batch(batch, [segment], subjects, [rule_ref], target)
+                        batch = batch_prepare(segment)(batch)
+                        validate_batch(batch, [segment], subjects, [rule_ref], target, intent_refs=intent_refs())
                         if batch.questions:
                             if cached is None:
                                 book_origins[origin] = evidence_ref
@@ -341,6 +406,7 @@ class SettingValidationService:
                     source_coverage.update(status="PROCESSED", reason="INDEPENDENT_BOOK_REVIEW_COMPLETE")
             # Only questions' actual book context survives. Unquestioned full books are never checkpoint blobs.
             corpus.evidence = {ref: row for ref, row in corpus.evidence.items() if ref in set(book_origins.values())}
+            where["stage"] = "MERGED_PLAN"
             questions = merge_questions(drafts)
             checks = await self.checkpoint.merge(questions) if self.checkpoint else {}
             decisions = {ref: ValidationDecision.model_validate(value["decision"])
@@ -460,6 +526,7 @@ class SettingValidationService:
                         own_receipts[qref].append(receipt)
                 while pending[qref]:
                     intent, from_follow_up = pending[qref][0]
+                    where["stage"] = f"LOOKUP:{qref}:{intent.operation}"
                     signature = (qref, intent.model_dump_json(exclude={"ref"}))
                     if signature in seen:
                         if from_follow_up:
@@ -575,14 +642,25 @@ class SettingValidationService:
                 ).hexdigest()
                 bundles[qref] = payload
                 await save_runtime()
-                judgment = await call_role(self.model, "JUDGE", payload, ValidationDecision, budget)
+                where["stage"] = f"JUDGE:{qref}"
+                schema = decision_schema(
+                    known_refs=[TARGET_REF, *(row["entry_ref"] for row in relevant),
+                                *(row["ref"] for row in evidence)],
+                    receipt_refs=[receipt.ref for receipt in own_receipts[qref]],
+                    question_refs=list(by_ref), fact_refs=[row["entry_ref"] for row in relevant],
+                    evidence_refs=[row["ref"] for row in evidence], entry_refs=entry_refs,
+                    source_refs=source_refs)
+                judgment = await call_role(self.model, "JUDGE", payload, ValidationDecision, budget,
+                                           schema=schema)
+                judgment = self._prepare_judgment(judgment, target, segment_refs, stats)
                 if judgment.action == "FOLLOW_UP":
-                    if (
-                        not judgment.follow_ups
-                        or judgment.outcome is not None
-                        or judgment.completion is not None
-                    ):
-                        raise IncompleteInspection("INVALID_FOLLOW_UP")
+                    if not judgment.follow_ups:
+                        raise IncompleteInspection("INVALID_FOLLOW_UP", "INVALID_FOLLOW_UP_EMPTY")
+                    try:
+                        # Unreadable follow-ups must never become durable obligations (GH331 S6).
+                        validate_intents(judgment.follow_ups, intent_refs())
+                    except ValueError as exc:
+                        raise IncompleteInspection(exc.args[0]) from None
                     affected = set(judgment.affected_question_refs) | {qref}
                     if not affected <= set(by_ref):
                         raise IncompleteInspection("UNKNOWN_QUESTION_REFERENCE")
@@ -600,11 +678,12 @@ class SettingValidationService:
                     await save_runtime()
                     continue
                 judgment = self._validate_decision(
-                    judgment, question, relevant, evidence, own_receipts[qref], target
+                    judgment, question, relevant, evidence, own_receipts[qref], target, stats
                 )
                 if self.checkpoint:
                     await self.checkpoint.decide(qref, judgment, payload)
                 decisions[qref] = judgment
+            where["stage"] = "FINAL_VALIDATE"
             await read(self.data.validate)
             await corpus.revalidate()
             # Re-read target too: unchanged DB metadata does not authenticate changed storage bytes.
@@ -612,6 +691,8 @@ class SettingValidationService:
             if final_target.text != target:
                 raise IncompleteInspection("INPUT_CHANGED")
             await read(self.data.validate)
+            logger.info("setting inspection completed questions=%d decisions=%d normalizations=%s",
+                        len(questions), len(decisions), dict(sorted(stats.items())))
             return InspectionResult(
                 "COMPLETED",
                 questions,
@@ -619,10 +700,12 @@ class SettingValidationService:
                 tuple(receipts),
                 tuple(coverage),
                 evidence_bundles=bundles,
+                normalizations=dict(stats),
             )
         except IncompleteInspection as exc:
+            diagnostics = self._diagnostics(exc.code, exc.cause, where["stage"], stats)
             if exc.code in {"INPUT_CHANGED", "SOURCE_CHANGED", "SOURCE_PURGED"}:
-                return InspectionResult("INCOMPLETE", failure_code=exc.code)
+                return InspectionResult("INCOMPLETE", failure_code=exc.code, **diagnostics)
             return InspectionResult(
                 "INCOMPLETE",
                 questions,
@@ -631,8 +714,10 @@ class SettingValidationService:
                 tuple(coverage),
                 exc.code,
                 bundles,
+                **diagnostics,
             )
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError) as exc:
+            # The collapsed category stays INVALID_INSPECTION_CONTRACT; the cause is kept (GH331).
             return InspectionResult(
                 "INCOMPLETE",
                 questions,
@@ -640,6 +725,7 @@ class SettingValidationService:
                 tuple(receipts),
                 tuple(coverage),
                 "INVALID_INSPECTION_CONTRACT",
+                **self._diagnostics("INVALID_INSPECTION_CONTRACT", _contract_cause(exc), where["stage"], stats),
             )
         except TimeoutError:
             return InspectionResult(
@@ -649,7 +735,38 @@ class SettingValidationService:
                 tuple(receipts),
                 tuple(coverage),
                 "BUDGET_EXHAUSTED",
+                **self._diagnostics("BUDGET_EXHAUSTED", None, where["stage"], stats),
             )
+
+    @staticmethod
+    def _diagnostics(code, cause, stage, stats):
+        logger.warning("setting inspection incomplete code=%s cause=%s stage=%s normalizations=%s",
+                       code, cause, stage, dict(sorted(stats.items())))
+        return {"failure_cause": cause if cause != code else None, "failure_stage": stage,
+                "normalizations": dict(stats)}
+
+    @staticmethod
+    def _prepare_judgment(value, target, aliases, stats):
+        """Deterministic, meaning-preserving cleanup of one JUDGE output (GH331 S2/S4/S5)."""
+        updates = {}
+        spans = list(dict.fromkeys(anchor_span(span, target, aliases=aliases, stats=stats)
+                                   for span in value.target_spans))
+        if spans != value.target_spans:
+            updates["target_spans"] = spans
+        follow_ups = [normalize_intent(intent, aliases, stats) for intent in value.follow_ups]
+        if follow_ups != value.follow_ups:
+            updates["follow_ups"] = follow_ups
+        if value.action == "FOLLOW_UP":
+            # A follow-up is not a decision: its outcome/impact/completion are never stored or used.
+            ignored = {name: None for name in _DECISION_FIELDS if getattr(value, name) is not None}
+            if ignored:
+                stats["FOLLOW_UP_DECISION_FIELDS_IGNORED"] += 1
+                updates.update(ignored)
+        elif value.outcome == "NO_CONFLICT" and (value.impact is not None or value.impact_reason is not None):
+            # NO_CONFLICT is never a finding, so an impact grade has no meaning (Backend rejects it).
+            stats["NO_CONFLICT_IMPACT_CLEARED"] += 1
+            updates.update(impact=None, impact_reason=None)
+        return value.model_copy(update=updates) if updates else value
 
     @staticmethod
     def _receipt_wire(row):
@@ -667,8 +784,8 @@ class SettingValidationService:
             raise IncompleteInspection("RELATED_SELECTION_INCOMPLETE")
 
     @staticmethod
-    def _validate_coverage(batch, segment, subjects, selected, target, clues):
-        validate_batch(batch, [segment], subjects, selected, target)
+    def _validate_coverage(batch, segment, subjects, selected, target, clues, intent_refs=None):
+        validate_batch(batch, [segment], subjects, selected, target, intent_refs=intent_refs)
         if (len(batch.clue_checks) != len(clues)
                 or {row.entry_ref for row in batch.clue_checks} != {row["ref"] for row in clues}
                 or any(row.status == "UNPROCESSED" for row in batch.clue_checks)):
@@ -689,59 +806,69 @@ class SettingValidationService:
         ]
 
     @staticmethod
-    def _validate_decision(value, question, settings, evidence, receipts, target):
-        fail = lambda: IncompleteInspection("INVALID_DECISION")
-        if (
-            value.follow_ups
-            or value.affected_question_refs
-            or value.completion is None
-            or value.outcome is None
-            or value.basis is None
-        ):
-            raise fail()
+    def _validate_decision(value, question, settings, evidence, receipts, target, stats=None):
+        def fail(cause):
+            return IncompleteInspection("INVALID_DECISION", "INVALID_DECISION_" + cause)
+
+        if value.follow_ups or value.affected_question_refs:
+            raise fail("HAS_FOLLOW_UPS")
+        if value.completion is None:
+            raise fail("COMPLETION_MISSING")
+        if value.outcome is None or value.basis is None:
+            raise fail("OUTCOME_MISSING")
         if set(value.target_spans) != set(question.draft.target_spans):
-            raise fail()
+            raise fail("TARGET_SPANS")
         for span in value.target_spans:
             validate_span(span, target)
         facts = {row["entry_ref"]: row for row in settings}
         actual = {row["ref"]: row for row in evidence}
-        known = {"T1"} | set(facts) | set(actual)
+        known = {TARGET_REF} | set(facts) | set(actual)
         real_receipts = {receipt.ref: receipt for receipt in receipts}
         if not set(value.evidence_refs) <= known:
-            raise fail()
-        for assessment in (
-            value.completion.comparison_context,
-            value.completion.changes_exceptions,
-            value.completion.no_pending_clues,
-            value.completion.required_reads,
-        ):
+            raise fail("UNKNOWN_EVIDENCE_REFERENCE")
+        reads = value.completion.required_reads
+        if not set(reads.receipt_refs) <= set(real_receipts) or not set(reads.evidence_refs) <= known:
+            raise fail("REQUIRED_READS")  # a cited receipt/evidence must really exist
+        if set(reads.receipt_refs) != set(real_receipts) or not reads.evidence_refs:
+            # GH331: "all required reads succeeded" is a Worker fact, not a model enumeration.
+            # Every own receipt is SUCCEEDED by construction; the model cannot add or drop one.
+            filled = reads.model_copy(update={
+                "receipt_refs": [receipt.ref for receipt in receipts],
+                "evidence_refs": reads.evidence_refs or list(dict.fromkeys(
+                    [TARGET_REF, *(ref for receipt in receipts for ref in receipt.evidence_refs if ref in known)])),
+            })
+            value = value.model_copy(update={
+                "completion": value.completion.model_copy(update={"required_reads": filled})})
+            if stats is not None:
+                stats["REQUIRED_READS_COMPLETED"] += 1
+        for field_name in ("comparison_context", "changes_exceptions", "no_pending_clues", "required_reads"):
+            assessment = getattr(value.completion, field_name)
             if (
                 not assessment.evidence_refs
                 or not set(assessment.evidence_refs) <= known
                 or not assessment.receipt_refs
                 or not set(assessment.receipt_refs) <= set(real_receipts)
+                or any(real_receipts[ref].status != "SUCCEEDED" for ref in assessment.receipt_refs)
             ):
-                raise fail()
-            if any(real_receipts[ref].status != "SUCCEEDED" for ref in assessment.receipt_refs):
-                raise fail()
+                raise fail(field_name.upper())
         if not set(real_receipts) <= set(value.completion.required_reads.receipt_refs):
-            raise fail()
-        if "T1" not in value.completion.comparison_context.evidence_refs:
-            raise fail()
+            raise fail("REQUIRED_READS")
+        if TARGET_REF not in value.completion.comparison_context.evidence_refs:
+            raise fail("COMPARISON_CONTEXT_TARGET")
         if value.outcome == "SUSPECTED_CONFLICT" and not any(
             real_receipts[ref].intent.kind == "CHANGES_EXCEPTIONS"
             and real_receipts[ref].intent.operation in {"KEYWORD", "VECTOR"}
             for ref in value.completion.changes_exceptions.receipt_refs
         ):
-            raise fail()  # CHANGE_NOT_FOUND needs an actual successful change/exception search.
+            raise fail("CHANGE_SEARCH_MISSING")  # CHANGE_NOT_FOUND needs an actual successful search.
         if value.basis == "DB_RAW_DISAGREEMENT" and not value.disagreements:
-            raise fail()
+            raise fail("DISAGREEMENT_MISSING")
         if value.outcome != "NO_CONFLICT" and (not value.impact or not value.impact_reason):
-            raise fail()
+            raise fail("IMPACT_MISSING")
         if value.outcome == "NO_CONFLICT" and (
             value.impact is not None or value.impact_reason is not None
         ):
-            raise fail()
+            raise fail("NO_CONFLICT_IMPACT")
         expected_basis = {
             "CONFLICT": "DIRECT_CONTRADICTION",
             "SUSPECTED_CONFLICT": "CHANGE_NOT_FOUND",
@@ -749,15 +876,15 @@ class SettingValidationService:
             "NO_CONFLICT": "COMPATIBLE",
         }
         if value.basis not in {expected_basis[value.outcome], "DB_RAW_DISAGREEMENT"}:
-            raise fail()
+            raise fail("BASIS_MISMATCH")
         if value.outcome in {"CONFLICT", "SUSPECTED_CONFLICT"} and not (
             set(value.evidence_refs) & (set(facts) | set(actual))
         ):
-            raise fail()  # same-target-only contradictions are outside this inspection
+            raise fail("EXTERNAL_EVIDENCE_MISSING")  # same-target-only contradictions are out of scope
         unresolved = []
         for disagreement in value.disagreements:
             if disagreement.fact_ref not in facts or disagreement.evidence_ref not in actual:
-                raise fail()
+                raise fail("DISAGREEMENT_REFERENCE")
             correction = facts[disagreement.fact_ref].get("author_correction")
             scope = question.draft
             applicable = (

@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import logging
+from collections import Counter
 from pathlib import Path
 from typing import Literal
 
@@ -27,10 +29,13 @@ from app.validation.contracts import (
     TypoCheckInput,
     TypoCheckResult,
     TypoSuggestion,
+    anchor_span,
     split_segments,
     validate_span,
 )
 from app.validation.data import ValidationDataClient
+
+logger = logging.getLogger(__name__)
 
 
 class ClassifiedTypoSuggestion(TypoSuggestion):
@@ -70,11 +75,23 @@ async def _call(state, operation, *args, kind=None, **kwargs):
         raise IncompleteInspection("UNEXPECTED_ERROR") from None
 
 
-def _validated_batch(response, segment, text, accepted):
+def _anchored(suggestions, segment, text, aliases, stats):
+    """GH331 S2: re-anchor each model span on its own exact quote inside the owning segment."""
+    def owned(start, end):
+        return segment.start <= start < segment.end and end <= segment.context_end
+    result = []
+    for suggestion in suggestions:
+        span = anchor_span(suggestion.span, text, aliases=aliases, accept=owned, stats=stats)
+        result.append(suggestion if span is suggestion.span else suggestion.model_copy(update={"span": span}))
+    return result
+
+
+def _validated_batch(response, segment, text, accepted, aliases=frozenset(), stats=None):
     try:
         batch = _TypoBatch.model_validate_json(response.text, strict=True)
     except ValidationError:
         raise IncompleteInspection("TYPO_RESPONSE_INVALID") from None
+    batch = batch.model_copy(update={"suggestions": _anchored(batch.suggestions, segment, text, aliases, stats)})
     probe = ClassifiedTypoCheckResult(target_hash="", status="COMPLETED", segments=batch.segments,
                                       suggestions=batch.suggestions, failure_code=None)
     try:
@@ -158,6 +175,7 @@ async def check_typos(
     coverage = [SegmentCoverage(segment_ref=segment.ref, status="UNPROCESSED", reason="NOT_PROCESSED")
                 for segment in segments]
     suggestions, failure_code = [], None
+    aliases, stats = frozenset(segment.ref for segment in segments), Counter()
     for index, (segment, core) in enumerate(zip(segments, check_input.spans, strict=True)):
         context = Span(source_ref="T1", start=segment.context_start, end=segment.context_end,
                        quote=source.text[segment.context_start:segment.context_end])
@@ -171,7 +189,7 @@ async def check_typos(
                 from app.llm.responses import LlmTextResponse
                 response = LlmTextResponse(text=json.dumps({"segments": saved["segments"],
                     "suggestions": saved["suggestions"]}), input_token_count=0, output_token_count=0)
-            checked, found = _validated_batch(response, segment, source.text, suggestions)
+            checked, found = _validated_batch(response, segment, source.text, suggestions, aliases, stats)
             if checkpoint and saved is None:
                 await checkpoint.typo(segment.ref, {"segments": [checked.model_dump()],
                     "suggestions": [row.model_dump() for row in found], "failure_code": None})
@@ -199,4 +217,9 @@ async def check_typos(
         segments=coverage, suggestions=suggestions, failure_code=failure_code,
     )
     result.require_coverage([segment.ref for segment in segments])
+    if failure_code:
+        logger.warning("typo inspection incomplete code=%s normalizations=%s", failure_code, dict(sorted(stats.items())))
+    else:
+        logger.info("typo inspection completed suggestions=%d normalizations=%s", len(suggestions),
+                    dict(sorted(stats.items())))
     return result
