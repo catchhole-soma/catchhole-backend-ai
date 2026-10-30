@@ -281,6 +281,55 @@ async def test_exact_unique_display_name_uses_server_key_without_extra_model_cal
 
 
 @pytest.mark.anyio
+async def test_unmatched_field_name_falls_back_to_type_values_for_selection():
+    # 항목은 있지만 질문 표현('몇 급 마법사')이 등록 표시명('직업')과 달라 FIELD 선택이 비는 경우,
+    # 포기하지 않고 그 유형의 현재값을 읽어 선택 모델이 고르게 한다.
+    catalog = [
+        catalog_subject(
+            140,
+            "드왈키",
+            current=[
+                item(
+                    140,
+                    "드왈키",
+                    category="PROFILE",
+                    key="profile.occupation",
+                    label="직업",
+                    value="8급 마법사",
+                ),
+                item(
+                    140,
+                    "드왈키",
+                    category="PROFILE",
+                    key="profile.species",
+                    label="종족",
+                    value="인간",
+                    number=141,
+                ),
+            ],
+        )
+    ]
+    result = await replay_case(
+        case(
+            "드왈키는 몇 급 마법사야?",
+            plan("드왈키", fact_type="PROFILE", attribute="몇 급 마법사"),
+            {"outcome": "INSUFFICIENT_EVIDENCE", "fieldRefs": []},
+            {"outcome": "ANSWER", "rowRefs": ["R1"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    assert actual["outcome"] == "ANSWER" and "8급" in actual["text"]
+    assert [q["tool"] for q in result["queries"]] == [
+        "FIND_CHARACTERS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_CURRENT",
+    ]
+    assert tool_queries(result, "CHARACTER_CURRENT")[0]["factType"] == "PROFILE"
+    assert NOTICES["FOCUS_FALLBACK"] in actual["limitations"]
+
+
+@pytest.mark.anyio
 async def test_missing_field_metadata_does_not_fall_back_to_unfiltered_values():
     catalog = [
         catalog_subject(

@@ -39,6 +39,7 @@ NOTICES = {
     "NO_SEARCH_EVIDENCE": "이번 조회에서 충분한 원문 근거를 찾지 못했습니다.",
     "SETTING_BOOK_UNSUPPORTED": "업로드한 설정집은 아직 조회하지 않습니다.",
     "PARTIAL_RESULTS": "조회 한도에 도달해 일부 등록 정보만 확인했습니다.",
+    "FOCUS_FALLBACK": "질문의 항목 이름과 등록 항목 이름이 달라 해당 유형의 등록 설정 전체에서 찾았습니다.",
     "CONTEXT_LIMIT": "입력 문맥 한도로 일부 항목을 검토하지 못했습니다.",
     "SELECTION_LIMIT": "답변 항목 상한에 도달해 일부 항목만 표시합니다.",
     "ANSWER_LIMIT": "답변 길이 한도로 일부 항목 또는 인용을 표시하지 못했습니다.",

@@ -236,6 +236,7 @@ class FocusedLookup:
         cached_current = None
         current_check_rows = []
         guard_reserve = 0
+        fallback_rows = False
         if focus:
             filters = [{"fact_type": focus.fact_type}]
             if focus.attribute:
@@ -261,6 +262,7 @@ class FocusedLookup:
                             self.codes,
                         )
                     guard_reserve = 1
+                gaps_before = set(self.lookup_gaps)
                 fields, stop = await self.fields(
                     subject.domain,
                     target,
@@ -284,17 +286,36 @@ class FocusedLookup:
                     }
                     for item in fields
                 ]
+                relevant_missing = "NO_RELEVANT_FIELDS" in (self.lookup_gaps - gaps_before)
+                # 원문 보완(sourceFallback)이 허용된 계획은 기존대로 값을 읽지 않고 원문으로 넘어간다.
+                source_fallback = bool(
+                    getattr(getattr(self, "plan", None), "source_fallback", False)
+                )
+                if (
+                    not fields
+                    and relevant_missing
+                    and not source_fallback
+                    and "CURRENT" in modes
+                    and not mixed_range
+                ):
+                    # 항목은 있는데 질문 표현('몇 급 마법사')이 등록 표시명('직업')과 달라 FIELD 선택이
+                    # 비면 포기하지 않고 그 유형의 현재값 전체를 읽어 선택 모델이 고르게 한다.
+                    # 해당 유형의 항목 자체가 없는 경우(NO_FIELDS)는 기존처럼 값 조회 없이 끝낸다.
+                    # 집중 조회가 아니므로 일반 행 상한과 선택 단계를 그대로 거친다.
+                    self.codes.append("FOCUS_FALLBACK")
+                    filters = [{"fact_type": focus.fact_type}]
+                    fallback_rows = True
         for mode in modes:
             collected = []
             complete = True
             if mode == "CURRENT" and cached_current is not None:
                 collected = cached_current
             else:
-                for arguments in filters:
+                for arguments in filters if (mode == "CURRENT" or not fallback_rows) else []:
                     items, page_complete = await self.pages(
                         f"{subject.domain}_{mode}",
                         target=target,
-                        exhaustive=focus is not None,
+                        exhaustive=focus is not None and not fallback_rows,
                         reserve=reserve + guard_reserve,
                         **arguments,
                     )
@@ -312,14 +333,14 @@ class FocusedLookup:
                     key=lambda i: (i.source_episode_no is None, i.source_episode_no or 0)
                 )
             for item in collected:
-                if focus is None and len(self.rows) >= self.cfg.max_items:
+                if (focus is None or fallback_rows) and len(self.rows) >= self.cfg.max_items:
                     self.codes.append("PARTIAL_RESULTS")
                     break
                 row = AnswerRow(f"R{len(self.rows) + 1}", item, subject.domain)
                 self.rows.append(row)
                 if mode == "CURRENT" and cached_current is not None:
                     current_check_rows.append(row)
-                if focus is not None:
+                if focus is not None and not fallback_rows:
                     self.focused_refs.add(self.rows[-1].ref)
         # Cached rows were fetched before the FIELD model call. Protect FACTS
         # rendering too; summary/hybrid synthesis keeps its later final check.
