@@ -7,7 +7,7 @@ CatchHole의 원고 분석 기능을 담당하는 Python AI 서버입니다.
 
 회차별 인물 관계도는 지원 서버의 기능 계약이 있는 분석에서 독립 Terra 추출·비교를 실행합니다.
 기존 캐릭터·세계관 모델은 유지합니다. [관계 흐름과 한계](docs/character-relationship-observations.md),
-[공통 API](docs/episode-relationships.md), [검증 기록](docs/ai-logic-versions/v0028.md)을 참고하세요.
+[공통 API](docs/episode-relationships.md), [검증 기록](docs/ai-logic-versions/v0030.md)을 참고하세요.
 
 ## 문서 기준
 

@@ -5,7 +5,7 @@
 캐릭터·세계관의 기존 추출/비교 모델·prompt·schema는 유지한다. 캐릭터 호출에 관계 배열을
 추가하던 과거 방향은 이번 최신 main 기반 구현에 포함하지 않는다.
 이전 실험은 [#93 보존 기록](ai-logic-versions/branches/gh-93/README.md), 현재 구현과 검증은
-[v0028](ai-logic-versions/v0028.md), Java/프론트 공통 API는 [회차별 계약](episode-relationships.md)을 따른다.
+[v0030](ai-logic-versions/v0030.md), Java/프론트 공통 API는 [회차별 계약](episode-relationships.md)을 따른다.
 
 ## 호출 흐름
 
