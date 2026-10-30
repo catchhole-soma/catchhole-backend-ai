@@ -53,6 +53,9 @@ def _strict_schema(value):
 
 async def call_role(client, role, payload, response_type, budget):
     budget.consume("model")
+    # Trusted invocation role, never inferred from prompt output or shared reasoning effort.
+    if hasattr(client, "for_validation_role"):
+        client = client.for_validation_role(role)
     schema = LlmResponseSchema(
         "validation_" + role.lower() + "_v1", _strict_schema(response_type.model_json_schema())
     )

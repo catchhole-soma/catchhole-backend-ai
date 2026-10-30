@@ -5,6 +5,10 @@ CatchHole의 원고 분석 기능을 담당하는 Python AI 서버입니다.
 프로젝트 전체 ERD와 분석 workflow는 Spring 백엔드 저장소의 `docs/`에서 관리합니다.
 이 저장소에서는 Python 서버 실행 방법과 패키지별 책임만 정리합니다.
 
+회차별 인물 관계도는 지원 서버의 기능 계약이 있는 분석에서 독립 Terra 추출·비교를 실행합니다.
+기존 캐릭터·세계관 모델은 유지합니다. [관계 흐름과 한계](docs/character-relationship-observations.md),
+[공통 API](docs/episode-relationships.md), [검증 기록](docs/ai-logic-versions/v0030.md)을 참고하세요.
+
 ## 문서 기준
 
 문서 책임은 다음 기준으로 나눕니다.
@@ -303,3 +307,13 @@ Python AI 서버의 실패 응답은 Spring 서버가 해석하기 쉽도록 공
 성공 응답은 FastAPI response model을 우선 사용하고, Spring API의 사용자-facing 응답은 Spring 서버에서 정리합니다.
 
 - [채팅 실행·인증·사용량 계약 v1](docs/chat-execution-v1.md) — #237, 기본 비활성; 자연어 orchestration은 #238.
+
+
+### 검수 전용 Worker (#310)
+
+설정/오탈자를 독립 실행하고 저장된 계획·정상 판정·성공 구간을 같은 입력에서 재개한다.
+기본 비활성이며 `PYTHONPATH=. python scripts/run_validation_worker.py --enable --once
+--backend-url "$VALIDATION_BACKEND_URL" --worker-id validation-explicit`로만 명시 시작한다.
+서버의 모든 역할/분기 예산과 기존 secret 환경이 필요하다. 이 명령은 실제 provider를 호출할 수 있다.
+실제 실행/복구·SELECT 전용 검색·optional embedding cap·로컬 합성 검증은
+[검수 실행 계약](docs/validation-execution-v1.md)을 따른다. 추출 Job·후보·자동 확정은 만들지 않는다.

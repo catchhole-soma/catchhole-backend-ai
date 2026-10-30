@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import tiktoken
 
 from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError, OrderedPromptBudgetExceeded
+from app.analysis.evidence_projection import located_evidence_quotes
 from app.domain.enums import AnalysisSourceKind, SettingBookReferenceTimeKind
 from app.llm.protocols import LlmResponseSchema, TextGenerationClient
 from app.schemas.analysis_context import (
@@ -207,7 +208,7 @@ class OrderedExtractionContext:
                 {
                     "name": character.name,
                     "aliases": character.aliases,
-                    "identity_evidence": [span.quote for span in character.identity_evidence],
+                    "identity_evidence": located_evidence_quotes(character.identity_evidence),
                     "confirmation_status": (
                         provenance.confirmation_status if provenance else "CONFIRMED"
                     ),

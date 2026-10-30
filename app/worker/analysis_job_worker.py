@@ -27,6 +27,7 @@ from app.analysis.ordered_character_subjects import (
     resolve_ordered_character_subjects,
 )
 from app.analysis.ordered_context import OrderedExtractionContext
+from app.analysis.relationship_pipeline import RelationshipAnalysisPipeline
 from app.analysis.schemas import CharacterSettingExtractionResult, ExtractedSettingCandidate
 from app.analysis.semantic_current_context import (
     SemanticCurrentInput,
@@ -61,9 +62,9 @@ from app.embeddings.services.episode_chunk_embedding import (
     EpisodeChunkEmbeddingService,
 )
 from app.exceptions.failure_classification import (
-    failure_diagnostics,
     COMPARISON_CANDIDATE_FAILURE_CODES,
     analysis_failure_code,
+    failure_diagnostics,
 )
 from app.llm.openai_client import OpenAIResponsesClient
 from app.llm.protocols import TextGenerationClient
@@ -73,8 +74,8 @@ from app.models.setting_book_chunk import SettingBookChunk
 from app.monitoring.worker_tracing import worker_span
 from app.schemas.analysis_context import WorkerAnalysisContext
 from app.schemas.worker import (
-    WorkerFailureDiagnostics,
     WorkerAnalysisJobPayload,
+    WorkerFailureDiagnostics,
     WorkerWorldSettingCandidatePayload,
     WorkerWorldSettingCandidatePublishItem,
 )
@@ -138,6 +139,7 @@ class SpringWorkerApi(
         supports_setting_book_reference_time: bool | None = None,
         supports_semantic_current_context: bool | None = None,
         supports_frozen_comparison_evidence: bool | None = None,
+        supports_relationship_analysis: bool | None = None,
     ) -> WorkerAnalysisJobPayload | None: ...
 
     # claim 직후 현재 Worker가 어떤 단계에 진입했는지 Spring에 보고한다.
@@ -260,6 +262,7 @@ class AnalysisJobWorker:
         setting_book_chunking_service: SettingBookS3ChunkingService | None = None,
         retrieval_preparer=None,
         retrieval_preparation_enabled: bool = False,
+        relationship_pipeline_factory=None,
     ) -> None:
         settings = get_settings()
         self.spring_client = spring_client or SpringWorkerClient.from_settings()
@@ -287,6 +290,7 @@ class AnalysisJobWorker:
         self.embedding_generation_enabled = embedding_generation_enabled
         self._retrieval_preparer = retrieval_preparer
         self._retrieval_preparation_enabled = retrieval_preparation_enabled
+        self._relationship_pipeline_factory = relationship_pipeline_factory
         self._llm_provider_client = llm_provider_client
         self._owns_llm_provider_client = llm_provider_client is None
         self._embedding_provider_client = None
@@ -340,6 +344,7 @@ class AnalysisJobWorker:
             supports_setting_book_reference_time=True,
             supports_semantic_current_context=True,
             supports_frozen_comparison_evidence=True,
+            supports_relationship_analysis=True,
         )
 
     async def run_once(self) -> WorkerRunResult:
@@ -359,6 +364,14 @@ class AnalysisJobWorker:
         payload: WorkerAnalysisJobPayload,
     ) -> WorkerRunResult:
         try:
+            relation_contract = payload.relationship_analysis_contract
+            if relation_contract is not None and (
+                not isinstance(relation_contract, dict)
+                or type(relation_contract.get("formatVersion")) is not int
+                or relation_contract["formatVersion"] != 1
+                or payload.source_kind != AnalysisSourceKind.EPISODE
+            ):
+                raise OrderedInputContextError("Unsupported relationship analysis contract.")
             if payload.analysis_mode == AnalysisMode.ORDERED_PROVISIONAL:
                 contract = payload.comparison_evidence_contract
                 if (not isinstance(contract, dict)
@@ -495,6 +508,10 @@ class AnalysisJobWorker:
         # Per-job memory only: publish at the original checkpoint, never on the
         # shared worker instance. A restart re-extracts any uncommitted result.
         world_extractions = {} if payload.source_kind == AnalysisSourceKind.EPISODE else None
+        relationship_pipeline = None
+        if payload.relationship_analysis_contract is not None:
+            relationship_pipeline = self._get_relationship_pipeline(payload)
+            await relationship_pipeline.load()
         with worker_span("analysis.character.prepare", attributes={
             "analysis.chunk.count": len(chunks),
             "analysis.known_character.count": len(known_characters),
@@ -507,6 +524,7 @@ class AnalysisJobWorker:
                 schema_hints,
                 semantic_current_context,
                 world_extractions,
+                **({"relationship_pipeline": relationship_pipeline} if relationship_pipeline is not None else {}),
             )
             if _checkpoint_reached(checkpoint, AnalysisJobCheckpointStage.CHARACTER_CANDIDATES_SAVED):
                 span.set_outcome("skipped")
@@ -540,7 +558,21 @@ class AnalysisJobWorker:
                     "analysis.world.reused_chunk_count": len(world_extractions or {}),
                 })
         with worker_span("analysis.world.compare") as span:
-            comparison_result = await self._run_world_comparison_stage(payload, checkpoint)
+            relationship_metrics = {}
+            if relationship_pipeline is None:
+                comparison_result = await self._run_world_comparison_stage(payload, checkpoint)
+            else:
+                # Core stage ordering stays intact. Relation decisions use only
+                # their own frozen context, so this independent work can overlap.
+                results = await asyncio.gather(
+                    self._run_world_comparison_stage(payload, checkpoint),
+                    relationship_pipeline.finish(chunks),
+                    return_exceptions=True,
+                )
+                for result in results:
+                    if isinstance(result, BaseException):
+                        raise result
+                comparison_result, relationship_metrics = results
             _record_comparison_span(span, comparison_result)
             if (payload.analysis_mode != AnalysisMode.ORDERED_PROVISIONAL and _checkpoint_reached(
                 checkpoint, AnalysisJobCheckpointStage.WORLD_COMPARISONS_FINISHED,
@@ -569,6 +601,7 @@ class AnalysisJobWorker:
                 "worldSettingComparisonCompletedCount": comparison_result.completed_count,
                 "worldSettingComparisonFailedCount": comparison_result.failed_count,
                 **comparison_result.summary_metrics(),
+                **relationship_metrics,
             },
             ensure_ascii=False,
         )
@@ -711,6 +744,7 @@ class AnalysisJobWorker:
         schema_hints: tuple[CharacterSettingSchemaHint, ...],
         semantic_current_context: SemanticCurrentInput | None = None,
         world_extractions: dict[UUID, WorldSettingExtractionResult] | None = None,
+        relationship_pipeline: RelationshipAnalysisPipeline | None = None,
     ) -> dict[str, int]:
         status_context_character_count = sum(
             bool(character.active_statuses) for character in known_characters
@@ -777,17 +811,22 @@ class AnalysisJobWorker:
             if world_extractions is None:
                 extraction_result = await character_extraction
             else:
-                # Drain both requests before propagating a failure. Cancellation
-                # cancels both; the existing metered clients release their slots.
-                results = await asyncio.gather(
+                requests = [
                     character_extraction,
                     self._extract_world_chunk(payload, chunk, semantic_current_context),
+                ]
+                if relationship_pipeline is not None:
+                    requests.append(relationship_pipeline.extract_chunk(chunk))
+                # Drain all requests before propagating fatal failures; relation
+                # output failures are recorded by its isolated pipeline.
+                results = await asyncio.gather(
+                    *requests,
                     return_exceptions=True,
                 )
                 for result in results:
                     if isinstance(result, BaseException):
                         raise result
-                extraction_result, world_extractions[chunk.id] = results
+                extraction_result, world_extractions[chunk.id] = results[:2]
             extraction_result = ground_extraction_narrative_time(
                 extraction_result, chunk=chunk, time_context=time_context,
             )
@@ -1293,6 +1332,27 @@ class AnalysisJobWorker:
                 session_factory=get_session_maker(),
             )
         return self._setting_candidate_service
+
+    def _get_relationship_pipeline(self, payload) -> RelationshipAnalysisPipeline:
+        if self._relationship_pipeline_factory is not None:
+            return self._relationship_pipeline_factory(payload)
+        from app.analysis.relationship_comparator import RelationshipComparator
+        from app.analysis.relationship_extractor import RelationshipExtractor
+
+        def client(purpose):
+            return MeteredTextGenerationClient(
+                delegate=self._get_llm_provider_client(), ledger=self.spring_client,
+                analysis_job_id=payload.analysis_job_id, lease_token=payload.lease_token,
+                purpose=purpose, default_model="gpt-6.1-terra",
+                request_semaphore=self._llm_request_semaphore,
+                max_retries=0,
+                retry_base_seconds=self._llm_http_retry_base_seconds,
+            )
+        return RelationshipAnalysisPipeline(
+            spring_client=self.spring_client, payload=payload,
+            extractor=RelationshipExtractor(llm_client=client("RELATIONSHIP_EXTRACTION")),
+            comparator=RelationshipComparator(llm_client=client("RELATIONSHIP_COMPARISON")),
+        )
 
     def _get_llm_provider_client(self) -> TextGenerationClient:
         if self._llm_provider_client is None:

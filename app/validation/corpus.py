@@ -46,7 +46,7 @@ class ValidationCorpus:
             ),
             None,
         )
-        ref = same or f"E{len(self.evidence) + 1}"
+        ref = same or f"E{max((int(key[1:]) for key in self.evidence), default=0) + 1}"
         self.evidence[ref] = {
             "ref": ref,
             "source_ref": source.ref,
@@ -106,6 +106,9 @@ class ValidationCorpus:
                     raise IncompleteInspection("VECTOR_INDEX_PARTIAL")
                 if intent.operation == "VECTOR":
                     self.last_readiness["vector_status"] = "READY"
+                    proof = getattr(self.embedding_client, "last_receipt", None)
+                    if proof is not None:
+                        self.last_readiness["query_embedding"] = dict(proof)
                 self.last_readiness["executed_methods"] = (intent.operation,)
                 limited = result.limited
                 by_episode = {
