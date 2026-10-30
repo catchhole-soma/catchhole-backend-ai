@@ -373,6 +373,22 @@ class _HybridSession(_Session):
         seen = {c.chunk_id for c in kept}
         return [*kept, *(c for c in found if c.chunk_id not in seen)]
 
+    def episode_ordered_head(self, plan, found):
+        """정렬 질문의 의미 검색 후보 중 가장 이른/늦은 ordered_top_k개. 유사도 순서보다 앞에 둔다."""
+        head = sorted(
+            found,
+            key=lambda c: (c.episode_no, c.chunk_index, str(c.chunk_id)),
+            reverse=plan.ordering == "LATEST",
+        )[: self.hcfg.ordered_top_k]
+        self.trace(
+            "ordered_vector",
+            round=self.rounds,
+            found=len(found),
+            kept=len(head),
+            boundary=head[0].episode_no if head else None,
+        )
+        return head
+
     async def focus_neighbors(self):
         """PARTIAL 초안이 인용한 장면의 앞뒤를 더 읽는다. 회차는 맞췄지만 세부가 빠진 경우용."""
         seeds = [e.chunk for e in self.supported_evidence if e.chunk]
@@ -630,11 +646,16 @@ class _HybridSession(_Session):
                 if self.hcfg.max_query_embeddings == 0:
                     self.codes.append("SEARCH_LIMIT")
                     break
+                vector_limit = self.hcfg.vector_top_k
+                if plan.ordering != "NONE":
+                    # 의미 검색은 활용형 차이를 넘어 장면을 찾으므로 정렬 질문은 더 넓게 읽고
+                    # 그중 가장 이른/늦은 몇 개를 앞세운다. 임베딩 호출 수는 그대로다.
+                    vector_limit = min(vector_limit * 3, 100)
                 found = await self.search(
                     "vector",
                     self.expansion_query(plan, draft, query),
                     _QueryEmbedding(self),
-                    limit=self.hcfg.vector_top_k,
+                    limit=vector_limit,
                     # A returned candidate may have been omitted by context limits.
                     # Only passages actually exposed to the answer model were read.
                     excluded_chunk_ids=tuple(
@@ -664,6 +685,9 @@ class _HybridSession(_Session):
                 )
             elif found and self.hcfg.neighbor_radius:
                 self.codes.append("SEARCH_LIMIT")
+            ordered_head = ()
+            if round_no > 1 and plan.ordering != "NONE":
+                ordered_head = self.episode_ordered_head(plan, found)
             focus = ()
             if round_no > 1 and partial_snapshot is not None:
                 # 앞 라운드가 일부만 답했다면 그 장면의 이어지는 대목을 새 전역 후보보다 먼저 읽는다.
@@ -674,6 +698,7 @@ class _HybridSession(_Session):
                 candidates,
                 fresh=found if round_no > 1 and plan.requested_parts else (),
                 focus=focus,
+                ordered=ordered_head,
             )
             if self.evidence_identity() == previous:
                 continue
@@ -1360,7 +1385,7 @@ class _HybridSession(_Session):
             )
         )[:1000]
 
-    def add_search_evidence(self, candidates, *, fresh=(), focus=()):
+    def add_search_evidence(self, candidates, *, fresh=(), focus=(), ordered=()):
         protected = {self.source_identity(e) for e in self.supported_evidence}
         direct = [e for e in self.evidences if e.direct_ref]
         direct.sort(key=lambda e: self.source_identity(e) not in protected)
@@ -1407,6 +1432,7 @@ class _HybridSession(_Session):
             *protected_chunks,
             *recovery,
             *focus,
+            *ordered,
             *fresh,
         ]
         bundle = compose_evidence(
