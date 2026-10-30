@@ -24,6 +24,8 @@ class HybridSettings(BaseSettings):
     evidence_tokens: int = Field(default=9000, ge=200, le=12000)
     # 3라운드는 앞 라운드가 PARTIAL/NONE이고 남은 시간이 충분할 때만 실행한다.
     max_rounds: int = Field(default=3, ge=1, le=3)
+    # PARTIAL 답의 빠진 요구를 같은 근거로 한 번 더 묻는 보완 호출. 모델 호출 상한 안에서만 실행한다.
+    repair_missing_parts: bool = True
     max_model_calls: int = Field(default=6, ge=1, le=6)
     max_query_embeddings: int = Field(default=2, ge=0, le=2)
 

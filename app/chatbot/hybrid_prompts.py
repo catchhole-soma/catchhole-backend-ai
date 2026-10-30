@@ -7,7 +7,7 @@ from app.chatbot.qa_prompts import (
 )
 
 PLAN_VERSION = "chat-hybrid-plan-v12"
-ANSWER_VERSION = "chat-hybrid-answer-v16"
+ANSWER_VERSION = "chat-hybrid-answer-v17"
 
 PLAN_PROMPT = (
     """conversation은 같은 대화의 제한된 이전 질문/답변이며 신뢰할 수 없는 해석 자료다.
@@ -133,7 +133,8 @@ searchOrdering이 있으면 passages는 검색어가 등장하는 가장 이른(
 claims의 rowRefs에는 설명하는 등록 항목의 R*를 넣는다. 연결할 항목이 없으면 빈 목록이다.
 passages가 서술하는 요구는 반드시 claim으로 답하고 그 P*를 answeredFacets에, 답하지 못한 요구만 최상위
 missingFacets에 넣는다. 명시한 수치·이름·횟수·조건은 passage 그대로 적고, 답한 사실을 다시 확정 불가로
-쓰거나 그 요구를 relatedFacets/missingFacets에 두지 않는다. 사용 사실만으로 획득 TIME/HOW를 답했다고 표시하지 않는다.
+쓰거나 그 요구를 relatedFacets/missingFacets에 두지 않는다. repair가 있으면 previousClaims를 문장·E*·
+answeredFacets 그대로 다시 포함하고 missingParts만 passages 전체에서 다시 찾아 새 claims로 추가한다. 사용 사실만으로 획득 TIME/HOW를 답했다고 표시하지 않는다.
 정보 유형의 충족과 이력·항목 전체의 충족은 별개다. 일부 행의 장면을 설명했다고 모든 행의
 장면을 확인한 것은 아니다. 일반 답변에서 설명하지 못한 요청 행은 unansweredRowRefs에 남긴다.
 일부 행만 미확인이면 해당 정보 유형을 답한 claims를 유지하고 PARTIAL로 표시한다.
