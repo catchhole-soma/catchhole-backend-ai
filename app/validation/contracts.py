@@ -238,6 +238,8 @@ class IntentRefs:
     source_refs: frozenset = frozenset()
     evidence_refs: frozenset = frozenset()
     target_length: int = 0
+    # VECTOR is offered only when this Worker can execute it (frozen RAG configured or no episodes).
+    search_operations: frozenset = frozenset({"KEYWORD", "VECTOR"})
 
 
 def validate_intents(intents, refs):
@@ -259,6 +261,8 @@ def validate_intents(intents, refs):
         if operation in {"KEYWORD", "VECTOR"} and (not intent.query or not intent.query.strip()
                                                     or len(intent.query) > 1000):
             raise ValueError("INVALID_SEARCH_REQUEST")
+        if operation in {"KEYWORD", "VECTOR"} and operation not in refs.search_operations:
+            raise ValueError("VECTOR_NOT_READY")
 
 
 def validate_batch(batch, segments, subjects, entries, target, *, intent_refs=None):

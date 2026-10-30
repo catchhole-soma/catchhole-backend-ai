@@ -198,6 +198,11 @@ class SettingValidationService:
             subject_order = list(dict.fromkeys(row["subject_ref"] for row in settings))
             entry_refs = [row["entry_ref"] for row in settings]
             source_refs = [source.ref for source in frozen.sources]
+            # Without frozen RAG an episode VECTOR lookup can only end in VECTOR_NOT_READY, so it is not offered.
+            search_operations = (("KEYWORD", "VECTOR")
+                                 if self.search is not None
+                                 or not any(source.kind == "EPISODE" for source in frozen.sources)
+                                 else ("KEYWORD",))
             catalogue = [
                 {key: row[key] for key in ("entry_ref", "subject_ref", "domain", "name", "aliases")}
                 | {"paths": list(row["state"].get("slots", row["state"].get("propertiesJson", {})))}
@@ -234,7 +239,7 @@ class SettingValidationService:
 
             def intent_refs():
                 return IntentRefs(frozenset(entry_refs), frozenset(source_refs),
-                                  frozenset(corpus.evidence), len(target))
+                                  frozenset(corpus.evidence), len(target), frozenset(search_operations))
 
             def batch_prepare(segment):
                 def inside(start, end):
@@ -246,7 +251,7 @@ class SettingValidationService:
                 return question_batch_schema(
                     segment_refs=[segment.ref], subject_refs=subject_order, rule_refs=list(rule_refs),
                     clue_refs=list(clue_refs), entry_refs=entry_refs, source_refs=source_refs,
-                    evidence_refs=list(evidence_refs))
+                    evidence_refs=list(evidence_refs), search_operations=search_operations)
             book_origins, book_coverage = {}, {}
             books = [source for source in frozen.sources if source.kind == "SETTING_BOOK"]
             for source in books:
@@ -649,7 +654,7 @@ class SettingValidationService:
                     receipt_refs=[receipt.ref for receipt in own_receipts[qref]],
                     question_refs=list(by_ref), fact_refs=[row["entry_ref"] for row in relevant],
                     evidence_refs=[row["ref"] for row in evidence], entry_refs=entry_refs,
-                    source_refs=source_refs)
+                    source_refs=source_refs, search_operations=search_operations)
                 judgment = await call_role(self.model, "JUDGE", payload, ValidationDecision, budget,
                                            schema=schema)
                 judgment = self._prepare_judgment(judgment, target, segment_refs, stats)

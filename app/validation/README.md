@@ -76,6 +76,8 @@ count와 생성, 원문 읽기와 최종 검증은 같은 `seconds` 벽시계 �
   후속 저장 DTO는 실제 subtype의 전체 직렬화를 소비하도록 연결해야 한다.
 - `Span`은 `T1`의 Unicode code point `[start,end)`와 실제 slice의 exact quote다.
   같은 문장은 위치로 구별한다. 제안의 start가 핵심 구간 안에 있을 때 그 구간이 소유한다.
+  GH331: 모델 위치가 1~4 code point 어긋나도 quote가 정확하면, 그 구간이 소유할 수 있는 가장 가까운 정확한 위치로 다시 계산한다.
+  원고에 없는 quote와 같은 거리의 반복은 그대로 `INVALID_EXACT_SPAN`이다. 설정 검사 span·판정 규칙은 [설정 검수 계약](../../docs/setting-validation-v1.md)의 GH331 절을 따른다.
   제안 끝은 제공된 문맥 안에서 핵심 구간 경계를 넘을 수 있다.
 - 구간별 응답 전체를 schema·coverage·원문 위치·중복/겹침·빈 이유·무변경 제안으로 검증한다.
   실패한 batch의 일부 제안을 건지지 않는다. 명백한 불필요 문자의 삭제는 빈 replacement로 표현할 수 있다.

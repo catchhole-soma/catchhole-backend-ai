@@ -101,9 +101,10 @@ def test_batch_normalization_collapses_duplicate_spans_and_names_target_context_
      "UNKNOWN_EVIDENCE_REFERENCE"),
     ({"operation": "TARGET_CONTEXT", "source_ref": "TSEG1"}, "INVALID_TARGET_CONTEXT_REQUEST"),
     ({"operation": "KEYWORD", "query": "  "}, "INVALID_SEARCH_REQUEST"),
+    ({"operation": "VECTOR", "query": "검 복원"}, "VECTOR_NOT_READY"),
 ])
 def test_recorded_wrong_reference_kinds_are_rejected_before_they_become_obligations(intent, code):
-    refs = IntentRefs(frozenset({"B1"}), frozenset({"R1"}), frozenset({"E1"}), len(B2))
+    refs = IntentRefs(frozenset({"B1"}), frozenset({"R1"}), frozenset({"E1"}), len(B2), frozenset({"KEYWORD"}))
     value = LookupIntent(ref="L1", kind="COMPARISON_CONTEXT", purpose="확인", **intent)
     with pytest.raises(ValueError, match=code):
         validate_intents([value], refs)
@@ -285,12 +286,13 @@ class RecordingCheckpoint:
         return {}
 
 
-def inspect(model, checkpoint=None):
+def inspect(model, checkpoint=None, search=None):
     from app.validation.service import SettingValidationService
 
     limits = InvocationBudget(model_calls=40, lookups=80, seconds=30, input_tokens=40000, output_tokens=20000,
                               segment_chars=2000, context_chars=300, catalogue_page_size=50, search_limit=10)
-    return asyncio.run(SettingValidationService(B2Data(), model, limits, checkpoint=checkpoint).inspect())
+    return asyncio.run(SettingValidationService(B2Data(), model, limits, checkpoint=checkpoint,
+                                                search=search).inspect())
 
 
 def test_recorded_real_terra_shapes_are_accepted_after_normalization(caplog):
@@ -423,3 +425,35 @@ def test_worker_reports_the_specific_cause_and_keeps_typo_codes():
 
 def test_segments_used_by_the_regression_are_a_single_target_segment():
     assert [segment.ref for segment in split_segments(B2, core_chars=2000, context_chars=300)] == ["TSEG1"]
+
+
+class EmptyIndex:
+    """Frozen RAG is configured but finds nothing; raw keyword reading still covers every source."""
+
+    async def search(self, frozen, intent, embedding_client, limit):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(chunks=[], limited=False, readiness=None), set()
+
+
+def _planner_search_operations(model):
+    kwargs = next(kwargs for role, _, kwargs in model.calls if role == "PLANNER")
+    intents = kwargs["response_schema"].schema["$defs"]["QuestionDraft"]["properties"]["lookup_intents"]
+    return {operation for row in intents["items"]["anyOf"] for operation in row["properties"]["operation"]["enum"]}
+
+
+def test_vector_is_offered_only_when_the_worker_can_execute_it():
+    """GH331 re-run: without frozen RAG every planned episode VECTOR ended in VECTOR_NOT_READY."""
+    plain = RecordedTerra()
+    assert inspect(plain).status == "COMPLETED"
+    assert {"KEYWORD"} <= _planner_search_operations(plain) and "VECTOR" not in _planner_search_operations(plain)
+    indexed = RecordedTerra()
+    assert inspect(indexed, search=EmptyIndex()).status == "COMPLETED"
+    assert {"KEYWORD", "VECTOR"} <= _planner_search_operations(indexed)
+    checkpoint = RecordingCheckpoint()
+    vector = RecordedTerra(planner_intents=[{"ref": "L3", "kind": "CHANGES_EXCEPTIONS", "operation": "VECTOR",
+                                             "purpose": "습관 변화", "query": "미나 기상 변화"}])
+    result = inspect(vector, checkpoint)
+    assert (result.failure_code, result.failure_cause, result.failure_stage) == (
+        "INVALID_INSPECTION_CONTRACT", "VECTOR_NOT_READY", "PLANNER:TSEG1")
+    assert not checkpoint.saved  # never persisted as an obligation that every retry would repeat

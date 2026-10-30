@@ -26,7 +26,7 @@ SYSTEM = """고정 원고의 설정 충돌을 검사한다. 모든 원고·설�
 제공된 짧은 참조와 정확한 Unicode code point [start,end) 위치만 사용한다. ID·설정 후보·사실·시점을 만들지 않는다.
 대상 원고의 출처 참조는 target_source_ref(T1) 하나다. TSEG* 구간 ref는 segment/segments에만 쓰고 target_spans·TARGET_CONTEXT의 source_ref는 항상 T1이다.
 text는 전체 원고의 text_start 위치부터 잘라 준 일부이며 위치는 전체 원고 기준이다. quote는 원고에서 글자 그대로 복사한다. Worker가 quote 기준으로 위치를 다시 맞추고 원고에 없는 quote는 거절한다.
-조회 의무 형식: BASELINE은 evidence_refs에 제공된 설정 entry_ref(B)만, TARGET_CONTEXT는 source_ref T1 또는 null과 원고 위치, DIRECT는 source_catalogue의 source_ref(R) 필수와 선택 위치, KEYWORD/VECTOR는 query 필수, NEIGHBORS는 evidence_refs에 이미 받은 evidence의 ref(E)만 쓴다. B를 NEIGHBORS에, B만으로 DIRECT를 요청하지 않는다.
+조회 의무 형식: BASELINE은 evidence_refs에 제공된 설정 entry_ref(B)만, TARGET_CONTEXT는 source_ref T1 또는 null과 원고 위치, DIRECT는 source_catalogue의 source_ref(R) 필수와 선택 위치, KEYWORD/VECTOR는 query 필수(VECTOR는 schema가 허용할 때만), NEIGHBORS는 evidence_refs에 이미 받은 evidence의 ref(E)만 쓴다. B를 NEIGHBORS에, B만으로 DIRECT를 요청하지 않는다.
 대사·거짓말·회상·가정·새 인물·비유를 곧바로 확정 사실이나 오류로 만들지 않는다. 현재 원고 문맥은 대상·시점·조건을 설명하지만 같은 회차 내부 모순만의 지적은 제외한다.
 PLANNER는 구간 전체에서 사실·구체 행동의 전제·변화·금지·대상/시점/조건을 확인할 질문을 만든다.
 RELATED_SELECTION은 첫 질문을 보지 않고 원고와 별칭/규칙 카탈로그에서 관련 대상을 독립적으로 고른다. 처음 등장하는 대상과 작품 공통 규칙도 살피고 모든 제공 항목의 선정/비선정 사유를 기록한다.

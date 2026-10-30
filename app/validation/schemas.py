@@ -56,7 +56,8 @@ def _intent_variant(operations, *, query, source_ref, positions, evidence_refs):
             "additionalProperties": False}
 
 
-def lookup_intent_schema(enums, *, entry_refs, source_refs, evidence_refs):
+def lookup_intent_schema(enums, *, entry_refs, source_refs, evidence_refs,
+                         search_operations=("KEYWORD", "VECTOR")):
     """One anyOf branch per operation: DIRECT needs an R ref, NEIGHBORS an E ref, BASELINE B refs."""
     variants = []
     if entry_refs:
@@ -70,7 +71,7 @@ def lookup_intent_schema(enums, *, entry_refs, source_refs, evidence_refs):
         variants.append(_intent_variant(["DIRECT"], query=False, source_ref=enums.string(source_refs),
                                         positions=True,
                                         evidence_refs={"type": "array", "items": {"type": "string"}}))
-    variants.append(_intent_variant(["KEYWORD", "VECTOR"], query=True, source_ref={"type": "null"},
+    variants.append(_intent_variant(list(search_operations), query=True, source_ref={"type": "null"},
                                     positions=False,
                                     evidence_refs={"type": "array", "items": {"type": "string"}}))
     if evidence_refs:
@@ -85,7 +86,7 @@ def _target_span(schema):
 
 
 def question_batch_schema(*, segment_refs, subject_refs, rule_refs, clue_refs, entry_refs, source_refs,
-                          evidence_refs=()):
+                          evidence_refs=(), search_operations=("KEYWORD", "VECTOR")):
     enums = _Enums()
     schema = deepcopy(_strict_schema(QuestionBatch.model_json_schema()))
     defs = schema["$defs"]
@@ -97,7 +98,8 @@ def question_batch_schema(*, segment_refs, subject_refs, rule_refs, clue_refs, e
     schema["properties"]["clue_checks"]["items"] = {"$ref": "#/$defs/ClueCoverage"}
     draft = defs["QuestionDraft"]["properties"]
     draft["lookup_intents"]["items"] = lookup_intent_schema(
-        enums, entry_refs=entry_refs, source_refs=source_refs, evidence_refs=evidence_refs)
+        enums, entry_refs=entry_refs, source_refs=source_refs, evidence_refs=evidence_refs,
+        search_operations=search_operations)
     draft["subject_refs"] = enums.array(subject_refs)
     defs.pop("LookupIntent")
     return schema
@@ -110,7 +112,7 @@ def selection_schema(*, entry_refs):
 
 
 def decision_schema(*, known_refs, receipt_refs, question_refs, fact_refs, evidence_refs, entry_refs,
-                    source_refs):
+                    source_refs, search_operations=("KEYWORD", "VECTOR")):
     enums = _Enums()
     schema = deepcopy(_strict_schema(ValidationDecision.model_json_schema()))
     defs, properties = schema["$defs"], schema["properties"]
@@ -122,6 +124,7 @@ def decision_schema(*, known_refs, receipt_refs, question_refs, fact_refs, evide
     defs["Disagreement"]["properties"]["fact_ref"] = enums.string(fact_refs)
     defs["Disagreement"]["properties"]["evidence_ref"] = enums.string(evidence_refs)
     properties["follow_ups"]["items"] = lookup_intent_schema(
-        enums, entry_refs=entry_refs, source_refs=source_refs, evidence_refs=evidence_refs)
+        enums, entry_refs=entry_refs, source_refs=source_refs, evidence_refs=evidence_refs,
+        search_operations=search_operations)
     defs.pop("LookupIntent")
     return schema
