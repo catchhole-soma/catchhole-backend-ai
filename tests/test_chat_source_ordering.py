@@ -50,29 +50,32 @@ def test_ordering_defaults_to_none_and_conversation_replies_cannot_order_search(
         HybridPlan.model_validate({**greeting, "ordering": "EARLIEST"})
 
 
-def test_ordering_anchors_prefer_the_asked_item_over_subject_names():
+def test_ordering_anchors_require_subject_names_and_half_of_the_asked_words():
     session, plan, _ = answer_context()
     unfocused = plan.subjects[0]
     assert unfocused.focus.attribute is None
-    # 집중 항목이 있으면 그 항목 표현이 기준이다.
+    # 집중 항목이 있으면 인물명(필수) + 그 항목 단어(선택)다.
     focused = unfocused.model_copy(
         update={"focus": unfocused.focus.model_copy(update={"attribute": "검은 창"})}
     )
-    assert session.ordering_anchors(plan.model_copy(update={"subjects": [focused]})) == [
-        "검은",
-        "창",
-    ]
-    # 집중 항목이 없으면 인물명을 뺀 검색어의 단어를 쓴다.
+    assert session.ordering_anchors(plan.model_copy(update={"subjects": [focused]})) == (
+        [unfocused.name],
+        ["검은", "창"],
+    )
+    # 집중 항목이 없으면 인물명을 뺀 검색어 단어가 선택 표현이다(최대 4개).
     bare = plan.model_copy(
         update={
             "subjects": [unfocused],
-            "search_terms": [unfocused.name, "검은 창", "첫 전투", unfocused.name.lower()],
+            "search_terms": [unfocused.name, "스킬", "첫 전투", unfocused.name.lower(), "고블린"],
         }
     )
-    assert session.ordering_anchors(bare) == ["검은", "창", "첫", "전투"]
-    # 검색어가 인물명뿐이면 인물명 자체가 기준이다(첫 등장 탐색).
+    assert session.ordering_anchors(bare) == ([unfocused.name], ["스킬", "첫", "전투", "고블린"])
+    # 검색어가 인물명뿐이면 인물명만 필수다(첫 등장 탐색).
     names_only = bare.model_copy(update={"search_terms": [unfocused.name]})
-    assert session.ordering_anchors(names_only) == [unfocused.name]
+    assert session.ordering_anchors(names_only) == ([unfocused.name], [])
+    # 인물이 없으면 검색어 단어만 선택 표현으로 쓴다.
+    no_subject = bare.model_copy(update={"subjects": [], "search_terms": ["반지", "강물"]})
+    assert session.ordering_anchors(no_subject) == ([], ["반지", "강물"])
     # 정렬 검색은 원문 검색 몫에 도구 1개를 더 남긴다.
     ordered = plan.model_copy(update={"ordering": "EARLIEST"})
     assert session.source_tool_reserve(ordered) == session.source_tool_reserve(plan) + 1
@@ -91,7 +94,7 @@ def test_earliest_ordering_reads_first_mention_episodes_before_lexical_hits(tmp_
     finished = result["finish"]["result"]
     assert finished["outcome"] == "ANSWER"
     assert result["search"].calls == ["keyword", "keyword_ordered", "neighbors", "revalidate"]
-    assert result["search"].ordered_calls == [(("아리아", "반지"), "EARLIEST")]
+    assert result["search"].ordered_calls == [((), ("아리아", "반지"), "EARLIEST")]
     request = result["raw"].requests[-1]["input"]
     assert [p["sourceEpisodeNo"] for p in request["passages"]] == [1, 3]
     assert request["searchOrdering"] == {
@@ -113,7 +116,7 @@ def test_latest_ordering_reverses_the_returned_order(tmp_path):
         search.ordered_chunks = [source_chunk("weather"), source_chunk("ring")]
 
     result = asyncio.run(replay(tmp_path, case, search_setup=setup))
-    assert result["search"].ordered_calls == [(("반지",), "LATEST")]
+    assert result["search"].ordered_calls == [((), ("반지",), "LATEST")]
     request = result["raw"].requests[-1]["input"]
     assert [p["sourceEpisodeNo"] for p in request["passages"]] == [3, 1]
     assert request["searchOrdering"]["boundaryEpisode"] == 3

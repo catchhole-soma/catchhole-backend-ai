@@ -104,9 +104,9 @@ class FakeSearch:
         self.record("keyword", scope)
         return SearchResult(tuple(self.keyword_chunks[:limit]), self.readiness, self.limited)
 
-    async def keyword_ordered(self, scope, anchors, order, limit):
+    async def keyword_ordered(self, scope, required, optional, order, limit):
         self.record("keyword_ordered", scope)
-        self.ordered_calls.append((tuple(anchors), order))
+        self.ordered_calls.append((tuple(required), tuple(optional), order))
         chunks = sorted(
             self.ordered_chunks or self.keyword_chunks,
             key=lambda c: (c.episode_no, c.chunk_index),

@@ -202,21 +202,25 @@ def test_keyword_ordered_reads_anchor_mentions_in_episode_order_with_rank_scores
         third, ["비요른이 메이스를 처음 쥐었다", "메이스만 언급되는 문장"]
     )
     late = corpus.chunks(ninth, ["비요른은 메이스를 휘둘렀다"])[0]
-    earliest = corpus.read("keyword_ordered", ["비요른", "메이스"], order="EARLIEST")
-    # 모든 anchor를 포함하는 청크만, 출처 회차·청크 순서대로 반환한다.
+    earliest = corpus.read("keyword_ordered", ["비요른"], ["메이스", "휘둘렀다"], order="EARLIEST")
+    # 필수 표현을 모두, 선택 표현을 절반 이상 포함하는 청크만 출처 회차·청크 순서대로 반환한다.
     assert [c.chunk_id for c in earliest] == [early_a, late]
     assert [c.episode_no for c in earliest] == [3, 9]
     assert [c.score for c in earliest] == [1.0, 1.0 - 1 / 10000]
     assert all(c.methods == ("KEYWORD",) for c in earliest)
-    latest = corpus.read("keyword_ordered", ["메이스"], order="LATEST", limit=2)
+    latest = corpus.read("keyword_ordered", [], ["메이스"], order="LATEST", limit=2)
     assert [c.chunk_id for c in latest] == [late, early_b]
     assert latest[0].score > latest[1].score
-    # 와일드카드는 값으로 묶여 literal이며 방향 값은 검증한다.
-    assert corpus.read("keyword_ordered", ["메이스%"], order="EARLIEST") == []
+    # 필수 표현만 있으면 그 인물의 첫 등장 순서다.
+    assert [c.episode_no for c in corpus.read("keyword_ordered", ["비요른"], [], order="EARLIEST")][
+        :2
+    ] == [1, 3]
+    # 와일드카드는 값으로 묶여 literal이며 방향·빈 표현은 검증한다.
+    assert corpus.read("keyword_ordered", [], ["메이스%"], order="EARLIEST") == []
     with pytest.raises(ValueError):
-        corpus.read("keyword_ordered", ["메이스"], order="RANDOM")
+        corpus.read("keyword_ordered", ["메이스"], [], order="RANDOM")
     with pytest.raises(ValueError):
-        corpus.read("keyword_ordered", ["   "], order="EARLIEST")
+        corpus.read("keyword_ordered", ["   "], [], order="EARLIEST")
 
 
 def test_vector_expansion_excludes_prior_hits_before_top_k_through_the_service(corpus):
