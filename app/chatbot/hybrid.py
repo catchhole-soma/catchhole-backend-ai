@@ -329,7 +329,7 @@ class _HybridSession(_Session):
         share = max(1, spare // remaining) if spare else 0
         return limit - self.tool_count - share
 
-    def ordering_anchors(self, plan):
+    def ordering_anchors(self, plan, objects=None):
         """최초/최후 탐색의 기준 표현. 인물명은 필수, 대상·사건 단어는 절반 이상 일치로 요구한다.
 
         인물명을 빼면 '스킬' 같은 일반 단어의 작품 첫 언급으로 흘러가고, 대상 단어를 모두
@@ -340,7 +340,8 @@ class _HybridSession(_Session):
         required = list(dict.fromkeys(s.name.strip() for s in plan.subjects if s.name.strip()))[:3]
         lowered = {n.casefold() for n in required}
         focus = [s.focus.attribute for s in plan.subjects if s.focus.attribute]
-        objects = focus or [t for t in plan.search_terms if t.strip().casefold() not in lowered]
+        if objects is None:
+            objects = focus or [t for t in plan.search_terms if t.strip().casefold() not in lowered]
         optional = list(
             dict.fromkeys(
                 w for term in objects for w in term.split() if w and w.casefold() not in lowered
@@ -348,9 +349,9 @@ class _HybridSession(_Session):
         )[:4]
         return required, optional
 
-    async def ordered_search(self, plan, found):
+    async def ordered_search(self, plan, found, objects=None):
         """검색어가 등장하는 출처 회차를 처음/마지막부터 읽어 일반 keyword 후보 앞에 둔다."""
-        required, optional = self.ordering_anchors(plan)
+        required, optional = self.ordering_anchors(plan, objects)
         anchors = [*required, *optional]
         # 이번 라운드의 남은 비용: 정렬 검색 1 + 이웃 1 + 영수증 1 + 최종 재검증 1
         if not anchors or not self.tools_available(4):
@@ -408,8 +409,8 @@ class _HybridSession(_Session):
         seeds = [e.chunk for e in self.supported_evidence if e.chunk]
         if not seeds or not self.hcfg.focus_radius:
             return ()
-        # 이번 라운드의 남은 비용: 이웃 1 + 영수증 1 + 최종 재검증 1
-        if not self.tools_available(3):
+        # 이번 라운드의 남은 비용: 이웃 1 + 영수증 1 + 최종 재검증 1 + 최종 영수증 1
+        if not self.tools_available(4):
             self.codes.append("SEARCH_LIMIT")
             return ()
         found = await self.search(
@@ -1021,6 +1022,9 @@ class _HybridSession(_Session):
                     if not self.models_available(embedding=True):
                         self.codes.append("SEARCH_LIMIT")
                         continue
+                    vector_limit = self.hcfg.vector_top_k
+                    if plan.ordering != "NONE":
+                        vector_limit = min(vector_limit * 3, 100)
                     found = await self.search(
                         "vector",
                         self.expansion_query(
@@ -1030,11 +1034,20 @@ class _HybridSession(_Session):
                             item_ref=item.ref,
                         ),
                         _QueryEmbedding(self),
-                        limit=self.hcfg.vector_top_k,
+                        limit=vector_limit,
                         excluded_chunk_ids=tuple(
                             e.chunk.chunk_id for e in self.evidences if e.chunk
                         ),
                     )
+                    if plan.ordering != "NONE" and found:
+                        # 항목 문맥 배분은 점수 등급으로 고르므로 가장 이른/늦은 후보를 최상위 등급에 둔다.
+                        head = self.episode_ordered_head(plan, found)
+                        kept = {c.chunk_id for c in head}
+                        top = max(c.score for c in found)
+                        found = [
+                            *(replace(c, score=top) for c in head),
+                            *(c for c in found if c.chunk_id not in kept),
+                        ]
                 elif not previous_attempts:
                     found = await self.search(
                         "keyword",
@@ -1042,6 +1055,9 @@ class _HybridSession(_Session):
                         limit=self.hcfg.keyword_top_k,
                         preferred_episode_ids=hints,
                     )
+                    if plan.ordering != "NONE":
+                        # 항목별 질문도 최초/최후 장면을 항목 표현 기준으로 회차 순서로 읽는다.
+                        found = await self.ordered_search(plan, found, objects=[query])
                 else:
                     continue
                 found_by_item.append((item.ref, found))

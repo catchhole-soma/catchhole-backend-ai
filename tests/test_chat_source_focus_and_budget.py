@@ -252,3 +252,18 @@ def test_third_round_stops_without_error_when_embedding_allowance_is_spent(tmp_p
     assert result["search"].calls.count("vector") == 1
     assert len(result["embedding"].inputs) == 1
     assert len(result["raw"].requests) == 3
+
+
+def test_focus_expansion_keeps_both_finalization_calls_funded(tmp_path):
+    # 1라운드 keyword·이웃·영수증(3) + 2라운드 vector·이웃(5) 뒤 남은 3개는 영수증·재검증·최종 영수증 몫이다.
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            partial_case(),
+            search_setup=replace_keyword_evidence,
+            config={"max_tool_calls": 8},
+        )
+    )
+    assert result["finish"].get("failure") is None
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    assert result["search"].calls == ["keyword", "neighbors", "vector", "neighbors", "revalidate"]

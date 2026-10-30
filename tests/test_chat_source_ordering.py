@@ -214,3 +214,33 @@ def test_ordering_anchors_keep_every_planned_subject_name():
     # 계획이 허용하는 세 인물을 모두 필수 표현으로 남겨 두 명만 있는 장면이 경계가 되지 않게 한다.
     assert required == ["세린", "아리아", "라온"]
     assert optional == ["만남"]
+
+
+def test_per_item_source_questions_also_use_ordered_search(tmp_path):
+    from tests.test_chat_quality_hybrid import (
+        item_answer,
+        set_source_text,
+        setup_catalog,
+        skill_case,
+        skills,
+    )
+
+    case = skill_case()
+    case["outputs"][0]["ordering"] = "EARLIEST"
+    case["outputs"].append(item_answer(2, text="세린은 스승에게 합성기술001을 배웠습니다."))
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            spring_setup=setup_catalog(skills(2)),
+            search_setup=lambda search: set_source_text(
+                search, "세린은 스승에게 합성기술001을 배웠다."
+            ),
+        )
+    )
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    # 항목별 경로도 keyword 뒤 정렬 검색을 호출하고, 인물명은 필수·항목 표현은 선택 anchor다.
+    assert "keyword_ordered" in result["search"].calls
+    required, optional, order = result["search"].ordered_calls[0]
+    assert required == ("세린",) and order == "EARLIEST"
+    assert optional and all("세린" not in word for word in optional)
