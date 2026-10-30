@@ -4,6 +4,7 @@
 
 | 버전 | 날짜 | 변경 | 평가 |
 | --- | --- | --- | --- |
+| [v0029](v0029.md) | 2026-10-30 | 챗봇 gpt-6 토큰 추정 o200k·원문 검색 도구 예약·PARTIAL 장면 이웃 확장·최초/최후 회차 순서 검색(plan v12/answer v15) ([Java #319](https://github.com/catchhole-soma/catchhole-backend-java/issues/319)) | 전체 4,640 통과/141 skip·기존 경고 1. 실제 모델 60발화 같은 고정본 DB: main 38/17/5 → 39/15/6(PASS/PARTIAL/FAIL, 블라인드). controls 6/6. 정렬 5문항 최종 build FAIL 0·PASS 1·PARTIAL 4 |
 | [v0028](v0028.md) | 2026-10-29 | 분석 상태 API read 기본 120초·연결/heartbeat/원장 30초 유지 ([PR #103](https://github.com/catchhole-soma/catchhole-backend-ai/pull/103)) | 전체 4,628 통과/140 skip·기존 경고 1. 집중 116 통과·실제 로컬 HTTP 3개 포함. 실제 모델 품질·운영 실패율 미측정 |
 | [v0027](v0027.md) | 2026-10-28~29 | 독립 오탈자 검사·위치/분류·구간 실패 보존·원고 변경 무효화·단일 생성 시도 경계 | #306 main 통합4,608통과/140skip·기존경고1. 전체ruff main480건과증감0. R1 전 실제 Terra 합성3사례 관측, 통합후추가유료호출없음 |
 | [v0026](v0026.md) | 2026-10-28 | 고정 기준 설정 질문·독립 보완·실제 근거 검색·Terra 역할별 판정 | Python 4,555/134 skip·Java 3,844/248 skip·bootJar 성공. 실PG 검색6/reader9·실HTTP2 포함 집중 통과. 실제 모델 품질 미측정 |
