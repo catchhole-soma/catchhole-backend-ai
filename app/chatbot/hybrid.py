@@ -1879,9 +1879,14 @@ class _HybridSession(_Session):
             )
         except (ModelTimeBudgetExceeded, ProviderOutputTruncated) as exc:
             # A failed expansion must not erase an earlier validated answer.
-            # With no supported snapshot the original failure still propagates.
             if not self.supported_evidence:
-                raise
+                # 첫 답변이 출력 상한에서 잘리고 복구할 시간이 없으면 실행 실패 대신 부족 안내로 마감한다.
+                # 긴 조회(두 인물 CURRENT_AND_HISTORY + 원문)에서 4,500토큰 답이 잘린 실제 사례.
+                self.codes.append("ANSWER_LIMIT")
+                self.trace(
+                    "answer_truncated_unrecovered", reason=type(exc).__name__, round=self.rounds
+                )
+                return self.empty_source_answer(plan)
             self.codes.append("SEARCH_LIMIT")
             self.trace("answer_expansion_stopped", reason=type(exc).__name__, round=self.rounds)
             return self.empty_source_answer(plan)

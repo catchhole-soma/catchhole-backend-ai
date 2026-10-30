@@ -11,8 +11,9 @@ import pytest
 
 from app.chatbot.hybrid import _HybridSession
 from app.chatbot.qa import _Session
+from app.chatbot.qa_render import NOTICES
 from app.chatbot.replay import ScriptedTextClient
-from tests.test_chat_hybrid import replay
+from tests.test_chat_hybrid import replay, scenario
 from tests.test_chat_hybrid_items import passage
 from tests.test_chat_requested_parts import (
     BEHAVIOR,
@@ -207,3 +208,16 @@ def test_soft_timeout_keeps_snapshot_and_unknown_usage_for_cancelled_call(tmp_pa
     assert len(unknown) == 1
     assert unknown[0]["inputTokens"] is None and unknown[0]["outputTokens"] is None
     assert result["spring"].receipts
+
+
+def test_unrecovered_first_answer_truncation_ends_insufficient_instead_of_failing(
+    tmp_path, monkeypatch
+):
+    # 첫 답변이 출력 상한에서 잘리고 복구 호출도 잘리면, 검증된 답이 없어도 실행 실패가 아니라
+    # 부족 안내로 마감한다(두 인물 CURRENT_AND_HISTORY + 원문에서 4,500토큰 답이 잘린 실제 사례).
+    truncated_provider(monkeypatch, first=1, repeat=True)
+    result = asyncio.run(replay(tmp_path, scenario("lexical_scene")))
+    assert result["finish"].get("failure") is None, result["finish"]
+    finished = result["finish"]["result"]
+    assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert NOTICES["ANSWER_LIMIT"] in finished["limitations"]
