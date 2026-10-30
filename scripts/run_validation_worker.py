@@ -1,6 +1,7 @@
 """Explicit opt-in validation runner. Reads configuration without loading a local .env."""
 import argparse
 import asyncio
+import logging
 import os
 
 from sqlalchemy import create_engine
@@ -71,4 +72,7 @@ def parser():
 
 
 if __name__ == "__main__":
+    # Fixed-code branch diagnostics only (GH331); HTTP client loggers stay at WARNING.
+    logging.basicConfig(level=logging.WARNING, format="[%(asctime)s] %(levelname)s %(name)s %(message)s")
+    logging.getLogger("app.validation").setLevel(logging.INFO)
     asyncio.run(run(parser().parse_args()))

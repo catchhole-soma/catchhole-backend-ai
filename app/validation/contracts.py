@@ -1,7 +1,8 @@
 """Validation-owned contracts; model references never grant source/work access."""
 
-from dataclasses import dataclass, field
 import math
+import re
+from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Literal
 
@@ -155,13 +156,116 @@ def split_segments(text, *, core_chars, context_chars):
                  for n, start in enumerate(range(0, len(text), core_chars)))
 
 
-def validate_span(span, text, *, source_ref="T1"):
+TARGET_REF = "T1"
+_SAFE_CODE = re.compile(r"[A-Z][A-Z0-9_]{0,99}")
+
+
+def safe_code(value, fallback=None):
+    """Return a Backend-safe fixed code (`[A-Z][A-Z0-9_]{0,99}`); never free text."""
+    return value if isinstance(value, str) and _SAFE_CODE.fullmatch(value) else fallback
+
+
+def validate_span(span, text, *, source_ref=TARGET_REF):
     if span.source_ref != source_ref or not 0 <= span.start < span.end <= len(text) or text[span.start:span.end] != span.quote:
         raise ValueError("INVALID_EXACT_SPAN")
     return True
 
 
-def validate_batch(batch, segments, subjects, entries, target):
+def _occurrences(text, quote):
+    index = text.find(quote)
+    while index >= 0:
+        yield index
+        index = text.find(quote, index + 1)
+
+
+def anchor_span(span, text, *, aliases=frozenset(), accept=None, stats=None):
+    """Re-anchor one model span on the frozen target before the strict exact check (GH331).
+
+    A known target segment alias (`TSEGn`) names the same frozen target, so it becomes `T1`;
+    any other reference is left for `validate_span` to reject. Offsets are recomputed only from
+    the model's own quote: an exact span is kept as is, otherwise the nearest exact occurrence
+    (within `accept`, if given) to the model start wins. An absent quote or an equidistant tie
+    stays unchanged and is therefore rejected. Quotes are never edited or invented.
+    """
+    updates = {}
+    if span.source_ref != TARGET_REF and span.source_ref in aliases:
+        updates["source_ref"] = TARGET_REF
+    if not (0 <= span.start < span.end <= len(text) and text[span.start:span.end] == span.quote):
+        length = len(span.quote)
+        hits = [hit for hit in _occurrences(text, span.quote) if accept is None or accept(hit, hit + length)]
+        if hits:
+            distance = min(abs(hit - span.start) for hit in hits)
+            nearest = [hit for hit in hits if abs(hit - span.start) == distance]
+            if len(nearest) == 1:
+                updates.update(start=nearest[0], end=nearest[0] + length)
+    if not updates:
+        return span
+    if stats is not None:
+        if "source_ref" in updates:
+            stats["TARGET_REF_ALIAS"] += 1
+        if "start" in updates:
+            stats["SPAN_REANCHORED"] += 1
+    return span.model_copy(update=updates)
+
+
+def normalize_intent(intent, aliases, stats=None):
+    """TARGET_CONTEXT may name the target by a segment alias; every other ref stays as given."""
+    if intent.operation == "TARGET_CONTEXT" and intent.source_ref != TARGET_REF and intent.source_ref in aliases:
+        if stats is not None:
+            stats["TARGET_REF_ALIAS"] += 1
+        return intent.model_copy(update={"source_ref": TARGET_REF})
+    return intent
+
+
+def normalize_batch(batch, target, *, aliases, accept=None, stats=None):
+    """Normalize every question span/intent of one planner/coverage batch; duplicates collapse."""
+    questions = []
+    for question in batch.questions:
+        spans = list(dict.fromkeys(anchor_span(span, target, aliases=aliases, accept=accept, stats=stats)
+                                   for span in question.target_spans))
+        intents = [normalize_intent(intent, aliases, stats) for intent in question.lookup_intents]
+        if spans != question.target_spans or intents != question.lookup_intents:
+            question = question.model_copy(update={"target_spans": spans, "lookup_intents": intents})
+        questions.append(question)
+    return batch.model_copy(update={"questions": questions})
+
+
+@dataclass(frozen=True)
+class IntentRefs:
+    """Actually readable references for lookup intents at the time a plan/follow-up is accepted."""
+
+    entry_refs: frozenset = frozenset()
+    source_refs: frozenset = frozenset()
+    evidence_refs: frozenset = frozenset()
+    target_length: int = 0
+    # VECTOR is offered only when this Worker can execute it (frozen RAG configured or no episodes).
+    search_operations: frozenset = frozenset({"KEYWORD", "VECTOR"})
+
+
+def validate_intents(intents, refs):
+    """Reject unreadable intents before they become durable obligations (GH331 S6)."""
+    for intent in intents:
+        operation = intent.operation
+        if operation == "BASELINE" and not set(intent.evidence_refs) <= refs.entry_refs:
+            raise ValueError("UNKNOWN_BASELINE_REFERENCE")
+        if operation == "DIRECT" and intent.source_ref not in refs.source_refs:
+            raise ValueError("UNKNOWN_SOURCE_REFERENCE")
+        if operation == "NEIGHBORS" and (not intent.evidence_refs
+                                         or not set(intent.evidence_refs) <= refs.evidence_refs):
+            raise ValueError("UNKNOWN_EVIDENCE_REFERENCE")
+        if operation == "TARGET_CONTEXT":
+            start = 0 if intent.start is None else intent.start
+            end = refs.target_length if intent.end is None else intent.end
+            if intent.source_ref not in {None, TARGET_REF} or not 0 <= start < end <= refs.target_length:
+                raise ValueError("INVALID_TARGET_CONTEXT_REQUEST")
+        if operation in {"KEYWORD", "VECTOR"} and (not intent.query or not intent.query.strip()
+                                                    or len(intent.query) > 1000):
+            raise ValueError("INVALID_SEARCH_REQUEST")
+        if operation in {"KEYWORD", "VECTOR"} and operation not in refs.search_operations:
+            raise ValueError("VECTOR_NOT_READY")
+
+
+def validate_batch(batch, segments, subjects, entries, target, *, intent_refs=None):
     expected = {s.ref for s in segments}
     if len(batch.segments) != len(expected) or {s.segment_ref for s in batch.segments} != expected:
         raise ValueError("SEGMENT_COVERAGE_MISSING")
@@ -176,6 +280,8 @@ def validate_batch(batch, segments, subjects, entries, target):
     for question in batch.questions:
         if not set(question.subject_refs) <= set(subjects):
             raise ValueError("UNKNOWN_SUBJECT_REFERENCE")
+        if intent_refs is not None:
+            validate_intents(question.lookup_intents, intent_refs)
         for span in question.target_spans:
             validate_span(span, target)
             if not any(s.context_start <= span.start < span.end <= s.context_end for s in segments):
@@ -219,8 +325,11 @@ def merge_questions(drafts):
 
 
 class IncompleteInspection(RuntimeError):
-    def __init__(self, code):
+    """`code` is the stable category; optional `cause` is the specific safe rule code (GH331)."""
+
+    def __init__(self, code, cause=None):
         self.code = code
+        self.cause = safe_code(cause)
         super().__init__(code)
 
 
@@ -291,3 +400,8 @@ class InspectionResult:
     coverage: tuple[dict[str, Any], ...] = ()
     failure_code: str | None = None
     evidence_bundles: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # GH331 diagnostics: the specific safe cause behind failure_code, the stage it happened in,
+    # and how often deterministic normalization fired. Never raw text, messages or IDs.
+    failure_cause: str | None = None
+    failure_stage: str | None = None
+    normalizations: dict[str, int] = field(default_factory=dict)
