@@ -126,7 +126,7 @@ class RetrievalSearchRepository:
         validate_limit(limit)
         if order not in {"EARLIEST", "LATEST"}:
             raise ValueError("Ordered search direction must be EARLIEST or LATEST")
-        required = [t for t in dict.fromkeys(str(a).strip() for a in required) if t][:2]
+        required = [t for t in dict.fromkeys(str(a).strip() for a in required) if t][:3]
         optional = [
             t for t in dict.fromkeys(str(a).strip() for a in optional) if t and t not in required
         ][:4]

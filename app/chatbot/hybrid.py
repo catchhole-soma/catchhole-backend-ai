@@ -336,7 +336,8 @@ class _HybridSession(_Session):
         요구하면 활용형 차이로 0건이 된다. 대상 표현은 집중 항목이 있으면 그것, 없으면 인물명을
         뺀 검색어다.
         """
-        required = list(dict.fromkeys(s.name.strip() for s in plan.subjects if s.name.strip()))[:2]
+        # 계획은 인물을 최대 3명 허용하므로 모두 필수 표현으로 보존한다.
+        required = list(dict.fromkeys(s.name.strip() for s in plan.subjects if s.name.strip()))[:3]
         lowered = {n.casefold() for n in required}
         focus = [s.focus.attribute for s in plan.subjects if s.focus.attribute]
         objects = focus or [t for t in plan.search_terms if t.strip().casefold() not in lowered]

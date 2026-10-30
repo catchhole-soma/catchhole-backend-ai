@@ -203,3 +203,14 @@ def test_first_round_keeps_ordered_hits_ahead_of_full_score_keyword_hits(tmp_pat
     request = result["raw"].requests[-1]["input"]
     assert [p["sourceEpisodeNo"] for p in request["passages"]] == [3]
     assert result["finish"]["result"]["outcome"] == "ANSWER"
+
+
+def test_ordering_anchors_keep_every_planned_subject_name():
+    session, plan, _ = answer_context()
+    base = plan.subjects[0]
+    subjects = [base.model_copy(update={"name": name}) for name in ("세린", "아리아", "라온")]
+    three = plan.model_copy(update={"subjects": subjects, "search_terms": ["만남"]})
+    required, optional = session.ordering_anchors(three)
+    # 계획이 허용하는 세 인물을 모두 필수 표현으로 남겨 두 명만 있는 장면이 경계가 되지 않게 한다.
+    assert required == ["세린", "아리아", "라온"]
+    assert optional == ["만남"]
