@@ -1,4 +1,12 @@
-"""Explicit opt-in validation runner. Reads configuration without loading a local .env."""
+"""Explicit opt-in validation runner. Reads configuration without loading a local .env.
+
+Continuous mode isolates every claim (GH340): an IncompleteInspection from one job (EXECUTION_STOPPED,
+INPUT_CHANGED, SOURCE_CHANGED, SOURCE_PURGED, ...) or any other exception from claim/process is logged
+with fixed codes, the exception type and job/report ids only, and the loop claims again. Consecutive
+failures back off exponentially (poll seconds x 2^n, capped at 60 s) and reset after a clean iteration.
+Cancellation, KeyboardInterrupt and a closing worker end the loop. --once handles at most one claim and
+re-raises its failure after logging, so the process exits non-zero.
+"""
 import argparse
 import asyncio
 import logging
@@ -11,7 +19,80 @@ from app.embeddings.client import OpenAIEmbeddingsClient
 from app.llm.openai_client import OpenAIResponsesClient
 from app.retrieval.contracts import IndexSpec
 from app.validation.client import ValidationExecutionClient
+from app.validation.contracts import IncompleteInspection, safe_code
 from app.worker.episode_validation_worker import EpisodeValidationWorker
+
+logger = logging.getLogger("app.validation.runner")
+MAX_BACKOFF_SECONDS = 60.0
+
+
+def _closing(worker):
+    return getattr(worker, "_close_task", None) is not None
+
+
+def _backoff_seconds(base, failures):
+    # The exponent is bounded so a long outage never overflows the float conversion.
+    return min(base * 2 ** min(failures, 30), max(MAX_BACKOFF_SECONDS, base))
+
+
+def _origin(exc):
+    """Innermost `module.function:line` (app code first); never the message or a file path."""
+    innermost = app = None
+    tb = exc.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        innermost = f"{frame.f_globals.get('__name__', '?')}.{frame.f_code.co_name}:{tb.tb_lineno}"
+        if innermost.startswith("app."):
+            app = innermost
+        tb = tb.tb_next
+    return app or innermost or "-"
+
+
+def _log_failure(log, exc, claim):
+    job = getattr(claim, "job_id", None) or "-"
+    report = getattr(getattr(claim, "scope", None), "reportId", None) or "-"
+    if isinstance(exc, IncompleteInspection):
+        log.warning("validation job incomplete code=%s cause=%s job=%s report=%s",
+                    safe_code(exc.code, "-"), exc.cause or "-", job, report)
+    else:
+        # Exception text may carry response bodies, provider text or URLs; only the type is logged.
+        log.error("validation job failed error=%s origin=%s job=%s report=%s",
+                  type(exc).__name__, _origin(exc), job, report)
+
+
+async def run_loop(worker, *, once, poll_seconds, sleeper=asyncio.sleep, should_stop=None, log=logger):
+    """Claim/process until stopped; one job's failure never ends continuous execution."""
+    base = poll_seconds if poll_seconds is not None and poll_seconds > 0 else 1.0
+    failures, logged_backoff = 0, 0.0
+    while not _closing(worker) and not (should_stop is not None and should_stop()):
+        claim = None
+        try:
+            claim = await worker.claim_next()  # Validates every required explicit server role/branch budget.
+            if claim is not None:
+                await worker.process_claimed(claim)
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            # Deploy shutdown: the job is not failed here; Spring lease expiry/reclaim recovers it.
+            raise
+        except Exception as exc:  # One claim's failure must keep the poller alive.
+            if _closing(worker):
+                log.info("validation runner stopping: worker is closing")
+                return
+            _log_failure(log, exc, claim)
+            if once:
+                raise
+            failures += 1
+        else:
+            failures = 0
+        if once:
+            return
+        if failures:
+            delay = _backoff_seconds(base, failures)
+            if delay > logged_backoff:
+                log.warning("validation runner backoff failures=%d sleep_seconds=%g", failures, delay)
+                logged_backoff = delay
+        else:
+            delay, logged_backoff = base, 0.0
+        await sleeper(delay)
 
 
 async def run(args):
@@ -38,13 +119,7 @@ async def run(args):
     worker = EpisodeValidationWorker(client, raw, enabled=True, worker_id=args.worker_id,
         readonly_sessions=sessions, embedding_client=embedding, index_spec=spec)
     try:
-        while True:
-            claim = await worker.claim_next()  # Validates every required explicit server role/branch budget.
-            if claim is not None:
-                await worker.process_claimed(claim)
-            if args.once:
-                return
-            await asyncio.sleep(args.poll_seconds)
+        await run_loop(worker, once=args.once, poll_seconds=args.poll_seconds)
     finally:
         await worker.aclose()
         await raw.http_client.aclose()
