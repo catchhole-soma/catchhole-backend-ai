@@ -320,3 +320,4 @@ Python AI 서버의 실패 응답은 Spring 서버가 해석하기 쉽도록 공
 `--shutdown-grace-seconds`(종료 신호 뒤 실행 중 Job 대기, 기본 `AI_WORKER_SHUTDOWN_GRACE_SECONDS` 또는 180초)를 받는다.
 실제 실행/복구·SELECT 전용 검색·optional embedding cap·로컬 합성 검증은
 [검수 실행 계약](docs/validation-execution-v1.md)을 따른다. 추출 Job·후보·자동 확정은 만들지 않는다.
+운영은 Worker Compose의 `ai-validation-worker`(기본 0개, `VALIDATION_WORKER_PROCESS_COUNT`)로 명시적으로 켜며 절차는 [Worker 운영 배포](deploy/WORKER_EC2_DEPLOYMENT.md#검수-worker-켜기-344)를 따른다.

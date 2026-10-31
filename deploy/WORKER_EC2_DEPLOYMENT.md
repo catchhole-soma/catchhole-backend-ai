@@ -1,6 +1,6 @@
 # CatchHole 인공지능 작업 서버 운영 배포
 
-이 문서는 Worker 서버용 Amazon EC2 인스턴스에서 설정 추출 Worker 5개, 캐릭터 비교 Worker 1개, 세계관 비교 Worker 1개를 실행하는 절차를 설명한다. API 서버, Caddy, Redis, PostgreSQL은 이 서버에서 실행하지 않는다.
+이 문서는 Worker 서버용 Amazon EC2 인스턴스에서 설정 추출 Worker 5개, 캐릭터 비교 Worker 1개, 세계관 비교 Worker 1개를 실행하는 절차를 설명한다. 검수 Worker는 기본 0개이며 [검수 Worker 켜기](#검수-worker-켜기-344)로 명시적으로 켠다. API 서버, Caddy, Redis, PostgreSQL은 이 서버에서 실행하지 않는다.
 
 ## 서버 파일
 
@@ -198,6 +198,72 @@ AI_WORKER_BLOCKING_MAX_WORKERS=3
 - 캐릭터 비교 Worker와 세계관 비교 Worker는 각각 1개이며 동시 작업과 언어 모델 요청을 각각 1개로 고정한다.
 - `LLM_MAX_CONCURRENT_REQUESTS=10`은 각 설정 추출 Worker 컨테이너 안의 상한이다. 전체 서버 또는 OpenAI 계정에 대한 전역 상한은 아니다.
 
+## 검수 Worker 켜기 (#344)
+
+`compose.worker.prod.yml`의 `ai-validation-worker`는 검수 전용 runner(`scripts/run_validation_worker.py --enable`)를 연속 실행한다. 기본 `VALIDATION_WORKER_PROCESS_COUNT=0`이라 컨테이너를 만들지 않는다. 분석 Worker와 같은 이미지·`SPRING_INTERNAL_API_BASE_URL`·`SPRING_INTERNAL_API_KEY`·`LLM_API_KEY`를 쓰고, DB 연결·S3·metrics port·tracing은 쓰지 않는다. 따라서 데이터베이스 연결 수 예산과 Prometheus target 수는 바뀌지 않는다.
+
+전제: Backend 저장소 `deploy/EC2_DEPLOYMENT.md`의 검수 실행 켜기 절차로 API 서버 `api.env`에 `VALIDATION_EXECUTION_ENABLED`와 검수 예산(`SPRING_APPLICATION_JSON`)을 먼저 적용하고 API가 정상 응답해야 한다. API 쪽이 꺼져 있으면 Worker를 켜지 않는다.
+
+`worker.env`에 다음 값을 둔다. 처음에는 프로세스 1개로 켠다.
+
+```dotenv
+VALIDATION_WORKER_PROCESS_COUNT=1
+VALIDATION_WORKER_CONCURRENCY=3
+VALIDATION_WORKER_LLM_CONCURRENCY=4
+VALIDATION_WORKER_POLL_SECONDS=5
+```
+
+- `VALIDATION_WORKER_CONCURRENCY`는 프로세스당 동시 검수 Job 수, `VALIDATION_WORKER_LLM_CONCURRENCY`는 그 프로세스 전체의 provider 동시 요청 상한이다. 컨테이너 안에서는 각각 `AI_WORKER_CONCURRENCY`, `LLM_MAX_CONCURRENT_REQUESTS`로 전달되며 분석 Worker 값과 분리된다.
+- 같은 provider key를 쓰므로 계정 전체 동시 요청은 분석 50(5×10) + 비교 2 + 검수 프로세스 수 × `VALIDATION_WORKER_LLM_CONCURRENCY`의 합이다.
+- `VALIDATION_WORKER_POLL_SECONDS`는 claim 시도 사이 간격이며 연속 실패 시 최대 60초까지 늘어난다.
+- 선택 값 `VALIDATION_WORKER_ID`(기본 `validation-prod`)는 claim의 `workerId`다. 프로세스를 2개 이상으로 늘려 같은 ID를 공유해도 Backend가 claim마다 Job을 잠그고 lease token을 따로 발급하므로 같은 Job을 중복 실행하지 않는다.
+
+렌더링을 확인한 뒤 검수 Worker만 생성한다. 분석·비교 Worker는 재생성하지 않는다.
+
+```bash
+cd /opt/catchhole
+```
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml config --quiet
+```
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml up -d ai-validation-worker
+```
+
+실행 상태와 로그를 확인한다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml ps
+```
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml logs --tail=100 ai-validation-worker
+```
+
+정상이면 대기 중에는 `validation runner` 로그가 조용하고, Job을 claim해 처리하면 `setting inspection completed`(오탈자 검사는 `typo inspection completed`) 줄이 남는다. `validation job failed`, `validation job incomplete`, `validation runner backoff`가 반복되면 API 쪽 검수 실행 설정·예산과 내부 키를 확인한다. 로그에는 고정 코드와 job/report ID만 남고 원문·응답 본문은 남지 않는다.
+
+끄려면 `worker.env`의 `VALIDATION_WORKER_PROCESS_COUNT=0`으로 되돌리고 검수 Worker만 0개로 줄인다. 다른 Worker의 대기 중인 설정 변경까지 함께 적용되지 않도록 전체 `up -d`나 `--remove-orphans`로 끄지 않는다.
+
+```bash
+sudo sed -i -e 's/^VALIDATION_WORKER_PROCESS_COUNT=.*/VALIDATION_WORKER_PROCESS_COUNT=0/' /opt/catchhole/worker.env
+```
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml up -d ai-validation-worker --scale ai-validation-worker=0
+```
+
+급히 멈출 때는 `stop`을 쓴다. 이 방법은 다음 `up -d`나 자동 배포에서 다시 시작되므로 위처럼 `worker.env`도 0으로 바꿔 둔다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml stop -t 210 ai-validation-worker
+```
+
+어느 방법이든 SIGTERM을 받으면 새 claim을 멈추고 실행 중 Job에 180초(`AI_WORKER_SHUTDOWN_GRACE_SECONDS`)를 준 뒤 남은 Job을 취소한다. 취소한 Job은 실패로 보고하지 않고 Backend lease 만료와 재claim으로 복구된다. Compose 종료 유예는 분석 Worker와 같은 210초다.
+
+GitHub Actions 자동 배포의 `manage-ai-runtime.py`는 같은 SHA의 Compose에 `ai-validation-worker`가 있어야 진행하고, 이 서비스의 내부 API 주소·내부 키·provider key가 `ai-worker`와 같은지 검사한다. 배포 뒤에는 `VALIDATION_WORKER_PROCESS_COUNT`만큼 검수 컨테이너가 실행될 때까지 기다리며, 0이면 실행 중인 검수 컨테이너가 없는지만 확인한다. 결과 JSON의 `validationReplicas`로 적용된 수를 확인한다.
+
 ## 데이터베이스 연결 수 예산
 
 | 실행 주체 | 프로세스 수 | 프로세스당 최대 연결 수 | 합계 |
@@ -340,7 +406,7 @@ cd /opt/catchhole
 ```
 
 ```bash
-sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml stop -t 210 ai-worker ai-character-comparison-worker ai-world-comparison-worker
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml stop -t 210 ai-worker ai-character-comparison-worker ai-world-comparison-worker ai-validation-worker
 ```
 
 ```bash
