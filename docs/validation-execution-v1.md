@@ -201,20 +201,29 @@ CL v1은 기존 Python 세 정규식과 반복 이름의 의미를 보존한다.
 
 ## 의미 단계와 완료 증명
 
-서버가 실제 전문 길이와 frozen entry count, 설정집 길이, 고정 segment/context/page 크기로 필수 grid를 계산한다.
+서버가 실제 전문 길이, frozen 항목의 이름·별칭, 설정집 길이, 고정 segment/context 크기로 필수 grid를 계산한다.
 Worker가 required-grid 또는 done:true를 보내 완료를 대체할 수 없다.
 
 - PLANNER: target segment별 QuestionBatch.
-- RELATED_SELECTION: target segment × 전체 catalogue page별 RelatedSelection.entries.
-- COVERAGE: target segment별 QuestionBatch. 선정한 모든 rule과 정확한 서버 CL 집합의 CHECKED/NOT_APPLICABLE 기록을 요구한다.
+- SUBJECT_RESOLUTION(GH349): target segment별 `{"mentions":[{"mention","subject_ref","reason"}]}`. 모델 호출 역할은 RELATED_SELECTION이다.
+  mention·reason은 공백이 아니고 mention은 중복되지 않으며 subject_ref는 null 또는 카탈로그 S 참조다. 빈 배열도 정상이다.
+- COVERAGE: target segment별 QuestionBatch. 같은 구간의 성공 SUBJECT_RESOLUTION이 먼저 저장돼 있어야 한다. rules는 관련 주체
+  (grid `segmentSubjects` ∪ 저장된 mentions의 null이 아닌 subject_ref)의 모든 항목 entry_ref 집합과 정확히 같아야 하고(비면 `[]`),
+  정확한 서버 CL 집합의 CHECKED/NOT_APPLICABLE 기록을 요구한다.
 - BOOK_SOURCE: 설정집 전문을 읽었다는 source_read_status=READY와 실제 planned_checks 기록. 빈 책도 읽기 성공+0 checks를 저장한다.
 - BOOK_COVERAGE: 각 target segment × 각 book segment의 QuestionBatch/rule 처리.
 - MERGED_PLAN: 저장된 모든 원 질문 originalRefs를 빠짐없이 연결한 질문 목록. 서버 UUID와 local Q-ref의 대응을 반환한다.
 - TYPO_SEGMENT: 분류(SPELLING/SPACING/TYPO)와 정확한 제안 또는 제안 0개의 완료 segment.
 
-SETTING과 TYPO grid는 독립 준비한다. SETTING의 gridVersion=1은 frozen manifest의 모든 BOOK_SOURCE 의무를
+SETTING과 TYPO grid는 독립 준비한다. SETTING grid는 GH349부터 `gridVersion=2`이고 TYPO grid는 1 그대로다.
+SETTING의 target 의무는 구간마다 `PLANNER:TSEGn`, `SUBJECT_RESOLUTION:TSEGn`, `COVERAGE:TSEGn` 순서이며 RELATED_SELECTION page 의무는 없다.
+`segmentSubjects`는 구간 순서의 `{segmentRef, subjectRefs}`이고, 항목의 비어 있지 않은 name 또는 aliases 문자열이 구간 문맥
+(`text[contextStart:contextEnd]`, code point)에 정확한 부분 문자열로 나온 주체를 S 번호 순·중복 없이 담는다(정규화 없음,
+name null·aliases 빈 항목은 제외). Worker는 첫 의미 단계 게시로 grid가 생긴 뒤 checkpoint에서 이 값을 읽고, 없거나 v1이면
+`GRID_VERSION_UNSUPPORTED`로 멈춘다. 상세 규칙은 [설정 검사 계약](setting-validation-v1.md)의 GH349 절이다.
+SETTING grid는 frozen manifest의 모든 BOOK_SOURCE 의무를
 먼저 넣고, 전문을 아직 확인하지 못한 book은 `books=[{sourceRef:...}]`와 `pendingBookRefs`로 남긴다.
-미확정 book은 빈 책/0 checks가 아니다. PLANNER/RELATED_SELECTION/COVERAGE 및 checkpoint는 다른 book 전문을
+미확정 book은 빈 책/0 checks가 아니다. PLANNER/SUBJECT_RESOLUTION/COVERAGE 및 checkpoint는 다른 book 전문을
 읽지 않고 저장한다. 성공 BOOK_SOURCE 게시가 그 book만 실제 전문 검증하여 totalCodePoints/plannedChecks/segments와
 해당 BOOK_COVERAGE 의무를 확정한다. 같은 Work 아래 최신 grid에 단조 병합하므로 동시 준비가 서로를 덮지 않는다.
 이미 성공한 stage/receipt와 checkpoint를 회수 후 복원하고 실패한 book만 다시 준비한다.
@@ -279,6 +288,8 @@ setting/typo의 model-calls/lookups/seconds/input-tokens/output-tokens/segment-c
 
 모든 generation 역할은 Terra이며 PLANNER medium / RELATED_SELECTION high / COVERAGE high / JUDGE medium / TYPO low다.
 RELATED_SELECTION은 독립 보완의 실제 transport 역할이고 BOOK_COVERAGE는 COVERAGE 역할을 사용한다.
+GH349부터 SUBJECT_RESOLUTION 단계가 RELATED_SELECTION 역할로 호출·예약·정산된다(역할 이름·모델·추론 강도·예산 key는 그대로).
+`cataloguePageSize`는 ENTRIES 읽기 페이지 크기로 계속 쓰는 예산 key다.
 count와 generation의 동일 옵션/schema는 Task3 adapter가 기존 검사기에서 유지해야 한다.
 QUERY_EMBEDDING은 선택 사항이며 명시 모델 text-embedding-3-small과 별도 cap을 함께 설정할 때만 예약한다.
 이는 기존 색인 계약의 모델 호환성이고 벡터 readiness나 검색 성공을 보장하지 않는다.
@@ -322,7 +333,8 @@ version은 기존 chat.retrieval-embedding-version override를 snapshot하고 �
 
 `EpisodeValidationWorker.claim_next/process_claimed/aclose`는 기존 호출형 inspect/check_typos와 별도다.
 `ValidationExecutionClient`가 CommonResponse.data/실제 lease/scope를 사용하며, Python은 validation DB에 쓰지 않는다.
-PLANNER/전체 RELATED_SELECTION page/COVERAGE/각 BOOK_SOURCE/각 BOOK_COVERAGE를 검증 직후 게시한다.
+PLANNER/SUBJECT_RESOLUTION/COVERAGE/각 BOOK_SOURCE/각 BOOK_COVERAGE를 검증 직후 게시한다.
+해소할 주체가 남지 않은 구간(주체 0개 또는 모두 이름 매칭)의 SUBJECT_RESOLUTION은 모델 호출 없이 빈 mentions로 게시한다.
 MERGED_PLAN은 첫 JUDGE 전에 서버 check UUID/revision/checkInputDigest를 발급받고 정상 NO_CONFLICT도 즉시 저장한다.
 FOLLOW_UP은 영향 질문 전부를 원자 revise한 다음 새 판단을 실행한다. 같은 입력의 checkpoint는 version만 전진하고
 원래 receipt와 근거를 보존한다. revision 저장 직후 crash는 서버 현재 의무와 이전 runtime revision 차이로 복원한다.
@@ -337,6 +349,14 @@ checkpoint v1은 성공 stage/decision을 중복 복사하지 않는다. 전역 
 두 분기는 독립 asyncio task이며 한 분기의 provider/role cap 실패나 질문 0개는 다른 분기를 취소하지 않는다.
 typed role-cap/token quota 409는 분기 실패로 처리한다. lease/current input/source 공유 무효화와 전체 취소는
 양쪽 children 및 새 예약/게시를 멈추되 원래 사용량의 UNKNOWN/늦은 실제 SETTLE는 유지한다.
+
+### GH349 grid v2 배포 호환
+
+서버는 `prepare`마다 설정에서 units를 다시 계산하고 `extendGrid`가 저장된 grid 기준과 비교한다. 그래서 배포 전에 claim된
+SETTING Job은 배포 뒤 `VALIDATION_SOURCE_VERSION_CONFLICT`로 끝나며 공개 retry(새 grid)로 다시 실행해야 한다.
+배포는 RUNNING 검수 Job이 없을 때 Backend와 AI를 같은 release로 올린다. grid v1 서버에 새 Worker가 붙으면 첫 PLANNER 게시 뒤
+`GRID_VERSION_UNSUPPORTED`로 SETTING 분기를 멈추고, 이미 저장된 v1 grid를 복원한 Job도 SUBJECT_RESOLUTION 전에 같은 코드로 멈춘다.
+Backend는 기록 보존을 위해 `RELATED_SELECTION` stage enum을 유지하지만 새 grid가 요구하지 않는다. Worker는 저장된 v1 stage를 읽지 않는다.
 
 ## 명시적 실행과 수동 검증
 
