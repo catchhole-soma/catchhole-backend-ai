@@ -1154,26 +1154,26 @@
           "R1": ""
         },
         "expectedSetting": {
-          "gridVersion": 1,
+          "gridVersion": 2,
           "units": [
             {
               "stage": "PLANNER",
               "ref": "TSEG1"
             },
             {
+              "stage": "SUBJECT_RESOLUTION",
+              "ref": "TSEG1"
+            },
+            {
               "stage": "COVERAGE",
               "ref": "TSEG1"
             },
             {
-              "stage": "RELATED_SELECTION",
-              "ref": "TSEG1:PAGE1"
-            },
-            {
-              "stage": "RELATED_SELECTION",
-              "ref": "TSEG1:PAGE2"
-            },
-            {
               "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "SUBJECT_RESOLUTION",
               "ref": "TSEG2"
             },
             {
@@ -1181,28 +1181,16 @@
               "ref": "TSEG2"
             },
             {
-              "stage": "RELATED_SELECTION",
-              "ref": "TSEG2:PAGE1"
-            },
-            {
-              "stage": "RELATED_SELECTION",
-              "ref": "TSEG2:PAGE2"
-            },
-            {
               "stage": "PLANNER",
+              "ref": "TSEG3"
+            },
+            {
+              "stage": "SUBJECT_RESOLUTION",
               "ref": "TSEG3"
             },
             {
               "stage": "COVERAGE",
               "ref": "TSEG3"
-            },
-            {
-              "stage": "RELATED_SELECTION",
-              "ref": "TSEG3:PAGE1"
-            },
-            {
-              "stage": "RELATED_SELECTION",
-              "ref": "TSEG3:PAGE2"
             },
             {
               "stage": "BOOK_SOURCE",
@@ -1234,6 +1222,20 @@
               "end": 5,
               "contextStart": 3,
               "contextEnd": 5
+            }
+          ],
+          "segmentSubjects": [
+            {
+              "segmentRef": "TSEG1",
+              "subjectRefs": []
+            },
+            {
+              "segmentRef": "TSEG2",
+              "subjectRefs": []
+            },
+            {
+              "segmentRef": "TSEG3",
+              "subjectRefs": []
             }
           ],
           "books": [
@@ -1338,10 +1340,14 @@
           "R2": "책"
         },
         "expectedSetting": {
-          "gridVersion": 1,
+          "gridVersion": 2,
           "units": [
             {
               "stage": "PLANNER",
+              "ref": "TSEG1"
+            },
+            {
+              "stage": "SUBJECT_RESOLUTION",
               "ref": "TSEG1"
             },
             {
@@ -1350,6 +1356,10 @@
             },
             {
               "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "SUBJECT_RESOLUTION",
               "ref": "TSEG2"
             },
             {
@@ -1407,6 +1417,16 @@
               "end": 3,
               "contextStart": 1,
               "contextEnd": 3
+            }
+          ],
+          "segmentSubjects": [
+            {
+              "segmentRef": "TSEG1",
+              "subjectRefs": []
+            },
+            {
+              "segmentRef": "TSEG2",
+              "subjectRefs": []
             }
           ],
           "books": [
@@ -1547,19 +1567,19 @@
         "sources": [],
         "sourceTexts": {},
         "expectedSetting": {
-          "gridVersion": 1,
+          "gridVersion": 2,
           "units": [
             {
               "stage": "PLANNER",
               "ref": "TSEG1"
             },
             {
-              "stage": "COVERAGE",
+              "stage": "SUBJECT_RESOLUTION",
               "ref": "TSEG1"
             },
             {
-              "stage": "RELATED_SELECTION",
-              "ref": "TSEG1:PAGE1"
+              "stage": "COVERAGE",
+              "ref": "TSEG1"
             },
             {
               "stage": "MERGED_PLAN",
@@ -1573,6 +1593,14 @@
               "end": 18,
               "contextStart": 0,
               "contextEnd": 18
+            }
+          ],
+          "segmentSubjects": [
+            {
+              "segmentRef": "TSEG1",
+              "subjectRefs": [
+                "S1"
+              ]
             }
           ],
           "clueVersion": 1,
@@ -1699,10 +1727,14 @@
           "R2": "책"
         },
         "expectedSetting": {
-          "gridVersion": 1,
+          "gridVersion": 2,
           "units": [
             {
               "stage": "PLANNER",
+              "ref": "TSEG1"
+            },
+            {
+              "stage": "SUBJECT_RESOLUTION",
               "ref": "TSEG1"
             },
             {
@@ -1711,6 +1743,10 @@
             },
             {
               "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "SUBJECT_RESOLUTION",
               "ref": "TSEG2"
             },
             {
@@ -1760,6 +1796,16 @@
               "end": 3,
               "contextStart": 1,
               "contextEnd": 3
+            }
+          ],
+          "segmentSubjects": [
+            {
+              "segmentRef": "TSEG1",
+              "subjectRefs": []
+            },
+            {
+              "segmentRef": "TSEG2",
+              "subjectRefs": []
             }
           ],
           "books": [
@@ -2067,19 +2113,20 @@
       "complete: server required-grid/check/no-check/typo aggregation"
     ],
     "stagePayloads": {
-      "RELATED_SELECTION": {
-        "ref": "TSEG1:PAGE1",
+      "SUBJECT_RESOLUTION": {
+        "stage": "SUBJECT_RESOLUTION",
+        "ref": "TSEG1",
         "payload": {
-          "entries": [
+          "mentions": [
             {
-              "entry_ref": "B1",
-              "selected": false,
-              "reason": "독립적인 카탈로그 점검"
+              "mention": "그녀",
+              "subject_ref": "S3",
+              "reason": "직전 문장의 서윤을 가리킨다"
             },
             {
-              "entry_ref": "B2",
-              "selected": true,
-              "reason": "실제 구간과 관련된 규칙"
+              "mention": "노인",
+              "subject_ref": null,
+              "reason": "카탈로그에 없는 인물"
             }
           ]
         }
@@ -2159,7 +2206,7 @@
     },
     "plansBoundary": "SETTING only; TYPO_SEGMENT must use /units classification/suggestion/coverage validation. /plans TYPO returns 400 without any stage/publication/version write.",
     "progressiveSourceGrid": {
-      "gridVersion": 1,
+      "gridVersion": 2,
       "serverAuthority": "All manifest BOOK_SOURCE obligations exist before book lengths are known; client required-grid or lengths never authorize completion",
       "pendingBookRow": {
         "sourceRef": "R2"
@@ -2169,7 +2216,7 @@
         "R2"
       ],
       "semantics": "Pending is unknown length and required review, never an empty book or zero required checks",
-      "publication": "PLANNER/RELATED_SELECTION/COVERAGE/checkpoint save without reading unrelated books. BOOK_SOURCE reads only its missing source. Citations still require actual bytes for their exact refs.",
+      "publication": "PLANNER/SUBJECT_RESOLUTION/COVERAGE/checkpoint save without reading unrelated books. BOOK_SOURCE reads only its missing source. Citations still require actual bytes for their exact refs.",
       "commit": "Under Work, merge discoveries monotonically with the latest grid and revalidate all frozen source metadata/current input/lease. Different known dimensions or source changes are conflicts.",
       "completion": "Any pending book blocks MERGED_PLAN, SETTING completion, and NO_CHECK success. After all book lengths are known, a fully covered target segment remains successful while other segments are incomplete.",
       "retry": "Restore successful stage payloads/server book segments/receipt IDs; read only unfinished book rules. Actual Worker/provider-count tests prove saved planner and successful first-book processing calls0; first book full reads0 in zero-question resume.",

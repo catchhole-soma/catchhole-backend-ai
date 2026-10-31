@@ -37,3 +37,26 @@ def test_runtime_is_disabled_and_cli_refuses_missing_explicit_opt_in():
     args = parser().parse_args(["--backend-url", "https://never-called.invalid", "--worker-id", "fixture"])
     with pytest.raises(ValueError, match="OFF"):
         asyncio.run(run(args))
+
+
+def test_grid_v2_cases_match_local_subject_matching_and_stage_order():
+    from app.validation.contracts import SubjectResolution, split_segments
+    from app.validation.service import _settings, grid_segment_subjects, mechanical_subject_refs
+
+    cases = [case for case in fixture()["gridCases"] if "expectedSetting" in case]
+    assert any(any(row["subjectRefs"] for row in case["expectedSetting"]["segmentSubjects"]) for case in cases)
+    for case in cases:
+        grid, budget = case["expectedSetting"], case["configuration"]["budgets"]["setting"]
+        settings = _settings([{"entryRef": f"B{n + 1}", **row} for n, row in enumerate(case.get("baselineEntries", []))])
+        segments = split_segments(case["target"], core_chars=budget["segmentChars"],
+                                  context_chars=budget["contextChars"])
+        subjects = {row["subject_ref"] for row in settings}
+        assert grid_segment_subjects(grid, segments, subjects) == mechanical_subject_refs(settings, case["target"], segments)
+        target_units = [(row["stage"], row["ref"]) for row in grid["units"]
+                        if row["stage"] in {"PLANNER", "SUBJECT_RESOLUTION", "COVERAGE", "RELATED_SELECTION"}]
+        assert target_units == [(stage, segment.ref) for segment in segments
+                                for stage in ("PLANNER", "SUBJECT_RESOLUTION", "COVERAGE")]
+        assert case["expectedTypo"]["gridVersion"] == 1
+    example = fixture()["stagePayloads"]["SUBJECT_RESOLUTION"]
+    assert (example["stage"], example["ref"]) == ("SUBJECT_RESOLUTION", "TSEG1")
+    SubjectResolution.model_validate(example["payload"])
