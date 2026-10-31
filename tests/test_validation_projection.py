@@ -94,3 +94,30 @@ def test_production_shaped_large_character_entry_shrinks_to_its_slot_values():
                 "valueJson", "snapshotVersion", "currentSupportingEvidenceVersion", "quote"):
         assert f'"{key}"' in full and f'"{key}"' not in compact
     assert compact.count('"factValue"') == 79
+
+
+def test_expanded_row_keeps_scalar_history_without_evidence_and_truncates_oldest():
+    from app.validation.projection import expanded_setting_row
+
+    row = {"entry_ref": "B1", "subject_ref": "S1", "domain": "characters", "name": "민수", "aliases": [],
+           "state": {"name": "민수", "slots": {"STATUS:손": {"factKey": "손", "factValue": "한손",
+                                                          "provenance": {"sourceKey": "k"}}},
+                     "historyFacts": [
+                         {"factType": "STATUS", "factKey": "손", "factValue": "양손 사용", "operation": "ADD",
+                          "effectiveFromEpisodeNo": 3, "supportingSource": {"quote": "옛 원문", "source_ref": None},
+                          "narrativeTime": {"factTime": {"kind": "PRESENT"}}},
+                         {"factType": "STATUS", "factKey": "손", "factValue": "한손", "operation": "UPDATE",
+                          "effectiveFromEpisodeNo": 9, "provenance": {"sourceKey": "k2"}}],
+                     "provenance": {"sourceKey": "k"}}}
+    expanded = expanded_setting_row(row)
+    assert expanded["state"]["slots"] == {"STATUS:손": {"factKey": "손", "factValue": "한손", "provenance": {"sourceKey": "k"}}}
+    assert expanded["state"]["historyFacts"] == [
+        {"factType": "STATUS", "factKey": "손", "factValue": "양손 사용", "operation": "ADD", "effectiveFromEpisodeNo": 3},
+        {"factType": "STATUS", "factKey": "손", "factValue": "한손", "operation": "UPDATE", "effectiveFromEpisodeNo": 9}]
+    assert "quote" not in str(expanded)
+    assert "provenance" not in expanded["state"] and "historyTruncated" not in expanded["state"]
+    truncated = expanded_setting_row(row, max_history=1)
+    assert [fact["factValue"] for fact in truncated["state"]["historyFacts"]] == ["한손"]  # newest kept
+    assert truncated["state"]["historyTruncated"] == 1
+    assert row["state"]["historyFacts"][0]["supportingSource"] == {"quote": "옛 원문", "source_ref": None}  # input untouched
+

@@ -249,7 +249,7 @@ GH349 후속 2: bundle `settings` 행은 `{"entry_ref": "B12", "subject_ref": "S
 subject_ref가 그 정본 행과 같은지, 중복이 없는지, ref 집합이 질문 주체의 항목 ∪ BASELINE 조회 ref와 같은지만 보고 행 내용 hash는 비교하지 않으며 추가 key는 무시한다.
 이유: 게시 명령 전체가 `maxPublicationBytes` 상한(당시 131,072 byte, 지금 1,048,576 byte)인데 예전 규칙은 그 항목들의 전체 정본 행을 요구했고 운영 인물 항목 하나가 362 KB라
 그 주체를 다루는 JUDGE는 게시할 수 없었다. bundle은 공개 응답에 나가지 않는다. `input_digest`는 이 ref 행 bundle로 계산한다(Worker 메타데이터, 권한 근거 아님).
-JUDGE 모델 입력은 그대로 압축 행(BASELINE으로 요청한 항목은 전체 행)이다. 이 변경 전 Worker가 전체 행으로 결정한 check를 재개하면
+JUDGE 모델 입력은 그대로 압축 행(BASELINE으로 요청한 항목은 근거·출처 없는 값 이력을 더한 확장 행, v0039)이다. 이 변경 전 Worker가 전체 행으로 결정한 check를 재개하면
 그 bundle은 entry_ref/subject_ref만 읽어 ref 행으로 돌려주고 다시 JUDGE하거나 게시하지 않는다. 공통 fixture의 판정 예시는 `settings: []`라 바뀌지 않는다.
 정상 NO_CONFLICT도 완료 check/receipts를 저장한다. E-ref는 실제 source_ref로 분류한다. T1을 E1로 포장해도
 CONFLICT/SUSPECTED_CONFLICT의 외부 비교 근거가 될 수 없고 frozen fact 또는 검증된 T1 이외의 source만 인정한다.
