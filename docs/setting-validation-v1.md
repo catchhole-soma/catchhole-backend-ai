@@ -151,7 +151,7 @@ GH349 후속(2026-10-31 첫 운영 실행): 30회차 작품에서 COVERAGE:TSEG1
   모델이 보는 것과 달리 고정 항목 읽기(`read_entries_page`), Worker 검증, receipt는 전체 투영 그대로다. 게시·checkpoint `evidence_bundle`의 `settings`는
   같은 항목의 ref 행만 담는다(아래 bundle ref 행, GH349 후속 2). 질문의 조회 의무나 JUDGE FOLLOW_UP의
   BASELINE이 `evidence_refs`로 요청한 항목은 그 질문의 다음 JUDGE 입력에 전체 행으로 준다. system prompt 한 줄이 이 압축과 BASELINE 요청 방법을 알린다.
-- 1글자 이름: 2 code point 미만의 name·alias는 기계 매칭에서 뺀다(1글자 이름이 거의 모든 문맥에 걸려 구간당 16~22주체가 COVERAGE에 들어갔다).
+- 1글자 이름: 2 code point 미만의 name·alias는 기계 매칭에서 뺀다(1글자 이름이 거의 모든 문맥에 걸려 구간당 16~22주체가 COVERAGE에 들어갔다). 빠진 1글자 이름은 SUBJECT_RESOLUTION이 찾는다: prompt는 `mechanical_subject_refs`에 없는 대상이면 글자 그대로의 언급도 mentions에 적게 한다(이미 기계 매칭된 대상만 제외).
   서버 SETTING grid는 같은 규칙으로 `gridVersion: 3`(모양은 v2와 같음)이며 Worker는 2·3을 모두 받는다. `subject_catalogue`에는 그대로 남아 SUBJECT_RESOLUTION이 문맥으로 해소할 수 있다.
 - 입력 상한 안전장치: 관련 항목이 `MAX_COVERAGE_SETTINGS`(400)를 넘으면 카탈로그 순서의 앞 400개만 COVERAGE 모델에 주고(`rule_refs`·schema enum도 400개),
   나머지는 모델 응답 뒤 Worker가 `NOT_APPLICABLE` + `입력 상한으로 모델 점검에서 제외됨`으로 rules에 더한다. 그래서 저장 rules는 여전히 관련 항목 전체이며
