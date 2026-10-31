@@ -151,6 +151,51 @@ class SpringWorkerClient:
         _raise_for_spring_status(response)
         return WorkerAnalysisJobPayload.model_validate(response.json()["data"])
 
+    async def claim_relationship_job(self) -> WorkerAnalysisJobPayload | None:
+        request = WorkerAnalysisJobClaimRequest(
+            allowed_job_types=[AnalysisJobType.RELATIONSHIP_EXTRACTION],
+            model_name="gpt-6.1-terra", supported_analysis_modes=[AnalysisMode.CONFIRMED_ONLY],
+            supported_source_kinds=[AnalysisSourceKind.EPISODE], supports_relationship_analysis=True,
+        )
+        response = await self._request(
+            "POST", self._url("/api/internal/v1/relationship-jobs/claim"),
+            trace_request=False,
+            headers=self._headers(), json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
+        )
+        if response.status_code == 204:
+            return None
+        _raise_for_spring_status(response)
+        return WorkerAnalysisJobPayload.model_validate(response.json()["data"])
+
+    async def heartbeat_relationship_job(self, analysis_job_id: UUID, lease_token: UUID):
+        response = await self._request(
+            "POST", self._url(f"/api/internal/v1/relationship-jobs/{analysis_job_id}/heartbeat"),
+            headers=self._headers(lease_token), processing_request=False,
+        )
+        _raise_for_spring_status(response)
+        return WorkerAnalysisJobHeartbeatResponse.model_validate(response.json()["data"])
+
+    async def complete_relationship_job(self, analysis_job_id: UUID, lease_token: UUID,
+                                        summary_json: str | None = None) -> None:
+        request = WorkerAnalysisJobCompleteRequest(summary_json=summary_json)
+        response = await self._request(
+            "POST", self._url(f"/api/internal/v1/relationship-jobs/{analysis_job_id}/complete"),
+            headers=self._headers(lease_token), json=request.model_dump(by_alias=True, exclude_none=True),
+        )
+        _raise_for_spring_status(response)
+
+    async def fail_relationship_job(self, analysis_job_id: UUID, lease_token: UUID,
+                                    error_message: str, failure_code: AnalysisFailureCode,
+                                    *, failure_diagnostics: WorkerFailureDiagnostics | None = None) -> None:
+        request = WorkerAnalysisJobFailRequest(
+            error_message=error_message, failure_code=failure_code, failure_diagnostics=failure_diagnostics,
+        )
+        response = await self._request(
+            "POST", self._url(f"/api/internal/v1/relationship-jobs/{analysis_job_id}/fail"),
+            headers=self._headers(lease_token), json=request.model_dump(by_alias=True, mode="json", exclude_none=True),
+        )
+        _raise_for_spring_status(response)
+
     async def get_relationship_analysis(self, analysis_job_id: UUID, lease_token: UUID) -> dict | None:
         response = await self._request(
             "GET", self._url(f"/api/internal/v1/analysis-jobs/{analysis_job_id}/relationship-analysis"),

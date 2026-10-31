@@ -33,6 +33,7 @@ PURPOSES = frozenset(
 JOB_TYPES = frozenset(
     {
         "SETTING_EXTRACTION",
+        "RELATIONSHIP_EXTRACTION",
         "CHARACTER_FACT_COMPARISON",
         "WORLD_SETTING_COMPARISON",
     }
@@ -135,7 +136,7 @@ class WorkerMetrics:
             "catchhole-ai",
             _bounded(environment, frozenset({"local", "prod"})),
             _bounded(
-                worker_kind, frozenset({"analysis", "character-comparison", "world-comparison"})
+                worker_kind, frozenset({"analysis", "character-comparison", "world-comparison", "relationship"})
             ),
         )
         labels = ("application", "environment", "worker_kind")
