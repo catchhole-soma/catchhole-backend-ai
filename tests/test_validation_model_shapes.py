@@ -30,7 +30,7 @@ from app.validation.contracts import (
     validate_intents,
     validate_span,
 )
-from app.validation.schemas import decision_schema, question_batch_schema
+from app.validation.schemas import decision_schema, question_batch_schema, subject_resolution_schema
 from tests.test_setting_validation_service import SyntheticData
 
 FIXTURE = Path(__file__).parent / "fixtures" / "episode_validation_cases.json"
@@ -183,6 +183,23 @@ def test_coverage_enums_are_capped_for_large_catalogues():
     assert baseline["evidence_refs"]["items"] == {"type": "string"}
 
 
+def test_subject_resolution_schema_offers_only_catalogue_subjects_or_null():
+    schema = subject_resolution_schema(subject_refs=["S1", "S2"])
+    _assert_strict(schema, schema["$defs"])
+    mention = schema["$defs"]["MentionResolution"]
+    assert mention["required"] == ["mention", "subject_ref", "reason"]
+    assert mention["properties"]["subject_ref"] == {"anyOf": [{"type": "string", "enum": ["S1", "S2"]},
+                                                              {"type": "null"}]}
+    assert mention["properties"]["mention"]["minLength"] == mention["properties"]["reason"]["minLength"] == 1
+    # Built once per report: every segment's call gets the same schema (provider prompt cache).
+    assert schema == subject_resolution_schema(subject_refs=["S1", "S2"])
+    empty = subject_resolution_schema(subject_refs=[])
+    assert empty["$defs"]["MentionResolution"]["properties"]["subject_ref"] == {"type": "null"}
+    big = subject_resolution_schema(subject_refs=[f"S{n}" for n in range(1, 151)])
+    assert big["$defs"]["MentionResolution"]["properties"]["subject_ref"] == {
+        "anyOf": [{"type": "string", "pattern": "^(S[1-9][0-9]*)$"}, {"type": "null"}]}
+
+
 # --- recorded real-model shapes through the full validation path ------------------------------------
 
 class B2Data(SyntheticData):
@@ -220,8 +237,7 @@ class RecordedTerra:
         role = payload["role"]
         self.calls.append((role, payload, kwargs))
         if role == "RELATED_SELECTION":
-            value = {"entries": [{"entry_ref": row["entry_ref"], "selected": True, "reason": "등장 인물"}
-                                 for row in payload["catalogue"]]}
+            value = {"mentions": []}
         elif role in {"PLANNER", "COVERAGE"}:
             if role == "PLANNER":
                 questions = [question("wake", [span(WAKE)], "새벽 기상", self.planner_intents),
@@ -333,12 +349,13 @@ def test_recorded_real_terra_shapes_are_accepted_after_normalization(caplog):
     coverage = next(payload for role, payload, _ in model.calls if role == "COVERAGE")
     assert planner["target_source_ref"] == coverage["target_source_ref"] == "T1"
     assert "catalogue" not in coverage and coverage["rule_refs"] == ["B1"]
-    assert [row["entry_ref"] for row in coverage["subject_catalogue"]] == ["B1"]
+    # GH349: one identification row per subject; 미나 is matched by name, so no resolution call is needed.
+    assert coverage["subject_catalogue"] == planner["subject_catalogue"] == [
+        {"subject_ref": "S1", "domain": "characters", "name": "미나", "aliases": []}]
     judge_schemas = [kwargs["response_schema"].schema for role, _, kwargs in model.calls if role == "JUDGE"]
     assert len(judge_schemas) == 6 and all(schema == judge_schemas[0] for schema in judge_schemas)
     names = {kwargs["response_schema"].name for _, _, kwargs in model.calls}
-    assert names == {"validation_planner_v2", "validation_related_selection_v2", "validation_coverage_v2",
-                     "validation_judge_v2"}
+    assert names == {"validation_planner_v2", "validation_coverage_v2", "validation_judge_v2"}
     assert "setting inspection completed" in caplog.text
 
 

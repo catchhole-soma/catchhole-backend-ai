@@ -6,15 +6,21 @@ and in the validators, which remain the authority either way.
 
 PLANNER and JUDGE run many times with the same system prompt, and the provider caches that identical
 prefix only while the schema is identical too. Their schemas therefore constrain references by kind
-(`B*`, `R*`, `E*`, `L*`, ...) with fixed patterns instead of per-call lists. COVERAGE, BOOK_COVERAGE and
-RELATED_SELECTION list the exact selected rules/clues/page entries (S3), capped so a large catalogue never
-produces an oversized schema.
+(`B*`, `R*`, `E*`, `L*`, ...) with fixed patterns instead of per-call lists. COVERAGE and BOOK_COVERAGE list
+the exact selected rules/clues (S3), capped so a large catalogue never produces an oversized schema.
+SUBJECT_RESOLUTION (GH349) lists the report's catalogue subject refs or null; it is built once per report so
+its prefix stays cacheable like JUDGE.
 """
 
 import re
 from copy import deepcopy
 
-from app.validation.contracts import TARGET_REF, QuestionBatch, RelatedSelection, ValidationDecision
+from app.validation.contracts import (
+    TARGET_REF,
+    QuestionBatch,
+    SubjectResolution,
+    ValidationDecision,
+)
 from app.validation.models import _strict_schema
 
 _ENUM_LIMIT = 100
@@ -137,9 +143,17 @@ def question_batch_schema(*, segment_refs, subject_refs, rule_refs, clue_refs, e
     return schema
 
 
-def selection_schema(*, entry_refs):
-    schema = deepcopy(_strict_schema(RelatedSelection.model_json_schema()))
-    schema["$defs"]["EntrySelection"]["properties"]["entry_ref"] = _Enums().string(entry_refs)
+def subject_resolution_schema(*, subject_refs):
+    """GH349: `subject_ref` is one of the report's catalogue subjects or null; identical for every segment.
+
+    Up to the enum limit the refs are listed exactly; a larger catalogue falls back to the `S*` pattern and
+    the validator remains the authority. Without subjects only null is offered.
+    """
+    schema = deepcopy(_strict_schema(SubjectResolution.model_json_schema()))
+    refs = list(dict.fromkeys(subject_refs))
+    subject = _Enums().string(refs) if len(refs) <= _ENUM_LIMIT else ref_kind("S", values=refs)
+    schema["$defs"]["MentionResolution"]["properties"]["subject_ref"] = (
+        {"anyOf": [subject, {"type": "null"}]} if refs else {"type": "null"})
     return schema
 
 

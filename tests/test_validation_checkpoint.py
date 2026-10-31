@@ -187,10 +187,11 @@ def test_large_book_without_questions_is_not_copied_into_checkpoint_and_resumes_
                 p = json.loads(kwargs["user_prompt"])
                 self.calls.append(p)
                 if p["role"] == "RELATED_SELECTION":
-                    body = {"entries": [{"entry_ref": r["entry_ref"], "selected": False, "reason": "합성"} for r in p["catalogue"]]}
+                    body = {"mentions": []}
                 else:
+                    rules = [r["ref"] for r in p.get("raw_rules", [])] + [r["entry_ref"] for r in p.get("settings", [])]
                     body = {"questions": [], "segments": [{"segment_ref": p["segment"]["ref"], "status": "NO_CHECK", "reason": "합성"}],
-                            "rules": [{"entry_ref": r["ref"], "status": "CHECKED", "reason": "합성"} for r in p.get("raw_rules", [])],
+                            "rules": [{"entry_ref": ref, "status": "CHECKED", "reason": "합성"} for ref in rules],
                             "clue_checks": []}
                 return LlmTextResponse(text=json.dumps(body), input_token_count=80, output_token_count=7)
         model = Empty()
@@ -204,4 +205,68 @@ def test_large_book_without_questions_is_not_copied_into_checkpoint_and_resumes_
         second = await SettingValidationService(data, model, budget, checkpoint=saved).inspect()
         assert second.status == "COMPLETED"
         assert len(model.calls) == calls + 1  # Only R2's single outstanding raw rule.
+    asyncio.run(run())
+
+
+def test_crash_after_subject_resolution_resumes_without_a_second_resolution_call():
+    from tests.test_setting_validation_service import subject_data
+
+    async def run():
+        saved, data = SavedStages(), subject_data()
+        mention = {"mention": "그 여자", "subject_ref": "S2", "reason": "앞 문장의 서윤을 가리킨다"}
+        model = SyntheticModel(mentions=[mention])
+        saved.crash_stage = "SUBJECT_RESOLUTION"
+        with pytest.raises(asyncio.CancelledError):
+            await SettingValidationService(data, model, limits(), checkpoint=saved).inspect()
+        assert saved.stages["SUBJECT_RESOLUTION", "TSEG1"] == {"mentions": [mention]}
+        assert [role for role, *_ in model.calls] == ["PLANNER", "RELATED_SELECTION"]
+        first = len(model.calls)
+        model.mentions = []  # a new call would drop 서윤; the stored stage must be used instead
+        result = await SettingValidationService(data, model, limits(), checkpoint=saved).inspect()
+        assert result.status == "COMPLETED"
+        resumed = [(role, payload) for role, payload, _ in model.calls[first:]]
+        assert [role for role, _ in resumed][:1] == ["COVERAGE"]
+        assert not {"PLANNER", "RELATED_SELECTION"} & {role for role, _ in resumed}
+        assert resumed[0][1]["rule_refs"] == ["B1", "B2", "B3"]
+    asyncio.run(run())
+
+
+def test_nothing_left_to_resolve_stores_an_empty_resolution_without_a_model_call():
+    async def run():
+        saved, model = SavedStages(), SyntheticModel()
+        result = await SettingValidationService(SyntheticData(), model, limits(), checkpoint=saved).inspect()
+        assert result.status == "COMPLETED"
+        # 민수, the only subject, is already matched by name: no model output could change the set.
+        assert saved.stages["SUBJECT_RESOLUTION", "TSEG1"] == {"mentions": []}
+        assert "RELATED_SELECTION" not in {role for role, *_ in model.calls}
+    asyncio.run(run())
+
+
+def test_setting_grid_is_reloaded_once_after_the_first_publication_creates_it():
+    from uuid import uuid4
+
+    from app.validation.checkpoint import ValidationCheckpoint
+    from app.validation.client import ExecutionScope, ValidationClaim
+
+    grid = {"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S1"]}]}
+
+    class Client:
+        loads = 0
+
+        async def load_checkpoint(self, claim, gate=None):
+            self.loads += 1
+            return {"requiredGrid": {"SETTING": grid}}
+
+    async def run():
+        claim = ValidationClaim(uuid4(), uuid4(), ExecutionScope(contractVersion=1, reportId=uuid4(),
+                                                                generation=1, inputDigest="a" * 64), {})
+        view = {"scope": claim.scope.model_dump(mode="json"), "stages": [], "checks": [], "branches": {},
+                "requiredGrid": None}
+        client = Client()
+        checkpoint = ValidationCheckpoint(client, claim, view, None)
+        assert await checkpoint.setting_grid() == grid
+        assert await checkpoint.setting_grid() == grid
+        assert client.loads == 1
+        known = ValidationCheckpoint(client, claim, {**view, "requiredGrid": {"SETTING": {"gridVersion": 1}}}, None)
+        assert await known.setting_grid() == {"gridVersion": 1} and client.loads == 1
     asyncio.run(run())

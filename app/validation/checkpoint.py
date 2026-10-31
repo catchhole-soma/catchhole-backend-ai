@@ -97,6 +97,15 @@ class ValidationCheckpoint:
         if stage == "BOOK_SOURCE":
             self.grid = (await self.client.load_checkpoint(self.claim, self.gate))["requiredGrid"]
 
+    async def setting_grid(self):
+        """The server-prepared SETTING grid (GH349 `segmentSubjects`), or None if the server has none yet.
+
+        The first semantic publication creates it, so a missing branch is reloaded once from Java.
+        """
+        if not isinstance(self.grid.get(self.branch), dict):
+            self.grid = (await self.client.load_checkpoint(self.claim, self.gate)).get("requiredGrid") or {}
+        return deepcopy(self.grid.get(self.branch))
+
     def book_segments(self, source_ref):
         book = next(row for row in self.grid["SETTING"]["books"] if row["sourceRef"] == source_ref)
         if "segments" not in book:
