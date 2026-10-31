@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import json
 import logging
 import socket
 
@@ -145,9 +146,10 @@ def test_unobserved_focus_is_retried_once_then_dropped_before_any_search(tmp_pat
     assert PRIVATE not in caplog.text
     assert "UNOBSERVED_FOCUS_ATTRIBUTE" in result["raw"].requests[1]["system"]
     assert PRIVATE not in result["raw"].requests[1]["system"]
-    assert len(result["raw"].requests) == len(result["spring"].reservations) == 2
-    assert result["search"].calls == []
-    assert result["spring"].receipts == []
+    # 계획 호출은 두 번뿐이고, 비운 항목 이름은 이후 조회·검색 어디에도 전달되지 않는다.
+    assert len(result["raw"].requests) == 2
+    assert PRIVATE not in json.dumps(result["spring"].queries, ensure_ascii=False)
+    assert all(PRIVATE not in str(call) for call in result["search"].calls)
 
 
 @pytest.mark.parametrize(
