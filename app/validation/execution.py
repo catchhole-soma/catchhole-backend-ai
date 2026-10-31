@@ -99,16 +99,18 @@ class ValidationLedger:
 
 
 class ValidationRoleClients:
-    def __init__(self, raw, ledger, claim):
+    def __init__(self, raw, ledger, claim, *, request_semaphore=None):
+        # request_semaphore is the runner's one process-wide provider cap; None keeps calls uncapped.
         self.clients = {role: MeteredTextGenerationClient(
             raw, ledger, claim.job_id, "VALIDATION_" + role, MODEL, claim.lease_token,
-            max_retries=0, exact_input_reservation=True) for role in ROLE_OPTIONS}
+            request_semaphore=request_semaphore, max_retries=0, exact_input_reservation=True)
+            for role in ROLE_OPTIONS}
 
     def for_validation_role(self, role):
         return self.clients[role]
 
 
-def metered_embedding(raw, ledger, claim, spec):
+def metered_embedding(raw, ledger, claim, spec, *, request_semaphore=None):
     if raw is None:
         return None
     model = claim.wire["models"].get("QUERY_EMBEDDING", {})
@@ -118,16 +120,17 @@ def metered_embedding(raw, ledger, claim, spec):
             or raw.version != spec.version or raw.dimensions != spec.dimensions
             or not cap.get("maxCalls") or not cap.get("maxReservedTokens")):
         raise IncompleteInspection("EMBEDDING_CONFIGURATION_INVALID")
-    return ValidationQueryEmbedding(raw, ledger, claim, spec)
+    return ValidationQueryEmbedding(raw, ledger, claim, spec, request_semaphore=request_semaphore)
 
 
 class ValidationQueryEmbedding:
-    def __init__(self, raw, ledger, claim, spec):
+    def __init__(self, raw, ledger, claim, spec, *, request_semaphore=None):
         self.model, self.version, self.dimensions = spec.model, spec.version, spec.dimensions
         self.ledger, self.claim = ledger, claim
         self.last_receipt = None
         self.metered = MeteredEmbeddingClient(raw, ledger, claim.job_id, spec.model,
-            claim.lease_token, max_retries=0, purpose="VALIDATION_QUERY_EMBEDDING")
+            claim.lease_token, request_semaphore=request_semaphore, max_retries=0,
+            purpose="VALIDATION_QUERY_EMBEDDING")
 
     async def create_embedding(self, query):
         self.last_receipt = None

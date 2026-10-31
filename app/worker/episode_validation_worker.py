@@ -34,7 +34,7 @@ def reported_failure_code(result):
 
 class EpisodeValidationWorker:
     def __init__(self, client, raw_model, *, enabled=False, worker_id="validation-worker",
-                 readonly_sessions=None, embedding_client=None, index_spec=None):
+                 readonly_sessions=None, embedding_client=None, index_spec=None, llm_request_semaphore=None):
         if not enabled:
             raise ValueError("Validation runtime is disabled; explicit enable and server budgets are required.")
         if type(raw_model) is not OpenAIResponsesClient:
@@ -43,6 +43,8 @@ class EpisodeValidationWorker:
         self.spec = index_spec or IndexSpec()
         self.search = FrozenRetrievalSearchService(readonly_sessions, self.spec) if readonly_sessions else None
         self.embedding = embedding_client
+        # One process-wide provider cap shared by every concurrent job; None keeps calls uncapped.
+        self.llm_request_semaphore = llm_request_semaphore
         self._active = set()
         self._operations, self._ledgers = set(), set()
         self._close_task = None
@@ -75,8 +77,9 @@ class EpisodeValidationWorker:
         gate = ExecutionGate()
         ledger = ValidationLedger(self.client, claim, gate)
         self._ledgers.add(ledger)
-        roles = ValidationRoleClients(self.raw_model, ledger, claim)
-        embedding = metered_embedding(self.embedding, ledger, claim, self.spec)
+        roles = ValidationRoleClients(self.raw_model, ledger, claim, request_semaphore=self.llm_request_semaphore)
+        embedding = metered_embedding(self.embedding, ledger, claim, self.spec,
+                                      request_semaphore=self.llm_request_semaphore)
         view = await self.client.load_checkpoint(claim, gate)
         setting = ValidationCheckpoint(self.client, claim, view, gate)
         typo = ValidationCheckpoint(self.client, claim, view, gate, "TYPO")
