@@ -83,7 +83,7 @@
   "execution": {
     "contractVersion": 1,
     "projectionVersion": 1,
-    "maxPublicationBytes": 131072,
+    "maxPublicationBytes": 1048576,
     "synthetic": true,
     "envelope": "All HTTP responses use CommonResponse; examples below are data, claim with no queued job has data=null.",
     "routes": {
@@ -2296,7 +2296,7 @@
       "runtime": "Typed global receipts plus question own_receipt_refs, remaining LookupIntent/bool queue, targetContexts/additional_target_context text spans, baseline selections and observed check revisions. No stage payload or saved decision duplication.",
       "revision": "All affected checks revise atomically. The same-input checkpoint version advances while authenticated receipts remain. Source/report invalidation still deletes all copies. Reclaim after revise-before-checkpoint reconstructs missing obligations from current server checks.",
       "books": "Finish and publish each book before reading another. Resume successful stages with zero provider calls; unfinished book rules use the existing lease-scoped READ_SOURCE range and exact source verification.",
-      "transport": "131072-byte publication ceiling and exact citation validation are unchanged; no hidden text fields or increased limits."
+      "transport": "1048576-byte publication ceiling (raised from 131072 for MERGED_PLAN, GH349 follow-up) and exact citation validation; no hidden text fields."
     }
   }
 }

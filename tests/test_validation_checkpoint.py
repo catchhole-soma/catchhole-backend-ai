@@ -354,9 +354,9 @@ def test_published_decision_carries_setting_refs_only_and_fits_the_publication_c
     cap = json.loads((Path(__file__).parents[1] / "docs/contracts/validation-execution-v1.json")
                      .read_text())["execution"]["maxPublicationBytes"]
     data = heavy_data()
-    data.entries[0]["state"]["historyFacts"] = [  # production's largest entry held 209 KB of history
+    data.entries[0]["state"]["historyFacts"] = [  # production's largest entry held 209 KB of history; the cap is now 1 MiB
         {"factType": "STATUS", "factKey": "손", "factValue": f"양손 사용 {n}", "supportingSource": {"quote": "옛 원문" * 20}}
-        for n in range(2000)]
+        for n in range(4000)]
     full = _settings(data.entries)
     assert len(json.dumps(full[0], ensure_ascii=False).encode()) > cap  # a full-row bundle could never be published
 
