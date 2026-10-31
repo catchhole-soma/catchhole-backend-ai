@@ -228,7 +228,15 @@ def test_incomplete_field_union_stops_before_selection(tmp_path, incomplete):
             source["history"].append(dict(source["history"][0], settingKey="mana.extra"))
         spring.catalog = [source]
 
-    result = asyncio.run(replay(tmp_path, spec, spring_setup=setup, config={"page_size": 1}))
+    # 항목 목록도 한 페이지에 1개만 읽게 해 "목록이 불완전하면 선택 전에 멈춘다"는 전제를 유지한다.
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            spec,
+            spring_setup=setup,
+            config={"page_size": 1, "fields_page_size": 1},
+        )
+    )
     actual = response(result)
     assert actual["outcome"] == "CLARIFICATION"
     assert NOTICES["PARTIAL_RESULTS"] in actual["limitations"]
