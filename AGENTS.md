@@ -363,7 +363,7 @@
 
 - 선정 계정·작품·회차 순서는 Spring의 고정 fingerprint manifest/캠페인 대기열이 소유한다. Python은 대상 SQL이나 회원 목록을 복제하지 않는다.
 - `relationship` Worker는 `/api/internal/v1/relationship-jobs/*`에서 `RELATIONSHIP_EXTRACTION`, `EPISODE`, `CONFIRMED_ONLY`, 정수 `relationshipAnalysisContract.formatVersion=1`만 처리한다. 일반 분석 claim/complete와 혼용하지 않는다.
-- 기존 관계 pipeline/extractor/comparator를 재사용하되 S3 고정 key/version/hash와 순수 청킹만 사용한다. SQLAlchemy 세션, 후보·프로필·청크 저장, retrieval embedding을 호출하지 않는다. 동기 원문 읽기는 Worker 소유 `BlockingIoExecutor`에서 `AI_WORKER_BLOCKING_MAX_WORKERS`(운영1) 한도를 지킨다. Job 취소는 즉시 전파하되 남은 읽기는 같은 한도에 포함하며 종료 시 executor를 정리한다.
+- 기존 관계 pipeline/extractor/comparator를 재사용하되 S3 고정 key/version/hash와 순수 청킹만 사용한다. SQLAlchemy 세션, 후보·프로필·청크 저장, retrieval embedding을 호출하지 않는다. 동기 원문 읽기는 Worker 소유 `BlockingIoExecutor`에서 `AI_WORKER_BLOCKING_MAX_WORKERS`(운영1) 한도를 지킨다. Job 취소는 즉시 전파하되 남은 읽기는 같은 한도에 포함하며 종료 시 executor를 정리한다. 관계 원문 읽기 예외는 executor에서 결과로 반환하고 살아 있는 Job에서 원래 객체를 다시 던진다. 취소 후 결과는 버려 S3 객체 key/URL이 포함될 수 있는 예외를 detached 로그에 남기지 않는다.
 - PREPARED/COMPLETED 재개는 저장 관측·결정을 쓰며 원문 재읽기와 재추출을 생략한다. 근거 원문 검증·lease·토큰 예약은 우회하지 않는다. 입력 상한 초과는 자르지 않고 실패한다.
 - 운영 `ai-relationship-worker`는 1프로세스·1Job·1LLM, DB 연결0, metrics host9109다. 런타임/targets/tracing 검사에 네 번째 종류를 포함하되 일반 분석 5×10과 비교 각1은 유지한다.
 - Java API/Flyway를 먼저, AI Worker를 다음에 배포한다. merge 자체가 provider 호출이 아니라 이미지 발행·배포 성공 후 claim이 시작점이다. 원칙/동기화 대상은 `docs/relationship-cohort-backfill.md`와 `docs/episode-relationships.md`다.
