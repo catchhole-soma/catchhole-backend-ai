@@ -324,6 +324,13 @@
 
 - 답변 v10은 기존 답변 호출에서 일반/항목별 `missingExplanations`를 생성한다. 고유한 missing facet에만 연결하고 구체적인 미확인 범위를 자연스러운 존댓말로 설명한다. 설명으로 coverage를 높이지 않으며 병합에서 해결된 요구, 검증에서 제거된 주장과 충돌 항목의 설명을 제거한다. 설명 누락은 기본 안내로 보존한다. 과거 저장 답변과 최종 NONE 경로는 유지하며 v9 실제 실행을 v10 품질 측정으로 재사용하지 않는다.
 
+### #319 2차 — 계획 정규화·집중 조회 되돌림·다인물 비교 — 2026-10-31
+
+- 현재 버전은 hybrid plan v13 / QA plan v10이며 answer v16·FIELD select v2·select v3은 그대로다. 계획의 흔한 계약 위반(등록값 필수+원문 보완, 등록 전용인데 요구 항목 남음, 보완인데 요구 항목 없음)은 before-validator가 정규화하고 나머지 위반만 재시도한다. 재호출이 모델 호출 상한을 소진해 뒤 단계가 실행 실패로 끝나는 것을 막기 위함이며 schema·wire는 바꾸지 않는다. 마지막 계획 시도까지 질문에 없는 항목 이름(focus.attribute)만 틀리면 그 이름을 비우고 유형으로 진행한다(`FOCUS_ATTRIBUTE_DROPPED`). OPT-33의 "focus 오류만 반복되면 명확화로 종료"는 이 진행으로 대체하되 첫 시도 재전달·거절값 비노출·대상 이름/검색어 미관측의 실패 경계는 유지한다.
+- 집중 조회의 FIELD 선택이 비면 유형을 비운 목록으로 다시 고르고(`FOCUS_TYPE_WIDENED`), 그래도 없거나 인물 항목 선택이 모호하면 그 유형의 현재값을 읽어 값으로 고른다(`FOCUS_FALLBACK`). 질문한 속성과 같은 표시명이 둘 이상이거나 조건 검색·세계관 같은 경로명이면 기존대로 되묻는다. 무관한 항목의 표시명 중복(158개 항목 속 '거대화' 2개)으로 되묻지 않는다. FIELDS는 `fields_page_size=50`으로 읽고 값 조회 `page_size`·불완전 목록 중단 규칙은 유지한다.
+- 대상이 둘 이상인 `CURRENT_AND_HISTORY`는 CURRENT만 읽고 `HISTORY_SKIPPED_FOR_COMPARISON`을 한 번 남긴다. 첫 답변과 복구가 모두 출력 상한에서 잘리면 실행 실패 대신 `ANSWER_LIMIT` 빈 답으로 기존 마감 경로를 따른다. 원문 요구가 있는 혼합 계획에서 원문 라운드 예약 때문에 FIELDS를 다 읽지 못하면 되묻지 않고 등록 현재값을 미확인으로 둔 채 원문을 계속한다(`REGISTERED_LOOKUP_INCOMPLETE`); 등록 전용 계획의 되묻기는 유지한다. 새 notice는 `limitations` 문장으로만 노출하고 저장값·인용·정산을 바꾸지 않는다.
+- plan v13/QA plan v10 지침: 동명이인·전수는 `NONE+SCENE+EARLIEST+LIST/COUNT`와 회차 분산 수집, 부재 확인은 `HISTORY+SUMMARY`, 이름 명시 인물의 현재 속성·비교는 CURRENT만(능력·효과·출처 설명은 SCENE 유지), 이름 없는 규칙·수치 질문은 되묻지 않는다. 25문항 연기 세트와 60발화 회귀의 실제 측정·남은 한계는 `docs/ai-logic-versions/v0033.md`와 공통 `docs/chat-query-quality-v1.md`를 따르며, 발표셋 112문항은 사람 Gold 검토 뒤 실행한다.
+
 ### OPT-33 현재 등록값·후속 정정 — 2026-10-22
 
 - 현재 버전은 QA plan v9/FIELD select v2, hybrid plan v12/answer v16, 등록 설명 v4이다. `registeredCurrentRequired`는 누락을 허용하지 않는 strict boolean이며, 현재 속성·보유·등록 화면 확인의 필수 근거를 표시 옵션과 분리한다. true이면 CURRENT 계열과 sourceFallback=false를 검증한다. 원문·작중/회차 서술만 묻는 질문과 일반 개념 질문에 등록 현재값을 강제하지 않는다.

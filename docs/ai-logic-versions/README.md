@@ -4,6 +4,7 @@
 
 | 버전 | 날짜 | 변경 | 평가 |
 | --- | --- | --- | --- |
+| [v0033](v0033.md) | 2026-10-31 | 챗봇 계획 계약 정규화·집중 조회 되돌림/유형 확장·항목 목록 50개·다인물 비교 이력 생략·절단 안내 마감·plan v13/QA plan v10(동명이인·전수·부재·CURRENT 우선) ([Java #319](https://github.com/catchhole-soma/catchhole-backend-java/issues/319)) | 25문항 연기 세트 13/7/4/1 → 합성 16/7/2, 60발화 회귀 40/17/3(기준 45/14/1, 코드 원인 후퇴 1건 수정) |
 | [v0032](v0032.md) | 2026-10-30 | 검수 모델 출력 정규화: 대상 참조 T1·quote 기준 위치·서버 확정 판정 필드·참조 종류 schema·실행 불가 VECTOR 미제안·원인 코드 보존 ([Java #331](https://github.com/catchhole-soma/catchhole-backend-java/issues/331)). v0031은 열린 AI #107 사용 중 | 전체4,868통과/140skip·실제 Java HTTP27. 실제 Terra 재실행 B2·A3 원본·교체본 모두 COMPLETED(재시도 포함), TSEG 0건·S3~S6 위반 0. 판정 FN 2(앞마당·망토)·교체본 FP1·같은 원인 미병합은 남음, 의미 점수 미측정 |
 | [v0031](v0031.md) | 2026-10-30 | 챗봇 gpt-6 토큰 추정 o200k·원문 검색 도구 예약·PARTIAL 장면 이웃 확장·최초/최후 회차 순서 검색·근거 예산 확대·3라운드(plan v12/answer v16) ([Java #319](https://github.com/catchhole-soma/catchhole-backend-java/issues/319)) | 전체 4,643 통과/141 skip·기존 경고 1. 실제 모델 60발화 같은 고정본 DB: main 38/17/5 → 1차 39/15/6 → 2차(근거 12·9,000토큰·3라운드·answer v16) 45/14/1(PASS/PARTIAL/FAIL, 블라인드). Gold 근거 포함률 76.6→85.9%. controls 6/6 |
 | [v0030](v0030.md) | 2026-10-29~30 | 독립 관계 추출·비교·회차 이력·내부 보류, 미확인 일반 인용 표시 분리 | 최신 main 통합 전체4,835통과/140skip·변경 lint 기존25건 증가0. 실제8호출 관계 의미 부분 검증. 일반10화는1회 실패 후 같은 작업 재개로 전부 완료·기존203작업 보존 |
