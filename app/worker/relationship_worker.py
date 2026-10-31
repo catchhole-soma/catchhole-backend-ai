@@ -116,7 +116,11 @@ class RelationshipWorker:
                 if pipeline.context is None:
                     with worker_span("analysis.relationship.source"):
                         try:
-                            chunks = await self._blocking_io_executor.run(self._read_chunks, payload)
+                            chunks, source_error = await self._blocking_io_executor.run(
+                                self._read_chunks_outcome, payload
+                            )
+                            if source_error is not None:
+                                raise source_error
                         except SourceObjectTooLargeError:
                             pipeline.failure_code = "INPUT_TOO_LARGE"
                     if len(chunks) > self._max_chunks:
@@ -173,6 +177,15 @@ class RelationshipWorker:
             or contract["formatVersion"] != 1
         ):
             raise OrderedInputContextError("Invalid relationship-only job contract.")
+
+    def _read_chunks_outcome(self, payload):
+        # Detached source failures can contain object keys/URLs. Return the original
+        # error as data so only a live owning Job re-raises it; cancellation discards
+        # the result without entering the shared executor's exception logger.
+        try:
+            return self._read_chunks(payload), None
+        except Exception as exc:  # noqa: BLE001 - preserve the original error for the owning Job
+            return [], exc
 
     def _read_chunks(self, payload):
         if self._storage is None:

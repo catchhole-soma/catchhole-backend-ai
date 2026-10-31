@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from botocore.exceptions import ReadTimeoutError
 
 from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
 from app.analysis.relationship_observations import RelationshipExtractionResult
@@ -321,6 +322,68 @@ def test_source_executor_still_closes_when_owned_provider_close_fails(monkeypatc
             await worker.aclose()
         with pytest.raises(RuntimeError, match="already closed"):
             await worker._blocking_io_executor.run(lambda: None)
+
+    asyncio.run(run())
+
+
+def test_cancelled_source_read_does_not_log_late_storage_exception(monkeypatch, caplog):
+    async def run():
+        worker, payload, spring, storage, extractor, _, _ = setup_worker(monkeypatch)
+        started, release = asyncio.Event(), threading.Event()
+        loop = asyncio.get_running_loop()
+        private_marker = "synthetic-private-source-object"
+
+        def failing_read(*_, **__):
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(timeout=5)
+            raise ReadTimeoutError(endpoint_url=f"https://s3.invalid/{private_marker}")
+
+        storage.get_text.side_effect = failing_read
+        task = asyncio.create_task(worker.process_claimed(payload))
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            release.set()
+            await worker.aclose()
+            callbacks_drained = asyncio.Event()
+            loop.call_soon(callbacks_drained.set)
+            await callbacks_drained.wait()
+            assert private_marker not in caplog.text
+            assert not any(record.name == "app.worker.blocking_io" for record in caplog.records)
+            extractor.extract_from_chunk.assert_not_called()
+            spring.complete_relationship_job.assert_not_called()
+            spring.fail_relationship_job.assert_not_called()
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await worker.aclose()
+
+    asyncio.run(run())
+
+
+def test_active_job_preserves_original_storage_exception_and_cause(monkeypatch):
+    async def run():
+        worker, payload, spring, storage, extractor, _, _ = setup_worker(monkeypatch)
+        original = ReadTimeoutError(endpoint_url="https://s3.invalid/synthetic-object")
+        cause = OSError("synthetic transport cause")
+        original.__cause__ = cause
+        storage.get_text.side_effect = original
+        try:
+            with pytest.raises(ReadTimeoutError) as caught:
+                await worker.process_claimed(payload)
+            assert caught.value is original
+            assert caught.value.__cause__ is cause
+            assert spring.fail_relationship_job.call_args.kwargs["failure_code"] == (
+                AnalysisFailureCode.UNEXPECTED_ERROR
+            )
+            extractor.extract_from_chunk.assert_not_called()
+            spring.complete_relationship_job.assert_not_called()
+        finally:
+            await worker.aclose()
 
     asyncio.run(run())
 
