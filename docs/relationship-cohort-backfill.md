@@ -61,7 +61,7 @@ flowchart TD
    시각을 추가한다. 기존 행의 시각은 과거 이력을 추정하지 않고 적용 시각으로 채운다.
    SQL migration 안에서 원문을 읽거나 모델을 호출하지 않는다. API는 migration 이후 기동한다.
 3. 운영 `application-prod.yml`/`compose.api.prod.yml`은 기능을 기본 활성화한다. 기본
-   10초 간격 scheduler가 `RelationshipBackfillService.bootstrap()`을 호출한다.
+   10초 간격 scheduler가 `RelationshipBackfillService.bootstrapRelationshipBackfill()`을 호출한다.
    캠페인 행 잠금과 `initialized` 기록으로 최초 등록을 한 번만 한다. active 회원·작품만
    고려하고, 선정 시각 이전에 저장된 보관 중 원문 key/hash가 있는 회차를 고정한다.
    대상 여부는 회차 생성 시각으로 정하고, 내용은 최초 bootstrap 시점의 현재 보존본으로 고정한다.
