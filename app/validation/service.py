@@ -20,6 +20,7 @@ from app.validation.contracts import (
     LookupIntent,
     LookupReceipt,
     QuestionBatch,
+    RuleCoverage,
     SubjectResolution,
     ValidationDecision,
     anchor_span,
@@ -34,6 +35,7 @@ from app.validation.contracts import (
 )
 from app.validation.corpus import ValidationCorpus
 from app.validation.models import call_role
+from app.validation.projection import compact_setting_row
 from app.validation.schemas import decision_schema, question_batch_schema, subject_resolution_schema
 from app.validation.search import vector_ready
 
@@ -44,6 +46,13 @@ WORKER_CHANGE_SEARCH_PURPOSE = "Worker가 충돌 의심 판정 전에 요구하�
 _SEARCH_QUERY_LIMIT = 1000  # corpus.lookup/validate_intents reject empty or longer queries
 # GH344: the one readiness read before PLANNER may never spend the inspection's seconds budget.
 VECTOR_READINESS_TIMEOUT_SECONDS = 5.0
+# GH349 amendment: 1-code-point names/aliases match almost any text, so they never match mechanically (grid v3).
+MECHANICAL_NAME_MIN_CODE_POINTS = 2
+# Safety valve for one COVERAGE prompt; the compact projection is the main fix. Rows past it are reported, not read.
+MAX_COVERAGE_SETTINGS = 400
+COVERAGE_TRUNCATED_REASON = "입력 상한으로 모델 점검에서 제외됨"
+# Grid v3 (GH349 amendment) keeps the v2 shape; only the server's mechanical matching rule changed.
+SUPPORTED_SETTING_GRID_VERSIONS = (2, 3)
 
 
 def _is_change_search(receipt):
@@ -148,6 +157,14 @@ def _settings(entries, sources=()):
     return result
 
 
+def bundle_settings(rows):
+    """GH349 Amendment 2: published/stored bundle settings are refs only; the Backend checks the ref set.
+
+    A bundle stored before that change holds full rows; it is read the same way (entry_ref/subject_ref only).
+    """
+    return [{"entry_ref": row["entry_ref"], "subject_ref": row["subject_ref"]} for row in rows]
+
+
 def _subject_order(ref):
     """Server S-refs sort by their number (S2 before S10)."""
     return (int(ref[1:]), ref) if re.fullmatch(r"S[1-9][0-9]*", ref) else (float("inf"), ref)
@@ -166,16 +183,17 @@ def subject_catalogue(settings):
 
 
 def mechanical_subject_refs(settings, target, segments):
-    """GH349 grid v2 `segmentSubjects`, computed locally only when no server grid exists (no execution job).
+    """GH349 grid v3 `segmentSubjects`, computed locally only when no server grid exists (no execution job).
 
-    A subject matches a segment when any non-empty entry name/alias occurs as an exact substring of the
-    segment context (code points, no normalization). Refs are unique and sorted by number.
+    A subject matches a segment when any entry name/alias of at least MECHANICAL_NAME_MIN_CODE_POINTS code points
+    occurs as an exact substring of the segment context (code points, no normalization). Shorter names stay in
+    `subject_catalogue` for SUBJECT_RESOLUTION. Refs are unique and sorted by number.
     """
     names = {}
     for row in settings:
         values = names.setdefault(row["subject_ref"], [])
         for value in (row.get("name"), *(row.get("aliases") or [])):
-            if isinstance(value, str) and value and value not in values:
+            if isinstance(value, str) and len(value) >= MECHANICAL_NAME_MIN_CODE_POINTS and value not in values:
                 values.append(value)
     result = {}
     for segment in segments:
@@ -186,8 +204,9 @@ def mechanical_subject_refs(settings, target, segments):
 
 
 def grid_segment_subjects(grid, segments, subjects):
-    """GH349: the server grid's mechanical matches. A v1 grid (or none) cannot cover a v2 inspection."""
-    if (not isinstance(grid, dict) or type(grid.get("gridVersion")) is not int or grid["gridVersion"] != 2
+    """GH349: the server grid's mechanical matches (v2, or v3 with the 1-character rule). v1 or none cannot."""
+    if (not isinstance(grid, dict) or type(grid.get("gridVersion")) is not int
+            or grid["gridVersion"] not in SUPPORTED_SETTING_GRID_VERSIONS
             or not isinstance(grid.get("segmentSubjects"), list)):
         raise IncompleteInspection("GRID_VERSION_UNSUPPORTED")
     rows = grid["segmentSubjects"]
@@ -383,6 +402,18 @@ class SettingValidationService:
                 return lambda value: normalize_batch(value, target, aliases=segment_refs,
                                                      accept=inside, stats=stats)
 
+            def coverage_prepare(segment, unread):
+                """Entries cut by MAX_COVERAGE_SETTINGS still need their rule row; a resumed batch already has it."""
+                prepare = batch_prepare(segment)
+
+                def merged(value):
+                    value = prepare(value)
+                    reported = {row.entry_ref for row in value.rules}
+                    missing = [RuleCoverage(entry_ref=ref, status="NOT_APPLICABLE", reason=COVERAGE_TRUNCATED_REASON)
+                               for ref in unread if ref not in reported]
+                    return value.model_copy(update={"rules": [*value.rules, *missing]}) if missing else value
+                return merged
+
             def batch_schema(segment, rule_refs=(), clue_refs=(), evidence_refs=(), *, cacheable=False):
                 return question_batch_schema(
                     segment_refs=[segment.ref], subject_refs=subject_order, rule_refs=list(rule_refs),
@@ -448,13 +479,20 @@ class SettingValidationService:
                 relevant_clues = [
                     clue for clue in clues if segment.start <= clue["span"]["start"] < segment.end
                 ]
-                rule_refs = [row["entry_ref"] for row in relevant]
+                shown = relevant[:MAX_COVERAGE_SETTINGS]
+                rule_refs = [row["entry_ref"] for row in shown]
+                unread = [row["entry_ref"] for row in relevant[len(shown):]]
+                if unread:
+                    stats["COVERAGE_SETTINGS_TRUNCATED"] += len(unread)
+                    logger.warning("coverage settings truncated total=%d kept=%d segment=%s",
+                                   len(relevant), len(shown), segment.ref)
                 second = await stage(
                     "COVERAGE", segment.ref,
                     {
                         **common,
-                        # GH331 S3/GH349: rules are reported only for the relevant subjects' settings.
-                        "settings": relevant,
+                        # GH331 S3/GH349: rules are reported only for the relevant subjects' settings, which the
+                        # model reads as compact rows (amendment); the Worker adds the rows cut by the valve.
+                        "settings": [compact_setting_row(row) for row in shown],
                         "rule_refs": rule_refs,
                         "mechanical_clues": relevant_clues,
                     },
@@ -462,7 +500,7 @@ class SettingValidationService:
                     lambda value, segment=segment, selected=selected, clues=relevant_clues: self._validate_coverage(
                         value, segment, subjects, selected, target, clues, intent_refs()),
                     schema=batch_schema(segment, rule_refs, [clue["ref"] for clue in relevant_clues]),
-                    prepare=batch_prepare(segment),
+                    prepare=coverage_prepare(segment, unread),
                 )
                 coverage = self._record_coverage(coverage, "COVERAGE", second)
                 drafts.extend(
@@ -595,7 +633,9 @@ class SettingValidationService:
                                        if LookupIntent.model_validate(row) not in completed_intents]
             for ref, check in checks.items():
                 if check.get("outcome") is not None:
-                    bundles[ref] = check.get("bundle", check.get("decision", {}).get("evidence_bundle", {}))
+                    bundle = check.get("bundle", check.get("decision", {}).get("evidence_bundle", {}))
+                    bundles[ref] = ({**bundle, "settings": bundle_settings(bundle["settings"])}
+                                    if "settings" in bundle else bundle)
 
             async def save_runtime():
                 if self.checkpoint:
@@ -776,7 +816,7 @@ class SettingValidationService:
                         }
                         for span in draft.target_spans
                     ],
-                    "settings": relevant,
+                    "settings": bundle_settings(relevant),
                     "evidence": evidence,
                     "receipts": [
                         asdict(receipt) | {"intent": receipt.intent.model_dump()}
@@ -793,8 +833,14 @@ class SettingValidationService:
                 bundles[qref] = payload
                 await save_runtime()
                 where["stage"] = f"JUDGE:{qref}"
-                judgment = await call_role(self.model, "JUDGE", payload, ValidationDecision, budget,
-                                           schema=judge_schema)
+                # GH349 amendments: the bundle (published, 131,072-byte cap) carries refs only; the model reads
+                # compact rows except the entries it asked for with a BASELINE lookup, which it receives in full.
+                requested = {ref for receipt in own_receipts[qref] if receipt.intent.operation == "BASELINE"
+                             for ref in receipt.intent.evidence_refs}
+                model_settings = [row if row["entry_ref"] in requested else compact_setting_row(row)
+                                  for row in relevant]
+                judgment = await call_role(self.model, "JUDGE", {**payload, "settings": model_settings},
+                                           ValidationDecision, budget, schema=judge_schema)
                 judgment = self._prepare_judgment(judgment, target, segment_refs, stats)
                 if judgment.action == "FOLLOW_UP":
                     if not judgment.follow_ups:

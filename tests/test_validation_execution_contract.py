@@ -39,14 +39,17 @@ def test_runtime_is_disabled_and_cli_refuses_missing_explicit_opt_in():
         asyncio.run(run(args))
 
 
-def test_grid_v2_cases_match_local_subject_matching_and_stage_order():
+def test_grid_v3_cases_match_local_subject_matching_and_stage_order():
     from app.validation.contracts import SubjectResolution, split_segments
     from app.validation.service import _settings, grid_segment_subjects, mechanical_subject_refs
 
     cases = [case for case in fixture()["gridCases"] if "expectedSetting" in case]
     assert any(any(row["subjectRefs"] for row in case["expectedSetting"]["segmentSubjects"]) for case in cases)
+    # GH349 amendment: the SETTING grid is v3 (v2 shape, 1-character names excluded from mechanical matching).
+    assert fixture()["progressiveSourceGrid"]["gridVersion"] == 3
     for case in cases:
         grid, budget = case["expectedSetting"], case["configuration"]["budgets"]["setting"]
+        assert grid["gridVersion"] == 3
         settings = _settings([{"entryRef": f"B{n + 1}", **row} for n, row in enumerate(case.get("baselineEntries", []))])
         segments = split_segments(case["target"], core_chars=budget["segmentChars"],
                                   context_chars=budget["contextChars"])

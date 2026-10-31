@@ -709,9 +709,11 @@ def test_suspected_conflict_without_change_search_gets_one_worker_keyword_search
     assert set(search.evidence_refs) <= {row["ref"] for row in second["evidence"]}
     assert search.ref in result.decisions["Q1"].completion.changes_exceptions.receipt_refs
     [(ref, published, bundle)] = checkpoint.decided
-    # The published bundle is the second JUDGE input (as JSON), carrying the inserted receipt.
+    # The published bundle is the second JUDGE input (as JSON), carrying the inserted receipt, with the
+    # model's setting rows reduced to their refs (GH349 Amendment 2).
+    refs = [{"entry_ref": row["entry_ref"], "subject_ref": row["subject_ref"]} for row in second["settings"]]
     assert ref == "Q1" and json.loads(json.dumps(bundle)) == {
-        key: item for key, item in second.items() if key != "role"}
+        key: item for key, item in second.items() if key != "role"} | {"settings": refs}
     assert_backend_publishable(published, bundle, checkpoint.checks["Q1"]["state"]["lookup_obligations"])
 
 
@@ -856,15 +858,25 @@ def test_frozen_provenance_uses_known_source_alias_without_server_ids():
     }
 
     def judge(payload):
-        assert (
-            payload["settings"][0]["state"]["slots"]["STATUS:손"]["provenance"]["source_ref"]
-            == "R1"
-        )
         assert {row["source_ref"] for row in payload["source_catalogue"]} == {"R1", "R2"}
         assert identifier not in json.dumps(payload)
+        if len(payload["receipts"]) == 2:  # GH349 amendments: compact first; provenance only on BASELINE request
+            value = decision(payload)
+            value.update(action="FOLLOW_UP", outcome=None, basis=None, completion=None, follow_ups=[
+                {"ref": "origin", "kind": "COMPARISON_CONTEXT", "operation": "BASELINE",
+                 "purpose": "손 상태의 출처 회차 확인", "evidence_refs": ["B1"]}])
+            return value
         return decision(payload)
 
-    assert run(data, SyntheticModel(judge)).status == "COMPLETED"
+    model = SyntheticModel(judge)
+    result = run(data, model)
+    assert result.status == "COMPLETED"
+    compact, full = payloads(model, "JUDGE")
+    assert compact["settings"][0]["state"]["slots"]["STATUS:손"] == {"factValue": "왼손 상실"}
+    assert full["settings"][0]["state"]["slots"]["STATUS:손"]["provenance"]["source_ref"] == "R1"
+    bundle = result.evidence_bundles["Q1"]
+    assert bundle["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"}]
+    assert identifier not in json.dumps(bundle)
 
 
 def test_merged_initial_obligations_reuse_one_read_and_keep_both_receipts():
@@ -1383,10 +1395,11 @@ def run_with_grid(grid, model):
                                                 checkpoint=GridCheckpoint()).inspect())
 
 
-def test_execution_trusts_the_server_grid_segment_subjects():
+@pytest.mark.parametrize("version", [2, 3])  # v3 = v2 shape + 1-character names excluded (GH349 amendment)
+def test_execution_trusts_the_server_grid_segment_subjects(version):
     model = SyntheticModel()
     # Locally 민수(S1) would match; the server grid is authoritative in execution.
-    grid = {"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]}
+    grid = {"gridVersion": version, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]}
     result = run_with_grid(grid, model)
     assert result.status == "COMPLETED"
     (resolution,), (coverage,) = payloads(model, "RELATED_SELECTION"), payloads(model, "COVERAGE")
@@ -1397,6 +1410,11 @@ def test_execution_trusts_the_server_grid_segment_subjects():
     (None, "GRID_VERSION_UNSUPPORTED"),
     ({"gridVersion": 1, "units": [{"stage": "RELATED_SELECTION", "ref": "TSEG1:PAGE1"}]}, "GRID_VERSION_UNSUPPORTED"),
     ({"gridVersion": 2}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 3}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 4, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": "3", "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]},
+     "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 3, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S9"]}]}, "INVALID_GRID_CONTRACT"),
     ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S9"]}]}, "INVALID_GRID_CONTRACT"),
     ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG2", "subjectRefs": []}]}, "INVALID_GRID_CONTRACT"),
     ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S1", "S1"]}]},
@@ -1407,3 +1425,146 @@ def test_execution_without_a_v2_grid_stops_before_subject_resolution(grid, code)
     result = run_with_grid(grid, model)
     assert (result.status, result.failure_code, result.failure_stage) == ("INCOMPLETE", code, "SUBJECT_RESOLUTION:TSEG1")
     assert [role for role, *_ in model.calls] == ["PLANNER"]
+
+
+# --- GH349 amendment: 1-character names are not mechanically matched (grid v3) ------------------------------
+
+
+def test_one_character_names_are_not_mechanically_matched_but_stay_in_the_catalogue():
+    from app.validation.contracts import split_segments
+    from app.validation.service import mechanical_subject_refs
+
+    target = "😀민수는 양손으로 검을 쥐었다."
+    settings = [{"subject_ref": "S1", "name": "민수", "aliases": []},
+                {"subject_ref": "S2", "name": "검", "aliases": ["손"]},
+                {"subject_ref": "S3", "name": None, "aliases": ["쥐", "양손"]},
+                {"subject_ref": "S4", "name": "😀", "aliases": []}]  # one code point (two UTF-16 units)
+    segments = split_segments(target, core_chars=100, context_chars=0)
+    assert mechanical_subject_refs(settings, target, segments) == {"TSEG1": ["S1", "S3"]}
+
+    data = SyntheticData()
+    data.entries.append({"entryRef": "B2", "domain": "characters", "subjectRef": "character:sword",
+                         "state": {"name": "검", "aliases": [], "slots": {}}})
+    model = SyntheticModel()
+    assert run(data, model).status == "COMPLETED"
+    (resolution,) = payloads(model, "RELATED_SELECTION")  # 검(S2) is left for SUBJECT_RESOLUTION
+    assert resolution["mechanical_subject_refs"] == ["S1"]
+    assert [row["name"] for row in resolution["subject_catalogue"]] == ["민수", "검"]
+
+
+# --- GH349 amendment: compact model rows and the COVERAGE input valve -------------------------------------
+
+
+def heavy_data():
+    """B1 carries what production rows carry besides values: slot provenance/evidence, history, identity evidence."""
+    data = SyntheticData()
+    state = data.entries[0]["state"]
+    state["slots"]["STATUS:손"].update(
+        factType="STATUS", factKey="손", valueJson={"value": "왼손 상실"},
+        provenance={"confirmationStatus": "CONFIRMED", "sourceEpisodeNo": 1},
+        supportingSources=[{"supportingSource": {"quote": "민수는 왼손을 잃었다.", "start": 0, "end": 11}}])
+    state.update(snapshotVersion=3, identityEvidence=[{"quote": "민수"}],
+                 historyFacts=[{"factType": "STATUS", "factKey": "손", "factValue": "양손 사용",
+                                "supportingSource": {"quote": "옛 원문"}}])
+    return data
+
+
+def test_coverage_and_judge_read_compact_rows_while_the_bundle_carries_refs_only():
+    from app.validation.projection import compact_setting_row
+    from app.validation.service import _settings
+
+    data, model = heavy_data(), SyntheticModel()
+    result = run(data, model)
+    assert result.status == "COMPLETED"
+    canonical = _settings(data.entries)
+    compact = [compact_setting_row(row) for row in canonical]
+    assert compact[0]["state"] == {"name": "민수", "aliases": [],
+                                   "slots": {"STATUS:손": {"factValue": "왼손 상실", "factType": "STATUS", "factKey": "손"}}}
+    (coverage,), (judge,) = payloads(model, "COVERAGE"), payloads(model, "JUDGE")
+    assert coverage["settings"] == judge["settings"] == compact and coverage["rule_refs"] == ["B1"]
+    for payload in (coverage, judge):
+        text = json.dumps(payload["settings"], ensure_ascii=False)
+        assert "왼손 상실" in text and not any(key in text for key in (
+            "historyFacts", "supportingSources", "supportingSource", "provenance", "identityEvidence", "valueJson"))
+    # GH349 Amendment 2: the Backend checks only the bundle's ref set; the digest covers the refs-only bundle.
+    bundle = result.evidence_bundles["Q1"]
+    assert bundle["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"}]
+    digested = {key: value for key, value in bundle.items() if key != "input_digest"}
+    assert bundle["input_digest"] == judge["input_digest"] == sha256(
+        json.dumps(digested, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def test_entry_requested_by_a_baseline_lookup_reaches_the_next_judge_in_full():
+    from app.validation.service import _settings
+
+    def judge(payload):
+        if len(payload["receipts"]) == 2:  # only the Worker's own BASELINE/TARGET_CONTEXT receipts so far
+            value = decision(payload)
+            value.update(action="FOLLOW_UP", outcome=None, basis=None, completion=None, follow_ups=[
+                {"ref": "history", "kind": "COMPARISON_CONTEXT", "operation": "BASELINE",
+                 "purpose": "손 상태의 이전 이력 확인", "evidence_refs": ["B1"]}])
+            return value
+        return decision(payload)
+
+    data, model = heavy_data(), SyntheticModel(judge)
+    result = run(data, model)
+    assert result.status == "COMPLETED"
+    first, second = payloads(model, "JUDGE")
+    assert "historyFacts" not in first["settings"][0]["state"]
+    assert second["settings"] == _settings(data.entries)  # the full canonical row, history included
+    assert second["settings"][0]["state"]["historyFacts"][0]["factValue"] == "양손 사용"
+    assert result.evidence_bundles["Q1"]["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"}]
+
+
+def valve_data(count=401):
+    data = SyntheticData()
+    data.entries = [{"entryRef": f"B{n}", "domain": "characters", "subjectRef": "character:existing",
+                     "state": {"name": "민수", "aliases": [], "slots": {f"PROFILE:항목{n}": {"factValue": "값"}}}}
+                    for n in range(1, count + 1)]
+    return data
+
+
+def test_coverage_valve_sends_400_rows_and_reports_the_rest_not_applicable(caplog):
+    from app.validation.contracts import QuestionBatch, split_segments, validate_batch
+    from app.validation.service import COVERAGE_TRUNCATED_REASON, MAX_COVERAGE_SETTINGS
+
+    model = SyntheticModel()
+    with caplog.at_level("WARNING", logger="app.validation.service"):
+        result = run(valve_data(), model, catalogue_page_size=100)
+    assert result.status == "COMPLETED"
+    (coverage,) = payloads(model, "COVERAGE")
+    assert MAX_COVERAGE_SETTINGS == 400
+    assert len(coverage["settings"]) == len(coverage["rule_refs"]) == 400 and coverage["rule_refs"][-1] == "B400"
+    _, _, kwargs = next(call for call in model.calls if call[0] == "COVERAGE")
+    assert "B401" not in json.dumps(kwargs["response_schema"].schema)
+    record = next(row for row in result.coverage if row["role"] == "COVERAGE")
+    assert [row["entry_ref"] for row in record["rules"]] == [f"B{n}" for n in range(1, 402)]
+    assert record["rules"][-1] == {"entry_ref": "B401", "status": "NOT_APPLICABLE", "reason": COVERAGE_TRUNCATED_REASON}
+    assert result.normalizations["COVERAGE_SETTINGS_TRUNCATED"] == 1
+    assert "coverage settings truncated total=401 kept=400 segment=TSEG1" in caplog.text
+    # The stored batch covers every relevant entry, as the Worker and Backend rule-set checks require.
+    batch = QuestionBatch.model_validate({"questions": [], "rules": record["rules"],
+                                          "segments": [{"segment_ref": "TSEG1", "status": "NO_CHECK", "reason": "합성"}]})
+    validate_batch(batch, split_segments(TARGET, core_chars=100, context_chars=10), {"S1"},
+                   [f"B{n}" for n in range(1, 402)], TARGET)
+
+
+def test_resumed_truncated_coverage_is_not_called_again_or_extended_twice():
+    from app.validation.service import SettingValidationService
+    from tests.test_validation_checkpoint import SavedStages
+
+    async def inspect(saved, model):
+        limits = InvocationBudget(30, 100, 30, 5000, 1000, 100, 10, 100, 10)
+        return await SettingValidationService(valve_data(), model, limits, checkpoint=saved).inspect()
+
+    saved, model = SavedStages(), SyntheticModel()
+    saved.crash_stage = "COVERAGE"
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(inspect(saved, model))
+    assert len(saved.stages["COVERAGE", "TSEG1"]["rules"]) == 401
+    calls = len(model.calls)
+    result = asyncio.run(inspect(saved, model))
+    assert result.status == "COMPLETED"
+    assert [role for role, *_ in model.calls[calls:]] == ["JUDGE"]
+    record = next(row for row in result.coverage if row["role"] == "COVERAGE")
+    assert len(record["rules"]) == 401

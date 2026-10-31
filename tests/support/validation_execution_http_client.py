@@ -23,12 +23,15 @@ class CrashClient(ValidationExecutionClient):
         self.mode = mode
 
     async def leased(self, claim, operation, **kwargs):
-        if self.mode in {"book-failure-crash", "vector-missing-crash"} and operation == "complete" and kwargs.get("failureCode"):
+        if self.mode == "book-failure-crash" and operation == "complete" and kwargs.get("failureCode"):
             raise asyncio.CancelledError()
         result = await super().leased(claim, operation, **kwargs)
         if ((self.mode == "vector-lookup-crash" and operation == "checkpoint"
              and kwargs.get("payload", {}).get("phase") == "JUDGING"
              and not kwargs["payload"]["runtime"]["pending"]["Q1"])
+            # GH344: VECTOR is only planned while the index is ready, so the "missing embedding" retry case stores
+            # the merged plan (its VECTOR obligations have no receipt yet) and crashes before any lookup runs.
+            or (self.mode == "vector-missing-crash" and operation == "plans" and kwargs.get("stage") == "MERGED_PLAN")
             or (self.mode == "crash-plan" and operation == "plans" and kwargs.get("stage") == "MERGED_PLAN")
             or (self.mode == "crash-decision" and operation == "units" and kwargs.get("branch") == "SETTING")
             or (self.mode == "followup-crash" and operation == "revisions")):

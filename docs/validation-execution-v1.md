@@ -215,12 +215,16 @@ Worker가 required-grid 또는 done:true를 보내 완료를 대체할 수 없�
 - MERGED_PLAN: 저장된 모든 원 질문 originalRefs를 빠짐없이 연결한 질문 목록. 서버 UUID와 local Q-ref의 대응을 반환한다.
 - TYPO_SEGMENT: 분류(SPELLING/SPACING/TYPO)와 정확한 제안 또는 제안 0개의 완료 segment.
 
-SETTING과 TYPO grid는 독립 준비한다. SETTING grid는 GH349부터 `gridVersion=2`이고 TYPO grid는 1 그대로다.
+SETTING과 TYPO grid는 독립 준비한다. SETTING grid는 GH349부터 `gridVersion=2`, GH349 후속부터 `gridVersion=3`이고 TYPO grid는 1 그대로다.
+grid v3 = v2 + 1글자 제외: 모양은 v2와 같고 2 code point 미만의 name·alias를 기계 매칭에서 빼는 규칙만 다르다. Worker는 2·3을 모두 받는다.
 SETTING의 target 의무는 구간마다 `PLANNER:TSEGn`, `SUBJECT_RESOLUTION:TSEGn`, `COVERAGE:TSEGn` 순서이며 RELATED_SELECTION page 의무는 없다.
-`segmentSubjects`는 구간 순서의 `{segmentRef, subjectRefs}`이고, 항목의 비어 있지 않은 name 또는 aliases 문자열이 구간 문맥
+`segmentSubjects`는 구간 순서의 `{segmentRef, subjectRefs}`이고, 항목의 2 code point 이상인 name 또는 aliases 문자열이 구간 문맥
 (`text[contextStart:contextEnd]`, code point)에 정확한 부분 문자열로 나온 주체를 S 번호 순·중복 없이 담는다(정규화 없음,
-name null·aliases 빈 항목은 제외). Worker는 첫 의미 단계 게시로 grid가 생긴 뒤 checkpoint에서 이 값을 읽고, 없거나 v1이면
+name null·aliases 빈 항목은 제외). Worker는 첫 의미 단계 게시로 grid가 생긴 뒤 checkpoint에서 이 값을 읽고, 없거나 2·3이 아니면
 `GRID_VERSION_UNSUPPORTED`로 멈춘다. 상세 규칙은 [설정 검사 계약](setting-validation-v1.md)의 GH349 절이다.
+GH349 후속: COVERAGE·JUDGE 모델 입력의 settings는 압축 행이고 고정 항목 조회·Worker 검증은 전체 정본 행 그대로다
+(COVERAGE 관련 항목 400개 초과분은 Worker가 NOT_APPLICABLE rule로 채운다, [설정 검사 계약](setting-validation-v1.md) GH349 후속).
+게시·checkpoint `evidence_bundle`의 settings는 GH349 후속 2부터 항목 ref 행만 담는다(아래 DECIDED unit).
 SETTING grid는 frozen manifest의 모든 BOOK_SOURCE 의무를
 먼저 넣고, 전문을 아직 확인하지 못한 book은 `books=[{sourceRef:...}]`와 `pendingBookRefs`로 남긴다.
 미확정 book은 빈 책/0 checks가 아니다. PLANNER/SUBJECT_RESOLUTION/COVERAGE 및 checkpoint는 다른 book 전문을
@@ -237,9 +241,16 @@ Python의 BOOK_SOURCE.status=PROCESSED는 전체 book 검토 집계이므로 실
 Java의 BOOK_SOURCE 성공은 읽기이며 전체 target×book 검토는 별도 BOOK_COVERAGE grid가 증명한다.
 
 각 DECIDED unit에는 현재 Python ValidationDecision과 `evidence_bundle`을 함께 보낸다.
-bundle의 question_ref/check_revision/question은 저장 질문과 일치해야 한다. canonical frozen settings,
+bundle의 question_ref/check_revision/question은 저장 질문과 일치해야 한다. settings의 frozen 항목 ref 집합,
 실제 E-ref/원문 위치, target_context와 additional_target_context의 인용, 알려진 fact/evidence refs,
 성공한 실제 비교·필수 읽기 receipts, 남은 lookup_obligations 0을 검증한다. 네 completion 사유만으로 완료하지 않는다.
+GH349 후속 2: bundle `settings` 행은 `{"entry_ref": "B12", "subject_ref": "S3"}`뿐이다. Worker는 질문의 관련 항목(질문 주체의 항목 ∪ BASELINE 조회 ref,
+이전과 같은 집합·순서)을 이 모양으로 줄여 게시하고 checkpoint check에도 같은 bundle을 둔다. 서버는 entry_ref가 현재 context의 정본 항목인지,
+subject_ref가 그 정본 행과 같은지, 중복이 없는지, ref 집합이 질문 주체의 항목 ∪ BASELINE 조회 ref와 같은지만 보고 행 내용 hash는 비교하지 않으며 추가 key는 무시한다.
+이유: 게시 명령 전체가 131,072 byte(`maxPublicationBytes`) 상한인데 예전 규칙은 그 항목들의 전체 정본 행을 요구했고 운영 인물 항목 하나가 362 KB라
+그 주체를 다루는 JUDGE는 게시할 수 없었다. bundle은 공개 응답에 나가지 않는다. `input_digest`는 이 ref 행 bundle로 계산한다(Worker 메타데이터, 권한 근거 아님).
+JUDGE 모델 입력은 그대로 압축 행(BASELINE으로 요청한 항목은 전체 행)이다. 이 변경 전 Worker가 전체 행으로 결정한 check를 재개하면
+그 bundle은 entry_ref/subject_ref만 읽어 ref 행으로 돌려주고 다시 JUDGE하거나 게시하지 않는다. 공통 fixture의 판정 예시는 `settings: []`라 바뀌지 않는다.
 정상 NO_CONFLICT도 완료 check/receipts를 저장한다. E-ref는 실제 source_ref로 분류한다. T1을 E1로 포장해도
 CONFLICT/SUSPECTED_CONFLICT의 외부 비교 근거가 될 수 없고 frozen fact 또는 검증된 T1 이외의 source만 인정한다.
 T1 자체 문맥·인용 저장은 유지한다.
@@ -357,6 +368,10 @@ SETTING Job은 배포 뒤 `VALIDATION_SOURCE_VERSION_CONFLICT`로 끝나며 공�
 배포는 RUNNING 검수 Job이 없을 때 Backend와 AI를 같은 release로 올린다. grid v1 서버에 새 Worker가 붙으면 첫 PLANNER 게시 뒤
 `GRID_VERSION_UNSUPPORTED`로 SETTING 분기를 멈추고, 이미 저장된 v1 grid를 복원한 Job도 SUBJECT_RESOLUTION 전에 같은 코드로 멈춘다.
 Backend는 기록 보존을 위해 `RELATED_SELECTION` stage enum을 유지하지만 새 grid가 요구하지 않는다. Worker는 저장된 v1 stage를 읽지 않는다.
+grid v3(GH349 후속, 1글자 제외)는 Backend가 3을 만들고 저장된 SETTING grid가 3이 아니면 공개 retry에서 버리고 다시 만든다. Worker는 2·3을 모두 받으므로
+새 Worker를 먼저 올려도 v2 서버와 동작하며(1글자 규칙만 서버 grid를 따름), 압축 투영은 서버 wire를 바꾸지 않는다.
+bundle ref 행(GH349 후속 2)에는 순서가 있다. 새 서버는 옛 Worker의 전체 행 bundle도 받지만(추가 key 무시) 옛 서버는 bundle settings를 정본 행과 비교하므로
+새 Worker의 DECIDED 게시를 거절한다. Backend를 먼저 또는 같은 release로 올리고, 검수 Job이 돌기 전에 둘 다 배포한다.
 
 ## 명시적 실행과 수동 검증
 
