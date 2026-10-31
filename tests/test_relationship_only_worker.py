@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 from hashlib import sha256
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -49,10 +50,12 @@ def make_payload(text="가와 나가 협력했다. 😀"):
 
 
 def setup_worker(
-    monkeypatch, *, status=None, observations=(), text="가와 나가 협력했다. 😀", **kwargs
+    monkeypatch, *, status=None, observations=(), text="가와 나가 협력했다. 😀",
+    blocking_workers=3, **kwargs
 ):
     monkeypatch.setattr(
-        "app.worker.relationship_worker.get_settings", lambda: Settings(_env_file=None)
+        "app.worker.relationship_worker.get_settings",
+        lambda: Settings(_env_file=None, ai_worker_blocking_max_workers=blocking_workers),
     )
     payload = make_payload(text)
     context = {
@@ -219,6 +222,105 @@ def test_mid_call_lease_failure_cancels_job_and_never_finalizes(monkeypatch):
             payload.analysis_job_id, payload.lease_token
         )
         spring.complete_relationship_job.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_cancelled_source_read_keeps_its_slot_and_shutdown_drains_reads(monkeypatch):
+    async def run():
+        worker, payload, spring, storage, extractor, _, _ = setup_worker(
+            monkeypatch, blocking_workers=1, heartbeat_interval_seconds=0.001
+        )
+        loop = asyncio.get_running_loop()
+        first_started, second_started = asyncio.Event(), asyncio.Event()
+        first_release, second_release = threading.Event(), threading.Event()
+        lock = threading.Lock()
+        active_reads = peak_reads = calls = 0
+
+        def get_text(*_, **__):
+            nonlocal active_reads, peak_reads, calls
+            with lock:
+                calls += 1
+                call = calls
+                active_reads += 1
+                peak_reads = max(peak_reads, active_reads)
+            started, release = (
+                (first_started, first_release) if call == 1 else (second_started, second_release)
+            )
+            loop.call_soon_threadsafe(started.set)
+            try:
+                assert release.wait(timeout=5), "Synthetic source read was not released."
+                return storage.get_text.return_value
+            finally:
+                with lock:
+                    active_reads -= 1
+
+        async def lost_lease(*_):
+            await first_started.wait()
+            raise ValueError("synthetic lease lost during source read")
+
+        async def next_loop_turn():
+            reached = asyncio.Event()
+            loop.call_soon(reached.set)
+            await reached.wait()
+
+        storage.get_text.side_effect = get_text
+        spring.heartbeat_relationship_job.side_effect = lost_lease
+        first = asyncio.create_task(worker.process_claimed(payload))
+        second = closing = None
+        try:
+            await asyncio.wait_for(first_started.wait(), 1)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(first, 1)
+            assert not first_release.is_set()
+            spring.complete_relationship_job.assert_not_called()
+            spring.fail_relationship_job.assert_not_called()
+
+            spring.heartbeat_relationship_job.side_effect = None
+            second = asyncio.create_task(worker.process_claimed(payload))
+            # The second Job reaches its source submission before shutdown starts.
+            await next_loop_turn()
+            closing = asyncio.create_task(worker.aclose())
+            await next_loop_turn()
+            assert not closing.done(), "Shutdown abandoned the cancelled Job's source read."
+            assert not second_started.is_set()
+
+            first_release.set()
+            await asyncio.wait_for(second_started.wait(), 1)
+            assert peak_reads == 1
+            assert not closing.done(), "Shutdown must also drain the next queued source read."
+            second_release.set()
+            assert (await asyncio.wait_for(second, 1)).claimed
+            await asyncio.wait_for(closing, 1)
+            assert active_reads == 0
+            assert calls == 2
+            extractor.extract_from_chunk.assert_awaited_once()
+            spring.complete_relationship_job.assert_awaited_once()
+            spring.fail_relationship_job.assert_not_called()
+        finally:
+            first_release.set()
+            second_release.set()
+            tasks = [task for task in (first, second, closing) if task is not None]
+            for task in tasks:
+                if not task.done() and task is not closing:
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await worker.aclose()
+
+    asyncio.run(run())
+
+
+def test_source_executor_still_closes_when_owned_provider_close_fails(monkeypatch):
+    async def run():
+        worker, *_ = setup_worker(monkeypatch)
+        worker._llm_provider_client = SimpleNamespace(
+            aclose=AsyncMock(side_effect=ValueError("synthetic close failure"))
+        )
+        await worker._blocking_io_executor.run(lambda: None)
+        with pytest.raises(ValueError, match="synthetic close failure"):
+            await worker.aclose()
+        with pytest.raises(RuntimeError, match="already closed"):
+            await worker._blocking_io_executor.run(lambda: None)
 
     asyncio.run(run())
 

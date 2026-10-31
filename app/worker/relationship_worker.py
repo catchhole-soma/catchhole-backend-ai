@@ -23,6 +23,7 @@ from app.schemas.worker import WorkerAnalysisJobPayload
 from app.storage.s3 import S3TextObjectStorage, SourceObjectTooLargeError
 from app.usage.metering import MeteredTextGenerationClient
 from app.worker.analysis_job_worker import WorkerRunResult
+from app.worker.blocking_io import BlockingIoExecutor
 from app.worker.lease_heartbeat import WorkerLeaseHeartbeat
 
 logger = logging.getLogger(__name__)
@@ -72,12 +73,14 @@ class RelationshipWorker:
             for value in (self._max_source_bytes, self._max_chunks)
         ):
             raise ValueError("Relationship source limits must be positive integers.")
+        self._blocking_io_executor = BlockingIoExecutor(settings.ai_worker_blocking_max_workers)
 
     async def aclose(self):
         first_error = None
         for resource, owned in (
             (self._llm_provider_client, self._owns_llm_provider_client),
             (self.spring_client, self._owns_spring_client),
+            (self._blocking_io_executor, True),
         ):
             close = getattr(resource, "aclose", None)
             if not owned or close is None:
@@ -113,7 +116,7 @@ class RelationshipWorker:
                 if pipeline.context is None:
                     with worker_span("analysis.relationship.source"):
                         try:
-                            chunks = await asyncio.to_thread(self._read_chunks, payload)
+                            chunks = await self._blocking_io_executor.run(self._read_chunks, payload)
                         except SourceObjectTooLargeError:
                             pipeline.failure_code = "INPUT_TOO_LARGE"
                     if len(chunks) > self._max_chunks:
