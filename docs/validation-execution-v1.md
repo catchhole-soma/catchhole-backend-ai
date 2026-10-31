@@ -354,6 +354,22 @@ INTERNAL_API_KEY/LLM_API_KEY는 기존 secret 환경으로 주입한다. 이 명
 예기치 않은 예외는 고정 코드/예외 종류와 jobId·reportId만 로그에 남기고 다음 claim을 계속하며, 연속 실패는
 poll×2^n(최대 60초)만큼 기다렸다가 정상 반복 뒤 초기화한다. 취소와 종료 중인 Worker는 루프를 끝내고,
 --once는 claim 하나만 처리하며 실패를 로그 뒤 다시 던져 0이 아닌 코드로 종료한다.
+프로세스당 동시 실행(GH343): 연속 실행은 --concurrency개의 Job 슬롯을 둔다. 빈 슬롯을 먼저 확보한 뒤에만
+claim하고 받은 Job은 즉시 별도 Task로 실행하며, claim한 Job을 프로세스 안에 쌓는 대기열은 두지 않는다.
+claim 간격은 기존과 같다: claim 시도마다 poll 간격(연속 실패 시 위 backoff)을 한 번 쉬고, 슬롯이 모두 차
+있으면 하나가 빌 때까지 기다린 뒤 쉰다. 그래서 --concurrency 1은 기존 순차 루프와 claim·처리 순서·로그가 같다.
+빈 claim·claim 실패·한 Job의 IncompleteInspection/예외는 다음 claim만 늦추고 실행 중인 다른 Job을 취소하지
+않는다. Job 단위 격리와 로그 형식(GH340)은 바뀌지 않는다. Backend claimValidationJob이 후보 Job 행을 잠그고
+lease token을 새로 발급하므로 동시 claim에 Backend 변경은 필요 없다.
+--llm-concurrency는 그 프로세스의 모든 Job·역할·query embedding provider 요청이 함께 쓰는 semaphore 하나다
+(예약·provider 호출·정산을 감싼다. exact input count 요청은 분석 metering과 같이 이 상한 밖이다).
+SIGTERM/SIGINT는 새 claim을 멈추고(진행 중인 claim 요청은 끝까지 받고 받은 Job도 실행한다) 실행 중 Job에
+--shutdown-grace-seconds를 준 뒤 남은 Job을 취소한다. 취소한 Job은 실패로 보고하지 않으며 Backend lease 만료와
+재claim이 복구한다(고정 로그 `validation runner shutdown grace expired pending_jobs=N` 한 줄). 기본값은 프로세스
+환경변수에서만 읽는다: --concurrency는 AI_WORKER_CONCURRENCY(없으면 1), --llm-concurrency는
+LLM_MAX_CONCURRENT_REQUESTS(없으면 상한 없음, 기존 동작), --shutdown-grace-seconds는
+AI_WORKER_SHUTDOWN_GRACE_SECONDS(없으면 180초)이며 1 미만·0 이하는 시작 전에 거절한다.
+--once는 동시성·종료 신호 옵션과 무관하게 claim 하나를 그 자리에서 처리한다.
 검색은 --readonly-url-env에 SELECT 전용 DB URL 환경변수명을 주면 실제 frozen RAG adapter에 연결된다.
 connection은 default_transaction_read_only=on이고 index model/version/1536 차원을 검증한다.
 --query-embedding은 서버의 별도 cap/model과 기존 준비 index가 모두 있을 때만 사용한다.
