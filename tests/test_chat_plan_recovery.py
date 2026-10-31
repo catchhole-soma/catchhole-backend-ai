@@ -9,7 +9,6 @@ import socket
 import pytest
 
 from app.chatbot.qa_render import NOTICES
-
 from app.chatbot.qa_validation import RULES
 from tests.test_chat_current_authority import current_case
 from tests.test_chat_focused_lookup import catalog_subject, item
