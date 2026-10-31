@@ -405,7 +405,9 @@ GH344 후속: 명시성은 플래그에 둔다. 플래그는 명시해야 하지
 frozen RAG 없이 실행한다(KeyError로 끝나지 않는다). 읽기 전용 session이 없는데 --query-embedding이면
 INFO `query embedding disabled: no read-only retrieval sessions`를 남기고 embedding client 없이 실행한다
 (ValueError 대신). --once도 같다. URL이 있으면 연결 풀은 --concurrency개(overflow 0)로 묶어 배포 연결 예산에
-`프로세스 수 × 동시 Job 수`로 넣는다. Job마다 claim에 QUERY_EMBEDDING model/cap이 아예 없으면 embedding 없이
+`프로세스 수 × 동시 Job 수`로 넣는다. 연결은 connect 5초·statement 5초(`statement_timeout`, readiness 5초 상한과 같은
+근거)·idle-in-transaction 10초·풀 대기 5초로 DB/드라이버가 끊는다. asyncio timeout은 `asyncio.to_thread`의 블로킹 조회와
+그 연결을 멈추지 못하기 때문이며, 끊긴 조회는 readiness면 KEYWORD 전용, 검색이면 기존 `SEARCH_FAILED`로 끝난다. Job마다 claim에 QUERY_EMBEDDING model/cap이 아예 없으면 embedding 없이
 키워드 검색만 제안하고(있는데 index와 다르거나 cap이 0이면 `EMBEDDING_CONFIGURATION_INVALID`), 회차 출처가 있으면
 Job 시작 때 고정 범위 readiness를 한 번 읽어 모든 회차 출처의 vector가 준비됐을 때만 VECTOR를 제안한다
 (INFO `vector search offered=<bool> sources=<n> ready=<m> ...`). 이 읽기는 `min(남은 seconds, 5초)`로 제한하며,
