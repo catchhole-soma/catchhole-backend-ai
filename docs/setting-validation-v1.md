@@ -148,8 +148,8 @@ GH349 후속(2026-10-31 첫 운영 실행): 30회차 작품에서 COVERAGE:TSEG1
   `slots`(슬롯마다 `factKey`·`factType`·`factValue`, 스칼라인 `temporalScope`·`effectiveFromEpisodeNo`만)만 남긴다.
   `historyFacts`, `supportingSources`, `supportingSource`, `provenance`, `provenanceByPath`, `identityEvidence`, `removedSnapshotEntries`, `valueJson`, `evidenceSpans`,
   `comparison`, `explicitAuthorCorrections`, `snapshotVersion`, `currentSupportingEvidenceVersion`, `version`과 그 밖의 중첩 목록·객체는 뺀다.
-  모델이 보는 것과 달리 고정 항목 읽기(`read_entries_page`), Worker 검증, receipt, checkpoint, 게시 `evidence_bundle`의 `settings`는 전체 투영 그대로다
-  (Backend가 bundle settings를 서버 정본 행과 같은지 비교하므로 바꿀 수 없다. `input_digest`도 전체 bundle 기준이다). 질문의 조회 의무나 JUDGE FOLLOW_UP의
+  모델이 보는 것과 달리 고정 항목 읽기(`read_entries_page`), Worker 검증, receipt는 전체 투영 그대로다. 게시·checkpoint `evidence_bundle`의 `settings`는
+  같은 항목의 ref 행만 담는다(아래 bundle ref 행, GH349 후속 2). 질문의 조회 의무나 JUDGE FOLLOW_UP의
   BASELINE이 `evidence_refs`로 요청한 항목은 그 질문의 다음 JUDGE 입력에 전체 행으로 준다. system prompt 한 줄이 이 압축과 BASELINE 요청 방법을 알린다.
 - 1글자 이름: 2 code point 미만의 name·alias는 기계 매칭에서 뺀다(1글자 이름이 거의 모든 문맥에 걸려 구간당 16~22주체가 COVERAGE에 들어갔다).
   서버 SETTING grid는 같은 규칙으로 `gridVersion: 3`(모양은 v2와 같음)이며 Worker는 2·3을 모두 받는다. `subject_catalogue`에는 그대로 남아 SUBJECT_RESOLUTION이 문맥으로 해소할 수 있다.
@@ -157,6 +157,10 @@ GH349 후속(2026-10-31 첫 운영 실행): 30회차 작품에서 COVERAGE:TSEG1
   나머지는 모델 응답 뒤 Worker가 `NOT_APPLICABLE` + `입력 상한으로 모델 점검에서 제외됨`으로 rules에 더한다. 그래서 저장 rules는 여전히 관련 항목 전체이며
   Worker와 Backend의 rule 집합 검사를 그대로 통과한다. 재개한 batch에는 이미 있으므로 다시 더하지 않는다. WARNING `coverage settings truncated total=… kept=… segment=…`와
   `normalizations.COVERAGE_SETTINGS_TRUNCATED`(구간 합계)를 남긴다. 주 해결책은 압축 투영이며 제외된 항목은 이 구간의 COVERAGE가 읽지 않았다는 뜻이다. JUDGE에는 상한이 없고 질문 주체의 항목 전체를 압축 행으로 받는다.
+- bundle ref 행(GH349 후속 2): 게시 명령은 전체 131,072 byte 상한인데 Backend가 JUDGE bundle `settings`를 질문 주체 항목 전체의 정본 행과 비교해 362 KB 인물 하나로도
+  그 주체의 판정을 게시할 수 없었다. 이제 bundle `settings` 행은 `{"entry_ref", "subject_ref"}`(`bundle_settings`, 이전과 같은 관련 항목 집합·순서)이고 `input_digest`도
+  이 bundle로 계산한다. Backend는 ref 집합(질문 주체의 항목 ∪ BASELINE 조회 ref), 정본 항목 여부, subject_ref 일치, 중복만 검사한다. `InspectionResult.evidence_bundles`도 같은 모양이다.
+  이 변경 전에 전체 행으로 결정된 check를 재개하면 entry_ref/subject_ref만 읽어 같은 모양으로 돌려주고 다시 JUDGE하거나 게시하지 않는다.
 
 DB↔원문 불일치는 두 참조를 유지하고 명시 정정의 정확한 대상/항목/시점/조건 범위를 검증한다.
 기존 데이터에는 그 scope metadata가 없을 수 있다. 그런 경우 보호/확정 flag를 정정으로 승격하지 않고 NEEDS_CONTEXT로 둔다.
