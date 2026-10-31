@@ -35,6 +35,7 @@ from app.validation.contracts import (
 from app.validation.corpus import ValidationCorpus
 from app.validation.models import call_role
 from app.validation.schemas import decision_schema, question_batch_schema, selection_schema
+from app.validation.search import vector_ready
 
 logger = logging.getLogger(__name__)
 _DECISION_FIELDS = ("outcome", "basis", "impact", "impact_reason", "completion")
@@ -151,6 +152,43 @@ class SettingValidationService:
         self.search, self.embedding_client = search, embedding_client
         self.checkpoint = checkpoint
 
+    async def _search_operations(self, frozen, budget, stats):
+        """Lookup operations the model may plan; an unexecutable VECTOR is never offered.
+
+        Without episode sources VECTOR is the explicit book raw fallback. Without frozen RAG an episode VECTOR
+        can only end in VECTOR_NOT_READY (GH331). With frozen RAG one readiness read of this job's scope
+        decides (GH344): every frozen episode source fully embedded and a query embedding client, unless an
+        earlier attempt of this job already saved VECTOR work. A failed readiness read only withholds VECTOR;
+        the search itself still re-checks readiness before each lookup.
+        """
+        episodes = sum(source.kind == "EPISODE" for source in frozen.sources)
+        if not episodes:
+            return ("KEYWORD", "VECTOR")
+        if self.search is None:
+            return ("KEYWORD",)
+        job = frozen.context.job_id or "-"
+        planned = getattr(self.checkpoint, "planned_operations", None)
+        if planned is not None and "VECTOR" in planned():
+            # An earlier attempt was offered VECTOR and saved it: its plans and successful receipts stay valid on
+            # resume even if the live index is being rebuilt; a still pending lookup re-checks readiness itself.
+            stats["VECTOR_OFFERED"] = 1
+            logger.info("vector search offered=True resumed=True job=%s", job)
+            return ("KEYWORD", "VECTOR")
+        timeout = budget.remaining()
+        try:
+            readiness = await asyncio.wait_for(self.search.readiness(frozen), timeout)
+        except Exception as exc:  # noqa: BLE001 - DB/driver text may carry URLs or credentials; type only.
+            stats["VECTOR_OFFERED"] = 0
+            logger.warning("vector search readiness unavailable error=%s job=%s; offering KEYWORD only",
+                           type(exc).__name__, job)
+            return ("KEYWORD",)
+        offered = vector_ready(readiness, self.embedding_client) and readiness.source_count == episodes
+        stats["VECTOR_OFFERED"] = int(offered)
+        logger.info("vector search offered=%s sources=%d ready=%d chunks=%d episodes=%d embedding=%s job=%s",
+                    offered, readiness.source_count, readiness.vector_ready_sources, readiness.vector_chunks,
+                    episodes, self.embedding_client is not None, job)
+        return ("KEYWORD", "VECTOR") if offered else ("KEYWORD",)
+
     async def inspect(self):
         budget = BudgetState(self.limits)
         questions, decisions, receipts, coverage, bundles = (), {}, [], [], {}
@@ -227,11 +265,8 @@ class SettingValidationService:
             subject_order = list(dict.fromkeys(row["subject_ref"] for row in settings))
             entry_refs = [row["entry_ref"] for row in settings]
             source_refs = [source.ref for source in frozen.sources]
-            # Without frozen RAG an episode VECTOR lookup can only end in VECTOR_NOT_READY, so it is not offered.
-            search_operations = (("KEYWORD", "VECTOR")
-                                 if self.search is not None
-                                 or not any(source.kind == "EPISODE" for source in frozen.sources)
-                                 else ("KEYWORD",))
+            # GH331/GH344: VECTOR is offered only when an episode VECTOR lookup of this job can succeed.
+            search_operations = await self._search_operations(frozen, budget, stats)
             catalogue = [
                 {key: row[key] for key in ("entry_ref", "subject_ref", "domain", "name", "aliases")}
                 | {"paths": list(row["state"].get("slots", row["state"].get("propertiesJson", {})))}

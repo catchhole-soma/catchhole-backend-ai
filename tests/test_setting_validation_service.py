@@ -1178,6 +1178,10 @@ def test_partial_vector_pipeline_keeps_failed_receipt_and_never_decides_suspecte
     from app.validation.service import SettingValidationService
 
     class Partial:
+        async def readiness(self, frozen):
+            # GH344: ready when VECTOR is offered; the index turns partial before the lookup runs.
+            return SearchReadiness(2, 2, 2, 2, 2)
+
         async def search(self, *args):
             return SimpleNamespace(
                 chunks=[],
@@ -1207,7 +1211,7 @@ def test_partial_vector_pipeline_keeps_failed_receipt_and_never_decides_suspecte
     limits = InvocationBudget(30, 50, 30, 5000, 1000, 100, 10, 10, 10)
     result = asyncio.run(
         SettingValidationService(
-            SyntheticData(), SyntheticModel(judge), limits, search=Partial()
+            SyntheticData(), SyntheticModel(judge), limits, search=Partial(), embedding_client=object()
         ).inspect()
     )
     assert result.status == "INCOMPLETE" and result.failure_code == "VECTOR_INDEX_PARTIAL"

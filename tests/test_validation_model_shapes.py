@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from app.llm.responses import LlmTextResponse
+from app.retrieval.search_contracts import SearchReadiness
 from app.validation.contracts import (
     IncompleteInspection,
     IntentRefs,
@@ -298,13 +299,13 @@ class RecordingCheckpoint:
         return {}
 
 
-def inspect(model, checkpoint=None, search=None):
+def inspect(model, checkpoint=None, search=None, embedding_client=None):
     from app.validation.service import SettingValidationService
 
     limits = InvocationBudget(model_calls=40, lookups=80, seconds=30, input_tokens=40000, output_tokens=20000,
                               segment_chars=2000, context_chars=300, catalogue_page_size=50, search_limit=10)
     return asyncio.run(SettingValidationService(B2Data(), model, limits, checkpoint=checkpoint,
-                                                search=search).inspect())
+                                                search=search, embedding_client=embedding_client).inspect())
 
 
 def test_recorded_real_terra_shapes_are_accepted_after_normalization(caplog):
@@ -465,8 +466,23 @@ def test_segments_used_by_the_regression_are_a_single_target_segment():
     assert [segment.ref for segment in split_segments(B2, core_chars=2000, context_chars=300)] == ["TSEG1"]
 
 
+READY = SearchReadiness(2, 2, 2, 4, 4)
+
+
 class EmptyIndex:
-    """Frozen RAG is configured but finds nothing; raw keyword reading still covers every source."""
+    """Frozen RAG is configured but finds nothing; raw keyword reading still covers every source.
+
+    ``readiness`` is what the job's one GH344 readiness read returns (an exception is raised instead).
+    """
+
+    def __init__(self, readiness=READY):
+        self.ready, self.readiness_reads = readiness, 0
+
+    async def readiness(self, frozen):
+        self.readiness_reads += 1
+        if isinstance(self.ready, Exception):
+            raise self.ready
+        return self.ready
 
     async def search(self, frozen, intent, embedding_client, limit):
         from types import SimpleNamespace
@@ -486,7 +502,7 @@ def test_vector_is_offered_only_when_the_worker_can_execute_it():
     assert inspect(plain).status == "COMPLETED"
     assert {"KEYWORD"} <= _planner_search_operations(plain) and "VECTOR" not in _planner_search_operations(plain)
     indexed = RecordedTerra()
-    assert inspect(indexed, search=EmptyIndex()).status == "COMPLETED"
+    assert inspect(indexed, search=EmptyIndex(), embedding_client=QUERY_EMBEDDING).status == "COMPLETED"
     assert {"KEYWORD", "VECTOR"} <= _planner_search_operations(indexed)
     checkpoint = RecordingCheckpoint()
     vector = RecordedTerra(planner_intents=[{"ref": "L3", "kind": "CHANGES_EXCEPTIONS", "operation": "VECTOR",
@@ -495,6 +511,96 @@ def test_vector_is_offered_only_when_the_worker_can_execute_it():
     assert (result.failure_code, result.failure_cause, result.failure_stage) == (
         "INVALID_INSPECTION_CONTRACT", "VECTOR_NOT_READY", "PLANNER:TSEG1")
     assert not checkpoint.saved  # never persisted as an obligation that every retry would repeat
+
+
+# --- GH344: VECTOR is offered only when this job's frozen index can serve it ----------------------
+
+QUERY_EMBEDDING = object()  # Never called: no VECTOR lookup runs in these inspections.
+
+
+@pytest.mark.parametrize(("readiness", "embedding_client", "offered"), [
+    (READY, QUERY_EMBEDDING, True),
+    (SearchReadiness(2, 2, 1, 4, 2, ("VECTOR_INDEX_PARTIAL",)), QUERY_EMBEDDING, False),  # one episode unembedded
+    (SearchReadiness(2, 2, 2, 4, 0), QUERY_EMBEDDING, False),  # no vector chunk at all
+    (READY, None, False),  # claim without QUERY_EMBEDDING or worker without --query-embedding
+    (SearchReadiness(1, 1, 1, 2, 2), QUERY_EMBEDDING, False),  # index scope differs from the frozen manifest
+], ids=["ready", "partial", "no-vectors", "no-embedding-client", "manifest-mismatch"])
+def test_vector_offer_follows_one_readiness_read_of_the_job(caplog, readiness, embedding_client, offered):
+    caplog.set_level(logging.INFO, logger="app.validation.service")
+    index, model = EmptyIndex(readiness), RecordedTerra()
+    result = inspect(model, search=index, embedding_client=embedding_client)
+    assert result.status == "COMPLETED"
+    assert ("VECTOR" in _planner_search_operations(model)) is offered
+    judge = [kwargs["response_schema"].schema for role, _, kwargs in model.calls if role == "JUDGE"]
+    assert judge and all(("VECTOR" in {operation for variant in _variants(schema["properties"]["follow_ups"])
+                                       for operation in variant}) is offered for schema in judge)
+    assert index.readiness_reads == 1
+    assert result.normalizations["VECTOR_OFFERED"] == int(offered)
+    assert (f"vector search offered={offered} sources={readiness.source_count} "
+            f"ready={readiness.vector_ready_sources}") in caplog.text
+
+
+def test_unexecutable_vector_follow_up_is_rejected_when_the_index_is_partial():
+    """A partial index no longer reaches the lookup: the VECTOR obligation is refused before revision."""
+    checkpoint = RecordingCheckpoint()
+    vector = RecordedTerra(planner_intents=[{"ref": "L3", "kind": "CHANGES_EXCEPTIONS", "operation": "VECTOR",
+                                             "purpose": "습관 변화", "query": "미나 기상 변화"}])
+    partial = EmptyIndex(SearchReadiness(2, 2, 1, 4, 2, ("VECTOR_INDEX_PARTIAL",)))
+    result = inspect(vector, checkpoint, search=partial, embedding_client=QUERY_EMBEDDING)
+    assert (result.failure_code, result.failure_cause, result.failure_stage) == (
+        "INVALID_INSPECTION_CONTRACT", "VECTOR_NOT_READY", "PLANNER:TSEG1")
+    assert not checkpoint.saved
+
+
+def test_failed_readiness_read_offers_keyword_only_and_logs_the_type_only(caplog):
+    caplog.set_level(logging.INFO, logger="app.validation.service")
+    index, model = EmptyIndex(OSError("postgresql://reader:secret@db.invalid/catchhole")), RecordedTerra()
+    result = inspect(model, search=index, embedding_client=QUERY_EMBEDDING)
+    assert result.status == "COMPLETED"  # the job is not failed by the readiness read
+    assert "VECTOR" not in _planner_search_operations(model)
+    assert index.readiness_reads == 1 and result.normalizations["VECTOR_OFFERED"] == 0
+    warnings = [row for row in caplog.records if row.levelno == logging.WARNING]
+    assert [row.getMessage() for row in warnings] == [
+        "vector search readiness unavailable error=OSError job=-; offering KEYWORD only"]
+    assert "secret" not in caplog.text and "db.invalid" not in caplog.text
+    assert "vector search offered" not in caplog.text
+
+
+def test_resumed_job_with_saved_vector_work_keeps_vector_while_the_index_is_rebuilt(caplog):
+    """Successful lookups resume JUDGE-only despite a live index rebuild (validation-execution-v1)."""
+    from types import SimpleNamespace
+
+    from app.validation.checkpoint import lookup_operations
+    from tests.test_validation_checkpoint import SavedStages
+
+    class Resumable(SavedStages):
+        async def merge(self, questions):
+            for q in questions:
+                self.checks.setdefault(q.ref, {"revision": 1, "outcome": None, "state": {
+                    "lookup_obligations": [i.model_dump() for i in q.draft.lookup_intents]}})
+            return self.checks
+
+        def planned_operations(self):  # Same scan as ValidationCheckpoint.planned_operations.
+            return lookup_operations(list(self.stages.values()), list(self.checks.values()), self.state)
+
+    class Index(EmptyIndex):
+        async def search(self, frozen, intent, embedding_client, limit):
+            return SimpleNamespace(chunks=[], limited=False, readiness=self.ready), set()
+
+    intents = [{"ref": "L3", "kind": "CHANGES_EXCEPTIONS", "operation": "VECTOR", "purpose": "습관 변화",
+                "query": "미나 기상 변화"}]
+    checkpoint = Resumable()
+    first = inspect(RecordedTerra(planner_intents=intents), checkpoint, search=Index(), embedding_client=QUERY_EMBEDDING)
+    assert first.status == "COMPLETED"
+    assert any(r.intent.operation == "VECTOR" and r.status == "SUCCEEDED" for r in first.receipts)
+
+    caplog.set_level(logging.INFO, logger="app.validation.service")
+    rebuilding = Index(SearchReadiness(2, 2, 1, 4, 2, ("VECTOR_INDEX_PARTIAL",)))
+    model = RecordedTerra(planner_intents=intents)
+    resumed = inspect(model, checkpoint, search=rebuilding, embedding_client=QUERY_EMBEDDING)
+    assert resumed.status == "COMPLETED" and not model.calls
+    assert rebuilding.readiness_reads == 0 and resumed.normalizations["VECTOR_OFFERED"] == 1
+    assert "vector search offered=True resumed=True job=-" in caplog.text
 
 
 # --- GH341: the SUSPECTED_CONFLICT change-search citation is a Worker fact -------------------------
