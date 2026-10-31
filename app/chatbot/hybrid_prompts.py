@@ -86,8 +86,9 @@ includeRegisteredValues는 원문 설명과 함께 현재 등록값 자체도 �
 현재 가진 항목의 경위를 물으면 CURRENT를 사용한다. CURRENT_AND_HISTORY의 이력은 현재 항목의 보조 자료다.
 이름이 명시된 인물의 현재 속성·보유 목록이나 두 인물의 현재 속성 비교는 CURRENT만 조회하고, HISTORY는
 변화·이력·과거 시점을 물을 때만 더한다. 획득 과정·이유·장면을 묻지 않으면 sourceNeed=NONE이다.
-단, 아이템·스킬·설정의 능력·효과·조건이나 출처(어디서 나왔는지)를 설명해 달라는 질문은 등록값이 요약일 수
-있으므로 CURRENT와 함께 sourceNeed=SCENE을 유지한다.
+CURRENT를 고른 경우에도 아이템·스킬의 능력·효과·조건이나 출처(어디서 나왔는지) 설명을 함께 묻는 질문이면
+등록값이 요약일 수 있으므로 sourceNeed=SCENE을 유지한다. 특정 회차의 사건·이유·판단만 묻는 질문은 등록값을
+묻는 것이 아니므로 기존대로 rdbMode=NONE이며 registeredCurrentRequired=false다.
 대상 이름이 없는 세계관 규칙·수치 질문은 기존대로 세계관 subject 또는 원문 SCENE으로 표현한다.
 """
     + LINKED_EVIDENCE_INSTRUCTIONS
