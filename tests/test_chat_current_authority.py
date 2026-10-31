@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.chatbot.qa import response_schema
+from app.chatbot.qa_render import NOTICES
 from app.schemas.chat_execution import ConversationTurn
 from app.schemas.chat_hybrid import HybridPlan
 from tests.test_chat_focused_lookup import catalog_subject, item
@@ -288,3 +289,43 @@ def test_ambiguous_registered_name_stops_before_current_or_source_lookup(tmp_pat
     assert result["finish"]["result"]["outcome"] == "CLARIFICATION"
     assert not result["search"].calls
     assert [q["tool"] for q in result["spring"].queries] == ["FIND_CHARACTERS"]
+
+
+def test_two_subject_comparison_reads_current_only_and_says_history_was_skipped(tmp_path):
+    # 두 인물의 현재 속성 비교에 이력까지 읽으면 항목·페이지 조회가 도구 예산을 넘겨
+    # '항목을 모두 확인하지 못함'으로 끝났다(실제 사례). 비교는 현재값만 읽고 이력 생략을 알린다.
+    case = current_case()
+    plan = case["outputs"][0]
+    plan.update(
+        question="세린과 다른 이름의 성별을 비교해줘",
+        rdbMode="CURRENT_AND_HISTORY",
+        subjects=[
+            {
+                "domain": "CHARACTER",
+                "name": "세린",
+                "focus": {"factType": "PROFILE", "attribute": "성별"},
+            },
+            {
+                "domain": "CHARACTER",
+                "name": "다른 이름",
+                "focus": {"factType": "PROFILE", "attribute": "성별"},
+            },
+        ],
+        searchTerms=["세린", "다른 이름"],
+    )
+    case["question"] = plan.pop("question")
+
+    def both(spring):
+        current_catalog(spring)
+        row = item(
+            702, "다른 이름", category="PROFILE", key="profile.gender", label="성별", value="남자"
+        )
+        spring.catalog.append(catalog_subject(702, "다른 이름", current=[row]))
+
+    result = run(tmp_path, case, both)
+    text = result_text(result)
+    assert "여자" in text and "남자" in text
+    tools = [q["tool"] for q in result["spring"].queries]
+    assert "CHARACTER_HISTORY" not in tools and tools.count("CHARACTER_CURRENT") == 2
+    limitations = result["finish"]["result"]["limitations"]
+    assert limitations.count(NOTICES["HISTORY_SKIPPED_FOR_COMPARISON"]) == 1

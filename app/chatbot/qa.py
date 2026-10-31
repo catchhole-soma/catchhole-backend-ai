@@ -687,6 +687,12 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                 if plan.intent == "CURRENT_AND_HISTORY"
                 else ["HISTORY" if plan.intent == "HISTORY" else "CURRENT"]
             )
+            if modes == ["CURRENT", "HISTORY"] and len(targets) > 1:
+                # 여러 인물의 현재 속성 비교에 이력까지 읽으면 항목·페이지 조회가 도구 예산을 넘겨
+                # '항목을 모두 확인하지 못함'으로 끝났다. 비교는 현재값으로 답하고 이력 생략을 알린다.
+                modes = ["CURRENT"]
+                if "HISTORY_SKIPPED_FOR_COMPARISON" not in self.codes:
+                    self.codes.append("HISTORY_SKIPPED_FOR_COMPARISON")
             stop = await self.subject_rows(subject, target, modes, reserve=current_checks)
             if stop:
                 return stop
