@@ -1494,7 +1494,7 @@ def test_coverage_and_judge_read_compact_rows_while_the_bundle_carries_refs_only
         json.dumps(digested, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def test_entry_requested_by_a_baseline_lookup_reaches_the_next_judge_in_full():
+def test_entry_requested_by_a_baseline_lookup_reaches_the_next_judge_with_its_history():
     from app.validation.service import _settings
 
     def judge(payload):
@@ -1511,8 +1511,11 @@ def test_entry_requested_by_a_baseline_lookup_reaches_the_next_judge_in_full():
     assert result.status == "COMPLETED"
     first, second = payloads(model, "JUDGE")
     assert "historyFacts" not in first["settings"][0]["state"]
-    assert second["settings"] == _settings(data.entries)  # the full canonical row, history included
-    assert second["settings"][0]["state"]["historyFacts"][0]["factValue"] == "양손 사용"
+    expanded = second["settings"][0]["state"]
+    assert expanded["historyFacts"][0]["factValue"] == "양손 사용"  # the value timeline arrives
+    assert "supportingSource" not in expanded["historyFacts"][0]  # without evidence or provenance
+    assert "provenance" not in expanded and "historyFacts" in expanded
+    assert second["settings"] != _settings(data.entries)  # never the full canonical row again
     assert result.evidence_bundles["Q1"]["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"}]
 
 

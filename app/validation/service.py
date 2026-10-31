@@ -35,7 +35,7 @@ from app.validation.contracts import (
 )
 from app.validation.corpus import ValidationCorpus
 from app.validation.models import call_role
-from app.validation.projection import compact_setting_row
+from app.validation.projection import compact_setting_row, expanded_setting_row
 from app.validation.schemas import decision_schema, question_batch_schema, subject_resolution_schema
 from app.validation.search import vector_ready
 
@@ -834,10 +834,11 @@ class SettingValidationService:
                 await save_runtime()
                 where["stage"] = f"JUDGE:{qref}"
                 # GH349 amendments: the bundle (published, 131,072-byte cap) carries refs only; the model reads
-                # compact rows except the entries it asked for with a BASELINE lookup, which it receives in full.
+                # compact rows except the entries it asked for with a BASELINE lookup, which it receives expanded
+                # (value history without evidence/provenance; a full production row exceeded the input cap).
                 requested = {ref for receipt in own_receipts[qref] if receipt.intent.operation == "BASELINE"
                              for ref in receipt.intent.evidence_refs}
-                model_settings = [row if row["entry_ref"] in requested else compact_setting_row(row)
+                model_settings = [expanded_setting_row(row) if row["entry_ref"] in requested else compact_setting_row(row)
                                   for row in relevant]
                 judgment = await call_role(self.model, "JUDGE", {**payload, "settings": model_settings},
                                            ValidationDecision, budget, schema=judge_schema)
