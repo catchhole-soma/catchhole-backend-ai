@@ -247,7 +247,7 @@ bundle의 question_ref/check_revision/question은 저장 질문과 일치해야 
 GH349 후속 2: bundle `settings` 행은 `{"entry_ref": "B12", "subject_ref": "S3"}`뿐이다. Worker는 질문의 관련 항목(질문 주체의 항목 ∪ BASELINE 조회 ref,
 이전과 같은 집합·순서)을 이 모양으로 줄여 게시하고 checkpoint check에도 같은 bundle을 둔다. 서버는 entry_ref가 현재 context의 정본 항목인지,
 subject_ref가 그 정본 행과 같은지, 중복이 없는지, ref 집합이 질문 주체의 항목 ∪ BASELINE 조회 ref와 같은지만 보고 행 내용 hash는 비교하지 않으며 추가 key는 무시한다.
-이유: 게시 명령 전체가 131,072 byte(`maxPublicationBytes`) 상한인데 예전 규칙은 그 항목들의 전체 정본 행을 요구했고 운영 인물 항목 하나가 362 KB라
+이유: 게시 명령 전체가 `maxPublicationBytes` 상한(당시 131,072 byte, 지금 1,048,576 byte)인데 예전 규칙은 그 항목들의 전체 정본 행을 요구했고 운영 인물 항목 하나가 362 KB라
 그 주체를 다루는 JUDGE는 게시할 수 없었다. bundle은 공개 응답에 나가지 않는다. `input_digest`는 이 ref 행 bundle로 계산한다(Worker 메타데이터, 권한 근거 아님).
 JUDGE 모델 입력은 그대로 압축 행(BASELINE으로 요청한 항목은 전체 행)이다. 이 변경 전 Worker가 전체 행으로 결정한 check를 재개하면
 그 bundle은 entry_ref/subject_ref만 읽어 ref 행으로 돌려주고 다시 JUDGE하거나 게시하지 않는다. 공통 fixture의 판정 예시는 `settings: []`라 바뀌지 않는다.
@@ -267,7 +267,7 @@ lookup_obligations에 추가되고 checkpoint pending/receipts에 남아 재개 
 
 ## 게시·파기·재시도
 
-게시 외피 전체는 131,072 UTF-8 bytes, citations는 1,000개, 의미 payload 깊이는 50을 넘기지 않는다.
+게시 외피 전체는 1,048,576 UTF-8 bytes(#349 후속: MERGED_PLAN이 모든 구간의 질문 초안을 한 번에 담아 65개 질문이 옛 131,072 bytes를 넘겼다), citations는 1,000개, 의미 payload 깊이는 50을 넘기지 않는다.
 target_spans/spans/evidence 행/typo span과 target_context/additional_target_context라는 계약 경로의 quote/text는
 정확한 source/hash/version/code point 인용 외피가 필요하다. settings[]는 서버 canonical projection 전체와 정확히
 일치해야 하며 그 내부 도메인 속성 이름 text/quote를 span으로 해석하지 않는다. 다른 임의 payload/checkpoint 경로의
@@ -354,7 +354,7 @@ source/report 파기와 입력 교체는 이 보존 경로를 쓰지 않고 기�
 checkpoint v1은 성공 stage/decision을 중복 복사하지 않는다. 전역 receipts와 질문별 refs, 남은 queue,
 필요한 실제 근거/추가 문맥/현재 관측 revision만 보존한다. evidence는 phase별 한 곳에 둔다.
 성공 BOOK_SOURCE와 서버 segments로 준비 상태를 복원하고, 미완료 rule은 인증된 READ_SOURCE 범위로 읽는다.
-질문이 없는 큰 책 전체를 checkpoint로 복사하지 않는다. 131072-byte 상한과 인용 검증은 그대로다.
+질문이 없는 큰 책 전체를 checkpoint로 복사하지 않는다. 1,048,576-byte 상한과 인용 검증은 그대로다.
 오탈자는 ClassifiedTypoSuggestion의 SPELLING/SPACING/TYPO와 정확한 span을 보존하고 실패 구간만 실행한다.
 
 두 분기는 독립 asyncio task이며 한 분기의 provider/role cap 실패나 질문 0개는 다른 분기를 취소하지 않는다.
