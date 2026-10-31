@@ -270,13 +270,14 @@ GitHub Actions 자동 배포의 `manage-ai-runtime.py`는 같은 SHA의 Compose�
 
 1. **API 예산.** Backend 저장소 `deploy/EC2_DEPLOYMENT.md`의 검수 실행 절차로 API 서버 검수 예산 JSON(`SPRING_APPLICATION_JSON`)에 `roles.QUERY_EMBEDDING`(최대 호출 수·예약 token)과 `query-embedding-model`(`text-embedding-3-small`)을 넣고 API를 재기동한다. Backend `deploy/validation-execution.prod.example.json`에 예시가 있다. 이 역할이 없으면 URL을 넣어도 Job마다 키워드 검색만 제안한다(실패하지 않는다).
 2. **DB 연결 예산.** 켜면 검수 프로세스마다 읽기 전용 연결이 `VALIDATION_WORKER_CONCURRENCY`개(기본 3) 더 생긴다. 실제 RDS 여유를 확인하고 `retrieval.env`의 `AI_RUNTIME_DB_CONNECTION_BUDGET`을 `검수 프로세스 수 × VALIDATION_WORKER_CONCURRENCY`만큼 올린다(예: 32 → 35). 자동 배포는 이 값을 넘으면 `DATABASE_CONNECTION_BUDGET_EXCEEDED`로 멈춘다.
-3. **worker.env.** `VALIDATION_READONLY_DATABASE_URL`에 `chatbot.env`의 `CHAT_RETRIEVAL_DATABASE_URL`과 같은 SELECT 전용 계정 URL을 그대로 넣고, `VALIDATION_WORKER_INDEX_VERSION`은 `CHAT_RETRIEVAL_EMBEDDING_VERSION`(기본 `v1`)과 맞춘다. 값이 터미널·셸 기록에 남지 않도록 편집기로 넣는다.
+3. **읽기 전용 계정 권한.** 검수 검색은 챗봇 계정(`catchhole_chat_reader`)으로 챗봇 7개 테이블 외에 `validation_reports`·`validation_jobs`·`validation_baseline_sources`도 읽는다. 챗봇 bootstrap은 이 세 테이블 SELECT를 추가한 AI SHA부터 배포 때마다 관리 계정의 grant를 갱신한다(초과 권한은 계속 거절). **검수 opt-in 전에 bootstrap을 다시 실행해 reader grant를 갱신한다**: 이 변경이 포함된 SHA의 GitHub Actions `Deploy Worker EC2`(최초 설정 단계 포함)가 성공했는지 확인하고, 아니면 그 실행을 다시 실행한다. 수동 `GRANT`는 bootstrap이 `READ_ROLE_EXCESS_READ_PRIVILEGE`로 거절하므로 하지 않는다. 운영자가 직접 만든(custom) 검색 계정이면 세 테이블 SELECT를 따로 준다. 권한이 없으면 Job마다 `vector search readiness unavailable error=ProgrammingError` 경고와 함께 그 Job은 frozen RAG 없이 키워드로만 진행한다. 자세한 계정 정책은 `docs/chat-runtime-operations.md`의 권한 절을 따른다.
+4. **worker.env.** `VALIDATION_READONLY_DATABASE_URL`에 `chatbot.env`의 `CHAT_RETRIEVAL_DATABASE_URL`과 같은 SELECT 전용 계정 URL을 그대로 넣고, `VALIDATION_WORKER_INDEX_VERSION`은 `CHAT_RETRIEVAL_EMBEDDING_VERSION`(기본 `v1`)과 맞춘다. 값이 터미널·셸 기록에 남지 않도록 편집기로 넣는다.
 
 ```bash
 sudoedit /opt/catchhole/worker.env
 ```
 
-4. **재기동.** 렌더링을 확인하고 검수 Worker만 다시 만든다.
+5. **재기동.** 렌더링을 확인하고 검수 Worker만 다시 만든다.
 
 ```bash
 sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml config --quiet
@@ -286,7 +287,7 @@ sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml c
 sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml up -d ai-validation-worker
 ```
 
-5. **확인.** 시작 로그에 `frozen retrieval disabled`가 없어야 하고, Job을 처리하면 `vector search offered=True sources=<n> ready=<n> ...`이 남는다.
+6. **확인.** 시작 로그에 `frozen retrieval disabled`가 없어야 하고, Job을 처리하면 `vector search offered=True sources=<n> ready=<n> ...`이 남는다.
 
 ```bash
 sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml logs --tail=200 ai-validation-worker | grep -E 'frozen retrieval disabled|query embedding disabled|vector search'
@@ -294,9 +295,9 @@ sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml l
 
 - `vector search offered=False`이고 `ready`가 `sources`보다 작으면 그 작품의 일부 회차가 아직 색인되지 않은 것이다. 그 Job은 키워드 검색만으로 정상 진행하며, 색인 백필이 끝난 뒤의 Job부터 의미 검색이 제안된다.
 - `embedding=False`이면 API 예산 JSON에 `QUERY_EMBEDDING`이 없다(1단계).
-- `vector search readiness unavailable error=<예외 종류>`는 읽기 전용 DB 접속 문제다. 그 Job은 키워드 검색만으로 계속한다. 로그에는 예외 종류와 Job ID만 남는다.
+- `vector search readiness unavailable error=<예외 종류>`는 읽기 전용 DB 접속·권한 문제다(`ProgrammingError`는 3단계 권한, `TimeoutError`는 5초 안에 응답하지 않은 DB). 그 Job은 frozen RAG 없이 키워드 검색만으로 계속한다. 로그에는 예외 종류와 Job ID만 남는다.
 
-끄려면 `VALIDATION_READONLY_DATABASE_URL`을 다시 비우고 4단계로 검수 Worker만 재기동한다. 자동 배포의 `manage-ai-runtime.py`는 URL이 비어 있으면 아무것도 검사하지 않고, 값이 있으면 챗봇의 `CHAT_RETRIEVAL_DATABASE_URL`과 같은지(`INCONSISTENT_VALIDATION_READONLY_DATABASE_URL`), `--index-version`이 `CHAT_RETRIEVAL_EMBEDDING_VERSION`과 같은지(`INCONSISTENT_VALIDATION_WORKER_INDEX_VERSION`) 확인한 뒤 위 연결 수를 예산에 넣는다. 결과 JSON의 `validationRetrieval`로 켜짐 여부를 확인한다.
+끄려면 `VALIDATION_READONLY_DATABASE_URL`을 다시 비우고 5단계로 검수 Worker만 재기동한다. 자동 배포의 `manage-ai-runtime.py`는 URL이 비어 있으면 아무것도 검사하지 않고, 값이 있으면 챗봇의 `CHAT_RETRIEVAL_DATABASE_URL`과 같은지(`INCONSISTENT_VALIDATION_READONLY_DATABASE_URL`), `--index-version`이 `CHAT_RETRIEVAL_EMBEDDING_VERSION`과 같은지(`INCONSISTENT_VALIDATION_WORKER_INDEX_VERSION`) 확인한 뒤 위 연결 수를 예산에 넣는다. 결과 JSON의 `validationRetrieval`로 켜짐 여부를 확인한다.
 
 ## 데이터베이스 연결 수 예산
 

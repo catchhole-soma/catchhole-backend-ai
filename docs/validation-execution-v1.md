@@ -388,7 +388,10 @@ INFO `query embedding disabled: no read-only retrieval sessions`를 남기고 em
 `프로세스 수 × 동시 Job 수`로 넣는다. Job마다 claim에 QUERY_EMBEDDING model/cap이 아예 없으면 embedding 없이
 키워드 검색만 제안하고(있는데 index와 다르거나 cap이 0이면 `EMBEDDING_CONFIGURATION_INVALID`), 회차 출처가 있으면
 Job 시작 때 고정 범위 readiness를 한 번 읽어 모든 회차 출처의 vector가 준비됐을 때만 VECTOR를 제안한다
-(INFO `vector search offered=<bool> sources=<n> ready=<m> ...`, 읽기 실패는 KEYWORD만 제안하고 예외 종류만 경고).
+(INFO `vector search offered=<bool> sources=<n> ready=<m> ...`). 이 읽기는 `min(남은 seconds, 5초)`로 제한하며,
+실패·초과하면 예외 종류만 경고하고 그 Job은 frozen RAG 없이 키워드 검색만 쓴다(첫 PLANNER 예산을 쓰지 않는다).
+검색 계정은 챗봇 계정과 같고 `validation_reports`·`validation_jobs`·`validation_baseline_sources` SELECT가 더 필요하다.
+챗봇 bootstrap(`app.retrieval.bootstrap`)이 관리 계정에 이 권한을 부여·갱신한다.
 같은 Job의 이전 시도가 VECTOR를 이미 저장했으면 재개 때 VECTOR를 유지해 위 JUDGE-only 재개 계약을 지킨다.
 
 합성 검증은 loopback gh310_execution_test 이외의 DB에서 실행하지 않는다. 실제 Spring HTTP·JPA·Flyway와

@@ -23,6 +23,7 @@ SELECT 전용 session factory를 명시하면 기존 frozen RAG를 사용한다.
 model/version/1536 차원·명시 cap이 일치할 때만 실행하고, exact query/input/manifest/index proof가
 원 호출 원장에 맞는 성공 VECTOR receipt를 재사용한다. 미준비 vector는 정상 빈 결과가 아니다.
 VECTOR는 Job 시작 때 읽은 readiness가 완전하고 query embedding client가 있을 때만 모델에 제안한다(GH344).
+readiness 읽기는 최대 5초이고, 실패·초과하면 그 Job은 frozen RAG 없이 키워드로만 진행한다.
 같은 Job의 이전 시도가 VECTOR를 저장했으면 재개 때는 그대로 유지한다.
 claim에 QUERY_EMBEDDING 역할이 아예 없으면 embedding 없이(키워드만) 실행하고, 있는데 index와 다르면 계속 거절한다.
 
