@@ -1,6 +1,7 @@
 """Synthetic evidence obligations and correction recovery, not planner accuracy."""
 
 import asyncio
+import json
 import copy
 import logging
 import socket
@@ -259,7 +260,11 @@ def test_value_only_correction_repairs_unobserved_attribute_then_maps_real_field
     assert len(result["spring"].reservations) == len(result["spring"].reports) == 3
 
 
-def test_repeated_focus_failure_clarifies_without_changing_scope_or_leaking_terms(tmp_path, caplog):
+def test_repeated_focus_failure_drops_the_attribute_without_changing_scope_or_leaking_terms(
+    tmp_path, caplog
+):
+    # 두 번째 시도도 질문에 없는 항목 이름만 틀렸으면 되묻지 않고 그 이름을 비운 뒤 유형(PROFILE)으로
+    # 진행한다. 대상·범위는 그대로이고 거절값은 로그·재전달 지침에 남지 않는다.
     case = current_case()
     case["question"] = "여자일 텐데?"
     private = "private-unobserved-attribute"
@@ -268,10 +273,14 @@ def test_repeated_focus_failure_clarifies_without_changing_scope_or_leaking_term
     with caplog.at_level(logging.WARNING, logger="app.chatbot.qa"):
         result = run(tmp_path, case, correction_catalog)
     assert result["finish"]["failure"] is None
-    assert result["finish"]["result"]["outcome"] == "CLARIFICATION"
-    assert not result["spring"].queries and not result["search"].calls
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    assert NOTICES["FOCUS_ATTRIBUTE_DROPPED"] in result["finish"]["result"]["limitations"]
+    assert [q["tool"] for q in result["spring"].queries][:1] == ["FIND_CHARACTERS"]
+    assert all(q.get("factType") in (None, "PROFILE") for q in result["spring"].queries)
+    assert not result["search"].calls
     assert len(result["raw"].requests) == 2
     assert private not in caplog.text and private not in result["raw"].requests[1]["system"]
+    assert private not in json.dumps(result["spring"].queries, ensure_ascii=False)
 
 
 def test_ambiguous_registered_name_stops_before_current_or_source_lookup(tmp_path):

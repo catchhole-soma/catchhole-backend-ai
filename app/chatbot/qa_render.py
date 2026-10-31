@@ -41,6 +41,7 @@ NOTICES = {
     "PARTIAL_RESULTS": "조회 한도에 도달해 일부 등록 정보만 확인했습니다.",
     "FOCUS_FALLBACK": "질문의 항목 이름과 등록 항목 이름이 달라 해당 유형의 등록 설정 전체에서 찾았습니다.",
     "FOCUS_TYPE_WIDENED": "질문한 유형의 등록 항목이 없어 다른 유형의 항목에서 찾았습니다.",
+    "FOCUS_ATTRIBUTE_DROPPED": "질문에서 항목 이름을 확인하지 못해 해당 유형의 등록 항목 전체에서 찾았습니다.",
     "HISTORY_SKIPPED_FOR_COMPARISON": "여러 인물을 함께 조회해 변경 이력은 생략하고 현재 등록값으로 답했습니다.",
     "CONTEXT_LIMIT": "입력 문맥 한도로 일부 항목을 검토하지 못했습니다.",
     "SELECTION_LIMIT": "답변 항목 상한에 도달해 일부 항목만 표시합니다.",

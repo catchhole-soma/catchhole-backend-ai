@@ -360,6 +360,25 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     *diagnostic.values(),
                     extra=diagnostic,
                 )
+                if (
+                    attempt + 1 == attempt_limit
+                    and validation_stage == "RESPONSE_CONTRACT"
+                    and feedback
+                    and all(item["code"] == "UNOBSERVED_FOCUS_ATTRIBUTE" for item in feedback)
+                    and hasattr(parsed, "subjects")
+                ):
+                    # 마지막 시도까지 질문에 없는 항목 이름만 남았으면 되묻거나 실패하는 대신
+                    # 그 이름을 비우고 유형으로 진행한다(두 속성 × 두 인물 질문의 실제 사례).
+                    recovered = self.drop_unobserved_focus(parsed)
+                    if recovered is not None:
+                        try:
+                            revalidated = validate(recovered) if validate else None
+                        except (ValidationError, ValueError):
+                            revalidated = None
+                            recovered = None
+                        if recovered is not None:
+                            self.codes.append("FOCUS_ATTRIBUTE_DROPPED")
+                            return revalidated if isinstance(revalidated, cls) else recovered
         if validation_failed:
             if only_focus_failures:
                 raise LookupClarificationRequired()

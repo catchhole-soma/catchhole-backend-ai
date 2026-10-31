@@ -7,6 +7,8 @@ import socket
 
 import pytest
 
+from app.chatbot.qa_render import NOTICES
+
 from app.chatbot.qa_validation import RULES
 from tests.test_chat_current_authority import current_case
 from tests.test_chat_focused_lookup import catalog_subject, item
@@ -110,9 +112,9 @@ def test_cross_field_failure_provides_specific_safe_feedback_then_recovers(
     assert all(report["outcome"] == "SUCCESS" for report in result["spring"].reports)
 
 
-def test_unobserved_focus_is_still_rejected_before_any_search_with_bounded_retries(
-    tmp_path, caplog
-):
+def test_unobserved_focus_is_retried_once_then_dropped_before_any_search(tmp_path, caplog):
+    # 질문에 없는 항목 이름은 한 번 재전달하고, 마지막 시도도 같은 오류만 남으면 그 이름을 비운 뒤
+    # 유형(SKILL)으로 진행한다. 거절값은 로그·지침에 남지 않고 검색은 시작하지 않는다.
     case = parts_case()
     invalid = copy.deepcopy(case["outputs"][0])
     invalid["subjects"] = [
@@ -129,7 +131,8 @@ def test_unobserved_focus_is_still_rejected_before_any_search_with_bounded_retri
         result = asyncio.run(replay(tmp_path, case))
 
     assert result["finish"]["failure"] is None
-    assert result["finish"]["result"]["outcome"] == "CLARIFICATION"
+    assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert NOTICES["FOCUS_ATTRIBUTE_DROPPED"] in result["finish"]["result"]["limitations"]
     records = [record for record in caplog.records if record.name == "app.chatbot.qa"]
     assert len(records) == 2
     assert all(record.validation_stage == "RESPONSE_CONTRACT" for record in records)

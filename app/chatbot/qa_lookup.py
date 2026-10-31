@@ -112,6 +112,24 @@ class FocusedLookup:
             raise SettingToolClientError("CONTRACT_ERROR")
         return item, None
 
+    def drop_unobserved_focus(self, plan):
+        """마지막 계획 시도도 질문에 없는 항목 이름만 틀렸으면 그 이름을 비우고 유형으로 진행한다.
+
+        항목 이름은 FIELD 선택의 힌트일 뿐이라 비워도 질문 본문으로 고를 수 있다. 바뀐 subject가 없으면 None.
+        """
+        observed = self.observed_question_text()
+        subjects = []
+        changed = False
+        for subject in plan.subjects:
+            attribute = subject.focus.attribute if subject.focus else None
+            if attribute and attribute.strip().casefold() not in observed:
+                subject = subject.model_copy(
+                    update={"focus": subject.focus.model_copy(update={"attribute": None})}
+                )
+                changed = True
+            subjects.append(subject)
+        return plan.model_copy(update={"subjects": subjects}) if changed else None
+
     def validate_focus(self, plan):
         observed = self.observed_question_text()
         terms = [s.focus.attribute for s in plan.subjects if s.focus and s.focus.attribute]
