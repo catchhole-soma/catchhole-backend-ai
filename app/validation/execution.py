@@ -111,10 +111,20 @@ class ValidationRoleClients:
 
 
 def metered_embedding(raw, ledger, claim, spec, *, request_semaphore=None):
+    """Optional QUERY_EMBEDDING client of one claim; None means VECTOR is not offered (GH344).
+
+    A claim without any QUERY_EMBEDDING model or cap means the API did not configure the optional role, so
+    the job runs keyword-only instead of failing. A role that is present but differs from the index, or has
+    no positive cap, is still a configuration error.
+    """
     if raw is None:
         return None
-    model = claim.wire["models"].get("QUERY_EMBEDDING", {})
-    cap = claim.wire["budgets"]["roles"].get("QUERY_EMBEDDING", {})
+    model = claim.wire["models"].get("QUERY_EMBEDDING")
+    cap = claim.wire["budgets"]["roles"].get("QUERY_EMBEDDING")
+    if model is None and cap is None:
+        return None
+    if not isinstance(model, dict) or not isinstance(cap, dict):
+        raise IncompleteInspection("EMBEDDING_CONFIGURATION_INVALID")
     if (model.get("version") != spec.version or model.get("dimensions") != spec.dimensions
             or model.get("model") != spec.model or getattr(raw, "model", None) != spec.model
             or raw.version != spec.version or raw.dimensions != spec.dimensions

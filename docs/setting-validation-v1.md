@@ -90,6 +90,11 @@ GH331 모델 입력·출력 계약(실제 Terra 관측 반영):
   실제 ref 형식이 다르면 일반 문자열로 둔다. 정확한 소속은 검증기가 판단한다.
 - frozen RAG 검색이 주입되지 않았고 회차 출처가 있으면 VECTOR는 항상 `VECTOR_NOT_READY`로 끝나므로 schema가 KEYWORD만 제안하고, 남은 VECTOR 의무는 저장 전에 거절한다.
   검색이 주입된 실행과 설정집만 있는 실행은 기존 VECTOR 경로(색인 readiness 검사·책 raw fallback)를 그대로 쓴다.
+  GH344: 검색이 주입돼도 회차 출처가 있으면 Job 시작 때 고정 범위의 readiness를 한 번 읽어, 모든 고정 회차 출처의 vector가 준비됐고(`vector_chunks>0`,
+  `vector_ready_sources=source_count=회차 출처 수`) query embedding client가 있을 때만 VECTOR를 제안한다. 읽기는 `min(남은 seconds, 5초)` 안에 끝나야 하며,
+  실패·초과하면 경고(예외 종류만)를 남기고 그 Job은 frozen RAG 없이(키워드만, 원문 직접 읽기) 계속한다. Job을 실패시키지 않는다.
+  `normalizations.VECTOR_OFFERED`(1/0)와 INFO `vector search offered=...`로 남긴다. 조회 직전의 readiness 검사(`VECTOR_NOT_READY`·`VECTOR_INDEX_PARTIAL`)는 그대로 둔다.
+  같은 Job의 이전 시도가 VECTOR 계획·의무·receipt를 이미 저장했으면 재개 때 readiness와 무관하게 VECTOR를 유지해(`resumed=True`) 성공한 조회의 JUDGE-only 재개를 막지 않는다.
 - strict mode는 root 조건부 필드를 표현할 수 없으므로 판정 조건은 prompt와 검증기가 맡는다. FOLLOW_UP의 outcome/basis/impact/impact_reason/completion은 사용하지 않으므로 무시(null)하고,
   NO_CONFLICT의 impact/impact_reason도 finding이 아니어서 null로 둔다. 나머지 판정의 impact 누락 등은 그대로 거절한다.
 - `completion.required_reads.receipt_refs`는 Worker가 질문의 실제 성공 receipt 전체로 확정한다. 모델이 인용한 receipt/근거가 실제로 없으면 거절하고, 빠진 receipt만 채운다.

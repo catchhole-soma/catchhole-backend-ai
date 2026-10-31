@@ -27,6 +27,20 @@ class SemanticState(Contract):
     runtime: QuestionRuntime | None = None
 
 
+def lookup_operations(*payloads):
+    """Lookup operations named anywhere in saved semantic payloads (plans, obligations, receipts, queue)."""
+    found, stack = set(), list(payloads)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if isinstance(node.get("operation"), str):
+                found.add(node["operation"])
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found
+
+
 def payload_key(kind, payload):
     # This is retransmission identity only, never a server scope/check CAS digest.
     return kind + ":" + sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
@@ -90,6 +104,10 @@ class ValidationCheckpoint:
 
     def stage(self, stage, ref):
         return deepcopy(self.stages.get((stage, ref)))
+
+    def planned_operations(self):
+        """GH344: what an earlier attempt already saved; a resumed VECTOR plan or receipt stays valid."""
+        return lookup_operations(list(self.stages.values()), list(self.checks.values()), self.saved)
 
     async def save_stage(self, stage, ref, payload):
         await self._publish("plans", payload, stage=stage, ref=ref, failureCode=None)

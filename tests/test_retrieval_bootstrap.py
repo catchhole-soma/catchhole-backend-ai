@@ -156,13 +156,104 @@ def test_saved_managed_dsn_keeps_exact_scope_and_supplied_credentials(tmp_path, 
     }
     b._write_private(tmp_path / "reader-intent.json", intent)
     monkeypatch.setattr(b, "_role", lambda *args: {"marker": intent["marker"]})
+    monkeypatch.setattr(b, "_quote", lambda _, value: '"' + value + '"')
     validate = Mock()
     monkeypatch.setattr(b, "_validate_role", validate)
-    connection = object()
+    connection = RecordingConnection()
     reader, saved_intent = b._existing_reader(connection, cfg)
     assert reader == cfg.existing_url and reader.password == "new-secret"
     assert saved_intent == intent
-    validate.assert_called_once_with(connection, b.ROLE, exact_select=True)
+    # Drift is checked before any grant, then the exact allow-list is re-checked after the idempotent grants.
+    assert validate.call_args_list == [((connection, b.ROLE), {"exact_select": True})] * 2
+    assert connection.grants == _expected_grants()
+
+
+class RecordingConnection:
+    def __init__(self):
+        self.statements, self.grants = [], []
+
+    def execute(self, query, params=None):
+        self.statements.append(str(query))
+
+    def exec_driver_sql(self, statement):
+        self.grants.append(statement)
+
+
+def _expected_grants():
+    relations = ",".join(f'public."{name}"' for name in b.RELATIONS)
+    return [
+        f'GRANT CONNECT ON DATABASE "test" TO "{b.ROLE}"',
+        f'GRANT USAGE ON SCHEMA public TO "{b.ROLE}"',
+        f'GRANT SELECT ON {relations} TO "{b.ROLE}"',
+    ]
+
+
+def test_managed_reader_grants_select_on_the_validation_frozen_rag_relations():
+    """GH344: the shared reader serves the chatbot and the validation Worker; SELECT only, nothing else."""
+    assert b.RELATIONS[:7] == (
+        "retrieval_chunks", "retrieval_sources", "retrieval_current_chunks", "episodes", "works", "members",
+        "episode_source_purge_requests",
+    )
+    assert b.RELATIONS[7:] == ("validation_reports", "validation_jobs", "validation_baseline_sources")
+    assert len(set(b.RELATIONS)) == len(b.RELATIONS) == 10
+
+
+@pytest.mark.parametrize("repository", ["chatbot", "validation"])
+def test_reader_allow_list_covers_every_relation_the_search_repositories_read(repository):
+    """The SQL each repository actually issues (recorded, no DB) reads only allow-listed relations."""
+    import re
+    from uuid import uuid4
+
+    from app.retrieval.contracts import IndexSpec
+    from app.retrieval.search_contracts import ChunkEvidence, SearchScope
+    from app.retrieval.search_repository import RetrievalSearchRepository
+    from app.validation.search import FrozenRetrievalRepository, FrozenSearchScope
+
+    class Rows(list):
+        def all(self):
+            return list(self)
+
+        def one(self):
+            return {key: 0 for key in ("sources", "text_sources", "vector_sources", "text_chunks",
+                                       "vector_chunks")}
+
+    class Session:
+        def __init__(self):
+            self.sql = []
+
+        def scalar(self, statement, params=None):
+            self.sql.append(str(statement))
+            return 1
+
+        def scalars(self, statement, params=None):
+            self.sql.append(str(statement))
+            return []
+
+        def execute(self, statement, params=None):
+            self.sql.append(str(statement))
+            return SimpleNamespace(mappings=lambda: Rows())
+
+    session, spec = Session(), IndexSpec()
+    if repository == "chatbot":
+        target = RetrievalSearchRepository(session, SearchScope(1, uuid4()), spec)
+    else:
+        scope = FrozenSearchScope(1, uuid4(), report_id=uuid4(), baseline_hash="a" * 64, target_hash="b" * 64,
+                                  job_id=uuid4(), lease_token=uuid4(), generation=1, input_digest="c" * 64)
+        target = FrozenRetrievalRepository(session, scope, spec)
+        target.indexed_episode_ids()
+    seed = ChunkEvidence(uuid4(), uuid4(), 1, 0, "본문", 0, 2, "d" * 64, "key", None, "e" * 64, spec.policy,
+                         ("KEYWORD",), 1.0)
+    target.readiness()
+    target.keyword("민수 의수", limit=5)
+    target.direct([seed.chunk_id], limit=5)
+    target.neighbors([seed], limit=5)
+    target.keyword_ordered(["민수"], ["의수"], order="EARLIEST", limit=5)
+    target.vector([1.0] + [0.0] * (spec.dimensions - 1), limit=5)
+    sql = "\n".join(session.sql)
+    ctes = set(re.findall(r"\b([a-z_][a-z0-9_]*) AS (?:MATERIALIZED )?\(", sql))
+    relations = {name for name in re.findall(r"\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)\b(?!\.)", sql)} - ctes
+    expected = set(b.RELATIONS) if repository == "validation" else set(b.RELATIONS[:7])
+    assert relations == expected
 
 
 @pytest.mark.parametrize("missing", ["intent", "marker", "role", "target"])

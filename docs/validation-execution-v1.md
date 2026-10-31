@@ -362,9 +362,11 @@ Backend는 기록 보존을 위해 `RELATED_SELECTION` stage enum을 유지하�
 
 운영은 Worker Compose 서비스 `ai-validation-worker`(기본 0 replicas, `VALIDATION_WORKER_PROCESS_COUNT`)로
 명시 opt-in한다(#344). 이 서비스는 `--enable`·`--poll-seconds`·`--backend-url`과 분석 Worker의 내부 키
-(`SPRING_INTERNAL_API_KEY`)·provider key(`LLM_API_KEY`) 환경변수 이름을 명시해 연속 실행하며, DB·S3·metrics·
-tracing은 쓰지 않는다(`--readonly-url-env`를 주지 않으므로 VECTOR 검색은 제공하지 않는다). 켜기·끄기는 AI
-`deploy/WORKER_EC2_DEPLOYMENT.md`를 따른다. 로컬 확인은 AI checkout에서 아래 전용 명령을 그대로 사용한다.
+(`SPRING_INTERNAL_API_KEY`)·provider key(`LLM_API_KEY`) 환경변수 이름을 명시해 연속 실행하며, S3·metrics·
+tracing은 쓰지 않는다. 과거 원고 의미 검색 플래그(`--readonly-url-env VALIDATION_READONLY_DATABASE_URL
+--query-embedding --index-version`)도 고정으로 주지만 기본 URL 값이 비어 있어 키워드 검색만 쓴다(GH344 후속,
+아래 끝 문단). 켜기·끄기는 AI `deploy/WORKER_EC2_DEPLOYMENT.md`를 따른다. 로컬 확인은 AI checkout에서 아래
+전용 명령을 그대로 사용한다.
 
 ```sh
 PYTHONPATH=. python scripts/run_validation_worker.py --enable --once \
@@ -398,6 +400,21 @@ AI_WORKER_SHUTDOWN_GRACE_SECONDS(없으면 180초)이며 1 미만·0 이하는 �
 connection은 default_transaction_read_only=on이고 index model/version/1536 차원을 검증한다.
 --query-embedding은 서버의 별도 cap/model과 기존 준비 index가 모두 있을 때만 사용한다.
 미설정/미준비 vector는 정상 빈 검색으로 숨기지 않는다.
+GH344 후속: 명시성은 플래그에 둔다. 플래그는 명시해야 하지만 그 환경변수 값은 비어 있을 수 있다.
+--readonly-url-env의 변수가 없거나 비어 있으면 INFO `frozen retrieval disabled: <NAME> is empty` 한 줄을 남기고
+frozen RAG 없이 실행한다(KeyError로 끝나지 않는다). 읽기 전용 session이 없는데 --query-embedding이면
+INFO `query embedding disabled: no read-only retrieval sessions`를 남기고 embedding client 없이 실행한다
+(ValueError 대신). --once도 같다. URL이 있으면 연결 풀은 --concurrency개(overflow 0)로 묶어 배포 연결 예산에
+`프로세스 수 × 동시 Job 수`로 넣는다. 연결은 connect 5초·statement 5초(`statement_timeout`, readiness 5초 상한과 같은
+근거)·idle-in-transaction 10초·풀 대기 5초로 DB/드라이버가 끊는다. asyncio timeout은 `asyncio.to_thread`의 블로킹 조회와
+그 연결을 멈추지 못하기 때문이며, 끊긴 조회는 readiness면 KEYWORD 전용, 검색이면 기존 `SEARCH_FAILED`로 끝난다. Job마다 claim에 QUERY_EMBEDDING model/cap이 아예 없으면 embedding 없이
+키워드 검색만 제안하고(있는데 index와 다르거나 cap이 0이면 `EMBEDDING_CONFIGURATION_INVALID`), 회차 출처가 있으면
+Job 시작 때 고정 범위 readiness를 한 번 읽어 모든 회차 출처의 vector가 준비됐을 때만 VECTOR를 제안한다
+(INFO `vector search offered=<bool> sources=<n> ready=<m> ...`). 이 읽기는 `min(남은 seconds, 5초)`로 제한하며,
+실패·초과하면 예외 종류만 경고하고 그 Job은 frozen RAG 없이 키워드 검색만 쓴다(첫 PLANNER 예산을 쓰지 않는다).
+검색 계정은 챗봇 계정과 같고 `validation_reports`·`validation_jobs`·`validation_baseline_sources` SELECT가 더 필요하다.
+챗봇 bootstrap(`app.retrieval.bootstrap`)이 관리 계정에 이 권한을 부여·갱신한다.
+같은 Job의 이전 시도가 VECTOR를 이미 저장했으면 재개 때 VECTOR를 유지해 위 JUDGE-only 재개 계약을 지킨다.
 
 합성 검증은 loopback gh310_execution_test 이외의 DB에서 실행하지 않는다. 실제 Spring HTTP·JPA·Flyway와
 새 Python Worker를 연결하는 ValidationExecutionHttpPostgresIntegrationTest는

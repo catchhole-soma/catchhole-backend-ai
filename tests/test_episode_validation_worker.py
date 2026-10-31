@@ -382,6 +382,110 @@ def test_llm_request_semaphore_reaches_every_role_and_query_embedding_client(mon
     assert (semaphore is not None) == capped
 
 
+QUERY_EMBEDDING_MODEL = {"model": "text-embedding-3-small", "version": "v1", "dimensions": 1536}
+QUERY_EMBEDDING_CAP = {"maxCalls": 2, "maxReservedTokens": 1000}
+ABSENT = object()
+
+
+def _embedding_claim(model=ABSENT, cap=ABSENT):
+    import json
+    from pathlib import Path
+
+    from app.validation.client import ValidationClaim
+    wire = json.loads((Path(__file__).parents[1] / "docs/contracts/validation-execution-v1.json")
+                      .read_text())["execution"]["responses"]["claim"]
+    assert "QUERY_EMBEDDING" not in wire["models"]  # The shared fixture has no optional role.
+    if model is not ABSENT:
+        wire["models"]["QUERY_EMBEDDING"] = model
+    if cap is not ABSENT:
+        wire["budgets"]["roles"]["QUERY_EMBEDDING"] = cap
+    return ValidationClaim.from_wire(wire)
+
+
+def _metered_embedding(claim, raw=ABSENT):
+    from types import SimpleNamespace
+
+    from app.retrieval.contracts import IndexSpec
+    from app.validation.execution import metered_embedding
+
+    if raw is ABSENT:  # The raw embeddings client is never called here; only its index identity matters.
+        raw = SimpleNamespace(model="text-embedding-3-small", version="v1", dimensions=1536)
+    return metered_embedding(raw, FakeLedger(), claim, IndexSpec(version="v1"))
+
+
+@pytest.mark.parametrize(("model", "cap"), [(ABSENT, ABSENT), (None, None)], ids=["absent", "null"])
+def test_claim_without_query_embedding_role_runs_without_vector(model, cap):
+    """GH344: an API without the optional QUERY_EMBEDDING role means keyword-only, not a failed job."""
+    assert _metered_embedding(_embedding_claim(model, cap)) is None
+    assert _metered_embedding(_embedding_claim(QUERY_EMBEDDING_MODEL, QUERY_EMBEDDING_CAP), raw=None) is None
+
+
+def test_configured_query_embedding_role_builds_the_metered_client():
+    from app.validation.execution import ValidationQueryEmbedding
+
+    client = _metered_embedding(_embedding_claim(QUERY_EMBEDDING_MODEL, QUERY_EMBEDDING_CAP))
+    assert isinstance(client, ValidationQueryEmbedding)
+    assert (client.model, client.version, client.dimensions) == ("text-embedding-3-small", "v1", 1536)
+
+
+@pytest.mark.parametrize(("model", "cap"), [
+    ({**QUERY_EMBEDDING_MODEL, "model": "text-embedding-3-large"}, QUERY_EMBEDDING_CAP),
+    ({**QUERY_EMBEDDING_MODEL, "version": "v2"}, QUERY_EMBEDDING_CAP),
+    ({**QUERY_EMBEDDING_MODEL, "dimensions": 3072}, QUERY_EMBEDDING_CAP),
+    (QUERY_EMBEDDING_MODEL, {**QUERY_EMBEDDING_CAP, "maxCalls": 0}),
+    (QUERY_EMBEDDING_MODEL, {**QUERY_EMBEDDING_CAP, "maxReservedTokens": 0}),
+    (QUERY_EMBEDDING_MODEL, ABSENT),
+    (ABSENT, QUERY_EMBEDDING_CAP),
+    ({}, QUERY_EMBEDDING_CAP),
+    ("text-embedding-3-small", QUERY_EMBEDDING_CAP),
+], ids=["model", "version", "dimensions", "zero-calls", "zero-tokens", "model-without-cap", "cap-without-model",
+        "empty-model", "not-an-object"])
+def test_present_but_mismatched_query_embedding_role_still_fails(model, cap):
+    from app.validation.contracts import IncompleteInspection
+
+    with pytest.raises(IncompleteInspection, match="EMBEDDING_CONFIGURATION_INVALID"):
+        _metered_embedding(_embedding_claim(model, cap))
+
+
+def test_worker_with_query_embedding_passes_none_when_the_claim_has_no_role(monkeypatch):
+    """The job proceeds past embedding setup and the inspection is built without a query embedding client."""
+    import app.worker.episode_validation_worker as worker_module
+    from app.embeddings.client import OpenAIEmbeddingsClient
+    from app.validation.client import ValidationExecutionClient
+    from app.validation.contracts import IncompleteInspection
+
+    built = []
+    real = worker_module.metered_embedding
+    monkeypatch.setattr(worker_module, "metered_embedding",
+                        lambda *args, **kwargs: built.append(real(*args, **kwargs)) or built[-1])
+
+    async def never_called(request):
+        raise AssertionError("no backend or provider request is expected")
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(never_called)) as http:
+            raw = OpenAIResponsesClient("synthetic", "gpt-6.1-terra", "https://provider.invalid/responses",
+                                        http_client=http)
+            embedding = OpenAIEmbeddingsClient("synthetic", "text-embedding-3-small", 1536, "v1",
+                                               "https://provider.invalid/embeddings", http)
+            client = ValidationExecutionClient("https://spring.invalid", "synthetic", http)
+
+            async def rejected_checkpoint(claim, gate=None):
+                raise IncompleteInspection("EXECUTION_HTTP_REJECTED")
+
+            client.load_checkpoint = rejected_checkpoint
+            worker = worker_module.EpisodeValidationWorker(client, raw, enabled=True, embedding_client=embedding)
+            try:
+                # Before GH344 this claim failed here with EMBEDDING_CONFIGURATION_INVALID.
+                with pytest.raises(IncompleteInspection, match="EXECUTION_HTTP_REJECTED"):
+                    await worker.process_claimed(_embedding_claim())
+            finally:
+                await worker.aclose()
+
+    asyncio.run(run())
+    assert built == [None]
+
+
 def _second_claim(backend):
     from uuid import uuid4
 

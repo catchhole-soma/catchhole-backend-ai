@@ -77,6 +77,13 @@ API·Worker 두 인스턴스의 SSM 명령 실행/결과 조회 권한이 필요
 
 검색 계정은 실제 DB CONNECT, public USAGE와 `retrieval_chunks`, `retrieval_sources`,
 `retrieval_current_chunks`, `episodes`, `works`, `members`, `episode_source_purge_requests` SELECT가 필요하다.
+같은 계정을 검수 Worker의 과거 원고 의미 검색(GH344)도 쓰므로, 고정 보고서·실행 Job·기준 출처로 범위를 좁히는
+`validation_reports`, `validation_jobs`, `validation_baseline_sources` SELECT도 부여한다(모두 10개, SELECT만).
+자동 생성한 계정은 이 목록 밖의 SELECT를 계속 `READ_ROLE_EXCESS_READ_PRIVILEGE`로 거절한다.
+목록이 늘어난 AI SHA의 `Deploy Worker EC2` 최초 설정 단계(`bootstrap-chat-aws.py prepare`)는 저장된 관리 DSN을
+재사용하면서 초과 권한을 먼저 검사한 뒤 빠진 SELECT만 멱등하게 추가한다. 따라서 **검수 의미 검색을 켜기 전에
+이 변경이 포함된 SHA의 배포(bootstrap 포함)가 성공했는지 확인하고, 아니면 그 실행을 다시 실행해 reader grant를
+갱신한다.** 운영자가 직접 만든(custom) 검색 계정은 자동으로 권한을 바꾸지 않으므로 위 세 테이블 SELECT를 따로 준다.
 다른 공유 테이블의 쓰기, 객체 소유권, 높은 역할 권한을 부여하지 않는다.
 DB의 PUBLIC CREATE 권한처럼 기존 공유 ACL 때문에 읽기 전용을 보장할 수 없으면 전역 ACL을 임의로 변경하지 않는다.
 

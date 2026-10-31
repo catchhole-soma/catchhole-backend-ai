@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from app.llm.responses import LlmTextResponse
+from app.retrieval.search_contracts import SearchReadiness
 from app.validation.contracts import (
     IncompleteInspection,
     IntentRefs,
@@ -314,13 +315,13 @@ class RecordingCheckpoint:
         return {}
 
 
-def inspect(model, checkpoint=None, search=None):
+def inspect(model, checkpoint=None, search=None, embedding_client=None, seconds=30):
     from app.validation.service import SettingValidationService
 
-    limits = InvocationBudget(model_calls=40, lookups=80, seconds=30, input_tokens=40000, output_tokens=20000,
+    limits = InvocationBudget(model_calls=40, lookups=80, seconds=seconds, input_tokens=40000, output_tokens=20000,
                               segment_chars=2000, context_chars=300, catalogue_page_size=50, search_limit=10)
     return asyncio.run(SettingValidationService(B2Data(), model, limits, checkpoint=checkpoint,
-                                                search=search).inspect())
+                                                search=search, embedding_client=embedding_client).inspect())
 
 
 def test_recorded_real_terra_shapes_are_accepted_after_normalization(caplog):
@@ -482,12 +483,31 @@ def test_segments_used_by_the_regression_are_a_single_target_segment():
     assert [segment.ref for segment in split_segments(B2, core_chars=2000, context_chars=300)] == ["TSEG1"]
 
 
+READY = SearchReadiness(2, 2, 2, 4, 4)
+HANG = object()  # A readiness read that never returns (a stuck DB connection).
+
+
 class EmptyIndex:
-    """Frozen RAG is configured but finds nothing; raw keyword reading still covers every source."""
+    """Frozen RAG is configured but finds nothing; raw keyword reading still covers every source.
+
+    ``readiness`` is what the job's one GH344 readiness read returns (an exception is raised instead).
+    """
+
+    def __init__(self, readiness=READY):
+        self.ready, self.readiness_reads, self.searches = readiness, 0, 0
+
+    async def readiness(self, frozen):
+        self.readiness_reads += 1
+        if self.ready is HANG:
+            await asyncio.Event().wait()
+        if isinstance(self.ready, Exception):
+            raise self.ready
+        return self.ready
 
     async def search(self, frozen, intent, embedding_client, limit):
         from types import SimpleNamespace
 
+        self.searches += 1
         return SimpleNamespace(chunks=[], limited=False, readiness=None), set()
 
 
@@ -503,7 +523,7 @@ def test_vector_is_offered_only_when_the_worker_can_execute_it():
     assert inspect(plain).status == "COMPLETED"
     assert {"KEYWORD"} <= _planner_search_operations(plain) and "VECTOR" not in _planner_search_operations(plain)
     indexed = RecordedTerra()
-    assert inspect(indexed, search=EmptyIndex()).status == "COMPLETED"
+    assert inspect(indexed, search=EmptyIndex(), embedding_client=QUERY_EMBEDDING).status == "COMPLETED"
     assert {"KEYWORD", "VECTOR"} <= _planner_search_operations(indexed)
     checkpoint = RecordingCheckpoint()
     vector = RecordedTerra(planner_intents=[{"ref": "L3", "kind": "CHANGES_EXCEPTIONS", "operation": "VECTOR",
@@ -512,6 +532,212 @@ def test_vector_is_offered_only_when_the_worker_can_execute_it():
     assert (result.failure_code, result.failure_cause, result.failure_stage) == (
         "INVALID_INSPECTION_CONTRACT", "VECTOR_NOT_READY", "PLANNER:TSEG1")
     assert not checkpoint.saved  # never persisted as an obligation that every retry would repeat
+
+
+# --- GH344: VECTOR is offered only when this job's frozen index can serve it ----------------------
+
+QUERY_EMBEDDING = object()  # Never called: no VECTOR lookup runs in these inspections.
+
+
+@pytest.mark.parametrize(("readiness", "embedding_client", "offered"), [
+    (READY, QUERY_EMBEDDING, True),
+    (SearchReadiness(2, 2, 1, 4, 2, ("VECTOR_INDEX_PARTIAL",)), QUERY_EMBEDDING, False),  # one episode unembedded
+    (SearchReadiness(2, 2, 2, 4, 0), QUERY_EMBEDDING, False),  # no vector chunk at all
+    (READY, None, False),  # claim without QUERY_EMBEDDING or worker without --query-embedding
+    (SearchReadiness(1, 1, 1, 2, 2), QUERY_EMBEDDING, False),  # index scope differs from the frozen manifest
+], ids=["ready", "partial", "no-vectors", "no-embedding-client", "manifest-mismatch"])
+def test_vector_offer_follows_one_readiness_read_of_the_job(caplog, readiness, embedding_client, offered):
+    caplog.set_level(logging.INFO, logger="app.validation.service")
+    index, model = EmptyIndex(readiness), RecordedTerra()
+    result = inspect(model, search=index, embedding_client=embedding_client)
+    assert result.status == "COMPLETED"
+    assert ("VECTOR" in _planner_search_operations(model)) is offered
+    judge = [kwargs["response_schema"].schema for role, _, kwargs in model.calls if role == "JUDGE"]
+    assert judge and all(("VECTOR" in {operation for variant in _variants(schema["properties"]["follow_ups"])
+                                       for operation in variant}) is offered for schema in judge)
+    assert index.readiness_reads == 1
+    assert result.normalizations["VECTOR_OFFERED"] == int(offered)
+    assert (f"vector search offered={offered} sources={readiness.source_count} "
+            f"ready={readiness.vector_ready_sources}") in caplog.text
+
+
+def test_unexecutable_vector_follow_up_is_rejected_when_the_index_is_partial():
+    """A partial index no longer reaches the lookup: the VECTOR obligation is refused before revision."""
+    checkpoint = RecordingCheckpoint()
+    vector = RecordedTerra(planner_intents=[{"ref": "L3", "kind": "CHANGES_EXCEPTIONS", "operation": "VECTOR",
+                                             "purpose": "습관 변화", "query": "미나 기상 변화"}])
+    partial = EmptyIndex(SearchReadiness(2, 2, 1, 4, 2, ("VECTOR_INDEX_PARTIAL",)))
+    result = inspect(vector, checkpoint, search=partial, embedding_client=QUERY_EMBEDDING)
+    assert (result.failure_code, result.failure_cause, result.failure_stage) == (
+        "INVALID_INSPECTION_CONTRACT", "VECTOR_NOT_READY", "PLANNER:TSEG1")
+    assert not checkpoint.saved
+
+
+def test_failed_readiness_read_offers_keyword_only_and_logs_the_type_only(caplog):
+    caplog.set_level(logging.INFO, logger="app.validation.service")
+    index, model = EmptyIndex(OSError("postgresql://reader:secret@db.invalid/catchhole")), RecordedTerra()
+    result = inspect(model, search=index, embedding_client=QUERY_EMBEDDING)
+    assert result.status == "COMPLETED"  # the job is not failed by the readiness read
+    assert "VECTOR" not in _planner_search_operations(model)
+    assert index.readiness_reads == 1 and result.normalizations["VECTOR_OFFERED"] == 0
+    # An unreadable index (e.g. missing reader grants) would fail every KEYWORD lookup too, so the job reads
+    # the frozen sources raw, exactly like the keyword-only configuration.
+    assert index.searches == 0
+    assert any(r.intent.operation == "KEYWORD" and r.status == "SUCCEEDED" for r in result.receipts)
+    warnings = [row for row in caplog.records if row.levelno == logging.WARNING]
+    assert [row.getMessage() for row in warnings] == [
+        "vector search readiness unavailable error=OSError job=-; offering KEYWORD only without frozen retrieval"]
+    assert "secret" not in caplog.text and "db.invalid" not in caplog.text
+    assert "vector search offered" not in caplog.text
+
+
+def test_stuck_readiness_read_is_capped_and_planning_keeps_its_budget(monkeypatch, caplog):
+    """A stuck read ends at the cap; the first PLANNER call still runs instead of BUDGET_EXHAUSTED.
+
+    The asyncio cap only frees the inspection. The real readiness runs a blocking session in
+    ``asyncio.to_thread``: cancelling the awaiting coroutine does not stop that thread, which keeps its
+    pooled connection (pool_size=--concurrency, max_overflow=0) until the database ends the statement.
+    The runner's read-only engine therefore sets statement_timeout (5 s, the same bound), connect and pool
+    timeouts; see ``test_statement_timeout_in_frozen_search_takes_the_existing_failure_paths`` and the
+    env-gated PostgreSQL check in ``tests/test_validation_readonly_postgres.py``.
+    """
+    import time
+
+    from app.validation import service
+
+    monkeypatch.setattr(service, "VECTOR_READINESS_TIMEOUT_SECONDS", 0.05)
+    caplog.set_level(logging.INFO, logger="app.validation.service")
+    index, model = EmptyIndex(HANG), RecordedTerra()
+    started = time.monotonic()
+    result = inspect(model, search=index, embedding_client=QUERY_EMBEDDING, seconds=20)
+    assert time.monotonic() - started < 5
+    assert result.status == "COMPLETED"
+    assert model.calls[0][0] == "PLANNER"
+    assert "VECTOR" not in _planner_search_operations(model)
+    assert result.normalizations["VECTOR_OFFERED"] == 0 and index.searches == 0
+    assert "vector search readiness unavailable error=TimeoutError job=-" in caplog.text
+
+
+def test_statement_timeout_in_frozen_search_takes_the_existing_failure_paths(caplog):
+    """A database-cancelled read (statement_timeout, SQLSTATE 57014) closes its session and maps to fixed codes.
+
+    readiness() raises the driver error to the offer check (KEYWORD only, frozen RAG off for the job);
+    search() turns it into SEARCH_FAILED for KEYWORD and VECTOR alike, never an empty result.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from app.validation.contracts import IncompleteInspection
+    from app.validation.search import FrozenRetrievalSearchService
+
+    class QueryCanceled(Exception):
+        sqlstate = "57014"
+
+    class CanceledSession:
+        def __init__(self):
+            self.closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.closed = True  # The pooled connection is returned even though the statement failed.
+            return False
+
+        def _cancel(self, *args, **kwargs):
+            raise OperationalError("SELECT ...", {}, QueryCanceled("canceling statement due to statement timeout"))
+
+        scalar = execute = scalars = _cancel
+
+    sessions = []
+
+    def factory():
+        sessions.append(CanceledSession())
+        return sessions[-1]
+
+    search = FrozenRetrievalSearchService(factory)
+
+    async def run():
+        frozen = await B2Data().read_input()
+        with pytest.raises(OperationalError):
+            await search.readiness(frozen)
+        codes = []
+        for operation in ("KEYWORD", "VECTOR"):
+            intent = LookupIntent(ref="L1", kind="CHANGES_EXCEPTIONS", operation=operation, purpose="변화",
+                                  query="미나 새벽")
+            with pytest.raises(IncompleteInspection) as failure:
+                await search.search(frozen, intent, QUERY_EMBEDDING, 5)
+            codes.append(failure.value.code)
+        return codes
+
+    assert asyncio.run(run()) == ["SEARCH_FAILED", "SEARCH_FAILED"]
+    assert sessions and all(session.closed for session in sessions)
+    # Through the inspection: the cancelled readiness read withholds VECTOR and the job reads sources raw.
+    caplog.set_level(logging.INFO, logger="app.validation.service")
+    model, before = RecordedTerra(), len(sessions)
+    result = inspect(model, search=search, embedding_client=QUERY_EMBEDDING)
+    assert result.status == "COMPLETED" and result.normalizations["VECTOR_OFFERED"] == 0
+    assert len(sessions) == before + 1  # Only the readiness read; KEYWORD lookups did not use the index.
+    assert "vector search readiness unavailable error=OperationalError job=-" in caplog.text
+    assert "statement timeout" not in caplog.text
+
+
+@pytest.mark.parametrize(("seconds", "cap"), [(20, 5.0), (3, None)], ids=["budget-above-cap", "budget-below-cap"])
+def test_readiness_timeout_is_the_smaller_of_the_budget_and_five_seconds(monkeypatch, seconds, cap):
+    from app.validation import service
+
+    assert service.VECTOR_READINESS_TIMEOUT_SECONDS == 5.0
+    real, timeouts = asyncio.wait_for, []
+
+    async def recording_wait_for(awaitable, timeout=None, **kwargs):
+        if getattr(awaitable, "__qualname__", "") == "EmptyIndex.readiness":
+            timeouts.append(timeout)
+        return await real(awaitable, timeout, **kwargs)
+
+    monkeypatch.setattr(asyncio, "wait_for", recording_wait_for)
+    assert inspect(RecordedTerra(), search=EmptyIndex(), embedding_client=QUERY_EMBEDDING,
+                   seconds=seconds).status == "COMPLETED"
+    [timeout] = timeouts
+    if cap is not None:
+        assert timeout == cap
+    else:  # The remaining inspection budget, already slightly below the configured seconds.
+        assert seconds - 1 < timeout <= seconds
+
+
+def test_resumed_job_with_saved_vector_work_keeps_vector_while_the_index_is_rebuilt(caplog):
+    """Successful lookups resume JUDGE-only despite a live index rebuild (validation-execution-v1)."""
+    from types import SimpleNamespace
+
+    from app.validation.checkpoint import lookup_operations
+    from tests.test_validation_checkpoint import SavedStages
+
+    class Resumable(SavedStages):
+        async def merge(self, questions):
+            for q in questions:
+                self.checks.setdefault(q.ref, {"revision": 1, "outcome": None, "state": {
+                    "lookup_obligations": [i.model_dump() for i in q.draft.lookup_intents]}})
+            return self.checks
+
+        def planned_operations(self):  # Same scan as ValidationCheckpoint.planned_operations.
+            return lookup_operations(list(self.stages.values()), list(self.checks.values()), self.state)
+
+    class Index(EmptyIndex):
+        async def search(self, frozen, intent, embedding_client, limit):
+            return SimpleNamespace(chunks=[], limited=False, readiness=self.ready), set()
+
+    intents = [{"ref": "L3", "kind": "CHANGES_EXCEPTIONS", "operation": "VECTOR", "purpose": "습관 변화",
+                "query": "미나 기상 변화"}]
+    checkpoint = Resumable()
+    first = inspect(RecordedTerra(planner_intents=intents), checkpoint, search=Index(), embedding_client=QUERY_EMBEDDING)
+    assert first.status == "COMPLETED"
+    assert any(r.intent.operation == "VECTOR" and r.status == "SUCCEEDED" for r in first.receipts)
+
+    caplog.set_level(logging.INFO, logger="app.validation.service")
+    rebuilding = Index(SearchReadiness(2, 2, 1, 4, 2, ("VECTOR_INDEX_PARTIAL",)))
+    model = RecordedTerra(planner_intents=intents)
+    resumed = inspect(model, checkpoint, search=rebuilding, embedding_client=QUERY_EMBEDDING)
+    assert resumed.status == "COMPLETED" and not model.calls
+    assert rebuilding.readiness_reads == 0 and resumed.normalizations["VECTOR_OFFERED"] == 1
+    assert "vector search offered=True resumed=True job=-" in caplog.text
 
 
 # --- GH341: the SUSPECTED_CONFLICT change-search citation is a Worker fact -------------------------

@@ -14,6 +14,14 @@ one slot this is exactly the sequential loop above. SIGTERM/SIGINT stop claiming
 --shutdown-grace-seconds, then cancel the rest for Backend lease recovery. --llm-concurrency caps
 concurrent provider requests of all jobs in the process; unset means no cap. CLI defaults come from the
 process environment only.
+
+Frozen RAG stays an explicit flag (GH344): --readonly-url-env names the SELECT-only DB URL variable and
+--query-embedding adds the query embedding client. An unset or empty variable logs one INFO line
+(`frozen retrieval disabled: NAME is empty`) and runs keyword-only; --query-embedding without those sessions
+logs `query embedding disabled` and runs without it. --once behaves the same. The read-only pool holds at
+most --concurrency connections; connect (5 s), statement (5 s), idle-in-transaction (10 s) and pool waits
+(5 s) are bounded by the database/driver, because a cancelled asyncio wait does not stop a blocking read. Per job, VECTOR is offered only when the frozen index is ready and the claim
+configured QUERY_EMBEDDING (`vector search offered=...`).
 """
 import argparse
 import asyncio
@@ -34,6 +42,27 @@ from app.worker.episode_validation_worker import EpisodeValidationWorker
 
 logger = logging.getLogger("app.validation.runner")
 MAX_BACKOFF_SECONDS = 60.0
+# GH344: one readiness/search read must finish within seconds, the same basis as the service's
+# VECTOR_READINESS_TIMEOUT_SECONDS (5 s). That asyncio timeout only cancels the awaiting coroutine: the
+# asyncio.to_thread worker and its pooled connection stay busy until the database ends the statement. So the
+# database enforces the bound too; an expired statement raises, the session closes and the connection returns.
+READONLY_CONNECT_TIMEOUT_SECONDS = 5
+READONLY_STATEMENT_TIMEOUT_MS = 5000
+READONLY_IDLE_IN_TRANSACTION_TIMEOUT_MS = 10000
+READONLY_POOL_TIMEOUT_SECONDS = 5
+
+
+def readonly_engine(url, slots):
+    """SELECT-only frozen RAG engine: one connection per job slot; connect, statement and pool waits bounded.
+
+    Each job reads sequentially, so `slots` connections bound this process (the deploy connection budget).
+    The DB account must also have SELECT-only grants; no validation writes use this connection.
+    """
+    options = ("-c default_transaction_read_only=on"
+               f" -c statement_timeout={READONLY_STATEMENT_TIMEOUT_MS}"
+               f" -c idle_in_transaction_session_timeout={READONLY_IDLE_IN_TRANSACTION_TIMEOUT_MS}")
+    return create_engine(url, pool_size=slots, max_overflow=0, pool_timeout=READONLY_POOL_TIMEOUT_SECONDS,
+                         connect_args={"connect_timeout": READONLY_CONNECT_TIMEOUT_SECONDS, "options": options})
 
 
 def _closing(worker):
@@ -289,15 +318,19 @@ async def run(args):
     engine, embedding = None, None
     sessions = None
     if args.readonly_url_env:
-        # The DB account must also have SELECT-only grants. No validation writes use this connection.
-        engine = create_engine(os.environ[args.readonly_url_env],
-                               connect_args={"options": "-c default_transaction_read_only=on"})
-        sessions = sessionmaker(engine, autoflush=False, expire_on_commit=False)
+        url = os.environ.get(args.readonly_url_env, "").strip()
+        if url:
+            engine = readonly_engine(url, args.concurrency)
+            sessions = sessionmaker(engine, autoflush=False, expire_on_commit=False)
+        else:
+            # The flag stays explicit; an empty value is a logged keyword-only opt-out (GH344).
+            logger.info("frozen retrieval disabled: %s is empty", args.readonly_url_env)
     if args.query_embedding:
         if sessions is None:
-            raise ValueError("Query embedding requires explicitly configured read-only retrieval sessions.")
-        embedding = OpenAIEmbeddingsClient(model_key, spec.model, spec.dimensions, spec.version,
-                                           args.embedding_url)
+            logger.info("query embedding disabled: no read-only retrieval sessions")
+        else:
+            embedding = OpenAIEmbeddingsClient(model_key, spec.model, spec.dimensions, spec.version,
+                                               args.embedding_url)
     raw = OpenAIResponsesClient(model_key, "gpt-6.1-terra", args.responses_url)
     client = ValidationExecutionClient(args.backend_url, internal_key)
     # One process-wide cap shared by every job's metered role and query-embedding clients.

@@ -138,7 +138,12 @@ def test_validation_worker_is_opt_in_and_reuses_api_credentials(
     assert option(command, "--poll-seconds") == poll_seconds
     assert option(command, "--worker-id") == worker_id
     assert "--once" not in command
+    # GH344: semantic search flags are fixed; the empty URL default keeps the runner keyword-only.
+    assert option(command, "--readonly-url-env") == "VALIDATION_READONLY_DATABASE_URL"
+    assert command.count("--query-embedding") == 1
+    assert option(command, "--index-version") == "v1"
     env = validation["environment"]
+    assert env["VALIDATION_READONLY_DATABASE_URL"] == ""
     assert env["AI_WORKER_CONCURRENCY"] == concurrency
     assert env["LLM_MAX_CONCURRENT_REQUESTS"] == llm_concurrency
     assert env["AI_WORKER_METRICS_ENABLED"] == "false"
@@ -161,3 +166,24 @@ def test_validation_worker_is_opt_in_and_reuses_api_credentials(
         assert env["SPRING_INTERNAL_API_KEY"] == "synthetic-internal-key"
         assert env["LLM_API_KEY"] == "synthetic-provider-key"
         assert all(port["target"] == 9102 for port in services[name]["ports"])
+
+
+def test_validation_worker_semantic_search_url_and_index_version_pass_through(compose_cli, tmp_path):
+    reader = "postgresql+psycopg://readonly:x@db.invalid/db"
+    services = render(compose_cli, tmp_path, {
+        **SYNTHETIC,
+        "VALIDATION_WORKER_PROCESS_COUNT": "1",
+        "VALIDATION_READONLY_DATABASE_URL": reader,
+        "VALIDATION_WORKER_INDEX_VERSION": "v2",
+    })
+    validation = services["ai-validation-worker"]
+    command = validation["command"]
+    assert option(command, "--readonly-url-env") == "VALIDATION_READONLY_DATABASE_URL"
+    assert command.count("--query-embedding") == 1
+    assert option(command, "--index-version") == "v2"
+    # The URL travels by environment variable name only, never on the command line.
+    assert reader not in command
+    assert validation["environment"]["VALIDATION_READONLY_DATABASE_URL"] == reader
+    # The analysis services never receive the validation reader.
+    for name in SERVICES:
+        assert "VALIDATION_READONLY_DATABASE_URL" not in services[name]["environment"]

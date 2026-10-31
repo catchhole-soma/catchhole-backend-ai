@@ -317,6 +317,69 @@ def test_validation_replicas_do_not_use_the_database_connection_budget(runtime):
     assert result["databaseConnectionsDuringPreflight"] == 32
 
 
+READER = "postgresql+psycopg://readonly:test@localhost/db"
+
+
+def _validation_semantic_search(configs, *, url=READER, version="v1", replicas=1, concurrency="3"):
+    """Rendered like compose (GH344): fixed flags, URL and job slots in the validation environment."""
+    validation = configs["worker"]["ai-validation-worker"]
+    validation["deploy"]["replicas"] = replicas
+    validation["command"] = ["python", "scripts/run_validation_worker.py", "--enable",
+                             "--readonly-url-env", "VALIDATION_READONLY_DATABASE_URL", "--query-embedding",
+                             *(["--index-version", version] if version is not None else [])]
+    validation["environment"].update(VALIDATION_READONLY_DATABASE_URL=url, AI_WORKER_CONCURRENCY=concurrency)
+
+
+@pytest.mark.parametrize("url", ["", "   ", None])
+def test_empty_validation_reader_keeps_keyword_only_without_checks(runtime, url):
+    obj, configs = runtime
+    _validation_semantic_search(configs, url=url, version="v9", replicas=2)
+    result = obj.validate()
+    assert result["validationRetrieval"] is False
+    assert result["databaseConnections"] == 31  # no reader pool is counted
+
+
+def test_validation_reader_must_match_the_chatbot_reader_and_index_and_is_budgeted(runtime):
+    obj, configs = runtime
+    _validation_semantic_search(configs)
+    budget = configs["retrieval"]["retrieval-index"]["environment"]
+    budget["AI_RUNTIME_DB_CONNECTION_BUDGET"] = "35"
+    result = obj.validate()
+    assert result["validationRetrieval"] is True
+    # One read-only connection per job slot: 1 process x 3 slots on top of the existing 31.
+    assert result["databaseConnections"] == 34
+    assert result["databaseConnectionsDuringPreflight"] == 35
+    budget["AI_RUNTIME_DB_CONNECTION_BUDGET"] = "34"
+    with pytest.raises(deploy.DeploymentError, match="^DATABASE_CONNECTION_BUDGET_EXCEEDED$"):
+        obj.validate()
+
+
+@pytest.mark.parametrize(("change", "code"), [
+    ({"url": "postgresql+psycopg://admin:test@10.0.0.3/catchhole"}, "INCONSISTENT_VALIDATION_READONLY_DATABASE_URL"),
+    ({"version": "v2"}, "INCONSISTENT_VALIDATION_WORKER_INDEX_VERSION"),
+    ({"version": None}, "INCONSISTENT_VALIDATION_WORKER_INDEX_VERSION"),
+])
+def test_inconsistent_validation_reader_stops_before_service_changes(runtime, monkeypatch, change, code):
+    obj, configs = runtime
+    _validation_semantic_search(configs, **change)
+    calls = []
+    monkeypatch.setattr(obj, "compose", lambda *args, **kwargs: calls.append(args))
+    with pytest.raises(deploy.DeploymentError, match=f"^{code}$"):
+        obj.deploy()
+    assert not calls
+
+
+@pytest.mark.parametrize("concurrency", ["0", "many", None])
+def test_validation_reader_with_invalid_job_slots_fails_closed(runtime, concurrency):
+    obj, configs = runtime
+    _validation_semantic_search(configs, concurrency=concurrency)
+    if concurrency is None:
+        del configs["worker"]["ai-validation-worker"]["environment"]["AI_WORKER_CONCURRENCY"]
+    configs["retrieval"]["retrieval-index"]["environment"]["AI_RUNTIME_DB_CONNECTION_BUDGET"] = "100"
+    with pytest.raises(deploy.DeploymentError, match="^DATABASE_CONNECTION_BUDGET_EXCEEDED$"):
+        obj.validate()
+
+
 def test_compose_credentials_never_leak_on_error(monkeypatch):
     monkeypatch.setattr(
         subprocess,

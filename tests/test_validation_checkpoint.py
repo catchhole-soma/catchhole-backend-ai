@@ -208,6 +208,38 @@ def test_large_book_without_questions_is_not_copied_into_checkpoint_and_resumes_
     asyncio.run(run())
 
 
+def test_planned_operations_cover_saved_plans_decided_bundles_and_runtime():
+    """GH344: a VECTOR saved by an earlier attempt keeps VECTOR offered on resume."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from app.validation.checkpoint import ValidationCheckpoint
+    from app.validation.client import ExecutionScope
+
+    scope = ExecutionScope(contractVersion=1, reportId=uuid4(), generation=1, inputDigest="a" * 64)
+    keyword = {"ref": "L1", "kind": "CHANGES_EXCEPTIONS", "operation": "KEYWORD", "purpose": "변화", "query": "q"}
+    vector = {**keyword, "operation": "VECTOR"}
+
+    def operations(stages=(), checks=(), runtime=None):
+        view = {"scope": scope.model_dump(mode="json"), "stages": list(stages), "checks": list(checks),
+                "branches": {"SETTING": {"version": 1, "payload": runtime}} if runtime else {}}
+        return ValidationCheckpoint(None, SimpleNamespace(scope=scope), view, None).planned_operations()
+
+    def plan(intent, successful=True, branch="SETTING"):
+        return {"stage": "PLANNER", "ref": "TSEG1", "successful": successful, "branch": branch,
+                "payload": {"questions": [{"local_ref": "q", "lookup_intents": [intent]}]}}
+
+    assert operations() == set()
+    assert operations([plan(keyword)]) == {"KEYWORD"}
+    assert "VECTOR" in operations([plan(vector)])
+    # A failed stage or another branch is not a saved plan of this branch.
+    assert operations([plan(vector, successful=False), plan(vector, branch="TYPO")]) == set()
+    decided = {"localRef": "Q1", "outcome": "NO_CONFLICT",
+               "decision": {"evidence_bundle": {"receipts": [{"ref": "L4", "intent": vector}]}}}
+    assert "VECTOR" in operations(checks=[decided])
+    assert "VECTOR" in operations(runtime={"phase": "JUDGING", "runtime": {"receipts": [{"intent": vector}]}})
+
+
 def test_crash_after_subject_resolution_resumes_without_a_second_resolution_call():
     from tests.test_setting_validation_service import subject_data
 

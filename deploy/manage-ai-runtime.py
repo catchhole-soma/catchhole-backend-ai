@@ -126,7 +126,7 @@ class Runtime:
             if validate_worker_tracing(worker[name]["environment"])
         ]
         # The validation Worker (#344) ships in the same compose SHA, off by default (0 replicas).
-        # It has no DB pool, so it stays out of the connection budget below.
+        # Only its optional read-only frozen RAG pool uses the database (see the budget below).
         validation = worker.get("ai-validation-worker")
         if validation is None:
             raise DeploymentError("VALIDATION_WORKER_SERVICE_MISSING")
@@ -157,6 +157,18 @@ class Runtime:
                     raise DeploymentError("MISSING_" + key)
                 if env.get(key) != w[key]:
                     raise DeploymentError("INCONSISTENT_" + key)
+        # Optional semantic search of the validation Worker (GH344): empty keeps it keyword-only. When set, it
+        # must be the chatbot's SELECT-only reader and read the same embedding index version.
+        validation_retrieval = bool(str(v.get("VALIDATION_READONLY_DATABASE_URL") or "").strip())
+        if validation_retrieval:
+            if v.get("VALIDATION_READONLY_DATABASE_URL") != c.get("CHAT_RETRIEVAL_DATABASE_URL"):
+                raise DeploymentError("INCONSISTENT_VALIDATION_READONLY_DATABASE_URL")
+            arguments = validation.get("command")
+            arguments = arguments if isinstance(arguments, list) else []
+            flag = "--index-version"
+            version = arguments[arguments.index(flag) + 1] if flag in arguments[:-1] else None
+            if version != c.get("CHAT_RETRIEVAL_EMBEDDING_VERSION"):
+                raise DeploymentError("INCONSISTENT_VALIDATION_WORKER_INDEX_VERSION")
         try:
             bind = ipaddress.ip_address(chat["ports"][0]["host_ip"])
             if bind.is_unspecified or bind.is_loopback or not bind.is_private:
@@ -186,6 +198,12 @@ class Runtime:
             budget = int(required(r, "AI_RUNTIME_DB_CONNECTION_BUDGET"))
             connections = api_pool + replicas * pool + comparisons
             connections += 2 * enabled(c.get("CHAT_RETRIEVAL_ENABLED")) + 2 * indexing
+            if validation_retrieval:
+                # The validation runner's read-only pool holds one connection per job slot.
+                validation_slots = int(v["AI_WORKER_CONCURRENCY"])
+                if validation_slots < 1:
+                    raise ValueError()
+                connections += validation_replicas * validation_slots
             # Read-only preflight probes need one temporary connection alongside old runtime.
             if min(replicas, pool, api_pool, budget) < 1 or connections + 1 > budget:
                 raise ValueError()
@@ -195,6 +213,7 @@ class Runtime:
             "indexing": indexing,
             "analysisReplicas": replicas,
             "validationReplicas": validation_replicas,
+            "validationRetrieval": validation_retrieval,
             "databaseConnections": connections,
             "databaseConnectionsDuringPreflight": connections + 1,
             "tracingWorkerServices": tracing_services,
