@@ -1383,10 +1383,11 @@ def run_with_grid(grid, model):
                                                 checkpoint=GridCheckpoint()).inspect())
 
 
-def test_execution_trusts_the_server_grid_segment_subjects():
+@pytest.mark.parametrize("version", [2, 3])  # v3 = v2 shape + 1-character names excluded (GH349 amendment)
+def test_execution_trusts_the_server_grid_segment_subjects(version):
     model = SyntheticModel()
     # Locally 민수(S1) would match; the server grid is authoritative in execution.
-    grid = {"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]}
+    grid = {"gridVersion": version, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]}
     result = run_with_grid(grid, model)
     assert result.status == "COMPLETED"
     (resolution,), (coverage,) = payloads(model, "RELATED_SELECTION"), payloads(model, "COVERAGE")
@@ -1397,6 +1398,11 @@ def test_execution_trusts_the_server_grid_segment_subjects():
     (None, "GRID_VERSION_UNSUPPORTED"),
     ({"gridVersion": 1, "units": [{"stage": "RELATED_SELECTION", "ref": "TSEG1:PAGE1"}]}, "GRID_VERSION_UNSUPPORTED"),
     ({"gridVersion": 2}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 3}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 4, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": "3", "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]},
+     "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 3, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S9"]}]}, "INVALID_GRID_CONTRACT"),
     ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S9"]}]}, "INVALID_GRID_CONTRACT"),
     ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG2", "subjectRefs": []}]}, "INVALID_GRID_CONTRACT"),
     ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S1", "S1"]}]},
@@ -1407,3 +1413,28 @@ def test_execution_without_a_v2_grid_stops_before_subject_resolution(grid, code)
     result = run_with_grid(grid, model)
     assert (result.status, result.failure_code, result.failure_stage) == ("INCOMPLETE", code, "SUBJECT_RESOLUTION:TSEG1")
     assert [role for role, *_ in model.calls] == ["PLANNER"]
+
+
+# --- GH349 amendment: 1-character names are not mechanically matched (grid v3) ------------------------------
+
+
+def test_one_character_names_are_not_mechanically_matched_but_stay_in_the_catalogue():
+    from app.validation.contracts import split_segments
+    from app.validation.service import mechanical_subject_refs
+
+    target = "😀민수는 양손으로 검을 쥐었다."
+    settings = [{"subject_ref": "S1", "name": "민수", "aliases": []},
+                {"subject_ref": "S2", "name": "검", "aliases": ["손"]},
+                {"subject_ref": "S3", "name": None, "aliases": ["쥐", "양손"]},
+                {"subject_ref": "S4", "name": "😀", "aliases": []}]  # one code point (two UTF-16 units)
+    segments = split_segments(target, core_chars=100, context_chars=0)
+    assert mechanical_subject_refs(settings, target, segments) == {"TSEG1": ["S1", "S3"]}
+
+    data = SyntheticData()
+    data.entries.append({"entryRef": "B2", "domain": "characters", "subjectRef": "character:sword",
+                         "state": {"name": "검", "aliases": [], "slots": {}}})
+    model = SyntheticModel()
+    assert run(data, model).status == "COMPLETED"
+    (resolution,) = payloads(model, "RELATED_SELECTION")  # 검(S2) is left for SUBJECT_RESOLUTION
+    assert resolution["mechanical_subject_refs"] == ["S1"]
+    assert [row["name"] for row in resolution["subject_catalogue"]] == ["민수", "검"]

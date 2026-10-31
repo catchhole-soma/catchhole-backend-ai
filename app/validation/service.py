@@ -44,6 +44,10 @@ WORKER_CHANGE_SEARCH_PURPOSE = "Worker가 충돌 의심 판정 전에 요구하�
 _SEARCH_QUERY_LIMIT = 1000  # corpus.lookup/validate_intents reject empty or longer queries
 # GH344: the one readiness read before PLANNER may never spend the inspection's seconds budget.
 VECTOR_READINESS_TIMEOUT_SECONDS = 5.0
+# GH349 amendment: 1-code-point names/aliases match almost any text, so they never match mechanically (grid v3).
+MECHANICAL_NAME_MIN_CODE_POINTS = 2
+# Grid v3 (GH349 amendment) keeps the v2 shape; only the server's mechanical matching rule changed.
+SUPPORTED_SETTING_GRID_VERSIONS = (2, 3)
 
 
 def _is_change_search(receipt):
@@ -166,16 +170,17 @@ def subject_catalogue(settings):
 
 
 def mechanical_subject_refs(settings, target, segments):
-    """GH349 grid v2 `segmentSubjects`, computed locally only when no server grid exists (no execution job).
+    """GH349 grid v3 `segmentSubjects`, computed locally only when no server grid exists (no execution job).
 
-    A subject matches a segment when any non-empty entry name/alias occurs as an exact substring of the
-    segment context (code points, no normalization). Refs are unique and sorted by number.
+    A subject matches a segment when any entry name/alias of at least MECHANICAL_NAME_MIN_CODE_POINTS code points
+    occurs as an exact substring of the segment context (code points, no normalization). Shorter names stay in
+    `subject_catalogue` for SUBJECT_RESOLUTION. Refs are unique and sorted by number.
     """
     names = {}
     for row in settings:
         values = names.setdefault(row["subject_ref"], [])
         for value in (row.get("name"), *(row.get("aliases") or [])):
-            if isinstance(value, str) and value and value not in values:
+            if isinstance(value, str) and len(value) >= MECHANICAL_NAME_MIN_CODE_POINTS and value not in values:
                 values.append(value)
     result = {}
     for segment in segments:
@@ -186,8 +191,9 @@ def mechanical_subject_refs(settings, target, segments):
 
 
 def grid_segment_subjects(grid, segments, subjects):
-    """GH349: the server grid's mechanical matches. A v1 grid (or none) cannot cover a v2 inspection."""
-    if (not isinstance(grid, dict) or type(grid.get("gridVersion")) is not int or grid["gridVersion"] != 2
+    """GH349: the server grid's mechanical matches (v2, or v3 with the 1-character rule). v1 or none cannot."""
+    if (not isinstance(grid, dict) or type(grid.get("gridVersion")) is not int
+            or grid["gridVersion"] not in SUPPORTED_SETTING_GRID_VERSIONS
             or not isinstance(grid.get("segmentSubjects"), list)):
         raise IncompleteInspection("GRID_VERSION_UNSUPPORTED")
     rows = grid["segmentSubjects"]

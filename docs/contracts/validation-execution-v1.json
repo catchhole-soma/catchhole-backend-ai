@@ -1154,7 +1154,7 @@
           "R1": ""
         },
         "expectedSetting": {
-          "gridVersion": 2,
+          "gridVersion": 3,
           "units": [
             {
               "stage": "PLANNER",
@@ -1340,7 +1340,7 @@
           "R2": "책"
         },
         "expectedSetting": {
-          "gridVersion": 2,
+          "gridVersion": 3,
           "units": [
             {
               "stage": "PLANNER",
@@ -1567,7 +1567,7 @@
         "sources": [],
         "sourceTexts": {},
         "expectedSetting": {
-          "gridVersion": 2,
+          "gridVersion": 3,
           "units": [
             {
               "stage": "PLANNER",
@@ -1727,7 +1727,7 @@
           "R2": "책"
         },
         "expectedSetting": {
-          "gridVersion": 2,
+          "gridVersion": 3,
           "units": [
             {
               "stage": "PLANNER",
@@ -2206,7 +2206,7 @@
     },
     "plansBoundary": "SETTING only; TYPO_SEGMENT must use /units classification/suggestion/coverage validation. /plans TYPO returns 400 without any stage/publication/version write.",
     "progressiveSourceGrid": {
-      "gridVersion": 2,
+      "gridVersion": 3,
       "serverAuthority": "All manifest BOOK_SOURCE obligations exist before book lengths are known; client required-grid or lengths never authorize completion",
       "pendingBookRow": {
         "sourceRef": "R2"
