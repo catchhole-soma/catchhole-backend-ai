@@ -709,9 +709,11 @@ def test_suspected_conflict_without_change_search_gets_one_worker_keyword_search
     assert set(search.evidence_refs) <= {row["ref"] for row in second["evidence"]}
     assert search.ref in result.decisions["Q1"].completion.changes_exceptions.receipt_refs
     [(ref, published, bundle)] = checkpoint.decided
-    # The published bundle is the second JUDGE input (as JSON), carrying the inserted receipt.
+    # The published bundle is the second JUDGE input (as JSON), carrying the inserted receipt, with the
+    # model's setting rows reduced to their refs (GH349 Amendment 2).
+    refs = [{"entry_ref": row["entry_ref"], "subject_ref": row["subject_ref"]} for row in second["settings"]]
     assert ref == "Q1" and json.loads(json.dumps(bundle)) == {
-        key: item for key, item in second.items() if key != "role"}
+        key: item for key, item in second.items() if key != "role"} | {"settings": refs}
     assert_backend_publishable(published, bundle, checkpoint.checks["Q1"]["state"]["lookup_obligations"])
 
 
@@ -856,16 +858,24 @@ def test_frozen_provenance_uses_known_source_alias_without_server_ids():
     }
 
     def judge(payload):
-        # GH349 amendment: the model reads the compact row; provenance stays in the canonical bundle.
-        assert payload["settings"][0]["state"]["slots"]["STATUS:손"] == {"factValue": "왼손 상실"}
         assert {row["source_ref"] for row in payload["source_catalogue"]} == {"R1", "R2"}
         assert identifier not in json.dumps(payload)
+        if len(payload["receipts"]) == 2:  # GH349 amendments: compact first; provenance only on BASELINE request
+            value = decision(payload)
+            value.update(action="FOLLOW_UP", outcome=None, basis=None, completion=None, follow_ups=[
+                {"ref": "origin", "kind": "COMPARISON_CONTEXT", "operation": "BASELINE",
+                 "purpose": "손 상태의 출처 회차 확인", "evidence_refs": ["B1"]}])
+            return value
         return decision(payload)
 
-    result = run(data, SyntheticModel(judge))
+    model = SyntheticModel(judge)
+    result = run(data, model)
     assert result.status == "COMPLETED"
+    compact, full = payloads(model, "JUDGE")
+    assert compact["settings"][0]["state"]["slots"]["STATUS:손"] == {"factValue": "왼손 상실"}
+    assert full["settings"][0]["state"]["slots"]["STATUS:손"]["provenance"]["source_ref"] == "R1"
     bundle = result.evidence_bundles["Q1"]
-    assert bundle["settings"][0]["state"]["slots"]["STATUS:손"]["provenance"]["source_ref"] == "R1"
+    assert bundle["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"}]
     assert identifier not in json.dumps(bundle)
 
 
@@ -1459,7 +1469,7 @@ def heavy_data():
     return data
 
 
-def test_coverage_and_judge_read_compact_rows_while_the_bundle_keeps_canonical_rows():
+def test_coverage_and_judge_read_compact_rows_while_the_bundle_carries_refs_only():
     from app.validation.projection import compact_setting_row
     from app.validation.service import _settings
 
@@ -1476,10 +1486,12 @@ def test_coverage_and_judge_read_compact_rows_while_the_bundle_keeps_canonical_r
         text = json.dumps(payload["settings"], ensure_ascii=False)
         assert "왼손 상실" in text and not any(key in text for key in (
             "historyFacts", "supportingSources", "supportingSource", "provenance", "identityEvidence", "valueJson"))
-    # The Backend compares bundle settings with its canonical rows, so the published bundle is unchanged.
+    # GH349 Amendment 2: the Backend checks only the bundle's ref set; the digest covers the refs-only bundle.
     bundle = result.evidence_bundles["Q1"]
-    assert bundle["settings"] == canonical and bundle["settings"][0]["state"]["historyFacts"]
-    assert bundle["input_digest"] == judge["input_digest"]
+    assert bundle["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"}]
+    digested = {key: value for key, value in bundle.items() if key != "input_digest"}
+    assert bundle["input_digest"] == judge["input_digest"] == sha256(
+        json.dumps(digested, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def test_entry_requested_by_a_baseline_lookup_reaches_the_next_judge_in_full():
@@ -1501,6 +1513,7 @@ def test_entry_requested_by_a_baseline_lookup_reaches_the_next_judge_in_full():
     assert "historyFacts" not in first["settings"][0]["state"]
     assert second["settings"] == _settings(data.entries)  # the full canonical row, history included
     assert second["settings"][0]["state"]["historyFacts"][0]["factValue"] == "양손 사용"
+    assert result.evidence_bundles["Q1"]["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"}]
 
 
 def valve_data(count=401):

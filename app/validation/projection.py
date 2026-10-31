@@ -1,7 +1,7 @@
 """GH349 amendment: the compact catalogue row COVERAGE/JUDGE models read.
 
-Only the model prompt uses it. Catalogue reads, BASELINE lookups the model asks for, evidence bundles, receipts and
-checkpoints keep the full server projection (the Backend compares bundle settings with its canonical rows).
+Only the model prompt uses it. Catalogue reads, BASELINE lookups the model asks for, receipts and Worker decision
+checks keep the full server projection; published/stored evidence bundles carry entry/subject refs only (Amendment 2).
 """
 
 from copy import deepcopy

@@ -157,6 +157,14 @@ def _settings(entries, sources=()):
     return result
 
 
+def bundle_settings(rows):
+    """GH349 Amendment 2: published/stored bundle settings are refs only; the Backend checks the ref set.
+
+    A bundle stored before that change holds full rows; it is read the same way (entry_ref/subject_ref only).
+    """
+    return [{"entry_ref": row["entry_ref"], "subject_ref": row["subject_ref"]} for row in rows]
+
+
 def _subject_order(ref):
     """Server S-refs sort by their number (S2 before S10)."""
     return (int(ref[1:]), ref) if re.fullmatch(r"S[1-9][0-9]*", ref) else (float("inf"), ref)
@@ -625,7 +633,9 @@ class SettingValidationService:
                                        if LookupIntent.model_validate(row) not in completed_intents]
             for ref, check in checks.items():
                 if check.get("outcome") is not None:
-                    bundles[ref] = check.get("bundle", check.get("decision", {}).get("evidence_bundle", {}))
+                    bundle = check.get("bundle", check.get("decision", {}).get("evidence_bundle", {}))
+                    bundles[ref] = ({**bundle, "settings": bundle_settings(bundle["settings"])}
+                                    if "settings" in bundle else bundle)
 
             async def save_runtime():
                 if self.checkpoint:
@@ -806,7 +816,7 @@ class SettingValidationService:
                         }
                         for span in draft.target_spans
                     ],
-                    "settings": relevant,
+                    "settings": bundle_settings(relevant),
                     "evidence": evidence,
                     "receipts": [
                         asdict(receipt) | {"intent": receipt.intent.model_dump()}
@@ -823,8 +833,8 @@ class SettingValidationService:
                 bundles[qref] = payload
                 await save_runtime()
                 where["stage"] = f"JUDGE:{qref}"
-                # GH349 amendment: the bundle (Backend-checked) keeps canonical rows; the model reads compact rows
-                # except the entries it asked for with a BASELINE lookup, which it receives in full.
+                # GH349 amendments: the bundle (published, 131,072-byte cap) carries refs only; the model reads
+                # compact rows except the entries it asked for with a BASELINE lookup, which it receives in full.
                 requested = {ref for receipt in own_receipts[qref] if receipt.intent.operation == "BASELINE"
                              for ref in receipt.intent.evidence_refs}
                 model_settings = [row if row["entry_ref"] in requested else compact_setting_row(row)
