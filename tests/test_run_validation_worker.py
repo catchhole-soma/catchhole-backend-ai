@@ -587,3 +587,87 @@ def test_run_wires_slots_llm_cap_and_signal_stop_into_the_loop(monkeypatch, llm_
         assert semaphore is None
     else:
         assert isinstance(semaphore, asyncio.Semaphore) and seen["capacity_exhausted"]
+
+
+# --- GH344: frozen RAG stays an explicit flag; an empty URL value is a logged keyword-only opt-out ---------
+
+READONLY_ENV = "VALIDATION_READONLY_DATABASE_URL"
+
+
+def _captured_worker(monkeypatch, *, engines=None):
+    for name in SCHEDULER_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("INTERNAL_API_KEY", "synthetic")
+    monkeypatch.setenv("LLM_API_KEY", "synthetic")
+    seen = {}
+
+    async def fake_loop(worker, **options):
+        seen.update(options, worker=worker)
+
+    def fake_engine(url, **options):
+        if engines is None:
+            raise AssertionError("no read-only engine may be created")
+        engine = SimpleNamespace(url=url, options=options, disposed=False)
+        engine.dispose = lambda: setattr(engine, "disposed", True)
+        engines.append(engine)
+        return engine
+
+    monkeypatch.setattr("scripts.run_validation_worker.run_loop", fake_loop)
+    monkeypatch.setattr("scripts.run_validation_worker.create_engine", fake_engine)
+    return seen
+
+
+@pytest.mark.parametrize("once", [True, False])
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_empty_readonly_url_runs_keyword_only_with_one_info_line(monkeypatch, caplog, once, value):
+    seen = _captured_worker(monkeypatch)
+    if value is None:
+        monkeypatch.delenv(READONLY_ENV, raising=False)
+    else:
+        monkeypatch.setenv(READONLY_ENV, value)
+    caplog.set_level(logging.INFO, logger=RUNNER_LOGGER)
+    extra = ["--readonly-url-env", READONLY_ENV, "--query-embedding", "--index-version", "v1"]
+    asyncio.run(run(_cli(*extra, *(["--once"] if once else []))))
+
+    worker = seen["worker"]
+    assert worker.search is None and worker.embedding is None
+    assert seen["once"] is once
+    messages = [row.getMessage() for row in caplog.records if row.name == RUNNER_LOGGER]
+    assert messages.count(f"frozen retrieval disabled: {READONLY_ENV} is empty") == 1
+    assert messages.count("query embedding disabled: no read-only retrieval sessions") == 1
+
+
+@pytest.mark.parametrize("once", [True, False])
+def test_query_embedding_without_readonly_sessions_is_logged_not_rejected(monkeypatch, caplog, once):
+    seen = _captured_worker(monkeypatch)
+    caplog.set_level(logging.INFO, logger=RUNNER_LOGGER)
+    asyncio.run(run(_cli("--query-embedding", *(["--once"] if once else []))))
+
+    assert seen["worker"].search is None and seen["worker"].embedding is None
+    assert "query embedding disabled: no read-only retrieval sessions" in caplog.text
+    assert "frozen retrieval disabled" not in caplog.text  # No --readonly-url-env flag was given.
+
+
+def test_readonly_url_builds_a_bounded_read_only_pool_and_the_query_embedding_client(monkeypatch, caplog):
+    from app.embeddings.client import OpenAIEmbeddingsClient
+    from app.validation.search import FrozenRetrievalSearchService
+
+    engines = []
+    seen = _captured_worker(monkeypatch, engines=engines)
+    url = "postgresql+psycopg://readonly:synthetic@db.invalid/catchhole"
+    monkeypatch.setenv(READONLY_ENV, url)
+    caplog.set_level(logging.INFO, logger=RUNNER_LOGGER)
+    asyncio.run(run(_cli("--readonly-url-env", READONLY_ENV, "--query-embedding", "--index-version", "v1",
+                         "--concurrency", "3")))
+
+    [engine] = engines
+    assert engine.url == url and engine.disposed
+    # One connection per job slot and no overflow: the deploy budget counts replicas x concurrency.
+    assert engine.options == {"pool_size": 3, "max_overflow": 0,
+                              "connect_args": {"options": "-c default_transaction_read_only=on"}}
+    worker = seen["worker"]
+    assert isinstance(worker.search, FrozenRetrievalSearchService)
+    assert isinstance(worker.embedding, OpenAIEmbeddingsClient)
+    assert (worker.embedding.model, worker.embedding.version, worker.embedding.dimensions) == (
+        "text-embedding-3-small", "v1", 1536)
+    assert "disabled" not in caplog.text and "synthetic@" not in caplog.text

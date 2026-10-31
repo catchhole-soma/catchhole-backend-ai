@@ -14,6 +14,13 @@ one slot this is exactly the sequential loop above. SIGTERM/SIGINT stop claiming
 --shutdown-grace-seconds, then cancel the rest for Backend lease recovery. --llm-concurrency caps
 concurrent provider requests of all jobs in the process; unset means no cap. CLI defaults come from the
 process environment only.
+
+Frozen RAG stays an explicit flag (GH344): --readonly-url-env names the SELECT-only DB URL variable and
+--query-embedding adds the query embedding client. An unset or empty variable logs one INFO line
+(`frozen retrieval disabled: NAME is empty`) and runs keyword-only; --query-embedding without those sessions
+logs `query embedding disabled` and runs without it. --once behaves the same. The read-only pool holds at
+most --concurrency connections. Per job, VECTOR is offered only when the frozen index is ready and the claim
+configured QUERY_EMBEDDING (`vector search offered=...`).
 """
 import argparse
 import asyncio
@@ -289,15 +296,22 @@ async def run(args):
     engine, embedding = None, None
     sessions = None
     if args.readonly_url_env:
-        # The DB account must also have SELECT-only grants. No validation writes use this connection.
-        engine = create_engine(os.environ[args.readonly_url_env],
-                               connect_args={"options": "-c default_transaction_read_only=on"})
-        sessions = sessionmaker(engine, autoflush=False, expire_on_commit=False)
+        url = os.environ.get(args.readonly_url_env, "").strip()
+        if url:
+            # The DB account must also have SELECT-only grants. No validation writes use this connection.
+            # Each job reads sequentially, so one connection per job slot bounds this process (deploy budget).
+            engine = create_engine(url, pool_size=args.concurrency, max_overflow=0,
+                                   connect_args={"options": "-c default_transaction_read_only=on"})
+            sessions = sessionmaker(engine, autoflush=False, expire_on_commit=False)
+        else:
+            # The flag stays explicit; an empty value is a logged keyword-only opt-out (GH344).
+            logger.info("frozen retrieval disabled: %s is empty", args.readonly_url_env)
     if args.query_embedding:
         if sessions is None:
-            raise ValueError("Query embedding requires explicitly configured read-only retrieval sessions.")
-        embedding = OpenAIEmbeddingsClient(model_key, spec.model, spec.dimensions, spec.version,
-                                           args.embedding_url)
+            logger.info("query embedding disabled: no read-only retrieval sessions")
+        else:
+            embedding = OpenAIEmbeddingsClient(model_key, spec.model, spec.dimensions, spec.version,
+                                               args.embedding_url)
     raw = OpenAIResponsesClient(model_key, "gpt-6.1-terra", args.responses_url)
     client = ValidationExecutionClient(args.backend_url, internal_key)
     # One process-wide cap shared by every job's metered role and query-embedding clients.
