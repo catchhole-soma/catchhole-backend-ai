@@ -882,6 +882,7 @@ class _HybridSession(_Session):
                 modes = ["CURRENT"]
                 if "HISTORY_SKIPPED_FOR_COMPARISON" not in self.codes:
                     self.codes.append("HISTORY_SKIPPED_FOR_COMPARISON")
+            gaps_before = set(self.lookup_gaps)
             stop = await self.subject_rows(
                 subject,
                 item.subject_id,
@@ -894,6 +895,15 @@ class _HybridSession(_Session):
                 ),
             )
             if stop:
+                if plan.source_need != "NONE" and "FIELDS_INCOMPLETE" in (
+                    self.lookup_gaps - gaps_before
+                ):
+                    # 원문 라운드 예약 때문에 항목 158개 인물의 등록 항목을 다 읽지 못하면 되묻지 않고
+                    # 등록 현재값은 미확인으로 두고 원문 답변을 계속한다(45화 황금 가면 실제 사례).
+                    self.current_requirement_resolved = False
+                    if "REGISTERED_LOOKUP_INCOMPLETE" not in self.codes:
+                        self.codes.append("REGISTERED_LOOKUP_INCOMPLETE")
+                    continue
                 return stop
         self.chosen, stop = await self.select_rows(plan, allow_missing=True)
         if stop:

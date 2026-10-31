@@ -338,3 +338,29 @@ def test_two_subject_comparison_reads_current_only_and_says_history_was_skipped(
     assert "CHARACTER_HISTORY" not in tools and tools.count("CHARACTER_CURRENT") == 2
     limitations = result["finish"]["result"]["limitations"]
     assert limitations.count(NOTICES["HISTORY_SKIPPED_FOR_COMPARISON"]) == 1
+
+
+def test_mixed_plan_continues_with_source_when_field_catalog_cannot_be_read_in_budget(tmp_path):
+    # 원문 라운드 예약 때문에 항목이 많은 인물의 등록 항목 목록을 다 읽지 못하면 되묻지 않고
+    # 등록 현재값은 미확인으로 두고 원문 답변을 계속한다(45화 황금 가면 실제 사례).
+    def many_fields(spring):
+        rows = [
+            item(701, "세린", category="PROFILE", key=f"profile.p{n}", label=f"항목 {n}", value="x")
+            for n in range(12)
+        ]
+        spring.catalog = [catalog_subject(701, "세린", current=rows)]
+
+    case = current_case(mixed=True)
+    case["outputs"].append(source_answer())
+    result = run(
+        tmp_path,
+        case,
+        many_fields,
+        search_setup=search_with(keyword=[passage(SOURCE, 1)]),
+        config={"fields_page_size": 1, "max_tool_calls": 12},
+    )
+    text = result_text(result)
+    assert result["finish"]["result"]["outcome"] != "CLARIFICATION"
+    assert SOURCE in text and "현재 등록 설정은 확인하지 못" in text
+    assert NOTICES["REGISTERED_LOOKUP_INCOMPLETE"] in result["finish"]["result"]["limitations"]
+    assert result["search"].calls

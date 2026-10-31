@@ -167,6 +167,7 @@ class FocusedLookup:
             reserve=reserve + 1,
         )
         if not complete:
+            self.lookup_gaps.add("FIELDS_INCOMPLETE")
             return [], message(
                 "CLARIFICATION",
                 "설정 항목을 모두 확인하지 못했습니다. 조회할 유형이나 항목을 좁혀 주세요.",
