@@ -126,6 +126,17 @@ class Runtime:
             )
             if validate_worker_tracing(worker[name]["environment"])
         ]
+        # The validation Worker (#344) ships in the same compose SHA, off by default (0 replicas).
+        # It has no DB pool, so it stays out of the connection budget below.
+        validation = worker.get("ai-validation-worker")
+        if validation is None:
+            raise DeploymentError("VALIDATION_WORKER_SERVICE_MISSING")
+        try:
+            validation_replicas = int(validation["deploy"]["replicas"])
+            if validation_replicas < 0:
+                raise ValueError()
+        except (KeyError, TypeError, ValueError):
+            raise DeploymentError("VALIDATION_WORKER_REPLICAS_INVALID") from None
         chat = self.config("chatbot")["chatbot"]
         index = self.config("retrieval")["retrieval-index"]
         w = worker["ai-worker"]["environment"]
@@ -138,14 +149,17 @@ class Runtime:
                 or enabled(relation_env.get("EMBEDDING_GENERATION_ENABLED"))
                 or enabled(relation_env.get("RETRIEVAL_PREPARATION_ENABLED"))):
             raise DeploymentError("RELATIONSHIP_WORKER_ISOLATION_REQUIRED")
+
+        v = validation.get("environment") or {}
         c, r = chat["environment"], index["environment"]
         if not enabled(c.get("CHAT_QA_ENABLED")):
             raise DeploymentError("CHAT_QA_ENABLED_REQUIRED")
-        for env in (w, c, r):
+        for env in (w, v, c, r):
             for key in ("SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL", "LLM_API_KEY"):
                 required(env, key)
         common = ("SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL", "LLM_API_KEY")
         for env, keys in (
+            (v, common),
             (c, common),
             (r, (*common, "DATABASE_URL", "AWS_REGION", "AWS_S3_BUCKET")),
             (relation_env, (*common, "AWS_REGION", "AWS_S3_BUCKET")),
@@ -193,6 +207,7 @@ class Runtime:
         return {
             "indexing": indexing,
             "analysisReplicas": replicas,
+            "validationReplicas": validation_replicas,
             "databaseConnections": connections,
             "databaseConnectionsDuringPreflight": connections + 1,
             "tracingWorkerServices": tracing_services,
@@ -258,6 +273,9 @@ class Runtime:
                 "ai-character-comparison-worker": 1,
                 "ai-world-comparison-worker": 1,
                 "ai-relationship-worker": 1,
+
+                # 0 when off: the check then confirms no validation container is left running.
+                "ai-validation-worker": configuration["validationReplicas"],
             }
             if all(
                 len(self.compose("worker", "ps", "--status", "running", "-q", name).split())

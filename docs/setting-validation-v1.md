@@ -101,6 +101,18 @@ SUSPECTED_CONFLICT/CHANGE_NOT_FOUND는 실제 성공한 변화/예외 keyword/ve
 DB/직접 입력과 이미 확보한 근거가 충분하면 추가 검색을 생략할 수 있으나 대상·시점·조건·변화/예외 설명과 실제 자료 참조가 필요하다.
 검색 0건 자체로 직접 모순이나 예외 부재를 증명하지 않는다. 같은 신규 회차만의 모순은 판정하지 않는다.
 
+GH341: SUSPECTED_CONFLICT의 변화·예외 검색 의무는 JUDGE가 답한 뒤에야 드러나므로 Worker가 결정적으로 보완한다(계약 자체는 그대로다).
+
+- DECIDED SUSPECTED_CONFLICT인데 그 질문에 성공한 `CHANGES_EXCEPTIONS` KEYWORD/VECTOR receipt가 없으면, 판정 검증 전에 KEYWORD 검색 하나를
+  조회 의무로 넣는다. ref `Qn-CHANGES_EXCEPTIONS`, 고정 purpose `Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색`, query는 중복 없는 비어 있지 않은
+  `subject_mentions` 뒤에 `property_or_rule`을 공백으로 이어 1000자 이내로 자른 값이다. FOLLOW_UP과 같이 검증·revision(`NEW_CLUE`)·재대기한 뒤
+  검색 receipt와 근거를 받은 JUDGE를 다시 호출한다. frozen RAG 유무와 관계없이 항상 KEYWORD다.
+- 질문당 한 번만 넣는다. 같은 purpose의 검색이 대기 중이거나(재개 포함) 이미 실행됐으면 다시 넣지 않는다. 검색 자체가 실패하면 기존처럼 그 조회의
+  실패 코드로 미완료이며 같은 입력의 재시도는 저장된 의무를 다시 실행할 뿐 새로 넣지 않는다. query를 만들 수 없으면 `INVALID_DECISION_CHANGE_SEARCH_MISSING`이 그대로다.
+- 다시 받은 SUSPECTED_CONFLICT의 `completion.changes_exceptions`가 성공 검색 receipt를 인용하지 않았는데 질문에 그런 receipt가 있으면, Worker가 그 receipt 전체와
+  그 근거 중 알려진 참조(없으면 `T1`)를 덧붙인다. 모델이 인용한 receipt·근거는 지우지 않고 그대로 검증하며 없는 참조를 만들지 않는다.
+- 횟수는 `normalizations`의 `CHANGE_SEARCH_INSERTED`(넣은 검색), `CHANGE_SEARCH_RECEIPT_FILLED`(인용 보완)로 남는다. 판정·사유·영향 등급·prompt·schema·예산은 바꾸지 않는다.
+
 DB↔원문 불일치는 두 참조를 유지하고 명시 정정의 정확한 대상/항목/시점/조건 범위를 검증한다.
 기존 데이터에는 그 scope metadata가 없을 수 있다. 그런 경우 보호/확정 flag를 정정으로 승격하지 않고 NEEDS_CONTEXT로 둔다.
 명시 scope가 있는 입력만 해당 범위의 정정을 우선할 수 있다. 이 검사기가 정정 metadata나 원문/DB를 쓰지 않는다.

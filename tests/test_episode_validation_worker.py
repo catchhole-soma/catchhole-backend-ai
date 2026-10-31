@@ -157,7 +157,7 @@ class ShutdownTransport(httpx.AsyncBaseTransport):
         self.events.append(("closed", None))
 
 
-async def shutdown_runtime(phase):
+async def shutdown_runtime(phase, **worker_options):
     from app.validation.client import ValidationClaim, ValidationExecutionClient
     from app.worker.episode_validation_worker import EpisodeValidationWorker
 
@@ -167,7 +167,7 @@ async def shutdown_runtime(phase):
     client = ValidationExecutionClient("https://spring.invalid", "synthetic", http)
     client.owns_http = True  # This fixture owns the injected HTTP pool, as the default runtime does.
     raw = OpenAIResponsesClient("synthetic", "gpt-6.1-terra", "https://provider.invalid/responses", http_client=provider)
-    worker = EpisodeValidationWorker(client, raw, enabled=True)
+    worker = EpisodeValidationWorker(client, raw, enabled=True, **worker_options)
     claim = ValidationClaim.from_wire(backend.wire)
     return backend, provider, worker, claim
 
@@ -311,6 +311,147 @@ def test_close_before_owned_claim_dispatch_does_not_start_backend_io():
             backend.release.set()
             operation.cancel()
             await asyncio.gather(operation, return_exceptions=True)
+            await worker.aclose()
+            await provider.aclose()
+    asyncio.run(run())
+
+
+async def _until(predicate, seconds=2):
+    async with asyncio.timeout(seconds):
+        while not predicate():
+            await asyncio.sleep(0.001)
+
+
+@pytest.mark.parametrize("capped", [True, False])
+def test_llm_request_semaphore_reaches_every_role_and_query_embedding_client(monkeypatch, capped):
+    """GH343: the runner's one process-wide cap is the same object on every metered client."""
+    import app.worker.episode_validation_worker as worker_module
+    from app.embeddings.client import OpenAIEmbeddingsClient
+    from app.validation.client import ValidationClaim, ValidationExecutionClient
+    from app.validation.contracts import IncompleteInspection
+    from app.validation.models import ROLE_OPTIONS
+
+    built = {}
+    real_roles, real_embedding = worker_module.ValidationRoleClients, worker_module.metered_embedding
+
+    def roles_spy(*args, **kwargs):
+        built["roles"] = real_roles(*args, **kwargs)
+        return built["roles"]
+
+    def embedding_spy(*args, **kwargs):
+        built["embedding"] = real_embedding(*args, **kwargs)
+        return built["embedding"]
+
+    monkeypatch.setattr(worker_module, "ValidationRoleClients", roles_spy)
+    monkeypatch.setattr(worker_module, "metered_embedding", embedding_spy)
+
+    async def never_called(request):
+        raise AssertionError("no backend or provider request is expected")
+
+    async def run():
+        backend = ShutdownTransport("settle")
+        wire = backend.wire
+        wire["models"]["QUERY_EMBEDDING"] = {"model": "text-embedding-3-small", "version": "v1", "dimensions": 1536}
+        wire["budgets"]["roles"]["QUERY_EMBEDDING"] = {"maxCalls": 2, "maxReservedTokens": 1000}
+        semaphore = asyncio.Semaphore(2) if capped else None
+        async with httpx.AsyncClient(transport=httpx.MockTransport(never_called)) as http:
+            raw = OpenAIResponsesClient("synthetic", "gpt-6.1-terra", "https://provider.invalid/responses",
+                                        http_client=http)
+            embedding = OpenAIEmbeddingsClient("synthetic", "text-embedding-3-small", 1536, "v1",
+                                               "https://provider.invalid/embeddings", http)
+            client = ValidationExecutionClient("https://spring.invalid", "synthetic", http)
+
+            async def rejected_checkpoint(claim, gate=None):
+                raise IncompleteInspection("EXECUTION_HTTP_REJECTED")
+
+            client.load_checkpoint = rejected_checkpoint
+            worker = worker_module.EpisodeValidationWorker(client, raw, enabled=True, embedding_client=embedding,
+                                                           llm_request_semaphore=semaphore)
+            try:
+                with pytest.raises(IncompleteInspection, match="EXECUTION_HTTP_REJECTED"):
+                    await worker.process_claimed(ValidationClaim.from_wire(wire))
+            finally:
+                await worker.aclose()
+        return semaphore
+
+    semaphore = asyncio.run(run())
+    clients = [built["roles"].for_validation_role(role) for role in ROLE_OPTIONS]
+    assert len(clients) == 5
+    assert all(client.request_semaphore is semaphore for client in clients)
+    assert built["embedding"].metered.request_semaphore is semaphore
+    assert (semaphore is not None) == capped
+
+
+def _second_claim(backend):
+    from uuid import uuid4
+
+    from app.validation.client import ValidationClaim
+    return ValidationClaim.from_wire({**backend.wire, "jobId": str(uuid4()), "leaseToken": str(uuid4())})
+
+
+def test_concurrent_jobs_in_one_worker_keep_separate_gates_and_ledgers():
+    """GH343: one job's gate stop ends only that job; the other keeps its lease, gate and usage."""
+    from app.validation.contracts import IncompleteInspection
+
+    async def run():
+        backend, provider, worker, first = await shutdown_runtime("provider")
+        backend.release.set()  # Finalizations are not withheld in this scenario.
+        second = _second_claim(backend)
+        jobs = {}
+        try:
+            jobs = {claim.job_id: asyncio.create_task(worker.process_claimed(claim)) for claim in (first, second)}
+            await _until(lambda: sorted(backend.provider_calls) == ["PLANNER", "PLANNER", "TYPO", "TYPO"])
+            ledgers = {ledger.claim.job_id: ledger for ledger in worker._ledgers}
+            assert set(ledgers) == {first.job_id, second.job_id}
+            assert ledgers[first.job_id].gate is not ledgers[second.job_id].gate
+            assert len(ledgers[first.job_id].requests) == len(ledgers[second.job_id].requests) == 2
+
+            ledgers[first.job_id].gate.stop()
+            result = (await asyncio.wait_for(asyncio.gather(jobs[first.job_id], return_exceptions=True), 2))[0]
+            assert isinstance(result, IncompleteInspection) and result.code == "EXECUTION_STOPPED"
+            assert ledgers[first.job_id].requests == set()
+            await asyncio.sleep(0.02)
+            assert not jobs[second.job_id].done()
+            assert not ledgers[second.job_id].gate.stopped.is_set()
+            assert len(ledgers[second.job_id].requests) == 2
+            assert {ledger.claim.job_id for ledger in worker._ledgers} == {second.job_id}
+            assert not backend.closed
+
+            await asyncio.wait_for(worker.aclose(), 2)
+            result = (await asyncio.gather(jobs[second.job_id], return_exceptions=True))[0]
+            assert isinstance(result, asyncio.CancelledError)
+            assert not any(state == "RESERVED" for state in backend.states.values())
+        finally:
+            backend.release.set()
+            for job in jobs.values():
+                job.cancel()
+            await asyncio.gather(*jobs.values(), return_exceptions=True)
+            await worker.aclose()
+            await provider.aclose()
+    asyncio.run(run())
+
+
+def test_llm_request_semaphore_caps_provider_calls_across_concurrent_jobs():
+    """GH343: with a cap of one, two jobs (four role branches) never run two provider calls at once."""
+    async def run():
+        backend, provider, worker, first = await shutdown_runtime(
+            "provider", llm_request_semaphore=asyncio.Semaphore(1))
+        backend.release.set()
+        jobs = []
+        try:
+            jobs = [asyncio.create_task(worker.process_claimed(claim)) for claim in (first, _second_claim(backend))]
+            await _until(lambda: len(backend.provider_calls) == 1)
+            await asyncio.sleep(0.05)
+            # The holder never returns; every other branch waits before reserving or calling.
+            assert len(backend.provider_calls) == 1 and len(backend.reservations) == 1
+            assert not any(job.done() for job in jobs)
+            await asyncio.wait_for(worker.aclose(), 2)
+            assert not any(state == "RESERVED" for state in backend.states.values())
+        finally:
+            backend.release.set()
+            for job in jobs:
+                job.cancel()
+            await asyncio.gather(*jobs, return_exceptions=True)
             await worker.aclose()
             await provider.aclose()
     asyncio.run(run())

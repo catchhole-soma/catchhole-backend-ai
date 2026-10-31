@@ -62,6 +62,7 @@ flowchart TD
 - 한 Job의 오류는 그 Task에서만 처리하며 다른 실행 중 Job을 취소하지 않습니다.
 - 현재 운영 기본값은 분석 Worker 5개 × 프로세스당 동시 Job 10개 = `SETTING_EXTRACTION` 최대 50개입니다. 50개 Job 부하 테스트가 기준에 미달하면 Worker 5개는 유지하고 프로세스당 Job과 LLM 요청을 5개로 낮춰 최대 25개로 되돌립니다.
 - 별도 `world-comparison`, `character-comparison` Worker는 Job·LLM 동시성을 각각 1로 유지합니다. 따라서 50은 provider 계정 전체의 분산 상한이 아니며, 계정 전체 상한이 필요하면 별도 분산 limiter가 필요합니다.
+- 검수 Worker는 운영 Compose 서비스 `ai-validation-worker`(`scripts/run_validation_worker.py --enable`)이며 기본 0개입니다. `VALIDATION_WORKER_PROCESS_COUNT`(기본 0) × `VALIDATION_WORKER_CONCURRENCY`(기본 3, 컨테이너의 `AI_WORKER_CONCURRENCY`)가 동시 검수 Job 수이고, `VALIDATION_WORKER_LLM_CONCURRENCY`(기본 4, 컨테이너의 `LLM_MAX_CONCURRENT_REQUESTS`)는 프로세스별 provider 요청 상한입니다. 분석 Worker와 같은 provider key를 쓰므로 계정 전체 동시 요청은 분석·비교·검수 Worker 상한의 합입니다. 종료 신호 뒤 `AI_WORKER_SHUTDOWN_GRACE_SECONDS`(기본 180초)를 넘긴 검수 Job은 취소되어 lease 만료로 재처리됩니다. 켜고 끄는 절차는 `deploy/WORKER_EC2_DEPLOYMENT.md`의 검수 Worker 켜기 절을 따릅니다.
 
 ### 동시 Job 50개 토큰 경계 부하 테스트
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from copy import deepcopy
 from hashlib import sha256
 from uuid import uuid4
 
@@ -596,13 +597,255 @@ def test_target_context_followup_delivers_requested_far_context():
     assert result.status == "COMPLETED"
 
 
-def test_suspected_conflict_cannot_claim_unperformed_change_search():
-    result = run(
-        model=SyntheticModel(
-            lambda payload: decision(payload, "SUSPECTED_CONFLICT", "CHANGE_NOT_FOUND")
-        )
-    )
-    assert result.status == "INCOMPLETE" and result.failure_code == "INVALID_DECISION"
+def suspected(payload, *, cite_search=True):
+    """SUSPECTED_CONFLICT; without ``cite_search`` changes_exceptions cites only the comparison reads."""
+    value = decision(payload, "SUSPECTED_CONFLICT", "CHANGE_NOT_FOUND")
+    if not cite_search:
+        value["completion"]["changes_exceptions"] = {
+            "reason": "변화·예외 기록을 찾지 못했다",
+            "evidence_refs": ["T1", "B1"],
+            "receipt_refs": [row["ref"] for row in payload["receipts"]
+                             if row["intent"]["kind"] == "COMPARISON_CONTEXT"],
+        }
+    return value
+
+
+class DurableCheckpoint:
+    """What the Backend keeps across attempts: stages, check revisions/obligations and the runtime state."""
+
+    def __init__(self):
+        self.stages, self.checks, self.state = {}, {}, None
+        self.revised, self.decided = [], []
+        self.crash_after_revise = False
+
+    def stage(self, stage, ref):
+        return deepcopy(self.stages.get((stage, ref)))
+
+    async def save_stage(self, stage, ref, payload):
+        self.stages[stage, ref] = deepcopy(payload)
+
+    async def merge(self, questions):
+        for q in questions:
+            self.checks.setdefault(q.ref, {"revision": 1, "outcome": None, "state": {
+                "lookup_obligations": [intent.model_dump() for intent in q.draft.lookup_intents]}})
+        return deepcopy(self.checks)
+
+    def load_state(self):
+        return deepcopy(self.state)
+
+    async def save_state(self, state):
+        self.state = deepcopy(state)
+
+    async def decide(self, ref, value, bundle):
+        self.decided.append((ref, value, bundle))
+        self.checks[ref].update(outcome=value.outcome, decision=value.model_dump(), bundle=bundle)
+
+    async def revise(self, affected, pending, questions, reason):
+        added = {ref: [intent.model_dump() for intent in pending[ref]] for ref in affected}
+        self.revised.append((sorted(affected), reason, added))
+        for ref in affected:
+            check = self.checks[ref]
+            check.update(revision=check["revision"] + 1, outcome=None)
+            check["state"]["lookup_obligations"] += added[ref]
+        if self.crash_after_revise:
+            self.crash_after_revise = False
+            raise asyncio.CancelledError()  # the revision is durable, the runtime write after it is lost
+        return deepcopy(self.checks)
+
+
+def inspect_with(data, model, checkpoint):
+    from app.validation.service import SettingValidationService
+
+    limits = InvocationBudget(30, 100, 30, 5000, 1000, 100, 10, 10, 10)
+    return asyncio.run(SettingValidationService(data, model, limits, checkpoint=checkpoint).inspect())
+
+
+def judge_calls(model):
+    return [payload for role, payload, kwargs in model.calls if role == "JUDGE"]
+
+
+def worker_searches(receipts):
+    from app.validation.service import WORKER_CHANGE_SEARCH_PURPOSE
+
+    return [row for row in receipts if row.intent.purpose == WORKER_CHANGE_SEARCH_PURPOSE]
+
+
+def assert_backend_publishable(value, bundle, obligations):
+    """The ValidationDecisionValidator rules this decision must pass unchanged (Backend is not modified)."""
+    receipts = {row["ref"]: row for row in bundle["receipts"]}
+    assert all(row["status"] == "SUCCEEDED" and row["failure_code"] is None for row in receipts.values())
+    assert all(any(row["intent"] == obligation for row in receipts.values()) for obligation in obligations)
+    facts = {row["entry_ref"] for row in bundle["settings"]}
+    outside = {row["ref"] for row in bundle["evidence"] if row["source_ref"] != "T1"}
+    known = {"T1"} | facts | {row["ref"] for row in bundle["evidence"]}
+    completion = value.completion
+    for name in ("comparison_context", "changes_exceptions", "no_pending_clues", "required_reads"):
+        assessment = getattr(completion, name)
+        assert assessment.evidence_refs and set(assessment.evidence_refs) <= known
+        assert assessment.receipt_refs and set(assessment.receipt_refs) <= set(receipts)
+    assert set(completion.required_reads.receipt_refs) == set(receipts)
+    assert any(receipts[ref]["intent"]["kind"] == "CHANGES_EXCEPTIONS"
+               and receipts[ref]["intent"]["operation"] in {"KEYWORD", "VECTOR"}
+               for ref in completion.changes_exceptions.receipt_refs)
+    assert set(value.evidence_refs) & (facts | outside)
+
+
+def test_suspected_conflict_without_change_search_gets_one_worker_keyword_search_and_is_asked_again():
+    from app.validation.service import WORKER_CHANGE_SEARCH_PURPOSE
+
+    data, model, checkpoint = SyntheticData(), SyntheticModel(suspected), DurableCheckpoint()
+    result = inspect_with(data, model, checkpoint)
+    assert (result.status, result.failure_code) == ("COMPLETED", None)
+    assert result.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert result.normalizations["CHANGE_SEARCH_INSERTED"] == 1
+    assert "CHANGE_SEARCH_RECEIPT_FILLED" not in result.normalizations  # the second answer cited it
+    inserted = {"ref": "Q1-CHANGES_EXCEPTIONS", "kind": "CHANGES_EXCEPTIONS", "operation": "KEYWORD",
+                "purpose": WORKER_CHANGE_SEARCH_PURPOSE, "query": "민수 손 사용", "source_ref": None,
+                "start": None, "end": None, "evidence_refs": []}
+    assert checkpoint.revised == [(["Q1"], "NEW_CLUE", {"Q1": [inserted]})]
+    [search] = worker_searches(result.receipts)
+    assert search.status == "SUCCEEDED" and search.intent.model_dump() == inserted and search.evidence_refs
+    first, second = judge_calls(model)
+    assert (first["check_revision"], second["check_revision"]) == (1, 2)
+    assert search.ref not in {row["ref"] for row in first["receipts"]}
+    assert search.ref in {row["ref"] for row in second["receipts"]}
+    assert set(search.evidence_refs) <= {row["ref"] for row in second["evidence"]}
+    assert search.ref in result.decisions["Q1"].completion.changes_exceptions.receipt_refs
+    [(ref, published, bundle)] = checkpoint.decided
+    # The published bundle is the second JUDGE input (as JSON), carrying the inserted receipt.
+    assert ref == "Q1" and json.loads(json.dumps(bundle)) == {
+        key: item for key, item in second.items() if key != "role"}
+    assert_backend_publishable(published, bundle, checkpoint.checks["Q1"]["state"]["lookup_obligations"])
+
+
+def test_repeated_suspected_conflict_without_citation_is_filled_with_the_real_search_receipt():
+    model, checkpoint = SyntheticModel(lambda payload: suspected(payload, cite_search=False)), DurableCheckpoint()
+    result = inspect_with(SyntheticData(), model, checkpoint)
+    assert result.status == "COMPLETED" and result.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert result.normalizations["CHANGE_SEARCH_INSERTED"] == 1
+    assert result.normalizations["CHANGE_SEARCH_RECEIPT_FILLED"] == 1
+    assert len(judge_calls(model)) == 2 and len(checkpoint.revised) == 1
+    [search] = worker_searches(result.receipts)
+    changes = result.decisions["Q1"].completion.changes_exceptions
+    assert changes.receipt_refs == ["L1", "L2", search.ref]  # the model's citations stay, the search is added
+    assert changes.evidence_refs == ["T1", "B1", *search.evidence_refs]
+    [(_ref, published, bundle)] = checkpoint.decided
+    assert_backend_publishable(published, bundle, checkpoint.checks["Q1"]["state"]["lookup_obligations"])
+
+
+class PlannedChangeSearch(SyntheticModel):
+    async def create_text_response(self, **kwargs):
+        response = await super().create_text_response(**kwargs)
+        if json.loads(kwargs["user_prompt"])["role"] == "COVERAGE":
+            value = json.loads(response.text)
+            value["questions"][0]["lookup_intents"] = [{
+                "ref": "change", "kind": "CHANGES_EXCEPTIONS", "operation": "KEYWORD",
+                "purpose": "손 상태 변화 확인", "query": "민수 의수"}]
+            return LlmTextResponse(text=json.dumps(value, ensure_ascii=False))
+        return response
+
+
+def follow_up_then_suspected(payload):
+    if any(row["intent"]["operation"] == "KEYWORD" for row in payload["receipts"]):
+        return suspected(payload, cite_search=False)
+    value = decision(payload)
+    value.update(action="FOLLOW_UP", outcome=None, basis=None, completion=None, follow_ups=[{
+        "ref": "change", "kind": "CHANGES_EXCEPTIONS", "operation": "KEYWORD",
+        "purpose": "손 상태 변화 확인", "query": "민수 의수"}])
+    return value
+
+
+@pytest.mark.parametrize("model_type,judge,judge_count", [
+    (PlannedChangeSearch, lambda payload: suspected(payload, cite_search=False), 1),
+    (SyntheticModel, follow_up_then_suspected, 2),
+])
+def test_model_issued_change_search_is_never_duplicated(model_type, judge, judge_count):
+    model = model_type(judge)
+    result = run(model=model)
+    assert result.status == "COMPLETED" and result.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert "CHANGE_SEARCH_INSERTED" not in result.normalizations and not worker_searches(result.receipts)
+    assert len(judge_calls(model)) == judge_count
+    # The model's own successful search is the cited one; nothing is invented.
+    [search] = [row for row in result.receipts if row.intent.operation == "KEYWORD"]
+    assert search.ref in result.decisions["Q1"].completion.changes_exceptions.receipt_refs
+    assert result.normalizations["CHANGE_SEARCH_RECEIPT_FILLED"] == 1
+
+
+def test_failed_worker_change_search_is_issued_once_and_resumes_without_a_second_insertion():
+    data, checkpoint = SyntheticData(), DurableCheckpoint()
+    data.failed_ref = "R1"  # only the KEYWORD search reads R1
+    model = SyntheticModel(suspected)
+    failed = inspect_with(data, model, checkpoint)
+    assert (failed.status, failed.failure_code, failed.failure_stage) == (
+        "INCOMPLETE", "SOURCE_UNREADABLE", "LOOKUP:Q1:KEYWORD")
+    assert failed.normalizations["CHANGE_SEARCH_INSERTED"] == 1 and len(judge_calls(model)) == 1
+    [search] = worker_searches(failed.receipts)
+    assert search.status == "FAILED" and search.failure_code == "SOURCE_UNREADABLE"
+    # Same input again: the durable obligation is retried, never issued a second time.
+    again = inspect_with(data, model, checkpoint)
+    assert (again.status, again.failure_code) == ("INCOMPLETE", "SOURCE_UNREADABLE")
+    assert "CHANGE_SEARCH_INSERTED" not in again.normalizations and len(judge_calls(model)) == 1
+    data.failed_ref = None
+    resumed = inspect_with(data, model, checkpoint)
+    assert resumed.status == "COMPLETED" and resumed.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert "CHANGE_SEARCH_INSERTED" not in resumed.normalizations
+    assert len(checkpoint.revised) == 1 and len(judge_calls(model)) == 2
+    assert [row.status for row in worker_searches(resumed.receipts)] == ["FAILED", "FAILED", "SUCCEEDED"]
+
+
+def test_crash_after_the_durable_revision_resumes_the_inserted_obligation_once():
+    data, checkpoint = SyntheticData(), DurableCheckpoint()
+    checkpoint.crash_after_revise = True
+    model = SyntheticModel(suspected)
+    with pytest.raises(asyncio.CancelledError):
+        inspect_with(data, model, checkpoint)
+    assert checkpoint.checks["Q1"]["revision"] == 2
+    assert checkpoint.state["runtime"]["revisions"]["Q1"] == 1  # the runtime write after revise was lost
+    resumed = inspect_with(data, model, checkpoint)
+    assert resumed.status == "COMPLETED" and resumed.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert "CHANGE_SEARCH_INSERTED" not in resumed.normalizations
+    assert len(checkpoint.revised) == 1 and len(judge_calls(model)) == 2
+    assert [row.status for row in worker_searches(resumed.receipts)] == ["SUCCEEDED"]
+    assert judge_calls(model)[-1]["check_revision"] == 2
+
+
+def test_suspected_conflict_still_needs_a_real_search_when_none_can_be_derived():
+    class Unsearchable(SyntheticModel):
+        async def create_text_response(self, **kwargs):
+            response = await super().create_text_response(**kwargs)
+            if json.loads(kwargs["user_prompt"])["role"] == "COVERAGE":
+                value = json.loads(response.text)
+                value["questions"][0].update(subject_mentions=[], property_or_rule=" ")
+                return LlmTextResponse(text=json.dumps(value, ensure_ascii=False))
+            return response
+
+    result = run(model=Unsearchable(suspected))
+    assert (result.status, result.failure_code, result.failure_cause) == (
+        "INCOMPLETE", "INVALID_DECISION", "INVALID_DECISION_CHANGE_SEARCH_MISSING")
+    assert "CHANGE_SEARCH_INSERTED" not in result.normalizations and not worker_searches(result.receipts)
+
+
+def test_worker_change_search_query_uses_mentions_then_property_and_stays_searchable():
+    from app.validation.contracts import IntentRefs, LookupIntent, QuestionDraft, validate_intents
+    from app.validation.service import change_search_query
+
+    base = QuestionDraft.model_validate(planned_question())
+    assert change_search_query(base) == "민수 손 사용"
+    mentions = base.model_copy(update={"subject_mentions": [" 서윤 ", "등대지기 서윤", "서윤", ""],
+                                       "property_or_rule": "나이"})
+    assert change_search_query(mentions) == "서윤 등대지기 서윤 나이"
+    assert change_search_query(base.model_copy(update={"subject_mentions": []})) == "손 사용"
+    long = base.model_copy(update={"subject_mentions": ["가" * 995], "property_or_rule": "나이 변화"})
+    assert change_search_query(long) == ("가" * 995 + " 나이 변")
+    cut_at_space = base.model_copy(update={"subject_mentions": ["가" * 999], "property_or_rule": "나이"})
+    assert change_search_query(cut_at_space) == "가" * 999
+    assert change_search_query(base.model_copy(update={"subject_mentions": [" "], "property_or_rule": " "})) == ""
+    for draft in (base, long, cut_at_space):
+        query = change_search_query(draft)
+        assert len(query) <= 1000
+        validate_intents([LookupIntent(ref="Q1-CHANGES_EXCEPTIONS", kind="CHANGES_EXCEPTIONS",
+                                       operation="KEYWORD", purpose="검색", query=query)],
+                         IntentRefs(search_operations=frozenset({"KEYWORD"})))
 
 
 def test_frozen_provenance_uses_known_source_alias_without_server_ids():

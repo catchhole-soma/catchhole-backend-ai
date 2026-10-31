@@ -51,6 +51,11 @@ def runtime(tmp_path, monkeypatch):
                 "command": ["python", "scripts/run_analysis_worker.py", "--worker-kind", "relationship"],
                 "deploy": {"replicas": 1},
             },
+            # Rendered like compose: the anchor carries the common keys; off by default.
+            "ai-validation-worker": {
+                "environment": {**common, "AI_WORKER_METRICS_ENABLED": "false"},
+                "deploy": {"replicas": 0},
+            },
         },
         "chatbot": {
             "chatbot": {
@@ -205,7 +210,7 @@ def test_deploy_uses_configured_replica_count_and_does_not_wait_for_paid_backfil
         if args[-1:] == ("preflight",):
             return json.dumps({"state": "PREFLIGHT_READY"})
         if args[:1] == ("ps",):
-            return "id\n" * (4 if args[-1] == "ai-worker" else 1)
+            return "id\n" * {"ai-worker": 4, "ai-validation-worker": 0}.get(args[-1], 1)
         return ""
 
     monkeypatch.setattr(obj, "compose", compose)
@@ -226,6 +231,121 @@ def test_deploy_uses_configured_replica_count_and_does_not_wait_for_paid_backfil
             "preflight",
         ),
     ) in calls
+
+
+def deploy_compose(calls, running):
+    """Fake compose for deploy(): ready probes pass, ps reports running(name, round) containers."""
+    rounds = {}
+
+    def compose(kind, *args, **kwargs):
+        calls.append((kind, args))
+        if "app.chatbot.readiness" in args:
+            return json.dumps({"state": "READY"})
+        if args[-1:] == ("preflight",):
+            return json.dumps({"state": "PREFLIGHT_READY"})
+        if args[:1] == ("ps",):
+            rounds[args[-1]] = rounds.get(args[-1], 0) + 1
+            return "id\n" * running(args[-1], rounds[args[-1]])
+        return ""
+
+    return compose
+
+
+def test_enabled_validation_worker_is_waited_for_until_running(runtime, monkeypatch):
+    obj, configs = runtime
+    configs["worker"]["ai-validation-worker"]["deploy"]["replicas"] = 1
+    calls, sleeps = [], []
+    analysis = {"ai-worker": 5, "ai-character-comparison-worker": 1, "ai-world-comparison-worker": 1, "ai-relationship-worker": 1}
+
+    def running(name, attempt):
+        # The validation container needs one more poll before it reports running.
+        return analysis[name] if name in analysis else int(attempt > 1)
+
+    monkeypatch.setattr(obj, "compose", deploy_compose(calls, running))
+    monkeypatch.setattr(deploy.time, "sleep", sleeps.append)
+    result = obj.deploy()
+    assert result["state"] == "DEPLOYED"
+    assert result["validationReplicas"] == 1
+    assert sleeps == [5]
+    assert [args for _, args in calls if args[:1] == ("ps",)].count(
+        ("ps", "--status", "running", "-q", "ai-validation-worker")
+    ) == 2
+
+
+def test_enabled_validation_worker_that_never_runs_fails_the_process_check(runtime, monkeypatch):
+    obj, configs = runtime
+    configs["worker"]["ai-validation-worker"]["deploy"]["replicas"] = 1
+    running = {"ai-worker": 5, "ai-validation-worker": 0}
+    monkeypatch.setattr(
+        obj, "compose", deploy_compose([], lambda name, _: running.get(name, 1))
+    )
+    monkeypatch.setattr(deploy.time, "sleep", lambda seconds: None)
+    with pytest.raises(deploy.DeploymentError, match="^WORKER_PROCESS_CHECK_FAILED$"):
+        obj.deploy()
+
+
+def test_disabled_validation_worker_needs_no_wait(runtime, monkeypatch):
+    obj, _ = runtime
+    calls = []
+    running = {"ai-worker": 5, "ai-validation-worker": 0}
+
+    def forbidden(seconds):
+        raise AssertionError("A disabled validation worker must not delay the rollout.")
+
+    monkeypatch.setattr(obj, "compose", deploy_compose(calls, lambda name, _: running.get(name, 1)))
+    monkeypatch.setattr(deploy.time, "sleep", forbidden)
+    result = obj.deploy()
+    assert result["state"] == "DEPLOYED"
+    assert result["validationReplicas"] == 0
+    # Zero replicas still confirms that no validation container is left running.
+    assert ("worker", ("ps", "--status", "running", "-q", "ai-validation-worker")) in calls
+
+
+@pytest.mark.parametrize(
+    "key", ["SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL", "LLM_API_KEY"]
+)
+def test_validation_worker_must_share_analysis_credentials(runtime, monkeypatch, key):
+    obj, configs = runtime
+    configs["worker"]["ai-validation-worker"]["environment"][key] = "synthetic-stale-setting"
+    calls = []
+    monkeypatch.setattr(obj, "compose", lambda *args, **kwargs: calls.append(args))
+    with pytest.raises(deploy.DeploymentError, match="^INCONSISTENT_" + key + "$"):
+        obj.deploy()
+    assert not calls
+
+
+def test_validation_worker_without_internal_key_fails_closed(runtime):
+    obj, configs = runtime
+    del configs["worker"]["ai-validation-worker"]["environment"]["SPRING_INTERNAL_API_KEY"]
+    with pytest.raises(deploy.DeploymentError, match="^MISSING_SPRING_INTERNAL_API_KEY$"):
+        obj.validate()
+
+
+def test_compose_without_validation_worker_service_is_rejected(runtime, monkeypatch):
+    obj, configs = runtime
+    del configs["worker"]["ai-validation-worker"]
+    calls = []
+    monkeypatch.setattr(obj, "compose", lambda *args, **kwargs: calls.append(args))
+    with pytest.raises(deploy.DeploymentError, match="^VALIDATION_WORKER_SERVICE_MISSING$"):
+        obj.deploy()
+    assert not calls
+
+
+@pytest.mark.parametrize("replicas", [-1, "two", None])
+def test_invalid_validation_replicas_are_rejected(runtime, replicas):
+    obj, configs = runtime
+    configs["worker"]["ai-validation-worker"]["deploy"]["replicas"] = replicas
+    with pytest.raises(deploy.DeploymentError, match="^VALIDATION_WORKER_REPLICAS_INVALID$"):
+        obj.validate()
+
+
+def test_validation_replicas_do_not_use_the_database_connection_budget(runtime):
+    obj, configs = runtime
+    configs["worker"]["ai-validation-worker"]["deploy"]["replicas"] = 3
+    result = obj.validate()
+    assert result["validationReplicas"] == 3
+    assert result["databaseConnections"] == 31
+    assert result["databaseConnectionsDuringPreflight"] == 32
 
 
 def test_compose_credentials_never_leak_on_error(monkeypatch):
@@ -352,6 +472,7 @@ def test_validate_cli_only_renders_and_validates_configuration(runtime, monkeypa
     assert deploy.main() == 0
     result = json.loads(capsys.readouterr().out)
     assert result["tracingWorkerServices"] == []
+    assert result["validationReplicas"] == 0
 
 
 def test_scheduler_script_parses_and_does_not_restart_live_backfill():

@@ -73,6 +73,15 @@ class WorkerTargetsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             worker_targets.build_targets(containers, expected_analysis=5)
 
+    def test_ignores_running_validation_worker_without_metrics_binding(self):
+        # #344: the opt-in validation Worker publishes no metrics port and is not a scrape target.
+        validation = container("ai-validation-worker", 1, 0)
+        validation["NetworkSettings"]["Ports"] = {}
+        groups = worker_targets.build_targets(eight_workers() + [validation], expected_analysis=5)
+        self.assertEqual(len(groups), 8)
+        self.assertNotIn("validation", {g["labels"]["worker_kind"] for g in groups})
+        self.assertEqual(sum(g["labels"]["worker_kind"] == "analysis" for g in groups), 5)
+
 
 if __name__ == "__main__":
     unittest.main()

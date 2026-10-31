@@ -117,3 +117,21 @@ services:
       RETRIEVAL_PREPARATION_ENABLED: "false"
       RELATIONSHIP_WORKER_MAX_SOURCE_BYTES: ${RELATIONSHIP_WORKER_MAX_SOURCE_BYTES:-2000000}
       RELATIONSHIP_WORKER_MAX_CHUNKS: ${RELATIONSHIP_WORKER_MAX_CHUNKS:-12}
+
+  ai-validation-worker:
+    <<: *worker-service
+    # 검수 Worker(#343·#344). 기본 0개로 꺼져 있다. worker.env의 VALIDATION_WORKER_PROCESS_COUNT=1로 켠다.
+    # DB·metrics·tracing·S3를 쓰지 않고 API 내부 키와 provider 키만 분석 Worker와 공유한다.
+    deploy:
+      replicas: ${VALIDATION_WORKER_PROCESS_COUNT:-0}
+    command: ["python", "scripts/run_validation_worker.py", "--enable",
+              "--poll-seconds", "${VALIDATION_WORKER_POLL_SECONDS:-5}",
+              "--backend-url", "${SPRING_INTERNAL_API_BASE_URL}",
+              "--worker-id", "${VALIDATION_WORKER_ID:-validation-prod}",
+              "--internal-key-env", "SPRING_INTERNAL_API_KEY", "--model-key-env", "LLM_API_KEY"]
+    environment:
+      <<: *worker-environment
+      AI_WORKER_METRICS_ENABLED: "false"
+      AI_WORKER_TRACING_ENABLED: "false"
+      AI_WORKER_CONCURRENCY: ${VALIDATION_WORKER_CONCURRENCY:-3}
+      LLM_MAX_CONCURRENT_REQUESTS: ${VALIDATION_WORKER_LLM_CONCURRENCY:-4}
