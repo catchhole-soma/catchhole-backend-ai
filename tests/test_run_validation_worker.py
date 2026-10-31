@@ -663,11 +663,32 @@ def test_readonly_url_builds_a_bounded_read_only_pool_and_the_query_embedding_cl
     [engine] = engines
     assert engine.url == url and engine.disposed
     # One connection per job slot and no overflow: the deploy budget counts replicas x concurrency.
-    assert engine.options == {"pool_size": 3, "max_overflow": 0,
-                              "connect_args": {"options": "-c default_transaction_read_only=on"}}
+    # Connect, statement, idle-in-transaction and pool waits are bounded below the driver: a cancelled
+    # asyncio wait never stops a blocking read that holds a pooled connection.
+    assert engine.options == {
+        "pool_size": 3, "max_overflow": 0, "pool_timeout": 5,
+        "connect_args": {"connect_timeout": 5,
+                         "options": "-c default_transaction_read_only=on -c statement_timeout=5000"
+                                    " -c idle_in_transaction_session_timeout=10000"},
+    }
     worker = seen["worker"]
     assert isinstance(worker.search, FrozenRetrievalSearchService)
     assert isinstance(worker.embedding, OpenAIEmbeddingsClient)
     assert (worker.embedding.model, worker.embedding.version, worker.embedding.dimensions) == (
         "text-embedding-3-small", "v1", 1536)
     assert "disabled" not in caplog.text and "synthetic@" not in caplog.text
+
+
+def test_readonly_engine_bounds_match_the_service_readiness_timeout():
+    """The database ends a stuck read no later than the asyncio readiness timeout gives up on it."""
+    from app.validation.service import VECTOR_READINESS_TIMEOUT_SECONDS
+    from scripts import run_validation_worker as runner
+
+    assert runner.READONLY_STATEMENT_TIMEOUT_MS == VECTOR_READINESS_TIMEOUT_SECONDS * 1000 == 5000
+    assert runner.READONLY_CONNECT_TIMEOUT_SECONDS == runner.READONLY_POOL_TIMEOUT_SECONDS == 5
+    assert runner.READONLY_IDLE_IN_TRANSACTION_TIMEOUT_MS == 10000
+    engine = runner.readonly_engine("postgresql+psycopg://readonly:synthetic@db.invalid/catchhole", 2)
+    try:  # Pool configuration only; no connection is opened.
+        assert (engine.pool.size(), engine.pool._max_overflow, engine.pool._timeout) == (2, 0, 5)
+    finally:
+        engine.dispose()

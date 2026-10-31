@@ -592,7 +592,15 @@ def test_failed_readiness_read_offers_keyword_only_and_logs_the_type_only(caplog
 
 
 def test_stuck_readiness_read_is_capped_and_planning_keeps_its_budget(monkeypatch, caplog):
-    """A stuck read ends at the cap; the first PLANNER call still runs instead of BUDGET_EXHAUSTED."""
+    """A stuck read ends at the cap; the first PLANNER call still runs instead of BUDGET_EXHAUSTED.
+
+    The asyncio cap only frees the inspection. The real readiness runs a blocking session in
+    ``asyncio.to_thread``: cancelling the awaiting coroutine does not stop that thread, which keeps its
+    pooled connection (pool_size=--concurrency, max_overflow=0) until the database ends the statement.
+    The runner's read-only engine therefore sets statement_timeout (5 s, the same bound), connect and pool
+    timeouts; see ``test_statement_timeout_in_frozen_search_takes_the_existing_failure_paths`` and the
+    env-gated PostgreSQL check in ``tests/test_validation_readonly_postgres.py``.
+    """
     import time
 
     from app.validation import service
@@ -608,6 +616,69 @@ def test_stuck_readiness_read_is_capped_and_planning_keeps_its_budget(monkeypatc
     assert "VECTOR" not in _planner_search_operations(model)
     assert result.normalizations["VECTOR_OFFERED"] == 0 and index.searches == 0
     assert "vector search readiness unavailable error=TimeoutError job=-" in caplog.text
+
+
+def test_statement_timeout_in_frozen_search_takes_the_existing_failure_paths(caplog):
+    """A database-cancelled read (statement_timeout, SQLSTATE 57014) closes its session and maps to fixed codes.
+
+    readiness() raises the driver error to the offer check (KEYWORD only, frozen RAG off for the job);
+    search() turns it into SEARCH_FAILED for KEYWORD and VECTOR alike, never an empty result.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from app.validation.contracts import IncompleteInspection
+    from app.validation.search import FrozenRetrievalSearchService
+
+    class QueryCanceled(Exception):
+        sqlstate = "57014"
+
+    class CanceledSession:
+        def __init__(self):
+            self.closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.closed = True  # The pooled connection is returned even though the statement failed.
+            return False
+
+        def _cancel(self, *args, **kwargs):
+            raise OperationalError("SELECT ...", {}, QueryCanceled("canceling statement due to statement timeout"))
+
+        scalar = execute = scalars = _cancel
+
+    sessions = []
+
+    def factory():
+        sessions.append(CanceledSession())
+        return sessions[-1]
+
+    search = FrozenRetrievalSearchService(factory)
+
+    async def run():
+        frozen = await B2Data().read_input()
+        with pytest.raises(OperationalError):
+            await search.readiness(frozen)
+        codes = []
+        for operation in ("KEYWORD", "VECTOR"):
+            intent = LookupIntent(ref="L1", kind="CHANGES_EXCEPTIONS", operation=operation, purpose="변화",
+                                  query="미나 새벽")
+            with pytest.raises(IncompleteInspection) as failure:
+                await search.search(frozen, intent, QUERY_EMBEDDING, 5)
+            codes.append(failure.value.code)
+        return codes
+
+    assert asyncio.run(run()) == ["SEARCH_FAILED", "SEARCH_FAILED"]
+    assert sessions and all(session.closed for session in sessions)
+    # Through the inspection: the cancelled readiness read withholds VECTOR and the job reads sources raw.
+    caplog.set_level(logging.INFO, logger="app.validation.service")
+    model, before = RecordedTerra(), len(sessions)
+    result = inspect(model, search=search, embedding_client=QUERY_EMBEDDING)
+    assert result.status == "COMPLETED" and result.normalizations["VECTOR_OFFERED"] == 0
+    assert len(sessions) == before + 1  # Only the readiness read; KEYWORD lookups did not use the index.
+    assert "vector search readiness unavailable error=OperationalError job=-" in caplog.text
+    assert "statement timeout" not in caplog.text
 
 
 @pytest.mark.parametrize(("seconds", "cap"), [(20, 5.0), (3, None)], ids=["budget-above-cap", "budget-below-cap"])
