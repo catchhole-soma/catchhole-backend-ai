@@ -41,7 +41,7 @@ flowchart TD
   A[Java PR을 main에 머지] --> B[테스트 후 같은 SHA의 API 이미지 발행]
   B --> C[Publish 성공을 받은 Deploy API workflow]
   C --> D[자동 SSM 배포 후 API health 확인]
-  D --> E[Flyway V103가 캠페인·대기열 구조 생성]
+  D --> E[Flyway V103·V104가 캠페인·대기열 구조와 감사 시각 생성]
   E --> F[Spring scheduler가 고정 계정의 회차 대기열 등록]
   G[AI PR을 main에 머지] --> H[테스트 후 같은 SHA의 Worker 이미지 발행]
   H --> I[API 배포 상태를 확인하고 Worker 배포]
@@ -57,9 +57,11 @@ flowchart TD
    그 SHA의 Compose와 이미지를 배포한다. 배포 도구 내부에서 SSM을 쓰지만 사람이 SSM에
    접속해서 SQL/백필 명령을 입력할 필요는 없다.
 2. `V103__add_relationship_cohort_backfill.sql`은 테이블·열·인덱스를 만든다.
+   후속 `V104__add_relationship_backfill_audit_timestamps.sql`은 세 백필 테이블에 생성·수정
+   시각을 추가한다. 기존 행의 시각은 과거 이력을 추정하지 않고 적용 시각으로 채운다.
    SQL migration 안에서 원문을 읽거나 모델을 호출하지 않는다. API는 migration 이후 기동한다.
 3. 운영 `application-prod.yml`/`compose.api.prod.yml`은 기능을 기본 활성화한다. 기본
-   10초 간격 scheduler가 `RelationshipBackfillCoordinator.bootstrap()`을 호출한다.
+   10초 간격 scheduler가 `RelationshipBackfillService.bootstrap()`을 호출한다.
    캠페인 행 잠금과 `initialized` 기록으로 최초 등록을 한 번만 한다. active 회원·작품만
    고려하고, 선정 시각 이전에 저장된 보관 중 원문 key/hash가 있는 회차를 고정한다.
    대상 여부는 회차 생성 시각으로 정하고, 내용은 최초 bootstrap 시점의 현재 보존본으로 고정한다.
@@ -95,8 +97,8 @@ Worker는5→6→…→10→11 순서로 이전 관계를 참고한다. 앞 회�
 | 책임 | 파일 / 주요 지점 | 의미 |
 |---|---|---|
 | 고정 대상 | Java `relationship-backfill-20261030-v1.json`, `RelationshipBackfillManifest` | 명단과 선정시각을 검증하며 대상을 동적으로 늘리지 않음 |
-| 실행 등록·순서 | Java `RelationshipBackfillScheduler`, `RelationshipBackfillCoordinator` | 초기화, 순서, 임대, 완료, 차단, 공개 전환 |
-| 저장 구조 | Java `V103__add_relationship_cohort_backfill.sql` | 캠페인/작품/회차 상태와 관계 세대 |
+| 실행 등록·순서 | Java `RelationshipBackfillScheduler`, `RelationshipBackfillService`/`RelationshipBackfillServiceImpl` | 초기화, 순서, 임대, 완료, 차단, 공개 전환 |
+| 저장 구조 | Java `V103__add_relationship_cohort_backfill.sql`, `V104__add_relationship_backfill_audit_timestamps.sql` | 캠페인/작품/회차 상태, 관계 세대, 생성·수정 시각 |
 | 기존 분석 연결 | Java `AnalysisJobWorkerServiceImpl` | 관리 중 작품의 inline 관계를 미루고 핵심 분석 완료 후 관계만 enqueue |
 | 관계 문맥·공개 | Java `RelationshipGraphServiceImpl` | Worker는 만드는 세대, 화면은 공개된 세대를 읽음 |
 | 토큰 경계 | Java `AiTokenServiceImpl` | 서비스 부담 여부, 목적, lease, 누적 예약 상한 검사 |
@@ -132,6 +134,8 @@ Worker 입력은 `jobType=RELATIONSHIP_EXTRACTION`, `sourceKind=EPISODE`,
   target·SG 갱신이 별도로 필요하다. 이는 분석 실행의 필수 조건은 아니다.
 - lease는60초, 전용 Worker heartbeat는20초다. 프로세스가 죽으면 만료 작업을 회수하여
   최대3회 claim하며, PREPARED/COMPLETED 재개는 저장 관측/결정을 사용한다.
+  회수는 작품·작업 잠금 뒤 작업을 DB에서 새로 읽고 상태와 만료 시각을 다시 확인한다.
+  잠금을 기다리는 동안 heartbeat가 연장한 작업을 이전 캐시 값으로 재시도하지 않는다.
   준비 결과 저장 전 중단된 추출 호출은 재호출될 수 있어 모든 경우의 중복 비용0을 보장하지 않는다.
 - 특정 회차가 실패하거나 원문이 교체되면 해당 작품을 `BLOCKED`로 남긴다. 다른 작품은 계속
   처리하지만 차단된 작품의 후행 관계를 자동으로 건너뛰지 않는다. 기존 공개 세대를 유지한다.
@@ -154,7 +158,7 @@ lease 회수, 공개 세대 보존, 사용자 토큰0과 raw 원장, 공개 API 
 정확한 실행 결과는 각 PR의 확인 사항과 AI 로직 버전 상세에 기록한다. 테스트 통과를
 운영 백필 완료나 실제 모델 정확도 평가로 해석하지 않는다.
 
-최소 읽기 순서는 manifest → coordinator → graph service → Python worker →
+최소 읽기 순서는 manifest → backfill service → graph service → Python worker →
 Compose/배포 workflow다. 이 순서로 대상, 실행 권한, 공개 시점, 모델 호출, 자동 배포를
 각각 분리해서 이해할 수 있다.
 
