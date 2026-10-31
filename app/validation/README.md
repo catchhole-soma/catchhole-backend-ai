@@ -22,6 +22,9 @@ PLANNER/선정 전체 page/COVERAGE/각 BOOK_SOURCE/BOOK_COVERAGE를 즉시 저�
 SELECT 전용 session factory를 명시하면 기존 frozen RAG를 사용한다. optional embedding은 실제 index와
 model/version/1536 차원·명시 cap이 일치할 때만 실행하고, exact query/input/manifest/index proof가
 원 호출 원장에 맞는 성공 VECTOR receipt를 재사용한다. 미준비 vector는 정상 빈 결과가 아니다.
+VECTOR는 Job 시작 때 읽은 readiness가 완전하고 query embedding client가 있을 때만 모델에 제안한다(GH344).
+같은 Job의 이전 시도가 VECTOR를 저장했으면 재개 때는 그대로 유지한다.
+claim에 QUERY_EMBEDDING 역할이 아예 없으면 embedding 없이(키워드만) 실행하고, 있는데 index와 다르면 계속 거절한다.
 
 기본 추출·챗봇 모델/재시도, 추출 Job·후보·자동 확정/철회는 바꾸지 않는다. #312/#314는 별도 범위다.
 

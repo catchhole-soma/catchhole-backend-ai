@@ -200,7 +200,7 @@ AI_WORKER_BLOCKING_MAX_WORKERS=3
 
 ## 검수 Worker 켜기 (#344)
 
-`compose.worker.prod.yml`의 `ai-validation-worker`는 검수 전용 runner(`scripts/run_validation_worker.py --enable`)를 연속 실행한다. 기본 `VALIDATION_WORKER_PROCESS_COUNT=0`이라 컨테이너를 만들지 않는다. 분석 Worker와 같은 이미지·`SPRING_INTERNAL_API_BASE_URL`·`SPRING_INTERNAL_API_KEY`·`LLM_API_KEY`를 쓰고, DB 연결·S3·metrics port·tracing은 쓰지 않는다. 따라서 데이터베이스 연결 수 예산과 Prometheus target 수는 바뀌지 않는다.
+`compose.worker.prod.yml`의 `ai-validation-worker`는 검수 전용 runner(`scripts/run_validation_worker.py --enable`)를 연속 실행한다. 기본 `VALIDATION_WORKER_PROCESS_COUNT=0`이라 컨테이너를 만들지 않는다. 분석 Worker와 같은 이미지·`SPRING_INTERNAL_API_BASE_URL`·`SPRING_INTERNAL_API_KEY`·`LLM_API_KEY`를 쓰고, S3·metrics port·tracing은 쓰지 않는다. DB는 [의미 검색 켜기](#의미-검색-켜기-선택)를 했을 때만 읽기 전용으로 쓴다. 기본(키워드 검색만)에서는 데이터베이스 연결 수 예산과 Prometheus target 수가 바뀌지 않는다.
 
 전제: Backend 저장소 `deploy/EC2_DEPLOYMENT.md`의 검수 실행 켜기 절차로 API 서버 `api.env`에 `VALIDATION_EXECUTION_ENABLED`와 검수 예산(`SPRING_APPLICATION_JSON`)을 먼저 적용하고 API가 정상 응답해야 한다. API 쪽이 꺼져 있으면 Worker를 켜지 않는다.
 
@@ -264,6 +264,40 @@ sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml s
 
 GitHub Actions 자동 배포의 `manage-ai-runtime.py`는 같은 SHA의 Compose에 `ai-validation-worker`가 있어야 진행하고, 이 서비스의 내부 API 주소·내부 키·provider key가 `ai-worker`와 같은지 검사한다. 배포 뒤에는 `VALIDATION_WORKER_PROCESS_COUNT`만큼 검수 컨테이너가 실행될 때까지 기다리며, 0이면 실행 중인 검수 컨테이너가 없는지만 확인한다. 결과 JSON의 `validationReplicas`로 적용된 수를 확인한다.
 
+### 의미 검색 켜기 (선택)
+
+기본 검수 Worker는 과거 원고를 키워드로만 찾는다. 챗봇이 쓰는 원문 색인(`retrieval_chunks`)으로 의미(벡터) 검색까지 쓰려면 아래 순서로 켠다. Compose는 `--readonly-url-env VALIDATION_READONLY_DATABASE_URL --query-embedding --index-version`을 항상 넘기며, URL 값이 비어 있으면 runner가 `frozen retrieval disabled: VALIDATION_READONLY_DATABASE_URL is empty`를 남기고 키워드 검색만 쓴다.
+
+1. **API 예산.** Backend 저장소 `deploy/EC2_DEPLOYMENT.md`의 검수 실행 절차로 API 서버 검수 예산 JSON(`SPRING_APPLICATION_JSON`)에 `roles.QUERY_EMBEDDING`(최대 호출 수·예약 token)과 `query-embedding-model`(`text-embedding-3-small`)을 넣고 API를 재기동한다. Backend `deploy/validation-execution.prod.example.json`에 예시가 있다. 이 역할이 없으면 URL을 넣어도 Job마다 키워드 검색만 제안한다(실패하지 않는다).
+2. **DB 연결 예산.** 켜면 검수 프로세스마다 읽기 전용 연결이 `VALIDATION_WORKER_CONCURRENCY`개(기본 3) 더 생긴다. 실제 RDS 여유를 확인하고 `retrieval.env`의 `AI_RUNTIME_DB_CONNECTION_BUDGET`을 `검수 프로세스 수 × VALIDATION_WORKER_CONCURRENCY`만큼 올린다(예: 32 → 35). 자동 배포는 이 값을 넘으면 `DATABASE_CONNECTION_BUDGET_EXCEEDED`로 멈춘다.
+3. **worker.env.** `VALIDATION_READONLY_DATABASE_URL`에 `chatbot.env`의 `CHAT_RETRIEVAL_DATABASE_URL`과 같은 SELECT 전용 계정 URL을 그대로 넣고, `VALIDATION_WORKER_INDEX_VERSION`은 `CHAT_RETRIEVAL_EMBEDDING_VERSION`(기본 `v1`)과 맞춘다. 값이 터미널·셸 기록에 남지 않도록 편집기로 넣는다.
+
+```bash
+sudoedit /opt/catchhole/worker.env
+```
+
+4. **재기동.** 렌더링을 확인하고 검수 Worker만 다시 만든다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml config --quiet
+```
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml up -d ai-validation-worker
+```
+
+5. **확인.** 시작 로그에 `frozen retrieval disabled`가 없어야 하고, Job을 처리하면 `vector search offered=True sources=<n> ready=<n> ...`이 남는다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml logs --tail=200 ai-validation-worker | grep -E 'frozen retrieval disabled|query embedding disabled|vector search'
+```
+
+- `vector search offered=False`이고 `ready`가 `sources`보다 작으면 그 작품의 일부 회차가 아직 색인되지 않은 것이다. 그 Job은 키워드 검색만으로 정상 진행하며, 색인 백필이 끝난 뒤의 Job부터 의미 검색이 제안된다.
+- `embedding=False`이면 API 예산 JSON에 `QUERY_EMBEDDING`이 없다(1단계).
+- `vector search readiness unavailable error=<예외 종류>`는 읽기 전용 DB 접속 문제다. 그 Job은 키워드 검색만으로 계속한다. 로그에는 예외 종류와 Job ID만 남는다.
+
+끄려면 `VALIDATION_READONLY_DATABASE_URL`을 다시 비우고 4단계로 검수 Worker만 재기동한다. 자동 배포의 `manage-ai-runtime.py`는 URL이 비어 있으면 아무것도 검사하지 않고, 값이 있으면 챗봇의 `CHAT_RETRIEVAL_DATABASE_URL`과 같은지(`INCONSISTENT_VALIDATION_READONLY_DATABASE_URL`), `--index-version`이 `CHAT_RETRIEVAL_EMBEDDING_VERSION`과 같은지(`INCONSISTENT_VALIDATION_WORKER_INDEX_VERSION`) 확인한 뒤 위 연결 수를 예산에 넣는다. 결과 JSON의 `validationRetrieval`로 켜짐 여부를 확인한다.
+
 ## 데이터베이스 연결 수 예산
 
 | 실행 주체 | 프로세스 수 | 프로세스당 최대 연결 수 | 합계 |
@@ -275,6 +309,8 @@ GitHub Actions 자동 배포의 `manage-ai-runtime.py`는 같은 SHA의 Compose�
 | 전체 |  |  | 27 |
 
 SQLAlchemy의 `DATABASE_POOL_MAX_OVERFLOW=0`은 기본 연결 풀을 넘는 임시 연결 생성을 막는다. 전체 애플리케이션의 이론상 최대 연결 수는 27개로, NVM-315의 40개 이하 기준을 만족한다.
+
+검수 Worker는 기본 0개이고 키워드 검색만 쓰면 DB에 연결하지 않는다. [의미 검색](#의미-검색-켜기-선택)을 켜면 검수 프로세스 수 × `VALIDATION_WORKER_CONCURRENCY`개(기본 1 × 3 = 3)의 읽기 전용 연결(overflow 0)이 더해지므로, 챗봇·색인 백필 연결과 함께 `AI_RUNTIME_DB_CONNECTION_BUDGET`과 실제 RDS 한도를 확인한다.
 
 ## 최초 실행
 

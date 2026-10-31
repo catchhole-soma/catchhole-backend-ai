@@ -342,9 +342,11 @@ typed role-cap/token quota 409는 분기 실패로 처리한다. lease/current i
 
 운영은 Worker Compose 서비스 `ai-validation-worker`(기본 0 replicas, `VALIDATION_WORKER_PROCESS_COUNT`)로
 명시 opt-in한다(#344). 이 서비스는 `--enable`·`--poll-seconds`·`--backend-url`과 분석 Worker의 내부 키
-(`SPRING_INTERNAL_API_KEY`)·provider key(`LLM_API_KEY`) 환경변수 이름을 명시해 연속 실행하며, DB·S3·metrics·
-tracing은 쓰지 않는다(`--readonly-url-env`를 주지 않으므로 VECTOR 검색은 제공하지 않는다). 켜기·끄기는 AI
-`deploy/WORKER_EC2_DEPLOYMENT.md`를 따른다. 로컬 확인은 AI checkout에서 아래 전용 명령을 그대로 사용한다.
+(`SPRING_INTERNAL_API_KEY`)·provider key(`LLM_API_KEY`) 환경변수 이름을 명시해 연속 실행하며, S3·metrics·
+tracing은 쓰지 않는다. 과거 원고 의미 검색 플래그(`--readonly-url-env VALIDATION_READONLY_DATABASE_URL
+--query-embedding --index-version`)도 고정으로 주지만 기본 URL 값이 비어 있어 키워드 검색만 쓴다(GH344 후속,
+아래 끝 문단). 켜기·끄기는 AI `deploy/WORKER_EC2_DEPLOYMENT.md`를 따른다. 로컬 확인은 AI checkout에서 아래
+전용 명령을 그대로 사용한다.
 
 ```sh
 PYTHONPATH=. python scripts/run_validation_worker.py --enable --once \
@@ -378,6 +380,16 @@ AI_WORKER_SHUTDOWN_GRACE_SECONDS(없으면 180초)이며 1 미만·0 이하는 �
 connection은 default_transaction_read_only=on이고 index model/version/1536 차원을 검증한다.
 --query-embedding은 서버의 별도 cap/model과 기존 준비 index가 모두 있을 때만 사용한다.
 미설정/미준비 vector는 정상 빈 검색으로 숨기지 않는다.
+GH344 후속: 명시성은 플래그에 둔다. 플래그는 명시해야 하지만 그 환경변수 값은 비어 있을 수 있다.
+--readonly-url-env의 변수가 없거나 비어 있으면 INFO `frozen retrieval disabled: <NAME> is empty` 한 줄을 남기고
+frozen RAG 없이 실행한다(KeyError로 끝나지 않는다). 읽기 전용 session이 없는데 --query-embedding이면
+INFO `query embedding disabled: no read-only retrieval sessions`를 남기고 embedding client 없이 실행한다
+(ValueError 대신). --once도 같다. URL이 있으면 연결 풀은 --concurrency개(overflow 0)로 묶어 배포 연결 예산에
+`프로세스 수 × 동시 Job 수`로 넣는다. Job마다 claim에 QUERY_EMBEDDING model/cap이 아예 없으면 embedding 없이
+키워드 검색만 제안하고(있는데 index와 다르거나 cap이 0이면 `EMBEDDING_CONFIGURATION_INVALID`), 회차 출처가 있으면
+Job 시작 때 고정 범위 readiness를 한 번 읽어 모든 회차 출처의 vector가 준비됐을 때만 VECTOR를 제안한다
+(INFO `vector search offered=<bool> sources=<n> ready=<m> ...`, 읽기 실패는 KEYWORD만 제안하고 예외 종류만 경고).
+같은 Job의 이전 시도가 VECTOR를 이미 저장했으면 재개 때 VECTOR를 유지해 위 JUDGE-only 재개 계약을 지킨다.
 
 합성 검증은 loopback gh310_execution_test 이외의 DB에서 실행하지 않는다. 실제 Spring HTTP·JPA·Flyway와
 새 Python Worker를 연결하는 ValidationExecutionHttpPostgresIntegrationTest는
