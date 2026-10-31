@@ -932,3 +932,55 @@ async def test_returned_wrong_field_cannot_cross_requested_filter_boundary():
         spring_setup=wrong_field,
     )
     assert result["finish"] == {"result": None, "failure": "NETWORK_FAILURE"}
+
+
+@pytest.mark.anyio
+async def test_unrelated_duplicate_labels_do_not_block_value_based_selection():
+    # 질문과 무관한 항목의 표시명이 겹쳐도(스킬·상태의 '거대화') 질문한 속성이 하나뿐이면 되묻지 않고
+    # 그 유형의 현재값을 읽어 고른다. 질문한 속성 자체가 겹치는 경우만 되묻는다.
+    catalog = [
+        catalog_subject(
+            170,
+            "비요른",
+            current=[
+                item(
+                    170,
+                    "비요른",
+                    category="PROFILE",
+                    key="profile.species",
+                    label="종족",
+                    value="바바리안",
+                ),
+                item(
+                    170,
+                    "비요른",
+                    category="SKILL",
+                    key="skill.giant",
+                    label="거대화",
+                    value="3단계",
+                    number=171,
+                ),
+                item(
+                    170,
+                    "비요른",
+                    category="STATUS",
+                    key="status.giant",
+                    label="거대화",
+                    value="활성",
+                    number=172,
+                ),
+            ],
+        )
+    ]
+    result = await replay_case(
+        case(
+            "비요른의 종족은?",
+            plan("비요른", fact_type="PROFILE", attribute="종족"),
+            {"outcome": "CLARIFICATION", "fieldRefs": []},
+            {"outcome": "ANSWER", "rowRefs": ["R1"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    assert actual["outcome"] == "ANSWER" and "바바리안" in actual["text"]
+    assert tool_queries(result, "CHARACTER_CURRENT")

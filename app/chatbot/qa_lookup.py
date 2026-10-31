@@ -222,9 +222,11 @@ class FocusedLookup:
         )
         if selected.outcome == "CLARIFICATION":
             labels = [normalized(item.display_name or "") for item in candidates.values()]
-            duplicated = len(labels) != len(set(labels))
+            asked = normalized(focus.attribute) if focus.attribute else None
+            duplicated = asked is not None and labels.count(asked) > 1
             if condition or domain != "CHARACTER" or duplicated:
-                # 조건 검색, 세계관의 같은 경로명(루트/범위), 같은 표시명이 둘 이상인 인물 항목은 되묻는 편이 맞다.
+                # 조건 검색, 세계관의 같은 경로명(루트/범위), 질문한 속성과 같은 표시명이 둘 이상인 인물 항목은
+                # 되묻는 편이 맞다. 질문과 무관한 항목의 표시명 중복(158개 항목 속 '거대화' 2개)은 막지 않는다.
                 return [], message(
                     "CLARIFICATION",
                     "같은 이름의 항목이나 범위가 있습니다. 어떤 설정을 뜻하는지 알려주세요.",
