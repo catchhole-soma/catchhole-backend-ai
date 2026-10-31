@@ -340,7 +340,11 @@ typed role-cap/token quota 409는 분기 실패로 처리한다. lease/current i
 
 ## 명시적 실행과 수동 검증
 
-기본 runner는 추가하지 않는다. AI checkout에서 명시 opt-in으로만 아래 전용 명령을 사용한다.
+운영은 Worker Compose 서비스 `ai-validation-worker`(기본 0 replicas, `VALIDATION_WORKER_PROCESS_COUNT`)로
+명시 opt-in한다(#344). 이 서비스는 `--enable`·`--poll-seconds`·`--backend-url`과 분석 Worker의 내부 키
+(`SPRING_INTERNAL_API_KEY`)·provider key(`LLM_API_KEY`) 환경변수 이름을 명시해 연속 실행하며, DB·S3·metrics·
+tracing은 쓰지 않는다(`--readonly-url-env`를 주지 않으므로 VECTOR 검색은 제공하지 않는다). 켜기·끄기는 AI
+`deploy/WORKER_EC2_DEPLOYMENT.md`를 따른다. 로컬 확인은 AI checkout에서 아래 전용 명령을 그대로 사용한다.
 
 ```sh
 PYTHONPATH=. python scripts/run_validation_worker.py --enable --once \
