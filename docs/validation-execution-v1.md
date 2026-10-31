@@ -215,12 +215,15 @@ Worker가 required-grid 또는 done:true를 보내 완료를 대체할 수 없�
 - MERGED_PLAN: 저장된 모든 원 질문 originalRefs를 빠짐없이 연결한 질문 목록. 서버 UUID와 local Q-ref의 대응을 반환한다.
 - TYPO_SEGMENT: 분류(SPELLING/SPACING/TYPO)와 정확한 제안 또는 제안 0개의 완료 segment.
 
-SETTING과 TYPO grid는 독립 준비한다. SETTING grid는 GH349부터 `gridVersion=2`이고 TYPO grid는 1 그대로다.
+SETTING과 TYPO grid는 독립 준비한다. SETTING grid는 GH349부터 `gridVersion=2`, GH349 후속부터 `gridVersion=3`이고 TYPO grid는 1 그대로다.
+grid v3 = v2 + 1글자 제외: 모양은 v2와 같고 2 code point 미만의 name·alias를 기계 매칭에서 빼는 규칙만 다르다. Worker는 2·3을 모두 받는다.
 SETTING의 target 의무는 구간마다 `PLANNER:TSEGn`, `SUBJECT_RESOLUTION:TSEGn`, `COVERAGE:TSEGn` 순서이며 RELATED_SELECTION page 의무는 없다.
-`segmentSubjects`는 구간 순서의 `{segmentRef, subjectRefs}`이고, 항목의 비어 있지 않은 name 또는 aliases 문자열이 구간 문맥
+`segmentSubjects`는 구간 순서의 `{segmentRef, subjectRefs}`이고, 항목의 2 code point 이상인 name 또는 aliases 문자열이 구간 문맥
 (`text[contextStart:contextEnd]`, code point)에 정확한 부분 문자열로 나온 주체를 S 번호 순·중복 없이 담는다(정규화 없음,
-name null·aliases 빈 항목은 제외). Worker는 첫 의미 단계 게시로 grid가 생긴 뒤 checkpoint에서 이 값을 읽고, 없거나 v1이면
+name null·aliases 빈 항목은 제외). Worker는 첫 의미 단계 게시로 grid가 생긴 뒤 checkpoint에서 이 값을 읽고, 없거나 2·3이 아니면
 `GRID_VERSION_UNSUPPORTED`로 멈춘다. 상세 규칙은 [설정 검사 계약](setting-validation-v1.md)의 GH349 절이다.
+GH349 후속: COVERAGE·JUDGE 모델 입력의 settings는 압축 행이고 게시 `evidence_bundle`·조회·checkpoint의 settings는 전체 정본 행 그대로라 서버 wire는 바뀌지 않는다
+(COVERAGE 관련 항목 400개 초과분은 Worker가 NOT_APPLICABLE rule로 채운다, [설정 검사 계약](setting-validation-v1.md) GH349 후속).
 SETTING grid는 frozen manifest의 모든 BOOK_SOURCE 의무를
 먼저 넣고, 전문을 아직 확인하지 못한 book은 `books=[{sourceRef:...}]`와 `pendingBookRefs`로 남긴다.
 미확정 book은 빈 책/0 checks가 아니다. PLANNER/SUBJECT_RESOLUTION/COVERAGE 및 checkpoint는 다른 book 전문을
@@ -357,6 +360,8 @@ SETTING Job은 배포 뒤 `VALIDATION_SOURCE_VERSION_CONFLICT`로 끝나며 공�
 배포는 RUNNING 검수 Job이 없을 때 Backend와 AI를 같은 release로 올린다. grid v1 서버에 새 Worker가 붙으면 첫 PLANNER 게시 뒤
 `GRID_VERSION_UNSUPPORTED`로 SETTING 분기를 멈추고, 이미 저장된 v1 grid를 복원한 Job도 SUBJECT_RESOLUTION 전에 같은 코드로 멈춘다.
 Backend는 기록 보존을 위해 `RELATED_SELECTION` stage enum을 유지하지만 새 grid가 요구하지 않는다. Worker는 저장된 v1 stage를 읽지 않는다.
+grid v3(GH349 후속, 1글자 제외)는 Backend가 3을 만들고 저장된 SETTING grid가 3이 아니면 공개 retry에서 버리고 다시 만든다. Worker는 2·3을 모두 받으므로
+새 Worker를 먼저 올려도 v2 서버와 동작하며(1글자 규칙만 서버 grid를 따름), 압축 투영은 서버 wire를 바꾸지 않는다.
 
 ## 명시적 실행과 수동 검증
 

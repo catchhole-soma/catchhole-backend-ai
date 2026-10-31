@@ -123,9 +123,9 @@ GH341: SUSPECTED_CONFLICT의 변화·예외 검색 의무는 JUDGE가 답한 뒤
 
 GH349: 관련 설정 선정을 전체 카탈로그 페이지 선별(RELATED_SELECTION:TSEGn:PAGEk)에서 주체 매칭 + 구간당 SUBJECT_RESOLUTION으로 바꾼다(grid v2, [실행 계약](validation-execution-v1.md)).
 
-- 기계 매칭: 항목의 비어 있지 않은 `name` 또는 `aliases` 문자열이 구간 문맥(`text[contextStart:contextEnd]`, code point)에 정확한 부분 문자열로 나오면
-  그 항목의 주체가 구간에 매칭된다. 정규화하지 않고, S 번호 순·중복 없음이며, name이 null이고 aliases가 비면 매칭되지 않는다.
-  실행 Job은 서버 grid의 `segmentSubjects`만 쓴다(첫 의미 단계 게시 뒤 checkpoint에서 다시 읽음). grid가 v1이거나 `segmentSubjects`가 없으면
+- 기계 매칭: 항목의 2 code point 이상인 `name` 또는 `aliases` 문자열이 구간 문맥(`text[contextStart:contextEnd]`, code point)에 정확한 부분 문자열로 나오면
+  그 항목의 주체가 구간에 매칭된다. 정규화하지 않고, S 번호 순·중복 없음이며, name이 null이고 aliases가 비면 매칭되지 않는다(1글자 규칙은 아래 GH349 후속).
+  실행 Job은 서버 grid의 `segmentSubjects`만 쓴다(첫 의미 단계 게시 뒤 checkpoint에서 다시 읽음). grid가 정수 2·3이 아니거나 `segmentSubjects`가 없으면
   `GRID_VERSION_UNSUPPORTED`, 구간·주체 참조가 맞지 않으면 `INVALID_GRID_CONTRACT`다. Job 없는 호출형만 같은 규칙을 로컬에서 계산한다.
 - SUBJECT_RESOLUTION은 구간마다 PLANNER 다음·COVERAGE 전에 한 번이다. 모델 호출 역할은 기존 `RELATED_SELECTION`(Terra high, 같은 역할 예산·원장)이고
   단계 이름만 새롭다. 입력은 구간 공통 입력 + `subject_catalogue` + `mechanical_subject_refs`, 출력·저장은 `{"mentions":[{"mention","subject_ref","reason"}]}`다.
@@ -138,6 +138,25 @@ GH349: 관련 설정 선정을 전체 카탈로그 페이지 선별(RELATED_SELE
 - 모델 호출은 카탈로그 크기와 무관하게 구간당 최대 1회다(예: 120항목·페이지 50이면 구간당 3→1). 고정 항목 읽기 페이지(`catalogue_page_size`)는 그대로다.
   coverage에는 `{"role": "SUBJECT_RESOLUTION", "segment_ref", "mechanical_subject_refs", "resolved_subject_refs", "mentions"}`(mentions는 개수)를 남긴다.
 - 한계: 이름이 다른 단어의 일부로 나와도 매칭된다(정규화 없음, 과포함 방향). 이름이 같은 다른 주체도 함께 매칭된다. 지칭 해소의 실제 모델 품질은 아직 측정하지 않았다.
+
+GH349 후속(2026-10-31 첫 운영 실행): 30회차 작품에서 COVERAGE:TSEG1이 호출 전에 `REQUIRED_CONTEXT_TOO_LARGE`(입력 > `setting.input-tokens` 80,000)로 멈췄다.
+호출 수가 아니라 항목 크기가 원인이었다(관련 항목 179개 raw JSON 795 KB, 가장 큰 인물 항목 362 KB 중 slots 149 KB·historyFacts 209 KB). 세 가지를 바꾼다.
+
+- 모델 입력 투영: COVERAGE와 JUDGE의 `settings`는 `app/validation/projection.py`의 `compact_setting_row`로 만든 압축 행이다.
+  행은 `entry_ref`, `subject_ref`, `domain`, `name`, `aliases`, `state`(+행에 있으면 `author_correction` 그대로)다. `state`에는 스칼라 값, 스칼라 목록(예: aliases),
+  `currentNarrativeTime`·`narrativeTime`·`absences`·`protectedSlots`·`protectedPaths`(안의 근거 키 제거), 세계관 값 `propertiesJson`(작가 설정명이라 그대로)과
+  `slots`(슬롯마다 `factKey`·`factType`·`factValue`, 스칼라인 `temporalScope`·`effectiveFromEpisodeNo`만)만 남긴다.
+  `historyFacts`, `supportingSources`, `supportingSource`, `provenance`, `provenanceByPath`, `identityEvidence`, `removedSnapshotEntries`, `valueJson`, `evidenceSpans`,
+  `comparison`, `explicitAuthorCorrections`, `snapshotVersion`, `currentSupportingEvidenceVersion`, `version`과 그 밖의 중첩 목록·객체는 뺀다.
+  모델이 보는 것과 달리 고정 항목 읽기(`read_entries_page`), Worker 검증, receipt, checkpoint, 게시 `evidence_bundle`의 `settings`는 전체 투영 그대로다
+  (Backend가 bundle settings를 서버 정본 행과 같은지 비교하므로 바꿀 수 없다. `input_digest`도 전체 bundle 기준이다). 질문의 조회 의무나 JUDGE FOLLOW_UP의
+  BASELINE이 `evidence_refs`로 요청한 항목은 그 질문의 다음 JUDGE 입력에 전체 행으로 준다. system prompt 한 줄이 이 압축과 BASELINE 요청 방법을 알린다.
+- 1글자 이름: 2 code point 미만의 name·alias는 기계 매칭에서 뺀다(1글자 이름이 거의 모든 문맥에 걸려 구간당 16~22주체가 COVERAGE에 들어갔다).
+  서버 SETTING grid는 같은 규칙으로 `gridVersion: 3`(모양은 v2와 같음)이며 Worker는 2·3을 모두 받는다. `subject_catalogue`에는 그대로 남아 SUBJECT_RESOLUTION이 문맥으로 해소할 수 있다.
+- 입력 상한 안전장치: 관련 항목이 `MAX_COVERAGE_SETTINGS`(400)를 넘으면 카탈로그 순서의 앞 400개만 COVERAGE 모델에 주고(`rule_refs`·schema enum도 400개),
+  나머지는 모델 응답 뒤 Worker가 `NOT_APPLICABLE` + `입력 상한으로 모델 점검에서 제외됨`으로 rules에 더한다. 그래서 저장 rules는 여전히 관련 항목 전체이며
+  Worker와 Backend의 rule 집합 검사를 그대로 통과한다. 재개한 batch에는 이미 있으므로 다시 더하지 않는다. WARNING `coverage settings truncated total=… kept=… segment=…`와
+  `normalizations.COVERAGE_SETTINGS_TRUNCATED`(구간 합계)를 남긴다. 주 해결책은 압축 투영이며 제외된 항목은 이 구간의 COVERAGE가 읽지 않았다는 뜻이다. JUDGE에는 상한이 없고 질문 주체의 항목 전체를 압축 행으로 받는다.
 
 DB↔원문 불일치는 두 참조를 유지하고 명시 정정의 정확한 대상/항목/시점/조건 범위를 검증한다.
 기존 데이터에는 그 scope metadata가 없을 수 있다. 그런 경우 보호/확정 flag를 정정으로 승격하지 않고 NEEDS_CONTEXT로 둔다.
