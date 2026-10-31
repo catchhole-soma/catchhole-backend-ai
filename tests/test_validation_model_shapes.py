@@ -299,10 +299,10 @@ class RecordingCheckpoint:
         return {}
 
 
-def inspect(model, checkpoint=None, search=None, embedding_client=None):
+def inspect(model, checkpoint=None, search=None, embedding_client=None, seconds=30):
     from app.validation.service import SettingValidationService
 
-    limits = InvocationBudget(model_calls=40, lookups=80, seconds=30, input_tokens=40000, output_tokens=20000,
+    limits = InvocationBudget(model_calls=40, lookups=80, seconds=seconds, input_tokens=40000, output_tokens=20000,
                               segment_chars=2000, context_chars=300, catalogue_page_size=50, search_limit=10)
     return asyncio.run(SettingValidationService(B2Data(), model, limits, checkpoint=checkpoint,
                                                 search=search, embedding_client=embedding_client).inspect())
@@ -467,6 +467,7 @@ def test_segments_used_by_the_regression_are_a_single_target_segment():
 
 
 READY = SearchReadiness(2, 2, 2, 4, 4)
+HANG = object()  # A readiness read that never returns (a stuck DB connection).
 
 
 class EmptyIndex:
@@ -476,10 +477,12 @@ class EmptyIndex:
     """
 
     def __init__(self, readiness=READY):
-        self.ready, self.readiness_reads = readiness, 0
+        self.ready, self.readiness_reads, self.searches = readiness, 0, 0
 
     async def readiness(self, frozen):
         self.readiness_reads += 1
+        if self.ready is HANG:
+            await asyncio.Event().wait()
         if isinstance(self.ready, Exception):
             raise self.ready
         return self.ready
@@ -487,6 +490,7 @@ class EmptyIndex:
     async def search(self, frozen, intent, embedding_client, limit):
         from types import SimpleNamespace
 
+        self.searches += 1
         return SimpleNamespace(chunks=[], limited=False, readiness=None), set()
 
 
@@ -559,11 +563,56 @@ def test_failed_readiness_read_offers_keyword_only_and_logs_the_type_only(caplog
     assert result.status == "COMPLETED"  # the job is not failed by the readiness read
     assert "VECTOR" not in _planner_search_operations(model)
     assert index.readiness_reads == 1 and result.normalizations["VECTOR_OFFERED"] == 0
+    # An unreadable index (e.g. missing reader grants) would fail every KEYWORD lookup too, so the job reads
+    # the frozen sources raw, exactly like the keyword-only configuration.
+    assert index.searches == 0
+    assert any(r.intent.operation == "KEYWORD" and r.status == "SUCCEEDED" for r in result.receipts)
     warnings = [row for row in caplog.records if row.levelno == logging.WARNING]
     assert [row.getMessage() for row in warnings] == [
-        "vector search readiness unavailable error=OSError job=-; offering KEYWORD only"]
+        "vector search readiness unavailable error=OSError job=-; offering KEYWORD only without frozen retrieval"]
     assert "secret" not in caplog.text and "db.invalid" not in caplog.text
     assert "vector search offered" not in caplog.text
+
+
+def test_stuck_readiness_read_is_capped_and_planning_keeps_its_budget(monkeypatch, caplog):
+    """A stuck read ends at the cap; the first PLANNER call still runs instead of BUDGET_EXHAUSTED."""
+    import time
+
+    from app.validation import service
+
+    monkeypatch.setattr(service, "VECTOR_READINESS_TIMEOUT_SECONDS", 0.05)
+    caplog.set_level(logging.INFO, logger="app.validation.service")
+    index, model = EmptyIndex(HANG), RecordedTerra()
+    started = time.monotonic()
+    result = inspect(model, search=index, embedding_client=QUERY_EMBEDDING, seconds=20)
+    assert time.monotonic() - started < 5
+    assert result.status == "COMPLETED"
+    assert model.calls[0][0] == "PLANNER"
+    assert "VECTOR" not in _planner_search_operations(model)
+    assert result.normalizations["VECTOR_OFFERED"] == 0 and index.searches == 0
+    assert "vector search readiness unavailable error=TimeoutError job=-" in caplog.text
+
+
+@pytest.mark.parametrize(("seconds", "cap"), [(20, 5.0), (3, None)], ids=["budget-above-cap", "budget-below-cap"])
+def test_readiness_timeout_is_the_smaller_of_the_budget_and_five_seconds(monkeypatch, seconds, cap):
+    from app.validation import service
+
+    assert service.VECTOR_READINESS_TIMEOUT_SECONDS == 5.0
+    real, timeouts = asyncio.wait_for, []
+
+    async def recording_wait_for(awaitable, timeout=None, **kwargs):
+        if getattr(awaitable, "__qualname__", "") == "EmptyIndex.readiness":
+            timeouts.append(timeout)
+        return await real(awaitable, timeout, **kwargs)
+
+    monkeypatch.setattr(asyncio, "wait_for", recording_wait_for)
+    assert inspect(RecordedTerra(), search=EmptyIndex(), embedding_client=QUERY_EMBEDDING,
+                   seconds=seconds).status == "COMPLETED"
+    [timeout] = timeouts
+    if cap is not None:
+        assert timeout == cap
+    else:  # The remaining inspection budget, already slightly below the configured seconds.
+        assert seconds - 1 < timeout <= seconds
 
 
 def test_resumed_job_with_saved_vector_work_keeps_vector_while_the_index_is_rebuilt(caplog):

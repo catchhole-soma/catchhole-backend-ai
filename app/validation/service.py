@@ -42,6 +42,8 @@ _DECISION_FIELDS = ("outcome", "basis", "impact", "impact_reason", "completion")
 # GH341: marks the single change search the Worker itself issues before accepting SUSPECTED_CONFLICT.
 WORKER_CHANGE_SEARCH_PURPOSE = "Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색"
 _SEARCH_QUERY_LIMIT = 1000  # corpus.lookup/validate_intents reject empty or longer queries
+# GH344: the one readiness read before PLANNER may never spend the inspection's seconds budget.
+VECTOR_READINESS_TIMEOUT_SECONDS = 5.0
 
 
 def _is_change_search(receipt):
@@ -152,14 +154,17 @@ class SettingValidationService:
         self.search, self.embedding_client = search, embedding_client
         self.checkpoint = checkpoint
 
-    async def _search_operations(self, frozen, budget, stats):
+    async def _prepare_search(self, frozen, budget, stats):
         """Lookup operations the model may plan; an unexecutable VECTOR is never offered.
 
         Without episode sources VECTOR is the explicit book raw fallback. Without frozen RAG an episode VECTOR
         can only end in VECTOR_NOT_READY (GH331). With frozen RAG one readiness read of this job's scope
         decides (GH344): every frozen episode source fully embedded and a query embedding client, unless an
-        earlier attempt of this job already saved VECTOR work. A failed readiness read only withholds VECTOR;
-        the search itself still re-checks readiness before each lookup.
+        earlier attempt of this job already saved VECTOR work. The read is capped at
+        VECTOR_READINESS_TIMEOUT_SECONDS. If it fails or times out, this job (one service instance per job)
+        runs without frozen RAG, exactly like the keyword-only configuration: an unreadable index (missing
+        grants, DB outage) would otherwise fail every KEYWORD lookup with SEARCH_FAILED as well. The search
+        itself still re-checks readiness before each VECTOR lookup.
         """
         episodes = sum(source.kind == "EPISODE" for source in frozen.sources)
         if not episodes:
@@ -174,13 +179,14 @@ class SettingValidationService:
             stats["VECTOR_OFFERED"] = 1
             logger.info("vector search offered=True resumed=True job=%s", job)
             return ("KEYWORD", "VECTOR")
-        timeout = budget.remaining()
+        timeout = min(budget.remaining(), VECTOR_READINESS_TIMEOUT_SECONDS)
         try:
             readiness = await asyncio.wait_for(self.search.readiness(frozen), timeout)
         except Exception as exc:  # noqa: BLE001 - DB/driver text may carry URLs or credentials; type only.
             stats["VECTOR_OFFERED"] = 0
-            logger.warning("vector search readiness unavailable error=%s job=%s; offering KEYWORD only",
-                           type(exc).__name__, job)
+            self.search = None
+            logger.warning("vector search readiness unavailable error=%s job=%s; offering KEYWORD only "
+                           "without frozen retrieval", type(exc).__name__, job)
             return ("KEYWORD",)
         offered = vector_ready(readiness, self.embedding_client) and readiness.source_count == episodes
         stats["VECTOR_OFFERED"] = int(offered)
@@ -266,7 +272,7 @@ class SettingValidationService:
             entry_refs = [row["entry_ref"] for row in settings]
             source_refs = [source.ref for source in frozen.sources]
             # GH331/GH344: VECTOR is offered only when an episode VECTOR lookup of this job can succeed.
-            search_operations = await self._search_operations(frozen, budget, stats)
+            search_operations = await self._prepare_search(frozen, budget, stats)
             catalogue = [
                 {key: row[key] for key in ("entry_ref", "subject_ref", "domain", "name", "aliases")}
                 | {"paths": list(row["state"].get("slots", row["state"].get("propertiesJson", {})))}
