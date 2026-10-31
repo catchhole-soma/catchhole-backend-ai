@@ -71,7 +71,8 @@ BOOK_SOURCE의 예정/완료 점검 수와 BOOK_COVERAGE의 구간/규칙 처리
 검수 과금/Worker 원장 연결은 GH310의 책임이다. 기존 추출용 MeteredTextGenerationClient를 재사용하기 위해 가짜 AnalysisJob/lease를 생성하지 않는다.
 
 1. 실제 target 전문과 고정 항목 페이지를 준비한다. 순수 분할기의 모든 핵심 구간이 전문을 덮고 앞뒤 문맥을 별도로 유지한다.
-2. Terra medium이 질문을 계획한다. Terra high는 첫 질문 없이 원고와 전체 카탈로그 페이지에서 대상을 독립 선정하고 선택한 제약·이력·조건에서 별도 질문을 만든다.
+2. Terra medium이 질문을 계획한다. 구간 문맥에 이름·별칭이 글자 그대로 나온 대상(기계 매칭)과 Terra high SUBJECT_RESOLUTION이 첫 질문 없이 해소한 비문자 지칭(대명사·호칭·직함·별명·부분 이름)의 대상을 합쳐 관련 대상으로 삼는다(GH349).
+   Terra high COVERAGE는 그 대상들의 고정 항목 전체의 제약·이력·조건에서 별도 질문을 만든다. 전체 카탈로그를 페이지별로 선정하지 않는다.
 3. 날짜/수량/요일/반복 명칭의 결정적 단서를 독립 수집한다. 보완은 선택 규칙·구간·단서마다 CHECKED/NOT_APPLICABLE/UNPROCESSED를 구분한다. 이 기록이 의미상 누락 0을 보증하지 않는다.
 4. 같은 제공 대상·속성/규칙·서사 시점·조건·서술 방식의 질문만 병합한다. 모든 위치·원 질문 참조·조회 의무를 보존하며 ID 미해결 질문은 보수적으로 별도 유지한다.
 5. 질문별 실제 고정 DB/target 조회 영수증과 추가 조회를 묶는다. Terra medium은 FOLLOW_UP 또는 DECIDED를 반환한다. 새 단서가 영향을 주는 기존 질문을 재개하고 revision/input_digest를 갱신한다.
@@ -80,9 +81,11 @@ BOOK_SOURCE의 예정/완료 점검 수와 BOOK_COVERAGE의 구간/규칙 처리
 GH331 모델 입력·출력 계약(실제 Terra 관측 반영):
 
 - PLANNER/COVERAGE 입력은 `target_source_ref: "T1"`과 대상 식별용 `subject_catalogue`를 준다. COVERAGE는 선택한 `settings`와 그 entry_ref 목록 `rule_refs`를 따로 받고
-  rules에는 rule_refs만 기록한다. RELATED_SELECTION은 기존처럼 page의 `catalogue`만 받는다.
+  rules에는 rule_refs만 기록한다. GH349부터 `subject_catalogue`는 항목별 행이 아니라 주체별 한 행(`subject_ref`, `domain`, 첫 항목의 `name`,
+  항목 전체 `aliases`의 순서 보존·중복 없는 합집합)이며 PLANNER·SUBJECT_RESOLUTION·COVERAGE가 같은 목록을 받는다(식별용, 질문 subject_refs 검증은 전체 주체 기준).
 - 역할별 strict schema(`validation_<role>_v2`)는 span `source_ref=T1`과 연산별 lookup intent anyOf(BASELINE=B, TARGET_CONTEXT=T1/null, DIRECT=R 필수,
-  KEYWORD/VECTOR=query 필수, NEIGHBORS=E만)를 쓴다. COVERAGE·BOOK_COVERAGE·RELATED_SELECTION은 선택 rule·CL·page 참조를 enum으로 열거한다(항목당 100·schema당 500개까지, 넘으면 문자열).
+  KEYWORD/VECTOR=query 필수, NEIGHBORS=E만)를 쓴다. COVERAGE·BOOK_COVERAGE는 선택 rule·CL 참조를 enum으로 열거한다(항목당 100·schema당 500개까지, 넘으면 문자열).
+  SUBJECT_RESOLUTION(GH349)은 `subject_ref`를 보고서의 S 참조 enum 또는 null로 제한하고(100개 초과는 S pattern, 주체가 없으면 null만) 보고서당 한 schema로 고정한다.
   PLANNER·JUDGE는 같은 system prompt로 여러 번 호출되므로 provider prompt cache가 유지되도록 보고서 안에서 schema를 고정한다. 참조는 종류별 pattern(B/R/E/L/Q/S/TSEG/CL)으로만 제한하고
   실제 ref 형식이 다르면 일반 문자열로 둔다. 정확한 소속은 검증기가 판단한다.
 - frozen RAG 검색이 주입되지 않았고 회차 출처가 있으면 VECTOR는 항상 `VECTOR_NOT_READY`로 끝나므로 schema가 KEYWORD만 제안하고, 남은 VECTOR 의무는 저장 전에 거절한다.
@@ -118,6 +121,24 @@ GH341: SUSPECTED_CONFLICT의 변화·예외 검색 의무는 JUDGE가 답한 뒤
   그 근거 중 알려진 참조(없으면 `T1`)를 덧붙인다. 모델이 인용한 receipt·근거는 지우지 않고 그대로 검증하며 없는 참조를 만들지 않는다.
 - 횟수는 `normalizations`의 `CHANGE_SEARCH_INSERTED`(넣은 검색), `CHANGE_SEARCH_RECEIPT_FILLED`(인용 보완)로 남는다. 판정·사유·영향 등급·prompt·schema·예산은 바꾸지 않는다.
 
+GH349: 관련 설정 선정을 전체 카탈로그 페이지 선별(RELATED_SELECTION:TSEGn:PAGEk)에서 주체 매칭 + 구간당 SUBJECT_RESOLUTION으로 바꾼다(grid v2, [실행 계약](validation-execution-v1.md)).
+
+- 기계 매칭: 항목의 비어 있지 않은 `name` 또는 `aliases` 문자열이 구간 문맥(`text[contextStart:contextEnd]`, code point)에 정확한 부분 문자열로 나오면
+  그 항목의 주체가 구간에 매칭된다. 정규화하지 않고, S 번호 순·중복 없음이며, name이 null이고 aliases가 비면 매칭되지 않는다.
+  실행 Job은 서버 grid의 `segmentSubjects`만 쓴다(첫 의미 단계 게시 뒤 checkpoint에서 다시 읽음). grid가 v1이거나 `segmentSubjects`가 없으면
+  `GRID_VERSION_UNSUPPORTED`, 구간·주체 참조가 맞지 않으면 `INVALID_GRID_CONTRACT`다. Job 없는 호출형만 같은 규칙을 로컬에서 계산한다.
+- SUBJECT_RESOLUTION은 구간마다 PLANNER 다음·COVERAGE 전에 한 번이다. 모델 호출 역할은 기존 `RELATED_SELECTION`(Terra high, 같은 역할 예산·원장)이고
+  단계 이름만 새롭다. 입력은 구간 공통 입력 + `subject_catalogue` + `mechanical_subject_refs`, 출력·저장은 `{"mentions":[{"mention","subject_ref","reason"}]}`다.
+  mention·reason은 공백이 아니고 mention은 중복되지 않으며 subject_ref는 null 또는 카탈로그 S 참조다. 위반은 `SUBJECT_RESOLUTION_INVALID`
+  (원인 `SUBJECT_RESOLUTION_BLANK`·`_DUPLICATE_MENTION`·`_UNKNOWN_SUBJECT`)이고 저장하지 않는다. 이미 매칭된 주체를 가리키는 mention은 허용하고 무시한다.
+- 해소할 주체가 남지 않으면(카탈로그 주체 0개이거나 모든 주체가 이미 기계 매칭) 모델 출력이 결과를 바꿀 수 없으므로 호출 없이 `{"mentions": []}`를 저장한다.
+  이전에도 빈 카탈로그는 선정 호출이 0이었다. 저장된 단계는 재개 때 다시 호출하지 않는다.
+- 관련 주체 U = 기계 매칭 ∪ null이 아닌 subject_ref. COVERAGE의 `settings`·`rule_refs`는 U에 속한 모든 항목(카탈로그 순서)이며 비어 있을 수 있다.
+  COVERAGE의 나머지 계약(구간·질문·clue_checks·span 범위)은 그대로다.
+- 모델 호출은 카탈로그 크기와 무관하게 구간당 최대 1회다(예: 120항목·페이지 50이면 구간당 3→1). 고정 항목 읽기 페이지(`catalogue_page_size`)는 그대로다.
+  coverage에는 `{"role": "SUBJECT_RESOLUTION", "segment_ref", "mechanical_subject_refs", "resolved_subject_refs", "mentions"}`(mentions는 개수)를 남긴다.
+- 한계: 이름이 다른 단어의 일부로 나와도 매칭된다(정규화 없음, 과포함 방향). 이름이 같은 다른 주체도 함께 매칭된다. 지칭 해소의 실제 모델 품질은 아직 측정하지 않았다.
+
 DB↔원문 불일치는 두 참조를 유지하고 명시 정정의 정확한 대상/항목/시점/조건 범위를 검증한다.
 기존 데이터에는 그 scope metadata가 없을 수 있다. 그런 경우 보호/확정 flag를 정정으로 승격하지 않고 NEEDS_CONTEXT로 둔다.
 명시 scope가 있는 입력만 해당 범위의 정정을 우선할 수 있다. 이 검사기가 정정 metadata나 원문/DB를 쓰지 않는다.
@@ -132,7 +153,7 @@ GH331부터 `failure_cause`(분류 코드 아래의 구체 고정 코드, 예: `
 ## 모델·예산·오탈자 공통 계약
 
 모든 역할 모델은 `gpt-6.1-terra`다. PLANNER medium, RELATED_SELECTION/COVERAGE high, JUDGE medium, TYPO low다.
-RELATED_SELECTION은 독립 누락 보완 역할의 호출이며 다섯 번째 별도 모델 선택이 아니다.
+RELATED_SELECTION은 독립 누락 보완 역할의 호출이며 다섯 번째 별도 모델 선택이 아니다. GH349부터 이 역할은 SUBJECT_RESOLUTION 단계를 호출한다.
 frozen `LlmCallOptions`를 count/생성 양쪽에 동일하게 전달하고 공유 client 기본 속성을 바꾸지 않는다.
 기존 추출/챗봇의 모델·추론 기본값은 유지한다. 실제 Terra provider 품질 호출은 이번 검증에서 실행하지 않았다.
 

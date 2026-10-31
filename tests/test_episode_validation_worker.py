@@ -559,3 +559,150 @@ def test_llm_request_semaphore_caps_provider_calls_across_concurrent_jobs():
             await worker.aclose()
             await provider.aclose()
     asyncio.run(run())
+
+
+class GridBackend(httpx.AsyncBaseTransport):
+    """GH349 synthetic Backend: the SETTING grid appears only after the first plan, as in Java."""
+
+    def __init__(self, grid):
+        import json
+        from datetime import UTC, datetime, timedelta
+        from pathlib import Path
+
+        fixture = json.loads((Path(__file__).parents[1] / "docs/contracts/validation-execution-v1.json").read_text())
+        self.responses = fixture["execution"]["responses"]
+        self.wire = self.responses["claim"]
+        self.wire["leaseExpiresAt"] = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
+        # "😀가😀가": 가(S1) is named in the target, 나(S2) is not.
+        self.settings = [{"entry_ref": f"B{n}", "subject_ref": f"S{n}", "domain": "characters", "name": name,
+                          "aliases": [], "state": {"name": name}, "author_correction": None}
+                         for n, name in ((1, "가"), (2, "나"))]
+        self.responses["dataInput"]["entryCount"] = len(self.settings)
+        self.responses["dataEntries"].update(
+            entries=[{"entryRef": row["entry_ref"], "domain": "characters", "state": row["state"]}
+                     for row in self.settings],
+            modelSettings=self.settings, nextOffset=len(self.settings))
+        self.grid, self.published, self.checkpoint_reads = grid, [], 0
+        self.reserved, self.provider_roles, self.completed = [], [], []
+
+    def view(self):
+        view = dict(self.wire["checkpoint"])
+        if self.published:
+            view["requiredGrid"] = {"SETTING": self.grid}
+        return view
+
+    async def handle_async_request(self, request):
+        import json
+        body = json.loads(request.content) if request.content else {}
+        path = request.url.path
+        data = None
+        if path.endswith("/claim"):
+            data = self.wire
+        elif path.endswith("/checkpoint") and request.method == "GET":
+            self.checkpoint_reads += 1
+            data = self.view()
+        elif path.endswith("/data"):
+            data = self.responses[{"INPUT": "dataInput", "ENTRIES": "dataEntries", "READ_SOURCE": "dataReadTarget",
+                                   "VALIDATE": "dataInput"}[body["operation"]]]
+        elif path.endswith("usage/reserve"):
+            self.reserved.append(body["role"])
+            data = {}
+        elif "/usage/" in path or path.endswith("/heartbeat"):
+            data = {}
+        elif path.endswith("/plans"):
+            self.published.append((body["stage"], body["ref"], body["payload"]))
+            data = {"stageId": "00000000-0000-4000-8000-000000000010", "branch": "SETTING", "stage": body["stage"],
+                    "ref": body["ref"], "successful": True, "checks": []}
+        elif path.endswith("/units"):
+            data = self.responses["typoUnit"]
+        elif path.endswith("/complete"):
+            self.completed.append(body["failureCode"])
+            data = {"status": "COMPLETED" if body["failureCode"] is None else "PARTIAL"}
+        if data is None:
+            raise AssertionError("unexpected synthetic backend route")
+        return httpx.Response(200, json={"data": data})
+
+    async def provider(self, request):
+        import json
+        body = json.loads(request.content)
+        if request.url.path.endswith("input_tokens"):
+            return httpx.Response(200, json={"input_tokens": 23})
+        payload = json.loads(body["input"][1]["content"][0]["text"])
+        role = payload.get("role", "TYPO")
+        self.provider_roles.append(role)
+        if role == "TYPO":
+            result = {"segments": [{"segment_ref": payload["segment_ref"], "status": "NO_CHECK", "reason": "합성"}],
+                      "suggestions": []}
+        elif role == "RELATED_SELECTION":
+            assert payload["mechanical_subject_refs"] == ["S1"]
+            assert [row["subject_ref"] for row in payload["subject_catalogue"]] == ["S1", "S2"]
+            result = {"mentions": [{"mention": "그 사람", "subject_ref": "S2", "reason": "합성 지칭 해소"}]}
+        else:
+            result = {"questions": [], "segments": [{"segment_ref": "TSEG1", "status": "NO_CHECK", "reason": "합성"}],
+                      "rules": [{"entry_ref": row["entry_ref"], "status": "CHECKED", "reason": "합성"}
+                                for row in payload.get("settings", [])],
+                      "clue_checks": []}
+        return httpx.Response(200, json={"status": "completed", "output_text": json.dumps(result, ensure_ascii=False),
+                                         "usage": {"input_tokens": 23, "output_tokens": 7}})
+
+
+def run_grid_backend(grid):
+    from app.validation.client import ValidationClaim, ValidationExecutionClient
+    from app.worker.episode_validation_worker import EpisodeValidationWorker
+
+    async def run():
+        backend = GridBackend(grid)
+        async with (httpx.AsyncClient(transport=backend) as http,
+                    httpx.AsyncClient(transport=httpx.MockTransport(backend.provider)) as provider):
+            client = ValidationExecutionClient("https://spring.invalid", "synthetic", http)
+            raw = OpenAIResponsesClient("synthetic", "gpt-6.1-terra", "https://provider.invalid/responses",
+                                        http_client=provider)
+            worker = EpisodeValidationWorker(client, raw, enabled=True)
+            try:
+                await worker.process_claimed(ValidationClaim.from_wire(backend.wire))
+            finally:
+                await worker.aclose()
+        return backend
+    return asyncio.run(run())
+
+
+def test_worker_reads_server_grid_v2_after_first_plan_and_publishes_subject_resolution():
+    grid = {"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S1"]}]}
+    backend = run_grid_backend(grid)
+    assert backend.completed == [None]
+    assert [(stage, ref) for stage, ref, _ in backend.published] == [
+        ("PLANNER", "TSEG1"), ("SUBJECT_RESOLUTION", "TSEG1"), ("COVERAGE", "TSEG1"), ("MERGED_PLAN", "PLAN")]
+    assert backend.published[1][2] == {"mentions": [{"mention": "그 사람", "subject_ref": "S2", "reason": "합성 지칭 해소"}]}
+    assert [row["entry_ref"] for row in backend.published[2][2]["rules"]] == ["B1", "B2"]
+    # Reloaded once when the first publication created the grid; the stage is metered as RELATED_SELECTION.
+    assert backend.checkpoint_reads == 2
+    assert sorted(backend.reserved) == ["COVERAGE", "PLANNER", "RELATED_SELECTION", "TYPO"]
+    assert sorted(backend.provider_roles) == ["COVERAGE", "PLANNER", "RELATED_SELECTION", "TYPO"]
+
+
+def test_worker_on_a_grid_v1_server_stops_before_subject_resolution():
+    backend = run_grid_backend({"gridVersion": 1, "units": [{"stage": "RELATED_SELECTION", "ref": "TSEG1:PAGE1"}]})
+    assert backend.completed == ["GRID_VERSION_UNSUPPORTED"]
+    assert [(stage, ref) for stage, ref, _ in backend.published] == [("PLANNER", "TSEG1")]
+    assert "RELATED_SELECTION" not in backend.provider_roles
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("none", []),
+    ("resolved", [{"mention": "그 사람", "subject_ref": "S2", "reason": "합성 지칭 해소"}]),
+    ("null", [{"mention": "낯선 노인", "subject_ref": None, "reason": "합성 카탈로그 밖 인물"}]),
+])
+def test_java_http_synthetic_provider_answers_subject_resolution_modes(mode, expected):
+    import json
+
+    from tests.support.validation_execution_http_client import SyntheticProvider
+
+    payload = {"role": "RELATED_SELECTION", "subject_catalogue": [
+        {"subject_ref": "S1", "domain": "characters", "name": "가", "aliases": []},
+        {"subject_ref": "S2", "domain": "characters", "name": "나", "aliases": []}],
+        "mechanical_subject_refs": ["S1"]}
+    body = {"model": "gpt-6.1-terra", "reasoning": {"effort": "high"},
+            "input": [{}, {"content": [{"text": json.dumps(payload, ensure_ascii=False)}]}]}
+    request = httpx.Request("POST", "https://provider.invalid/responses", json=body)
+    response = asyncio.run(SyntheticProvider("zero", subject_mentions=mode)(request))
+    assert json.loads(response.json()["output_text"]) == {"mentions": expected}

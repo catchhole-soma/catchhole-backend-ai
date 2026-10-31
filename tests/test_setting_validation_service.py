@@ -133,11 +133,12 @@ class SyntheticData:
 
 
 class SyntheticModel:
-    def __init__(self, judge=None, *, dropped=False, planner_question=False):
+    def __init__(self, judge=None, *, dropped=False, planner_question=False, mentions=()):
         self.calls = []
         self.judge = judge or decision
         self.dropped = dropped
         self.planner_question = planner_question
+        self.mentions = list(mentions)
 
     async def count_input_tokens(self, **kwargs):
         return 80
@@ -147,16 +148,8 @@ class SyntheticModel:
         role = payload["role"]
         self.calls.append((role, payload, kwargs))
         if role == "RELATED_SELECTION":
-            result = {
-                "entries": [
-                    {
-                        "entry_ref": row["entry_ref"],
-                        "selected": True,
-                        "reason": "독립적으로 원고에 등장하는 인물",
-                    }
-                    for row in payload["catalogue"]
-                ]
-            }
+            # GH349 SUBJECT_RESOLUTION: only the scripted non-literal mentions.
+            result = {"mentions": self.mentions}
         elif role in {"PLANNER", "COVERAGE"}:
             questions = [planned_question()] if role == "COVERAGE" or self.planner_question else []
             result = {
@@ -227,7 +220,11 @@ def test_independent_coverage_restores_hand_question_and_reads_unrecorded_prosth
         return decision(payload)
 
     model = SyntheticModel(judge)
-    result = run(model=model)
+    data = SyntheticData()
+    # An unmentioned second subject keeps the independent SUBJECT_RESOLUTION call (GH349).
+    data.entries.append({"entryRef": "B2", "domain": "characters", "subjectRef": "character:other",
+                         "state": {"name": "서윤", "aliases": [], "slots": {}}})
+    result = run(data, model)
     assert result.status == "COMPLETED"
     assert len(result.questions) == 1
     assert result.questions[0].original_refs == ("COVERAGE:TSEG1:hand",)
@@ -957,7 +954,7 @@ class BookReviewModel(SyntheticModel):
                 ],
             }
         else:
-            value = {"entries": []}
+            value = {"mentions": []}
         return LlmTextResponse(text=json.dumps(value, ensure_ascii=False))
 
 
@@ -974,6 +971,10 @@ def test_zero_question_first_episode_independently_reads_unanalyzed_book_raw():
     ]
     assert "민수는 왼손이 없다." in book_inputs
     assert any(row["role"] == "BOOK_COVERAGE" for row in result.coverage)
+    # GH349: an empty catalogue has nothing to resolve, so SUBJECT_RESOLUTION needs no model call.
+    assert all(role != "RELATED_SELECTION" for role, *_ in model.calls)
+    assert {"role": "SUBJECT_RESOLUTION", "segment_ref": "TSEG1", "mechanical_subject_refs": [],
+            "resolved_subject_refs": [], "mentions": 0} in result.coverage
 
 
 def test_required_unanalyzed_book_read_failure_is_not_zero_findings():
@@ -1218,3 +1219,191 @@ def test_partial_vector_pipeline_keeps_failed_receipt_and_never_decides_suspecte
     assert not result.decisions and result.receipts[-1].status == "FAILED"
     assert result.receipts[-1].readiness["vector_ready_sources"] == 1
     assert "VECTOR_INDEX_PARTIAL" in result.receipts[-1].readiness["limitations"]
+
+
+# --- GH349 grid v2: subject matching + SUBJECT_RESOLUTION instead of paging the whole catalogue ------------
+
+
+def subject_data(data_type=None):
+    """민수(S1, two entries) is named in TARGET; 서윤(S2) and the 북부 왕국 world setting(S3) are not."""
+    data = (data_type or SyntheticData)()
+    data.entries[0]["state"]["aliases"] = ["민수 씨"]
+    data.entries += [
+        {"entryRef": "B2", "domain": "characters", "subjectRef": "character:existing",
+         "state": {"name": "민수", "aliases": ["민수 씨", "검사"], "slots": {"STATUS:검": {"factValue": "양손검"}}}},
+        {"entryRef": "B3", "domain": "characters", "subjectRef": "character:seoyun",
+         "state": {"name": "서윤", "aliases": ["등대지기"], "slots": {}}},
+        {"entryRef": "B4", "domain": "worldSettings", "subjectRef": None,
+         "state": {"targetWorldSettingId": "kingdom", "name": "북부 왕국", "aliases": [], "propertiesJson": {}}},
+    ]
+    return data
+
+
+def payloads(model, role):
+    return [payload for called, payload, _ in model.calls if called == role]
+
+
+def test_subject_resolution_gets_deduplicated_subjects_and_mechanical_matches_only():
+    model = SyntheticModel()
+    result = run(subject_data(), model)
+    assert result.status == "COMPLETED"
+    subjects = [
+        {"subject_ref": "S1", "domain": "characters", "name": "민수", "aliases": ["민수 씨", "검사"]},
+        {"subject_ref": "S2", "domain": "characters", "name": "서윤", "aliases": ["등대지기"]},
+        {"subject_ref": "S3", "domain": "worldSettings", "name": "북부 왕국", "aliases": []},
+    ]
+    (resolution,) = payloads(model, "RELATED_SELECTION")  # 4 entries, 3 subjects -> 3 rows
+    assert resolution["subject_catalogue"] == subjects and resolution["mechanical_subject_refs"] == ["S1"]
+    assert set(resolution) == {"role", "segment", "text", "text_start", "target_source_ref", "source_catalogue",
+                               "subject_catalogue", "mechanical_subject_refs"}
+    (planner,), (coverage,) = payloads(model, "PLANNER"), payloads(model, "COVERAGE")
+    assert planner["subject_catalogue"] == coverage["subject_catalogue"] == subjects
+    assert coverage["rule_refs"] == [row["entry_ref"] for row in coverage["settings"]] == ["B1", "B2"]
+    _, _, kwargs = next(call for call in model.calls if call[0] == "RELATED_SELECTION")
+    assert kwargs["call_options"].reasoning_effort == "high"
+    assert kwargs["response_schema"].name == "validation_related_selection_v2"
+    assert kwargs["response_schema"].schema["$defs"]["MentionResolution"]["properties"]["subject_ref"] == {
+        "anyOf": [{"type": "string", "enum": ["S1", "S2", "S3"]}, {"type": "null"}]}
+    assert [row for row in result.coverage if row["role"] == "SUBJECT_RESOLUTION"] == [
+        {"role": "SUBJECT_RESOLUTION", "segment_ref": "TSEG1", "mechanical_subject_refs": ["S1"],
+         "resolved_subject_refs": [], "mentions": 0}]
+
+
+@pytest.mark.parametrize("mentions,rule_refs,resolved", [
+    ([{"mention": "그 여자", "subject_ref": "S2", "reason": "앞 문장의 서윤을 가리킨다"}], ["B1", "B2", "B3"], ["S2"]),
+    ([{"mention": "노인", "subject_ref": None, "reason": "카탈로그에 없는 인물"}], ["B1", "B2"], []),
+    ([{"mention": "왕국", "subject_ref": "S3", "reason": "북부 왕국의 줄임말"},
+      {"mention": "그", "subject_ref": "S1", "reason": "이름이 이미 나온 민수"}], ["B1", "B2", "B4"], ["S1", "S3"]),
+])
+def test_resolved_mentions_add_only_their_subjects_entries_in_catalogue_order(mentions, rule_refs, resolved):
+    model = SyntheticModel(mentions=mentions)
+    result = run(subject_data(), model)
+    assert result.status == "COMPLETED"
+    (coverage,) = payloads(model, "COVERAGE")
+    assert coverage["rule_refs"] == [row["entry_ref"] for row in coverage["settings"]] == rule_refs
+    record = next(row for row in result.coverage if row["role"] == "SUBJECT_RESOLUTION")
+    assert record["resolved_subject_refs"] == resolved and record["mentions"] == len(mentions)
+
+
+@pytest.mark.parametrize("mentions,cause", [
+    ([{"mention": "그 여자", "subject_ref": "S9", "reason": "없는 대상"}], "SUBJECT_RESOLUTION_UNKNOWN_SUBJECT"),
+    ([{"mention": "그", "subject_ref": "S2", "reason": "서윤"},
+      {"mention": "그", "subject_ref": None, "reason": "다른 인물"}], "SUBJECT_RESOLUTION_DUPLICATE_MENTION"),
+    ([{"mention": "  ", "subject_ref": "S2", "reason": "서윤"}], "SUBJECT_RESOLUTION_BLANK"),
+    ([{"mention": "그 여자", "subject_ref": "S2", "reason": " "}], "SUBJECT_RESOLUTION_BLANK"),
+])
+def test_invalid_subject_resolution_stops_before_coverage(mentions, cause):
+    model = SyntheticModel(mentions=mentions)
+    result = run(subject_data(), model)
+    assert (result.status, result.failure_code, result.failure_cause, result.failure_stage) == (
+        "INCOMPLETE", "SUBJECT_RESOLUTION_INVALID", cause, "SUBJECT_RESOLUTION:TSEG1")
+    assert not payloads(model, "COVERAGE") and not result.decisions
+
+
+def test_no_name_match_and_no_resolved_mention_gives_coverage_no_settings():
+    data = SyntheticData()
+    data.entries = [{"entryRef": "B1", "domain": "characters", "subjectRef": "character:seoyun",
+                     "state": {"name": "서윤", "aliases": [], "slots": {"STATUS:손": {"factValue": "왼손 상실"}}}}]
+    model = SyntheticModel()
+    result = run(data, model)
+    assert result.status == "COMPLETED"
+    (resolution,), (coverage,) = payloads(model, "RELATED_SELECTION"), payloads(model, "COVERAGE")
+    assert resolution["mechanical_subject_refs"] == []
+    assert coverage["settings"] == [] and coverage["rule_refs"] == []
+
+
+def test_large_catalogue_needs_one_resolution_call_per_segment_instead_of_one_per_page():
+    data = SyntheticData()
+    names = {"character:existing": "민수", "character:seoyun": "서윤", "character:keeper": "등대지기"}
+    data.entries = [{"entryRef": f"B{index + 1}", "domain": "characters", "subjectRef": subject,
+                     "state": {"name": names[subject], "aliases": [],
+                               "slots": {f"PROFILE:항목{index + 1}": {"factValue": "값"}}}}
+                    for index, subject in enumerate(list(names) * 40)]
+    model = SyntheticModel()
+    result = run(data, model, catalogue_page_size=50)
+    assert result.status == "COMPLETED"
+    # Grid v1 called RELATED_SELECTION once per catalogue page: ceil(120 / 50) = 3 per segment.
+    (resolution,) = payloads(model, "RELATED_SELECTION")
+    assert [row["subject_ref"] for row in resolution["subject_catalogue"]] == ["S1", "S2", "S3"]
+    (coverage,) = payloads(model, "COVERAGE")
+    assert coverage["rule_refs"] == [f"B{index}" for index in range(1, 121, 3)]  # all 40 of 민수's entries
+
+
+def test_local_mechanical_matches_use_exact_code_point_context_and_numeric_order():
+    from app.validation.contracts import split_segments
+    from app.validation.service import mechanical_subject_refs
+
+    target = "😀서윤과 민수"
+    settings = [{"subject_ref": "S10", "name": "민수", "aliases": []},
+                {"subject_ref": "S2", "name": None, "aliases": ["서윤"]},
+                {"subject_ref": "S3", "name": None, "aliases": []},
+                {"subject_ref": "S4", "name": "", "aliases": [""]},
+                {"subject_ref": "S5", "name": "서 윤", "aliases": []}]
+    split = split_segments(target, core_chars=4, context_chars=2)
+    assert mechanical_subject_refs(settings, target, split) == {"TSEG1": ["S2"], "TSEG2": ["S10"]}
+    whole = split_segments(target, core_chars=100, context_chars=0)
+    assert mechanical_subject_refs(settings, target, whole) == {"TSEG1": ["S2", "S10"]}
+
+
+class ExecutionData(SyntheticData):
+    """Leased execution: server projections, server clues and the server grid instead of local fallbacks."""
+
+    execution = True
+
+    @property
+    def model_settings(self):
+        from app.validation.service import _settings
+
+        return _settings(self.entries)
+
+    async def read_input(self):
+        from dataclasses import replace
+
+        frozen = await super().read_input()
+        return replace(frozen, model_source_catalogue=[{"source_ref": source.ref, "source_kind": source.kind}
+                                                       for source in frozen.sources])
+
+    async def read_source(self, source, start=None, end=None):
+        from dataclasses import replace
+
+        value = await super().read_source(source, start, end)
+        return replace(value, model_clues=[]) if source.ref == "T1" and start is None and end is None else value
+
+
+def run_with_grid(grid, model):
+    from app.validation.service import SettingValidationService
+    from tests.test_validation_checkpoint import SavedStages
+
+    class GridCheckpoint(SavedStages):
+        async def setting_grid(self):
+            return deepcopy(grid)
+
+    limits = InvocationBudget(30, 50, 30, 5000, 1000, 100, 10, 10, 10)
+    return asyncio.run(SettingValidationService(subject_data(ExecutionData), model, limits,
+                                                checkpoint=GridCheckpoint()).inspect())
+
+
+def test_execution_trusts_the_server_grid_segment_subjects():
+    model = SyntheticModel()
+    # Locally 민수(S1) would match; the server grid is authoritative in execution.
+    grid = {"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]}
+    result = run_with_grid(grid, model)
+    assert result.status == "COMPLETED"
+    (resolution,), (coverage,) = payloads(model, "RELATED_SELECTION"), payloads(model, "COVERAGE")
+    assert resolution["mechanical_subject_refs"] == ["S2"] and coverage["rule_refs"] == ["B3"]
+
+
+@pytest.mark.parametrize("grid,code", [
+    (None, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 1, "units": [{"stage": "RELATED_SELECTION", "ref": "TSEG1:PAGE1"}]}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 2}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S9"]}]}, "INVALID_GRID_CONTRACT"),
+    ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG2", "subjectRefs": []}]}, "INVALID_GRID_CONTRACT"),
+    ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S1", "S1"]}]},
+     "INVALID_GRID_CONTRACT"),
+])
+def test_execution_without_a_v2_grid_stops_before_subject_resolution(grid, code):
+    model = SyntheticModel()
+    result = run_with_grid(grid, model)
+    assert (result.status, result.failure_code, result.failure_stage) == ("INCOMPLETE", code, "SUBJECT_RESOLUTION:TSEG1")
+    assert [role for role, *_ in model.calls] == ["PLANNER"]

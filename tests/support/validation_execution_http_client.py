@@ -37,8 +37,8 @@ class CrashClient(ValidationExecutionClient):
 
 
 class SyntheticProvider:
-    def __init__(self, mode, wait_file=None):
-        self.mode, self.wait_file = mode, wait_file
+    def __init__(self, mode, wait_file=None, subject_mentions="none"):
+        self.mode, self.wait_file, self.subject_mentions = mode, wait_file, subject_mentions
         self.calls, self.judges = Counter(), Counter()
 
     async def __call__(self, request):
@@ -64,8 +64,8 @@ class SyntheticProvider:
             result = {"segments": [{"segment_ref": payload["segment_ref"], "status": "NO_CHECK", "reason": "합성 검사"}],
                       "suggestions": []}
         elif role == "RELATED_SELECTION":
-            result = {"entries": [{"entry_ref": row["entry_ref"], "selected": True, "reason": "합성 선정"}
-                                  for row in payload["catalogue"]]}
+            # GH349: the RELATED_SELECTION role now answers the SUBJECT_RESOLUTION stage.
+            result = {"mentions": self.mentions(payload)}
         elif role in {"PLANNER", "COVERAGE"}:
             planned = role == "COVERAGE" and not payload.get("raw_rules") and self.mode not in {
                 "zero", "all-fail", "typo-fail", "book-failure-crash"}
@@ -100,6 +100,16 @@ class SyntheticProvider:
         return httpx.Response(200, json={"status": "completed", "output_text": json.dumps(result, ensure_ascii=False),
                                         "usage": {"input_tokens": 23, "output_tokens": 7}})
 
+    def mentions(self, payload):
+        """none: no mention; resolved: the first subject not matched by name; null: an uncatalogued person."""
+        if self.subject_mentions == "resolved":
+            refs = [row["subject_ref"] for row in payload["subject_catalogue"]
+                    if row["subject_ref"] not in payload["mechanical_subject_refs"]]
+            return [{"mention": "그 사람", "subject_ref": refs[0], "reason": "합성 지칭 해소"}] if refs else []
+        if self.subject_mentions == "null":
+            return [{"mention": "낯선 노인", "subject_ref": None, "reason": "합성 카탈로그 밖 인물"}]
+        return []
+
     @staticmethod
     def question(payload, index):
         start = payload["segment"]["start"]
@@ -125,7 +135,7 @@ class SyntheticProvider:
 
 
 async def main(args):
-    provider = SyntheticProvider(args.mode, args.wait_file)
+    provider = SyntheticProvider(args.mode, args.wait_file, args.subject_mentions)
     async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
         raw = OpenAIResponsesClient("synthetic-only", "gpt-6.1-terra", "https://provider.invalid/responses", http_client=http)
         client = CrashClient(args.base_url, "gh310-synthetic-internal", mode=args.mode)
@@ -166,4 +176,5 @@ if __name__ == "__main__":
     parser.add_argument("--mode", required=True)
     parser.add_argument("--wait-file")
     parser.add_argument("--readonly-url")
+    parser.add_argument("--subject-mentions", choices=("none", "resolved", "null"), default="none")
     asyncio.run(main(parser.parse_args()))

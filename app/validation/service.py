@@ -20,7 +20,7 @@ from app.validation.contracts import (
     LookupIntent,
     LookupReceipt,
     QuestionBatch,
-    RelatedSelection,
+    SubjectResolution,
     ValidationDecision,
     anchor_span,
     merge_questions,
@@ -34,7 +34,7 @@ from app.validation.contracts import (
 )
 from app.validation.corpus import ValidationCorpus
 from app.validation.models import call_role
-from app.validation.schemas import decision_schema, question_batch_schema, selection_schema
+from app.validation.schemas import decision_schema, question_batch_schema, subject_resolution_schema
 from app.validation.search import vector_ready
 
 logger = logging.getLogger(__name__)
@@ -148,6 +148,57 @@ def _settings(entries, sources=()):
     return result
 
 
+def _subject_order(ref):
+    """Server S-refs sort by their number (S2 before S10)."""
+    return (int(ref[1:]), ref) if re.fullmatch(r"S[1-9][0-9]*", ref) else (float("inf"), ref)
+
+
+def subject_catalogue(settings):
+    """GH349: one identification row per subject: the first entry's domain/name and the ordered alias union."""
+    rows = {}
+    for row in settings:
+        subject = rows.setdefault(row["subject_ref"], {"subject_ref": row["subject_ref"], "domain": row["domain"],
+                                                      "name": row["name"], "aliases": []})
+        for alias in row.get("aliases") or []:
+            if alias not in subject["aliases"]:
+                subject["aliases"].append(alias)
+    return list(rows.values())
+
+
+def mechanical_subject_refs(settings, target, segments):
+    """GH349 grid v2 `segmentSubjects`, computed locally only when no server grid exists (no execution job).
+
+    A subject matches a segment when any non-empty entry name/alias occurs as an exact substring of the
+    segment context (code points, no normalization). Refs are unique and sorted by number.
+    """
+    names = {}
+    for row in settings:
+        values = names.setdefault(row["subject_ref"], [])
+        for value in (row.get("name"), *(row.get("aliases") or [])):
+            if isinstance(value, str) and value and value not in values:
+                values.append(value)
+    result = {}
+    for segment in segments:
+        text = target[segment.context_start:segment.context_end]
+        result[segment.ref] = sorted((ref for ref, values in names.items() if any(value in text for value in values)),
+                                     key=_subject_order)
+    return result
+
+
+def grid_segment_subjects(grid, segments, subjects):
+    """GH349: the server grid's mechanical matches. A v1 grid (or none) cannot cover a v2 inspection."""
+    if (not isinstance(grid, dict) or type(grid.get("gridVersion")) is not int or grid["gridVersion"] != 2
+            or not isinstance(grid.get("segmentSubjects"), list)):
+        raise IncompleteInspection("GRID_VERSION_UNSUPPORTED")
+    rows = grid["segmentSubjects"]
+    if (any(not isinstance(row, dict) or not isinstance(row.get("subjectRefs"), list)
+            or any(not isinstance(ref, str) or ref not in subjects for ref in row["subjectRefs"])
+            or len(set(row["subjectRefs"])) != len(row["subjectRefs"]) for row in rows)
+            or [row.get("segmentRef") for row in rows] != [segment.ref for segment in segments]):
+        raise IncompleteInspection("INVALID_GRID_CONTRACT")
+    return {row["segmentRef"]: list(row["subjectRefs"]) for row in rows}
+
+
 class SettingValidationService:
     def __init__(self, data_client, model_client, budget, *, search=None, embedding_client=None, checkpoint=None):
         self.data, self.model, self.limits = data_client, model_client, budget
@@ -206,18 +257,24 @@ class SettingValidationService:
                 budget.consume("lookup")
                 return await asyncio.wait_for(action(*args), budget.remaining())
 
-            async def stage(role, ref, payload, response_type, validate, *, schema=None, prepare=None):
-                where["stage"] = f"{role}:{ref}"
-                saved = self.checkpoint.stage(role, ref) if self.checkpoint else None
-                value = response_type.model_validate(saved) if saved is not None else await call_role(
-                    self.model, role, payload, response_type, budget, schema=schema
-                )
+            async def stage(name, ref, payload, response_type, validate, *, schema=None, prepare=None,
+                            role=None, fixed=None):
+                # `role` is the trusted model/budget role when it differs from the stage name (GH349).
+                # `fixed` is a value no model output could change, stored without a call.
+                where["stage"] = f"{name}:{ref}"
+                saved = self.checkpoint.stage(name, ref) if self.checkpoint else None
+                if saved is not None:
+                    value = response_type.model_validate(saved)
+                elif fixed is not None:
+                    value = fixed
+                else:
+                    value = await call_role(self.model, role or name, payload, response_type, budget, schema=schema)
                 if prepare is not None:
                     # Normalized before validation and before the durable save the Backend checks.
                     value = prepare(value)
                 validate(value)
                 if self.checkpoint and saved is None:
-                    await self.checkpoint.save_stage(role, ref, value.model_dump())
+                    await self.checkpoint.save_stage(name, ref, value.model_dump())
                 return value
 
             frozen = await read(self.data.read_input)
@@ -273,18 +330,15 @@ class SettingValidationService:
             source_refs = [source.ref for source in frozen.sources]
             # GH331/GH344: VECTOR is offered only when an episode VECTOR lookup of this job can succeed.
             search_operations = await self._prepare_search(frozen, budget, stats)
-            catalogue = [
-                {key: row[key] for key in ("entry_ref", "subject_ref", "domain", "name", "aliases")}
-                | {"paths": list(row["state"].get("slots", row["state"].get("propertiesJson", {})))}
-                for row in settings
-            ]
+            # GH349: identification only (PLANNER, SUBJECT_RESOLUTION, COVERAGE); one row per subject.
+            subject_rows = subject_catalogue(settings)
             segments = split_segments(
                 target,
                 core_chars=self.limits.segment_chars,
                 context_chars=self.limits.context_chars,
             )
             clues = collect_clues(
-                target, [name for row in catalogue for name in [row["name"], *row["aliases"]]]
+                target, [name for row in settings for name in [row["name"], *row["aliases"]]]
             )
             if execution:
                 clues = target_read.model_clues
@@ -309,6 +363,15 @@ class SettingValidationService:
             # One JUDGE schema per report: an identical system+schema prefix stays provider-cacheable.
             judge_schema = decision_schema(entry_refs=entry_refs, source_refs=source_refs,
                                            search_operations=search_operations)
+            resolution_schema = subject_resolution_schema(subject_refs=subject_order)
+
+            async def segment_subjects():
+                """Mechanical matches per segment: the server grid in execution, else the same rule locally."""
+                if not execution:
+                    return mechanical_subject_refs(settings, target, segments)
+                # The first published stage (PLANNER) makes the server prepare the SETTING grid.
+                grid = await self.checkpoint.setting_grid() if self.checkpoint is not None else None
+                return grid_segment_subjects(grid, segments, subjects)
 
             def intent_refs():
                 return IntentRefs(frozenset(entry_refs), frozenset(source_refs),
@@ -341,12 +404,7 @@ class SettingValidationService:
                         "completed_checks": 0,
                     }
                 )
-            drafts, segment_inputs = [], {}
-            # Identification only. Selection below pages independently over all settings.
-            subject_catalogue = [
-                {key: row[key] for key in ("entry_ref", "subject_ref", "name", "aliases")}
-                for row in catalogue
-            ]
+            drafts, segment_inputs, mechanical = [], {}, None
             for segment in segments:
                 base = {
                     "segment": asdict(segment),
@@ -356,7 +414,7 @@ class SettingValidationService:
                     "target_source_ref": TARGET_REF,
                     "source_catalogue": source_catalogue,
                 }
-                common = {**base, "subject_catalogue": subject_catalogue}
+                common = {**base, "subject_catalogue": subject_rows}
                 segment_inputs[segment.ref] = common
                 first = await stage("PLANNER", segment.ref, common, QuestionBatch,
                                     lambda value, segment=segment: validate_batch(
@@ -365,30 +423,28 @@ class SettingValidationService:
                                     prepare=batch_prepare(segment))
                 coverage = self._record_coverage(coverage, "PLANNER", first)
                 drafts.extend((question, f"PLANNER:{segment.ref}") for question in first.questions)
-                selected = set()
-                for index in range(0, len(catalogue), self.limits.catalogue_page_size):
-                    page = catalogue[index : index + self.limits.catalogue_page_size]
-                    selection = await stage(
-                        "RELATED_SELECTION", f"{segment.ref}:PAGE{index // self.limits.catalogue_page_size + 1}",
-                        {
-                            **base,
-                            "catalogue": page,
-                        },
-                        RelatedSelection,
-                        lambda value, page=page: self._validate_selection(value, page),
-                        schema=selection_schema(entry_refs=[row["entry_ref"] for row in page]),
-                    )
-                    selected.update(
-                        entry.entry_ref for entry in selection.entries if entry.selected
-                    )
-                    coverage.append(
-                        {
-                            "role": "RELATED_SELECTION",
-                            "segment_ref": segment.ref,
-                            "selections": [entry.model_dump() for entry in selection.entries],
-                        }
-                    )
-                relevant = [row for row in settings if row["entry_ref"] in selected]
+                if mechanical is None:
+                    where["stage"] = f"SUBJECT_RESOLUTION:{segment.ref}"
+                    mechanical = await segment_subjects()
+                matched = mechanical[segment.ref]
+                # GH349: one RELATED_SELECTION-role call resolves non-literal mentions instead of paging the
+                # whole catalogue. With every subject already matched by name the result cannot change.
+                resolution = await stage(
+                    "SUBJECT_RESOLUTION", segment.ref,
+                    {**common, "mechanical_subject_refs": matched},
+                    SubjectResolution,
+                    lambda value: self._resolved_subjects(value, subjects),
+                    schema=resolution_schema, role="RELATED_SELECTION",
+                    fixed=None if subjects - set(matched) else SubjectResolution(mentions=[]),
+                )
+                resolved = self._resolved_subjects(resolution, subjects)
+                relevant_subjects = set(matched) | resolved
+                relevant = [row for row in settings if row["subject_ref"] in relevant_subjects]
+                selected = {row["entry_ref"] for row in relevant}
+                coverage.append({"role": "SUBJECT_RESOLUTION", "segment_ref": segment.ref,
+                                 "mechanical_subject_refs": list(matched),
+                                 "resolved_subject_refs": sorted(resolved, key=_subject_order),
+                                 "mentions": len(resolution.mentions)})
                 relevant_clues = [
                     clue for clue in clues if segment.start <= clue["span"]["start"] < segment.end
                 ]
@@ -397,7 +453,7 @@ class SettingValidationService:
                     "COVERAGE", segment.ref,
                     {
                         **common,
-                        # GH331 S3: rules are reported only for these selected settings.
+                        # GH331 S3/GH349: rules are reported only for the relevant subjects' settings.
                         "settings": relevant,
                         "rule_refs": rule_refs,
                         "mechanical_clues": relevant_clues,
@@ -868,10 +924,20 @@ class SettingValidationService:
                                 "evidence_refs": tuple(row["evidence_refs"])})
 
     @staticmethod
-    def _validate_selection(selection, page):
-        if len(selection.entries) != len(page) or {row.entry_ref for row in selection.entries} != {
-            row["entry_ref"] for row in page}:
-            raise IncompleteInspection("RELATED_SELECTION_INCOMPLETE")
+    def _resolved_subjects(resolution, subjects):
+        """Validate SUBJECT_RESOLUTION like the server and return its non-null subject refs."""
+        def fail(cause):
+            return IncompleteInspection("SUBJECT_RESOLUTION_INVALID", "SUBJECT_RESOLUTION_" + cause)
+
+        mentions = [row.mention for row in resolution.mentions]
+        if any(not row.mention.strip() or not row.reason.strip() for row in resolution.mentions):
+            raise fail("BLANK")
+        if len(set(mentions)) != len(mentions):
+            raise fail("DUPLICATE_MENTION")
+        resolved = {row.subject_ref for row in resolution.mentions if row.subject_ref is not None}
+        if not resolved <= subjects:
+            raise fail("UNKNOWN_SUBJECT")
+        return resolved
 
     @staticmethod
     def _validate_coverage(batch, segment, subjects, selected, target, clues, intent_refs=None):

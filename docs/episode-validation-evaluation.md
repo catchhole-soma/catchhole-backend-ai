@@ -4,6 +4,8 @@
 모든 원고는 평가용으로 새로 쓴 합성 자료이며 사례·기대값은 [`tests/fixtures/episode_validation_cases.json`](../tests/fixtures/episode_validation_cases.json)에 있다.
 기대값은 사람이 정한 판정 기준이고 **모델 채택 합격선이나 품질 수치 목표가 아니다**(#314 합의: 모델 비교·순위 실험과 "심각 오류 1건 누락 시 채택 보류" 정책은 만들지 않는다).
 3~8절은 수정 전 기록으로 보존한다. #331 수정 뒤 같은 사례를 shim 없이 다시 실행한 결과는 [9절](#9-gh331-수정-후-재실행)에 있다.
+이 문서의 실행은 모두 grid v1(카탈로그 페이지별 RELATED_SELECTION 선정)이다. GH349(로직 [v0036](ai-logic-versions/v0036.md))부터 RELATED_SELECTION 역할은 구간당 한 번의
+SUBJECT_RESOLUTION(이름·별칭 매칭 밖의 지칭 해소)에 쓰이므로 아래의 선정 호출 수·시간은 당시 기록이다. 새 구조의 실제 모델 재실행은 리뷰어가 확인할 예정이다.
 
 ## 1. 두 종류의 결과를 구분한다
 
