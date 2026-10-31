@@ -33,6 +33,12 @@ RELATIONS = (
     "works",
     "members",
     "episode_source_purge_requests",
+    # GH344: the validation Worker reuses this reader for frozen RAG. FrozenRetrievalRepository
+    # (app/validation/search.py) fences the same corpus by the frozen report, its running job and
+    # baseline manifest. SELECT only; tests derive the full list from the repository's SQL.
+    "validation_reports",
+    "validation_jobs",
+    "validation_baseline_sources",
 )
 ADMIN_HEADROOM = 5
 
@@ -348,6 +354,12 @@ def _managed_reader(connection, config):
             "ALTER ROLE catchhole_chat_reader SET default_transaction_read_only=on"
         )
     _validate_role(connection, ROLE, exact_select=True)
+    _grant_select(connection, config)
+    return config.admin_url.set(username=ROLE, password=intent["password"]), intent
+
+
+def _grant_select(connection, config):
+    """Idempotent CONNECT/USAGE/SELECT on RELATIONS only, re-validated against the exact allow-list."""
     role = _quote(connection, ROLE)
     database = _quote(connection, config.admin_url.database)
     connection.exec_driver_sql(f"GRANT CONNECT ON DATABASE {database} TO {role}")
@@ -355,7 +367,6 @@ def _managed_reader(connection, config):
     relations = ",".join("public." + _quote(connection, relation) for relation in RELATIONS)
     connection.exec_driver_sql(f"GRANT SELECT ON {relations} TO {role}")
     _validate_role(connection, ROLE, exact_select=True)
-    return config.admin_url.set(username=ROLE, password=intent["password"]), intent
 
 
 def _existing_reader(connection, config):
@@ -370,6 +381,11 @@ def _existing_reader(connection, config):
             if intent is None or role is None or role["marker"] != intent["marker"]:
                 raise BootstrapFailure("READ_ROLE_COLLISION")
     _validate_role(connection, reader.username, exact_select=intent is not None)
+    if intent is not None:
+        # A host rerun with a newer image adds SELECT on relations the managed reader now needs (GH344
+        # validation frozen RAG). Drift was rejected above, before any grant; a custom reader is never granted.
+        connection.execute(text("SELECT pg_advisory_xact_lock(25823901)"))
+        _grant_select(connection, config)
     return reader, intent
 
 
