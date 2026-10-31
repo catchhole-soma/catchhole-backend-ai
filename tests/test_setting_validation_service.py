@@ -856,15 +856,17 @@ def test_frozen_provenance_uses_known_source_alias_without_server_ids():
     }
 
     def judge(payload):
-        assert (
-            payload["settings"][0]["state"]["slots"]["STATUS:손"]["provenance"]["source_ref"]
-            == "R1"
-        )
+        # GH349 amendment: the model reads the compact row; provenance stays in the canonical bundle.
+        assert payload["settings"][0]["state"]["slots"]["STATUS:손"] == {"factValue": "왼손 상실"}
         assert {row["source_ref"] for row in payload["source_catalogue"]} == {"R1", "R2"}
         assert identifier not in json.dumps(payload)
         return decision(payload)
 
-    assert run(data, SyntheticModel(judge)).status == "COMPLETED"
+    result = run(data, SyntheticModel(judge))
+    assert result.status == "COMPLETED"
+    bundle = result.evidence_bundles["Q1"]
+    assert bundle["settings"][0]["state"]["slots"]["STATUS:손"]["provenance"]["source_ref"] == "R1"
+    assert identifier not in json.dumps(bundle)
 
 
 def test_merged_initial_obligations_reuse_one_read_and_keep_both_receipts():
@@ -1438,3 +1440,118 @@ def test_one_character_names_are_not_mechanically_matched_but_stay_in_the_catalo
     (resolution,) = payloads(model, "RELATED_SELECTION")  # 검(S2) is left for SUBJECT_RESOLUTION
     assert resolution["mechanical_subject_refs"] == ["S1"]
     assert [row["name"] for row in resolution["subject_catalogue"]] == ["민수", "검"]
+
+
+# --- GH349 amendment: compact model rows and the COVERAGE input valve -------------------------------------
+
+
+def heavy_data():
+    """B1 carries what production rows carry besides values: slot provenance/evidence, history, identity evidence."""
+    data = SyntheticData()
+    state = data.entries[0]["state"]
+    state["slots"]["STATUS:손"].update(
+        factType="STATUS", factKey="손", valueJson={"value": "왼손 상실"},
+        provenance={"confirmationStatus": "CONFIRMED", "sourceEpisodeNo": 1},
+        supportingSources=[{"supportingSource": {"quote": "민수는 왼손을 잃었다.", "start": 0, "end": 11}}])
+    state.update(snapshotVersion=3, identityEvidence=[{"quote": "민수"}],
+                 historyFacts=[{"factType": "STATUS", "factKey": "손", "factValue": "양손 사용",
+                                "supportingSource": {"quote": "옛 원문"}}])
+    return data
+
+
+def test_coverage_and_judge_read_compact_rows_while_the_bundle_keeps_canonical_rows():
+    from app.validation.projection import compact_setting_row
+    from app.validation.service import _settings
+
+    data, model = heavy_data(), SyntheticModel()
+    result = run(data, model)
+    assert result.status == "COMPLETED"
+    canonical = _settings(data.entries)
+    compact = [compact_setting_row(row) for row in canonical]
+    assert compact[0]["state"] == {"name": "민수", "aliases": [],
+                                   "slots": {"STATUS:손": {"factValue": "왼손 상실", "factType": "STATUS", "factKey": "손"}}}
+    (coverage,), (judge,) = payloads(model, "COVERAGE"), payloads(model, "JUDGE")
+    assert coverage["settings"] == judge["settings"] == compact and coverage["rule_refs"] == ["B1"]
+    for payload in (coverage, judge):
+        text = json.dumps(payload["settings"], ensure_ascii=False)
+        assert "왼손 상실" in text and not any(key in text for key in (
+            "historyFacts", "supportingSources", "supportingSource", "provenance", "identityEvidence", "valueJson"))
+    # The Backend compares bundle settings with its canonical rows, so the published bundle is unchanged.
+    bundle = result.evidence_bundles["Q1"]
+    assert bundle["settings"] == canonical and bundle["settings"][0]["state"]["historyFacts"]
+    assert bundle["input_digest"] == judge["input_digest"]
+
+
+def test_entry_requested_by_a_baseline_lookup_reaches_the_next_judge_in_full():
+    from app.validation.service import _settings
+
+    def judge(payload):
+        if len(payload["receipts"]) == 2:  # only the Worker's own BASELINE/TARGET_CONTEXT receipts so far
+            value = decision(payload)
+            value.update(action="FOLLOW_UP", outcome=None, basis=None, completion=None, follow_ups=[
+                {"ref": "history", "kind": "COMPARISON_CONTEXT", "operation": "BASELINE",
+                 "purpose": "손 상태의 이전 이력 확인", "evidence_refs": ["B1"]}])
+            return value
+        return decision(payload)
+
+    data, model = heavy_data(), SyntheticModel(judge)
+    result = run(data, model)
+    assert result.status == "COMPLETED"
+    first, second = payloads(model, "JUDGE")
+    assert "historyFacts" not in first["settings"][0]["state"]
+    assert second["settings"] == _settings(data.entries)  # the full canonical row, history included
+    assert second["settings"][0]["state"]["historyFacts"][0]["factValue"] == "양손 사용"
+
+
+def valve_data(count=401):
+    data = SyntheticData()
+    data.entries = [{"entryRef": f"B{n}", "domain": "characters", "subjectRef": "character:existing",
+                     "state": {"name": "민수", "aliases": [], "slots": {f"PROFILE:항목{n}": {"factValue": "값"}}}}
+                    for n in range(1, count + 1)]
+    return data
+
+
+def test_coverage_valve_sends_400_rows_and_reports_the_rest_not_applicable(caplog):
+    from app.validation.contracts import QuestionBatch, split_segments, validate_batch
+    from app.validation.service import COVERAGE_TRUNCATED_REASON, MAX_COVERAGE_SETTINGS
+
+    model = SyntheticModel()
+    with caplog.at_level("WARNING", logger="app.validation.service"):
+        result = run(valve_data(), model, catalogue_page_size=100)
+    assert result.status == "COMPLETED"
+    (coverage,) = payloads(model, "COVERAGE")
+    assert MAX_COVERAGE_SETTINGS == 400
+    assert len(coverage["settings"]) == len(coverage["rule_refs"]) == 400 and coverage["rule_refs"][-1] == "B400"
+    _, _, kwargs = next(call for call in model.calls if call[0] == "COVERAGE")
+    assert "B401" not in json.dumps(kwargs["response_schema"].schema)
+    record = next(row for row in result.coverage if row["role"] == "COVERAGE")
+    assert [row["entry_ref"] for row in record["rules"]] == [f"B{n}" for n in range(1, 402)]
+    assert record["rules"][-1] == {"entry_ref": "B401", "status": "NOT_APPLICABLE", "reason": COVERAGE_TRUNCATED_REASON}
+    assert result.normalizations["COVERAGE_SETTINGS_TRUNCATED"] == 1
+    assert "coverage settings truncated total=401 kept=400 segment=TSEG1" in caplog.text
+    # The stored batch covers every relevant entry, as the Worker and Backend rule-set checks require.
+    batch = QuestionBatch.model_validate({"questions": [], "rules": record["rules"],
+                                          "segments": [{"segment_ref": "TSEG1", "status": "NO_CHECK", "reason": "합성"}]})
+    validate_batch(batch, split_segments(TARGET, core_chars=100, context_chars=10), {"S1"},
+                   [f"B{n}" for n in range(1, 402)], TARGET)
+
+
+def test_resumed_truncated_coverage_is_not_called_again_or_extended_twice():
+    from app.validation.service import SettingValidationService
+    from tests.test_validation_checkpoint import SavedStages
+
+    async def inspect(saved, model):
+        limits = InvocationBudget(30, 100, 30, 5000, 1000, 100, 10, 100, 10)
+        return await SettingValidationService(valve_data(), model, limits, checkpoint=saved).inspect()
+
+    saved, model = SavedStages(), SyntheticModel()
+    saved.crash_stage = "COVERAGE"
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(inspect(saved, model))
+    assert len(saved.stages["COVERAGE", "TSEG1"]["rules"]) == 401
+    calls = len(model.calls)
+    result = asyncio.run(inspect(saved, model))
+    assert result.status == "COMPLETED"
+    assert [role for role, *_ in model.calls[calls:]] == ["JUDGE"]
+    record = next(row for row in result.coverage if row["role"] == "COVERAGE")
+    assert len(record["rules"]) == 401
