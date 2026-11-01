@@ -22,6 +22,7 @@ from app.monitoring.worker_tracing import (
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.worker.analysis_job_worker import AnalysisJobWorker, WorkerRunResult
 from app.worker.character_fact_comparison_worker import CharacterFactComparisonWorker
+from app.worker.relationship_worker import RelationshipWorker
 from app.worker.world_setting_comparison_worker import WorldSettingComparisonWorker
 
 
@@ -306,23 +307,24 @@ def main() -> None:
 
 
 async def _async_main(args: argparse.Namespace, settings: Settings) -> None:
-    metrics = create_worker_metrics(settings, args.worker_kind, (
+    model_names = (
         args.model_name, args.extraction_model_name, args.subject_resolution_model_name,
         args.comparison_model_name,
-    ))
+        *(("gpt-6.1-terra",) if args.worker_kind == "relationship" else ()),
+    )
+    metrics = create_worker_metrics(settings, args.worker_kind, model_names)
     previous_metrics = set_process_metrics(metrics)
     previous_tracing = set_process_tracing(None)
     tracing = None
     worker: WorkerSchedulerApi | None = None
     try:
-        tracing = create_worker_tracing(settings, args.worker_kind, (
-            args.model_name, args.extraction_model_name, args.subject_resolution_model_name,
-            args.comparison_model_name,
-        ))
+        tracing = create_worker_tracing(settings, args.worker_kind, model_names)
         set_process_tracing(tracing)
         if metrics is not None:
             metrics.start_exporter(settings.ai_worker_metrics_host, settings.ai_worker_metrics_port)
-        if args.worker_kind == "world-comparison":
+        if args.worker_kind == "relationship":
+            worker = RelationshipWorker()
+        elif args.worker_kind == "world-comparison":
             worker = WorldSettingComparisonWorker(
                 subject_resolution_model_name=(args.subject_resolution_model_name or args.model_name),
                 comparison_model_name=args.comparison_model_name or args.model_name,
@@ -344,7 +346,7 @@ async def _async_main(args: argparse.Namespace, settings: Settings) -> None:
             payload = await worker.claim_next()
             if payload is None:
                 kind = {"analysis": "analysis", "character-comparison": "character-fact comparison",
-                        "world-comparison": "world-setting comparison"}[args.worker_kind]
+                        "world-comparison": "world-setting comparison", "relationship": "relationship-only"}[args.worker_kind]
                 result = WorkerRunResult(False, None, f"Claimable {kind} job does not exist.")
             else:
                 result = await _run_claimed_with_metrics(worker, payload, metrics)
@@ -385,7 +387,7 @@ def _parse_args(settings: Settings | None = None) -> argparse.Namespace:
     parser.add_argument("--once", action="store_true", help="Run one claim attempt and exit.")
     parser.add_argument(
         "--worker-kind",
-        choices=("analysis", "character-comparison", "world-comparison"),
+        choices=("analysis", "character-comparison", "world-comparison", "relationship"),
         default="analysis",
         help="Select the disjoint Spring job type set claimed by this process.",
     )
@@ -437,7 +439,7 @@ def _parse_args(settings: Settings | None = None) -> argparse.Namespace:
 
 
 def _resolve_worker_concurrency(worker_kind: str, configured_concurrency: int) -> int:
-    if worker_kind in {"character-comparison", "world-comparison"}:
+    if worker_kind in {"character-comparison", "world-comparison", "relationship"}:
         return 1
     return configured_concurrency
 

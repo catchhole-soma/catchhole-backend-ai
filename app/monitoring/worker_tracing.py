@@ -40,6 +40,14 @@ _trace_context_propagator = TraceContextTextMapPropagator()
 # Match only known route shapes. Neither the original URL nor its IDs become attributes.
 _UUID_PATH = re.compile(r"/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(?=/|$)")
 _SPRING_OPERATIONS = {
+    "/relationship-jobs/claim": "relationship.job.claim",
+    "/relationship-jobs/{id}/complete": "relationship.job.complete",
+    "/relationship-jobs/{id}/fail": "relationship.job.fail",
+    "/relationship-jobs/{id}/heartbeat": "relationship.job.heartbeat",
+    "/analysis-jobs/{id}/relationship-analysis": "relationship.context",
+    "/analysis-jobs/{id}/relationship-analysis/prepare": "relationship.prepare",
+    "/analysis-jobs/{id}/relationship-analysis/complete": "relationship.complete",
+    "/analysis-jobs/{id}/relationship-analysis/fail": "relationship.fail",
     "/analysis-jobs/{id}/progress": "job.progress",
     "/analysis-jobs/{id}/complete": "job.complete",
     "/analysis-jobs/{id}/fail": "job.fail",
@@ -213,7 +221,7 @@ def create_worker_tracing(
         if not re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", service_name):
             service_name = "catchhole-ai-worker"
         worker_kind = worker_kind if worker_kind in {
-            "analysis", "character-comparison", "world-comparison",
+            "analysis", "character-comparison", "world-comparison", "relationship",
         } else "other"
         provider = TracerProvider(
             resource=Resource({

@@ -61,6 +61,8 @@ class Settings(BaseSettings):
 
     # 장기 실행 Worker scheduler 설정. 로컬 기본값은 이전 단일 실행 동작을 보존한다.
     ai_worker_concurrency: int = 1
+    relationship_worker_max_source_bytes: int = Field(default=2_000_000, ge=1)
+    relationship_worker_max_chunks: int = Field(default=12, ge=1)
     ai_worker_idle_sleep_seconds: float = 5.0
     ai_worker_shutdown_grace_seconds: float = 180.0
     # CLI 프로세스당 하나의 Prometheus exporter. Compose에서 명시적으로 활성화한다.

@@ -120,4 +120,3 @@ def test_expanded_row_keeps_scalar_history_without_evidence_and_truncates_oldest
     assert [fact["factValue"] for fact in truncated["state"]["historyFacts"]] == ["한손"]  # newest kept
     assert truncated["state"]["historyTruncated"] == 1
     assert row["state"]["historyFacts"][0]["supportingSource"] == {"quote": "옛 원문", "source_ref": None}  # input untouched
-
