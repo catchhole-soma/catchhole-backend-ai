@@ -145,6 +145,12 @@ class FrozenRetrievalRepository(RetrievalSearchRepository):
         )
 
 
+def vector_ready(readiness, embedding_client):
+    """A VECTOR read can run: a query embedding client and every frozen episode source fully embedded."""
+    return (embedding_client is not None and readiness.vector_chunks > 0
+            and readiness.vector_ready_sources == readiness.source_count)
+
+
 class FrozenRetrievalSearchService:
     """Uses an explicitly injected read-only session factory; no default DB or embeddings."""
 
@@ -154,9 +160,10 @@ class FrozenRetrievalSearchService:
             session_factory, self.spec, repository_factory=FrozenRetrievalRepository
         )
 
-    async def search(self, frozen, intent, embedding_client, limit):
+    @staticmethod
+    def _scope(frozen):
         context = frozen.context
-        scope = FrozenSearchScope(
+        return FrozenSearchScope(
             context.member_id,
             context.work_id,
             report_id=context.report_id,
@@ -164,13 +171,20 @@ class FrozenRetrievalSearchService:
             target_hash=context.target_hash, job_id=context.job_id, lease_token=context.lease_token,
             generation=context.generation, input_digest=context.input_digest,
         )
+
+    async def readiness(self, frozen):
+        """GH344: one read of the job's frozen index readiness, before VECTOR is offered to the model."""
+        return await self.service.readiness(self._scope(frozen))
+
+    async def search(self, frozen, intent, embedding_client, limit):
+        scope = self._scope(frozen)
         try:
             if intent.operation == "KEYWORD":
                 result = await self.service.keyword(scope, intent.query, limit=limit)
             else:
+                # Last line of defence: the offer check (GH344) may predate an index change.
                 readiness = await self.service.readiness(scope)
-                if (readiness.vector_chunks == 0 or readiness.vector_ready_sources < readiness.source_count
-                        or embedding_client is None):
+                if not vector_ready(readiness, embedding_client):
                     raise IncompleteInspection("VECTOR_NOT_READY")
                 result = await self.service.vector(
                     scope, intent.query, embedding_client, limit=limit

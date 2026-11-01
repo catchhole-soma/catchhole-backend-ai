@@ -2,10 +2,16 @@
 
 버전별 문서에서 **무엇을 바꿨고, 점수가 어떻게 나왔으며, 무엇이 남았는지** 확인한다.
 
+병렬 PR 번호 설명은 각 기록 작성 시점 기준이다. 관계 백필 AI #108의 최신 기록은 [v0040](v0040.md)이다.
+
 | 버전 | 날짜 | 변경 | 평가 |
 | --- | --- | --- | --- |
-| [v0035](v0035.md) | 2026-10-30~31 | 선정 계정 관계 전용 Worker·고정 원문·재개·자동 배포 | 리뷰 보완 후 전체4,978통과/141skip·실HTTP/PG/Python 통과. 실모델 품질 미측정·미배포 |
-| [v0034](v0034.md) | 2026-10-31 | 검수 충돌 의심 판정 전 빠진 변화·예외 KEYWORD 검색을 Worker가 한 번 넣고 다시 묻기·검색 receipt 인용 보완 ([Java #341](https://github.com/catchhole-soma/catchhole-backend-java/issues/341)). 관계 백필 AI #108은 v0035로 이동 | 전체4,914통과/141skip·기존 경고1, 가짜 모델 신규 11 case. 실제 모델 live spec 3회 모두 통과(설정 검사 6/6 완료, 5/6에서 검색 삽입) |
+| [v0040](v0040.md) | 2026-10-30~11-01 | 선정 계정 관계 전용 Worker·고정 원문·재개·자동 배포 | 최신 main 통합 전체5,072통과/143skip·실HTTP/PG/Python 통과. 실모델 품질 미측정·미배포 |
+| [v0039](v0039.md) | 2026-10-31 | BASELINE으로 요청한 항목을 JUDGE에 전체 행 대신 값 이력 확장 행(이력 6필드·최신 300개, 근거·출처 없음)으로 전달 ([Java #349](https://github.com/catchhole-soma/catchhole-backend-java/issues/349) 후속). 근거: 운영 31화 8번째 실행에서 이력 209 KB 인물의 두 번째 JUDGE 입력이 80,000토큰 초과 | 집중·전체 pytest 통과(가짜 모델). 실제 모델 재실행: 운영 재시도로 확인 예정 |
+| [v0038](v0038.md) | 2026-10-31 | 검수 COVERAGE·JUDGE 모델 입력을 슬롯 값만 남긴 압축 행으로 보냄(조회·BASELINE 요청 항목은 전체 행)·판정 게시 bundle settings는 항목 ref 행만 담음·1글자 이름·별칭 기계 매칭 제외(grid v3 = v2 + 1글자 제외, Worker는 v2·v3 허용)·COVERAGE 관련 항목 400개 초과분은 NOT_APPLICABLE로 기록 ([Java #349](https://github.com/catchhole-soma/catchhole-backend-java/issues/349) 후속). 근거: 첫 운영 실행 COVERAGE 입력 80,000토큰 초과(관련 179항목 795 KB), 362 KB 인물 판정 bundle이 게시 상한 131,072 byte 초과 | 전체5,043통과/143skip·기존 경고1, 신규 15 case. 가짜 모델만. 실제 모델 재실행: 리뷰어 확인 예정 |
+| [v0037](v0037.md) | 2026-10-31 | 검수 의미(VECTOR) 검색은 Job 시작 때 5초 안에 읽은 색인이 완전하고 query embedding이 설정됐을 때만 제안(실패 시 그 Job은 색인 없이 키워드)·QUERY_EMBEDDING 미설정은 키워드로 실행·재개 시 저장된 VECTOR 유지·챗봇 reader에 검수 테이블 3개 SELECT·운영 Compose env opt-in ([Java #344](https://github.com/catchhole-soma/catchhole-backend-java/issues/344)). v0033·v0035는 열린 AI #114·#108, v0036은 #349 브랜치 사용 | 전체4,998통과/142skip·기존 경고1, 검수·배포·bootstrap 집중442. 가짜 모델·가짜 readiness만, 실제 모델·운영 DB·PG grant 통합 미실행 |
+| [v0036](v0036.md) | 2026-10-31 | 검수 누락 보완을 전체 카탈로그 페이지 선정 대신 이름·별칭 주체 매칭(grid v2 `segmentSubjects`)과 구간당 한 번의 SUBJECT_RESOLUTION 지칭 해소로 바꾸고 `subject_catalogue`를 주체당 한 행으로 축소 ([Java #349](https://github.com/catchhole-soma/catchhole-backend-java/issues/349)). 열린 AI #114는 v0033, #108은 v0035 사용 | 전체4,978통과/141skip·기존 경고1, 가짜 모델 신규 28 case(120항목·페이지50에서 구간당 호출 3→1). 실제 모델 재실행: 리뷰어 확인 예정 |
+| [v0034](v0034.md) | 2026-10-31 | 검수 충돌 의심 판정 전 빠진 변화·예외 KEYWORD 검색을 Worker가 한 번 넣고 다시 묻기·검색 receipt 인용 보완 ([Java #341](https://github.com/catchhole-soma/catchhole-backend-java/issues/341)). 관계 백필 AI #108은 v0040으로 이동 | 전체4,914통과/141skip·기존 경고1, 가짜 모델 신규 11 case. 실제 모델 live spec 3회 모두 통과(설정 검사 6/6 완료, 5/6에서 검색 삽입) |
 | [v0032](v0032.md) | 2026-10-30 | 검수 모델 출력 정규화: 대상 참조 T1·quote 기준 위치·서버 확정 판정 필드·참조 종류 schema·실행 불가 VECTOR 미제안·원인 코드 보존 ([Java #331](https://github.com/catchhole-soma/catchhole-backend-java/issues/331)). v0031은 열린 AI #107 사용 중 | 전체4,868통과/140skip·실제 Java HTTP27. 실제 Terra 재실행 B2·A3 원본·교체본 모두 COMPLETED(재시도 포함), TSEG 0건·S3~S6 위반 0. 판정 FN 2(앞마당·망토)·교체본 FP1·같은 원인 미병합은 남음, 의미 점수 미측정 |
 | [v0031](v0031.md) | 2026-10-30 | 챗봇 gpt-6 토큰 추정 o200k·원문 검색 도구 예약·PARTIAL 장면 이웃 확장·최초/최후 회차 순서 검색·근거 예산 확대·3라운드(plan v12/answer v16) ([Java #319](https://github.com/catchhole-soma/catchhole-backend-java/issues/319)) | 전체 4,643 통과/141 skip·기존 경고 1. 실제 모델 60발화 같은 고정본 DB: main 38/17/5 → 1차 39/15/6 → 2차(근거 12·9,000토큰·3라운드·answer v16) 45/14/1(PASS/PARTIAL/FAIL, 블라인드). Gold 근거 포함률 76.6→85.9%. controls 6/6 |
 | [v0030](v0030.md) | 2026-10-29~30 | 독립 관계 추출·비교·회차 이력·내부 보류, 미확인 일반 인용 표시 분리 | 최신 main 통합 전체4,835통과/140skip·변경 lint 기존25건 증가0. 실제8호출 관계 의미 부분 검증. 일반10화는1회 실패 후 같은 작업 재개로 전부 완료·기존203작업 보존 |

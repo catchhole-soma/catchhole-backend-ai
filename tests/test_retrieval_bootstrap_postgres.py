@@ -94,7 +94,7 @@ def test_non_superuser_bootstrap_is_readonly_and_crash_restart_never_rotates_pas
     engine, admin, env, directory = prepared_environment
     result = b.run(env)
     assert result["state"] == "READY", result
-    assert result["selectRelationCount"] == 7
+    assert result["selectRelationCount"] == len(b.RELATIONS) == 10
     output = b._private_file(directory / "reader.json")
     intent = b._private_file(directory / "reader-intent.json")
     assert output["managed"] and output["password"] == intent["password"]
@@ -223,6 +223,29 @@ def test_existing_managed_reader_privilege_drift_fails_without_repair(
     result = b.run(env)
     assert result["code"] == code, result
     assert (directory / "reader.json").read_bytes() == before
+
+
+def test_host_rerun_grants_relations_added_after_the_reader_was_created(prepared_environment):
+    """GH344: a reader created before the validation relations gains SELECT on them on the next rerun."""
+    engine, _, env, directory = prepared_environment
+    assert b.run(env)["state"] == "READY"
+    output = b._private_file(directory / "reader.json")
+    env["CHAT_RETRIEVAL_DATABASE_URL"] = output["databaseUrl"]
+    added = ("validation_reports", "validation_jobs", "validation_baseline_sources")
+    with engine.begin() as connection:
+        # The earlier seven-relation reader, revoked as the original grantor.
+        connection.exec_driver_sql("SET LOCAL ROLE bootstrap_admin")
+        connection.exec_driver_sql(f"REVOKE SELECT ON {','.join(added)} FROM {b.ROLE}")
+    assert b.run(env)["state"] == "READY"
+    assert b._private_file(directory / "reader.json") == output
+    with engine.connect() as connection:
+        grants = connection.execute(
+            text(
+                "SELECT table_name,privilege_type FROM information_schema.role_table_grants WHERE grantee=:role"
+            ),
+            {"role": b.ROLE},
+        ).all()
+    assert set(grants) == {(name, "SELECT") for name in b.RELATIONS}
 
 
 def test_preexisting_public_column_select_is_rejected_during_first_prepare(prepared_environment):

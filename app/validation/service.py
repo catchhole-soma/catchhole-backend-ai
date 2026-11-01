@@ -20,7 +20,8 @@ from app.validation.contracts import (
     LookupIntent,
     LookupReceipt,
     QuestionBatch,
-    RelatedSelection,
+    RuleCoverage,
+    SubjectResolution,
     ValidationDecision,
     anchor_span,
     merge_questions,
@@ -34,13 +35,24 @@ from app.validation.contracts import (
 )
 from app.validation.corpus import ValidationCorpus
 from app.validation.models import call_role
-from app.validation.schemas import decision_schema, question_batch_schema, selection_schema
+from app.validation.projection import compact_setting_row, expanded_setting_row
+from app.validation.schemas import decision_schema, question_batch_schema, subject_resolution_schema
+from app.validation.search import vector_ready
 
 logger = logging.getLogger(__name__)
 _DECISION_FIELDS = ("outcome", "basis", "impact", "impact_reason", "completion")
 # GH341: marks the single change search the Worker itself issues before accepting SUSPECTED_CONFLICT.
 WORKER_CHANGE_SEARCH_PURPOSE = "Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색"
 _SEARCH_QUERY_LIMIT = 1000  # corpus.lookup/validate_intents reject empty or longer queries
+# GH344: the one readiness read before PLANNER may never spend the inspection's seconds budget.
+VECTOR_READINESS_TIMEOUT_SECONDS = 5.0
+# GH349 amendment: 1-code-point names/aliases match almost any text, so they never match mechanically (grid v3).
+MECHANICAL_NAME_MIN_CODE_POINTS = 2
+# Safety valve for one COVERAGE prompt; the compact projection is the main fix. Rows past it are reported, not read.
+MAX_COVERAGE_SETTINGS = 400
+COVERAGE_TRUNCATED_REASON = "입력 상한으로 모델 점검에서 제외됨"
+# Grid v3 (GH349 amendment) keeps the v2 shape; only the server's mechanical matching rule changed.
+SUPPORTED_SETTING_GRID_VERSIONS = (2, 3)
 
 
 def _is_change_search(receipt):
@@ -145,11 +157,113 @@ def _settings(entries, sources=()):
     return result
 
 
+def bundle_settings(rows):
+    """GH349 Amendment 2: published/stored bundle settings are refs only; the Backend checks the ref set.
+
+    A bundle stored before that change holds full rows; it is read the same way (entry_ref/subject_ref only).
+    """
+    return [{"entry_ref": row["entry_ref"], "subject_ref": row["subject_ref"]} for row in rows]
+
+
+def _subject_order(ref):
+    """Server S-refs sort by their number (S2 before S10)."""
+    return (int(ref[1:]), ref) if re.fullmatch(r"S[1-9][0-9]*", ref) else (float("inf"), ref)
+
+
+def subject_catalogue(settings):
+    """GH349: one identification row per subject: the first entry's domain/name and the ordered alias union."""
+    rows = {}
+    for row in settings:
+        subject = rows.setdefault(row["subject_ref"], {"subject_ref": row["subject_ref"], "domain": row["domain"],
+                                                      "name": row["name"], "aliases": []})
+        for alias in row.get("aliases") or []:
+            if alias not in subject["aliases"]:
+                subject["aliases"].append(alias)
+    return list(rows.values())
+
+
+def mechanical_subject_refs(settings, target, segments):
+    """GH349 grid v3 `segmentSubjects`, computed locally only when no server grid exists (no execution job).
+
+    A subject matches a segment when any entry name/alias of at least MECHANICAL_NAME_MIN_CODE_POINTS code points
+    occurs as an exact substring of the segment context (code points, no normalization). Shorter names stay in
+    `subject_catalogue` for SUBJECT_RESOLUTION. Refs are unique and sorted by number.
+    """
+    names = {}
+    for row in settings:
+        values = names.setdefault(row["subject_ref"], [])
+        for value in (row.get("name"), *(row.get("aliases") or [])):
+            if isinstance(value, str) and len(value) >= MECHANICAL_NAME_MIN_CODE_POINTS and value not in values:
+                values.append(value)
+    result = {}
+    for segment in segments:
+        text = target[segment.context_start:segment.context_end]
+        result[segment.ref] = sorted((ref for ref, values in names.items() if any(value in text for value in values)),
+                                     key=_subject_order)
+    return result
+
+
+def grid_segment_subjects(grid, segments, subjects):
+    """GH349: the server grid's mechanical matches (v2, or v3 with the 1-character rule). v1 or none cannot."""
+    if (not isinstance(grid, dict) or type(grid.get("gridVersion")) is not int
+            or grid["gridVersion"] not in SUPPORTED_SETTING_GRID_VERSIONS
+            or not isinstance(grid.get("segmentSubjects"), list)):
+        raise IncompleteInspection("GRID_VERSION_UNSUPPORTED")
+    rows = grid["segmentSubjects"]
+    if (any(not isinstance(row, dict) or not isinstance(row.get("subjectRefs"), list)
+            or any(not isinstance(ref, str) or ref not in subjects for ref in row["subjectRefs"])
+            or len(set(row["subjectRefs"])) != len(row["subjectRefs"]) for row in rows)
+            or [row.get("segmentRef") for row in rows] != [segment.ref for segment in segments]):
+        raise IncompleteInspection("INVALID_GRID_CONTRACT")
+    return {row["segmentRef"]: list(row["subjectRefs"]) for row in rows}
+
+
 class SettingValidationService:
     def __init__(self, data_client, model_client, budget, *, search=None, embedding_client=None, checkpoint=None):
         self.data, self.model, self.limits = data_client, model_client, budget
         self.search, self.embedding_client = search, embedding_client
         self.checkpoint = checkpoint
+
+    async def _prepare_search(self, frozen, budget, stats):
+        """Lookup operations the model may plan; an unexecutable VECTOR is never offered.
+
+        Without episode sources VECTOR is the explicit book raw fallback. Without frozen RAG an episode VECTOR
+        can only end in VECTOR_NOT_READY (GH331). With frozen RAG one readiness read of this job's scope
+        decides (GH344): every frozen episode source fully embedded and a query embedding client, unless an
+        earlier attempt of this job already saved VECTOR work. The read is capped at
+        VECTOR_READINESS_TIMEOUT_SECONDS. If it fails or times out, this job (one service instance per job)
+        runs without frozen RAG, exactly like the keyword-only configuration: an unreadable index (missing
+        grants, DB outage) would otherwise fail every KEYWORD lookup with SEARCH_FAILED as well. The search
+        itself still re-checks readiness before each VECTOR lookup.
+        """
+        episodes = sum(source.kind == "EPISODE" for source in frozen.sources)
+        if not episodes:
+            return ("KEYWORD", "VECTOR")
+        if self.search is None:
+            return ("KEYWORD",)
+        job = frozen.context.job_id or "-"
+        planned = getattr(self.checkpoint, "planned_operations", None)
+        if planned is not None and "VECTOR" in planned():
+            # An earlier attempt was offered VECTOR and saved it: its plans and successful receipts stay valid on
+            # resume even if the live index is being rebuilt; a still pending lookup re-checks readiness itself.
+            stats["VECTOR_OFFERED"] = 1
+            logger.info("vector search offered=True resumed=True job=%s", job)
+            return ("KEYWORD", "VECTOR")
+        timeout = min(budget.remaining(), VECTOR_READINESS_TIMEOUT_SECONDS)
+        try:
+            readiness = await asyncio.wait_for(self.search.readiness(frozen), timeout)
+        except Exception as exc:  # noqa: BLE001 - DB/driver text may carry URLs or credentials; type only.
+            stats["VECTOR_OFFERED"] = 0
+            self.search = None
+            logger.warning("vector search readiness unavailable error=%s job=%s; offering KEYWORD only "
+                           "without frozen retrieval", type(exc).__name__, job)
+            return ("KEYWORD",)
+        offered = vector_ready(readiness, self.embedding_client) and readiness.source_count == episodes
+        stats["VECTOR_OFFERED"] = int(offered)
+        logger.info("vector search offered=%s sources=%d ready=%d chunks=%d episodes=%d embedding=%s job=%s",
+                    offered, readiness.source_count, readiness.vector_ready_sources, readiness.vector_chunks,
+                    episodes, self.embedding_client is not None, job)
+        return ("KEYWORD", "VECTOR") if offered else ("KEYWORD",)
 
     async def inspect(self):
         budget = BudgetState(self.limits)
@@ -162,18 +276,24 @@ class SettingValidationService:
                 budget.consume("lookup")
                 return await asyncio.wait_for(action(*args), budget.remaining())
 
-            async def stage(role, ref, payload, response_type, validate, *, schema=None, prepare=None):
-                where["stage"] = f"{role}:{ref}"
-                saved = self.checkpoint.stage(role, ref) if self.checkpoint else None
-                value = response_type.model_validate(saved) if saved is not None else await call_role(
-                    self.model, role, payload, response_type, budget, schema=schema
-                )
+            async def stage(name, ref, payload, response_type, validate, *, schema=None, prepare=None,
+                            role=None, fixed=None):
+                # `role` is the trusted model/budget role when it differs from the stage name (GH349).
+                # `fixed` is a value no model output could change, stored without a call.
+                where["stage"] = f"{name}:{ref}"
+                saved = self.checkpoint.stage(name, ref) if self.checkpoint else None
+                if saved is not None:
+                    value = response_type.model_validate(saved)
+                elif fixed is not None:
+                    value = fixed
+                else:
+                    value = await call_role(self.model, role or name, payload, response_type, budget, schema=schema)
                 if prepare is not None:
                     # Normalized before validation and before the durable save the Backend checks.
                     value = prepare(value)
                 validate(value)
                 if self.checkpoint and saved is None:
-                    await self.checkpoint.save_stage(role, ref, value.model_dump())
+                    await self.checkpoint.save_stage(name, ref, value.model_dump())
                 return value
 
             frozen = await read(self.data.read_input)
@@ -227,23 +347,17 @@ class SettingValidationService:
             subject_order = list(dict.fromkeys(row["subject_ref"] for row in settings))
             entry_refs = [row["entry_ref"] for row in settings]
             source_refs = [source.ref for source in frozen.sources]
-            # Without frozen RAG an episode VECTOR lookup can only end in VECTOR_NOT_READY, so it is not offered.
-            search_operations = (("KEYWORD", "VECTOR")
-                                 if self.search is not None
-                                 or not any(source.kind == "EPISODE" for source in frozen.sources)
-                                 else ("KEYWORD",))
-            catalogue = [
-                {key: row[key] for key in ("entry_ref", "subject_ref", "domain", "name", "aliases")}
-                | {"paths": list(row["state"].get("slots", row["state"].get("propertiesJson", {})))}
-                for row in settings
-            ]
+            # GH331/GH344: VECTOR is offered only when an episode VECTOR lookup of this job can succeed.
+            search_operations = await self._prepare_search(frozen, budget, stats)
+            # GH349: identification only (PLANNER, SUBJECT_RESOLUTION, COVERAGE); one row per subject.
+            subject_rows = subject_catalogue(settings)
             segments = split_segments(
                 target,
                 core_chars=self.limits.segment_chars,
                 context_chars=self.limits.context_chars,
             )
             clues = collect_clues(
-                target, [name for row in catalogue for name in [row["name"], *row["aliases"]]]
+                target, [name for row in settings for name in [row["name"], *row["aliases"]]]
             )
             if execution:
                 clues = target_read.model_clues
@@ -268,6 +382,15 @@ class SettingValidationService:
             # One JUDGE schema per report: an identical system+schema prefix stays provider-cacheable.
             judge_schema = decision_schema(entry_refs=entry_refs, source_refs=source_refs,
                                            search_operations=search_operations)
+            resolution_schema = subject_resolution_schema(subject_refs=subject_order)
+
+            async def segment_subjects():
+                """Mechanical matches per segment: the server grid in execution, else the same rule locally."""
+                if not execution:
+                    return mechanical_subject_refs(settings, target, segments)
+                # The first published stage (PLANNER) makes the server prepare the SETTING grid.
+                grid = await self.checkpoint.setting_grid() if self.checkpoint is not None else None
+                return grid_segment_subjects(grid, segments, subjects)
 
             def intent_refs():
                 return IntentRefs(frozenset(entry_refs), frozenset(source_refs),
@@ -278,6 +401,18 @@ class SettingValidationService:
                     return segment.context_start <= start and end <= segment.context_end
                 return lambda value: normalize_batch(value, target, aliases=segment_refs,
                                                      accept=inside, stats=stats)
+
+            def coverage_prepare(segment, unread):
+                """Entries cut by MAX_COVERAGE_SETTINGS still need their rule row; a resumed batch already has it."""
+                prepare = batch_prepare(segment)
+
+                def merged(value):
+                    value = prepare(value)
+                    reported = {row.entry_ref for row in value.rules}
+                    missing = [RuleCoverage(entry_ref=ref, status="NOT_APPLICABLE", reason=COVERAGE_TRUNCATED_REASON)
+                               for ref in unread if ref not in reported]
+                    return value.model_copy(update={"rules": [*value.rules, *missing]}) if missing else value
+                return merged
 
             def batch_schema(segment, rule_refs=(), clue_refs=(), evidence_refs=(), *, cacheable=False):
                 return question_batch_schema(
@@ -300,12 +435,7 @@ class SettingValidationService:
                         "completed_checks": 0,
                     }
                 )
-            drafts, segment_inputs = [], {}
-            # Identification only. Selection below pages independently over all settings.
-            subject_catalogue = [
-                {key: row[key] for key in ("entry_ref", "subject_ref", "name", "aliases")}
-                for row in catalogue
-            ]
+            drafts, segment_inputs, mechanical = [], {}, None
             for segment in segments:
                 base = {
                     "segment": asdict(segment),
@@ -315,7 +445,7 @@ class SettingValidationService:
                     "target_source_ref": TARGET_REF,
                     "source_catalogue": source_catalogue,
                 }
-                common = {**base, "subject_catalogue": subject_catalogue}
+                common = {**base, "subject_catalogue": subject_rows}
                 segment_inputs[segment.ref] = common
                 first = await stage("PLANNER", segment.ref, common, QuestionBatch,
                                     lambda value, segment=segment: validate_batch(
@@ -324,40 +454,45 @@ class SettingValidationService:
                                     prepare=batch_prepare(segment))
                 coverage = self._record_coverage(coverage, "PLANNER", first)
                 drafts.extend((question, f"PLANNER:{segment.ref}") for question in first.questions)
-                selected = set()
-                for index in range(0, len(catalogue), self.limits.catalogue_page_size):
-                    page = catalogue[index : index + self.limits.catalogue_page_size]
-                    selection = await stage(
-                        "RELATED_SELECTION", f"{segment.ref}:PAGE{index // self.limits.catalogue_page_size + 1}",
-                        {
-                            **base,
-                            "catalogue": page,
-                        },
-                        RelatedSelection,
-                        lambda value, page=page: self._validate_selection(value, page),
-                        schema=selection_schema(entry_refs=[row["entry_ref"] for row in page]),
-                    )
-                    selected.update(
-                        entry.entry_ref for entry in selection.entries if entry.selected
-                    )
-                    coverage.append(
-                        {
-                            "role": "RELATED_SELECTION",
-                            "segment_ref": segment.ref,
-                            "selections": [entry.model_dump() for entry in selection.entries],
-                        }
-                    )
-                relevant = [row for row in settings if row["entry_ref"] in selected]
+                if mechanical is None:
+                    where["stage"] = f"SUBJECT_RESOLUTION:{segment.ref}"
+                    mechanical = await segment_subjects()
+                matched = mechanical[segment.ref]
+                # GH349: one RELATED_SELECTION-role call resolves non-literal mentions instead of paging the
+                # whole catalogue. With every subject already matched by name the result cannot change.
+                resolution = await stage(
+                    "SUBJECT_RESOLUTION", segment.ref,
+                    {**common, "mechanical_subject_refs": matched},
+                    SubjectResolution,
+                    lambda value: self._resolved_subjects(value, subjects),
+                    schema=resolution_schema, role="RELATED_SELECTION",
+                    fixed=None if subjects - set(matched) else SubjectResolution(mentions=[]),
+                )
+                resolved = self._resolved_subjects(resolution, subjects)
+                relevant_subjects = set(matched) | resolved
+                relevant = [row for row in settings if row["subject_ref"] in relevant_subjects]
+                selected = {row["entry_ref"] for row in relevant}
+                coverage.append({"role": "SUBJECT_RESOLUTION", "segment_ref": segment.ref,
+                                 "mechanical_subject_refs": list(matched),
+                                 "resolved_subject_refs": sorted(resolved, key=_subject_order),
+                                 "mentions": len(resolution.mentions)})
                 relevant_clues = [
                     clue for clue in clues if segment.start <= clue["span"]["start"] < segment.end
                 ]
-                rule_refs = [row["entry_ref"] for row in relevant]
+                shown = relevant[:MAX_COVERAGE_SETTINGS]
+                rule_refs = [row["entry_ref"] for row in shown]
+                unread = [row["entry_ref"] for row in relevant[len(shown):]]
+                if unread:
+                    stats["COVERAGE_SETTINGS_TRUNCATED"] += len(unread)
+                    logger.warning("coverage settings truncated total=%d kept=%d segment=%s",
+                                   len(relevant), len(shown), segment.ref)
                 second = await stage(
                     "COVERAGE", segment.ref,
                     {
                         **common,
-                        # GH331 S3: rules are reported only for these selected settings.
-                        "settings": relevant,
+                        # GH331 S3/GH349: rules are reported only for the relevant subjects' settings, which the
+                        # model reads as compact rows (amendment); the Worker adds the rows cut by the valve.
+                        "settings": [compact_setting_row(row) for row in shown],
                         "rule_refs": rule_refs,
                         "mechanical_clues": relevant_clues,
                     },
@@ -365,7 +500,7 @@ class SettingValidationService:
                     lambda value, segment=segment, selected=selected, clues=relevant_clues: self._validate_coverage(
                         value, segment, subjects, selected, target, clues, intent_refs()),
                     schema=batch_schema(segment, rule_refs, [clue["ref"] for clue in relevant_clues]),
-                    prepare=batch_prepare(segment),
+                    prepare=coverage_prepare(segment, unread),
                 )
                 coverage = self._record_coverage(coverage, "COVERAGE", second)
                 drafts.extend(
@@ -498,7 +633,9 @@ class SettingValidationService:
                                        if LookupIntent.model_validate(row) not in completed_intents]
             for ref, check in checks.items():
                 if check.get("outcome") is not None:
-                    bundles[ref] = check.get("bundle", check.get("decision", {}).get("evidence_bundle", {}))
+                    bundle = check.get("bundle", check.get("decision", {}).get("evidence_bundle", {}))
+                    bundles[ref] = ({**bundle, "settings": bundle_settings(bundle["settings"])}
+                                    if "settings" in bundle else bundle)
 
             async def save_runtime():
                 if self.checkpoint:
@@ -679,7 +816,7 @@ class SettingValidationService:
                         }
                         for span in draft.target_spans
                     ],
-                    "settings": relevant,
+                    "settings": bundle_settings(relevant),
                     "evidence": evidence,
                     "receipts": [
                         asdict(receipt) | {"intent": receipt.intent.model_dump()}
@@ -696,8 +833,15 @@ class SettingValidationService:
                 bundles[qref] = payload
                 await save_runtime()
                 where["stage"] = f"JUDGE:{qref}"
-                judgment = await call_role(self.model, "JUDGE", payload, ValidationDecision, budget,
-                                           schema=judge_schema)
+                # GH349 amendments: the bundle (published, 131,072-byte cap) carries refs only; the model reads
+                # compact rows except the entries it asked for with a BASELINE lookup, which it receives expanded
+                # (value history without evidence/provenance; a full production row exceeded the input cap).
+                requested = {ref for receipt in own_receipts[qref] if receipt.intent.operation == "BASELINE"
+                             for ref in receipt.intent.evidence_refs}
+                model_settings = [expanded_setting_row(row) if row["entry_ref"] in requested else compact_setting_row(row)
+                                  for row in relevant]
+                judgment = await call_role(self.model, "JUDGE", {**payload, "settings": model_settings},
+                                           ValidationDecision, budget, schema=judge_schema)
                 judgment = self._prepare_judgment(judgment, target, segment_refs, stats)
                 if judgment.action == "FOLLOW_UP":
                     if not judgment.follow_ups:
@@ -827,10 +971,20 @@ class SettingValidationService:
                                 "evidence_refs": tuple(row["evidence_refs"])})
 
     @staticmethod
-    def _validate_selection(selection, page):
-        if len(selection.entries) != len(page) or {row.entry_ref for row in selection.entries} != {
-            row["entry_ref"] for row in page}:
-            raise IncompleteInspection("RELATED_SELECTION_INCOMPLETE")
+    def _resolved_subjects(resolution, subjects):
+        """Validate SUBJECT_RESOLUTION like the server and return its non-null subject refs."""
+        def fail(cause):
+            return IncompleteInspection("SUBJECT_RESOLUTION_INVALID", "SUBJECT_RESOLUTION_" + cause)
+
+        mentions = [row.mention for row in resolution.mentions]
+        if any(not row.mention.strip() or not row.reason.strip() for row in resolution.mentions):
+            raise fail("BLANK")
+        if len(set(mentions)) != len(mentions):
+            raise fail("DUPLICATE_MENTION")
+        resolved = {row.subject_ref for row in resolution.mentions if row.subject_ref is not None}
+        if not resolved <= subjects:
+            raise fail("UNKNOWN_SUBJECT")
+        return resolved
 
     @staticmethod
     def _validate_coverage(batch, segment, subjects, selected, target, clues, intent_refs=None):
