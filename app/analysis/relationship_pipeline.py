@@ -6,6 +6,7 @@ The Spring completion transaction owns publication, never this pipeline.
 """
 
 from app.analysis.exceptions import OrderedInputContextError
+from app.analysis.relationship_diagnostics import annotate_relationship_failure
 from app.analysis.relationship_observations import RelationshipInputTooLargeError
 from app.exceptions.failure_classification import is_candidate_comparison_failure
 
@@ -25,6 +26,20 @@ class RelationshipAnalysisPipeline:
         self.context = None
         self.extractions = {}
         self.failure_code = None
+        self.failure_exception = None
+        self.failure_stage = "RELATIONSHIP_EXTRACTION"
+
+    def _record_failure(self, code, error=None, *, stage="RELATIONSHIP_EXTRACTION"):
+        # Ordinary extraction still isolates optional relationship failures; only
+        # the dedicated worker re-raises this typed cause after the safe fail API.
+        self.failure_code = code
+        self.failure_stage = stage
+        if code == "INPUT_TOO_LARGE":
+            error = annotate_relationship_failure(
+                error or RelationshipInputTooLargeError("Relationship input exceeds its budget."),
+                stage=stage, reason="RELATIONSHIP_INPUT_TOO_LARGE",
+            )
+        self.failure_exception = error
 
     async def load(self):
         context = await self.spring.get_relationship_analysis(
@@ -58,14 +73,14 @@ class RelationshipAnalysisPipeline:
                 episode_title=self.payload.episode.title,
             )
             if sum(len(result.observations) for result in self.extractions.values()) > MAX_EPISODE_OBSERVATIONS:
-                self.failure_code = "INPUT_TOO_LARGE"
-        except RelationshipInputTooLargeError:
-            self.failure_code = "INPUT_TOO_LARGE"
+                self._record_failure("INPUT_TOO_LARGE")
+        except RelationshipInputTooLargeError as exc:
+            self._record_failure("INPUT_TOO_LARGE", exc)
         except Exception as exc:
             if not is_candidate_comparison_failure(exc):
                 raise
             # Do not store provider/error text, which can contain the manuscript.
-            self.failure_code = "EXTRACTION_FAILED"
+            self._record_failure("EXTRACTION_FAILED", exc)
 
     async def finish(self, chunks):
         if self.context is not None and self.context["status"] in _TERMINAL_STATUSES:
@@ -93,7 +108,7 @@ class RelationshipAnalysisPipeline:
                         } for span in observation.evidence_spans],
                     })
             if len(observations) > MAX_EPISODE_OBSERVATIONS:
-                self.failure_code = "INPUT_TOO_LARGE"
+                self._record_failure("INPUT_TOO_LARGE")
             if self.failure_code is not None:
                 return await self._fail()
             context = await self.spring.prepare_relationship_analysis(
@@ -104,17 +119,18 @@ class RelationshipAnalysisPipeline:
             self._accept_context(context)
         if self.context["status"] in _TERMINAL_STATUSES:
             return {"relationshipAnalysisStatus": self.context["status"]}
+        self.failure_stage = "RELATIONSHIP_COMPARE"
         try:
             # Empty extraction is successful and never implies existing edges ended.
             decisions = (await self.comparator.compare(self.context)
                          if self.context["observations"] else [])
-        except RelationshipInputTooLargeError:
-            self.failure_code = "INPUT_TOO_LARGE"
+        except RelationshipInputTooLargeError as exc:
+            self._record_failure("INPUT_TOO_LARGE", exc, stage="RELATIONSHIP_COMPARE")
             return await self._fail()
         except Exception as exc:
             if not is_candidate_comparison_failure(exc):
                 raise
-            self.failure_code = "COMPARISON_FAILED"
+            self._record_failure("COMPARISON_FAILED", exc, stage="RELATIONSHIP_COMPARE")
             return await self._fail()
         await self.spring.complete_relationship_analysis(
             self.payload.analysis_job_id, self.payload.lease_token,
@@ -126,6 +142,8 @@ class RelationshipAnalysisPipeline:
                 "relationshipDecisionCount": len(decisions)}
 
     async def _fail(self):
+        if self.failure_code == "INPUT_TOO_LARGE" and self.failure_exception is None:
+            self._record_failure("INPUT_TOO_LARGE", stage=self.failure_stage)
         await self.spring.fail_relationship_analysis(
             self.payload.analysis_job_id, self.payload.lease_token,
             {"formatVersion": 1, "sourceHash": self.source_hash,

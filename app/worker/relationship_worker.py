@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from hashlib import sha256
 from uuid import UUID, uuid5
 
-from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.exceptions import (
+    ComparisonValidationError,
+    OrderedAnalysisIncompleteError,
+    OrderedInputContextError,
+)
 from app.analysis.relationship_comparator import RelationshipComparator
 from app.analysis.relationship_extractor import DEFAULT_RELATIONSHIP_MODEL, RelationshipExtractor
 from app.analysis.relationship_pipeline import RelationshipAnalysisPipeline
@@ -100,6 +104,7 @@ class RelationshipWorker:
         return await self.spring_client.heartbeat_relationship_job(analysis_job_id, lease_token)
 
     async def process_claimed(self, payload: WorkerAnalysisJobPayload):
+        pipeline = None
         try:
             self._validate_payload(payload)
             async with WorkerLeaseHeartbeat(
@@ -130,6 +135,15 @@ class RelationshipWorker:
                 with worker_span("analysis.relationship.process"):
                     summary = await pipeline.finish(chunks)
                 if summary.get("relationshipAnalysisStatus") == "FAILED":
+                    if pipeline.failure_exception is not None:
+                        # The CLI prints exception messages. Retain only typed safe
+                        # metadata, never a provider exception that can contain text.
+                        raise OrderedAnalysisIncompleteError(
+                            analysis_failure_code(pipeline.failure_exception),
+                            failure_diagnostics=failure_diagnostics(
+                                pipeline.failure_exception, stage=pipeline.failure_stage,
+                            ),
+                        ) from None
                     raise ComparisonValidationError("Relationship analysis did not complete.")
                 heartbeat.raise_if_failed()
             # This endpoint publishes only the relation generation/cursor. It never
@@ -146,7 +160,9 @@ class RelationshipWorker:
                     payload.lease_token,
                     error_message="Relationship-only analysis failed.",
                     failure_code=analysis_failure_code(exc),
-                    failure_diagnostics=failure_diagnostics(exc, stage="EXTRACTION"),
+                    failure_diagnostics=failure_diagnostics(
+                        exc, stage=pipeline.failure_stage if pipeline is not None else "RELATIONSHIP_EXTRACTION",
+                    ),
                 )
             except Exception:  # noqa: BLE001 - retain the original failure if reporting fails
                 # Do not emit the source/provider/transport exception body.
