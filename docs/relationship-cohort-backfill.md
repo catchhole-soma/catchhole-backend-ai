@@ -109,6 +109,9 @@ Worker 입력은 `jobType=RELATIONSHIP_EXTRACTION`, `sourceKind=EPISODE`,
 `analysisMode=CONFIRMED_ONLY`, 정수 `relationshipAnalysisContract.formatVersion=1`이다.
 전용 claim/heartbeat/complete/fail을 사용하며, prepare/관계 결정 저장과 토큰 원장은 기존
 `/api/internal/v1/analysis-jobs/{id}/relationship-analysis` 계열을 재사용한다.
+복구를 지원하는 전용 Worker는 claim에 `supportsRelationshipRecovery: true`도 광고한다.
+일반 분석 claim에는 이 필드를 추가하지 않는다. 서버가 관리하는 복구 대상·횟수·서비스 부담
+경계를 Worker에서 넓히거나 DB 상태를 직접 초기화하지 않는다.
 
 원문의 key·version·SHA-256·회차 번호와 보관/파기 상태를 고정/검증한다. 관계 관측의
 인용 위치도 기존 규칙대로 검증한다. 프로필 연결은 회차 cutoff 이전의 확인된 후보 출처만
@@ -130,6 +133,11 @@ Worker 입력은 `jobType=RELATIONSHIP_EXTRACTION`, `sourceKind=EPISODE`,
   포함하고 실제 사용량이 더 크면 큰 값을 사용한다. 캠페인 전체의 원화/달러 예산은 아니다.
 - Worker는1프로세스·동시Job1·동시모델호출1이다. 기존 관계 Terra 모델/프롬프트를 재사용한다.
   원문 최대2MB·12청크를 넘으면 자르지 않고 실패한다. 캐릭터·세계관·임베딩 호출은 없다.
+  비교 입력이64k를 넘을 때만 인물 쌍과 과거 보류의 연결 범위를 보존해 최대16개 순차 호출로
+  나누며, 첫 호출 전에 전체 계획을 검사한다. 단일 묶음 초과는 그대로 실패한다.
+  원문·관찰을 잘라 성공으로 만들거나 비교 출력 repair를 추가하지 않는다.
+  전체 O coverage·관계 슬롯·512개 결정 상한은 결합 후 다시 검사한다.
+  상세 분할·안전한 실패 진단 계약은 [회차 관계 계약](episode-relationships.md)을 따른다.
   Worker 기동은 자동이지만 새 metrics 포트 9109의 Prometheus 수집은 기존 배포 안내에 따른
   target·SG 갱신이 별도로 필요하다. 이는 분석 실행의 필수 조건은 아니다.
 - lease는60초, 전용 Worker heartbeat는20초다. 프로세스가 죽으면 만료 작업을 회수하여

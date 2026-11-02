@@ -96,6 +96,7 @@
 
 - 관계는 EPISODE/SETTING_EXTRACTION에서만 `supportsRelationshipAnalysis=true`와 서버 v1 계약으로 활성화한다. 계약이 없으면 관계 API/모델을 호출하지 않는다. 캐릭터·세계관 prompt/schema/model/평가 Gold는 변경하지 않는다.
 - 관계 1차와 2차는 별도 Terra/medium client, input 64k/output 16k, metering 재시도 0이다. 1차는 기존 두 추출과 병렬, 2차는 기존 세계관 비교와 병렬이며 전역 semaphore·계량을 공유한다.
+- 관계 비교의 전체 문맥이 64k 이내이면 단일 호출을 유지한다. 초과 시에만 O/H의 가능한 unordered endpoint pair가 겹치는 연결 묶음으로 나누며, H의 간접 연결·동일 pair 모든 슬롯·원래 ref/순서/근거를 보존한다. O 없는 H는 소비하지 않는다. 최대16개 순차 호출의 전체 입력 계획을 첫 호출 전에 검사하고 단일 묶음 초과는 실패한다. 결합 후 전체 고정 문맥으로 schema512·coverage·슬롯을 재검증하며 부분 저장·출력 repair·원문 절단을 하지 않는다. 진단은 공통 fixture의 고정 reason/stage만 보존하고 전용 Worker가 원본 provider 오류 문자열을 runner로 전파하지 않는다.
 - 1차 원문 조각 ID에서 quote·Unicode offset을 복원하고 2차에는 요청별 N/R/O/H 참조만 전달한다. Python은 DB 관계를 직접 쓰지 않으며 lease·원문·권한·quota·Spring 오류를 의미 실패로 숨기지 않는다.
 - ADD/MERGE/UPDATE/END/EXCLUDE/HOLD의 coverage·시점·참조·중복을 검증한다. 보류는 내부 상태로 저장하고 필수 사용자 검토 큐를 만들지 않는다. 이름 없는 1인칭/역할을 주인공으로 추정하지 않으며 자동 해소를 보장하지 않는다.
 - PREPARED는 추출을 재호출하지 않고 COMPLETED/FAILED는 관계 모델을 재호출하지 않는다. 회차 이력/무효화/실제 반영은 Spring 계약을 따른다. 공통 `docs/episode-relationships.md`를 Java·프론트와 동기화하며 실제 모델·합성 매핑·DB 검증을 구분한다.
