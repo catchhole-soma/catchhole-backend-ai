@@ -67,9 +67,9 @@ slot은 두 노드 + axis + kind + direction이다. DIRECTED는 순서를 보존
 
 실패 요청은 `{formatVersion:1,sourceHash,contextToken,failureCode,failureDiagnostics?}`다. optional 진단은 공통 v1의 허용 코드·검사·승인된 짧은 구절만 정제해 첫 실패에 보존하며, 구 Worker의 4필드 요청도 허용한다. failureCode는 INVALID_RESPONSE, EXTRACTION_FAILED, COMPARISON_FAILED, INPUT_TOO_LARGE다.
 
-한 prepare 최대 신규 관측 384개, 관측당 인용 1~12개, 한 인용 480 code point 이하, 관측당 인용 총 4000 code point 이하, 이름/mention 100 이하, 관측 summary 300 이하. 관계 설명 summary는 500 이하. 완료 결정 최대 512개, label 60 이하, reason 500 이하. 관련 H가 384개 또는 비교 문맥의 노드/관계가 각각 1536개를 초과하면 자르지 않고 FAILED/INPUT_TOO_LARGE Context를 저장해 반환한다. `rejectedObservationCount`는 검증 탈락을 성공한 빈 결과로 숨기지 않기 위한 비음수 개수다.
+한 prepare 최대 신규 관측 384개, 관측당 인용 1~12개, 한 인용 480 code point 이하, 관측당 인용 총 4000 code point 이하, 이름/mention 100 이하, 관측 summary 300 이하. 관계 설명 summary는 500 이하. 완료 결정 최대 512개, label 60 이하, reason 500 이하. legacy는 한쪽 인물이라도 겹치는 과거 R/H를 포함한다. 새 partial Context는 양쪽 인물이 각각 하나로 해소된 신규 O의 정확한 무방향 쌍에 필요한 R/H만 먼저 투영한다. 미해소·다른 쌍의 H는 저장에 남기고 이 입력에서는 제외한다. 투영 후 관련 H가 384개 또는 비교 문맥의 노드/관계가 각각 1536개를 초과하면 자르지 않고 FAILED/INPUT_TOO_LARGE Context를 저장해 반환한다. `rejectedObservationCount`는 검증 탈락을 성공한 빈 결과로 숨기지 않기 위한 비음수 개수다.
 
-### 비교 입력 상한과 실패 진단 보완 (GH332)
+### 기존 단일 완료 계약의 비교 입력 상한과 실패 진단 (GH332)
 
 전체 고정 비교 문맥이 64,000 추정 입력 토큰 이내이면 기존 Terra/medium 단일 호출과 prompt/schema를 그대로 사용한다. 상한을 넘을 때만 O/H의 `sourceNodeRefs × targetNodeRefs`가 만드는 가능한 무방향 인물 쌍을 기준으로 나눈다. 가능한 쌍이 겹치는 관측은 같은 묶음이며, 과거 H가 여러 묶음을 잇거나 H끼리 이어지는 경우도 모두 합친다. 가능한 쌍 전체를 메모리에 생성하지 않고 endpoint 집합의 교집합으로 겹침을 검사한다. 방향·axis·kind가 다른 같은 인물 쌍을 분리하지 않는다. 인물 후보가 없는 관측을 이름 추측으로 해소하지 않는다.
 
@@ -78,6 +78,68 @@ slot은 두 노드 + axis + kind + direction이다. DIRECTED는 순서를 보존
 각 O는 정확히 한 묶음에 배정하지만 기존 계약처럼 그 O를 서로 다른 관계 결정에 여러 번 사용할 수 있다. 묶음별 결과를 모두 받은 뒤 원래 전체 문맥으로 결정 최대 512개·전체 O coverage·참조·시점·중복 슬롯을 다시 검증한다. 검증 전에는 부분 결과를 Spring에 저장하지 않는다. 다른 인물 쌍의 문맥이 줄어들 수 있으므로 이 분할은 상한 초과 경로에만 적용하며, 실제 모델 의미 품질 개선을 자동으로 보장하지 않는다.
 
 진단은 공통 `relationship-failure-diagnostics-v1.json`의 고정 코드만 사용한다. stage는 `RELATIONSHIP_EXTRACTION`/`RELATIONSHIP_COMPARE`이며, JSON/schema·관측 coverage·순서·슬롯·MERGE 내용 변경·인물 해소·입력 상한 등을 구분한다. 전체 원문·전체 모델 응답·예외 원문은 기록하지 않는다. 사용자 승인된 짧은 문제 구절은 GH357의 최대 3개·각 120 code point 제한을 따른다. 관계 pipeline은 원본 실패의 분류와 안전한 진단을 관계 fail API 및 전용 Worker에 전달하고, 상위 runner에는 고정 메시지만 노출한다. 일반 캐릭터/세계관 분석에서 관계 실패를 격리하는 의미는 유지한다.
+
+### 인물 쌍별 부분 완료 (GH359)
+
+`formatVersion=1`을 유지하며 claim의 `supportsRelationshipPartialResults=true`와 서버가
+새 Job에 동결한 `relationshipAnalysisContract.supportsPartialResults=true`, Context의
+`supportsPartialResults=true`가 모두 있을 때만 다음 추가 계약을 사용한다. 기존 고정 v1
+작업은 새 Worker가 재선점해도 승격하지 않는다. 새 복구 Job은 보존된 추출 관측으로 새
+Context를 준비하면서 활성화할 수 있다. 구 Worker는 능력이 동결된 Job 및 현재 공개/생성
+세대에 유효한 부분 실패가 있는 작품의 후속 관계 작업을 claim하지 않는다.
+
+모델 입력은 인물 쌍별 그룹으로 구성하고 같은 두 인물의 방향·axis·kind는 한 그룹에서 판단한다.
+이미 연결된 두 인물의 참조는 모델에게 다시 작성시키지 않는다. 이름이 미확정인 새 O는 내부
+HOLD로 보존하고, 미확정 또는 다른 쌍의 H는 모델 입력에서 제외하되 원래 보류를 삭제·소비하지
+않는다. 명확하지 않은 지속 관계를 추측하기보다 직접 입증된 상호작용만 표현한다. 별칭·동일성
+추정 병합이나 사용자에게 보류 목록을 검토시키는 기능은 추가하지 않는다.
+
+구조/검증 실패는 해당 쌍에 한 번만 제한적으로 다시 묻는다. 참조나 JSON을 읽을 수 없어
+영향 범위를 특정할 수 없으면 해당 호출의 그룹 전체가 대상이다. 초기 최대 16 batch와 실패
+그룹의 repair 최대 16 batch, 총 최대 32 provider 호출이며 repair 입력 여유도 미리 검사한다.
+비교 batch는 출력에도 여유를 둔다. 쌍당512토큰을 계획값으로 잡고 출력의20% 이상을
+추론·변동 여유로 남기며 batch당최대24쌍이다. 기본 출력16,000에서는384쌍도16batch에
+들어간다. 512는 보장 상한이나 응답 절단 기준이 아니며, 한 쌍의 전체 O/H를 쪼개거나
+출력 추정만으로 해당 쌍을 실패시키지 않는다. 실제 출력 절단은 기존 실행 실패로 남는다.
+한 쌍의 입력 또는 전체 호출 상한 초과는 `RELATIONSHIP_INPUT_TOO_LARGE`로 보존한다.
+최종 512개 결정 상한을 넘기는 쌍은 `RELATIONSHIP_RESPONSE_SCHEMA_INVALID`로 보존한다.
+provider HTTP/timeout/output truncation, quota, lease, 권한, 고정 문맥·원문·저장 오류는 이
+복구나 부분 완료로 숨기지 않는다. 추가 호출도 기존 예약/정산과 사용자·서비스 부담 정책을 따른다.
+
+완료 요청은 기존 `decisions`와 `failures:[{observationRefs:["O1","O2"],reasonCode:"RELATIONSHIP_ENDPOINTS_UNGROUNDED"}]`를
+함께 보낸다. 실패는 양쪽 인물이 유일한 같은 무방향 인물 쌍의 새 O 전체여야 하며, 성공과
+실패의 출처는 겹치지 않고 전체 새 O를 덮어야 한다. 정상 결정의 주체·근거·시점·중복 slot·
+MERGE 불변 검증은 유지한다. reason은 기존 RELATIONSHIP 진단 중 CONTEXT_INVALID를 제외한
+코드와 `RELATIONSHIP_PREDECESSOR_INCOMPLETE`만 허용한다. 임의 오류 문자열은 받지 않는다.
+
+Spring은 정상 결정과 failures를 원자로 저장한다. 부분 계약의 terminal Context는 빈 배열을
+포함해 `failures`를 항상 반환하므로 완료 직전 재시작이 실패를 지우거나 provider를 재호출하지
+않는다. graph는 APPLIED에서도 failures와 `failure_code=PARTIAL_COMPARISON_FAILED`를
+보존한다. 실행 Job의 SUCCEEDED는 결과의 완전 성공이 아니며 전용 회차 항목은 PARTIAL이다.
+
+앞 회차 실패 쌍은 Context의 local N 번호가 아닌 저장된 node UUID로 연결한다. 현재 새 O에
+필요한 쌍만 `blockedPairs:[{sourceNodeRef,targetNodeRef,firstFailedEpisodeNo}]`로 동결한다.
+이 쌍의 후속 O는 provider에 보내지 않고 PREDECESSOR_INCOMPLETE로 남겨 누락 상태 위에서
+UPDATE/END하지 못하게 한다. 독립 쌍은 진행한다. 앞부분 복구는 후행 무효화·순서 재구성이
+필요하며 이 변경은 기존 자동 복구 예산을 늘리지 않는다. 원문 추출 전체 실패는 FAILED이고
+전용 백필은 BLOCKED다. 거절된 추출 관측처럼 실패 쌍을 모르면 기술 확인 범위를 보수적으로
+표시하되 새로운 전역 실행 차단으로 확대하지 않는다.
+
+APPLIED의 새 기술 실패는 V111 trigger가 기존 outbox에 RELATIONSHIP_COMPARISON으로
+기록한다. V107의 서버 생성 실행 시도 ID와 발송 묶음을 재사용하고, V109의 검사·발췌 정제는
+유지한다. 이 새 사건은 허용 reason별 인물 쌍 개수와 안전한 ID만 저장하며 후보/실패 작업 수와
+구분해서 표시한다. 선행 실패의 파급은 반복 알림하지 않는다. 동일 완료 재전송은 같은 completion hash를 요구하며 event·알림을 중복 생성하지 않는다.
+
+공개 Graph의 `updateIncomplete`와 `incompleteEpisodeNos`는 선택 회차/공개 세대의 기술적
+누락만 표시한다. 기존 `partial`에는 의미상 HOLD도 포함되므로 기술 실패로 해석하지 않는다.
+Edge의 `lastVerifiedEpisodeNo`는 해당 쌍의 기술적 완료가 이어진 마지막 회차다. 변경이 없는
+정상 회차에서도 진행하고 첫 쌍 실패 또는 위치 미상의 전체 누락 앞에서 멈춘다. 관계 변경 회차와
+다르며 서사 의미의 절대 정확성 보장은 아니다. 0은 확인 가능한 완료 구간이 없다는 뜻이다.
+미완료인 이전 edge를 현재까지 다시 확인한 사실처럼 표시하지 않고, 전체 실패 때 빈 그래프를
+완료로 표시하지 않는다. 내부 보류·실패 refs·응답 전문은 공개하지 않는다.
+
+배포 순서는 Java(V111·능력 gate) → AI(pair-group 계약) → Front(미완료 표시)다. 운영 데이터
+변경·유료 재실행·기존 복구 count 초기화는 이 변경에 포함하지 않는다.
 
 ## 공개 API
 
@@ -90,13 +152,15 @@ slot은 두 노드 + axis + kind + direction이다. DIRECTED는 순서를 보존
 | PATCH | 위 경로 + `/edges/{edgeId}` | updateEpisodeRelationshipEdge |
 | DELETE | 위 경로 + `/edges/{edgeId}?expectedVersion=N` | deleteEpisodeRelationshipEdge |
 
-Graph: `selectedEpisode,availableEpisodes,revision,nodes,edges,truncated,totalEdgeCount,analysisStatus,partial`.
+Graph: `selectedEpisode,availableEpisodes,revision,nodes,edges,truncated,totalEdgeCount,analysisStatus,partial,updateIncomplete,incompleteEpisodeNos`.
 Episode: `id,episodeNo,title`. 프론트 회차 선택은 스포일러를 줄이기 위해 N화만 사용한다.
 Node: `id,name,description,profileRegistered`. v1 description은 null.
-Edge: `id,sourceNodeId,targetNodeId,axis,kind,label,summary,direction,status,version,evidenceCount`.
+Edge: `id,sourceNodeId,targetNodeId,axis,kind,label,summary,direction,status,version,evidenceCount,lastVerifiedEpisodeNo,updateIncomplete`.
 Detail: `edge,sourceNode,targetNode,evidence,version`. 근거는 `episodeId,episodeNo,episodeTitle,quote,startOffset,endOffset`이며 선택 회차 이후 근거를 보내지 않는다.
 
 analysisStatus는 NOT_ANALYZED, PROCESSING, COMPLETED, PARTIAL, FAILED, INVALIDATED다. partial은 거절된 관측/미해결 보류/실패 또는 빠진 관계 분석이 있다는 뜻이며 사용자 검토 요청이 아니다. 최신 분석이 실패하면 기존 성공 회차 그래프를 보여주더라도 FAILED를 유지한다. 공개 그래프는 200개 edge까지 반환하고 초과 시 truncated=true와 실제 totalEdgeCount를 반환한다. 상세 API에는 이 표시 제한을 적용하지 않는다.
+
+새 partial Context의 사용자 정정·삭제 의존성은 신규 O의 실제 stable node UUID 쌍에 한정한다. 관계 ID와 삭제 억제는 세대 간 공유되므로 같은 쌍의 다른 세대 edge도 검사한다. 무관한 쌍 정정은 진행 중인 비교를 중단시키지 않으며, 같은 쌍 정정·삭제와 원문·앞 회차 반영·세대 변경은 기존 충돌 보호를 유지한다. 이 범위는 내부 binding `dependencyPairScopeVersion=1`로 고정하고 `pairDependencyRevision`을 검증한다. 기존 `dependencyRevision`도 전체 범위 해시로 함께 보존하여 구 Java reader가 수정 없는 새 문맥을 재개할 수 있게 한다. marker가 없는 기존 PREPARED/COMPLETED Context는 종전 전체 의존성 해시를 그대로 검증하며 배포 시 새 범위로 바꾸지 않는다.
 
 PATCH 입력은 `{expectedVersion,summary}`이며 summary는 앞뒤 공백 없는 1~500 code point다. 수정/삭제는 서사의 새 사건이 아니라 분석 오류 정정이므로 모든 회차에 적용한다. 충돌은 409다. 삭제는 canonical slot 억제 기록을 유지해 다음 분석과 재분석이 같은 연결을 되살리지 못하게 한다. v1에는 이 억제를 취소하는 공개 API가 없다. 프로필 연결/직접 관계 추가도 이번 API 범위 밖이다.
 
@@ -104,7 +168,7 @@ PATCH 입력은 `{expectedVersion,summary}`이며 summary는 앞뒤 공백 없�
 
 Flyway V101이 `relationship_graph_analyses/nodes/edges/events`와 `analysis_jobs.relationship_analysis_enabled`를 추가한다. 관계 event는 analysis+edge마다 하나이며 회차별 읽기는 최신 유효 분석만 사용한다. 관계 edge와 node는 재분석 후에도 ID를 보존해 사용자 수정과 삭제를 유지한다.
 
-작품 파기는 관계 event→edge→node→analysis 순서로 삭제한다. 회차 원문 파기는 해당 회차 이후의 동결 Context/decision/binding과 복사된 인용을 지우고 후행 결과를 무효화한다. 캐릭터 삭제는 노드의 profile FK만 null로 만들고 관계 이력을 보존한다.
+작품 파기는 관계 event→edge→node→analysis 순서로 삭제한다. 회차 원문 파기는 해당 회차 이후의 동결 Context/decision/failure/binding과 복사된 인용을 지우고 후행 결과를 무효화한다. 캐릭터 삭제는 노드의 profile FK만 null로 만들고 관계 이력을 보존한다.
 
 ## 검증
 

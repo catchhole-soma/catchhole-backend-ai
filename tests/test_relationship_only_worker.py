@@ -643,6 +643,7 @@ def test_relationship_job_wire_routes_lease_and_timeouts_are_separate():
     assert json.loads(requests[0].content)["allowedJobTypes"] == ["RELATIONSHIP_EXTRACTION"]
     assert json.loads(requests[0].content)["supportedSourceKinds"] == ["EPISODE"]
     assert json.loads(requests[0].content)["supportsRelationshipRecovery"] is True
+    assert json.loads(requests[0].content)["supportsRelationshipPartialResults"] is True
     assert requests[1].extensions["timeout"]["read"] == 30.0
     assert requests[2].extensions["timeout"]["read"] == 120.0
 

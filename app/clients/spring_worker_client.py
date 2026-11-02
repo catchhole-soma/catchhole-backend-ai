@@ -125,6 +125,7 @@ class SpringWorkerClient:
         supports_semantic_current_context: bool | None = None,
         supports_frozen_comparison_evidence: bool | None = None,
         supports_relationship_analysis: bool | None = None,
+        supports_relationship_partial_results: bool | None = None,
     ) -> WorkerAnalysisJobPayload | None:
         request = WorkerAnalysisJobClaimRequest(
             model_name=model_name,
@@ -137,6 +138,7 @@ class SpringWorkerClient:
             supports_semantic_current_context=supports_semantic_current_context,
             supports_frozen_comparison_evidence=supports_frozen_comparison_evidence,
             supports_relationship_analysis=supports_relationship_analysis,
+            supports_relationship_partial_results=supports_relationship_partial_results,
         )
         response = await self._request(
             "POST",
@@ -157,6 +159,7 @@ class SpringWorkerClient:
             model_name="gpt-6.1-terra", supported_analysis_modes=[AnalysisMode.CONFIRMED_ONLY],
             supported_source_kinds=[AnalysisSourceKind.EPISODE], supports_relationship_analysis=True,
             supports_relationship_recovery=True,
+            supports_relationship_partial_results=True,
         )
         response = await self._request(
             "POST", self._url("/api/internal/v1/relationship-jobs/claim"),

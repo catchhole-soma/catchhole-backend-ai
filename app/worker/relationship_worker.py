@@ -137,8 +137,14 @@ class RelationshipWorker:
                         pipeline._record_failure("INPUT_TOO_LARGE", checks=[failure_check("chunkCount", "MAX", self._max_chunks, len(chunks))])
                         chunks = []
                 heartbeat.raise_if_failed()
-                with worker_span("analysis.relationship.process"):
+                with worker_span("analysis.relationship.process") as span:
                     summary = await pipeline.finish(chunks)
+                    if summary.get("relationshipAnalysisStatus") == "PARTIAL":
+                        span.set_outcome("partial", error=True)
+                        span.set_attributes({
+                            "analysis.relationship.failed_observation_count": summary.get("relationshipFailureCount", 0),
+                            "analysis.relationship.failed_group_count": summary.get("relationshipFailedGroupCount", 0),
+                        })
                 if summary.get("relationshipAnalysisStatus") == "FAILED":
                     if pipeline.failure_exception is not None:
                         # The CLI prints exception messages. Retain only typed safe
@@ -196,6 +202,7 @@ class RelationshipWorker:
             or not isinstance(contract, dict)
             or type(contract.get("formatVersion")) is not int
             or contract["formatVersion"] != 1
+            or type(contract.get("supportsPartialResults", False)) is not bool
         ):
             raise OrderedInputContextError("Invalid relationship-only job contract.")
 
