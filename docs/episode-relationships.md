@@ -67,7 +67,7 @@ slot은 두 노드 + axis + kind + direction이다. DIRECTED는 순서를 보존
 
 실패 요청은 `{formatVersion:1,sourceHash,contextToken,failureCode}`다. failureCode는 INVALID_RESPONSE, EXTRACTION_FAILED, COMPARISON_FAILED, INPUT_TOO_LARGE다.
 
-한 prepare 최대 신규 관측 384개, 관측당 인용 1~12개, 한 인용 480 code point 이하, 관측당 인용 총 4000 code point 이하, 이름/mention 100 이하, 관측 summary 300 이하. 관계 설명 summary는 500 이하. 완료 결정 최대 512개, label 60 이하, reason 500 이하. 관련 H가 384개 또는 비교 문맥의 노드/관계가 각각 1536개를 초과하면 자르지 않고 FAILED/INPUT_TOO_LARGE Context를 저장해 반환한다. `rejectedObservationCount`는 검증 탈락을 성공한 빈 결과로 숨기지 않기 위한 비음수 개수다.
+한 prepare 최대 신규 관측 384개, 관측당 인용 1~12개, 한 인용 480 code point 이하, 관측당 인용 총 4000 code point 이하, 이름/mention 100 이하, 관측 summary 300 이하. 관계 설명 summary는 500 이하. 완료 결정 최대 512개, label 60 이하, reason 500 이하. legacy는 한쪽 인물이라도 겹치는 과거 R/H를 포함한다. 새 partial Context는 양쪽 인물이 각각 하나로 해소된 신규 O의 정확한 무방향 쌍에 필요한 R/H만 먼저 투영한다. 미해소·다른 쌍의 H는 저장에 남기고 이 입력에서는 제외한다. 투영 후 관련 H가 384개 또는 비교 문맥의 노드/관계가 각각 1536개를 초과하면 자르지 않고 FAILED/INPUT_TOO_LARGE Context를 저장해 반환한다. `rejectedObservationCount`는 검증 탈락을 성공한 빈 결과로 숨기지 않기 위한 비음수 개수다.
 
 ### 기존 단일 완료 계약의 비교 입력 상한과 실패 진단 (GH332)
 
@@ -97,6 +97,10 @@ HOLD로 보존하고, 미확정 또는 다른 쌍의 H는 모델 입력에서 �
 구조/검증 실패는 해당 쌍에 한 번만 제한적으로 다시 묻는다. 참조나 JSON을 읽을 수 없어
 영향 범위를 특정할 수 없으면 해당 호출의 그룹 전체가 대상이다. 초기 최대 16 batch와 실패
 그룹의 repair 최대 16 batch, 총 최대 32 provider 호출이며 repair 입력 여유도 미리 검사한다.
+비교 batch는 출력에도 여유를 둔다. 쌍당512토큰을 계획값으로 잡고 출력의20% 이상을
+추론·변동 여유로 남기며 batch당최대24쌍이다. 기본 출력16,000에서는384쌍도16batch에
+들어간다. 512는 보장 상한이나 응답 절단 기준이 아니며, 한 쌍의 전체 O/H를 쪼개거나
+출력 추정만으로 해당 쌍을 실패시키지 않는다. 실제 출력 절단은 기존 실행 실패로 남는다.
 한 쌍의 입력 또는 전체 호출 상한 초과는 `RELATIONSHIP_INPUT_TOO_LARGE`로 보존한다.
 최종 512개 결정 상한을 넘기는 쌍은 `RELATIONSHIP_RESPONSE_SCHEMA_INVALID`로 보존한다.
 provider HTTP/timeout/output truncation, quota, lease, 권한, 고정 문맥·원문·저장 오류는 이
@@ -154,6 +158,8 @@ Edge: `id,sourceNodeId,targetNodeId,axis,kind,label,summary,direction,status,ver
 Detail: `edge,sourceNode,targetNode,evidence,version`. 근거는 `episodeId,episodeNo,episodeTitle,quote,startOffset,endOffset`이며 선택 회차 이후 근거를 보내지 않는다.
 
 analysisStatus는 NOT_ANALYZED, PROCESSING, COMPLETED, PARTIAL, FAILED, INVALIDATED다. partial은 거절된 관측/미해결 보류/실패 또는 빠진 관계 분석이 있다는 뜻이며 사용자 검토 요청이 아니다. 최신 분석이 실패하면 기존 성공 회차 그래프를 보여주더라도 FAILED를 유지한다. 공개 그래프는 200개 edge까지 반환하고 초과 시 truncated=true와 실제 totalEdgeCount를 반환한다. 상세 API에는 이 표시 제한을 적용하지 않는다.
+
+새 partial Context의 사용자 정정·삭제 의존성은 신규 O의 실제 stable node UUID 쌍에 한정한다. 관계 ID와 삭제 억제는 세대 간 공유되므로 같은 쌍의 다른 세대 edge도 검사한다. 무관한 쌍 정정은 진행 중인 비교를 중단시키지 않으며, 같은 쌍 정정·삭제와 원문·앞 회차 반영·세대 변경은 기존 충돌 보호를 유지한다. 이 범위는 내부 binding `dependencyPairScopeVersion=1`로 고정하고 `pairDependencyRevision`을 검증한다. 기존 `dependencyRevision`도 전체 범위 해시로 함께 보존하여 구 Java reader가 수정 없는 새 문맥을 재개할 수 있게 한다. marker가 없는 기존 PREPARED/COMPLETED Context는 종전 전체 의존성 해시를 그대로 검증하며 배포 시 새 범위로 바꾸지 않는다.
 
 PATCH 입력은 `{expectedVersion,summary}`이며 summary는 앞뒤 공백 없는 1~500 code point다. 수정/삭제는 서사의 새 사건이 아니라 분석 오류 정정이므로 모든 회차에 적용한다. 충돌은 409다. 삭제는 canonical slot 억제 기록을 유지해 다음 분석과 재분석이 같은 연결을 되살리지 못하게 한다. v1에는 이 억제를 취소하는 공개 API가 없다. 프로필 연결/직접 관계 추가도 이번 API 범위 밖이다.
 
