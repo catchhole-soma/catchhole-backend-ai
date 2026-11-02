@@ -42,6 +42,9 @@ c.chunk_hash,s.source_key,s.source_version,s.source_hash,s.chunk_policy"""
 
 class RetrievalSearchRepository:
     from_clause = CURRENT_FROM
+    # 키워드 순위를 단어 희귀도(완만한 BM25 IDF)로 가중한다. 하위 저장소가 별도 평가 전까지 기존
+    # 일치 단어 비율 순위를 유지해야 하면 False로 둔다.
+    rarity_weighted_keyword = True
 
     def __init__(self, session, scope: SearchScope, spec: IndexSpec):
         self.session, self.scope, self.spec = session, scope, spec
@@ -106,12 +109,48 @@ class RetrievalSearchRepository:
             for n, term in enumerate(terms)
         }
         matches = [f"c.chunk_text ILIKE :pattern_{n} ESCAPE '\\'" for n in range(len(terms))]
+        if self.rarity_weighted_keyword:
+            return self._rarity_weighted_keyword(matches, params, limit, preferred_episode_ids)
         score = " + ".join(f"CASE WHEN {match} THEN 1.0 ELSE 0.0 END" for match in matches)
         return self._rows(
             f"SELECT {FIELDS},({score})/{len(terms)} AS score {self.from_clause} "
             f"AND ({' OR '.join(matches)}) "
             "ORDER BY score DESC,(e.id=ANY(CAST(:preferred AS uuid[]))) DESC,"
             "e.episode_no,c.chunk_index,c.id LIMIT :limit",
+            {**params, "limit": limit, "preferred": list(dict.fromkeys(preferred_episode_ids))},
+            "KEYWORD",
+        )
+
+    def _rarity_weighted_keyword(self, matches, params, limit, preferred_episode_ids):
+        """일치한 단어의 희귀도 가중치 합을 전체 가중치 합으로 나눈 값으로 순위를 매긴다.
+
+        일치 비율만 쓰면 1인칭 주인공 이름이나 '어떻게'·'처음'처럼 흔한 단어 여러 개가 겹친 무관한
+        청크가 결정적인 단어('죽인')가 든 실제 장면보다 앞선다. 가중치는 같은 조회 범위 청크의 문서
+        빈도로 계산한 BM25 IDF ln(1 + (N - df + 0.5) / (df + 0.5))에 ln(1 + x)를 한 번 더 씌운 값이며
+        항상 양수다. 원문에 없는 활용형·바꿔 쓴 단어가 희귀하다는 이유만으로 실제 장면을 밀어내지
+        않도록 가중치 차이를 완만하게 줄였다. 모든 단어가 일치하면 1.0이고 단어가 하나면 기존 순위와
+        같다. 후보 조건(한 단어 이상 일치)과 동점 처리 순서는 기존과 같다.
+        """
+        count = range(len(matches))
+        hits = ",".join(
+            f"CASE WHEN {match} THEN 1 ELSE 0 END AS hit_{n}" for n, match in enumerate(matches)
+        )
+        frequencies = ",".join(
+            f"CAST(coalesce(sum(hit_{n}),0) AS double precision) AS df_{n}" for n in count
+        )
+        weights = ",".join(
+            f"ln(1.0+ln(1.0+(total-df_{n}+0.5)/(df_{n}+0.5))) AS w_{n}" for n in count
+        )
+        matched = " + ".join(f"k.hit_{n}*w.w_{n}" for n in count)
+        total = " + ".join(f"w.w_{n}" for n in count)
+        return self._rows(
+            f"WITH scoped AS (SELECT {FIELDS},{hits} {self.from_clause}),"
+            f"stats AS (SELECT CAST(count(*) AS double precision) AS total,{frequencies} FROM scoped),"
+            f"weights AS (SELECT {weights} FROM stats) "
+            f"SELECT k.*,({matched})/({total}) AS score FROM scoped k CROSS JOIN weights w "
+            f"WHERE {' OR '.join(f'k.hit_{n}=1' for n in count)} "
+            "ORDER BY score DESC,(k.episode_id=ANY(CAST(:preferred AS uuid[]))) DESC,"
+            "k.episode_no,k.chunk_index,k.id LIMIT :limit",
             {**params, "limit": limit, "preferred": list(dict.fromkeys(preferred_episode_ids))},
             "KEYWORD",
         )

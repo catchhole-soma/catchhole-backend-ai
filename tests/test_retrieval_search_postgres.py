@@ -186,6 +186,23 @@ def test_keyword_and_vector_rank_full_corpus_before_limit(corpus):
     assert corpus.read("vector", [1.0, 0.0] + [0.0] * 1534, limit=1)[0].chunk_id == last
 
 
+def test_keyword_rank_weights_rare_words_over_many_common_words(corpus):
+    # 흔한 단어 셋이 겹친 무관한 청크보다 희귀한 결정 단어가 든 실제 장면을 먼저 읽는다(#319 X09).
+    # 일치 비율만 쓰면 둘 다 3/5로 같아 앞 회차의 무관한 청크가 먼저 나왔다.
+    filler = ["비요른 처음 어떻게 걸었다", "비요른 처음 어떻게 먹었다", "비요른 어떻게 잠들었다"]
+    corpus.chunks(corpus.episode(1), [text for text in filler for _ in range(8)])
+    scene = corpus.chunks(corpus.episode(7), ["처음 사람을 죽인 장면"])[0]
+    found = corpus.read("keyword", "비요른 처음 사람을 죽인 어떻게", limit=5)
+    assert found[0].chunk_id == scene
+    # 모든 단어가 든 청크는 1.0으로 가장 앞서고, 단어가 하나면 기존 일치 순위와 같다.
+    full = corpus.chunks(corpus.episode(8), ["비요른 처음 사람을 죽인 어떻게"])[0]
+    found = corpus.read("keyword", "비요른 처음 사람을 죽인 어떻게", limit=2)
+    assert found[0].chunk_id == full and found[0].score == pytest.approx(1.0)
+    single = corpus.read("keyword", "죽인", limit=5)
+    assert [c.chunk_id for c in single] == [scene, full]
+    assert all(c.score == pytest.approx(1.0) for c in single)
+
+
 def test_keyword_wildcards_are_literal_bound_values(corpus):
     episode = corpus.episode(1)
     literal, other = corpus.chunks(episode, ["100% 능력_a \\ 규칙", "1000 능력Xa x 규칙"])
