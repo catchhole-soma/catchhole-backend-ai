@@ -37,6 +37,8 @@ from app.usage.metering import estimate_text_input_tokens
 VERSION = "relationship-comparison:pair-groups-v2"
 PROMPT = Path(__file__).resolve().parents[1] / "llm/prompts/relationship_comparison_grouped.md"
 MAX_BATCHES = 16  # Each initial batch has at most one repair request: 32 total.
+MAX_GROUPS_PER_BATCH = 24  # 384 independent pairs still fit the 16-batch ceiling.
+PLANNED_OUTPUT_TOKENS_PER_GROUP = 512
 FAILURE_REASONS = frozenset(
     reason for reason in FAILURE_DIAGNOSTIC_REASONS
     if reason.startswith("RELATIONSHIP_") and reason != "RELATIONSHIP_CONTEXT_INVALID"
@@ -190,6 +192,17 @@ class GroupedRelationshipComparator:
         self.system_prompt = PROMPT.read_text(encoding="utf-8")
 
     def _fits(self, groups):
+        # Input fit alone can pack 140 short pairs whose valid two-slot output
+        # already exceeds 16k tokens. Plan room for several decisions per pair
+        # and leave at least a fifth of output tokens for reasoning/variation. This is
+        # an estimate, not a guarantee: keep one pair's full O/H indivisible and
+        # retain the normal failure boundary for any actual output truncation.
+        output_group_limit = max(1, min(
+            MAX_GROUPS_PER_BATCH,
+            self.comparator.max_output_tokens * 4 // 5 // PLANNED_OUTPUT_TOKENS_PER_GROUP,
+        ))
+        if len(groups) > output_group_limit:
+            return False
         # Reserve a full allowlisted diagnostic list per group. A repair sends
         # exactly one fixed reason, so it always fits the preflighted batch.
         reserve = {group["groupRef"]: sorted(FAILURE_REASONS) for group in groups}
