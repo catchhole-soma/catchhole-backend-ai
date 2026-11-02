@@ -141,16 +141,24 @@ class RetrievalSearchRepository:
         weights = ",".join(
             f"ln(1.0+ln(1.0+(total-df_{n}+0.5)/(df_{n}+0.5))) AS w_{n}" for n in count
         )
-        matched = " + ".join(f"k.hit_{n}*w.w_{n}" for n in count)
+        matched = " + ".join(f"h.hit_{n}*w.w_{n}" for n in count)
         total = " + ".join(f"w.w_{n}" for n in count)
+        order = "score DESC,preferred DESC,episode_no,chunk_index,id"
+        # 범위 안 모든 청크의 본문을 중간 결과에 쌓지 않도록 일치 표시만 계산하고, 상위 후보만 본문을 읽는다.
         return self._rows(
-            f"WITH scoped AS (SELECT {FIELDS},{hits} {self.from_clause}),"
-            f"stats AS (SELECT CAST(count(*) AS double precision) AS total,{frequencies} FROM scoped),"
-            f"weights AS (SELECT {weights} FROM stats) "
-            f"SELECT k.*,({matched})/({total}) AS score FROM scoped k CROSS JOIN weights w "
-            f"WHERE {' OR '.join(f'k.hit_{n}=1' for n in count)} "
-            "ORDER BY score DESC,(k.episode_id=ANY(CAST(:preferred AS uuid[]))) DESC,"
-            "k.episode_no,k.chunk_index,k.id LIMIT :limit",
+            f"WITH hits AS (SELECT c.id,c.episode_id AS hit_episode_id,e.episode_no AS hit_episode_no,"
+            f"c.chunk_index AS hit_chunk_index,{hits} {self.from_clause}),"
+            f"stats AS (SELECT CAST(count(*) AS double precision) AS total,{frequencies} FROM hits),"
+            f"weights AS (SELECT {weights} FROM stats),"
+            f"ranked AS (SELECT h.id,({matched})/({total}) AS score,"
+            "(h.hit_episode_id=ANY(CAST(:preferred AS uuid[]))) AS preferred,"
+            "h.hit_episode_no AS episode_no,h.hit_chunk_index AS chunk_index "
+            f"FROM hits h CROSS JOIN weights w WHERE {' OR '.join(f'h.hit_{n}=1' for n in count)} "
+            f"ORDER BY {order} LIMIT :limit) "
+            f"SELECT {FIELDS},r.score FROM ranked r JOIN retrieval_chunks c ON c.id=r.id "
+            "JOIN retrieval_sources s ON s.episode_id=c.episode_id "
+            "JOIN episodes e ON e.id=s.episode_id AND e.work_id=s.work_id "
+            "ORDER BY r.score DESC,r.preferred DESC,r.episode_no,r.chunk_index,r.id",
             {**params, "limit": limit, "preferred": list(dict.fromkeys(preferred_episode_ids))},
             "KEYWORD",
         )
