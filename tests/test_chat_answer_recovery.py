@@ -221,3 +221,24 @@ def test_unrecovered_first_answer_truncation_ends_insufficient_instead_of_failin
     finished = result["finish"]["result"]
     assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
     assert NOTICES["ANSWER_LIMIT"] in finished["limitations"]
+
+
+def test_answer_timeout_without_validated_answer_keeps_the_failure_boundary(tmp_path, monkeypatch):
+    # 부족 안내 마감은 출력 상한 절단에만 쓴다. 첫 답변 호출이 출력 없이 시간만 초과하면
+    # 검증된 답이 없으므로 기존 실패 경계를 유지하고 '답변 길이 한도' 안내를 붙이지 않는다.
+    original = ScriptedTextClient.create_text_response
+    original_time = _Session.model_time_left
+
+    async def slow(self, *args, **kwargs):
+        if len(self.requests) >= 1:
+            await asyncio.sleep(1)
+            raise AssertionError("The soft deadline should cancel this call")
+        return await original(self, *args, **kwargs)
+
+    def time_left(self):
+        return 0.02 if self.model_calls >= 2 else original_time(self)
+
+    monkeypatch.setattr(ScriptedTextClient, "create_text_response", slow)
+    monkeypatch.setattr(_Session, "model_time_left", time_left)
+    result = asyncio.run(replay(tmp_path, scenario("lexical_scene")))
+    assert result["finish"] == {"result": None, "failure": "EXECUTION_LIMIT_EXCEEDED"}

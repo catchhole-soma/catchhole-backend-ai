@@ -1896,6 +1896,9 @@ class _HybridSession(_Session):
         except (ModelTimeBudgetExceeded, ProviderOutputTruncated) as exc:
             # A failed expansion must not erase an earlier validated answer.
             if not self.supported_evidence:
+                if not isinstance(exc, ProviderOutputTruncated):
+                    # 출력 없이 시간만 초과한 경우는 기존 실패 경계(EXECUTION_LIMIT_EXCEEDED)를 유지한다.
+                    raise
                 # 첫 답변이 출력 상한에서 잘리고 복구할 시간이 없으면 실행 실패 대신 부족 안내로 마감한다.
                 # 긴 조회(두 인물 CURRENT_AND_HISTORY + 원문)에서 4,500토큰 답이 잘린 실제 사례.
                 self.codes.append("ANSWER_LIMIT")
