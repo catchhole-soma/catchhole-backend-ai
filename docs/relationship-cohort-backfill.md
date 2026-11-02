@@ -60,6 +60,8 @@ flowchart TD
    후속 `V104__add_relationship_backfill_audit_timestamps.sql`은 세 백필 테이블에 생성·수정
    시각을 추가한다. 기존 행의 시각은 과거 이력을 추정하지 않고 적용 시각으로 채운다.
    `V105__bound_relationship_backfill_recovery.sql`은 회차 항목별 복구 횟수를 0~1로 제한한다.
+   V106은 관계 실패 단계·원인·작업 종류가 알림 outbox에서도 보존되도록 허용목록을 추가한다.
+   기존 migration과 과거 알림 snapshot은 수정하지 않는다.
    SQL migration 안에서 원문을 읽거나 모델을 호출하지 않는다. API는 migration 이후 기동한다.
 3. 운영 `application-prod.yml`/`compose.api.prod.yml`은 기능을 기본 활성화한다. 기본
    10초 간격 scheduler가 `RelationshipBackfillService.bootstrapRelationshipBackfill()`을 호출한다.
