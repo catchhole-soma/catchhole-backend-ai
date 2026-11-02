@@ -13,6 +13,7 @@ from app.validation.execution import (
     ValidationLedger,
     ValidationRoleClients,
     claim_budgets,
+    claim_roles,
     metered_embedding,
 )
 from app.validation.search import FrozenRetrievalSearchService
@@ -74,10 +75,12 @@ class EpisodeValidationWorker:
     async def _process_claimed(self, payload):
         claim = payload if isinstance(payload, ValidationClaim) else ValidationClaim.from_wire(payload)
         limits = claim_budgets(claim)
+        runtimes = claim_roles(claim)
         gate = ExecutionGate()
         ledger = ValidationLedger(self.client, claim, gate)
         self._ledgers.add(ledger)
-        roles = ValidationRoleClients(self.raw_model, ledger, claim, request_semaphore=self.llm_request_semaphore)
+        roles = ValidationRoleClients(self.raw_model, ledger, claim, runtimes,
+                                      request_semaphore=self.llm_request_semaphore)
         embedding = metered_embedding(self.embedding, ledger, claim, self.spec,
                                       request_semaphore=self.llm_request_semaphore)
         view = await self.client.load_checkpoint(claim, gate)
@@ -89,15 +92,15 @@ class EpisodeValidationWorker:
             job_id=claim.job_id, lease_token=claim.lease_token, manifest_hash=wire["manifestHash"],
             report_revision=wire["reportRevision"], target_revision=wire["targetRevision"],
             generation=claim.scope.generation, input_digest=claim.scope.inputDigest)
-        # Independent clients keep page accumulation separate; the HTTP pool and lease are shared.
+        # Independent clients per branch; the HTTP pool and lease are shared.
         def data():
             return ValidationDataClient(self.client.base_url, self.client.key, context, self.client.http)
         children = {
-            asyncio.create_task(SettingValidationService(data(), roles, limits["SETTING"],
+            asyncio.create_task(SettingValidationService(data(), roles, limits["SETTING"], runtimes,
                 search=self.search, embedding_client=embedding, checkpoint=setting).inspect(),
                 name="validation-setting"),
             asyncio.create_task(check_typos(data(), roles.for_validation_role("TYPO"),
-                budget=limits["TYPO"], checkpoint=typo), name="validation-typo"),
+                budget=limits["TYPO"], role=runtimes["TYPO"], checkpoint=typo), name="validation-typo"),
         }
         self._active.update(children)
         heartbeat = asyncio.create_task(self._heartbeat(claim, gate), name="validation-heartbeat")

@@ -95,7 +95,8 @@ class ShutdownTransport(httpx.AsyncBaseTransport):
             return httpx.Response(200, json={"data": self.wire["checkpoint"]})
         if path.endswith("/data"):
             operation = body["operation"]
-            name = {"INPUT": "dataInput", "ENTRIES": "dataEntries", "READ_SOURCE": "dataReadTarget", "VALIDATE": "dataInput"}[operation]
+            name = {"INPUT": "dataInput", "SUBJECTS": "dataSubjects", "SETTINGS": "dataSettings",
+                    "READ_SOURCE": "dataReadTarget", "VALIDATE": "dataInput"}[operation]
             return httpx.Response(200, json={"data": self.fixture["responses"][name]})
         if path.endswith("usage/reserve"):
             role, ref = body["role"], body["requestId"]
@@ -148,7 +149,7 @@ class ShutdownTransport(httpx.AsyncBaseTransport):
         if self.phase == "unknown":
             return httpx.Response(503)
         assert self.phase == "settle"
-        result = {"questions": [], "segments": [{"segment_ref": "TSEG1", "status": "NO_CHECK", "reason": "합성"}], "rules": [], "clue_checks": []}
+        result = {"questions": [], "segments": [{"segment_ref": "TSEG1", "status": "NO_CHECK", "reason": "합성"}]}
         return httpx.Response(200, json={"status": "completed", "output_text": json.dumps(result), "usage": {"input_tokens": 23, "output_tokens": 7}})
 
     async def aclose(self):
@@ -329,7 +330,7 @@ def test_llm_request_semaphore_reaches_every_role_and_query_embedding_client(mon
     from app.embeddings.client import OpenAIEmbeddingsClient
     from app.validation.client import ValidationClaim, ValidationExecutionClient
     from app.validation.contracts import IncompleteInspection
-    from app.validation.models import ROLE_OPTIONS
+    from app.validation.models import GENERATION_ROLES
 
     built = {}
     real_roles, real_embedding = worker_module.ValidationRoleClients, worker_module.metered_embedding
@@ -375,8 +376,9 @@ def test_llm_request_semaphore_reaches_every_role_and_query_embedding_client(mon
         return semaphore
 
     semaphore = asyncio.run(run())
-    clients = [built["roles"].for_validation_role(role) for role in ROLE_OPTIONS]
-    assert len(clients) == 5
+    clients = [built["roles"].for_validation_role(role) for role in GENERATION_ROLES]
+    assert len(clients) == 3 and set(built["roles"].clients) == set(GENERATION_ROLES)
+    assert {client.default_model for client in clients} == {"gpt-6.1-terra"}
     assert all(client.request_semaphore is semaphore for client in clients)
     assert built["embedding"].metered.request_semaphore is semaphore
     assert (semaphore is not None) == capped
@@ -562,9 +564,9 @@ def test_llm_request_semaphore_caps_provider_calls_across_concurrent_jobs():
 
 
 class GridBackend(httpx.AsyncBaseTransport):
-    """GH349 synthetic Backend: the SETTING grid appears only after the first plan, as in Java."""
+    """Grid v4 synthetic Backend: the SETTING grid appears only after the first plan, as in Java."""
 
-    def __init__(self, grid):
+    def __init__(self, grid=None):
         import json
         from datetime import UTC, datetime, timedelta
         from pathlib import Path
@@ -573,17 +575,21 @@ class GridBackend(httpx.AsyncBaseTransport):
         self.responses = fixture["execution"]["responses"]
         self.wire = self.responses["claim"]
         self.wire["leaseExpiresAt"] = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
-        # "😀가😀가": 가(S1) is named in the target, 나(S2) is not.
-        self.settings = [{"entry_ref": f"B{n}", "subject_ref": f"S{n}", "domain": "characters", "name": name,
-                          "aliases": [], "state": {"name": name}, "author_correction": None}
-                         for n, name in ((1, "가"), (2, "나"))]
-        self.responses["dataInput"]["entryCount"] = len(self.settings)
-        self.responses["dataEntries"].update(
-            entries=[{"entryRef": row["entry_ref"], "domain": "characters", "state": row["state"]}
-                     for row in self.settings],
-            modelSettings=self.settings, nextOffset=len(self.settings))
-        self.grid, self.published, self.checkpoint_reads = grid, [], 0
-        self.reserved, self.provider_roles, self.completed = [], [], []
+        self.target = self.responses["dataReadTarget"]["text"]
+        # "😀가😀가": two current rows of S1 and a history row the judge must never receive.
+        self.settings = [{"entry_ref": "B1", "subject_ref": "S1", "domain": "characters", "name": "가", "aliases": [],
+                          "state": {"name": "가"}, "author_correction": None},
+                         {"entry_ref": "B3", "subject_ref": "S1", "domain": "characters", "name": "가", "aliases": [],
+                          "state": {"name": "가", "aliases": ["가가"]}, "author_correction": None}]
+        self.responses["dataInput"]["entryCount"] = 3
+        self.responses["dataSubjects"].update(
+            subjects=[{"subject_ref": "S1", "domain": "characters", "name": "가", "aliases": ["가가"]}],
+            subjectCount=1, entryCount=3)
+        self.grid = grid or {"gridVersion": 4, "segments": [{"ref": "TSEG1", "start": 0, "end": len(self.target),
+                                                             "contextStart": 0, "contextEnd": len(self.target)}],
+                             "units": [{"stage": "PLANNER", "ref": "TSEG1"}, {"stage": "MERGED_PLAN", "ref": "PLAN"}]}
+        self.published, self.units, self.data_operations, self.checkpoint_reads = [], [], [], 0
+        self.reserved, self.provider_roles, self.completed, self.judge_payloads = [], [], [], []
 
     def view(self):
         view = dict(self.wire["checkpoint"])
@@ -602,8 +608,12 @@ class GridBackend(httpx.AsyncBaseTransport):
             self.checkpoint_reads += 1
             data = self.view()
         elif path.endswith("/data"):
-            data = self.responses[{"INPUT": "dataInput", "ENTRIES": "dataEntries", "READ_SOURCE": "dataReadTarget",
-                                   "VALIDATE": "dataInput"}[body["operation"]]]
+            operation = body["operation"]
+            self.data_operations.append((operation, body.get("subjectRefs")))
+            data = self.responses[{"INPUT": "dataInput", "SUBJECTS": "dataSubjects", "SETTINGS": "dataSettings",
+                                   "READ_SOURCE": "dataReadTarget", "VALIDATE": "dataInput"}[operation]]
+            if operation == "SETTINGS":
+                data = {**data, "settings": self.settings}
         elif path.endswith("usage/reserve"):
             self.reserved.append(body["role"])
             data = {}
@@ -611,9 +621,16 @@ class GridBackend(httpx.AsyncBaseTransport):
             data = {}
         elif path.endswith("/plans"):
             self.published.append((body["stage"], body["ref"], body["payload"]))
+            checks = []
+            if body["stage"] == "MERGED_PLAN":
+                checks = [{"checkId": f"00000000-0000-4000-8000-00000000002{index}", "localRef": row["localRef"],
+                           "originalRefs": row["originalRefs"], "revision": 1, "checkInputDigest": "d" * 64,
+                           "state": row["state"], "outcome": None, "decision": None, "changeReason": None}
+                          for index, row in enumerate(body["payload"]["questions"])]
             data = {"stageId": "00000000-0000-4000-8000-000000000010", "branch": "SETTING", "stage": body["stage"],
-                    "ref": body["ref"], "successful": True, "checks": []}
+                    "ref": body["ref"], "successful": True, "checks": checks}
         elif path.endswith("/units"):
+            self.units.append(body)
             data = self.responses["typoUnit"]
         elif path.endswith("/complete"):
             self.completed.append(body["failureCode"])
@@ -633,20 +650,28 @@ class GridBackend(httpx.AsyncBaseTransport):
         if role == "TYPO":
             result = {"segments": [{"segment_ref": payload["segment_ref"], "status": "NO_CHECK", "reason": "합성"}],
                       "suggestions": []}
-        elif role == "RELATED_SELECTION":
-            assert payload["mechanical_subject_refs"] == ["S1"]
-            assert [row["subject_ref"] for row in payload["subject_catalogue"]] == ["S1", "S2"]
-            result = {"mentions": [{"mention": "그 사람", "subject_ref": "S2", "reason": "합성 지칭 해소"}]}
+        elif role == "PLANNER":
+            assert "settings" not in payload and payload["subject_catalogue"][0]["subject_ref"] == "S1"
+            result = {"questions": [{"local_ref": "q", "target_spans": [
+                {"source_ref": "T1", "start": 0, "end": 2, "quote": self.target[:2]}], "subject_refs": ["S1"],
+                "subject_mentions": ["가"], "property_or_rule": "합성 속성", "time_context": "현재", "conditions": [],
+                "assertion_mode": "NARRATION", "check_intent": "합성", "reason": "합성"}],
+                "segments": [{"segment_ref": "TSEG1", "status": "PLANNED", "reason": "합성"}]}
         else:
-            result = {"questions": [], "segments": [{"segment_ref": "TSEG1", "status": "NO_CHECK", "reason": "합성"}],
-                      "rules": [{"entry_ref": row["entry_ref"], "status": "CHECKED", "reason": "합성"}
-                                for row in payload.get("settings", [])],
-                      "clue_checks": []}
+            self.judge_payloads.append(payload)
+            refs = ["T1", *(row["entry_ref"] for row in payload["settings"])]
+            assessment = {"reason": "합성 확인", "evidence_refs": refs,
+                          "receipt_refs": [row["ref"] for row in payload["receipts"]]}
+            result = {"action": "DECIDED", "outcome": "NO_CONFLICT", "basis": "COMPATIBLE", "reason": "합성",
+                      "impact": None, "impact_reason": None, "target_spans": payload["question"]["target_spans"],
+                      "evidence_refs": refs, "completion": {key: assessment for key in (
+                          "comparison_context", "changes_exceptions", "no_pending_clues", "required_reads")},
+                      "disagreements": [], "search_queries": [], "context_requests": []}
         return httpx.Response(200, json={"status": "completed", "output_text": json.dumps(result, ensure_ascii=False),
                                          "usage": {"input_tokens": 23, "output_tokens": 7}})
 
 
-def run_grid_backend(grid):
+def run_grid_backend(grid=None):
     from app.validation.client import ValidationClaim, ValidationExecutionClient
     from app.worker.episode_validation_worker import EpisodeValidationWorker
 
@@ -666,43 +691,59 @@ def run_grid_backend(grid):
     return asyncio.run(run())
 
 
-def test_worker_reads_server_grid_v2_after_first_plan_and_publishes_subject_resolution():
-    grid = {"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S1"]}]}
-    backend = run_grid_backend(grid)
+def test_worker_plans_checks_the_v4_grid_merges_and_publishes_the_judged_unit():
+    backend = run_grid_backend()
     assert backend.completed == [None]
-    assert [(stage, ref) for stage, ref, _ in backend.published] == [
-        ("PLANNER", "TSEG1"), ("SUBJECT_RESOLUTION", "TSEG1"), ("COVERAGE", "TSEG1"), ("MERGED_PLAN", "PLAN")]
-    assert backend.published[1][2] == {"mentions": [{"mention": "그 사람", "subject_ref": "S2", "reason": "합성 지칭 해소"}]}
-    assert [row["entry_ref"] for row in backend.published[2][2]["rules"]] == ["B1", "B2"]
-    # Reloaded once when the first publication created the grid; the stage is metered as RELATED_SELECTION.
+    assert [(stage, ref) for stage, ref, _ in backend.published] == [("PLANNER", "TSEG1"), ("MERGED_PLAN", "PLAN")]
+    assert set(backend.published[0][2]) == {"questions", "segments"}
+    assert backend.published[1][2]["questions"][0]["state"] == {
+        "draft": backend.published[0][2]["questions"][0], "lookup_obligations": []}
+    operations = [operation for operation, _ in backend.data_operations]
+    assert operations[:3] == ["INPUT", "READ_SOURCE", "SUBJECTS"] or "SUBJECTS" in operations
+    assert ("SETTINGS", ["S1"]) in backend.data_operations and "ENTRIES" not in operations
+    (judge,) = backend.judge_payloads
+    assert judge["form"] == "OPEN" and [row["entry_ref"] for row in judge["settings"]] == ["B1", "B3"]
+    (unit,) = [row for row in backend.units if row["branch"] == "SETTING"]
+    assert unit["payload"]["evidence_bundle"]["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"},
+                                                             {"entry_ref": "B3", "subject_ref": "S1"}]
+    # Reloaded once when the first publication created the grid; three generation roles are metered.
     assert backend.checkpoint_reads == 2
-    assert sorted(backend.reserved) == ["COVERAGE", "PLANNER", "RELATED_SELECTION", "TYPO"]
-    assert sorted(backend.provider_roles) == ["COVERAGE", "PLANNER", "RELATED_SELECTION", "TYPO"]
+    assert sorted(backend.reserved) == ["JUDGE", "PLANNER", "TYPO"]
 
 
-def test_worker_on_a_grid_v1_server_stops_before_subject_resolution():
-    backend = run_grid_backend({"gridVersion": 1, "units": [{"stage": "RELATED_SELECTION", "ref": "TSEG1:PAGE1"}]})
-    assert backend.completed == ["GRID_VERSION_UNSUPPORTED"]
-    assert [(stage, ref) for stage, ref, _ in backend.published] == [("PLANNER", "TSEG1")]
-    assert "RELATED_SELECTION" not in backend.provider_roles
-
-
-@pytest.mark.parametrize("mode,expected", [
-    ("none", []),
-    ("resolved", [{"mention": "그 사람", "subject_ref": "S2", "reason": "합성 지칭 해소"}]),
-    ("null", [{"mention": "낯선 노인", "subject_ref": None, "reason": "합성 카탈로그 밖 인물"}]),
+@pytest.mark.parametrize(("grid", "code"), [
+    ({"gridVersion": 3, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": []}]}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 4, "segments": [{"ref": "TSEG1", "start": 0, "end": 2, "contextStart": 0, "contextEnd": 4},
+                                     {"ref": "TSEG2", "start": 2, "end": 4, "contextStart": 0, "contextEnd": 4}],
+      "units": []}, "GRID_SEGMENTS_MISMATCH"),
 ])
-def test_java_http_synthetic_provider_answers_subject_resolution_modes(mode, expected):
+def test_worker_on_a_different_server_grid_stops_before_merging(grid, code):
+    backend = run_grid_backend(grid)
+    assert backend.completed == [code]
+    assert [(stage, ref) for stage, ref, _ in backend.published] == [("PLANNER", "TSEG1")]
+    assert "JUDGE" not in backend.provider_roles
+
+
+@pytest.mark.parametrize("mode", ["zero", "normal", "vector-judge", "followup-crash"])
+def test_java_http_synthetic_provider_answers_grid_v4_roles(mode):
     import json
 
     from tests.support.validation_execution_http_client import SyntheticProvider
 
-    payload = {"role": "RELATED_SELECTION", "subject_catalogue": [
-        {"subject_ref": "S1", "domain": "characters", "name": "가", "aliases": []},
-        {"subject_ref": "S2", "domain": "characters", "name": "나", "aliases": []}],
-        "mechanical_subject_refs": ["S1"]}
-    body = {"model": "gpt-6.1-terra", "reasoning": {"effort": "high"},
-            "input": [{}, {"content": [{"text": json.dumps(payload, ensure_ascii=False)}]}]}
-    request = httpx.Request("POST", "https://provider.invalid/responses", json=body)
-    response = asyncio.run(SyntheticProvider("zero", subject_mentions=mode)(request))
-    assert json.loads(response.json()["output_text"]) == {"mentions": expected}
+    provider = SyntheticProvider(mode)
+
+    def call(payload, effort):
+        body = {"model": "gpt-6.1-terra", "reasoning": {"effort": effort},
+                "input": [{}, {"content": [{"text": json.dumps(payload, ensure_ascii=False)}]}]}
+        request = httpx.Request("POST", "https://provider.invalid/responses", json=body)
+        return json.loads(asyncio.run(provider(request)).json()["output_text"])
+
+    planner = call({"role": "PLANNER", "segment": {"ref": "TSEG1", "start": 0}, "text": "가나다", "text_start": 0,
+                    "subject_catalogue": [{"subject_ref": "S1"}]}, "medium")
+    assert set(planner) == {"questions", "segments"}
+    assert bool(planner["questions"]) == (mode != "zero")
+    question = {"target_spans": [{"source_ref": "T1", "start": 0, "end": 2, "quote": "가나"}]}
+    judge = call({"role": "JUDGE", "form": "OPEN", "question_ref": "Q3", "question": question,
+                  "settings": [], "evidence": [], "receipts": [{"ref": "L1"}]}, "medium")
+    expected = "FOLLOW_UP" if mode in {"vector-judge", "followup-crash"} else "DECIDED"
+    assert judge["action"] == expected and "follow_ups" not in judge

@@ -4,29 +4,53 @@ from hashlib import sha256
 
 from app.usage.metering import MeteredEmbeddingClient, MeteredTextGenerationClient
 from app.validation.contracts import IncompleteInspection, InvocationBudget
-from app.validation.models import MODEL, ROLE_OPTIONS
+from app.validation.models import GENERATION_ROLES, RoleRuntime
 
+CONFIGURATION_VERSION = 2  # Job configuration v2: per-role model/effort/outputTokens, no catalogue page size
 _BUDGET_FIELDS = {
     "model_calls": "modelCalls", "lookups": "lookups", "seconds": "seconds",
-    "input_tokens": "inputTokens", "output_tokens": "outputTokens",
-    "segment_chars": "segmentChars", "context_chars": "contextChars",
-    "catalogue_page_size": "cataloguePageSize", "search_limit": "searchLimit",
+    "input_tokens": "inputTokens", "segment_chars": "segmentChars", "context_chars": "contextChars",
+    "search_limit": "searchLimit",
 }
 
 
+def _positive(value):
+    return type(value) is int and value >= 1
+
+
+def _current_configuration(claim):
+    if type(claim.wire.get("configurationVersion")) is not int or claim.wire["configurationVersion"] != CONFIGURATION_VERSION:
+        raise ValueError("Legacy job configuration")
+
+
 def claim_budgets(claim):
+    """Per-branch InvocationBudget (per claim attempt); the server's per-run role caps stay authoritative."""
     try:
+        _current_configuration(claim)
+        claim_roles(claim)
         budgets = claim.wire["budgets"]
-        for role, options in ROLE_OPTIONS.items():
-            model, cap = claim.wire["models"][role], budgets["roles"][role]
-            if (model != {"model": MODEL, "reasoningEffort": options.reasoning_effort}
-                    or type(cap["maxCalls"]) is not int or cap["maxCalls"] < 1
-                    or type(cap["maxReservedTokens"]) is not int or cap["maxReservedTokens"] < 1):
-                raise ValueError("Explicit frozen role settings required")
-        return {branch: InvocationBudget(**{key: budgets[branch.lower()][wire]
-                                           for key, wire in _BUDGET_FIELDS.items()})
+        return {branch: InvocationBudget(**{key: budgets[branch.lower()][wire] for key, wire in _BUDGET_FIELDS.items()})
                 for branch in ("SETTING", "TYPO")}
-    except (KeyError, TypeError, ValueError):
+    except IncompleteInspection:
+        raise
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise IncompleteInspection("EXECUTION_BUDGET_CONFIGURATION_INVALID") from None
+
+
+def claim_roles(claim):
+    """`{PLANNER, JUDGE, TYPO: RoleRuntime}` frozen in the job configuration (v2); anything else is invalid."""
+    try:
+        _current_configuration(claim)
+        models, roles = claim.wire["models"], claim.wire["budgets"]["roles"]
+        result = {}
+        for role in GENERATION_ROLES:
+            model, cap = models[role], roles[role]
+            if (not isinstance(model, dict) or not isinstance(cap, dict) or not _positive(cap.get("maxCalls"))
+                    or not _positive(cap.get("maxReservedTokens"))):
+                raise ValueError("Explicit frozen role settings required")
+            result[role] = RoleRuntime.of(model["model"], model["reasoningEffort"], cap["outputTokens"])
+        return result
+    except (KeyError, TypeError, ValueError, AttributeError):
         raise IncompleteInspection("EXECUTION_BUDGET_CONFIGURATION_INVALID") from None
 
 
@@ -99,12 +123,15 @@ class ValidationLedger:
 
 
 class ValidationRoleClients:
-    def __init__(self, raw, ledger, claim, *, request_semaphore=None):
+    """One metered client per generation role, each defaulting to that role's frozen model."""
+
+    def __init__(self, raw, ledger, claim, runtimes, *, request_semaphore=None):
         # request_semaphore is the runner's one process-wide provider cap; None keeps calls uncapped.
+        self.runtimes = dict(runtimes)
         self.clients = {role: MeteredTextGenerationClient(
-            raw, ledger, claim.job_id, "VALIDATION_" + role, MODEL, claim.lease_token,
+            raw, ledger, claim.job_id, "VALIDATION_" + role, runtime.model, claim.lease_token,
             request_semaphore=request_semaphore, max_retries=0, exact_input_reservation=True)
-            for role in ROLE_OPTIONS}
+            for role, runtime in self.runtimes.items()}
 
     def for_validation_role(self, role):
         return self.clients[role]
@@ -138,19 +165,23 @@ class ValidationQueryEmbedding:
         self.model, self.version, self.dimensions = spec.model, spec.version, spec.dimensions
         self.ledger, self.claim = ledger, claim
         self.last_receipt = None
+        # The ledger's queryInput/requestId and last_receipt are shared per-job state; parallel judges must never
+        # interleave one query's reservation identity with another's proof (the corpus also serializes searches).
+        self._lock = asyncio.Lock()
         self.metered = MeteredEmbeddingClient(raw, ledger, claim.job_id, spec.model,
             claim.lease_token, request_semaphore=request_semaphore, max_retries=0,
             purpose="VALIDATION_QUERY_EMBEDDING")
 
     async def create_embedding(self, query):
-        self.last_receipt = None
-        proof = {"contractVersion": 1, "inputDigest": self.claim.scope.inputDigest,
-                 "queryHash": sha256(query.encode()).hexdigest(), "indexModel": self.model,
-                 "indexVersion": self.version, "indexDimensions": self.dimensions,
-                 "manifestHash": self.claim.wire["manifestHash"]}
-        self.ledger.query_input = proof
-        response = await self.metered.create_embeddings([query])
-        if response.model != self.model or len(response.embeddings[0]) != self.dimensions:
-            raise IncompleteInspection("EMBEDDING_CONFIGURATION_INVALID")
-        self.last_receipt = {**proof, "requestId": self.ledger.query_request_id}
-        return response.embeddings[0]
+        async with self._lock:
+            self.last_receipt = None
+            proof = {"contractVersion": 1, "inputDigest": self.claim.scope.inputDigest,
+                     "queryHash": sha256(query.encode()).hexdigest(), "indexModel": self.model,
+                     "indexVersion": self.version, "indexDimensions": self.dimensions,
+                     "manifestHash": self.claim.wire["manifestHash"]}
+            self.ledger.query_input = proof
+            response = await self.metered.create_embeddings([query])
+            if response.model != self.model or len(response.embeddings[0]) != self.dimensions:
+                raise IncompleteInspection("EMBEDDING_CONFIGURATION_INVALID")
+            self.last_receipt = {**proof, "requestId": self.ledger.query_request_id}
+            return response.embeddings[0]

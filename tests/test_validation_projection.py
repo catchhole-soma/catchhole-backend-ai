@@ -96,27 +96,45 @@ def test_production_shaped_large_character_entry_shrinks_to_its_slot_values():
     assert compact.count('"factValue"') == 79
 
 
-def test_expanded_row_keeps_scalar_history_without_evidence_and_truncates_oldest():
-    from app.validation.projection import expanded_setting_row
+def shared():
+    from pathlib import Path
+    return json.loads((Path(__file__).parents[1] / "docs/contracts/validation-execution-v1.json").read_text())["execution"]
 
-    row = {"entry_ref": "B1", "subject_ref": "S1", "domain": "characters", "name": "민수", "aliases": [],
-           "state": {"name": "민수", "slots": {"STATUS:손": {"factKey": "손", "factValue": "한손",
-                                                          "provenance": {"sourceKey": "k"}}},
-                     "historyFacts": [
-                         {"factType": "STATUS", "factKey": "손", "factValue": "양손 사용", "operation": "ADD",
-                          "effectiveFromEpisodeNo": 3, "supportingSource": {"quote": "옛 원문", "source_ref": None},
-                          "narrativeTime": {"factTime": {"kind": "PRESENT"}}},
-                         {"factType": "STATUS", "factKey": "손", "factValue": "한손", "operation": "UPDATE",
-                          "effectiveFromEpisodeNo": 9, "provenance": {"sourceKey": "k2"}}],
-                     "provenance": {"sourceKey": "k"}}}
-    expanded = expanded_setting_row(row)
-    assert expanded["state"]["slots"] == {"STATUS:손": {"factKey": "손", "factValue": "한손", "provenance": {"sourceKey": "k"}}}
-    assert expanded["state"]["historyFacts"] == [
-        {"factType": "STATUS", "factKey": "손", "factValue": "양손 사용", "operation": "ADD", "effectiveFromEpisodeNo": 3},
-        {"factType": "STATUS", "factKey": "손", "factValue": "한손", "operation": "UPDATE", "effectiveFromEpisodeNo": 9}]
-    assert "quote" not in str(expanded)
-    assert "provenance" not in expanded["state"] and "historyTruncated" not in expanded["state"]
-    truncated = expanded_setting_row(row, max_history=1)
-    assert [fact["factValue"] for fact in truncated["state"]["historyFacts"]] == ["한손"]  # newest kept
-    assert truncated["state"]["historyTruncated"] == 1
-    assert row["state"]["historyFacts"][0]["supportingSource"] == {"quote": "옛 원문", "source_ref": None}  # input untouched
+
+def test_settings_projection_matches_the_shared_server_vector():
+    from app.validation.data import SourceDocument
+    from app.validation.projection import model_settings, source_catalogue
+
+    vector = shared()["projectionVector"]
+    sources = [SourceDocument.from_wire(row) for row in vector["sources"].values()]
+    entries = [{"entryRef": f"B{index + 1}", **row} for index, row in enumerate(vector["entries"])]
+    assert {row["entry_ref"]: row for row in model_settings(entries, sources)} == vector["expected"]
+    assert source_catalogue(sources) == vector["sourceCatalogue"]
+
+
+def test_subject_catalogue_and_current_settings_match_the_shared_vector():
+    from app.validation.projection import (
+        CURRENT_DOMAINS,
+        current_settings,
+        model_settings,
+        subject_catalogue,
+    )
+
+    vector = shared()["subjectCatalogueVector"]
+    rows = model_settings([{"entryRef": f"B{index + 1}", **row} for index, row in enumerate(vector["entries"])])
+    assert subject_catalogue(rows) == vector["subjects"]
+    assert (vector["subjectCount"], vector["entryCount"]) == (len(vector["subjects"]), len(rows))
+    assert any(row["domain"] == "worldHistory" for row in rows)
+    for request in vector["settingsRequests"]:
+        found = current_settings(rows, request["subjectRefs"])
+        assert [row["entry_ref"] for row in found] == request["entryRefs"]
+        assert all(row["domain"] in CURRENT_DOMAINS for row in found)
+
+
+def test_numbered_refs_sort_numerically_not_lexically():
+    from app.validation.projection import current_settings, subject_catalogue
+
+    rows = [{"entry_ref": f"B{n}", "subject_ref": f"S{n}", "domain": "characters", "name": str(n), "aliases": []}
+            for n in (10, 2, 1)]
+    assert [row["subject_ref"] for row in subject_catalogue(rows)] == ["S1", "S2", "S10"]
+    assert [row["entry_ref"] for row in current_settings(rows, ["S10", "S2"])] == ["B2", "B10"]

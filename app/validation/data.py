@@ -8,6 +8,10 @@ from uuid import UUID
 import httpx
 
 from app.validation.contracts import IncompleteInspection
+from app.validation.projection import CURRENT_DOMAINS, entry_order
+
+PROJECTION_VERSION = 2  # SUBJECTS/SETTINGS exist, no modelClues, current-only settings (grid v4)
+MAX_SETTING_SUBJECTS = 100  # server @Size(max=100) on subjectRefs
 
 
 @dataclass(frozen=True)
@@ -82,7 +86,6 @@ class SourceRead:
     start: int
     end: int
     total_code_points: int
-    model_clues: list | None = None
 
 
 class ValidationDataClient:
@@ -92,8 +95,6 @@ class ValidationDataClient:
         self._http = http_client or httpx.AsyncClient(timeout=30)
         self._owns_http = http_client is None
         self.execution = context.job_id is not None
-        self.model_settings = []
-        self.author_correction_proofs = []
 
     async def _request(self, operation, **fields):
         context = self.context
@@ -124,8 +125,8 @@ class ValidationDataClient:
                 or data.get("targetHash") != context.target_hash
                 or type(data.get("baselineRevision")) is not int or data.get("baselineRevision") != context.baseline_revision):
             raise IncompleteInspection("INPUT_CHANGED")
-        if self.execution and (type(data.get("projectionVersion")) is not int or data.get("projectionVersion") != 1
-                or type(data.get("clueVersion")) is not int or data.get("clueVersion") != 1
+        if self.execution and (type(data.get("projectionVersion")) is not int
+                or data.get("projectionVersion") != PROJECTION_VERSION
                 or data.get("manifestHash") != context.manifest_hash
                 or context.report_revision is not None and data.get("reportRevision") != context.report_revision):
             raise IncompleteInspection("INPUT_CHANGED")
@@ -156,28 +157,48 @@ class ValidationDataClient:
         except (ValueError, KeyError, TypeError):
             raise IncompleteInspection("INVALID_INPUT_CONTRACT") from None
 
-    async def read_entries_page(self, offset, limit):
-        data = await self._request("ENTRIES", offset=offset, limit=limit)
-        if (not isinstance(data.get("entries"), list) or type(data.get("nextOffset")) is not int
-                or type(data.get("hasMore")) is not bool
-                or data["nextOffset"] != offset + len(data["entries"])
-                or data["hasMore"] and not data["entries"]):
-            raise IncompleteInspection("INCOMPLETE_CATALOGUE")
-        if self.execution:
-            settings, proofs = data.get("modelSettings"), data.get("authorCorrectionProofs")
-            if (not isinstance(settings, list) or not isinstance(proofs, list)
-                    or any(not isinstance(row, dict) for row in settings)
-                    or any(not isinstance(row, dict) for row in data["entries"])
-                    or [row.get("entry_ref") for row in settings] != [row.get("entryRef") for row in data["entries"]]
-                    or any(row.get("author_correction") is not None for row in settings)):
-                raise IncompleteInspection("INVALID_BASELINE_CONTRACT")
-            if offset == 0:
-                self.model_settings, self.author_correction_proofs = [], []
-            if offset != len(self.model_settings):
-                raise IncompleteInspection("INCOMPLETE_CATALOGUE")
-            self.model_settings.extend(settings)
-            self.author_correction_proofs.extend(proofs)
-        return data["entries"], data["nextOffset"], data["hasMore"]
+    async def read_subjects(self):
+        """SUBJECTS: the frozen baseline's subject catalogue, read once at start (one row per S ref)."""
+        data = await self._request("SUBJECTS")
+        rows = data.get("subjects")
+        try:
+            if (not isinstance(rows, list) or type(data.get("subjectCount")) is not int
+                    or data["subjectCount"] != len(rows) or type(data.get("entryCount")) is not int):
+                raise ValueError("Invalid subject catalogue")
+            for index, row in enumerate(rows):
+                if (not isinstance(row, dict) or row.get("subject_ref") != f"S{index + 1}"
+                        or not isinstance(row.get("domain"), str)
+                        or not (row.get("name") is None or isinstance(row["name"], str))
+                        or not isinstance(row.get("aliases"), list)
+                        or any(not isinstance(alias, str) for alias in row["aliases"])):
+                    raise ValueError("Invalid subject row")
+        except (ValueError, KeyError, TypeError):
+            raise IncompleteInspection("INVALID_BASELINE_CONTRACT") from None
+        return [dict(row) for row in rows]
+
+    async def read_settings(self, subject_refs):
+        """SETTINGS: current-domain rows of up to MAX_SETTING_SUBJECTS requested subjects, in B order."""
+        refs = list(dict.fromkeys(subject_refs))
+        if not refs or len(refs) > MAX_SETTING_SUBJECTS or any(
+                not isinstance(ref, str) or not re.fullmatch(r"S[1-9][0-9]*", ref) for ref in refs):
+            raise IncompleteInspection("INVALID_BASELINE_CONTRACT", "SETTINGS_REQUEST_INVALID")
+        data = await self._request("SETTINGS", subjectRefs=refs)
+        rows, proofs = data.get("settings"), data.get("authorCorrectionProofs")
+        try:
+            if not isinstance(rows, list) or not isinstance(proofs, list):
+                raise TypeError("Invalid settings")
+            entries = [row.get("entry_ref") if isinstance(row, dict) else None for row in rows]
+            if (any(not isinstance(row, dict) for row in rows)
+                    or any(not isinstance(ref, str) or not re.fullmatch(r"B[1-9][0-9]*", ref) for ref in entries)
+                    or len(set(entries)) != len(entries)
+                    or entries != sorted(entries, key=entry_order)
+                    or any(row.get("subject_ref") not in refs or row.get("domain") not in CURRENT_DOMAINS
+                           or row.get("author_correction") is not None or not isinstance(row.get("state"), dict)
+                           for row in rows)):
+                raise ValueError("Invalid settings")
+        except (ValueError, KeyError, TypeError):
+            raise IncompleteInspection("INVALID_BASELINE_CONTRACT") from None
+        return rows
 
     async def read_source(self, source: SourceDocument, start=None, end=None):
         data = await self._request(
@@ -196,19 +217,12 @@ class ValidationDataClient:
                     or value.start == 0 and value.end == value.total_code_points
                     and sha256(value.text.encode()).hexdigest() != source.content_hash):
                 raise ValueError("Invalid actual source")
-            if self.execution and source.ref == "T1" and start is None and end is None:
-                clues = data.get("modelClues")
-                if not isinstance(clues, list):
-                    raise ValueError("Missing trusted clues")
-                from app.validation.contracts import Span, validate_span
-                for clue in clues:
-                    validate_span(Span.model_validate(clue["span"]), value.text)
-                value = SourceRead(source, value.text, value.start, value.end, value.total_code_points, clues)
             return value
         except (ValueError, KeyError, TypeError):
             raise IncompleteInspection("INVALID_SOURCE_CONTRACT") from None
 
     async def validate(self):
+        """Kept for TYPO's final revalidation; the server also revalidates inside every publication."""
         await self._request("VALIDATE")
 
     async def aclose(self):

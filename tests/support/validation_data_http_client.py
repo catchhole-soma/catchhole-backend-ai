@@ -37,8 +37,11 @@ async def main():
         source = await client.read_source(frozen.target)
         assert source.text == "😀민수는 검을 쥐었다. 민수는 검을 쥐었다."
         assert (await client.read_source(frozen.target, 1, 3)).text == "민수"
-        entries, next_offset, more = await client.read_entries_page(0, 100)
-        assert entries[0]["entryRef"] == "B1" and next_offset == 1 and not more
+        # Grid v4 (projectionVersion 2): one SUBJECTS read, then current SETTINGS rows of chosen subjects.
+        subjects = await client.read_subjects()
+        assert subjects[0]["subject_ref"] == "S1", str(subjects)
+        settings = await client.read_settings(["S1"])
+        assert settings[0]["entry_ref"] == "B1" and settings[0]["subject_ref"] == "S1"
         await client.validate()
         outsider = ValidationDataClient(
             base,

@@ -240,7 +240,6 @@ def test_reader_allow_list_covers_every_relation_the_search_repositories_read(re
         scope = FrozenSearchScope(1, uuid4(), report_id=uuid4(), baseline_hash="a" * 64, target_hash="b" * 64,
                                   job_id=uuid4(), lease_token=uuid4(), generation=1, input_digest="c" * 64)
         target = FrozenRetrievalRepository(session, scope, spec)
-        target.indexed_episode_ids()
     seed = ChunkEvidence(uuid4(), uuid4(), 1, 0, "본문", 0, 2, "d" * 64, "key", None, "e" * 64, spec.policy,
                          ("KEYWORD",), 1.0)
     target.readiness()

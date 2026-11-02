@@ -1,6 +1,5 @@
-"""Exact frozen-manifest predicates apply before every rank/LIMIT/neighbor expansion."""
+"""Exact frozen-manifest predicates apply before every rank/LIMIT; validation searches are VECTOR only."""
 
-import asyncio
 import re
 from dataclasses import dataclass, field
 from uuid import UUID
@@ -131,19 +130,6 @@ class FrozenRetrievalRepository(RetrievalSearchRepository):
             tuple(limitations),
         )
 
-    def indexed_episode_ids(self):
-        self.readiness()
-        return set(
-            self.session.scalars(
-                text(f"""
-            WITH valid AS MATERIALIZED (SELECT c.episode_id {self.from_clause})
-            SELECT s.episode_id FROM retrieval_sources s JOIN valid v ON v.episode_id=s.episode_id
-            GROUP BY s.episode_id,s.chunk_count HAVING s.chunk_count>0 AND count(*)=s.chunk_count
-            """),
-                self.params,
-            )
-        )
-
 
 def vector_ready(readiness, embedding_client):
     """A VECTOR read can run: a query embedding client and every frozen episode source fully embedded."""
@@ -176,33 +162,15 @@ class FrozenRetrievalSearchService:
         """GH344: one read of the job's frozen index readiness, before VECTOR is offered to the model."""
         return await self.service.readiness(self._scope(frozen))
 
-    async def search(self, frozen, intent, embedding_client, limit):
+    async def search(self, frozen, query, embedding_client, limit):
+        """One VECTOR search over the job's frozen episode scope (grid v4: no keyword, direct or neighbor reads).
+
+        The underlying service authorizes and reads readiness before embedding and again after ranking; the
+        corpus checks that readiness covers every frozen episode source before accepting any evidence.
+        """
         scope = self._scope(frozen)
         try:
-            if intent.operation == "KEYWORD":
-                result = await self.service.keyword(scope, intent.query, limit=limit)
-            else:
-                # Last line of defence: the offer check (GH344) may predate an index change.
-                readiness = await self.service.readiness(scope)
-                if not vector_ready(readiness, embedding_client):
-                    raise IncompleteInspection("VECTOR_NOT_READY")
-                result = await self.service.vector(
-                    scope, intent.query, embedding_client, limit=limit
-                )
-
-            def indexed():
-                with self.sessions() as session:
-                    return FrozenRetrievalRepository(
-                        session, scope, self.spec
-                    ).indexed_episode_ids()
-
-            ids = await asyncio.to_thread(indexed)
-            refs = {
-                source.ref
-                for source in frozen.sources
-                if source.kind == "EPISODE" and UUID(source.metadata["episodeId"]) in ids
-            }
-            return result, refs
+            return await self.service.vector(scope, query, embedding_client, limit=limit)
         except IncompleteInspection:
             raise
         except SearchScopeUnavailable:
