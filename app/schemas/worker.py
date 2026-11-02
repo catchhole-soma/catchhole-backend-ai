@@ -43,7 +43,7 @@ FAILURE_DIAGNOSTIC_REASONS = frozenset({
     "RELATIONSHIP_DUPLICATE_TARGET", "RELATIONSHIP_INACTIVE_TARGET",
     "RELATIONSHIP_MERGE_CONTENT_CHANGED", "RELATIONSHIP_OBSERVATION_COVERAGE_MISSING",
     "RELATIONSHIP_RESPONSE_JSON_INVALID", "RELATIONSHIP_RESPONSE_SCHEMA_INVALID",
-    "RELATIONSHIP_INPUT_TOO_LARGE", "RELATIONSHIP_CONTEXT_INVALID",
+    "RELATIONSHIP_INPUT_TOO_LARGE", "RELATIONSHIP_CONTEXT_INVALID", "RELATIONSHIP_PREDECESSOR_INCOMPLETE",
 })
 FAILURE_DIAGNOSTIC_STAGES = frozenset({
     "CLAIM_INPUT", "CHARACTER_CONTEXT", "CHARACTER_COMPARE", "WORLD_CONTEXT", "WORLD_COMPARE", "EXTRACTION", "FINALIZE", "UNKNOWN",
@@ -179,6 +179,9 @@ class WorkerAnalysisJobClaimRequest(BaseModel):
     )
     supports_relationship_recovery: bool | None = Field(
         default=None, alias="supportsRelationshipRecovery", strict=True,
+    )
+    supports_relationship_partial_results: bool | None = Field(
+        default=None, alias="supportsRelationshipPartialResults", strict=True,
     )
 
 

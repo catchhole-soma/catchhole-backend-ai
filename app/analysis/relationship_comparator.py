@@ -388,6 +388,11 @@ class RelationshipComparator:
             decisions.extend(await self._compare_payload(batch))
         return self._validate_response({"decisions": decisions}, payload)
 
+    async def compare_partial(self, context: dict):
+        # Lazy import keeps the legacy provider contract and validator standalone.
+        from app.analysis.relationship_grouped_comparator import GroupedRelationshipComparator
+        return await GroupedRelationshipComparator(self).compare(context)
+
     def _fits(self, payload):
         return estimate_text_input_tokens(
             self.system_prompt, json.dumps(payload, ensure_ascii=False), self.model,
