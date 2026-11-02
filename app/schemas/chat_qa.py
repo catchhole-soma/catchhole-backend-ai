@@ -144,6 +144,25 @@ class AnswerSelection(ContractModel):
     outcome: Literal["ANSWER", "CLARIFICATION", "INSUFFICIENT_EVIDENCE"]
     row_refs: list[str] = Field(max_length=50)
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_selection(cls, data):
+        # 같은 행을 두 번 고르거나 판단과 행 목록이 어긋난 응답은 재호출 대신 보수적으로 맞춘다.
+        # 답하지 않는 판단은 행을 버리고, 답한다면서 행이 없으면 근거 부족으로 본다.
+        if not isinstance(data, dict):
+            return data
+        key = "rowRefs" if "rowRefs" in data else "row_refs"
+        refs = data.get(key)
+        if not isinstance(refs, list) or not all(isinstance(ref, str) for ref in refs):
+            return data
+        refs = list(dict.fromkeys(refs))
+        outcome = data.get("outcome")
+        if outcome in ("CLARIFICATION", "INSUFFICIENT_EVIDENCE"):
+            refs = []
+        elif outcome == "ANSWER" and not refs:
+            outcome = "INSUFFICIENT_EVIDENCE"
+        return {**data, key: refs, "outcome": outcome}
+
     @model_validator(mode="after")
     def valid_selection(self) -> Self:
         if (self.outcome == "ANSWER") != bool(self.row_refs):

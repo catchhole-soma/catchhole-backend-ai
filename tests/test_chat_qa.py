@@ -88,7 +88,6 @@ async def test_invented_subject_name_is_rejected_before_query():
     "bad",
     [
         {"outcome": "ANSWER", "rowRefs": ["R999"]},
-        {"outcome": "ANSWER", "rowRefs": ["R1", "R1"]},
         {"outcome": "ANSWER", "rowRefs": ["R1"], "quote": "조작된 원문"},
         {"outcome": "ANSWER", "rowRefs": ["R1"], "text": "마력은 무한대다"},
     ],
@@ -618,4 +617,48 @@ async def test_truncated_named_item_is_unknown_without_hiding_other_complete_ite
     assert "확인한 결과에는 포함하지 않았어요:" in text
     items = result["modelRequests"][1]["input"]["items"]
     assert [group["itemRef"] for group in items] == ["I1"]
+    assert len(result["modelRequests"]) == 2
+
+
+def test_selection_contract_mismatches_are_normalized_conservatively():
+    # 같은 행을 두 번 고르면 하나로 합치고, 답하지 않는 판단에 붙은 행은 버리며,
+    # 답한다면서 행이 없으면 근거 부족으로 본다. 재호출로 모델 호출 상한을 쓰지 않기 위한 정규화다.
+    def parse(data):
+        return AnswerSelection.model_validate(data)
+
+    assert parse({"outcome": "ANSWER", "rowRefs": ["R2", "R1", "R2"]}).row_refs == ["R2", "R1"]
+    assert parse({"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": ["R1"]}).row_refs == []
+    clarify = parse({"outcome": "CLARIFICATION", "rowRefs": ["R1", "R2"]})
+    assert (clarify.outcome, clarify.row_refs) == ("CLARIFICATION", [])
+    empty = parse({"outcome": "ANSWER", "rowRefs": []})
+    assert (empty.outcome, empty.row_refs) == ("INSUFFICIENT_EVIDENCE", [])
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"outcome": "ANSWER", "rowRefs": ["R1", "R1"]},
+        {"outcome": "ANSWER", "rowRefs": ["R1", "R999"]},
+    ],
+)
+async def test_duplicate_or_unknown_refs_keep_the_known_row_without_a_retry(selection):
+    case, catalog = scenario()
+    result = await replay_case(case, catalog, outputs=[case["modelOutputs"][0], selection])
+    assert result["finish"]["failure"] is None, result["finish"]
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    assert len(result["modelRequests"]) == 2
+
+
+@pytest.mark.anyio
+async def test_selection_over_the_row_cap_is_truncated_with_a_notice():
+    case, catalog = scenario()
+    result = await replay_case(
+        case,
+        catalog,
+        outputs=[case["modelOutputs"][0], {"outcome": "ANSWER", "rowRefs": ["R1", "R2"]}],
+        config={"max_selected_rows": 1},
+    )
+    assert result["finish"]["failure"] is None, result["finish"]
+    assert NOTICES["SELECTION_LIMIT"] in result["finish"]["result"]["limitations"]
     assert len(result["modelRequests"]) == 2
