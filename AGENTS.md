@@ -29,12 +29,17 @@
 
 ## Spring Worker API
 
+- GH357 관계 의미 실패의 `/relationship-analysis/fail` 요청에도 optional `failureDiagnostics`를 전달한다. 허용된 구절/검사값만 보내며 상위 Job을 실패시키거나 실패 분류·재시도 정책을 바꾸지 않는다. 일반 회차 부분 실패와 관계 전용 Job 실패의 구분·알림 snapshot은 서버가 소유한다.
+
 - 분석 상태 API의 read 한도는 `SPRING_WORKER_READ_TIMEOUT_SECONDS`(기본 120초)로 요청별 적용한다. 연결·쓰기·pool과 heartbeat·token 원장의 기존 30초 한도, heartbeat 실패 시 소유 작업 취소, lease 검증은 유지한다. read 한도는 요청 전체 deadline이 아니며 일반 분석 POST를 자동 재전송하지 않는다.
 
-- 선택적 `failureDiagnostics`는 Java/Python 공통 v1 고정 코드 계약이다. 원문·예외 메시지·URL·lease/인증값은 넣지 않으며 실제 관측한 HTTP 상태와 요청/trace ID만 전달한다. Spring 오류의 부가 진단 파싱 실패는 원래 HTTP 실패와 분리하고 `first_failure_code`와 그 실패의 `first_failure_diagnostics`를 묶어 batch→run→Job 실패 보고까지 운반한다. 새 실패에서 이전 시도의 진단을 재사용하거나 상세 원인으로 기존 격리·재시도 분류를 바꾸지 않는다.
+- 사용자 승인(2026-11-02)에 따라 `failureDiagnostics.excerpts`는 고정 kind/field로 후보 근거·기존 관계 값·AI 응답 문제 필드를 최대3개·각120 code point 전달한다. 선택 가능한 실제 대상 이름과 최대60 code point의 subjectName을 보존하며 전체 prompt/context/응답 또는 HTTP 헤더/예외 문자열을 복사하지 않는다. 긴 관계 MERGE 값은 첫 차이 주변을 보존한다. SOURCE는 후보에 저장된 근거이며 원문 재검증을 의미하지 않는다. 분할/재시도 후 최종 실패의 후보·응답을 사용하고 다른 후보나 이전 실패 구절을 이어받지 않는다.
+- 실패 진단의 선택적 `checks`는 실제 검증 지점에서 최대 3개를 수집한다. 고정 field/rule와 제한된 수치·local 참조·enum·boolean의 expected/actual만 허용하고 전체 원문/전체 응답/예외 문자열은 금지한다. 사용자가 승인한 문제 구절은 아래 excerpts 규칙으로만 전달한다. 관계 입력량·관측 참조와 세계관 주체 응답의 참조/순서를 보존하며, 참조가 길면 오류를 일으킨 값을 우선한다. `request_validated_model`의 원시 원인 제거는 검증된 WorkerFailureDiagnostics만 보존한다. 세계관 후보 보류 요청에도 optional 진단을 전달하되 실패 분류·후보 격리·재시도 정책을 바꾸지 않는다.
+- 선택적 `failureDiagnostics`는 Java/Python 공통 v1 고정 코드 계약이다. 전체 원문·예외 메시지·lease/인증값은 넣지 않으며 실제 관측한 HTTP 상태와 요청/trace ID만 전달한다. Spring 오류의 부가 진단 파싱 실패는 원래 HTTP 실패와 분리하고 `first_failure_code`와 그 실패의 `first_failure_diagnostics`를 묶어 batch→run→Job 실패 보고까지 운반한다. 새 실패에서 이전 시도의 진단을 재사용하거나 상세 원인으로 기존 격리·재시도 분류를 바꾸지 않는다.
 
 - 인용 offset 복원은 exact·공백 검색 다음에 `U+0022/U+201C/U+201D` 큰따옴표 차이만 허용하고 유일하게 찾은 원문 slice와 Unicode code point offset을 함께 저장한다. 의미 문자·다른 부호·모호한 반복을 보정하지 않는다. 현재값과 `UNAVAILABLE/QUOTE_NOT_FOUND`인 과거 근거는 별개이며 빈 근거를 만들거나 VERIFIED로 승격하지 않는다.
 - 일반 캐릭터 인용의 위치가 없거나 잘못되어 Spring이 `UNAVAILABLE`로 내린 경우에도 내용·현재값과 분석은 유지한다. `OFFSETS_UNAVAILABLE/INVALID_OFFSETS/EVIDENCE_UNAVAILABLE`를 provider에 보존하고 빈 인용을 복원하지 않는다. 과거 frozen CURRENT·identity·캐릭터 보류 참고의 null/불완전 offset도 provider 투영에서만 제외하며 DTO/hash/raw 기록을 바꾸지 않는다. 로컬 비교 projection은 위치 유무만으로 VERIFIED를 부여하지 않는다. 원문/hash/소유권 경계와 별도 서사시점·관계 근거 검증은 유지한다.
+- GH357의 세계관 준비 진단(`WORLD_SUBJECT_RESOLUTION_FAILED`, `WORLD_COMPARISON_INPUT_TOO_LARGE`)은 Java와 v1 허용목록을 맞춘다. 저장된 FAILED 관계 문맥에 당시 원인이 없으면 `RELATIONSHIP_RESUME`/`RELATIONSHIP_PREVIOUS_FAILURE`로 보고하고 추출 단계 실패로 추정하지 않는다. 고정 진단만 전달하며 실패 판정·복구·모델 실행은 바꾸지 않는다.
 - GH304 내부 진단 수신·additive schema는 Backend부터 배포하고 AI 진단 전송을 뒤에 둔다. 구 Backend는 추가 필드를 무시하므로 실패 처리는 호환되지만 상세 진단은 보존되지 않는다. rollback은 nullable 열을 남긴 코드 복구이며 운영 작업을 자동 재실행하지 않는다. 합성 Java HTTP 연결은 Backend `ComparisonEvidenceHttpPostgresIntegrationTest`와 `tests/support/comparison_evidence_http_client.py`를 사용하고 AI checkout과 기존 venv 경로를 분리한다.
 
 - 기본 `analysis` Worker는 `supportsFrozenComparisonEvidence=true`를 claim에 전송한다. `ORDERED_PROVISIONAL` 응답의 `comparisonEvidenceContract.formatVersion`이 정수 1인지 progress·heartbeat·원문/저장·provider 호출 전에 확인하고, 누락·잘못된 타입·미지원 버전은 기존 lease 기반 fail로 보고한다. 구 `CONFIRMED_ONLY`와 두 hidden 재비교 Worker의 광고는 유지한다.

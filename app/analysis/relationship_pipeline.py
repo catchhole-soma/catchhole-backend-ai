@@ -5,10 +5,12 @@ transport-to-Spring and unexpected failures retain the parent job's failure path
 The Spring completion transaction owns publication, never this pipeline.
 """
 
-from app.analysis.exceptions import OrderedInputContextError
+from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
 from app.analysis.relationship_diagnostics import annotate_relationship_failure
 from app.analysis.relationship_observations import RelationshipInputTooLargeError
-from app.exceptions.failure_classification import is_candidate_comparison_failure
+from app.exceptions.failure_classification import failure_diagnostics, is_candidate_comparison_failure
+
+from app.schemas.worker import failure_check
 
 MAX_EPISODE_OBSERVATIONS = 384
 _TERMINAL_STATUSES = frozenset({"COMPLETED", "FAILED", "APPLIED"})
@@ -29,7 +31,7 @@ class RelationshipAnalysisPipeline:
         self.failure_exception = None
         self.failure_stage = "RELATIONSHIP_EXTRACTION"
 
-    def _record_failure(self, code, error=None, *, stage="RELATIONSHIP_EXTRACTION"):
+    def _record_failure(self, code, error=None, *, stage="RELATIONSHIP_EXTRACTION", checks=()):
         # Ordinary extraction still isolates optional relationship failures; only
         # the dedicated worker re-raises this typed cause after the safe fail API.
         self.failure_code = code
@@ -38,6 +40,7 @@ class RelationshipAnalysisPipeline:
             error = annotate_relationship_failure(
                 error or RelationshipInputTooLargeError("Relationship input exceeds its budget."),
                 stage=stage, reason="RELATIONSHIP_INPUT_TOO_LARGE",
+                checks=checks or getattr(getattr(error, "failure_diagnostics", None), "checks", ()),
             )
         self.failure_exception = error
 
@@ -62,6 +65,14 @@ class RelationshipAnalysisPipeline:
                 ))):
             raise OrderedInputContextError("Invalid frozen relationship context.")
         self.context = context
+        if context["status"] == "FAILED":
+            # The saved context does not carry the original diagnostics. Never
+            # invent an extraction/comparison cause when resuming a failed row.
+            self.failure_stage = "RELATIONSHIP_RESUME"
+            self.failure_exception = annotate_relationship_failure(
+                ComparisonValidationError("Previously failed relationship analysis."),
+                stage=self.failure_stage, reason="RELATIONSHIP_PREVIOUS_FAILURE",
+            )
 
     async def extract_chunk(self, chunk):
         if self.context is not None or self.failure_code or chunk.id in self.extractions:
@@ -72,8 +83,9 @@ class RelationshipAnalysisPipeline:
                 episode_no=self.payload.episode.episode_no,
                 episode_title=self.payload.episode.title,
             )
-            if sum(len(result.observations) for result in self.extractions.values()) > MAX_EPISODE_OBSERVATIONS:
-                self._record_failure("INPUT_TOO_LARGE")
+            count = sum(len(result.observations) for result in self.extractions.values())
+            if count > MAX_EPISODE_OBSERVATIONS:
+                self._record_failure("INPUT_TOO_LARGE", checks=[failure_check("observationCount", "MAX", MAX_EPISODE_OBSERVATIONS, count)])
         except RelationshipInputTooLargeError as exc:
             self._record_failure("INPUT_TOO_LARGE", exc)
         except Exception as exc:
@@ -108,7 +120,7 @@ class RelationshipAnalysisPipeline:
                         } for span in observation.evidence_spans],
                     })
             if len(observations) > MAX_EPISODE_OBSERVATIONS:
-                self._record_failure("INPUT_TOO_LARGE")
+                self._record_failure("INPUT_TOO_LARGE", checks=[failure_check("observationCount", "MAX", MAX_EPISODE_OBSERVATIONS, len(observations))])
             if self.failure_code is not None:
                 return await self._fail()
             context = await self.spring.prepare_relationship_analysis(
@@ -144,10 +156,14 @@ class RelationshipAnalysisPipeline:
     async def _fail(self):
         if self.failure_code == "INPUT_TOO_LARGE" and self.failure_exception is None:
             self._record_failure("INPUT_TOO_LARGE", stage=self.failure_stage)
+        diagnostic = (failure_diagnostics(self.failure_exception, stage=self.failure_stage)
+                      if self.failure_exception is not None else None)
         await self.spring.fail_relationship_analysis(
             self.payload.analysis_job_id, self.payload.lease_token,
             {"formatVersion": 1, "sourceHash": self.source_hash,
              "contextToken": self.context.get("contextToken") if self.context else None,
-             "failureCode": self.failure_code},
+             "failureCode": self.failure_code,
+             **({"failureDiagnostics": diagnostic.model_dump(mode="json", by_alias=True, exclude_none=True)}
+                if diagnostic is not None else {})},
         )
         return {"relationshipAnalysisStatus": "FAILED"}

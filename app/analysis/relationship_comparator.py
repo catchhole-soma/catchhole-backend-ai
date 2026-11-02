@@ -4,6 +4,8 @@ Only request-local references enter the prompt. The backend remains responsible
 for ownership, optimistic concurrency, idempotency, and durable episode history.
 """
 
+from app.schemas.worker import failure_check, failure_excerpt, differing_excerpts
+
 import json
 import re
 from itertools import pairwise
@@ -205,8 +207,8 @@ def relationship_comparison_prompt_data(context: dict) -> dict:
         _invalid_input()
 
 
-def _invalid_decision(reason, message):
-    raise RelationshipDecisionValidationError("RELATIONSHIP_" + reason, message)
+def _invalid_decision(reason, message, *checks, excerpts=()):
+    raise RelationshipDecisionValidationError("RELATIONSHIP_" + reason, message, checks, excerpts)
 
 
 def validate_relationship_decisions(result: RelationshipComparisonResponse, context: dict) -> list[dict]:
@@ -219,23 +221,38 @@ def validate_relationship_decisions(result: RelationshipComparisonResponse, cont
     slots = {_slot(row) for row in relationships.values()}
     consumed, changed, used_targets = {}, set(), set()
     validated = []
-    for decision in result.decisions:
+    for item_index, decision in enumerate(result.decisions, 1):
         row = decision.model_dump()
         refs = row["observationRefs"]
-        if any(ref not in obs for ref in refs) or len(set(refs)) != len(refs):
-            _invalid_decision("OBSERVATION_REFS_INVALID", "Invalid observation coverage")
+        unknown = [ref for ref in refs if ref not in obs]
+        if unknown or len(set(refs)) != len(refs):
+            duplicate = next((ref for ref in refs if refs.count(ref) > 1), None)
+            _invalid_decision("OBSERVATION_REFS_INVALID", "Invalid observation coverage",
+                              failure_check("observationRefs", "IN_SET" if unknown else "UNIQUE",
+                                            list(obs) if unknown else [duplicate], unknown or [duplicate, duplicate], item_index=item_index))
         indexes = [order[ref] for ref in refs]
         new_indexes = [order[ref] for ref in refs if ref in expected]
         if indexes != sorted(indexes) or not new_indexes:
-            _invalid_decision("OBSERVATION_ORDER_INVALID", "Decisions require ordered references and new evidence")
+            checks = []
+            if indexes != sorted(indexes):
+                ordered_refs = sorted(refs, key=order.get)
+                mismatch = next(i for i, ref in enumerate(refs) if ref != ordered_refs[i])
+                checks.append(failure_check("observationRefs", "ORDERED", ordered_refs[mismatch:mismatch + 8], refs[mismatch:mismatch + 8], item_index=item_index))
+            if not new_indexes:
+                checks.append(failure_check("newObservationRefs", "IN_SET", sorted(expected), [], item_index=item_index))
+            _invalid_decision("OBSERVATION_ORDER_INVALID", "Decisions require ordered references and new evidence", *checks)
         mutates = row["operation"] in _MUTATIONS
         for ref in refs:
             if ref in consumed and not (consumed[ref] and mutates):
                 _invalid_decision("DISPOSITION_CONFLICT", "An observation cannot be both held/excluded and applied")
             consumed[ref] = mutates
         for key in ("label", "summary", "reason"):
-            if row[key] is not None and (_UUID.search(row[key]) or _LOCAL_REF.search(row[key])):
-                _invalid_decision("DISPLAY_REFERENCE_LEAK", "Display text contains internal references")
+            if row[key] is not None:
+                matches = [match for pattern in (_UUID, _LOCAL_REF) if (match := pattern.search(row[key])) is not None]
+                if matches:
+                    start = max(0, min(match.start() for match in matches) - 30)
+                    _invalid_decision("DISPLAY_REFERENCE_LEAK", "Display text contains internal references",
+                                      excerpts=[failure_excerpt("RESPONSE", {"label": "relationshipLabel", "summary": "relationshipSummary", "reason": "relationshipReason"}[key], row[key][start:], item_index=item_index, truncated=start > 0)])
         target_fields = ("relationshipRef", "sourceNodeRef", "targetNodeRef", "axis", "kind", "label", "summary", "direction")
         if row["operation"] not in _MUTATIONS:
             if any(row[key] is not None for key in target_fields) or not row["reason"]:
@@ -243,19 +260,22 @@ def validate_relationship_decisions(result: RelationshipComparisonResponse, cont
             validated.append(row)
             continue
         if row["temporalScope"] != "PRESENT":
-            _invalid_decision("NONPRESENT_MUTATION", "Non-present observation cannot mutate current state")
+            _invalid_decision("NONPRESENT_MUTATION", "Non-present observation cannot mutate current state",
+                              failure_check("temporalScope", "EQUALS", "PRESENT", row["temporalScope"], item_index=item_index))
         if any(row[key] is None for key in target_fields[1:]):
             _invalid_decision("MUTATION_CONTENT_MISSING", "Mutation is missing relationship content")
         pair = (row["sourceNodeRef"], row["targetNodeRef"])
         if pair[0] == pair[1]:
-            _invalid_decision("SELF_RELATIONSHIP", "Self relationship is invalid")
+            _invalid_decision("SELF_RELATIONSHIP", "Self relationship is invalid",
+                              failure_check("targetNodeRef", "DIFFERENT", [pair[0]], [pair[1]], item_index=item_index))
         for ref in refs:
             source, target = obs[ref]["sourceNodeRefs"], obs[ref]["targetNodeRefs"]
             if len(source) != 1 or len(target) != 1 or pair not in {(source[0], target[0]), (target[0], source[0])}:
                 _invalid_decision("ENDPOINTS_UNGROUNDED", "Relationship endpoints are not unambiguously grounded")
         slot = _slot(row)
         if slot in changed:
-            _invalid_decision("DUPLICATE_SLOT", "A relationship slot must have one grouped decision")
+            _invalid_decision("DUPLICATE_SLOT", "A relationship slot must have one grouped decision",
+                              failure_check("targetUseCount", "MAX", 1, 2, item_index=item_index))
         changed.add(slot)
         if row["operation"] == "ADD":
             if row["relationshipRef"] is not None or slot in slots:
@@ -264,17 +284,24 @@ def validate_relationship_decisions(result: RelationshipComparisonResponse, cont
             target = relationships.get(row["relationshipRef"])
             if (target is None or _slot(target) != slot
                     or (target["sourceNodeRef"], target["targetNodeRef"]) != pair):
-                _invalid_decision("EXISTING_REF_MISMATCH", "Existing relationship reference does not match")
+                _invalid_decision("EXISTING_REF_MISMATCH", "Existing relationship reference does not match",
+                                  failure_check("relationshipRef", "IN_SET", [ref for ref, existing in relationships.items() if _slot(existing) == slot and (existing["sourceNodeRef"], existing["targetNodeRef"]) == pair], [row["relationshipRef"]] if row["relationshipRef"] else [], item_index=item_index))
             if row["relationshipRef"] in used_targets:
-                _invalid_decision("DUPLICATE_TARGET", "An existing relationship cannot be changed twice")
+                _invalid_decision("DUPLICATE_TARGET", "An existing relationship cannot be changed twice",
+                                  failure_check("targetUseCount", "MAX", 1, 2, item_index=item_index))
             used_targets.add(row["relationshipRef"])
             if row["operation"] in {"MERGE", "END"} and target["status"] != "ACTIVE":
-                _invalid_decision("INACTIVE_TARGET", "MERGE/END require an active relationship")
+                _invalid_decision("INACTIVE_TARGET", "MERGE/END require an active relationship",
+                              failure_check("targetStatus", "EQUALS", "ACTIVE", target["status"], item_index=item_index))
             if row["operation"] == "MERGE" and (row["label"], row["summary"]) != (target["label"], target["summary"]):
-                _invalid_decision("MERGE_CONTENT_CHANGED", "MERGE only adds evidence and must preserve current content")
+                field = "summary" if row["summary"] != target["summary"] else "label"
+                _invalid_decision("MERGE_CONTENT_CHANGED", "MERGE only adds evidence and must preserve current content",
+                                  excerpts=differing_excerpts("relationshipSummary" if field == "summary" else "relationshipLabel",
+                                                             target[field], row[field], item_index=item_index))
         validated.append(row)
     if set(consumed).intersection(expected) != expected:
-        _invalid_decision("OBSERVATION_COVERAGE_MISSING", "Every new observation must be covered")
+        _invalid_decision("OBSERVATION_COVERAGE_MISSING", "Every new observation must be covered",
+                          failure_check("newObservationRefs", "COVERS", sorted(expected - set(consumed)), []))
     return validated
 
 
@@ -345,17 +372,17 @@ def _project_comparison(payload, observations, endpoint_sets=None):
     }
 
 
-def _comparison_error(reason):
+def _comparison_error(reason, checks=(), excerpts=()):
     return annotate_relationship_failure(
         ComparisonValidationError("Invalid relationship comparison response."),
-        stage="RELATIONSHIP_COMPARE", reason=reason,
+        stage="RELATIONSHIP_COMPARE", reason=reason, checks=checks, excerpts=excerpts,
     )
 
 
-def _input_too_large():
+def _input_too_large(*checks):
     raise annotate_relationship_failure(
         RelationshipInputTooLargeError("Relationship comparison input exceeds its token budget."),
-        stage="RELATIONSHIP_COMPARE", reason="RELATIONSHIP_INPUT_TOO_LARGE",
+        stage="RELATIONSHIP_COMPARE", reason="RELATIONSHIP_INPUT_TOO_LARGE", checks=checks,
     )
 
 
@@ -388,19 +415,23 @@ class RelationshipComparator:
             decisions.extend(await self._compare_payload(batch))
         return self._validate_response({"decisions": decisions}, payload)
 
-    def _fits(self, payload):
+    def _input_tokens(self, payload):
         return estimate_text_input_tokens(
             self.system_prompt, json.dumps(payload, ensure_ascii=False), self.model,
             RELATIONSHIP_COMPARISON_RESPONSE_SCHEMA,
-        ) <= self.max_input_tokens
+        )
+
+    def _fits(self, payload):
+        return self._input_tokens(payload) <= self.max_input_tokens
 
     def _plan_batches(self, payload):
         batches, pending = [], []
         endpoint_sets = _comparison_endpoint_sets(payload)
         for component in _comparison_components(payload, endpoint_sets):
             projected = _project_comparison(payload, component, endpoint_sets)
-            if not self._fits(projected):
-                _input_too_large()
+            tokens = self._input_tokens(projected)
+            if tokens > self.max_input_tokens:
+                _input_too_large(failure_check("inputTokens", "MAX", self.max_input_tokens, tokens))
             combined = [*pending, *component]
             if pending and not self._fits(_project_comparison(payload, combined, endpoint_sets)):
                 batches.append(_project_comparison(payload, pending, endpoint_sets))
@@ -410,7 +441,7 @@ class RelationshipComparator:
         if pending:
             batches.append(_project_comparison(payload, pending, endpoint_sets))
         if len(batches) > MAX_COMPARISON_BATCHES:
-            _input_too_large()
+            _input_too_large(failure_check("comparisonBatchCount", "MAX", MAX_COMPARISON_BATCHES, len(batches)))
         return batches
 
     @staticmethod
@@ -422,7 +453,7 @@ class RelationshipComparator:
         try:
             return validate_relationship_decisions(result, payload)
         except RelationshipDecisionValidationError as exc:
-            raise _comparison_error(exc.reason_code) from None
+            raise _comparison_error(exc.reason_code, exc.checks, exc.excerpts) from None
 
     async def _compare_payload(self, payload):
         user_prompt = json.dumps(payload, ensure_ascii=False)

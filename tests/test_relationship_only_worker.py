@@ -331,7 +331,7 @@ def test_failed_relationship_stops_cursor_without_repeat_or_core_completion(monk
     worker, payload, spring, storage, extractor, comparator, _ = setup_worker(
         monkeypatch, status="FAILED"
     )
-    with pytest.raises(ComparisonValidationError):
+    with pytest.raises(OrderedAnalysisIncompleteError):
         asyncio.run(worker.process_claimed(payload))
     storage.get_text.assert_not_called()
     extractor.extract_from_chunk.assert_not_called()
