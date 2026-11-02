@@ -1,31 +1,38 @@
-# 검수 실행과 호출형 검사 (#306/#309/#310)
+# 검수 실행과 호출형 검사 (#306/#309/#310, grid v4 #349 개편)
 
 `EpisodeValidationWorker`는 실제 Java ValidationJob과 leased HTTP를 사용해 설정/오탈자를 독립 실행한다.
-`SettingValidationService(...).inspect()`와 `check_typos(...)`의 기존 callable API도 유지한다.
+`SettingValidationService(...).inspect()`와 `check_typos(...)`의 callable API도 유지한다.
 전용 실행/기본 OFF·명시 예산/복원/원장/수동 검증은 [실행 계약](../../docs/validation-execution-v1.md)을 따른다.
-Worker는 서버 projectionVersion/modelSettings/modelSourceCatalogue와 clueVersion/modelClues만 사용하며
-로컬 projection/CL fallback은 Job 없는 callable에만 남긴다. authorCorrectionProofs는 실제 편집 transport이며
+Worker는 서버 `projectionVersion=2`(SUBJECTS/SETTINGS, modelClues 없음, 현재값만)와 `configurationVersion=2`(역할별 모델·추론 강도·출력 상한)만 받는다.
+Job 없는 callable과 실험 harness는 같은 projection을 `projection.py`의 Python 대응으로 만든다. authorCorrectionProofs는 실제 편집 transport이며
 canonical author_correction=null을 자유 문자열 서사 시점·조건의 권위로 바꾸지 않는다.
 
-PLANNER/선정 전체 page/COVERAGE/각 BOOK_SOURCE/BOOK_COVERAGE를 즉시 저장하고 MERGED_PLAN의
-서버 check UUID/revision/digest로 판정한다. 성공 NO_CONFLICT와 오탈자 segment도 즉시 저장한다.
-같은 입력의 crash/reclaim은 성공 단계·판정·구간을 재호출하지 않고, FOLLOW_UP은 영향 revision을 원자 변경한다.
-첫 책 검토를 저장한 뒤 다음 책을 읽고 재개 시 미완료 rule만 source 범위로 읽는다.
-전체 책이나 저장 stage/decision을 checkpoint에 중복 복사하지 않는다. 원문 교체·파기는 모든 사본을 지운다.
+모듈:
+- `contracts.py`: 계약·`split_setting_segments`(grid v4)·`split_segments`(TYPO)·판정 답 `JudgeOpenAnswer`/`JudgeFinalAnswer`·예산.
+- `planning.py`: 구간 PLANNER 병렬 호출·정규화·게시·MERGED_PLAN 병합·서버 grid 대조.
+- `judging.py`: 판정 상태 기계(OPEN → 검색·문맥 → FINAL, 충돌 의심 변화 검색, 최대 3회)·`SettingsCache`·판정 검증.
+- `corpus.py`: L receipt·E-ref 발급과 실행 단위 RAG 재사용(lock 하나, 같은 문장 1회 검색).
+- `failures.py`: 질문 단위/실행 단위 실패 분류와 정책 스위치(운영 fail-fast, 실험 계속).
+- `service.py`: 조율(입력 읽기 → 계획 → 판정 4개씩).
+- `models.py`/`schemas.py`: `RoleRuntime`, PLANNER/JUDGE 지시문, `call_role`, v3 strict schema.
+- `execution.py`: claim 예산·역할 runtime(`claim_roles`), 역할별 metered client, query embedding(lock).
+
+PLANNER 단계를 검증 즉시 저장하고 서버 v4 grid를 확인한 뒤 MERGED_PLAN의 서버 check UUID/revision/digest로 판정한다.
+결정된 질문과 오탈자 segment도 즉시 저장한다. 같은 입력의 crash/reclaim은 저장된 PLANNER·결정·구간을 재호출하지 않고,
+게시되지 않은 질문만 첫 판정 호출부터 다시 한다(JUDGING runtime checkpoint·`/revisions` 없음). 원문 교체·파기는 모든 사본을 지운다.
 
 두 분기는 한쪽 실패·질문0으로 취소하지 않는다. 역할 cap/예약 실패와 공유 lease/input/source 손실을 구분하며,
 공유 무효화 때 양쪽의 새 예약·게시를 막고 기존 실제 사용량은 UNKNOWN/늦은 SETTLE로 정산한다.
 `await worker.aclose()`는 등록된 claim·초기화·두 분기 실행을 멈춘 뒤 해당 실행과 원장 정리를 모두 기다리고 HTTP를 닫는다.
 취소 뒤 분리된 예약 응답·UNKNOWN·SETTLE도 검수 ledger가 소유하며, 이미 측정한 실제 사용량을 유지한다.
 동시·반복 close는 한 번의 종료를 공유하고 한 호출자의 취소가 나머지 정산을 중단하지 않는다.
-새 예약·provider 호출·게시를 시작하지 않으며 원래 API timeout/cancellation 계약을 사용한다.
-SELECT 전용 session factory를 명시하면 기존 frozen RAG를 사용한다. optional embedding은 실제 index와
-model/version/1536 차원·명시 cap이 일치할 때만 실행하고, exact query/input/manifest/index proof가
-원 호출 원장에 맞는 성공 VECTOR receipt를 재사용한다. 미준비 vector는 정상 빈 결과가 아니다.
-VECTOR는 Job 시작 때 읽은 readiness가 완전하고 query embedding client가 있을 때만 모델에 제안한다(GH344).
-readiness 읽기는 최대 5초이고, 실패·초과하면 그 Job은 frozen RAG 없이 키워드로만 진행한다.
-같은 Job의 이전 시도가 VECTOR를 저장했으면 재개 때는 그대로 유지한다.
-claim에 QUERY_EMBEDDING 역할이 아예 없으면 embedding 없이(키워드만) 실행하고, 있는데 index와 다르면 계속 거절한다.
+SELECT 전용 session factory를 명시하면 frozen RAG를 사용한다. optional embedding은 실제 index와
+model/version/1536 차원·명시 cap이 일치할 때만 실행한다. 같은 실행 안의 같은 검색 문장은 한 번만 embedding·검색하고
+결과를 재사용한다(`reused_from`). 실행 사이(retry)의 재사용은 없다. 미준비 vector는 정상 빈 결과가 아니다.
+검색은 Job 시작 때 읽은 readiness가 완전하고 query embedding client가 있을 때만 판정에 제안한다(GH344).
+readiness 읽기는 최대 5초이고, 실패·초과하면 그 Job은 검색 없이 진행하며 변화 검색이 필요한 질문은 `VECTOR_NOT_READY`다.
+과거 회차가 없으면 검색은 근거 없이 성공한다(`NOT_APPLICABLE`). claim에 QUERY_EMBEDDING 역할이 아예 없으면 embedding 없이 실행하고,
+있는데 index와 다르면 계속 거절한다.
 
 기본 추출·챗봇 모델/재시도, 추출 Job·후보·자동 확정/철회는 바꾸지 않는다. #312/#314는 별도 범위다.
 
@@ -44,11 +51,12 @@ claim에 QUERY_EMBEDDING 역할이 아예 없으면 embedding 없이(키워드�
 from app.validation.data import ValidationContext, ValidationDataClient
 from app.validation.typo import check_typos
 
-async def inspect(context: ValidationContext, base_url, internal_key, llm, budget):
+async def inspect(context: ValidationContext, base_url, internal_key, llm, budget, role):
     # context/인증값은 신뢰 서버 실행에서 고정한다. 모델 출력으로 만들지 않는다.
+    # role은 claim configuration v2의 TYPO RoleRuntime(model, 추론 강도, 출력 상한)이다.
     data = ValidationDataClient(base_url, internal_key, context)
     try:
-        result = await check_typos(data, llm, budget=budget)
+        result = await check_typos(data, llm, budget=budget, role=role)
         return result.model_dump(mode="json")  # category를 포함한 실제 subtype으로 직렬화
     finally:
         await data.aclose()
@@ -63,7 +71,7 @@ model_calls 상한을 우회하지 않게 하기 위함이다. 호출 전 전용
 이 허용을 위해 검수에 가짜 AnalysisJob/lease를 만들지 않는다. 검수 실행·계량은 전용 #310 Worker가 실제 ValidationJob 원장 adapter로 연결한다.
 호출자는 `InvocationBudget`의 모든 수치를 명시한다.
 `model_calls`는 생성 시도 수, `lookups`는 frozen reader 요청 수이며 정상 경로는 3회다.
-`input_tokens`와 `output_tokens`는 각각 한 요청의 실제 입력 상한과 생성 출력 상한이다.
+`input_tokens`는 한 요청의 실제 입력 상한이고, 생성 출력 상한은 `role.max_output_tokens`다.
 `segment_chars/context_chars`는 공통 `split_segments`에 그대로 전달한다.
 나머지 공통 catalogue/search 예산은 오탈자 분기에서 사용하지 않는다.
 count와 생성, 원문 읽기와 최종 검증은 같은 `seconds` 벽시계 예산 안에서 실행한다.
@@ -71,7 +79,7 @@ count와 생성, 원문 읽기와 최종 검증은 같은 `seconds` 벽시계 �
 
 ## 제안과 위치
 
-- 모델은 `gpt-6.1-terra`, 호출별 옵션은 불변 `LlmCallOptions(reasoning_effort="low")`다.
+- 모델·호출별 옵션은 claim configuration v2의 TYPO `RoleRuntime`(운영 권장 `gpt-6.1-terra`, `low`)이다.
   count와 생성에 동일한 system/user/model/schema/options를 제공한다.
   추출·챗봇의 전역 기본값이나 공유 client 속성은 바꾸지 않는다.
 - 공통 `TypoSuggestion`에는 분류가 없어서 #309-local subtype에만 `category`를 추가했다.
