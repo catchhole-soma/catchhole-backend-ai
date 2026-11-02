@@ -808,17 +808,10 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         by_ref = {row.ref: row for row in candidates}
 
         def validate_selection(selection):
-            # 없는 행은 버리고, 상한보다 많이 고르면 앞에서부터 상한까지만 쓴다. 남는 행이 없으면 재호출한다.
-            known = [ref for ref in selection.row_refs if ref in by_ref]
-            if selection.row_refs and not known:
+            if len(selection.row_refs) > self.cfg.max_selected_rows or any(
+                ref not in by_ref for ref in selection.row_refs
+            ):
                 raise ValueError("Unknown or excessive row references")
-            if len(known) > self.cfg.max_selected_rows:
-                known = known[: self.cfg.max_selected_rows]
-                if "SELECTION_LIMIT" not in self.codes:
-                    self.codes.append("SELECTION_LIMIT")
-            if known != list(selection.row_refs):
-                return selection.model_copy(update={"row_refs": known})
-            return None
 
         selection = await self.model(
             AnswerSelection,

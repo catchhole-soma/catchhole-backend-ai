@@ -146,22 +146,22 @@ class AnswerSelection(ContractModel):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_selection(cls, data):
-        # 같은 행을 두 번 고르거나 판단과 행 목록이 어긋난 응답은 재호출 대신 보수적으로 맞춘다.
-        # 답하지 않는 판단은 행을 버리고, 답한다면서 행이 없으면 근거 부족으로 본다.
+    def normalize_outcome(cls, data):
+        # 판단과 행 목록이 어긋난 응답은 재호출 대신 보수적으로 맞춘다(V2-036: 두 번 모두
+        # INVALID_SELECTION으로 실행 실패). 답하지 않는 판단에 붙은 행은 버리고, 답한다면서 행이
+        # 없으면 근거 부족으로 본다. 없는 참조·중복·상한 초과는 기존대로 재시도한다.
         if not isinstance(data, dict):
             return data
         key = "rowRefs" if "rowRefs" in data else "row_refs"
         refs = data.get(key)
-        if not isinstance(refs, list) or not all(isinstance(ref, str) for ref in refs):
+        if not isinstance(refs, list):
             return data
-        refs = list(dict.fromkeys(refs))
         outcome = data.get("outcome")
-        if outcome in ("CLARIFICATION", "INSUFFICIENT_EVIDENCE"):
-            refs = []
-        elif outcome == "ANSWER" and not refs:
-            outcome = "INSUFFICIENT_EVIDENCE"
-        return {**data, key: refs, "outcome": outcome}
+        if outcome in ("CLARIFICATION", "INSUFFICIENT_EVIDENCE") and refs:
+            return {**data, key: []}
+        if outcome == "ANSWER" and not refs:
+            return {**data, "outcome": "INSUFFICIENT_EVIDENCE"}
+        return data
 
     @model_validator(mode="after")
     def valid_selection(self) -> Self:
