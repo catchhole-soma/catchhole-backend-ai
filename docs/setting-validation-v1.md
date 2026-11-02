@@ -71,7 +71,8 @@ BOOK_SOURCE의 예정/완료 점검 수와 BOOK_COVERAGE의 구간/규칙 처리
 검수 과금/Worker 원장 연결은 GH310의 책임이다. 기존 추출용 MeteredTextGenerationClient를 재사용하기 위해 가짜 AnalysisJob/lease를 생성하지 않는다.
 
 1. 실제 target 전문과 고정 항목 페이지를 준비한다. 순수 분할기의 모든 핵심 구간이 전문을 덮고 앞뒤 문맥을 별도로 유지한다.
-2. Terra medium이 질문을 계획한다. Terra high는 첫 질문 없이 원고와 전체 카탈로그 페이지에서 대상을 독립 선정하고 선택한 제약·이력·조건에서 별도 질문을 만든다.
+2. Terra medium이 질문을 계획한다. 구간 문맥에 이름·별칭이 글자 그대로 나온 대상(기계 매칭)과 Terra high SUBJECT_RESOLUTION이 첫 질문 없이 해소한 비문자 지칭(대명사·호칭·직함·별명·부분 이름)의 대상을 합쳐 관련 대상으로 삼는다(GH349).
+   Terra high COVERAGE는 그 대상들의 고정 항목 전체의 제약·이력·조건에서 별도 질문을 만든다. 전체 카탈로그를 페이지별로 선정하지 않는다.
 3. 날짜/수량/요일/반복 명칭의 결정적 단서를 독립 수집한다. 보완은 선택 규칙·구간·단서마다 CHECKED/NOT_APPLICABLE/UNPROCESSED를 구분한다. 이 기록이 의미상 누락 0을 보증하지 않는다.
 4. 같은 제공 대상·속성/규칙·서사 시점·조건·서술 방식의 질문만 병합한다. 모든 위치·원 질문 참조·조회 의무를 보존하며 ID 미해결 질문은 보수적으로 별도 유지한다.
 5. 질문별 실제 고정 DB/target 조회 영수증과 추가 조회를 묶는다. Terra medium은 FOLLOW_UP 또는 DECIDED를 반환한다. 새 단서가 영향을 주는 기존 질문을 재개하고 revision/input_digest를 갱신한다.
@@ -80,13 +81,20 @@ BOOK_SOURCE의 예정/완료 점검 수와 BOOK_COVERAGE의 구간/규칙 처리
 GH331 모델 입력·출력 계약(실제 Terra 관측 반영):
 
 - PLANNER/COVERAGE 입력은 `target_source_ref: "T1"`과 대상 식별용 `subject_catalogue`를 준다. COVERAGE는 선택한 `settings`와 그 entry_ref 목록 `rule_refs`를 따로 받고
-  rules에는 rule_refs만 기록한다. RELATED_SELECTION은 기존처럼 page의 `catalogue`만 받는다.
+  rules에는 rule_refs만 기록한다. GH349부터 `subject_catalogue`는 항목별 행이 아니라 주체별 한 행(`subject_ref`, `domain`, 첫 항목의 `name`,
+  항목 전체 `aliases`의 순서 보존·중복 없는 합집합)이며 PLANNER·SUBJECT_RESOLUTION·COVERAGE가 같은 목록을 받는다(식별용, 질문 subject_refs 검증은 전체 주체 기준).
 - 역할별 strict schema(`validation_<role>_v2`)는 span `source_ref=T1`과 연산별 lookup intent anyOf(BASELINE=B, TARGET_CONTEXT=T1/null, DIRECT=R 필수,
-  KEYWORD/VECTOR=query 필수, NEIGHBORS=E만)를 쓴다. COVERAGE·BOOK_COVERAGE·RELATED_SELECTION은 선택 rule·CL·page 참조를 enum으로 열거한다(항목당 100·schema당 500개까지, 넘으면 문자열).
+  KEYWORD/VECTOR=query 필수, NEIGHBORS=E만)를 쓴다. COVERAGE·BOOK_COVERAGE는 선택 rule·CL 참조를 enum으로 열거한다(항목당 100·schema당 500개까지, 넘으면 문자열).
+  SUBJECT_RESOLUTION(GH349)은 `subject_ref`를 보고서의 S 참조 enum 또는 null로 제한하고(100개 초과는 S pattern, 주체가 없으면 null만) 보고서당 한 schema로 고정한다.
   PLANNER·JUDGE는 같은 system prompt로 여러 번 호출되므로 provider prompt cache가 유지되도록 보고서 안에서 schema를 고정한다. 참조는 종류별 pattern(B/R/E/L/Q/S/TSEG/CL)으로만 제한하고
   실제 ref 형식이 다르면 일반 문자열로 둔다. 정확한 소속은 검증기가 판단한다.
 - frozen RAG 검색이 주입되지 않았고 회차 출처가 있으면 VECTOR는 항상 `VECTOR_NOT_READY`로 끝나므로 schema가 KEYWORD만 제안하고, 남은 VECTOR 의무는 저장 전에 거절한다.
   검색이 주입된 실행과 설정집만 있는 실행은 기존 VECTOR 경로(색인 readiness 검사·책 raw fallback)를 그대로 쓴다.
+  GH344: 검색이 주입돼도 회차 출처가 있으면 Job 시작 때 고정 범위의 readiness를 한 번 읽어, 모든 고정 회차 출처의 vector가 준비됐고(`vector_chunks>0`,
+  `vector_ready_sources=source_count=회차 출처 수`) query embedding client가 있을 때만 VECTOR를 제안한다. 읽기는 `min(남은 seconds, 5초)` 안에 끝나야 하며,
+  실패·초과하면 경고(예외 종류만)를 남기고 그 Job은 frozen RAG 없이(키워드만, 원문 직접 읽기) 계속한다. Job을 실패시키지 않는다.
+  `normalizations.VECTOR_OFFERED`(1/0)와 INFO `vector search offered=...`로 남긴다. 조회 직전의 readiness 검사(`VECTOR_NOT_READY`·`VECTOR_INDEX_PARTIAL`)는 그대로 둔다.
+  같은 Job의 이전 시도가 VECTOR 계획·의무·receipt를 이미 저장했으면 재개 때 readiness와 무관하게 VECTOR를 유지해(`resumed=True`) 성공한 조회의 JUDGE-only 재개를 막지 않는다.
 - strict mode는 root 조건부 필드를 표현할 수 없으므로 판정 조건은 prompt와 검증기가 맡는다. FOLLOW_UP의 outcome/basis/impact/impact_reason/completion은 사용하지 않으므로 무시(null)하고,
   NO_CONFLICT의 impact/impact_reason도 finding이 아니어서 null로 둔다. 나머지 판정의 impact 누락 등은 그대로 거절한다.
 - `completion.required_reads.receipt_refs`는 Worker가 질문의 실제 성공 receipt 전체로 확정한다. 모델이 인용한 receipt/근거가 실제로 없으면 거절하고, 빠진 receipt만 채운다.
@@ -100,6 +108,59 @@ GH331 모델 입력·출력 계약(실제 Terra 관측 반영):
 SUSPECTED_CONFLICT/CHANGE_NOT_FOUND는 실제 성공한 변화/예외 keyword/vector 검색 receipt가 있어야 한다.
 DB/직접 입력과 이미 확보한 근거가 충분하면 추가 검색을 생략할 수 있으나 대상·시점·조건·변화/예외 설명과 실제 자료 참조가 필요하다.
 검색 0건 자체로 직접 모순이나 예외 부재를 증명하지 않는다. 같은 신규 회차만의 모순은 판정하지 않는다.
+
+GH341: SUSPECTED_CONFLICT의 변화·예외 검색 의무는 JUDGE가 답한 뒤에야 드러나므로 Worker가 결정적으로 보완한다(계약 자체는 그대로다).
+
+- DECIDED SUSPECTED_CONFLICT인데 그 질문에 성공한 `CHANGES_EXCEPTIONS` KEYWORD/VECTOR receipt가 없으면, 판정 검증 전에 KEYWORD 검색 하나를
+  조회 의무로 넣는다. ref `Qn-CHANGES_EXCEPTIONS`, 고정 purpose `Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색`, query는 중복 없는 비어 있지 않은
+  `subject_mentions` 뒤에 `property_or_rule`을 공백으로 이어 1000자 이내로 자른 값이다. FOLLOW_UP과 같이 검증·revision(`NEW_CLUE`)·재대기한 뒤
+  검색 receipt와 근거를 받은 JUDGE를 다시 호출한다. frozen RAG 유무와 관계없이 항상 KEYWORD다.
+- 질문당 한 번만 넣는다. 같은 purpose의 검색이 대기 중이거나(재개 포함) 이미 실행됐으면 다시 넣지 않는다. 검색 자체가 실패하면 기존처럼 그 조회의
+  실패 코드로 미완료이며 같은 입력의 재시도는 저장된 의무를 다시 실행할 뿐 새로 넣지 않는다. query를 만들 수 없으면 `INVALID_DECISION_CHANGE_SEARCH_MISSING`이 그대로다.
+- 다시 받은 SUSPECTED_CONFLICT의 `completion.changes_exceptions`가 성공 검색 receipt를 인용하지 않았는데 질문에 그런 receipt가 있으면, Worker가 그 receipt 전체와
+  그 근거 중 알려진 참조(없으면 `T1`)를 덧붙인다. 모델이 인용한 receipt·근거는 지우지 않고 그대로 검증하며 없는 참조를 만들지 않는다.
+- 횟수는 `normalizations`의 `CHANGE_SEARCH_INSERTED`(넣은 검색), `CHANGE_SEARCH_RECEIPT_FILLED`(인용 보완)로 남는다. 판정·사유·영향 등급·prompt·schema·예산은 바꾸지 않는다.
+
+GH349: 관련 설정 선정을 전체 카탈로그 페이지 선별(RELATED_SELECTION:TSEGn:PAGEk)에서 주체 매칭 + 구간당 SUBJECT_RESOLUTION으로 바꾼다(grid v2, [실행 계약](validation-execution-v1.md)).
+
+- 기계 매칭: 항목의 2 code point 이상인 `name` 또는 `aliases` 문자열이 구간 문맥(`text[contextStart:contextEnd]`, code point)에 정확한 부분 문자열로 나오면
+  그 항목의 주체가 구간에 매칭된다. 정규화하지 않고, S 번호 순·중복 없음이며, name이 null이고 aliases가 비면 매칭되지 않는다(1글자 규칙은 아래 GH349 후속).
+  실행 Job은 서버 grid의 `segmentSubjects`만 쓴다(첫 의미 단계 게시 뒤 checkpoint에서 다시 읽음). grid가 정수 2·3이 아니거나 `segmentSubjects`가 없으면
+  `GRID_VERSION_UNSUPPORTED`, 구간·주체 참조가 맞지 않으면 `INVALID_GRID_CONTRACT`다. Job 없는 호출형만 같은 규칙을 로컬에서 계산한다.
+- SUBJECT_RESOLUTION은 구간마다 PLANNER 다음·COVERAGE 전에 한 번이다. 모델 호출 역할은 기존 `RELATED_SELECTION`(Terra high, 같은 역할 예산·원장)이고
+  단계 이름만 새롭다. 입력은 구간 공통 입력 + `subject_catalogue` + `mechanical_subject_refs`, 출력·저장은 `{"mentions":[{"mention","subject_ref","reason"}]}`다.
+  mention·reason은 공백이 아니고 mention은 중복되지 않으며 subject_ref는 null 또는 카탈로그 S 참조다. 위반은 `SUBJECT_RESOLUTION_INVALID`
+  (원인 `SUBJECT_RESOLUTION_BLANK`·`_DUPLICATE_MENTION`·`_UNKNOWN_SUBJECT`)이고 저장하지 않는다. 이미 매칭된 주체를 가리키는 mention은 허용하고 무시한다.
+- 해소할 주체가 남지 않으면(카탈로그 주체 0개이거나 모든 주체가 이미 기계 매칭) 모델 출력이 결과를 바꿀 수 없으므로 호출 없이 `{"mentions": []}`를 저장한다.
+  이전에도 빈 카탈로그는 선정 호출이 0이었다. 저장된 단계는 재개 때 다시 호출하지 않는다.
+- 관련 주체 U = 기계 매칭 ∪ null이 아닌 subject_ref. COVERAGE의 `settings`·`rule_refs`는 U에 속한 모든 항목(카탈로그 순서)이며 비어 있을 수 있다.
+  COVERAGE의 나머지 계약(구간·질문·clue_checks·span 범위)은 그대로다.
+- 모델 호출은 카탈로그 크기와 무관하게 구간당 최대 1회다(예: 120항목·페이지 50이면 구간당 3→1). 고정 항목 읽기 페이지(`catalogue_page_size`)는 그대로다.
+  coverage에는 `{"role": "SUBJECT_RESOLUTION", "segment_ref", "mechanical_subject_refs", "resolved_subject_refs", "mentions"}`(mentions는 개수)를 남긴다.
+- 한계: 이름이 다른 단어의 일부로 나와도 매칭된다(정규화 없음, 과포함 방향). 이름이 같은 다른 주체도 함께 매칭된다. 지칭 해소의 실제 모델 품질은 아직 측정하지 않았다.
+
+GH349 후속(2026-10-31 첫 운영 실행): 30회차 작품에서 COVERAGE:TSEG1이 호출 전에 `REQUIRED_CONTEXT_TOO_LARGE`(입력 > `setting.input-tokens` 80,000)로 멈췄다.
+호출 수가 아니라 항목 크기가 원인이었다(관련 항목 179개 raw JSON 795 KB, 가장 큰 인물 항목 362 KB 중 slots 149 KB·historyFacts 209 KB). 세 가지를 바꾼다.
+
+- 모델 입력 투영: COVERAGE와 JUDGE의 `settings`는 `app/validation/projection.py`의 `compact_setting_row`로 만든 압축 행이다.
+  행은 `entry_ref`, `subject_ref`, `domain`, `name`, `aliases`, `state`(+행에 있으면 `author_correction` 그대로)다. `state`에는 스칼라 값, 스칼라 목록(예: aliases),
+  `currentNarrativeTime`·`narrativeTime`·`absences`·`protectedSlots`·`protectedPaths`(안의 근거 키 제거), 세계관 값 `propertiesJson`(작가 설정명이라 그대로)과
+  `slots`(슬롯마다 `factKey`·`factType`·`factValue`, 스칼라인 `temporalScope`·`effectiveFromEpisodeNo`만)만 남긴다.
+  `historyFacts`, `supportingSources`, `supportingSource`, `provenance`, `provenanceByPath`, `identityEvidence`, `removedSnapshotEntries`, `valueJson`, `evidenceSpans`,
+  `comparison`, `explicitAuthorCorrections`, `snapshotVersion`, `currentSupportingEvidenceVersion`, `version`과 그 밖의 중첩 목록·객체는 뺀다.
+  모델이 보는 것과 달리 고정 항목 읽기(`read_entries_page`), Worker 검증, receipt는 전체 투영 그대로다. 게시·checkpoint `evidence_bundle`의 `settings`는
+  같은 항목의 ref 행만 담는다(아래 bundle ref 행, GH349 후속 2). 질문의 조회 의무나 JUDGE FOLLOW_UP의
+  BASELINE이 `evidence_refs`로 요청한 항목은 그 질문의 다음 JUDGE 입력에 값 이력을 더한 확장 행(`expanded_setting_row`: 압축 행 + `historyFacts`의 factType·factKey·factValue·operation·effectiveFromEpisodeNo·temporalScope, 최신 300개, 초과분은 `historyTruncated` 개수)으로 준다. 전체 정본 행은 운영 인물 하나(이력 209 KB)만으로 호출 입력 상한을 넘겨 v0039에서 바꿨다. system prompt 한 줄이 이 압축과 BASELINE 요청 방법을 알린다.
+- 1글자 이름: 2 code point 미만의 name·alias는 기계 매칭에서 뺀다(1글자 이름이 거의 모든 문맥에 걸려 구간당 16~22주체가 COVERAGE에 들어갔다). 빠진 1글자 이름은 SUBJECT_RESOLUTION이 찾는다: prompt는 `mechanical_subject_refs`에 없는 대상이면 글자 그대로의 언급도 mentions에 적게 한다(이미 기계 매칭된 대상만 제외).
+  서버 SETTING grid는 같은 규칙으로 `gridVersion: 3`(모양은 v2와 같음)이며 Worker는 2·3을 모두 받는다. `subject_catalogue`에는 그대로 남아 SUBJECT_RESOLUTION이 문맥으로 해소할 수 있다.
+- 입력 상한 안전장치: 관련 항목이 `MAX_COVERAGE_SETTINGS`(400)를 넘으면 카탈로그 순서의 앞 400개만 COVERAGE 모델에 주고(`rule_refs`·schema enum도 400개),
+  나머지는 모델 응답 뒤 Worker가 `NOT_APPLICABLE` + `입력 상한으로 모델 점검에서 제외됨`으로 rules에 더한다. 그래서 저장 rules는 여전히 관련 항목 전체이며
+  Worker와 Backend의 rule 집합 검사를 그대로 통과한다. 재개한 batch에는 이미 있으므로 다시 더하지 않는다. WARNING `coverage settings truncated total=… kept=… segment=…`와
+  `normalizations.COVERAGE_SETTINGS_TRUNCATED`(구간 합계)를 남긴다. 주 해결책은 압축 투영이며 제외된 항목은 이 구간의 COVERAGE가 읽지 않았다는 뜻이다. JUDGE에는 상한이 없고 질문 주체의 항목 전체를 압축 행으로 받는다.
+- bundle ref 행(GH349 후속 2): 게시 명령은 전체 상한(당시 131,072 byte, 이후 1,048,576 byte로 상향)인데 Backend가 JUDGE bundle `settings`를 질문 주체 항목 전체의 정본 행과 비교해 362 KB 인물 하나로도
+  그 주체의 판정을 게시할 수 없었다. 이제 bundle `settings` 행은 `{"entry_ref", "subject_ref"}`(`bundle_settings`, 이전과 같은 관련 항목 집합·순서)이고 `input_digest`도
+  이 bundle로 계산한다. Backend는 ref 집합(질문 주체의 항목 ∪ BASELINE 조회 ref), 정본 항목 여부, subject_ref 일치, 중복만 검사한다. `InspectionResult.evidence_bundles`도 같은 모양이다.
+  이 변경 전에 전체 행으로 결정된 check를 재개하면 entry_ref/subject_ref만 읽어 같은 모양으로 돌려주고 다시 JUDGE하거나 게시하지 않는다.
 
 DB↔원문 불일치는 두 참조를 유지하고 명시 정정의 정확한 대상/항목/시점/조건 범위를 검증한다.
 기존 데이터에는 그 scope metadata가 없을 수 있다. 그런 경우 보호/확정 flag를 정정으로 승격하지 않고 NEEDS_CONTEXT로 둔다.
@@ -115,7 +176,7 @@ GH331부터 `failure_cause`(분류 코드 아래의 구체 고정 코드, 예: `
 ## 모델·예산·오탈자 공통 계약
 
 모든 역할 모델은 `gpt-6.1-terra`다. PLANNER medium, RELATED_SELECTION/COVERAGE high, JUDGE medium, TYPO low다.
-RELATED_SELECTION은 독립 누락 보완 역할의 호출이며 다섯 번째 별도 모델 선택이 아니다.
+RELATED_SELECTION은 독립 누락 보완 역할의 호출이며 다섯 번째 별도 모델 선택이 아니다. GH349부터 이 역할은 SUBJECT_RESOLUTION 단계를 호출한다.
 frozen `LlmCallOptions`를 count/생성 양쪽에 동일하게 전달하고 공유 client 기본 속성을 바꾸지 않는다.
 기존 추출/챗봇의 모델·추론 기본값은 유지한다. 실제 Terra provider 품질 호출은 이번 검증에서 실행하지 않았다.
 

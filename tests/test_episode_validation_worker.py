@@ -157,7 +157,7 @@ class ShutdownTransport(httpx.AsyncBaseTransport):
         self.events.append(("closed", None))
 
 
-async def shutdown_runtime(phase):
+async def shutdown_runtime(phase, **worker_options):
     from app.validation.client import ValidationClaim, ValidationExecutionClient
     from app.worker.episode_validation_worker import EpisodeValidationWorker
 
@@ -167,7 +167,7 @@ async def shutdown_runtime(phase):
     client = ValidationExecutionClient("https://spring.invalid", "synthetic", http)
     client.owns_http = True  # This fixture owns the injected HTTP pool, as the default runtime does.
     raw = OpenAIResponsesClient("synthetic", "gpt-6.1-terra", "https://provider.invalid/responses", http_client=provider)
-    worker = EpisodeValidationWorker(client, raw, enabled=True)
+    worker = EpisodeValidationWorker(client, raw, enabled=True, **worker_options)
     claim = ValidationClaim.from_wire(backend.wire)
     return backend, provider, worker, claim
 
@@ -314,3 +314,395 @@ def test_close_before_owned_claim_dispatch_does_not_start_backend_io():
             await worker.aclose()
             await provider.aclose()
     asyncio.run(run())
+
+
+async def _until(predicate, seconds=2):
+    async with asyncio.timeout(seconds):
+        while not predicate():
+            await asyncio.sleep(0.001)
+
+
+@pytest.mark.parametrize("capped", [True, False])
+def test_llm_request_semaphore_reaches_every_role_and_query_embedding_client(monkeypatch, capped):
+    """GH343: the runner's one process-wide cap is the same object on every metered client."""
+    import app.worker.episode_validation_worker as worker_module
+    from app.embeddings.client import OpenAIEmbeddingsClient
+    from app.validation.client import ValidationClaim, ValidationExecutionClient
+    from app.validation.contracts import IncompleteInspection
+    from app.validation.models import ROLE_OPTIONS
+
+    built = {}
+    real_roles, real_embedding = worker_module.ValidationRoleClients, worker_module.metered_embedding
+
+    def roles_spy(*args, **kwargs):
+        built["roles"] = real_roles(*args, **kwargs)
+        return built["roles"]
+
+    def embedding_spy(*args, **kwargs):
+        built["embedding"] = real_embedding(*args, **kwargs)
+        return built["embedding"]
+
+    monkeypatch.setattr(worker_module, "ValidationRoleClients", roles_spy)
+    monkeypatch.setattr(worker_module, "metered_embedding", embedding_spy)
+
+    async def never_called(request):
+        raise AssertionError("no backend or provider request is expected")
+
+    async def run():
+        backend = ShutdownTransport("settle")
+        wire = backend.wire
+        wire["models"]["QUERY_EMBEDDING"] = {"model": "text-embedding-3-small", "version": "v1", "dimensions": 1536}
+        wire["budgets"]["roles"]["QUERY_EMBEDDING"] = {"maxCalls": 2, "maxReservedTokens": 1000}
+        semaphore = asyncio.Semaphore(2) if capped else None
+        async with httpx.AsyncClient(transport=httpx.MockTransport(never_called)) as http:
+            raw = OpenAIResponsesClient("synthetic", "gpt-6.1-terra", "https://provider.invalid/responses",
+                                        http_client=http)
+            embedding = OpenAIEmbeddingsClient("synthetic", "text-embedding-3-small", 1536, "v1",
+                                               "https://provider.invalid/embeddings", http)
+            client = ValidationExecutionClient("https://spring.invalid", "synthetic", http)
+
+            async def rejected_checkpoint(claim, gate=None):
+                raise IncompleteInspection("EXECUTION_HTTP_REJECTED")
+
+            client.load_checkpoint = rejected_checkpoint
+            worker = worker_module.EpisodeValidationWorker(client, raw, enabled=True, embedding_client=embedding,
+                                                           llm_request_semaphore=semaphore)
+            try:
+                with pytest.raises(IncompleteInspection, match="EXECUTION_HTTP_REJECTED"):
+                    await worker.process_claimed(ValidationClaim.from_wire(wire))
+            finally:
+                await worker.aclose()
+        return semaphore
+
+    semaphore = asyncio.run(run())
+    clients = [built["roles"].for_validation_role(role) for role in ROLE_OPTIONS]
+    assert len(clients) == 5
+    assert all(client.request_semaphore is semaphore for client in clients)
+    assert built["embedding"].metered.request_semaphore is semaphore
+    assert (semaphore is not None) == capped
+
+
+QUERY_EMBEDDING_MODEL = {"model": "text-embedding-3-small", "version": "v1", "dimensions": 1536}
+QUERY_EMBEDDING_CAP = {"maxCalls": 2, "maxReservedTokens": 1000}
+ABSENT = object()
+
+
+def _embedding_claim(model=ABSENT, cap=ABSENT):
+    import json
+    from pathlib import Path
+
+    from app.validation.client import ValidationClaim
+    wire = json.loads((Path(__file__).parents[1] / "docs/contracts/validation-execution-v1.json")
+                      .read_text())["execution"]["responses"]["claim"]
+    assert "QUERY_EMBEDDING" not in wire["models"]  # The shared fixture has no optional role.
+    if model is not ABSENT:
+        wire["models"]["QUERY_EMBEDDING"] = model
+    if cap is not ABSENT:
+        wire["budgets"]["roles"]["QUERY_EMBEDDING"] = cap
+    return ValidationClaim.from_wire(wire)
+
+
+def _metered_embedding(claim, raw=ABSENT):
+    from types import SimpleNamespace
+
+    from app.retrieval.contracts import IndexSpec
+    from app.validation.execution import metered_embedding
+
+    if raw is ABSENT:  # The raw embeddings client is never called here; only its index identity matters.
+        raw = SimpleNamespace(model="text-embedding-3-small", version="v1", dimensions=1536)
+    return metered_embedding(raw, FakeLedger(), claim, IndexSpec(version="v1"))
+
+
+@pytest.mark.parametrize(("model", "cap"), [(ABSENT, ABSENT), (None, None)], ids=["absent", "null"])
+def test_claim_without_query_embedding_role_runs_without_vector(model, cap):
+    """GH344: an API without the optional QUERY_EMBEDDING role means keyword-only, not a failed job."""
+    assert _metered_embedding(_embedding_claim(model, cap)) is None
+    assert _metered_embedding(_embedding_claim(QUERY_EMBEDDING_MODEL, QUERY_EMBEDDING_CAP), raw=None) is None
+
+
+def test_configured_query_embedding_role_builds_the_metered_client():
+    from app.validation.execution import ValidationQueryEmbedding
+
+    client = _metered_embedding(_embedding_claim(QUERY_EMBEDDING_MODEL, QUERY_EMBEDDING_CAP))
+    assert isinstance(client, ValidationQueryEmbedding)
+    assert (client.model, client.version, client.dimensions) == ("text-embedding-3-small", "v1", 1536)
+
+
+@pytest.mark.parametrize(("model", "cap"), [
+    ({**QUERY_EMBEDDING_MODEL, "model": "text-embedding-3-large"}, QUERY_EMBEDDING_CAP),
+    ({**QUERY_EMBEDDING_MODEL, "version": "v2"}, QUERY_EMBEDDING_CAP),
+    ({**QUERY_EMBEDDING_MODEL, "dimensions": 3072}, QUERY_EMBEDDING_CAP),
+    (QUERY_EMBEDDING_MODEL, {**QUERY_EMBEDDING_CAP, "maxCalls": 0}),
+    (QUERY_EMBEDDING_MODEL, {**QUERY_EMBEDDING_CAP, "maxReservedTokens": 0}),
+    (QUERY_EMBEDDING_MODEL, ABSENT),
+    (ABSENT, QUERY_EMBEDDING_CAP),
+    ({}, QUERY_EMBEDDING_CAP),
+    ("text-embedding-3-small", QUERY_EMBEDDING_CAP),
+], ids=["model", "version", "dimensions", "zero-calls", "zero-tokens", "model-without-cap", "cap-without-model",
+        "empty-model", "not-an-object"])
+def test_present_but_mismatched_query_embedding_role_still_fails(model, cap):
+    from app.validation.contracts import IncompleteInspection
+
+    with pytest.raises(IncompleteInspection, match="EMBEDDING_CONFIGURATION_INVALID"):
+        _metered_embedding(_embedding_claim(model, cap))
+
+
+def test_worker_with_query_embedding_passes_none_when_the_claim_has_no_role(monkeypatch):
+    """The job proceeds past embedding setup and the inspection is built without a query embedding client."""
+    import app.worker.episode_validation_worker as worker_module
+    from app.embeddings.client import OpenAIEmbeddingsClient
+    from app.validation.client import ValidationExecutionClient
+    from app.validation.contracts import IncompleteInspection
+
+    built = []
+    real = worker_module.metered_embedding
+    monkeypatch.setattr(worker_module, "metered_embedding",
+                        lambda *args, **kwargs: built.append(real(*args, **kwargs)) or built[-1])
+
+    async def never_called(request):
+        raise AssertionError("no backend or provider request is expected")
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(never_called)) as http:
+            raw = OpenAIResponsesClient("synthetic", "gpt-6.1-terra", "https://provider.invalid/responses",
+                                        http_client=http)
+            embedding = OpenAIEmbeddingsClient("synthetic", "text-embedding-3-small", 1536, "v1",
+                                               "https://provider.invalid/embeddings", http)
+            client = ValidationExecutionClient("https://spring.invalid", "synthetic", http)
+
+            async def rejected_checkpoint(claim, gate=None):
+                raise IncompleteInspection("EXECUTION_HTTP_REJECTED")
+
+            client.load_checkpoint = rejected_checkpoint
+            worker = worker_module.EpisodeValidationWorker(client, raw, enabled=True, embedding_client=embedding)
+            try:
+                # Before GH344 this claim failed here with EMBEDDING_CONFIGURATION_INVALID.
+                with pytest.raises(IncompleteInspection, match="EXECUTION_HTTP_REJECTED"):
+                    await worker.process_claimed(_embedding_claim())
+            finally:
+                await worker.aclose()
+
+    asyncio.run(run())
+    assert built == [None]
+
+
+def _second_claim(backend):
+    from uuid import uuid4
+
+    from app.validation.client import ValidationClaim
+    return ValidationClaim.from_wire({**backend.wire, "jobId": str(uuid4()), "leaseToken": str(uuid4())})
+
+
+def test_concurrent_jobs_in_one_worker_keep_separate_gates_and_ledgers():
+    """GH343: one job's gate stop ends only that job; the other keeps its lease, gate and usage."""
+    from app.validation.contracts import IncompleteInspection
+
+    async def run():
+        backend, provider, worker, first = await shutdown_runtime("provider")
+        backend.release.set()  # Finalizations are not withheld in this scenario.
+        second = _second_claim(backend)
+        jobs = {}
+        try:
+            jobs = {claim.job_id: asyncio.create_task(worker.process_claimed(claim)) for claim in (first, second)}
+            await _until(lambda: sorted(backend.provider_calls) == ["PLANNER", "PLANNER", "TYPO", "TYPO"])
+            ledgers = {ledger.claim.job_id: ledger for ledger in worker._ledgers}
+            assert set(ledgers) == {first.job_id, second.job_id}
+            assert ledgers[first.job_id].gate is not ledgers[second.job_id].gate
+            assert len(ledgers[first.job_id].requests) == len(ledgers[second.job_id].requests) == 2
+
+            ledgers[first.job_id].gate.stop()
+            result = (await asyncio.wait_for(asyncio.gather(jobs[first.job_id], return_exceptions=True), 2))[0]
+            assert isinstance(result, IncompleteInspection) and result.code == "EXECUTION_STOPPED"
+            assert ledgers[first.job_id].requests == set()
+            await asyncio.sleep(0.02)
+            assert not jobs[second.job_id].done()
+            assert not ledgers[second.job_id].gate.stopped.is_set()
+            assert len(ledgers[second.job_id].requests) == 2
+            assert {ledger.claim.job_id for ledger in worker._ledgers} == {second.job_id}
+            assert not backend.closed
+
+            await asyncio.wait_for(worker.aclose(), 2)
+            result = (await asyncio.gather(jobs[second.job_id], return_exceptions=True))[0]
+            assert isinstance(result, asyncio.CancelledError)
+            assert not any(state == "RESERVED" for state in backend.states.values())
+        finally:
+            backend.release.set()
+            for job in jobs.values():
+                job.cancel()
+            await asyncio.gather(*jobs.values(), return_exceptions=True)
+            await worker.aclose()
+            await provider.aclose()
+    asyncio.run(run())
+
+
+def test_llm_request_semaphore_caps_provider_calls_across_concurrent_jobs():
+    """GH343: with a cap of one, two jobs (four role branches) never run two provider calls at once."""
+    async def run():
+        backend, provider, worker, first = await shutdown_runtime(
+            "provider", llm_request_semaphore=asyncio.Semaphore(1))
+        backend.release.set()
+        jobs = []
+        try:
+            jobs = [asyncio.create_task(worker.process_claimed(claim)) for claim in (first, _second_claim(backend))]
+            await _until(lambda: len(backend.provider_calls) == 1)
+            await asyncio.sleep(0.05)
+            # The holder never returns; every other branch waits before reserving or calling.
+            assert len(backend.provider_calls) == 1 and len(backend.reservations) == 1
+            assert not any(job.done() for job in jobs)
+            await asyncio.wait_for(worker.aclose(), 2)
+            assert not any(state == "RESERVED" for state in backend.states.values())
+        finally:
+            backend.release.set()
+            for job in jobs:
+                job.cancel()
+            await asyncio.gather(*jobs, return_exceptions=True)
+            await worker.aclose()
+            await provider.aclose()
+    asyncio.run(run())
+
+
+class GridBackend(httpx.AsyncBaseTransport):
+    """GH349 synthetic Backend: the SETTING grid appears only after the first plan, as in Java."""
+
+    def __init__(self, grid):
+        import json
+        from datetime import UTC, datetime, timedelta
+        from pathlib import Path
+
+        fixture = json.loads((Path(__file__).parents[1] / "docs/contracts/validation-execution-v1.json").read_text())
+        self.responses = fixture["execution"]["responses"]
+        self.wire = self.responses["claim"]
+        self.wire["leaseExpiresAt"] = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
+        # "😀가😀가": 가(S1) is named in the target, 나(S2) is not.
+        self.settings = [{"entry_ref": f"B{n}", "subject_ref": f"S{n}", "domain": "characters", "name": name,
+                          "aliases": [], "state": {"name": name}, "author_correction": None}
+                         for n, name in ((1, "가"), (2, "나"))]
+        self.responses["dataInput"]["entryCount"] = len(self.settings)
+        self.responses["dataEntries"].update(
+            entries=[{"entryRef": row["entry_ref"], "domain": "characters", "state": row["state"]}
+                     for row in self.settings],
+            modelSettings=self.settings, nextOffset=len(self.settings))
+        self.grid, self.published, self.checkpoint_reads = grid, [], 0
+        self.reserved, self.provider_roles, self.completed = [], [], []
+
+    def view(self):
+        view = dict(self.wire["checkpoint"])
+        if self.published:
+            view["requiredGrid"] = {"SETTING": self.grid}
+        return view
+
+    async def handle_async_request(self, request):
+        import json
+        body = json.loads(request.content) if request.content else {}
+        path = request.url.path
+        data = None
+        if path.endswith("/claim"):
+            data = self.wire
+        elif path.endswith("/checkpoint") and request.method == "GET":
+            self.checkpoint_reads += 1
+            data = self.view()
+        elif path.endswith("/data"):
+            data = self.responses[{"INPUT": "dataInput", "ENTRIES": "dataEntries", "READ_SOURCE": "dataReadTarget",
+                                   "VALIDATE": "dataInput"}[body["operation"]]]
+        elif path.endswith("usage/reserve"):
+            self.reserved.append(body["role"])
+            data = {}
+        elif "/usage/" in path or path.endswith("/heartbeat"):
+            data = {}
+        elif path.endswith("/plans"):
+            self.published.append((body["stage"], body["ref"], body["payload"]))
+            data = {"stageId": "00000000-0000-4000-8000-000000000010", "branch": "SETTING", "stage": body["stage"],
+                    "ref": body["ref"], "successful": True, "checks": []}
+        elif path.endswith("/units"):
+            data = self.responses["typoUnit"]
+        elif path.endswith("/complete"):
+            self.completed.append(body["failureCode"])
+            data = {"status": "COMPLETED" if body["failureCode"] is None else "PARTIAL"}
+        if data is None:
+            raise AssertionError("unexpected synthetic backend route")
+        return httpx.Response(200, json={"data": data})
+
+    async def provider(self, request):
+        import json
+        body = json.loads(request.content)
+        if request.url.path.endswith("input_tokens"):
+            return httpx.Response(200, json={"input_tokens": 23})
+        payload = json.loads(body["input"][1]["content"][0]["text"])
+        role = payload.get("role", "TYPO")
+        self.provider_roles.append(role)
+        if role == "TYPO":
+            result = {"segments": [{"segment_ref": payload["segment_ref"], "status": "NO_CHECK", "reason": "합성"}],
+                      "suggestions": []}
+        elif role == "RELATED_SELECTION":
+            assert payload["mechanical_subject_refs"] == ["S1"]
+            assert [row["subject_ref"] for row in payload["subject_catalogue"]] == ["S1", "S2"]
+            result = {"mentions": [{"mention": "그 사람", "subject_ref": "S2", "reason": "합성 지칭 해소"}]}
+        else:
+            result = {"questions": [], "segments": [{"segment_ref": "TSEG1", "status": "NO_CHECK", "reason": "합성"}],
+                      "rules": [{"entry_ref": row["entry_ref"], "status": "CHECKED", "reason": "합성"}
+                                for row in payload.get("settings", [])],
+                      "clue_checks": []}
+        return httpx.Response(200, json={"status": "completed", "output_text": json.dumps(result, ensure_ascii=False),
+                                         "usage": {"input_tokens": 23, "output_tokens": 7}})
+
+
+def run_grid_backend(grid):
+    from app.validation.client import ValidationClaim, ValidationExecutionClient
+    from app.worker.episode_validation_worker import EpisodeValidationWorker
+
+    async def run():
+        backend = GridBackend(grid)
+        async with (httpx.AsyncClient(transport=backend) as http,
+                    httpx.AsyncClient(transport=httpx.MockTransport(backend.provider)) as provider):
+            client = ValidationExecutionClient("https://spring.invalid", "synthetic", http)
+            raw = OpenAIResponsesClient("synthetic", "gpt-6.1-terra", "https://provider.invalid/responses",
+                                        http_client=provider)
+            worker = EpisodeValidationWorker(client, raw, enabled=True)
+            try:
+                await worker.process_claimed(ValidationClaim.from_wire(backend.wire))
+            finally:
+                await worker.aclose()
+        return backend
+    return asyncio.run(run())
+
+
+def test_worker_reads_server_grid_v2_after_first_plan_and_publishes_subject_resolution():
+    grid = {"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S1"]}]}
+    backend = run_grid_backend(grid)
+    assert backend.completed == [None]
+    assert [(stage, ref) for stage, ref, _ in backend.published] == [
+        ("PLANNER", "TSEG1"), ("SUBJECT_RESOLUTION", "TSEG1"), ("COVERAGE", "TSEG1"), ("MERGED_PLAN", "PLAN")]
+    assert backend.published[1][2] == {"mentions": [{"mention": "그 사람", "subject_ref": "S2", "reason": "합성 지칭 해소"}]}
+    assert [row["entry_ref"] for row in backend.published[2][2]["rules"]] == ["B1", "B2"]
+    # Reloaded once when the first publication created the grid; the stage is metered as RELATED_SELECTION.
+    assert backend.checkpoint_reads == 2
+    assert sorted(backend.reserved) == ["COVERAGE", "PLANNER", "RELATED_SELECTION", "TYPO"]
+    assert sorted(backend.provider_roles) == ["COVERAGE", "PLANNER", "RELATED_SELECTION", "TYPO"]
+
+
+def test_worker_on_a_grid_v1_server_stops_before_subject_resolution():
+    backend = run_grid_backend({"gridVersion": 1, "units": [{"stage": "RELATED_SELECTION", "ref": "TSEG1:PAGE1"}]})
+    assert backend.completed == ["GRID_VERSION_UNSUPPORTED"]
+    assert [(stage, ref) for stage, ref, _ in backend.published] == [("PLANNER", "TSEG1")]
+    assert "RELATED_SELECTION" not in backend.provider_roles
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("none", []),
+    ("resolved", [{"mention": "그 사람", "subject_ref": "S2", "reason": "합성 지칭 해소"}]),
+    ("null", [{"mention": "낯선 노인", "subject_ref": None, "reason": "합성 카탈로그 밖 인물"}]),
+])
+def test_java_http_synthetic_provider_answers_subject_resolution_modes(mode, expected):
+    import json
+
+    from tests.support.validation_execution_http_client import SyntheticProvider
+
+    payload = {"role": "RELATED_SELECTION", "subject_catalogue": [
+        {"subject_ref": "S1", "domain": "characters", "name": "가", "aliases": []},
+        {"subject_ref": "S2", "domain": "characters", "name": "나", "aliases": []}],
+        "mechanical_subject_refs": ["S1"]}
+    body = {"model": "gpt-6.1-terra", "reasoning": {"effort": "high"},
+            "input": [{}, {"content": [{"text": json.dumps(payload, ensure_ascii=False)}]}]}
+    request = httpx.Request("POST", "https://provider.invalid/responses", json=body)
+    response = asyncio.run(SyntheticProvider("zero", subject_mentions=mode)(request))
+    assert json.loads(response.json()["output_text"]) == {"mentions": expected}

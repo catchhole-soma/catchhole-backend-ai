@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from copy import deepcopy
 from hashlib import sha256
 from uuid import uuid4
 
@@ -132,11 +133,12 @@ class SyntheticData:
 
 
 class SyntheticModel:
-    def __init__(self, judge=None, *, dropped=False, planner_question=False):
+    def __init__(self, judge=None, *, dropped=False, planner_question=False, mentions=()):
         self.calls = []
         self.judge = judge or decision
         self.dropped = dropped
         self.planner_question = planner_question
+        self.mentions = list(mentions)
 
     async def count_input_tokens(self, **kwargs):
         return 80
@@ -146,16 +148,8 @@ class SyntheticModel:
         role = payload["role"]
         self.calls.append((role, payload, kwargs))
         if role == "RELATED_SELECTION":
-            result = {
-                "entries": [
-                    {
-                        "entry_ref": row["entry_ref"],
-                        "selected": True,
-                        "reason": "독립적으로 원고에 등장하는 인물",
-                    }
-                    for row in payload["catalogue"]
-                ]
-            }
+            # GH349 SUBJECT_RESOLUTION: only the scripted non-literal mentions.
+            result = {"mentions": self.mentions}
         elif role in {"PLANNER", "COVERAGE"}:
             questions = [planned_question()] if role == "COVERAGE" or self.planner_question else []
             result = {
@@ -226,7 +220,11 @@ def test_independent_coverage_restores_hand_question_and_reads_unrecorded_prosth
         return decision(payload)
 
     model = SyntheticModel(judge)
-    result = run(model=model)
+    data = SyntheticData()
+    # An unmentioned second subject keeps the independent SUBJECT_RESOLUTION call (GH349).
+    data.entries.append({"entryRef": "B2", "domain": "characters", "subjectRef": "character:other",
+                         "state": {"name": "서윤", "aliases": [], "slots": {}}})
+    result = run(data, model)
     assert result.status == "COMPLETED"
     assert len(result.questions) == 1
     assert result.questions[0].original_refs == ("COVERAGE:TSEG1:hand",)
@@ -596,13 +594,257 @@ def test_target_context_followup_delivers_requested_far_context():
     assert result.status == "COMPLETED"
 
 
-def test_suspected_conflict_cannot_claim_unperformed_change_search():
-    result = run(
-        model=SyntheticModel(
-            lambda payload: decision(payload, "SUSPECTED_CONFLICT", "CHANGE_NOT_FOUND")
-        )
-    )
-    assert result.status == "INCOMPLETE" and result.failure_code == "INVALID_DECISION"
+def suspected(payload, *, cite_search=True):
+    """SUSPECTED_CONFLICT; without ``cite_search`` changes_exceptions cites only the comparison reads."""
+    value = decision(payload, "SUSPECTED_CONFLICT", "CHANGE_NOT_FOUND")
+    if not cite_search:
+        value["completion"]["changes_exceptions"] = {
+            "reason": "변화·예외 기록을 찾지 못했다",
+            "evidence_refs": ["T1", "B1"],
+            "receipt_refs": [row["ref"] for row in payload["receipts"]
+                             if row["intent"]["kind"] == "COMPARISON_CONTEXT"],
+        }
+    return value
+
+
+class DurableCheckpoint:
+    """What the Backend keeps across attempts: stages, check revisions/obligations and the runtime state."""
+
+    def __init__(self):
+        self.stages, self.checks, self.state = {}, {}, None
+        self.revised, self.decided = [], []
+        self.crash_after_revise = False
+
+    def stage(self, stage, ref):
+        return deepcopy(self.stages.get((stage, ref)))
+
+    async def save_stage(self, stage, ref, payload):
+        self.stages[stage, ref] = deepcopy(payload)
+
+    async def merge(self, questions):
+        for q in questions:
+            self.checks.setdefault(q.ref, {"revision": 1, "outcome": None, "state": {
+                "lookup_obligations": [intent.model_dump() for intent in q.draft.lookup_intents]}})
+        return deepcopy(self.checks)
+
+    def load_state(self):
+        return deepcopy(self.state)
+
+    async def save_state(self, state):
+        self.state = deepcopy(state)
+
+    async def decide(self, ref, value, bundle):
+        self.decided.append((ref, value, bundle))
+        self.checks[ref].update(outcome=value.outcome, decision=value.model_dump(), bundle=bundle)
+
+    async def revise(self, affected, pending, questions, reason):
+        added = {ref: [intent.model_dump() for intent in pending[ref]] for ref in affected}
+        self.revised.append((sorted(affected), reason, added))
+        for ref in affected:
+            check = self.checks[ref]
+            check.update(revision=check["revision"] + 1, outcome=None)
+            check["state"]["lookup_obligations"] += added[ref]
+        if self.crash_after_revise:
+            self.crash_after_revise = False
+            raise asyncio.CancelledError()  # the revision is durable, the runtime write after it is lost
+        return deepcopy(self.checks)
+
+
+def inspect_with(data, model, checkpoint):
+    from app.validation.service import SettingValidationService
+
+    limits = InvocationBudget(30, 100, 30, 5000, 1000, 100, 10, 10, 10)
+    return asyncio.run(SettingValidationService(data, model, limits, checkpoint=checkpoint).inspect())
+
+
+def judge_calls(model):
+    return [payload for role, payload, kwargs in model.calls if role == "JUDGE"]
+
+
+def worker_searches(receipts):
+    from app.validation.service import WORKER_CHANGE_SEARCH_PURPOSE
+
+    return [row for row in receipts if row.intent.purpose == WORKER_CHANGE_SEARCH_PURPOSE]
+
+
+def assert_backend_publishable(value, bundle, obligations):
+    """The ValidationDecisionValidator rules this decision must pass unchanged (Backend is not modified)."""
+    receipts = {row["ref"]: row for row in bundle["receipts"]}
+    assert all(row["status"] == "SUCCEEDED" and row["failure_code"] is None for row in receipts.values())
+    assert all(any(row["intent"] == obligation for row in receipts.values()) for obligation in obligations)
+    facts = {row["entry_ref"] for row in bundle["settings"]}
+    outside = {row["ref"] for row in bundle["evidence"] if row["source_ref"] != "T1"}
+    known = {"T1"} | facts | {row["ref"] for row in bundle["evidence"]}
+    completion = value.completion
+    for name in ("comparison_context", "changes_exceptions", "no_pending_clues", "required_reads"):
+        assessment = getattr(completion, name)
+        assert assessment.evidence_refs and set(assessment.evidence_refs) <= known
+        assert assessment.receipt_refs and set(assessment.receipt_refs) <= set(receipts)
+    assert set(completion.required_reads.receipt_refs) == set(receipts)
+    assert any(receipts[ref]["intent"]["kind"] == "CHANGES_EXCEPTIONS"
+               and receipts[ref]["intent"]["operation"] in {"KEYWORD", "VECTOR"}
+               for ref in completion.changes_exceptions.receipt_refs)
+    assert set(value.evidence_refs) & (facts | outside)
+
+
+def test_suspected_conflict_without_change_search_gets_one_worker_keyword_search_and_is_asked_again():
+    from app.validation.service import WORKER_CHANGE_SEARCH_PURPOSE
+
+    data, model, checkpoint = SyntheticData(), SyntheticModel(suspected), DurableCheckpoint()
+    result = inspect_with(data, model, checkpoint)
+    assert (result.status, result.failure_code) == ("COMPLETED", None)
+    assert result.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert result.normalizations["CHANGE_SEARCH_INSERTED"] == 1
+    assert "CHANGE_SEARCH_RECEIPT_FILLED" not in result.normalizations  # the second answer cited it
+    inserted = {"ref": "Q1-CHANGES_EXCEPTIONS", "kind": "CHANGES_EXCEPTIONS", "operation": "KEYWORD",
+                "purpose": WORKER_CHANGE_SEARCH_PURPOSE, "query": "민수 손 사용", "source_ref": None,
+                "start": None, "end": None, "evidence_refs": []}
+    assert checkpoint.revised == [(["Q1"], "NEW_CLUE", {"Q1": [inserted]})]
+    [search] = worker_searches(result.receipts)
+    assert search.status == "SUCCEEDED" and search.intent.model_dump() == inserted and search.evidence_refs
+    first, second = judge_calls(model)
+    assert (first["check_revision"], second["check_revision"]) == (1, 2)
+    assert search.ref not in {row["ref"] for row in first["receipts"]}
+    assert search.ref in {row["ref"] for row in second["receipts"]}
+    assert set(search.evidence_refs) <= {row["ref"] for row in second["evidence"]}
+    assert search.ref in result.decisions["Q1"].completion.changes_exceptions.receipt_refs
+    [(ref, published, bundle)] = checkpoint.decided
+    # The published bundle is the second JUDGE input (as JSON), carrying the inserted receipt, with the
+    # model's setting rows reduced to their refs (GH349 Amendment 2).
+    refs = [{"entry_ref": row["entry_ref"], "subject_ref": row["subject_ref"]} for row in second["settings"]]
+    assert ref == "Q1" and json.loads(json.dumps(bundle)) == {
+        key: item for key, item in second.items() if key != "role"} | {"settings": refs}
+    assert_backend_publishable(published, bundle, checkpoint.checks["Q1"]["state"]["lookup_obligations"])
+
+
+def test_repeated_suspected_conflict_without_citation_is_filled_with_the_real_search_receipt():
+    model, checkpoint = SyntheticModel(lambda payload: suspected(payload, cite_search=False)), DurableCheckpoint()
+    result = inspect_with(SyntheticData(), model, checkpoint)
+    assert result.status == "COMPLETED" and result.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert result.normalizations["CHANGE_SEARCH_INSERTED"] == 1
+    assert result.normalizations["CHANGE_SEARCH_RECEIPT_FILLED"] == 1
+    assert len(judge_calls(model)) == 2 and len(checkpoint.revised) == 1
+    [search] = worker_searches(result.receipts)
+    changes = result.decisions["Q1"].completion.changes_exceptions
+    assert changes.receipt_refs == ["L1", "L2", search.ref]  # the model's citations stay, the search is added
+    assert changes.evidence_refs == ["T1", "B1", *search.evidence_refs]
+    [(_ref, published, bundle)] = checkpoint.decided
+    assert_backend_publishable(published, bundle, checkpoint.checks["Q1"]["state"]["lookup_obligations"])
+
+
+class PlannedChangeSearch(SyntheticModel):
+    async def create_text_response(self, **kwargs):
+        response = await super().create_text_response(**kwargs)
+        if json.loads(kwargs["user_prompt"])["role"] == "COVERAGE":
+            value = json.loads(response.text)
+            value["questions"][0]["lookup_intents"] = [{
+                "ref": "change", "kind": "CHANGES_EXCEPTIONS", "operation": "KEYWORD",
+                "purpose": "손 상태 변화 확인", "query": "민수 의수"}]
+            return LlmTextResponse(text=json.dumps(value, ensure_ascii=False))
+        return response
+
+
+def follow_up_then_suspected(payload):
+    if any(row["intent"]["operation"] == "KEYWORD" for row in payload["receipts"]):
+        return suspected(payload, cite_search=False)
+    value = decision(payload)
+    value.update(action="FOLLOW_UP", outcome=None, basis=None, completion=None, follow_ups=[{
+        "ref": "change", "kind": "CHANGES_EXCEPTIONS", "operation": "KEYWORD",
+        "purpose": "손 상태 변화 확인", "query": "민수 의수"}])
+    return value
+
+
+@pytest.mark.parametrize("model_type,judge,judge_count", [
+    (PlannedChangeSearch, lambda payload: suspected(payload, cite_search=False), 1),
+    (SyntheticModel, follow_up_then_suspected, 2),
+])
+def test_model_issued_change_search_is_never_duplicated(model_type, judge, judge_count):
+    model = model_type(judge)
+    result = run(model=model)
+    assert result.status == "COMPLETED" and result.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert "CHANGE_SEARCH_INSERTED" not in result.normalizations and not worker_searches(result.receipts)
+    assert len(judge_calls(model)) == judge_count
+    # The model's own successful search is the cited one; nothing is invented.
+    [search] = [row for row in result.receipts if row.intent.operation == "KEYWORD"]
+    assert search.ref in result.decisions["Q1"].completion.changes_exceptions.receipt_refs
+    assert result.normalizations["CHANGE_SEARCH_RECEIPT_FILLED"] == 1
+
+
+def test_failed_worker_change_search_is_issued_once_and_resumes_without_a_second_insertion():
+    data, checkpoint = SyntheticData(), DurableCheckpoint()
+    data.failed_ref = "R1"  # only the KEYWORD search reads R1
+    model = SyntheticModel(suspected)
+    failed = inspect_with(data, model, checkpoint)
+    assert (failed.status, failed.failure_code, failed.failure_stage) == (
+        "INCOMPLETE", "SOURCE_UNREADABLE", "LOOKUP:Q1:KEYWORD")
+    assert failed.normalizations["CHANGE_SEARCH_INSERTED"] == 1 and len(judge_calls(model)) == 1
+    [search] = worker_searches(failed.receipts)
+    assert search.status == "FAILED" and search.failure_code == "SOURCE_UNREADABLE"
+    # Same input again: the durable obligation is retried, never issued a second time.
+    again = inspect_with(data, model, checkpoint)
+    assert (again.status, again.failure_code) == ("INCOMPLETE", "SOURCE_UNREADABLE")
+    assert "CHANGE_SEARCH_INSERTED" not in again.normalizations and len(judge_calls(model)) == 1
+    data.failed_ref = None
+    resumed = inspect_with(data, model, checkpoint)
+    assert resumed.status == "COMPLETED" and resumed.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert "CHANGE_SEARCH_INSERTED" not in resumed.normalizations
+    assert len(checkpoint.revised) == 1 and len(judge_calls(model)) == 2
+    assert [row.status for row in worker_searches(resumed.receipts)] == ["FAILED", "FAILED", "SUCCEEDED"]
+
+
+def test_crash_after_the_durable_revision_resumes_the_inserted_obligation_once():
+    data, checkpoint = SyntheticData(), DurableCheckpoint()
+    checkpoint.crash_after_revise = True
+    model = SyntheticModel(suspected)
+    with pytest.raises(asyncio.CancelledError):
+        inspect_with(data, model, checkpoint)
+    assert checkpoint.checks["Q1"]["revision"] == 2
+    assert checkpoint.state["runtime"]["revisions"]["Q1"] == 1  # the runtime write after revise was lost
+    resumed = inspect_with(data, model, checkpoint)
+    assert resumed.status == "COMPLETED" and resumed.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert "CHANGE_SEARCH_INSERTED" not in resumed.normalizations
+    assert len(checkpoint.revised) == 1 and len(judge_calls(model)) == 2
+    assert [row.status for row in worker_searches(resumed.receipts)] == ["SUCCEEDED"]
+    assert judge_calls(model)[-1]["check_revision"] == 2
+
+
+def test_suspected_conflict_still_needs_a_real_search_when_none_can_be_derived():
+    class Unsearchable(SyntheticModel):
+        async def create_text_response(self, **kwargs):
+            response = await super().create_text_response(**kwargs)
+            if json.loads(kwargs["user_prompt"])["role"] == "COVERAGE":
+                value = json.loads(response.text)
+                value["questions"][0].update(subject_mentions=[], property_or_rule=" ")
+                return LlmTextResponse(text=json.dumps(value, ensure_ascii=False))
+            return response
+
+    result = run(model=Unsearchable(suspected))
+    assert (result.status, result.failure_code, result.failure_cause) == (
+        "INCOMPLETE", "INVALID_DECISION", "INVALID_DECISION_CHANGE_SEARCH_MISSING")
+    assert "CHANGE_SEARCH_INSERTED" not in result.normalizations and not worker_searches(result.receipts)
+
+
+def test_worker_change_search_query_uses_mentions_then_property_and_stays_searchable():
+    from app.validation.contracts import IntentRefs, LookupIntent, QuestionDraft, validate_intents
+    from app.validation.service import change_search_query
+
+    base = QuestionDraft.model_validate(planned_question())
+    assert change_search_query(base) == "민수 손 사용"
+    mentions = base.model_copy(update={"subject_mentions": [" 서윤 ", "등대지기 서윤", "서윤", ""],
+                                       "property_or_rule": "나이"})
+    assert change_search_query(mentions) == "서윤 등대지기 서윤 나이"
+    assert change_search_query(base.model_copy(update={"subject_mentions": []})) == "손 사용"
+    long = base.model_copy(update={"subject_mentions": ["가" * 995], "property_or_rule": "나이 변화"})
+    assert change_search_query(long) == ("가" * 995 + " 나이 변")
+    cut_at_space = base.model_copy(update={"subject_mentions": ["가" * 999], "property_or_rule": "나이"})
+    assert change_search_query(cut_at_space) == "가" * 999
+    assert change_search_query(base.model_copy(update={"subject_mentions": [" "], "property_or_rule": " "})) == ""
+    for draft in (base, long, cut_at_space):
+        query = change_search_query(draft)
+        assert len(query) <= 1000
+        validate_intents([LookupIntent(ref="Q1-CHANGES_EXCEPTIONS", kind="CHANGES_EXCEPTIONS",
+                                       operation="KEYWORD", purpose="검색", query=query)],
+                         IntentRefs(search_operations=frozenset({"KEYWORD"})))
 
 
 def test_frozen_provenance_uses_known_source_alias_without_server_ids():
@@ -616,15 +858,25 @@ def test_frozen_provenance_uses_known_source_alias_without_server_ids():
     }
 
     def judge(payload):
-        assert (
-            payload["settings"][0]["state"]["slots"]["STATUS:손"]["provenance"]["source_ref"]
-            == "R1"
-        )
         assert {row["source_ref"] for row in payload["source_catalogue"]} == {"R1", "R2"}
         assert identifier not in json.dumps(payload)
+        if len(payload["receipts"]) == 2:  # GH349 amendments: compact first; provenance only on BASELINE request
+            value = decision(payload)
+            value.update(action="FOLLOW_UP", outcome=None, basis=None, completion=None, follow_ups=[
+                {"ref": "origin", "kind": "COMPARISON_CONTEXT", "operation": "BASELINE",
+                 "purpose": "손 상태의 출처 회차 확인", "evidence_refs": ["B1"]}])
+            return value
         return decision(payload)
 
-    assert run(data, SyntheticModel(judge)).status == "COMPLETED"
+    model = SyntheticModel(judge)
+    result = run(data, model)
+    assert result.status == "COMPLETED"
+    compact, full = payloads(model, "JUDGE")
+    assert compact["settings"][0]["state"]["slots"]["STATUS:손"] == {"factValue": "왼손 상실"}
+    assert full["settings"][0]["state"]["slots"]["STATUS:손"]["provenance"]["source_ref"] == "R1"
+    bundle = result.evidence_bundles["Q1"]
+    assert bundle["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"}]
+    assert identifier not in json.dumps(bundle)
 
 
 def test_merged_initial_obligations_reuse_one_read_and_keep_both_receipts():
@@ -714,7 +966,7 @@ class BookReviewModel(SyntheticModel):
                 ],
             }
         else:
-            value = {"entries": []}
+            value = {"mentions": []}
         return LlmTextResponse(text=json.dumps(value, ensure_ascii=False))
 
 
@@ -731,6 +983,10 @@ def test_zero_question_first_episode_independently_reads_unanalyzed_book_raw():
     ]
     assert "민수는 왼손이 없다." in book_inputs
     assert any(row["role"] == "BOOK_COVERAGE" for row in result.coverage)
+    # GH349: an empty catalogue has nothing to resolve, so SUBJECT_RESOLUTION needs no model call.
+    assert all(role != "RELATED_SELECTION" for role, *_ in model.calls)
+    assert {"role": "SUBJECT_RESOLUTION", "segment_ref": "TSEG1", "mechanical_subject_refs": [],
+            "resolved_subject_refs": [], "mentions": 0} in result.coverage
 
 
 def test_required_unanalyzed_book_read_failure_is_not_zero_findings():
@@ -935,6 +1191,10 @@ def test_partial_vector_pipeline_keeps_failed_receipt_and_never_decides_suspecte
     from app.validation.service import SettingValidationService
 
     class Partial:
+        async def readiness(self, frozen):
+            # GH344: ready when VECTOR is offered; the index turns partial before the lookup runs.
+            return SearchReadiness(2, 2, 2, 2, 2)
+
         async def search(self, *args):
             return SimpleNamespace(
                 chunks=[],
@@ -964,10 +1224,350 @@ def test_partial_vector_pipeline_keeps_failed_receipt_and_never_decides_suspecte
     limits = InvocationBudget(30, 50, 30, 5000, 1000, 100, 10, 10, 10)
     result = asyncio.run(
         SettingValidationService(
-            SyntheticData(), SyntheticModel(judge), limits, search=Partial()
+            SyntheticData(), SyntheticModel(judge), limits, search=Partial(), embedding_client=object()
         ).inspect()
     )
     assert result.status == "INCOMPLETE" and result.failure_code == "VECTOR_INDEX_PARTIAL"
     assert not result.decisions and result.receipts[-1].status == "FAILED"
     assert result.receipts[-1].readiness["vector_ready_sources"] == 1
     assert "VECTOR_INDEX_PARTIAL" in result.receipts[-1].readiness["limitations"]
+
+
+# --- GH349 grid v2: subject matching + SUBJECT_RESOLUTION instead of paging the whole catalogue ------------
+
+
+def subject_data(data_type=None):
+    """민수(S1, two entries) is named in TARGET; 서윤(S2) and the 북부 왕국 world setting(S3) are not."""
+    data = (data_type or SyntheticData)()
+    data.entries[0]["state"]["aliases"] = ["민수 씨"]
+    data.entries += [
+        {"entryRef": "B2", "domain": "characters", "subjectRef": "character:existing",
+         "state": {"name": "민수", "aliases": ["민수 씨", "검사"], "slots": {"STATUS:검": {"factValue": "양손검"}}}},
+        {"entryRef": "B3", "domain": "characters", "subjectRef": "character:seoyun",
+         "state": {"name": "서윤", "aliases": ["등대지기"], "slots": {}}},
+        {"entryRef": "B4", "domain": "worldSettings", "subjectRef": None,
+         "state": {"targetWorldSettingId": "kingdom", "name": "북부 왕국", "aliases": [], "propertiesJson": {}}},
+    ]
+    return data
+
+
+def payloads(model, role):
+    return [payload for called, payload, _ in model.calls if called == role]
+
+
+def test_subject_resolution_gets_deduplicated_subjects_and_mechanical_matches_only():
+    model = SyntheticModel()
+    result = run(subject_data(), model)
+    assert result.status == "COMPLETED"
+    subjects = [
+        {"subject_ref": "S1", "domain": "characters", "name": "민수", "aliases": ["민수 씨", "검사"]},
+        {"subject_ref": "S2", "domain": "characters", "name": "서윤", "aliases": ["등대지기"]},
+        {"subject_ref": "S3", "domain": "worldSettings", "name": "북부 왕국", "aliases": []},
+    ]
+    (resolution,) = payloads(model, "RELATED_SELECTION")  # 4 entries, 3 subjects -> 3 rows
+    assert resolution["subject_catalogue"] == subjects and resolution["mechanical_subject_refs"] == ["S1"]
+    assert set(resolution) == {"role", "segment", "text", "text_start", "target_source_ref", "source_catalogue",
+                               "subject_catalogue", "mechanical_subject_refs"}
+    (planner,), (coverage,) = payloads(model, "PLANNER"), payloads(model, "COVERAGE")
+    assert planner["subject_catalogue"] == coverage["subject_catalogue"] == subjects
+    assert coverage["rule_refs"] == [row["entry_ref"] for row in coverage["settings"]] == ["B1", "B2"]
+    _, _, kwargs = next(call for call in model.calls if call[0] == "RELATED_SELECTION")
+    assert kwargs["call_options"].reasoning_effort == "high"
+    assert kwargs["response_schema"].name == "validation_related_selection_v2"
+    assert kwargs["response_schema"].schema["$defs"]["MentionResolution"]["properties"]["subject_ref"] == {
+        "anyOf": [{"type": "string", "enum": ["S1", "S2", "S3"]}, {"type": "null"}]}
+    assert [row for row in result.coverage if row["role"] == "SUBJECT_RESOLUTION"] == [
+        {"role": "SUBJECT_RESOLUTION", "segment_ref": "TSEG1", "mechanical_subject_refs": ["S1"],
+         "resolved_subject_refs": [], "mentions": 0}]
+
+
+@pytest.mark.parametrize("mentions,rule_refs,resolved", [
+    ([{"mention": "그 여자", "subject_ref": "S2", "reason": "앞 문장의 서윤을 가리킨다"}], ["B1", "B2", "B3"], ["S2"]),
+    ([{"mention": "노인", "subject_ref": None, "reason": "카탈로그에 없는 인물"}], ["B1", "B2"], []),
+    ([{"mention": "왕국", "subject_ref": "S3", "reason": "북부 왕국의 줄임말"},
+      {"mention": "그", "subject_ref": "S1", "reason": "이름이 이미 나온 민수"}], ["B1", "B2", "B4"], ["S1", "S3"]),
+])
+def test_resolved_mentions_add_only_their_subjects_entries_in_catalogue_order(mentions, rule_refs, resolved):
+    model = SyntheticModel(mentions=mentions)
+    result = run(subject_data(), model)
+    assert result.status == "COMPLETED"
+    (coverage,) = payloads(model, "COVERAGE")
+    assert coverage["rule_refs"] == [row["entry_ref"] for row in coverage["settings"]] == rule_refs
+    record = next(row for row in result.coverage if row["role"] == "SUBJECT_RESOLUTION")
+    assert record["resolved_subject_refs"] == resolved and record["mentions"] == len(mentions)
+
+
+@pytest.mark.parametrize("mentions,cause", [
+    ([{"mention": "그 여자", "subject_ref": "S9", "reason": "없는 대상"}], "SUBJECT_RESOLUTION_UNKNOWN_SUBJECT"),
+    ([{"mention": "그", "subject_ref": "S2", "reason": "서윤"},
+      {"mention": "그", "subject_ref": None, "reason": "다른 인물"}], "SUBJECT_RESOLUTION_DUPLICATE_MENTION"),
+    ([{"mention": "  ", "subject_ref": "S2", "reason": "서윤"}], "SUBJECT_RESOLUTION_BLANK"),
+    ([{"mention": "그 여자", "subject_ref": "S2", "reason": " "}], "SUBJECT_RESOLUTION_BLANK"),
+])
+def test_invalid_subject_resolution_stops_before_coverage(mentions, cause):
+    model = SyntheticModel(mentions=mentions)
+    result = run(subject_data(), model)
+    assert (result.status, result.failure_code, result.failure_cause, result.failure_stage) == (
+        "INCOMPLETE", "SUBJECT_RESOLUTION_INVALID", cause, "SUBJECT_RESOLUTION:TSEG1")
+    assert not payloads(model, "COVERAGE") and not result.decisions
+
+
+def test_no_name_match_and_no_resolved_mention_gives_coverage_no_settings():
+    data = SyntheticData()
+    data.entries = [{"entryRef": "B1", "domain": "characters", "subjectRef": "character:seoyun",
+                     "state": {"name": "서윤", "aliases": [], "slots": {"STATUS:손": {"factValue": "왼손 상실"}}}}]
+    model = SyntheticModel()
+    result = run(data, model)
+    assert result.status == "COMPLETED"
+    (resolution,), (coverage,) = payloads(model, "RELATED_SELECTION"), payloads(model, "COVERAGE")
+    assert resolution["mechanical_subject_refs"] == []
+    assert coverage["settings"] == [] and coverage["rule_refs"] == []
+
+
+def test_large_catalogue_needs_one_resolution_call_per_segment_instead_of_one_per_page():
+    data = SyntheticData()
+    names = {"character:existing": "민수", "character:seoyun": "서윤", "character:keeper": "등대지기"}
+    data.entries = [{"entryRef": f"B{index + 1}", "domain": "characters", "subjectRef": subject,
+                     "state": {"name": names[subject], "aliases": [],
+                               "slots": {f"PROFILE:항목{index + 1}": {"factValue": "값"}}}}
+                    for index, subject in enumerate(list(names) * 40)]
+    model = SyntheticModel()
+    result = run(data, model, catalogue_page_size=50)
+    assert result.status == "COMPLETED"
+    # Grid v1 called RELATED_SELECTION once per catalogue page: ceil(120 / 50) = 3 per segment.
+    (resolution,) = payloads(model, "RELATED_SELECTION")
+    assert [row["subject_ref"] for row in resolution["subject_catalogue"]] == ["S1", "S2", "S3"]
+    (coverage,) = payloads(model, "COVERAGE")
+    assert coverage["rule_refs"] == [f"B{index}" for index in range(1, 121, 3)]  # all 40 of 민수's entries
+
+
+def test_local_mechanical_matches_use_exact_code_point_context_and_numeric_order():
+    from app.validation.contracts import split_segments
+    from app.validation.service import mechanical_subject_refs
+
+    target = "😀서윤과 민수"
+    settings = [{"subject_ref": "S10", "name": "민수", "aliases": []},
+                {"subject_ref": "S2", "name": None, "aliases": ["서윤"]},
+                {"subject_ref": "S3", "name": None, "aliases": []},
+                {"subject_ref": "S4", "name": "", "aliases": [""]},
+                {"subject_ref": "S5", "name": "서 윤", "aliases": []}]
+    split = split_segments(target, core_chars=4, context_chars=2)
+    assert mechanical_subject_refs(settings, target, split) == {"TSEG1": ["S2"], "TSEG2": ["S10"]}
+    whole = split_segments(target, core_chars=100, context_chars=0)
+    assert mechanical_subject_refs(settings, target, whole) == {"TSEG1": ["S2", "S10"]}
+
+
+class ExecutionData(SyntheticData):
+    """Leased execution: server projections, server clues and the server grid instead of local fallbacks."""
+
+    execution = True
+
+    @property
+    def model_settings(self):
+        from app.validation.service import _settings
+
+        return _settings(self.entries)
+
+    async def read_input(self):
+        from dataclasses import replace
+
+        frozen = await super().read_input()
+        return replace(frozen, model_source_catalogue=[{"source_ref": source.ref, "source_kind": source.kind}
+                                                       for source in frozen.sources])
+
+    async def read_source(self, source, start=None, end=None):
+        from dataclasses import replace
+
+        value = await super().read_source(source, start, end)
+        return replace(value, model_clues=[]) if source.ref == "T1" and start is None and end is None else value
+
+
+def run_with_grid(grid, model):
+    from app.validation.service import SettingValidationService
+    from tests.test_validation_checkpoint import SavedStages
+
+    class GridCheckpoint(SavedStages):
+        async def setting_grid(self):
+            return deepcopy(grid)
+
+    limits = InvocationBudget(30, 50, 30, 5000, 1000, 100, 10, 10, 10)
+    return asyncio.run(SettingValidationService(subject_data(ExecutionData), model, limits,
+                                                checkpoint=GridCheckpoint()).inspect())
+
+
+@pytest.mark.parametrize("version", [2, 3])  # v3 = v2 shape + 1-character names excluded (GH349 amendment)
+def test_execution_trusts_the_server_grid_segment_subjects(version):
+    model = SyntheticModel()
+    # Locally 민수(S1) would match; the server grid is authoritative in execution.
+    grid = {"gridVersion": version, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]}
+    result = run_with_grid(grid, model)
+    assert result.status == "COMPLETED"
+    (resolution,), (coverage,) = payloads(model, "RELATED_SELECTION"), payloads(model, "COVERAGE")
+    assert resolution["mechanical_subject_refs"] == ["S2"] and coverage["rule_refs"] == ["B3"]
+
+
+@pytest.mark.parametrize("grid,code", [
+    (None, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 1, "units": [{"stage": "RELATED_SELECTION", "ref": "TSEG1:PAGE1"}]}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 2}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 3}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 4, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]}, "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": "3", "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S2"]}]},
+     "GRID_VERSION_UNSUPPORTED"),
+    ({"gridVersion": 3, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S9"]}]}, "INVALID_GRID_CONTRACT"),
+    ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S9"]}]}, "INVALID_GRID_CONTRACT"),
+    ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG2", "subjectRefs": []}]}, "INVALID_GRID_CONTRACT"),
+    ({"gridVersion": 2, "segmentSubjects": [{"segmentRef": "TSEG1", "subjectRefs": ["S1", "S1"]}]},
+     "INVALID_GRID_CONTRACT"),
+])
+def test_execution_without_a_v2_grid_stops_before_subject_resolution(grid, code):
+    model = SyntheticModel()
+    result = run_with_grid(grid, model)
+    assert (result.status, result.failure_code, result.failure_stage) == ("INCOMPLETE", code, "SUBJECT_RESOLUTION:TSEG1")
+    assert [role for role, *_ in model.calls] == ["PLANNER"]
+
+
+# --- GH349 amendment: 1-character names are not mechanically matched (grid v3) ------------------------------
+
+
+def test_one_character_names_are_not_mechanically_matched_but_stay_in_the_catalogue():
+    from app.validation.contracts import split_segments
+    from app.validation.service import mechanical_subject_refs
+
+    target = "😀민수는 양손으로 검을 쥐었다."
+    settings = [{"subject_ref": "S1", "name": "민수", "aliases": []},
+                {"subject_ref": "S2", "name": "검", "aliases": ["손"]},
+                {"subject_ref": "S3", "name": None, "aliases": ["쥐", "양손"]},
+                {"subject_ref": "S4", "name": "😀", "aliases": []}]  # one code point (two UTF-16 units)
+    segments = split_segments(target, core_chars=100, context_chars=0)
+    assert mechanical_subject_refs(settings, target, segments) == {"TSEG1": ["S1", "S3"]}
+
+    data = SyntheticData()
+    data.entries.append({"entryRef": "B2", "domain": "characters", "subjectRef": "character:sword",
+                         "state": {"name": "검", "aliases": [], "slots": {}}})
+    model = SyntheticModel()
+    assert run(data, model).status == "COMPLETED"
+    (resolution,) = payloads(model, "RELATED_SELECTION")  # 검(S2) is left for SUBJECT_RESOLUTION
+    assert resolution["mechanical_subject_refs"] == ["S1"]
+    assert [row["name"] for row in resolution["subject_catalogue"]] == ["민수", "검"]
+
+
+# --- GH349 amendment: compact model rows and the COVERAGE input valve -------------------------------------
+
+
+def heavy_data():
+    """B1 carries what production rows carry besides values: slot provenance/evidence, history, identity evidence."""
+    data = SyntheticData()
+    state = data.entries[0]["state"]
+    state["slots"]["STATUS:손"].update(
+        factType="STATUS", factKey="손", valueJson={"value": "왼손 상실"},
+        provenance={"confirmationStatus": "CONFIRMED", "sourceEpisodeNo": 1},
+        supportingSources=[{"supportingSource": {"quote": "민수는 왼손을 잃었다.", "start": 0, "end": 11}}])
+    state.update(snapshotVersion=3, identityEvidence=[{"quote": "민수"}],
+                 historyFacts=[{"factType": "STATUS", "factKey": "손", "factValue": "양손 사용",
+                                "supportingSource": {"quote": "옛 원문"}}])
+    return data
+
+
+def test_coverage_and_judge_read_compact_rows_while_the_bundle_carries_refs_only():
+    from app.validation.projection import compact_setting_row
+    from app.validation.service import _settings
+
+    data, model = heavy_data(), SyntheticModel()
+    result = run(data, model)
+    assert result.status == "COMPLETED"
+    canonical = _settings(data.entries)
+    compact = [compact_setting_row(row) for row in canonical]
+    assert compact[0]["state"] == {"name": "민수", "aliases": [],
+                                   "slots": {"STATUS:손": {"factValue": "왼손 상실", "factType": "STATUS", "factKey": "손"}}}
+    (coverage,), (judge,) = payloads(model, "COVERAGE"), payloads(model, "JUDGE")
+    assert coverage["settings"] == judge["settings"] == compact and coverage["rule_refs"] == ["B1"]
+    for payload in (coverage, judge):
+        text = json.dumps(payload["settings"], ensure_ascii=False)
+        assert "왼손 상실" in text and not any(key in text for key in (
+            "historyFacts", "supportingSources", "supportingSource", "provenance", "identityEvidence", "valueJson"))
+    # GH349 Amendment 2: the Backend checks only the bundle's ref set; the digest covers the refs-only bundle.
+    bundle = result.evidence_bundles["Q1"]
+    assert bundle["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"}]
+    digested = {key: value for key, value in bundle.items() if key != "input_digest"}
+    assert bundle["input_digest"] == judge["input_digest"] == sha256(
+        json.dumps(digested, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def test_entry_requested_by_a_baseline_lookup_reaches_the_next_judge_with_its_history():
+    from app.validation.service import _settings
+
+    def judge(payload):
+        if len(payload["receipts"]) == 2:  # only the Worker's own BASELINE/TARGET_CONTEXT receipts so far
+            value = decision(payload)
+            value.update(action="FOLLOW_UP", outcome=None, basis=None, completion=None, follow_ups=[
+                {"ref": "history", "kind": "COMPARISON_CONTEXT", "operation": "BASELINE",
+                 "purpose": "손 상태의 이전 이력 확인", "evidence_refs": ["B1"]}])
+            return value
+        return decision(payload)
+
+    data, model = heavy_data(), SyntheticModel(judge)
+    result = run(data, model)
+    assert result.status == "COMPLETED"
+    first, second = payloads(model, "JUDGE")
+    assert "historyFacts" not in first["settings"][0]["state"]
+    expanded = second["settings"][0]["state"]
+    assert expanded["historyFacts"][0]["factValue"] == "양손 사용"  # the value timeline arrives
+    assert "supportingSource" not in expanded["historyFacts"][0]  # without evidence or provenance
+    assert "provenance" not in expanded and "historyFacts" in expanded
+    assert second["settings"] != _settings(data.entries)  # never the full canonical row again
+    assert result.evidence_bundles["Q1"]["settings"] == [{"entry_ref": "B1", "subject_ref": "S1"}]
+
+
+def valve_data(count=401):
+    data = SyntheticData()
+    data.entries = [{"entryRef": f"B{n}", "domain": "characters", "subjectRef": "character:existing",
+                     "state": {"name": "민수", "aliases": [], "slots": {f"PROFILE:항목{n}": {"factValue": "값"}}}}
+                    for n in range(1, count + 1)]
+    return data
+
+
+def test_coverage_valve_sends_400_rows_and_reports_the_rest_not_applicable(caplog):
+    from app.validation.contracts import QuestionBatch, split_segments, validate_batch
+    from app.validation.service import COVERAGE_TRUNCATED_REASON, MAX_COVERAGE_SETTINGS
+
+    model = SyntheticModel()
+    with caplog.at_level("WARNING", logger="app.validation.service"):
+        result = run(valve_data(), model, catalogue_page_size=100)
+    assert result.status == "COMPLETED"
+    (coverage,) = payloads(model, "COVERAGE")
+    assert MAX_COVERAGE_SETTINGS == 400
+    assert len(coverage["settings"]) == len(coverage["rule_refs"]) == 400 and coverage["rule_refs"][-1] == "B400"
+    _, _, kwargs = next(call for call in model.calls if call[0] == "COVERAGE")
+    assert "B401" not in json.dumps(kwargs["response_schema"].schema)
+    record = next(row for row in result.coverage if row["role"] == "COVERAGE")
+    assert [row["entry_ref"] for row in record["rules"]] == [f"B{n}" for n in range(1, 402)]
+    assert record["rules"][-1] == {"entry_ref": "B401", "status": "NOT_APPLICABLE", "reason": COVERAGE_TRUNCATED_REASON}
+    assert result.normalizations["COVERAGE_SETTINGS_TRUNCATED"] == 1
+    assert "coverage settings truncated total=401 kept=400 segment=TSEG1" in caplog.text
+    # The stored batch covers every relevant entry, as the Worker and Backend rule-set checks require.
+    batch = QuestionBatch.model_validate({"questions": [], "rules": record["rules"],
+                                          "segments": [{"segment_ref": "TSEG1", "status": "NO_CHECK", "reason": "합성"}]})
+    validate_batch(batch, split_segments(TARGET, core_chars=100, context_chars=10), {"S1"},
+                   [f"B{n}" for n in range(1, 402)], TARGET)
+
+
+def test_resumed_truncated_coverage_is_not_called_again_or_extended_twice():
+    from app.validation.service import SettingValidationService
+    from tests.test_validation_checkpoint import SavedStages
+
+    async def inspect(saved, model):
+        limits = InvocationBudget(30, 100, 30, 5000, 1000, 100, 10, 100, 10)
+        return await SettingValidationService(valve_data(), model, limits, checkpoint=saved).inspect()
+
+    saved, model = SavedStages(), SyntheticModel()
+    saved.crash_stage = "COVERAGE"
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(inspect(saved, model))
+    assert len(saved.stages["COVERAGE", "TSEG1"]["rules"]) == 401
+    calls = len(model.calls)
+    result = asyncio.run(inspect(saved, model))
+    assert result.status == "COMPLETED"
+    assert [role for role, *_ in model.calls[calls:]] == ["JUDGE"]
+    record = next(row for row in result.coverage if row["role"] == "COVERAGE")
+    assert len(record["rules"]) == 401

@@ -5,6 +5,10 @@ import boto3
 
 from app.core.config import Settings, get_settings
 
+
+class SourceObjectTooLargeError(ValueError):
+    """A bounded source read failed without decoding or truncating its contents."""
+
 # S3에서 텍스트 파일을 읽어오는 Storage 객체
 @dataclass(frozen=True)
 class S3TextObjectStorage:
@@ -56,7 +60,7 @@ class S3TextObjectStorage:
         try:
             value = body.read(max_bytes + 1) if max_bytes is not None else body.read()
             if max_bytes is not None and len(value) > max_bytes:
-                raise ValueError("Source exceeds the retrieval read limit")
+                raise SourceObjectTooLargeError("Source exceeds the retrieval read limit")
             return value.decode("utf-8")
         finally:
             close = getattr(body, "close", None)

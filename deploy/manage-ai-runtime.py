@@ -122,28 +122,65 @@ class Runtime:
         tracing_services = [
             name for name in (
                 "ai-worker", "ai-character-comparison-worker", "ai-world-comparison-worker",
+                "ai-relationship-worker",
             )
             if validate_worker_tracing(worker[name]["environment"])
         ]
+        # The validation Worker (#344) ships in the same compose SHA, off by default (0 replicas).
+        # Only its optional read-only frozen RAG pool uses the database (see the budget below).
+        validation = worker.get("ai-validation-worker")
+        if validation is None:
+            raise DeploymentError("VALIDATION_WORKER_SERVICE_MISSING")
+        try:
+            validation_replicas = int(validation["deploy"]["replicas"])
+            if validation_replicas < 0:
+                raise ValueError()
+        except (KeyError, TypeError, ValueError):
+            raise DeploymentError("VALIDATION_WORKER_REPLICAS_INVALID") from None
         chat = self.config("chatbot")["chatbot"]
         index = self.config("retrieval")["retrieval-index"]
         w = worker["ai-worker"]["environment"]
+        relation = worker["ai-relationship-worker"]
+        relation_env = relation["environment"]
+        if (relation.get("command") != ["python", "scripts/run_analysis_worker.py", "--worker-kind", "relationship"]
+                or str(relation.get("deploy", {}).get("replicas")) != "1"
+                or str(relation_env.get("AI_WORKER_CONCURRENCY")) != "1"
+                or str(relation_env.get("LLM_MAX_CONCURRENT_REQUESTS")) != "1"
+                or enabled(relation_env.get("EMBEDDING_GENERATION_ENABLED"))
+                or enabled(relation_env.get("RETRIEVAL_PREPARATION_ENABLED"))):
+            raise DeploymentError("RELATIONSHIP_WORKER_ISOLATION_REQUIRED")
+
+        v = validation.get("environment") or {}
         c, r = chat["environment"], index["environment"]
         if not enabled(c.get("CHAT_QA_ENABLED")):
             raise DeploymentError("CHAT_QA_ENABLED_REQUIRED")
-        for env in (w, c, r):
+        for env in (w, v, c, r):
             for key in ("SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL", "LLM_API_KEY"):
                 required(env, key)
         common = ("SPRING_INTERNAL_API_KEY", "SPRING_INTERNAL_API_BASE_URL", "LLM_API_KEY")
         for env, keys in (
+            (v, common),
             (c, common),
             (r, (*common, "DATABASE_URL", "AWS_REGION", "AWS_S3_BUCKET")),
+            (relation_env, (*common, "AWS_REGION", "AWS_S3_BUCKET")),
         ):
             for key in keys:
                 if not w.get(key):
                     raise DeploymentError("MISSING_" + key)
                 if env.get(key) != w[key]:
                     raise DeploymentError("INCONSISTENT_" + key)
+        # Optional semantic search of the validation Worker (GH344): empty keeps it keyword-only. When set, it
+        # must be the chatbot's SELECT-only reader and read the same embedding index version.
+        validation_retrieval = bool(str(v.get("VALIDATION_READONLY_DATABASE_URL") or "").strip())
+        if validation_retrieval:
+            if v.get("VALIDATION_READONLY_DATABASE_URL") != c.get("CHAT_RETRIEVAL_DATABASE_URL"):
+                raise DeploymentError("INCONSISTENT_VALIDATION_READONLY_DATABASE_URL")
+            arguments = validation.get("command")
+            arguments = arguments if isinstance(arguments, list) else []
+            flag = "--index-version"
+            version = arguments[arguments.index(flag) + 1] if flag in arguments[:-1] else None
+            if version != c.get("CHAT_RETRIEVAL_EMBEDDING_VERSION"):
+                raise DeploymentError("INCONSISTENT_VALIDATION_WORKER_INDEX_VERSION")
         try:
             bind = ipaddress.ip_address(chat["ports"][0]["host_ip"])
             if bind.is_unspecified or bind.is_loopback or not bind.is_private:
@@ -172,7 +209,14 @@ class Runtime:
             api_pool = int(required(r, "AI_RUNTIME_API_DB_POOL_SIZE"))
             budget = int(required(r, "AI_RUNTIME_DB_CONNECTION_BUDGET"))
             connections = api_pool + replicas * pool + comparisons
+            # The relationship-only worker uses S3 + Spring APIs, never a DB session.
             connections += 2 * enabled(c.get("CHAT_RETRIEVAL_ENABLED")) + 2 * indexing
+            if validation_retrieval:
+                # The validation runner's read-only pool holds one connection per job slot.
+                validation_slots = int(v["AI_WORKER_CONCURRENCY"])
+                if validation_slots < 1:
+                    raise ValueError()
+                connections += validation_replicas * validation_slots
             # Read-only preflight probes need one temporary connection alongside old runtime.
             if min(replicas, pool, api_pool, budget) < 1 or connections + 1 > budget:
                 raise ValueError()
@@ -181,6 +225,8 @@ class Runtime:
         return {
             "indexing": indexing,
             "analysisReplicas": replicas,
+            "validationReplicas": validation_replicas,
+            "validationRetrieval": validation_retrieval,
             "databaseConnections": connections,
             "databaseConnectionsDuringPreflight": connections + 1,
             "tracingWorkerServices": tracing_services,
@@ -245,6 +291,10 @@ class Runtime:
                 "ai-worker": configuration["analysisReplicas"],
                 "ai-character-comparison-worker": 1,
                 "ai-world-comparison-worker": 1,
+                "ai-relationship-worker": 1,
+
+                # 0 when off: the check then confirms no validation container is left running.
+                "ai-validation-worker": configuration["validationReplicas"],
             }
             if all(
                 len(self.compose("worker", "ps", "--status", "running", "-q", name).split())

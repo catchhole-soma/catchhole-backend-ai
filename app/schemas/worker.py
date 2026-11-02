@@ -4,8 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.analysis.semantic_current_context import SemanticCurrentContext
 from app.analysis.narrative_time import NarrativeTime
+from app.analysis.semantic_current_context import SemanticCurrentContext
 from app.domain.enums import (
     AnalysisFailureCode,
     AnalysisJobCheckpointStage,
@@ -34,9 +34,20 @@ FAILURE_DIAGNOSTIC_REASONS = frozenset({
     "CURRENT_EVIDENCE_OFFSET_INVALID", "CURRENT_EVIDENCE_SOURCE_HASH_MISMATCH", "CURRENT_EVIDENCE_SOURCE_READ_FAILED",
     "CURRENT_EVIDENCE_QUOTE_NOT_FOUND", "INTERNAL_API_HTTP_ERROR", "INTERNAL_API_TRANSPORT_ERROR",
     "LLM_RATE_LIMIT", "LLM_TIMEOUT", "LLM_PROVIDER_ERROR", "LLM_OUTPUT_TRUNCATED", "COMPARISON_RESULT_INVALID", "UNKNOWN",
+    "RELATIONSHIP_OBSERVATION_REFS_INVALID", "RELATIONSHIP_OBSERVATION_ORDER_INVALID",
+    "RELATIONSHIP_DISPOSITION_CONFLICT", "RELATIONSHIP_DISPLAY_REFERENCE_LEAK",
+    "RELATIONSHIP_DISPOSITION_CONTENT_INVALID", "RELATIONSHIP_NONPRESENT_MUTATION",
+    "RELATIONSHIP_MUTATION_CONTENT_MISSING", "RELATIONSHIP_SELF_RELATIONSHIP",
+    "RELATIONSHIP_ENDPOINTS_UNGROUNDED", "RELATIONSHIP_DUPLICATE_SLOT",
+    "RELATIONSHIP_ADD_SLOT_EXISTS", "RELATIONSHIP_EXISTING_REF_MISMATCH",
+    "RELATIONSHIP_DUPLICATE_TARGET", "RELATIONSHIP_INACTIVE_TARGET",
+    "RELATIONSHIP_MERGE_CONTENT_CHANGED", "RELATIONSHIP_OBSERVATION_COVERAGE_MISSING",
+    "RELATIONSHIP_RESPONSE_JSON_INVALID", "RELATIONSHIP_RESPONSE_SCHEMA_INVALID",
+    "RELATIONSHIP_INPUT_TOO_LARGE", "RELATIONSHIP_CONTEXT_INVALID",
 })
 FAILURE_DIAGNOSTIC_STAGES = frozenset({
     "CLAIM_INPUT", "CHARACTER_CONTEXT", "CHARACTER_COMPARE", "WORLD_CONTEXT", "WORLD_COMPARE", "EXTRACTION", "FINALIZE", "UNKNOWN",
+    "RELATIONSHIP_EXTRACTION", "RELATIONSHIP_COMPARE",
 })
 PROVIDER_DIAGNOSTIC_CODES = frozenset({
     "rate_limit_exceeded", "server_error", "timeout", "invalid_request_error", "insufficient_quota", "billing_hard_limit_reached",
@@ -165,6 +176,9 @@ class WorkerAnalysisJobClaimRequest(BaseModel):
     )
     supports_relationship_analysis: bool | None = Field(
         default=None, alias="supportsRelationshipAnalysis", strict=True,
+    )
+    supports_relationship_recovery: bool | None = Field(
+        default=None, alias="supportsRelationshipRecovery", strict=True,
     )
 
 

@@ -24,7 +24,7 @@
 
 ORDERED_PROVISIONAL은 기존 회차 순서를 따른다. CONFIRMED_ONLY/수동 작업이 병렬 실행되는 경우에도 prepare가 읽은 앞 회차 상태와 사용자 수정·삭제 상태를 동결한다. complete/finalize 때 의존성이 바뀌었으면 409로 거절한다. 뒤 회차가 먼저 완료됐더라도 앞 회차가 반영되면 후행 관계 결과를 무효화한다. 조용히 이전 문맥으로 합치지 않는다. 의존성이 바뀐 PREPARED/COMPLETED는 GET 재개와 같은 prepare 재전송부터 409로 거절해 유료 비교를 다시 호출하지 않게 한다. 같은 Job의 자동 재시도로 문맥을 바꾸지 않으며 새 분석 Job이 필요하다.
 
-같은 회차를 다시 분석하면 기존 해당 회차와 후행 관계 결과는 INVALIDATED가 된다. 원문 hash뿐 아니라 key/version/회차 번호·보관·파기 여부를 검사한다. 원문이 바뀌었거나 INVALIDATED인 최초 회차 뒤의 결과도 공개하지 않는다. 다시 유효하게 만들려면 해당 회차부터 순서대로 분석해야 한다. 이 기능은 무효화된 후행 회차를 자동 유료 재분석하거나 과거 모든 회차를 백필하지 않는다. 이전 성공 회차를 표시하는 경우에도 `analysisStatus`와 `partial`로 누락 상태를 함께 반환한다.
+같은 회차를 다시 분석하면 기존 해당 회차와 후행 관계 결과는 INVALIDATED가 된다. 원문 hash뿐 아니라 key/version/회차 번호·보관·파기 여부를 검사한다. 원문이 바뀌었거나 INVALIDATED인 최초 회차 뒤의 결과도 공개하지 않는다. 다시 유효하게 만들려면 해당 회차부터 순서대로 분석해야 한다. 일반 분석은 무효화된 후행 회차를 자동 유료 재분석하거나 과거 모든 회차를 백필하지 않는다. GH332의 고정 선정 계정은 별도 관계 전용 캠페인에서만 과거 회차를 순서대로 백필한다([실행 계약](relationship-cohort-backfill.md)). 이전 성공 회차를 표시하는 경우에도 `analysisStatus`와 `partial`로 누락 상태를 함께 반환한다.
 
 ## 내부 Worker API
 
@@ -68,6 +68,16 @@ slot은 두 노드 + axis + kind + direction이다. DIRECTED는 순서를 보존
 실패 요청은 `{formatVersion:1,sourceHash,contextToken,failureCode}`다. failureCode는 INVALID_RESPONSE, EXTRACTION_FAILED, COMPARISON_FAILED, INPUT_TOO_LARGE다.
 
 한 prepare 최대 신규 관측 384개, 관측당 인용 1~12개, 한 인용 480 code point 이하, 관측당 인용 총 4000 code point 이하, 이름/mention 100 이하, 관측 summary 300 이하. 관계 설명 summary는 500 이하. 완료 결정 최대 512개, label 60 이하, reason 500 이하. 관련 H가 384개 또는 비교 문맥의 노드/관계가 각각 1536개를 초과하면 자르지 않고 FAILED/INPUT_TOO_LARGE Context를 저장해 반환한다. `rejectedObservationCount`는 검증 탈락을 성공한 빈 결과로 숨기지 않기 위한 비음수 개수다.
+
+### 비교 입력 상한과 실패 진단 보완 (GH332)
+
+전체 고정 비교 문맥이 64,000 추정 입력 토큰 이내이면 기존 Terra/medium 단일 호출과 prompt/schema를 그대로 사용한다. 상한을 넘을 때만 O/H의 `sourceNodeRefs × targetNodeRefs`가 만드는 가능한 무방향 인물 쌍을 기준으로 나눈다. 가능한 쌍이 겹치는 관측은 같은 묶음이며, 과거 H가 여러 묶음을 잇거나 H끼리 이어지는 경우도 모두 합친다. 가능한 쌍 전체를 메모리에 생성하지 않고 endpoint 집합의 교집합으로 겹침을 검사한다. 방향·axis·kind가 다른 같은 인물 쌍을 분리하지 않는다. 인물 후보가 없는 관측을 이름 추측으로 해소하지 않는다.
+
+각 묶음에는 해당 쌍의 기존 R 전체, 해당 O/H, 이들이 참조하는 N을 원래 ref·순서·인용·내용 그대로 제공한다. O가 없는 H 묶음은 재해석하지 않으며 저장된 보류도 그대로 남는다. 독립 묶음은 입력 상한 안에서 합쳐 호출 횟수를 줄인다. 모든 묶음의 입력 크기와 전체 최대 16호출을 첫 모델 호출 전에 검사하고, 쪼갤 수 없는 단일 묶음이 초과하면 원문을 자르지 않고 INPUT_TOO_LARGE로 실패한다. 호출은 순차 실행하며 기존 heartbeat·계량·서버 예산 검사를 유지한다. 출력 오류를 재질문하는 repair는 추가하지 않는다.
+
+각 O는 정확히 한 묶음에 배정하지만 기존 계약처럼 그 O를 서로 다른 관계 결정에 여러 번 사용할 수 있다. 묶음별 결과를 모두 받은 뒤 원래 전체 문맥으로 결정 최대 512개·전체 O coverage·참조·시점·중복 슬롯을 다시 검증한다. 검증 전에는 부분 결과를 Spring에 저장하지 않는다. 다른 인물 쌍의 문맥이 줄어들 수 있으므로 이 분할은 상한 초과 경로에만 적용하며, 실제 모델 의미 품질 개선을 자동으로 보장하지 않는다.
+
+진단은 공통 `relationship-failure-diagnostics-v1.json`의 고정 코드만 사용한다. stage는 `RELATIONSHIP_EXTRACTION`/`RELATIONSHIP_COMPARE`이며, JSON/schema·관측 coverage·순서·슬롯·MERGE 내용 변경·인물 해소·입력 상한 등을 구분한다. 원문·모델 응답·예외 원문은 기록하지 않는다. 관계 pipeline은 원본 실패의 분류와 안전한 진단만 전용 Worker에 전달하고, 상위 runner에는 고정 메시지만 노출한다. 일반 캐릭터/세계관 분석에서 관계 실패를 격리하는 의미는 유지한다.
 
 ## 공개 API
 
@@ -120,5 +130,5 @@ main의 검수 실행·검토 종료 기능이 V92~V100을 사용하므로, 운�
 배포 순서는 Java API/DB, 지원 AI Worker, Front다. Java는 지원 광고가 없는 Worker에 관계 계약을
 주지 않으며, 이미 관계 분석이 활성화된 Job은 지원 Worker만 재개할 수 있다. 기능 플래그를 끄면
 신규 활성화만 멈추므로, 진행 중 관계 Job이 남은 상태의 Worker 롤백은 별도 확인이 필요하다.
-기존 작품 전체의 자동 유료 백필은 추가하지 않는다. 일반 인용의 위치가 불확실한 경우에는
+기존 작품 전체의 자동 유료 백필은 하지 않는다. GH332는 [고정 선정 계정의 관계 전용 캠페인](relationship-cohort-backfill.md)만 운영 배포 후 자동 시작한다. 일반 인용의 위치가 불확실한 경우에는
 [일반 인용 정책](https://github.com/catchhole-soma/catchhole-backend-java/blob/main/docs/analysis-continuity.md)의 GH323 정책으로 인용만 숨기고 설정값을 유지한다.

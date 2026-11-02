@@ -1,6 +1,6 @@
 # CatchHole 인공지능 작업 서버 운영 배포
 
-이 문서는 Worker 서버용 Amazon EC2 인스턴스에서 설정 추출 Worker 5개, 캐릭터 비교 Worker 1개, 세계관 비교 Worker 1개를 실행하는 절차를 설명한다. API 서버, Caddy, Redis, PostgreSQL은 이 서버에서 실행하지 않는다.
+이 문서는 Worker 서버용 Amazon EC2 인스턴스에서 설정 추출 Worker 5개, 캐릭터 비교 Worker 1개, 세계관 비교 Worker 1개를 실행하는 절차를 설명한다. 검수 Worker는 기본 0개이며 [검수 Worker 켜기](#검수-worker-켜기-344)로 명시적으로 켠다. API 서버, Caddy, Redis, PostgreSQL은 이 서버에서 실행하지 않는다.
 
 ## 서버 파일
 
@@ -130,7 +130,7 @@ SPRING_WORKER_READ_TIMEOUT_SECONDS=120
 수행하는 동안 응답을 기다릴 read 한도다. 기본 120초이며 유한한 양수만 허용한다.
 최초 claim, 후보 게시/비교 claim, 문맥 조회, progress, complete, fail에 적용한다.
 연결·쓰기·connection pool 대기와 heartbeat·token 원장의 read 한도는 각각 기존 30초다.
-Compose의 세 Worker 서비스는 같은 설정을 사용한다. 일반 분석 POST 재전송은 추가하지 않는다.
+Compose의 네 Worker 서비스는 같은 설정을 사용한다. 일반 분석 POST 재전송은 추가하지 않는다.
 
 120초는 HTTPX가 응답 헤더/다음 바이트를 기다리는 한 번의 읽기 제한이다.
 요청 전체나 Job 완료의 절대 시간 보장이 아니다. heartbeat는 기존 60초 주기,
@@ -195,8 +195,109 @@ AI_WORKER_BLOCKING_MAX_WORKERS=3
 - 설정 추출 Worker 컨테이너는 5개다.
 - 각 컨테이너는 동시에 최대 10개 분석 작업을 실행한다.
 - 설정 추출 작업 슬롯은 `5 × 10 = 50`개다.
-- 캐릭터 비교 Worker와 세계관 비교 Worker는 각각 1개이며 동시 작업과 언어 모델 요청을 각각 1개로 고정한다.
+- 캐릭터 비교 Worker, 세계관 비교 Worker, 관계 전용 Worker는 각각 1개이며 동시 작업과 언어 모델 요청을 각각 1개로 고정한다. 관계 전용 Worker는 SQLAlchemy 세션을 사용하지 않는다.
 - `LLM_MAX_CONCURRENT_REQUESTS=10`은 각 설정 추출 Worker 컨테이너 안의 상한이다. 전체 서버 또는 OpenAI 계정에 대한 전역 상한은 아니다.
+
+## 검수 Worker 켜기 (#344)
+
+`compose.worker.prod.yml`의 `ai-validation-worker`는 검수 전용 runner(`scripts/run_validation_worker.py --enable`)를 연속 실행한다. 기본 `VALIDATION_WORKER_PROCESS_COUNT=0`이라 컨테이너를 만들지 않는다. 분석 Worker와 같은 이미지·`SPRING_INTERNAL_API_BASE_URL`·`SPRING_INTERNAL_API_KEY`·`LLM_API_KEY`를 쓰고, S3·metrics port·tracing은 쓰지 않는다. DB는 [의미 검색 켜기](#의미-검색-켜기-선택)를 했을 때만 읽기 전용으로 쓴다. 기본(키워드 검색만)에서는 데이터베이스 연결 수 예산과 Prometheus target 수가 바뀌지 않는다.
+
+전제: Backend 저장소 `deploy/EC2_DEPLOYMENT.md`의 검수 실행 켜기 절차로 API 서버 `api.env`에 `VALIDATION_EXECUTION_ENABLED`와 검수 예산(`SPRING_APPLICATION_JSON`)을 먼저 적용하고 API가 정상 응답해야 한다. API 쪽이 꺼져 있으면 Worker를 켜지 않는다.
+
+`worker.env`에 다음 값을 둔다. 처음에는 프로세스 1개로 켠다.
+
+```dotenv
+VALIDATION_WORKER_PROCESS_COUNT=1
+VALIDATION_WORKER_CONCURRENCY=3
+VALIDATION_WORKER_LLM_CONCURRENCY=4
+VALIDATION_WORKER_POLL_SECONDS=5
+```
+
+- `VALIDATION_WORKER_CONCURRENCY`는 프로세스당 동시 검수 Job 수, `VALIDATION_WORKER_LLM_CONCURRENCY`는 그 프로세스 전체의 provider 동시 요청 상한이다. 컨테이너 안에서는 각각 `AI_WORKER_CONCURRENCY`, `LLM_MAX_CONCURRENT_REQUESTS`로 전달되며 분석 Worker 값과 분리된다.
+- 같은 provider key를 쓰므로 계정 전체 동시 요청은 분석 50(5×10) + 비교 2 + 관계 1 + 검수 프로세스 수 × `VALIDATION_WORKER_LLM_CONCURRENCY`의 합이다.
+- `VALIDATION_WORKER_POLL_SECONDS`는 claim 시도 사이 간격이며 연속 실패 시 최대 60초까지 늘어난다.
+- 선택 값 `VALIDATION_WORKER_ID`(기본 `validation-prod`)는 claim의 `workerId`다. 프로세스를 2개 이상으로 늘려 같은 ID를 공유해도 Backend가 claim마다 Job을 잠그고 lease token을 따로 발급하므로 같은 Job을 중복 실행하지 않는다.
+
+렌더링을 확인한 뒤 검수 Worker만 생성한다. 분석·비교 Worker는 재생성하지 않는다.
+
+```bash
+cd /opt/catchhole
+```
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml config --quiet
+```
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml up -d ai-validation-worker
+```
+
+실행 상태와 로그를 확인한다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml ps
+```
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml logs --tail=100 ai-validation-worker
+```
+
+정상이면 대기 중에는 `validation runner` 로그가 조용하고, Job을 claim해 처리하면 `setting inspection completed`(오탈자 검사는 `typo inspection completed`) 줄이 남는다. `validation job failed`, `validation job incomplete`, `validation runner backoff`가 반복되면 API 쪽 검수 실행 설정·예산과 내부 키를 확인한다. 로그에는 고정 코드와 job/report ID만 남고 원문·응답 본문은 남지 않는다.
+
+끄려면 `worker.env`의 `VALIDATION_WORKER_PROCESS_COUNT=0`으로 되돌리고 검수 Worker만 0개로 줄인다. 다른 Worker의 대기 중인 설정 변경까지 함께 적용되지 않도록 전체 `up -d`나 `--remove-orphans`로 끄지 않는다.
+
+```bash
+sudo sed -i -e 's/^VALIDATION_WORKER_PROCESS_COUNT=.*/VALIDATION_WORKER_PROCESS_COUNT=0/' /opt/catchhole/worker.env
+```
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml up -d ai-validation-worker --scale ai-validation-worker=0
+```
+
+급히 멈출 때는 `stop`을 쓴다. 이 방법은 다음 `up -d`나 자동 배포에서 다시 시작되므로 위처럼 `worker.env`도 0으로 바꿔 둔다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml stop -t 210 ai-validation-worker
+```
+
+어느 방법이든 SIGTERM을 받으면 새 claim을 멈추고 실행 중 Job에 180초(`AI_WORKER_SHUTDOWN_GRACE_SECONDS`)를 준 뒤 남은 Job을 취소한다. 취소한 Job은 실패로 보고하지 않고 Backend lease 만료와 재claim으로 복구된다. Compose 종료 유예는 분석 Worker와 같은 210초다.
+
+GitHub Actions 자동 배포의 `manage-ai-runtime.py`는 같은 SHA의 Compose에 `ai-validation-worker`가 있어야 진행하고, 이 서비스의 내부 API 주소·내부 키·provider key가 `ai-worker`와 같은지 검사한다. 배포 뒤에는 `VALIDATION_WORKER_PROCESS_COUNT`만큼 검수 컨테이너가 실행될 때까지 기다리며, 0이면 실행 중인 검수 컨테이너가 없는지만 확인한다. 결과 JSON의 `validationReplicas`로 적용된 수를 확인한다.
+
+### 의미 검색 켜기 (선택)
+
+기본 검수 Worker는 과거 원고를 키워드로만 찾는다. 챗봇이 쓰는 원문 색인(`retrieval_chunks`)으로 의미(벡터) 검색까지 쓰려면 아래 순서로 켠다. Compose는 `--readonly-url-env VALIDATION_READONLY_DATABASE_URL --query-embedding --index-version`을 항상 넘기며, URL 값이 비어 있으면 runner가 `frozen retrieval disabled: VALIDATION_READONLY_DATABASE_URL is empty`를 남기고 키워드 검색만 쓴다.
+
+1. **API 예산.** Backend 저장소 `deploy/EC2_DEPLOYMENT.md`의 검수 실행 절차로 API 서버 검수 예산 JSON(`SPRING_APPLICATION_JSON`)에 `roles.QUERY_EMBEDDING`(최대 호출 수·예약 token)과 `query-embedding-model`(`text-embedding-3-small`)을 넣고 API를 재기동한다. Backend `deploy/validation-execution.prod.example.json`에 예시가 있다. 이 역할이 없으면 URL을 넣어도 Job마다 키워드 검색만 제안한다(실패하지 않는다).
+2. **DB 연결 예산.** 켜면 검수 프로세스마다 읽기 전용 연결이 `VALIDATION_WORKER_CONCURRENCY`개(기본 3) 더 생긴다. 실제 RDS 여유를 확인하고 `retrieval.env`의 `AI_RUNTIME_DB_CONNECTION_BUDGET`을 `검수 프로세스 수 × VALIDATION_WORKER_CONCURRENCY`만큼 올린다(예: 32 → 35). 자동 배포는 이 값을 넘으면 `DATABASE_CONNECTION_BUDGET_EXCEEDED`로 멈춘다. 각 연결은 connect 5초·statement 5초·idle-in-transaction 10초·풀 대기 5초 상한이 있어, 멈춘 조회가 연결을 계속 붙잡지 않는다.
+3. **읽기 전용 계정 권한.** 검수 검색은 챗봇 계정(`catchhole_chat_reader`)으로 챗봇 7개 테이블 외에 `validation_reports`·`validation_jobs`·`validation_baseline_sources`도 읽는다. 챗봇 bootstrap은 이 세 테이블 SELECT를 추가한 AI SHA부터 배포 때마다 관리 계정의 grant를 갱신한다(초과 권한은 계속 거절). **검수 opt-in 전에 bootstrap을 다시 실행해 reader grant를 갱신한다**: 이 변경이 포함된 SHA의 GitHub Actions `Deploy Worker EC2`(최초 설정 단계 포함)가 성공했는지 확인하고, 아니면 그 실행을 다시 실행한다. 수동 `GRANT`는 bootstrap이 `READ_ROLE_EXCESS_READ_PRIVILEGE`로 거절하므로 하지 않는다. 운영자가 직접 만든(custom) 검색 계정이면 세 테이블 SELECT를 따로 준다. 권한이 없으면 Job마다 `vector search readiness unavailable error=ProgrammingError` 경고와 함께 그 Job은 frozen RAG 없이 키워드로만 진행한다. 자세한 계정 정책은 `docs/chat-runtime-operations.md`의 권한 절을 따른다.
+4. **worker.env.** `VALIDATION_READONLY_DATABASE_URL`에 `chatbot.env`의 `CHAT_RETRIEVAL_DATABASE_URL`과 같은 SELECT 전용 계정 URL을 그대로 넣고, `VALIDATION_WORKER_INDEX_VERSION`은 `CHAT_RETRIEVAL_EMBEDDING_VERSION`(기본 `v1`)과 맞춘다. 값이 터미널·셸 기록에 남지 않도록 편집기로 넣는다.
+
+```bash
+sudoedit /opt/catchhole/worker.env
+```
+
+5. **재기동.** 렌더링을 확인하고 검수 Worker만 다시 만든다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml config --quiet
+```
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml up -d ai-validation-worker
+```
+
+6. **확인.** 시작 로그에 `frozen retrieval disabled`가 없어야 하고, Job을 처리하면 `vector search offered=True sources=<n> ready=<n> ...`이 남는다.
+
+```bash
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml logs --tail=200 ai-validation-worker | grep -E 'frozen retrieval disabled|query embedding disabled|vector search'
+```
+
+- `vector search offered=False`이고 `ready`가 `sources`보다 작으면 그 작품의 일부 회차가 아직 색인되지 않은 것이다. 그 Job은 키워드 검색만으로 정상 진행하며, 색인 백필이 끝난 뒤의 Job부터 의미 검색이 제안된다.
+- `embedding=False`이면 API 예산 JSON에 `QUERY_EMBEDDING`이 없다(1단계).
+- `vector search readiness unavailable error=<예외 종류>`는 읽기 전용 DB 접속·권한 문제다(`ProgrammingError`는 3단계 권한, `TimeoutError`는 5초 안에 응답하지 않은 DB). 그 Job은 frozen RAG 없이 키워드 검색만으로 계속한다. 로그에는 예외 종류와 Job ID만 남는다.
+
+끄려면 `VALIDATION_READONLY_DATABASE_URL`을 다시 비우고 5단계로 검수 Worker만 재기동한다. 자동 배포의 `manage-ai-runtime.py`는 URL이 비어 있으면 아무것도 검사하지 않고, 값이 있으면 챗봇의 `CHAT_RETRIEVAL_DATABASE_URL`과 같은지(`INCONSISTENT_VALIDATION_READONLY_DATABASE_URL`), `--index-version`이 `CHAT_RETRIEVAL_EMBEDDING_VERSION`과 같은지(`INCONSISTENT_VALIDATION_WORKER_INDEX_VERSION`) 확인한 뒤 위 연결 수를 예산에 넣는다. 결과 JSON의 `validationRetrieval`로 켜짐 여부를 확인한다.
 
 ## 데이터베이스 연결 수 예산
 
@@ -206,9 +307,12 @@ AI_WORKER_BLOCKING_MAX_WORKERS=3
 | 설정 추출 Worker | 5 | 3 | 15 |
 | 캐릭터 비교 Worker | 1 | 1 | 1 |
 | 세계관 비교 Worker | 1 | 1 | 1 |
+| 관계 전용 Worker | 1 | 0 | 0 |
 | 전체 |  |  | 27 |
 
 SQLAlchemy의 `DATABASE_POOL_MAX_OVERFLOW=0`은 기본 연결 풀을 넘는 임시 연결 생성을 막는다. 전체 애플리케이션의 이론상 최대 연결 수는 27개로, NVM-315의 40개 이하 기준을 만족한다.
+
+검수 Worker는 기본 0개이고 키워드 검색만 쓰면 DB에 연결하지 않는다. [의미 검색](#의미-검색-켜기-선택)을 켜면 검수 프로세스 수 × `VALIDATION_WORKER_CONCURRENCY`개(기본 1 × 3 = 3)의 읽기 전용 연결(overflow 0)이 더해지므로, 챗봇·색인 백필 연결과 함께 `AI_RUNTIME_DB_CONNECTION_BUDGET`과 실제 RDS 한도를 확인한다.
 
 ## 최초 실행
 
@@ -340,7 +444,7 @@ cd /opt/catchhole
 ```
 
 ```bash
-sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml stop -t 210 ai-worker ai-character-comparison-worker ai-world-comparison-worker
+sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml stop -t 210 ai-worker ai-character-comparison-worker ai-world-comparison-worker ai-relationship-worker ai-validation-worker
 ```
 
 ```bash
@@ -414,12 +518,12 @@ GitHub Actions가 사용하는 AWS Identity and Access Management 사용자 또�
 Python CLI의 같은 프로세스에서 `prometheus_client.start_http_server`가 HTTP thread를 제공한다. 별도 FastAPI 서버는 필요 없다. 앱의 기본값은 비활성·127.0.0.1:9102이며 운영 Compose는 활성화와 컨테이너 내부 0.0.0.0:9102를 명시한다. 호스트 publish의 기본값은 localhost다.
 
 - `AI_WORKER_METRICS_ENABLED=true`: CLI exporter 활성화.
-- `AI_WORKER_METRICS_BIND_ADDRESS`: 최초 localhost, 모니터링 SG만 TCP 9102–9108 접근하도록 적용한 뒤 Worker EC2 사설 IPv4로 변경.
+- `AI_WORKER_METRICS_BIND_ADDRESS`: 최초 localhost, 모니터링 SG만 TCP 9102–9109 접근하도록 적용한 뒤 Worker EC2 사설 IPv4로 변경.
 - `AI_WORKER_METRICS_PORT_RANGE=9102-9106`: 분석 replica 5개에 각기 다른 host port를 할당. 같은 host 고정 port 하나를 모든 replica에 지정하면 충돌한다.
-- 캐릭터 비교 host 9107 / 세계관 비교 host 9108, 각 컨테이너 내부는 동일 9102.
+- 캐릭터 비교 host 9107 / 세계관 비교 host 9108 / 관계 전용 host 9109, 각 컨테이너 내부는 동일 9102.
 - Worker 5×10, 비교 각 1의 동시성과 180/210초 graceful shutdown은 변경하지 않는다. scale을 바꿀 때 port range 용량과 target 예상 수·SG를 함께 검토한다.
 
-[generate_worker_targets.py](generate_worker_targets.py)는 Docker inspect의 실제 mapping을 확인하고 일곱 개 endpoint를 생성한다. 부족한 프로세스, duplicate 주소/replica, wildcard·localhost·public host bind를 발견하면 실패한다. **운영 사설 수집용**이며 localhost 개발용 target 생성기는 아니다. 이 파일은 같은 배포 SHA의 코드와 함께 Worker 서버에 설치한다.
+[generate_worker_targets.py](generate_worker_targets.py)는 Docker inspect의 실제 mapping을 확인하고 여덟 개 endpoint를 생성한다. 부족한 프로세스, duplicate 주소/replica, wildcard·localhost·public host bind를 발견하면 실패한다. **운영 사설 수집용**이며 localhost 개발용 target 생성기는 아니다. 이 파일은 같은 배포 SHA의 코드와 함께 Worker 서버에 설치한다.
 
 ```bash
 cd /opt/catchhole
@@ -452,7 +556,7 @@ python -m unittest discover -s deploy/tests -p 'test_worker_targets.py'
 
 이 절차는 운영 적용을 위한 설정과 확인 항목이다. 파일을 추가하거나 기본값으로 배포한
 것만으로 트레이스가 켜지지 않으며, 실제 운영 활성화·데이터 조회는 별도로 확인한다.
-세 Worker 서비스가 공통 설정을 상속하고 종류별 활성화 값을 우선 적용한다.
+네 Worker 서비스가 공통 설정을 상속하고 종류별 활성화 값을 우선 적용한다.
 분석 replica별 포트 추가나 프로세스 수 변경은 필요 없다.
 
 ```text
@@ -489,17 +593,18 @@ AI_WORKER_TRACING_ENABLED=false
 AI_ANALYSIS_TRACING_ENABLED=false
 AI_CHARACTER_COMPARISON_TRACING_ENABLED=true
 AI_WORLD_COMPARISON_TRACING_ENABLED=false
+AI_RELATIONSHIP_TRACING_ENABLED=false
 OTEL_SERVICE_NAME=catchhole-ai-worker
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://<MONITORING_PRIVATE_IPV4>:4318/v1/traces
 ```
 
-세 종류별 값은 지정하지 않거나 비워 두면 공통 `AI_WORKER_TRACING_ENABLED`를 따른다.
+네 종류별 값은 지정하지 않거나 비워 두면 공통 `AI_WORKER_TRACING_ENABLED`를 따른다.
 명시한 `true`/`false`는 공통값보다 우선한다. 따라서 공통값만 `false`로 변경해도 명시적
 `true` override는 꺼지지 않는다는 점에 주의한다. 환경 파일에는 같은 키를 중복 추가하지
 않고 기존 값을 수정한다.
 
-`OTEL_SERVICE_NAME`은 세 Worker에서 동일하게 유지한다. Trace resource의 `worker.kind`는
-`analysis`, `character-comparison`, `world-comparison`으로 구분되고,
+`OTEL_SERVICE_NAME`은 네 Worker에서 동일하게 유지한다. Trace resource의 `worker.kind`는
+`analysis`, `character-comparison`, `world-comparison`, `relationship`으로 구분되고,
 `deployment.environment.name=prod`, `service.instance.id`는 프로세스별 UUID다.
 컨테이너를 다시 만들면 instance ID도 바뀐다. chatbot·검색 backfill은 이번 범위에 없다.
 
@@ -515,7 +620,7 @@ python3 /opt/catchhole/releases/<FULL_COMMIT_SHA>/manage-ai-runtime.py validate 
 ```
 
 첫 canary에서 결과의 `tracingWorkerServices`에는 `ai-character-comparison-worker`
-하나만 있어야 한다. 세 종류를 모두 켠 뒤에는 세 서비스 이름이 나온다.
+하나만 있어야 한다. 네 종류를 모두 켠 뒤에는 네 서비스 이름이 나온다.
 검사는 `true|false`와 활성화 시 HTTP·RFC1918 IPv4·4318·`/v1/traces`를 요구하며,
 인증 정보·query·fragment가 붙은 주소를 거절한다. 실패 출력에는 주소나 비밀값을 복사하지
 않는다. 기존 자동배포의 preflight에도 같은 검사를 적용하므로 잘못된 설정은 pull/readiness/
@@ -534,7 +639,7 @@ python3 /opt/catchhole/releases/<FULL_COMMIT_SHA>/manage-ai-runtime.py validate 
 | Docker 종료 여유 | 기존 `stop_grace_period: 210s` 유지 |
 
 SDK에 explicit 값을 전달하므로 `OTEL_BSP_*`만 추가해도 이 제한이 바뀌지는 않는다.
-기본 프로세스 7개의 완료 Span 큐는 합계 최대 7,168개지만, 진행 중 Span·export 중 batch를
+기본 프로세스 8개의 완료 Span 큐는 합계 최대 8,192개지만, 진행 중 Span·export 중 batch를
 포함한 전체 메모리 상한은 아니다. Collector 장애·큐 포화·SIGKILL에는 Span이 유실될 수
 있다. flush timeout도 프로세스 종료의 엄격한 시간 보장이나 Tempo 저장 보장이 아니다.
 장기 작업의 마지막 root가 늦게 도착할 수 있으므로 Tail sampling을 자동으로 켜지 않는다.
@@ -574,3 +679,24 @@ python -m pytest -q tests/test_ai_runtime_deploy.py tests/test_worker_tracing.py
 
 외부 endpoint·운영 DB·유료 LLM은 호출하지 않는다. 합성 Trace 실험과 확인된 한계는
 [worker-tracing.md](../docs/worker-tracing.md)를 참고한다.
+
+## 선정 계정 관계 백필 (GH332)
+
+[전체 실행 계약](../docs/relationship-cohort-backfill.md)을 먼저 확인한다. Java API의 고정
+대상 목록과 DB 대기열이 실행 권한을 소유하며, Worker에 회원 목록이나 운영 SQL을 넣지 않는다.
+Java 배포 후 이 AI 변경을 main에 머지하면 기존 Publish/Deploy workflow가 같은 SHA의
+`ai-relationship-worker`를 자동 시작한다. 운영자가 SSM에서 백필 명령을 실행할 필요는 없다.
+
+- 실행: `--worker-kind relationship`. Compose는 `AI_WORKER_CONCURRENCY=1`,
+  `LLM_MAX_CONCURRENT_REQUESTS=1`을 전달하고 Worker도 동시성을1로 제한한다.
+- HTTP: `/api/internal/v1/relationship-jobs/claim` 및 전용 heartbeat/complete/fail.
+- 원문: 고정 S3 key/version/hash, 최대 `RELATIONSHIP_WORKER_MAX_SOURCE_BYTES=2000000`,
+  `RELATIONSHIP_WORKER_MAX_CHUNKS=12`. 초과 시 잘라 분석하지 않고 실패를 보고한다.
+- 기존 Terra 관계 추출/비교만 실행한다. 캐릭터/세계관 추출, 청크 DB 저장, 임베딩을 하지 않는다.
+- `PREPARED` 이상 재개는 저장된 관측/결정을 사용해 원문 읽기와 추출 호출을 반복하지 않는다.
+- 관계 전용 metrics는 호스트 9109이며 새 SG 허용이 없으면 외부 수집은 되지 않을 수 있다.
+  백필 실행 자체는 기존 내부 API·S3·제공자 통신을 사용한다.
+- 프로세스 검증은 설정 추출 5 + 캐릭터 비교 1 + 세계관 비교 1 + 관계 1 = 8개다.
+  관계 Worker는 DB 연결 0이므로 기존 DB 연결 예산 27개를 늘리지 않는다.
+- 중단은 API의 `RELATIONSHIP_BACKFILL_ENABLED=false` 배포로 새 claim을 멈춘다.
+  진행 중 호출의 즉시 취소가 아니며 작업 상태와 공개 중인 관계도는 DB에 남는다.

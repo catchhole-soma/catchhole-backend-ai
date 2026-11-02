@@ -13,6 +13,7 @@ SERVICES = {
     "ai-worker": "analysis",
     "ai-character-comparison-worker": "character-comparison",
     "ai-world-comparison-worker": "world-comparison",
+    "ai-relationship-worker": "relationship",
 }
 
 
@@ -57,7 +58,7 @@ def build_targets(containers: list[dict], expected_analysis: int = 5) -> list[di
                        "worker_kind": SERVICES[service], "worker_replica": str(replica)},
         })
     expected = {"ai-worker": expected_analysis, "ai-character-comparison-worker": 1,
-                "ai-world-comparison-worker": 1}
+                "ai-world-comparison-worker": 1, "ai-relationship-worker": 1}
     if dict(counts) != expected:
         raise ValueError("실행 중인 Worker 수가 예상과 다릅니다. 기존 targets를 유지하세요.")
     return sorted(targets, key=lambda group: (group["labels"]["worker_kind"],

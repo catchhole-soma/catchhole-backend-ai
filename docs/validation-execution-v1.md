@@ -201,20 +201,33 @@ CL v1은 기존 Python 세 정규식과 반복 이름의 의미를 보존한다.
 
 ## 의미 단계와 완료 증명
 
-서버가 실제 전문 길이와 frozen entry count, 설정집 길이, 고정 segment/context/page 크기로 필수 grid를 계산한다.
+서버가 실제 전문 길이, frozen 항목의 이름·별칭, 설정집 길이, 고정 segment/context 크기로 필수 grid를 계산한다.
 Worker가 required-grid 또는 done:true를 보내 완료를 대체할 수 없다.
 
 - PLANNER: target segment별 QuestionBatch.
-- RELATED_SELECTION: target segment × 전체 catalogue page별 RelatedSelection.entries.
-- COVERAGE: target segment별 QuestionBatch. 선정한 모든 rule과 정확한 서버 CL 집합의 CHECKED/NOT_APPLICABLE 기록을 요구한다.
+- SUBJECT_RESOLUTION(GH349): target segment별 `{"mentions":[{"mention","subject_ref","reason"}]}`. 모델 호출 역할은 RELATED_SELECTION이다.
+  mention·reason은 공백이 아니고 mention은 중복되지 않으며 subject_ref는 null 또는 카탈로그 S 참조다. 빈 배열도 정상이다.
+- COVERAGE: target segment별 QuestionBatch. 같은 구간의 성공 SUBJECT_RESOLUTION이 먼저 저장돼 있어야 한다. rules는 관련 주체
+  (grid `segmentSubjects` ∪ 저장된 mentions의 null이 아닌 subject_ref)의 모든 항목 entry_ref 집합과 정확히 같아야 하고(비면 `[]`),
+  정확한 서버 CL 집합의 CHECKED/NOT_APPLICABLE 기록을 요구한다.
 - BOOK_SOURCE: 설정집 전문을 읽었다는 source_read_status=READY와 실제 planned_checks 기록. 빈 책도 읽기 성공+0 checks를 저장한다.
 - BOOK_COVERAGE: 각 target segment × 각 book segment의 QuestionBatch/rule 처리.
 - MERGED_PLAN: 저장된 모든 원 질문 originalRefs를 빠짐없이 연결한 질문 목록. 서버 UUID와 local Q-ref의 대응을 반환한다.
 - TYPO_SEGMENT: 분류(SPELLING/SPACING/TYPO)와 정확한 제안 또는 제안 0개의 완료 segment.
 
-SETTING과 TYPO grid는 독립 준비한다. SETTING의 gridVersion=1은 frozen manifest의 모든 BOOK_SOURCE 의무를
+SETTING과 TYPO grid는 독립 준비한다. SETTING grid는 GH349부터 `gridVersion=2`, GH349 후속부터 `gridVersion=3`이고 TYPO grid는 1 그대로다.
+grid v3 = v2 + 1글자 제외: 모양은 v2와 같고 2 code point 미만의 name·alias를 기계 매칭에서 빼는 규칙만 다르다. Worker는 2·3을 모두 받는다.
+SETTING의 target 의무는 구간마다 `PLANNER:TSEGn`, `SUBJECT_RESOLUTION:TSEGn`, `COVERAGE:TSEGn` 순서이며 RELATED_SELECTION page 의무는 없다.
+`segmentSubjects`는 구간 순서의 `{segmentRef, subjectRefs}`이고, 항목의 2 code point 이상인 name 또는 aliases 문자열이 구간 문맥
+(`text[contextStart:contextEnd]`, code point)에 정확한 부분 문자열로 나온 주체를 S 번호 순·중복 없이 담는다(정규화 없음,
+name null·aliases 빈 항목은 제외). Worker는 첫 의미 단계 게시로 grid가 생긴 뒤 checkpoint에서 이 값을 읽고, 없거나 2·3이 아니면
+`GRID_VERSION_UNSUPPORTED`로 멈춘다. 상세 규칙은 [설정 검사 계약](setting-validation-v1.md)의 GH349 절이다.
+GH349 후속: COVERAGE·JUDGE 모델 입력의 settings는 압축 행이고 고정 항목 조회·Worker 검증은 전체 정본 행 그대로다
+(COVERAGE 관련 항목 400개 초과분은 Worker가 NOT_APPLICABLE rule로 채운다, [설정 검사 계약](setting-validation-v1.md) GH349 후속).
+게시·checkpoint `evidence_bundle`의 settings는 GH349 후속 2부터 항목 ref 행만 담는다(아래 DECIDED unit).
+SETTING grid는 frozen manifest의 모든 BOOK_SOURCE 의무를
 먼저 넣고, 전문을 아직 확인하지 못한 book은 `books=[{sourceRef:...}]`와 `pendingBookRefs`로 남긴다.
-미확정 book은 빈 책/0 checks가 아니다. PLANNER/RELATED_SELECTION/COVERAGE 및 checkpoint는 다른 book 전문을
+미확정 book은 빈 책/0 checks가 아니다. PLANNER/SUBJECT_RESOLUTION/COVERAGE 및 checkpoint는 다른 book 전문을
 읽지 않고 저장한다. 성공 BOOK_SOURCE 게시가 그 book만 실제 전문 검증하여 totalCodePoints/plannedChecks/segments와
 해당 BOOK_COVERAGE 의무를 확정한다. 같은 Work 아래 최신 grid에 단조 병합하므로 동시 준비가 서로를 덮지 않는다.
 이미 성공한 stage/receipt와 checkpoint를 회수 후 복원하고 실패한 book만 다시 준비한다.
@@ -228,14 +241,23 @@ Python의 BOOK_SOURCE.status=PROCESSED는 전체 book 검토 집계이므로 실
 Java의 BOOK_SOURCE 성공은 읽기이며 전체 target×book 검토는 별도 BOOK_COVERAGE grid가 증명한다.
 
 각 DECIDED unit에는 현재 Python ValidationDecision과 `evidence_bundle`을 함께 보낸다.
-bundle의 question_ref/check_revision/question은 저장 질문과 일치해야 한다. canonical frozen settings,
+bundle의 question_ref/check_revision/question은 저장 질문과 일치해야 한다. settings의 frozen 항목 ref 집합,
 실제 E-ref/원문 위치, target_context와 additional_target_context의 인용, 알려진 fact/evidence refs,
 성공한 실제 비교·필수 읽기 receipts, 남은 lookup_obligations 0을 검증한다. 네 completion 사유만으로 완료하지 않는다.
+GH349 후속 2: bundle `settings` 행은 `{"entry_ref": "B12", "subject_ref": "S3"}`뿐이다. Worker는 질문의 관련 항목(질문 주체의 항목 ∪ BASELINE 조회 ref,
+이전과 같은 집합·순서)을 이 모양으로 줄여 게시하고 checkpoint check에도 같은 bundle을 둔다. 서버는 entry_ref가 현재 context의 정본 항목인지,
+subject_ref가 그 정본 행과 같은지, 중복이 없는지, ref 집합이 질문 주체의 항목 ∪ BASELINE 조회 ref와 같은지만 보고 행 내용 hash는 비교하지 않으며 추가 key는 무시한다.
+이유: 게시 명령 전체가 `maxPublicationBytes` 상한(당시 131,072 byte, 지금 1,048,576 byte)인데 예전 규칙은 그 항목들의 전체 정본 행을 요구했고 운영 인물 항목 하나가 362 KB라
+그 주체를 다루는 JUDGE는 게시할 수 없었다. bundle은 공개 응답에 나가지 않는다. `input_digest`는 이 ref 행 bundle로 계산한다(Worker 메타데이터, 권한 근거 아님).
+JUDGE 모델 입력은 그대로 압축 행(BASELINE으로 요청한 항목은 근거·출처 없는 값 이력을 더한 확장 행, v0039)이다. 이 변경 전 Worker가 전체 행으로 결정한 check를 재개하면
+그 bundle은 entry_ref/subject_ref만 읽어 ref 행으로 돌려주고 다시 JUDGE하거나 게시하지 않는다. 공통 fixture의 판정 예시는 `settings: []`라 바뀌지 않는다.
 정상 NO_CONFLICT도 완료 check/receipts를 저장한다. E-ref는 실제 source_ref로 분류한다. T1을 E1로 포장해도
 CONFLICT/SUSPECTED_CONFLICT의 외부 비교 근거가 될 수 없고 frozen fact 또는 검증된 T1 이외의 source만 인정한다.
 T1 자체 문맥·인용 저장은 유지한다.
 새 FOLLOW_UP은 영향을 받는 모든 check를 한 트랜잭션에서 revision 변경하고 옛 완료를 집계에서 제외한다.
 원 상태/판정과 changeReason은 check history에 남겨 #312가 변경된 질문을 구분할 수 있다.
+GH341에서 Worker가 SUSPECTED_CONFLICT 전에 넣는 변화·예외 KEYWORD 검색도 그 질문 하나의 일반 revision(`revisions`, `reason=NEW_CLUE`)으로
+lookup_obligations에 추가되고 checkpoint pending/receipts에 남아 재개 때 다시 넣지 않는다([설정 검사 계약](setting-validation-v1.md)).
 
 종료 상태는 현재 revision의 완료 check(NO_CONFLICT 포함), 완료 typo segment(제안 0개 포함),
 필수 PLANNER/selection/COVERAGE/book/CL이 모두 저장되고 미해결 질문이 없는 NO_CHECK segment로 결정한다.
@@ -245,7 +267,7 @@ T1 자체 문맥·인용 저장은 유지한다.
 
 ## 게시·파기·재시도
 
-게시 외피 전체는 131,072 UTF-8 bytes, citations는 1,000개, 의미 payload 깊이는 50을 넘기지 않는다.
+게시 외피 전체는 1,048,576 UTF-8 bytes(#349 후속: MERGED_PLAN이 모든 구간의 질문 초안을 한 번에 담아 65개 질문이 옛 131,072 bytes를 넘겼다), citations는 1,000개, 의미 payload 깊이는 50을 넘기지 않는다.
 target_spans/spans/evidence 행/typo span과 target_context/additional_target_context라는 계약 경로의 quote/text는
 정확한 source/hash/version/code point 인용 외피가 필요하다. settings[]는 서버 canonical projection 전체와 정확히
 일치해야 하며 그 내부 도메인 속성 이름 text/quote를 span으로 해석하지 않는다. 다른 임의 payload/checkpoint 경로의
@@ -277,6 +299,8 @@ setting/typo의 model-calls/lookups/seconds/input-tokens/output-tokens/segment-c
 
 모든 generation 역할은 Terra이며 PLANNER medium / RELATED_SELECTION high / COVERAGE high / JUDGE medium / TYPO low다.
 RELATED_SELECTION은 독립 보완의 실제 transport 역할이고 BOOK_COVERAGE는 COVERAGE 역할을 사용한다.
+GH349부터 SUBJECT_RESOLUTION 단계가 RELATED_SELECTION 역할로 호출·예약·정산된다(역할 이름·모델·추론 강도·예산 key는 그대로).
+`cataloguePageSize`는 ENTRIES 읽기 페이지 크기로 계속 쓰는 예산 key다.
 count와 generation의 동일 옵션/schema는 Task3 adapter가 기존 검사기에서 유지해야 한다.
 QUERY_EMBEDDING은 선택 사항이며 명시 모델 text-embedding-3-small과 별도 cap을 함께 설정할 때만 예약한다.
 이는 기존 색인 계약의 모델 호환성이고 벡터 readiness나 검색 성공을 보장하지 않는다.
@@ -320,7 +344,8 @@ version은 기존 chat.retrieval-embedding-version override를 snapshot하고 �
 
 `EpisodeValidationWorker.claim_next/process_claimed/aclose`는 기존 호출형 inspect/check_typos와 별도다.
 `ValidationExecutionClient`가 CommonResponse.data/실제 lease/scope를 사용하며, Python은 validation DB에 쓰지 않는다.
-PLANNER/전체 RELATED_SELECTION page/COVERAGE/각 BOOK_SOURCE/각 BOOK_COVERAGE를 검증 직후 게시한다.
+PLANNER/SUBJECT_RESOLUTION/COVERAGE/각 BOOK_SOURCE/각 BOOK_COVERAGE를 검증 직후 게시한다.
+해소할 주체가 남지 않은 구간(주체 0개 또는 모두 이름 매칭)의 SUBJECT_RESOLUTION은 모델 호출 없이 빈 mentions로 게시한다.
 MERGED_PLAN은 첫 JUDGE 전에 서버 check UUID/revision/checkInputDigest를 발급받고 정상 NO_CONFLICT도 즉시 저장한다.
 FOLLOW_UP은 영향 질문 전부를 원자 revise한 다음 새 판단을 실행한다. 같은 입력의 checkpoint는 version만 전진하고
 원래 receipt와 근거를 보존한다. revision 저장 직후 crash는 서버 현재 의무와 이전 runtime revision 차이로 복원한다.
@@ -329,16 +354,34 @@ source/report 파기와 입력 교체는 이 보존 경로를 쓰지 않고 기�
 checkpoint v1은 성공 stage/decision을 중복 복사하지 않는다. 전역 receipts와 질문별 refs, 남은 queue,
 필요한 실제 근거/추가 문맥/현재 관측 revision만 보존한다. evidence는 phase별 한 곳에 둔다.
 성공 BOOK_SOURCE와 서버 segments로 준비 상태를 복원하고, 미완료 rule은 인증된 READ_SOURCE 범위로 읽는다.
-질문이 없는 큰 책 전체를 checkpoint로 복사하지 않는다. 131072-byte 상한과 인용 검증은 그대로다.
+질문이 없는 큰 책 전체를 checkpoint로 복사하지 않는다. 1,048,576-byte 상한과 인용 검증은 그대로다.
 오탈자는 ClassifiedTypoSuggestion의 SPELLING/SPACING/TYPO와 정확한 span을 보존하고 실패 구간만 실행한다.
 
 두 분기는 독립 asyncio task이며 한 분기의 provider/role cap 실패나 질문 0개는 다른 분기를 취소하지 않는다.
 typed role-cap/token quota 409는 분기 실패로 처리한다. lease/current input/source 공유 무효화와 전체 취소는
 양쪽 children 및 새 예약/게시를 멈추되 원래 사용량의 UNKNOWN/늦은 실제 SETTLE는 유지한다.
 
+### GH349 grid v2 배포 호환
+
+서버는 `prepare`마다 설정에서 units를 다시 계산하고 `extendGrid`가 저장된 grid 기준과 비교한다. 그래서 배포 전에 claim된
+SETTING Job은 배포 뒤 `VALIDATION_SOURCE_VERSION_CONFLICT`로 끝나며 공개 retry(새 grid)로 다시 실행해야 한다.
+배포는 RUNNING 검수 Job이 없을 때 Backend와 AI를 같은 release로 올린다. grid v1 서버에 새 Worker가 붙으면 첫 PLANNER 게시 뒤
+`GRID_VERSION_UNSUPPORTED`로 SETTING 분기를 멈추고, 이미 저장된 v1 grid를 복원한 Job도 SUBJECT_RESOLUTION 전에 같은 코드로 멈춘다.
+Backend는 기록 보존을 위해 `RELATED_SELECTION` stage enum을 유지하지만 새 grid가 요구하지 않는다. Worker는 저장된 v1 stage를 읽지 않는다.
+grid v3(GH349 후속, 1글자 제외)는 Backend가 3을 만들고 저장된 SETTING grid가 3이 아니면 공개 retry에서 버리고 다시 만든다. Worker는 2·3을 모두 받으므로
+새 Worker를 먼저 올려도 v2 서버와 동작하며(1글자 규칙만 서버 grid를 따름), 압축 투영은 서버 wire를 바꾸지 않는다.
+bundle ref 행(GH349 후속 2)에는 순서가 있다. 새 서버는 옛 Worker의 전체 행 bundle도 받지만(추가 key 무시) 옛 서버는 bundle settings를 정본 행과 비교하므로
+새 Worker의 DECIDED 게시를 거절한다. Backend를 먼저 또는 같은 release로 올리고, 검수 Job이 돌기 전에 둘 다 배포한다.
+
 ## 명시적 실행과 수동 검증
 
-기본 runner는 추가하지 않는다. AI checkout에서 명시 opt-in으로만 아래 전용 명령을 사용한다.
+운영은 Worker Compose 서비스 `ai-validation-worker`(기본 0 replicas, `VALIDATION_WORKER_PROCESS_COUNT`)로
+명시 opt-in한다(#344). 이 서비스는 `--enable`·`--poll-seconds`·`--backend-url`과 분석 Worker의 내부 키
+(`SPRING_INTERNAL_API_KEY`)·provider key(`LLM_API_KEY`) 환경변수 이름을 명시해 연속 실행하며, S3·metrics·
+tracing은 쓰지 않는다. 과거 원고 의미 검색 플래그(`--readonly-url-env VALIDATION_READONLY_DATABASE_URL
+--query-embedding --index-version`)도 고정으로 주지만 기본 URL 값이 비어 있어 키워드 검색만 쓴다(GH344 후속,
+아래 끝 문단). 켜기·끄기는 AI `deploy/WORKER_EC2_DEPLOYMENT.md`를 따른다. 로컬 확인은 AI checkout에서 아래
+전용 명령을 그대로 사용한다.
 
 ```sh
 PYTHONPATH=. python scripts/run_validation_worker.py --enable --once \
@@ -348,10 +391,45 @@ PYTHONPATH=. python scripts/run_validation_worker.py --enable --once \
 INTERNAL_API_KEY/LLM_API_KEY는 기존 secret 환경으로 주입한다. 이 명령은 실제 provider를 호출할 수 있으므로
 운영 검증은 별도 승인 절차에서 수행한다. --enable이 없거나 claim의 역할/분기 예산이 빠지면 시작하지 않는다.
 연속 실행에는 --poll-seconds를 명시한다. .env를 읽거나 운영 환경을 자동 수정하지 않는다.
+연속 실행은 Job 단위로 실패를 격리한다(GH340): 한 claim의 IncompleteInspection(EXECUTION_STOPPED 등)이나
+예기치 않은 예외는 고정 코드/예외 종류와 jobId·reportId만 로그에 남기고 다음 claim을 계속하며, 연속 실패는
+poll×2^n(최대 60초)만큼 기다렸다가 정상 반복 뒤 초기화한다. 취소와 종료 중인 Worker는 루프를 끝내고,
+--once는 claim 하나만 처리하며 실패를 로그 뒤 다시 던져 0이 아닌 코드로 종료한다.
+프로세스당 동시 실행(GH343): 연속 실행은 --concurrency개의 Job 슬롯을 둔다. 빈 슬롯을 먼저 확보한 뒤에만
+claim하고 받은 Job은 즉시 별도 Task로 실행하며, claim한 Job을 프로세스 안에 쌓는 대기열은 두지 않는다.
+claim 간격은 기존과 같다: claim 시도마다 poll 간격(연속 실패 시 위 backoff)을 한 번 쉬고, 슬롯이 모두 차
+있으면 하나가 빌 때까지 기다린 뒤 쉰다. 그래서 --concurrency 1은 기존 순차 루프와 claim·처리 순서·로그가 같다.
+빈 claim·claim 실패·한 Job의 IncompleteInspection/예외는 다음 claim만 늦추고 실행 중인 다른 Job을 취소하지
+않는다. Job 단위 격리와 로그 형식(GH340)은 바뀌지 않는다. Backend claimValidationJob이 후보 Job 행을 잠그고
+lease token을 새로 발급하므로 동시 claim에 Backend 변경은 필요 없다.
+--llm-concurrency는 그 프로세스의 모든 Job·역할·query embedding provider 요청이 함께 쓰는 semaphore 하나다
+(예약·provider 호출·정산을 감싼다. exact input count 요청은 분석 metering과 같이 이 상한 밖이다).
+SIGTERM/SIGINT는 새 claim을 멈추고(진행 중인 claim 요청은 끝까지 받고 받은 Job도 실행한다) 실행 중 Job에
+--shutdown-grace-seconds를 준 뒤 남은 Job을 취소한다. 취소한 Job은 실패로 보고하지 않으며 Backend lease 만료와
+재claim이 복구한다(고정 로그 `validation runner shutdown grace expired pending_jobs=N` 한 줄). 기본값은 프로세스
+환경변수에서만 읽는다: --concurrency는 AI_WORKER_CONCURRENCY(없으면 1), --llm-concurrency는
+LLM_MAX_CONCURRENT_REQUESTS(없으면 상한 없음, 기존 동작), --shutdown-grace-seconds는
+AI_WORKER_SHUTDOWN_GRACE_SECONDS(없으면 180초)이며 1 미만·0 이하는 시작 전에 거절한다.
+--once는 동시성·종료 신호 옵션과 무관하게 claim 하나를 그 자리에서 처리한다.
 검색은 --readonly-url-env에 SELECT 전용 DB URL 환경변수명을 주면 실제 frozen RAG adapter에 연결된다.
 connection은 default_transaction_read_only=on이고 index model/version/1536 차원을 검증한다.
 --query-embedding은 서버의 별도 cap/model과 기존 준비 index가 모두 있을 때만 사용한다.
 미설정/미준비 vector는 정상 빈 검색으로 숨기지 않는다.
+GH344 후속: 명시성은 플래그에 둔다. 플래그는 명시해야 하지만 그 환경변수 값은 비어 있을 수 있다.
+--readonly-url-env의 변수가 없거나 비어 있으면 INFO `frozen retrieval disabled: <NAME> is empty` 한 줄을 남기고
+frozen RAG 없이 실행한다(KeyError로 끝나지 않는다). 읽기 전용 session이 없는데 --query-embedding이면
+INFO `query embedding disabled: no read-only retrieval sessions`를 남기고 embedding client 없이 실행한다
+(ValueError 대신). --once도 같다. URL이 있으면 연결 풀은 --concurrency개(overflow 0)로 묶어 배포 연결 예산에
+`프로세스 수 × 동시 Job 수`로 넣는다. 연결은 connect 5초·statement 5초(`statement_timeout`, readiness 5초 상한과 같은
+근거)·idle-in-transaction 10초·풀 대기 5초로 DB/드라이버가 끊는다. asyncio timeout은 `asyncio.to_thread`의 블로킹 조회와
+그 연결을 멈추지 못하기 때문이며, 끊긴 조회는 readiness면 KEYWORD 전용, 검색이면 기존 `SEARCH_FAILED`로 끝난다. Job마다 claim에 QUERY_EMBEDDING model/cap이 아예 없으면 embedding 없이
+키워드 검색만 제안하고(있는데 index와 다르거나 cap이 0이면 `EMBEDDING_CONFIGURATION_INVALID`), 회차 출처가 있으면
+Job 시작 때 고정 범위 readiness를 한 번 읽어 모든 회차 출처의 vector가 준비됐을 때만 VECTOR를 제안한다
+(INFO `vector search offered=<bool> sources=<n> ready=<m> ...`). 이 읽기는 `min(남은 seconds, 5초)`로 제한하며,
+실패·초과하면 예외 종류만 경고하고 그 Job은 frozen RAG 없이 키워드 검색만 쓴다(첫 PLANNER 예산을 쓰지 않는다).
+검색 계정은 챗봇 계정과 같고 `validation_reports`·`validation_jobs`·`validation_baseline_sources` SELECT가 더 필요하다.
+챗봇 bootstrap(`app.retrieval.bootstrap`)이 관리 계정에 이 권한을 부여·갱신한다.
+같은 Job의 이전 시도가 VECTOR를 이미 저장했으면 재개 때 VECTOR를 유지해 위 JUDGE-only 재개 계약을 지킨다.
 
 합성 검증은 loopback gh310_execution_test 이외의 DB에서 실행하지 않는다. 실제 Spring HTTP·JPA·Flyway와
 새 Python Worker를 연결하는 ValidationExecutionHttpPostgresIntegrationTest는

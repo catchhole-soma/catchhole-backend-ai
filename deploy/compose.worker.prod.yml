@@ -96,3 +96,47 @@ services:
       LLM_MAX_CONCURRENT_REQUESTS: 1
       AI_WORKER_BLOCKING_MAX_WORKERS: 1
       EMBEDDING_GENERATION_ENABLED: "false"
+
+  ai-relationship-worker:
+    <<: *worker-service
+    ports:
+      - "${AI_WORKER_METRICS_BIND_ADDRESS:-127.0.0.1}:${AI_RELATIONSHIP_METRICS_PORT:-9109}:9102"
+    deploy:
+      replicas: 1
+    command: ["python", "scripts/run_analysis_worker.py", "--worker-kind", "relationship"]
+    environment:
+      <<: *worker-environment
+      AI_WORKER_TRACING_ENABLED: ${AI_RELATIONSHIP_TRACING_ENABLED:-${AI_WORKER_TRACING_ENABLED:-false}}
+      # Settings retain the shared DSN, but this worker opens no database sessions.
+      DATABASE_POOL_SIZE: 1
+      DATABASE_POOL_MAX_OVERFLOW: 0
+      AI_WORKER_CONCURRENCY: 1
+      LLM_MAX_CONCURRENT_REQUESTS: 1
+      AI_WORKER_BLOCKING_MAX_WORKERS: 1
+      EMBEDDING_GENERATION_ENABLED: "false"
+      RETRIEVAL_PREPARATION_ENABLED: "false"
+      RELATIONSHIP_WORKER_MAX_SOURCE_BYTES: ${RELATIONSHIP_WORKER_MAX_SOURCE_BYTES:-2000000}
+      RELATIONSHIP_WORKER_MAX_CHUNKS: ${RELATIONSHIP_WORKER_MAX_CHUNKS:-12}
+
+  ai-validation-worker:
+    <<: *worker-service
+    # 검수 Worker(#343·#344). 기본 0개로 꺼져 있다. worker.env의 VALIDATION_WORKER_PROCESS_COUNT=1로 켠다.
+    # metrics·tracing·S3를 쓰지 않고 API 내부 키와 provider 키만 분석 Worker와 공유한다.
+    # 과거 원고 의미 검색은 VALIDATION_READONLY_DATABASE_URL(챗봇과 같은 SELECT 전용 URL)을 채울 때만 켜진다.
+    # 비어 있으면 runner가 로그 한 줄을 남기고 키워드 검색만 쓴다. 켜면 프로세스당 DB 연결 AI_WORKER_CONCURRENCY개.
+    deploy:
+      replicas: ${VALIDATION_WORKER_PROCESS_COUNT:-0}
+    command: ["python", "scripts/run_validation_worker.py", "--enable",
+              "--poll-seconds", "${VALIDATION_WORKER_POLL_SECONDS:-5}",
+              "--backend-url", "${SPRING_INTERNAL_API_BASE_URL}",
+              "--worker-id", "${VALIDATION_WORKER_ID:-validation-prod}",
+              "--internal-key-env", "SPRING_INTERNAL_API_KEY", "--model-key-env", "LLM_API_KEY",
+              "--readonly-url-env", "VALIDATION_READONLY_DATABASE_URL", "--query-embedding",
+              "--index-version", "${VALIDATION_WORKER_INDEX_VERSION:-v1}"]
+    environment:
+      <<: *worker-environment
+      AI_WORKER_METRICS_ENABLED: "false"
+      AI_WORKER_TRACING_ENABLED: "false"
+      AI_WORKER_CONCURRENCY: ${VALIDATION_WORKER_CONCURRENCY:-3}
+      LLM_MAX_CONCURRENT_REQUESTS: ${VALIDATION_WORKER_LLM_CONCURRENCY:-4}
+      VALIDATION_READONLY_DATABASE_URL: ${VALIDATION_READONLY_DATABASE_URL:-}

@@ -65,14 +65,16 @@ class QuestionBatch(Contract):
     clue_checks: list[RuleCoverage] = Field(default_factory=list)
 
 
-class EntrySelection(Contract):
-    entry_ref: str
-    selected: bool = Field(strict=True)
+# GH349 SUBJECT_RESOLUTION stage payload (no docstrings: they would become schema descriptions).
+# One non-literal mention in the segment text and the catalogue subject it refers to, or null.
+class MentionResolution(Contract):
+    mention: str = Field(min_length=1)
+    subject_ref: str | None
     reason: str = Field(min_length=1)
 
 
-class RelatedSelection(Contract):
-    entries: list[EntrySelection]
+class SubjectResolution(Contract):
+    mentions: list[MentionResolution]
 
 
 class Assessment(Contract):
