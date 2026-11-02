@@ -75,9 +75,10 @@ class FocusedLookup:
             item.category != subject.world_category for item in found
         ):
             raise SettingToolClientError("CONTRACT_ERROR")
-        if complete and len(found) > 1:
-            # 이름 일부만 같은 후보('미궁법', '미궁 전리품') 사이에서 이름이 정확히 같은 등록 대상이
-            # 하나뿐이면 그 대상을 고른다. 같은 이름이 둘 이상(동명이인)이면 기존대로 되묻는다.
+        if complete and len(found) > 1 and subject.domain == "WORLD":
+            # 세계관 이름 일부만 같은 후보('미궁법', '미궁 전리품') 사이에서 이름이 정확히 같은 등록
+            # 대상이 하나뿐이면 그 대상을 고른다. 같은 이름이 둘 이상이면 기존대로 되묻는다.
+            # 인물은 성·호칭·동명이인 때문에 정확히 같은 이름이어도 임의로 고르지 않는다.
             exact = [
                 item for item in found if normalized(item.subject_name) == normalized(subject.name)
             ]
