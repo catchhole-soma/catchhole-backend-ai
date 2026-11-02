@@ -278,15 +278,28 @@ def validate_relationship_decisions(result: RelationshipComparisonResponse, cont
     return validated
 
 
-def _possible_pairs(observation):
-    return {tuple(sorted((source, target)))
-            for source in observation["sourceNodeRefs"]
-            for target in observation["targetNodeRefs"] if source != target}
+def _comparison_endpoint_sets(payload):
+    return {row["ref"]: (frozenset(row["sourceNodeRefs"]), frozenset(row["targetNodeRefs"]))
+            for row in [*payload["observations"], *payload["heldObservations"]]}
 
 
-def _comparison_components(payload):
+def _has_distinct_pair(sources, targets):
+    # Exclude self-only pairs without materializing sources × targets.
+    return bool(sources and targets and not (len(sources) == len(targets) == 1 and sources == targets))
+
+
+def _possible_pairs_overlap(left, right):
+    source_left, target_left = left
+    source_right, target_right = right
+    return (_has_distinct_pair(source_left & source_right, target_left & target_right)
+            or _has_distinct_pair(source_left & target_right, target_left & source_right))
+
+
+def _comparison_components(payload, endpoint_sets=None):
     """Keep every potentially shared pair, including held bridges, in one component."""
     observations = [*payload["observations"], *payload["heldObservations"]]
+    if endpoint_sets is None:
+        endpoint_sets = _comparison_endpoint_sets(payload)
     parents = list(range(len(observations)))
 
     def root(index):
@@ -295,11 +308,13 @@ def _comparison_components(payload):
             index = parents[index]
         return index
 
-    owners = {}
     for index, observation in enumerate(observations):
-        for pair in sorted(_possible_pairs(observation)):
-            previous = owners.setdefault(pair, index)
-            parents[root(index)] = root(previous)
+        for previous in range(index):
+            current_root, previous_root = root(index), root(previous)
+            if current_root != previous_root and _possible_pairs_overlap(
+                endpoint_sets[observation["ref"]], endpoint_sets[observations[previous]["ref"]],
+            ):
+                parents[current_root] = previous_root
     groups = {}
     for index, observation in enumerate(observations):
         groups.setdefault(root(index), []).append(observation)
@@ -307,12 +322,17 @@ def _comparison_components(payload):
     return [group for group in groups.values() if any(row["ref"].startswith("O") for row in group)]
 
 
-def _project_comparison(payload, observations):
+def _project_comparison(payload, observations, endpoint_sets=None):
     """Project by immutable local references, never by names or truncated prose."""
     refs = {row["ref"] for row in observations}
-    pairs = {pair for row in observations for pair in _possible_pairs(row)}
-    relationships = [row for row in payload["relationships"]
-                     if tuple(sorted((row["sourceNodeRef"], row["targetNodeRef"]))) in pairs]
+    if endpoint_sets is None:
+        endpoint_sets = _comparison_endpoint_sets(payload)
+    endpoints = [endpoint_sets[row["ref"]] for row in observations]
+    relationships = [row for row in payload["relationships"] if any(
+        (row["sourceNodeRef"] in sources and row["targetNodeRef"] in targets)
+        or (row["targetNodeRef"] in sources and row["sourceNodeRef"] in targets)
+        for sources, targets in endpoints
+    )]
     node_refs = {ref for row in observations for side in ("sourceNodeRefs", "targetNodeRefs")
                  for ref in row[side]}
     node_refs.update(ref for row in relationships for ref in (row["sourceNodeRef"], row["targetNodeRef"]))
@@ -376,18 +396,19 @@ class RelationshipComparator:
 
     def _plan_batches(self, payload):
         batches, pending = [], []
-        for component in _comparison_components(payload):
-            projected = _project_comparison(payload, component)
+        endpoint_sets = _comparison_endpoint_sets(payload)
+        for component in _comparison_components(payload, endpoint_sets):
+            projected = _project_comparison(payload, component, endpoint_sets)
             if not self._fits(projected):
                 _input_too_large()
             combined = [*pending, *component]
-            if pending and not self._fits(_project_comparison(payload, combined)):
-                batches.append(_project_comparison(payload, pending))
+            if pending and not self._fits(_project_comparison(payload, combined, endpoint_sets)):
+                batches.append(_project_comparison(payload, pending, endpoint_sets))
                 pending = component
             else:
                 pending = combined
         if pending:
-            batches.append(_project_comparison(payload, pending))
+            batches.append(_project_comparison(payload, pending, endpoint_sets))
         if len(batches) > MAX_COMPARISON_BATCHES:
             _input_too_large()
         return batches
