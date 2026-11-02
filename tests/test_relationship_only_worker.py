@@ -19,12 +19,14 @@ from app.analysis.exceptions import (
 )
 from app.analysis.relationship_observations import RelationshipExtractionResult
 from app.analysis.relationship_pipeline import RelationshipAnalysisPipeline
+from app.clients.exceptions import SpringWorkerTransportError, WorkerLeaseExpiredError
 from app.clients.spring_worker_client import SpringWorkerClient
 from app.core.config import Settings
 from app.domain.enums import AnalysisFailureCode
 from app.llm.responses import LlmTextResponse
 from app.schemas.worker import WorkerAnalysisJobPayload
 from app.storage.s3 import SourceObjectTooLargeError
+from app.worker.lease_heartbeat import WorkerLeaseHeartbeat
 from app.worker.relationship_worker import RelationshipWorker
 
 
@@ -134,6 +136,170 @@ def test_fresh_job_uses_only_relationship_apis_and_pure_frozen_source_chunks(mon
     assert first[0].start_offset == 0
 
 
+@pytest.fixture
+def initial_heartbeats(monkeypatch):
+    instances = []
+
+    def create(*args, **kwargs):
+        heartbeat = WorkerLeaseHeartbeat(*args, **kwargs, retry_base_seconds=0)
+        instances.append(heartbeat)
+        return heartbeat
+
+    monkeypatch.setattr("app.worker.relationship_worker.WorkerLeaseHeartbeat", create)
+    return instances
+
+
+def test_initial_heartbeat_gates_context_and_source_before_periodic_task(
+    monkeypatch, initial_heartbeats
+):
+    async def run():
+        worker, payload, spring, storage, extractor, comparator, pipeline = setup_worker(monkeypatch)
+        pipeline.load = AsyncMock(wraps=pipeline.load)
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def initial_heartbeat(*_):
+            started.set()
+            await release.wait()
+
+        spring.heartbeat_relationship_job.side_effect = initial_heartbeat
+        task = asyncio.create_task(worker.process_claimed(payload))
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            pipeline.load.assert_not_called()
+            storage.get_text.assert_not_called()
+            extractor.extract_from_chunk.assert_not_called()
+            comparator.compare.assert_not_called()
+            assert initial_heartbeats[0]._task is None
+            assert initial_heartbeats[0]._owner_task is None
+            release.set()
+            assert (await asyncio.wait_for(task, 1)).claimed
+            spring.heartbeat_relationship_job.assert_awaited_once_with(
+                payload.analysis_job_id, payload.lease_token
+            )
+            pipeline.load.assert_awaited_once()
+            extractor.extract_from_chunk.assert_awaited_once()
+            assert initial_heartbeats[0]._task.done()
+            assert initial_heartbeats[0]._owner_task is None
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await worker.aclose()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", ["lease", "unexpected", "transport"])
+def test_initial_heartbeat_failure_preserves_error_without_provider_or_reservation(
+    monkeypatch, initial_heartbeats, failure
+):
+    async def run():
+        worker, payload, spring, storage, *_ = setup_worker(monkeypatch)
+        request = httpx.Request("POST", "https://synthetic.invalid/heartbeat")
+        original = {
+            "lease": WorkerLeaseExpiredError(
+                "Synthetic lease conflict", request=request,
+                response=httpx.Response(409, request=request),
+                spring_error_code="ANALYSIS_JOB_LEASE_CONFLICT",
+            ),
+            "unexpected": ValueError("Synthetic heartbeat failure"),
+            "transport": SpringWorkerTransportError("Synthetic transport failure"),
+        }[failure]
+        spring.heartbeat_relationship_job.side_effect = original
+        # A failed report must not replace the original heartbeat error.
+        spring.fail_relationship_job.side_effect = RuntimeError("Synthetic report failure")
+        spring.reserve_ai_tokens = AsyncMock()
+        worker._pipeline_factory = None
+        provider = SimpleNamespace(create_text_response=AsyncMock())
+        worker._llm_provider_client = provider
+        try:
+            with pytest.raises(type(original)) as caught:
+                await worker.process_claimed(payload)
+            assert caught.value is original
+            assert spring.heartbeat_relationship_job.await_count == (
+                3 if failure == "transport" else 1
+            )
+            assert initial_heartbeats[0]._task is None
+            assert initial_heartbeats[0]._owner_task is None
+            spring.get_relationship_analysis.assert_not_called()
+            storage.get_text.assert_not_called()
+            provider.create_text_response.assert_not_called()
+            spring.reserve_ai_tokens.assert_not_called()
+            spring.complete_relationship_job.assert_not_called()
+            spring.fail_relationship_job.assert_awaited_once()
+            if failure == "lease":
+                assert spring.fail_relationship_job.call_args.kwargs["failure_code"] == (
+                    AnalysisFailureCode.WORKER_LEASE_EXPIRED
+                )
+        finally:
+            await worker.aclose()
+
+    asyncio.run(run())
+
+
+def test_initial_heartbeat_retries_transient_errors_before_loading_context(
+    monkeypatch, initial_heartbeats
+):
+    async def run():
+        worker, payload, spring, storage, *_ = setup_worker(
+            monkeypatch, status="COMPLETED"
+        )
+        attempts = 0
+
+        async def initial_heartbeat(*_):
+            nonlocal attempts
+            attempts += 1
+            spring.get_relationship_analysis.assert_not_called()
+            if attempts < 3:
+                raise SpringWorkerTransportError("Synthetic temporary outage")
+
+        spring.heartbeat_relationship_job.side_effect = initial_heartbeat
+        try:
+            assert (await worker.process_claimed(payload)).claimed
+            assert attempts == 3
+            spring.get_relationship_analysis.assert_awaited_once()
+            storage.get_text.assert_not_called()
+            spring.fail_relationship_job.assert_not_called()
+            assert initial_heartbeats[0]._task.done()
+        finally:
+            await worker.aclose()
+
+    asyncio.run(run())
+
+
+def test_cancellation_during_initial_heartbeat_never_starts_work_or_periodic_task(
+    monkeypatch, initial_heartbeats
+):
+    async def run():
+        worker, payload, spring, storage, extractor, comparator, _ = setup_worker(monkeypatch)
+        started = asyncio.Event()
+
+        async def initial_heartbeat(*_):
+            started.set()
+            await asyncio.Event().wait()
+
+        spring.heartbeat_relationship_job.side_effect = initial_heartbeat
+        task = asyncio.create_task(worker.process_claimed(payload))
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert initial_heartbeats[0]._task is None
+            assert initial_heartbeats[0]._owner_task is None
+            spring.get_relationship_analysis.assert_not_called()
+            storage.get_text.assert_not_called()
+            extractor.extract_from_chunk.assert_not_called()
+            comparator.compare.assert_not_called()
+            spring.fail_relationship_job.assert_not_called()
+            spring.complete_relationship_job.assert_not_called()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await worker.aclose()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("status", ["PREPARED", "COMPLETED", "APPLIED"])
 def test_resume_does_not_repeat_source_or_extraction(monkeypatch, status):
     worker, payload, spring, storage, extractor, comparator, _ = setup_worker(
@@ -220,10 +386,11 @@ def test_mid_call_lease_failure_cancels_job_and_never_finalizes(monkeypatch):
             await asyncio.Event().wait()
 
         extractor.extract_from_chunk.side_effect = blocked
-        spring.heartbeat_relationship_job.side_effect = ValueError("synthetic lease lost")
+        spring.heartbeat_relationship_job.side_effect = [None, ValueError("synthetic lease lost")]
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(asyncio.create_task(worker.process_claimed(payload)), 1)
-        spring.heartbeat_relationship_job.assert_awaited_once_with(
+        assert spring.heartbeat_relationship_job.await_count == 2
+        spring.heartbeat_relationship_job.assert_awaited_with(
             payload.analysis_job_id, payload.lease_token
         )
         spring.complete_relationship_job.assert_not_called()
@@ -261,6 +428,8 @@ def test_cancelled_source_read_keeps_its_slot_and_shutdown_drains_reads(monkeypa
                     active_reads -= 1
 
         async def lost_lease(*_):
+            if spring.heartbeat_relationship_job.await_count == 1:
+                return
             await first_started.wait()
             raise ValueError("synthetic lease lost during source read")
 
