@@ -984,3 +984,49 @@ async def test_unrelated_duplicate_labels_do_not_block_value_based_selection():
     actual = answer(result)
     assert actual["outcome"] == "ANSWER" and "바바리안" in actual["text"]
     assert tool_queries(result, "CHARACTER_CURRENT")
+
+
+@pytest.mark.anyio
+async def test_each_subject_gets_its_own_value_fallback_when_field_names_do_not_match():
+    # 항목 탐색 결과는 실행 전체가 아니라 탐색 한 번마다 판단한다. 두 인물 모두 질문 표현('등급')과
+    # 등록 표시명('직업')이 다르면 두 인물 모두 그 유형의 현재값을 읽어야 한다.
+    catalog = [
+        catalog_subject(
+            180,
+            "미샤",
+            current=[
+                item(180, "미샤", category="PROFILE", key="profile.job", label="직업", value="8급")
+            ],
+        ),
+        catalog_subject(
+            181,
+            "에르웬",
+            current=[
+                item(
+                    181, "에르웬", category="PROFILE", key="profile.job", label="직업", value="궁수"
+                )
+            ],
+        ),
+    ]
+    decision = plan("미샤", fact_type="PROFILE", attribute="등급")
+    decision["subjects"].append(
+        {
+            "domain": "CHARACTER",
+            "name": "에르웬",
+            "focus": {"factType": "PROFILE", "attribute": "등급"},
+        }
+    )
+    result = await replay_case(
+        case(
+            "미샤와 에르웬의 등급은?",
+            decision,
+            {"outcome": "INSUFFICIENT_EVIDENCE", "fieldRefs": []},
+            {"outcome": "INSUFFICIENT_EVIDENCE", "fieldRefs": []},
+            {"outcome": "ANSWER", "rowRefs": ["R1", "R2"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    current = tool_queries(result, "CHARACTER_CURRENT")
+    assert len(current) == 2 and all(q["factType"] == "PROFILE" for q in current)
+    assert "8급" in actual["text"] and "궁수" in actual["text"]

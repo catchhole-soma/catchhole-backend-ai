@@ -114,6 +114,9 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         self.selected_rows: list[AnswerRow] = []
         # Internal lookup outcomes, never inferred from public warning strings.
         self.lookup_gaps: set[str] = set()
+        # 직전 항목 탐색(fields) 한 번의 결과. lookup_gaps는 실행 전체에 누적되므로 인물마다의
+        # 되돌림·계속 진행 판단은 이 값으로 한다.
+        self.field_attempt_gaps: set[str] = set()
         self.focused_refs: set[str] = set()
         self.snapshot_versions = {}
         self.last_collection = None

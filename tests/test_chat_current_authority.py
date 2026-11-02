@@ -364,3 +364,51 @@ def test_mixed_plan_continues_with_source_when_field_catalog_cannot_be_read_in_b
     assert SOURCE in text and "현재 등록 설정은 확인하지 못" in text
     assert NOTICES["REGISTERED_LOOKUP_INCOMPLETE"] in result["finish"]["result"]["limitations"]
     assert result["search"].calls
+
+
+def test_each_mixed_subject_with_unreadable_field_catalog_continues_to_source(tmp_path):
+    # 항목 목록을 예산 안에 다 읽지 못한 인물이 둘이어도, 두 번째 인물에서 되묻기로 끝나지 않고
+    # 두 인물 모두 등록 현재값을 미확인으로 둔 채 원문 답변을 계속한다.
+    def many_fields(spring):
+        def rows(number, name):
+            return [
+                item(
+                    number,
+                    name,
+                    category="PROFILE",
+                    key=f"profile.p{n}",
+                    label=f"항목 {n}",
+                    value="x",
+                )
+                for n in range(12)
+            ]
+
+        spring.catalog = [
+            catalog_subject(701, "세린", current=rows(701, "세린")),
+            catalog_subject(702, "미라", current=rows(702, "미라")),
+        ]
+
+    case = current_case(mixed=True)
+    case["question"] = "현재 세린과 미라의 성별은? 원문에서는 어떻게 나와?"
+    case["outputs"][0]["subjects"].append(
+        {
+            "domain": "CHARACTER",
+            "name": "미라",
+            "focus": {"factType": "PROFILE", "attribute": "성별"},
+        }
+    )
+    case["outputs"].append(source_answer())
+    result = run(
+        tmp_path,
+        case,
+        many_fields,
+        search_setup=search_with(keyword=[passage(SOURCE, 1)]),
+        config={"fields_page_size": 1, "max_tool_calls": 14},
+    )
+    text = result_text(result)
+    finished = result["finish"]["result"]
+    assert finished["outcome"] != "CLARIFICATION", finished
+    assert SOURCE in text
+    assert finished["limitations"].count(NOTICES["REGISTERED_LOOKUP_INCOMPLETE"]) == 1
+    assert [q["tool"] for q in result["spring"].queries].count("CHARACTER_FIELDS") >= 2
+    assert result["search"].calls
