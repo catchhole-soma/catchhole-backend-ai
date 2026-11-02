@@ -451,3 +451,95 @@ def test_mixed_plan_trims_registered_rows_to_keep_room_for_the_source_answer(tmp
     kept = result["raw"].requests[-1]["input"]["rows"]
     assert 0 < len(kept) < 10
     assert SOURCE in finished["text"]
+
+
+MAZE = "미궁 1층은 7일째에 폐쇄된다."
+
+
+def world_mixed_case(*, attribute=None):
+    case = current_case(mixed=True, required=False)
+    case["question"] = "미궁은 층마다 며칠째에 폐쇄돼? 원문 근거도 알려줘."
+    case["outputs"][0].update(
+        subjects=[
+            {
+                "domain": "WORLD",
+                "name": "미궁",
+                "worldCategory": None,
+                "focus": {"factType": None, "attribute": attribute},
+            }
+        ],
+        searchTerms=["미궁"],
+        requestedParts=[{"ref": "P1", "description": "미궁 층별 폐쇄 시점"}],
+    )
+    case["outputs"].append(answer(claim(MAZE, MAZE, parts=("P1",), event_match=None)))
+    return case
+
+
+def maze_in_two_categories(spring):
+    region = catalog_subject(801, "미궁", domain="WORLD")
+    rule = catalog_subject(802, "미궁", domain="WORLD")
+    region["subject"]["category"] = "LOCATION"
+    rule["subject"]["category"] = "WORLD_RULE_HISTORY"
+    spring.catalog = [region, rule]
+
+
+def test_mixed_plan_answers_from_source_when_world_name_is_registered_in_two_categories(tmp_path):
+    # 같은 이름의 세계관이 두 분류에 등록돼 있어도('미궁' 지역·세계 규칙) 원문 계획은 되묻지 않고
+    # 등록 정보 없이 원문으로 답한다(V2-007 실제 사례).
+    result = run(
+        tmp_path,
+        world_mixed_case(),
+        maze_in_two_categories,
+        search_setup=search_with(keyword=[passage(MAZE, 1)]),
+    )
+    finished = result["finish"]["result"]
+    assert result["finish"]["failure"] is None, result["finish"]
+    assert finished["outcome"] != "CLARIFICATION", finished
+    assert MAZE in finished["text"]
+    assert NOTICES["REGISTERED_LOOKUP_AMBIGUOUS"] in finished["limitations"]
+    assert result["search"].calls
+
+
+def test_required_registered_current_still_asks_when_world_name_is_ambiguous(tmp_path):
+    case = world_mixed_case()
+    case["outputs"][0]["registeredCurrentRequired"] = True
+    result = run(
+        tmp_path,
+        case,
+        maze_in_two_categories,
+        search_setup=search_with(keyword=[passage(MAZE, 1)]),
+    )
+    assert result["finish"]["result"]["outcome"] == "CLARIFICATION"
+    assert not result["search"].calls
+
+
+def test_mixed_plan_answers_from_source_when_the_registered_field_is_ambiguous(tmp_path):
+    # 대상은 하나로 찾았고 어느 등록 항목인지만 모호하면(세계관의 같은 경로명) 원문 답변을 막지 않는다
+    # (V2-054 실제 사례).
+    def two_paths(spring):
+        rows = [
+            item(
+                811, "미궁", category="WORLD_RULE_HISTORY", key="closing", label="폐쇄", value="7일"
+            ),
+            item(
+                811,
+                "미궁",
+                category="WORLD_RULE_HISTORY",
+                key="closing",
+                label="폐쇄",
+                value="10일",
+                scope="2층",
+            ),
+        ]
+        maze = catalog_subject(811, "미궁", domain="WORLD", current=rows)
+        maze["subject"]["category"] = "WORLD_RULE_HISTORY"
+        spring.catalog = [maze]
+
+    case = world_mixed_case(attribute="폐쇄")
+    case["outputs"].insert(1, {"outcome": "CLARIFICATION", "fieldRefs": []})
+    result = run(tmp_path, case, two_paths, search_setup=search_with(keyword=[passage(MAZE, 1)]))
+    finished = result["finish"]["result"]
+    assert result["finish"]["failure"] is None, result["finish"]
+    assert finished["outcome"] != "CLARIFICATION", finished
+    assert MAZE in finished["text"]
+    assert NOTICES["REGISTERED_LOOKUP_AMBIGUOUS"] in finished["limitations"]

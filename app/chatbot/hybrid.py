@@ -867,6 +867,11 @@ class _HybridSession(_Session):
         for index, subject in enumerate(plan.subjects):
             item, stop = await self.resolve_subject(subject, allow_missing=True)
             if stop:
+                if subject.domain == "WORLD" and self.source_answer_continues(plan):
+                    # 같은 이름의 세계관이 여러 분류에 등록돼 있어도('미궁' 지역·세계 규칙) 원문 계획은
+                    # 등록 정보 없이 원문으로 답한다. 인물은 원문 답변도 사람을 구분해야 하므로 되묻는다.
+                    self.registered_lookup_ambiguous()
+                    continue
                 return stop
             if item is None:
                 self.current_requirement_resolved = False
@@ -903,6 +908,13 @@ class _HybridSession(_Session):
                     if "REGISTERED_LOOKUP_INCOMPLETE" not in self.codes:
                         self.codes.append("REGISTERED_LOOKUP_INCOMPLETE")
                     continue
+                if (
+                    "FIELD_CLARIFICATION" in self.field_attempt_gaps
+                    and self.source_answer_continues(plan)
+                ):
+                    # 대상은 찾았고 어느 등록 항목인지만 모호하면 원문 답변을 막지 않는다.
+                    self.registered_lookup_ambiguous()
+                    continue
                 return stop
         self.chosen, stop = await self.select_rows(plan, allow_missing=True)
         if stop:
@@ -911,6 +923,15 @@ class _HybridSession(_Session):
             self.codes.append("NO_RELATED_SETTING")
         self.current_requirement_targets = targets
         return None
+
+    def source_answer_continues(self, plan):
+        """등록 조회의 모호성이 원문 답변을 끝내지 않는 계획인지 확인한다(등록 현재값 필수 제외)."""
+        return plan.source_need != "NONE" and not plan.registered_current_required
+
+    def registered_lookup_ambiguous(self):
+        self.current_requirement_resolved = False
+        if "REGISTERED_LOOKUP_AMBIGUOUS" not in self.codes:
+            self.codes.append("REGISTERED_LOOKUP_AMBIGUOUS")
 
     def current_requirement_satisfied(self, plan):
         """A manuscript passage cannot satisfy a required registered-current read."""

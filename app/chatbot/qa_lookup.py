@@ -259,7 +259,8 @@ class FocusedLookup:
             if condition or domain != "CHARACTER" or duplicated or not allow_value_fallback:
                 # 조건 검색, 세계관의 같은 경로명(루트/범위), 질문한 속성과 같은 표시명이 둘 이상인 인물 항목,
                 # 값으로 다시 고를 수 없는 호출은 되묻는 편이 맞다. 질문과 무관한 항목의 표시명 중복
-                # (158개 항목 속 '거대화' 2개)은 막지 않는다.
+                # (158개 항목 속 '거대화' 2개)은 막지 않는다. 원문 계획은 이 표지로 등록 정보 없이 계속한다.
+                self.field_attempt_gaps.add("FIELD_CLARIFICATION")
                 return [], message(
                     "CLARIFICATION",
                     "같은 이름의 항목이나 범위가 있습니다. 어떤 설정을 뜻하는지 알려주세요.",
