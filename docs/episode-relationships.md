@@ -65,7 +65,7 @@ slot은 두 노드 + axis + kind + direction이다. DIRECTED는 순서를 보존
 `direction`: DIRECTED, MUTUAL, UNDIRECTED.
 `temporalScope`: PRESENT, PAST, HYPOTHETICAL, UNKNOWN. PRESENT는 현재 회차에서 새로 드러난 지식이다. PRESENT만 ADD/MERGE/UPDATE/END할 수 있다.
 
-실패 요청은 `{formatVersion:1,sourceHash,contextToken,failureCode}`다. failureCode는 INVALID_RESPONSE, EXTRACTION_FAILED, COMPARISON_FAILED, INPUT_TOO_LARGE다.
+실패 요청은 `{formatVersion:1,sourceHash,contextToken,failureCode,failureDiagnostics?}`다. optional 진단은 공통 v1의 허용 코드·검사·승인된 짧은 구절만 정제해 첫 실패에 보존하며, 구 Worker의 4필드 요청도 허용한다. failureCode는 INVALID_RESPONSE, EXTRACTION_FAILED, COMPARISON_FAILED, INPUT_TOO_LARGE다.
 
 한 prepare 최대 신규 관측 384개, 관측당 인용 1~12개, 한 인용 480 code point 이하, 관측당 인용 총 4000 code point 이하, 이름/mention 100 이하, 관측 summary 300 이하. 관계 설명 summary는 500 이하. 완료 결정 최대 512개, label 60 이하, reason 500 이하. legacy는 한쪽 인물이라도 겹치는 과거 R/H를 포함한다. 새 partial Context는 양쪽 인물이 각각 하나로 해소된 신규 O의 정확한 무방향 쌍에 필요한 R/H만 먼저 투영한다. 미해소·다른 쌍의 H는 저장에 남기고 이 입력에서는 제외한다. 투영 후 관련 H가 384개 또는 비교 문맥의 노드/관계가 각각 1536개를 초과하면 자르지 않고 FAILED/INPUT_TOO_LARGE Context를 저장해 반환한다. `rejectedObservationCount`는 검증 탈락을 성공한 빈 결과로 숨기지 않기 위한 비음수 개수다.
 
@@ -77,7 +77,7 @@ slot은 두 노드 + axis + kind + direction이다. DIRECTED는 순서를 보존
 
 각 O는 정확히 한 묶음에 배정하지만 기존 계약처럼 그 O를 서로 다른 관계 결정에 여러 번 사용할 수 있다. 묶음별 결과를 모두 받은 뒤 원래 전체 문맥으로 결정 최대 512개·전체 O coverage·참조·시점·중복 슬롯을 다시 검증한다. 검증 전에는 부분 결과를 Spring에 저장하지 않는다. 다른 인물 쌍의 문맥이 줄어들 수 있으므로 이 분할은 상한 초과 경로에만 적용하며, 실제 모델 의미 품질 개선을 자동으로 보장하지 않는다.
 
-진단은 공통 `relationship-failure-diagnostics-v1.json`의 고정 코드만 사용한다. stage는 `RELATIONSHIP_EXTRACTION`/`RELATIONSHIP_COMPARE`이며, JSON/schema·관측 coverage·순서·슬롯·MERGE 내용 변경·인물 해소·입력 상한 등을 구분한다. 원문·모델 응답·예외 원문은 기록하지 않는다. 관계 pipeline은 원본 실패의 분류와 안전한 진단만 전용 Worker에 전달하고, 상위 runner에는 고정 메시지만 노출한다. 일반 캐릭터/세계관 분석에서 관계 실패를 격리하는 의미는 유지한다.
+진단은 공통 `relationship-failure-diagnostics-v1.json`의 고정 코드만 사용한다. stage는 `RELATIONSHIP_EXTRACTION`/`RELATIONSHIP_COMPARE`이며, JSON/schema·관측 coverage·순서·슬롯·MERGE 내용 변경·인물 해소·입력 상한 등을 구분한다. 전체 원문·전체 모델 응답·예외 원문은 기록하지 않는다. 사용자 승인된 짧은 문제 구절은 GH357의 최대 3개·각 120 code point 제한을 따른다. 관계 pipeline은 원본 실패의 분류와 안전한 진단을 관계 fail API 및 전용 Worker에 전달하고, 상위 runner에는 고정 메시지만 노출한다. 일반 캐릭터/세계관 분석에서 관계 실패를 격리하는 의미는 유지한다.
 
 ### 인물 쌍별 부분 완료 (GH359)
 
@@ -125,9 +125,10 @@ UPDATE/END하지 못하게 한다. 독립 쌍은 진행한다. 앞부분 복구�
 전용 백필은 BLOCKED다. 거절된 추출 관측처럼 실패 쌍을 모르면 기술 확인 범위를 보수적으로
 표시하되 새로운 전역 실행 차단으로 확대하지 않는다.
 
-APPLIED의 새 기술 실패는 V107 trigger가 기존 outbox에 RELATIONSHIP_COMPARISON으로
-기록한다. 허용 reason별 인물 쌍 개수와 안전한 ID만 저장하며 선행 실패의 파급은 반복 알림하지
-않는다. 동일 완료 재전송은 같은 completion hash를 요구하며 event·알림을 중복 생성하지 않는다.
+APPLIED의 새 기술 실패는 V111 trigger가 기존 outbox에 RELATIONSHIP_COMPARISON으로
+기록한다. V107의 서버 생성 실행 시도 ID와 발송 묶음을 재사용하고, V109의 검사·발췌 정제는
+유지한다. 이 새 사건은 허용 reason별 인물 쌍 개수와 안전한 ID만 저장하며 후보/실패 작업 수와
+구분해서 표시한다. 선행 실패의 파급은 반복 알림하지 않는다. 동일 완료 재전송은 같은 completion hash를 요구하며 event·알림을 중복 생성하지 않는다.
 
 공개 Graph의 `updateIncomplete`와 `incompleteEpisodeNos`는 선택 회차/공개 세대의 기술적
 누락만 표시한다. 기존 `partial`에는 의미상 HOLD도 포함되므로 기술 실패로 해석하지 않는다.
@@ -137,7 +138,7 @@ Edge의 `lastVerifiedEpisodeNo`는 해당 쌍의 기술적 완료가 이어진 �
 미완료인 이전 edge를 현재까지 다시 확인한 사실처럼 표시하지 않고, 전체 실패 때 빈 그래프를
 완료로 표시하지 않는다. 내부 보류·실패 refs·응답 전문은 공개하지 않는다.
 
-배포 순서는 Java(V107·능력 gate) → AI(pair-group 계약) → Front(미완료 표시)다. 운영 데이터
+배포 순서는 Java(V111·능력 gate) → AI(pair-group 계약) → Front(미완료 표시)다. 운영 데이터
 변경·유료 재실행·기존 복구 count 초기화는 이 변경에 포함하지 않는다.
 
 ## 공개 API
@@ -195,3 +196,7 @@ main의 검수 실행·검토 종료 기능이 V92~V100을 사용하므로, 운�
 신규 활성화만 멈추므로, 진행 중 관계 Job이 남은 상태의 Worker 롤백은 별도 확인이 필요하다.
 기존 작품 전체의 자동 유료 백필은 하지 않는다. GH332는 [고정 선정 계정의 관계 전용 캠페인](relationship-cohort-backfill.md)만 운영 배포 후 자동 시작한다. 일반 인용의 위치가 불확실한 경우에는
 [일반 인용 정책](https://github.com/catchhole-soma/catchhole-backend-java/blob/main/docs/analysis-continuity.md)의 GH323 정책으로 인용만 숨기고 설정값을 유지한다.
+
+### V110 부분 실패 알림 (GH357)
+
+일반 회차 SETTING_EXTRACTION에서 관계만 FAILED가 되면 기존 outbox에 RELATIONSHIP_PARTIAL을 저장하고 `관계도만 실패 · 나머지 분석 계속`으로 알린다. 관계도 전용 Job은 기존 Job FAILED 알림만 사용한다. 같은 묶음에 회차 중단 기록이 있으면 전체 중단을 우선 표시한다. 알림 추가가 실패 격리·재시도·반영 정책을 변경하지 않으며, 관계 진단의 발췌도 원문 파기 시 작품 단위로 제거한다.

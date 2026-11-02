@@ -137,7 +137,7 @@ HOLD나 정상 관계로 바꾸지 않는다. 모든 항목이 SUCCEEDED/PARTIAL
 게시하되 공개 API의 updateIncomplete/incompleteEpisodeNos 및 edge 확인 구간을 표시한다.
 전체 원문 추출·권한·lease·quota·고정 입력·저장 장애는 부분 비교 실패로 우회하지 않는다.
 
-V107은 부분 결과 저장, Job capability 동결, PARTIAL 항목과 운영 알림 trigger를 추가한다.
+V111은 부분 결과 저장, Job capability 동결, PARTIAL 항목과 운영 알림 trigger를 추가한다.
 새 실패 reason별 인물 쌍 수만 기존 outbox에 적재하고 선행 실패 파급은 재알림하지 않는다.
 초기 비교 16 batch와 각 실패 batch의 제한적 repair 최대 16 batch를 포함해 provider 호출은
 최대 32회이며 기존 누적 raw 예약 상한·과금 정책을 유지한다. 출력 계획은 쌍당512토큰,
