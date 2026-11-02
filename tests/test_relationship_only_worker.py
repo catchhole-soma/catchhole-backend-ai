@@ -12,7 +12,11 @@ import httpx
 import pytest
 from botocore.exceptions import ReadTimeoutError
 
-from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.exceptions import (
+    ComparisonValidationError,
+    OrderedAnalysisIncompleteError,
+    OrderedInputContextError,
+)
 from app.analysis.relationship_observations import RelationshipExtractionResult
 from app.analysis.relationship_pipeline import RelationshipAnalysisPipeline
 from app.clients.spring_worker_client import SpringWorkerClient
@@ -198,7 +202,7 @@ def test_source_limits_fail_without_truncation_or_any_paid_call(monkeypatch, lim
     )
     if limit_kind == "bytes":
         storage.get_text.side_effect = SourceObjectTooLargeError("oversize")
-    with pytest.raises(ComparisonValidationError):
+    with pytest.raises(OrderedAnalysisIncompleteError):
         asyncio.run(worker.process_claimed(payload))
     extractor.extract_from_chunk.assert_not_called()
     comparator.compare.assert_not_called()
@@ -455,6 +459,7 @@ def test_relationship_job_wire_routes_lease_and_timeouts_are_separate():
     assert all(r.headers["X-Worker-Lease-Token"] == str(payload.lease_token) for r in requests[1:])
     assert json.loads(requests[0].content)["allowedJobTypes"] == ["RELATIONSHIP_EXTRACTION"]
     assert json.loads(requests[0].content)["supportedSourceKinds"] == ["EPISODE"]
+    assert json.loads(requests[0].content)["supportsRelationshipRecovery"] is True
     assert requests[1].extensions["timeout"]["read"] == 30.0
     assert requests[2].extensions["timeout"]["read"] == 120.0
 

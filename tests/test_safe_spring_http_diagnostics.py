@@ -7,7 +7,10 @@ import pytest
 
 from app.clients.exceptions import SpringWorkerHttpError, WorkerLeaseExpiredError
 from app.clients.spring_worker_client import _raise_for_spring_status
-from app.exceptions.failure_classification import comparison_failure_code, is_candidate_comparison_failure
+from app.exceptions.failure_classification import (
+    comparison_failure_code,
+    is_candidate_comparison_failure,
+)
 
 
 def rejected(code="REQUEST_VALIDATION_FAILED", *, status=400, fields=None, reason="PRIVATE_REASON"):
@@ -93,6 +96,7 @@ def test_fields_are_bounded_and_constraints_are_not_inferred_from_messages():
 def test_failure_diagnostics_contract_fixture_and_untrusted_fields():
     import json
     from pathlib import Path
+
     from app.schemas.worker import WorkerFailureDiagnostics
     fixture = json.loads((Path(__file__).parent / "fixtures/analysis-failure-diagnostics-v1.json").read_text())
     result = WorkerFailureDiagnostics.model_validate(fixture)
@@ -142,3 +146,20 @@ def test_malformed_or_legacy_spring_diagnostics_do_not_replace_http_failure(opti
     assert diagnostic.http_status == 500 and diagnostic.reason_code == "INTERNAL_API_HTTP_ERROR"
     assert diagnostic.request_id == "11111111-1111-4111-8111-111111111111"
     assert comparison_failure_code(caught.value).value == "UNEXPECTED_ERROR"
+
+
+def test_relationship_failure_diagnostics_preserve_shared_contract_codes():
+    import json
+    from pathlib import Path
+
+    from app.schemas.worker import WorkerFailureDiagnostics
+    contract = json.loads((Path(__file__).parent / "fixtures/relationship-failure-diagnostics-v1.json").read_text())
+    for stage in contract["stages"]:
+        for reason in contract["reasonCodes"]:
+            result = WorkerFailureDiagnostics.model_validate({
+                "schemaVersion": 1, "origin": "WORKER", "stage": stage, "reasonCode": reason,
+                "errorMessage": "PRIVATE_MANUSCRIPT", "leaseToken": "PRIVATE_TOKEN",
+            }).model_dump(mode="json", by_alias=True)
+            assert result["stage"] == stage
+            assert result["reasonCode"] == reason
+            assert "PRIVATE" not in json.dumps(result)

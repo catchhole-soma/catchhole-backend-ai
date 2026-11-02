@@ -59,6 +59,9 @@ flowchart TD
 2. `V103__add_relationship_cohort_backfill.sql`은 테이블·열·인덱스를 만든다.
    후속 `V104__add_relationship_backfill_audit_timestamps.sql`은 세 백필 테이블에 생성·수정
    시각을 추가한다. 기존 행의 시각은 과거 이력을 추정하지 않고 적용 시각으로 채운다.
+   `V105__bound_relationship_backfill_recovery.sql`은 회차 항목별 복구 횟수를 0~1로 제한한다.
+   V106은 관계 실패 단계·원인·작업 종류가 알림 outbox에서도 보존되도록 허용목록을 추가한다.
+   기존 migration과 과거 알림 snapshot은 수정하지 않는다.
    SQL migration 안에서 원문을 읽거나 모델을 호출하지 않는다. API는 migration 이후 기동한다.
 3. 운영 `application-prod.yml`/`compose.api.prod.yml`은 기능을 기본 활성화한다. 기본
    10초 간격 scheduler가 `RelationshipBackfillService.bootstrapRelationshipBackfill()`을 호출한다.
@@ -110,9 +113,47 @@ Worker 입력은 `jobType=RELATIONSHIP_EXTRACTION`, `sourceKind=EPISODE`,
 전용 claim/heartbeat/complete/fail을 사용하며, prepare/관계 결정 저장과 토큰 원장은 기존
 `/api/internal/v1/analysis-jobs/{id}/relationship-analysis` 계열을 재사용한다.
 
+실패 비교 복구를 지원하는 전용 Worker는 claim에 `supportsRelationshipRecovery=true`를
+광고한다. 생략·null·false인 구 Worker는 복구를 시작하거나 복구 Job의 만료 lease를 다시
+선점하지 않는다. 일반 백필 claim의 기존 지원 조건은 유지한다. 일반 분석 claim에는 이 필드를
+추가하지 않으며 Worker가 서버의 복구 대상·횟수·서비스 부담 경계를 넓히지 않는다.
+
 원문의 key·version·SHA-256·회차 번호와 보관/파기 상태를 고정/검증한다. 관계 관측의
 인용 위치도 기존 규칙대로 검증한다. 프로필 연결은 회차 cutoff 이전의 확인된 후보 출처만
 사용하며, 현재 최신 프로필 전체를 가져와 과거 회차에 미래 이름을 노출하지 않는다.
+
+## 보존 관측을 사용하는 한 번의 비교 복구
+
+고정 캠페인의 서비스 부담 회차 항목은 아래 조건을 모두 만족하면 비교만 한 번 자동 복구한다.
+특정 운영 실패 ID 목록을 별도로 동결하지 않으며 같은 캠페인의 이후 실패에도 동일한 조건과
+회차 항목별 1회 한도를 적용한다. 일반 사용자 부담 분석이나 앞 회차의 일반 분석 대기는 바꾸지 않는다.
+
+- 고정 fingerprint에 속한 활성 회원의 활성 작품이며, 선정 시각 이전 작품이고 아직 공개하지
+  않은 같은 세대다. 작품과 가장 앞선 미완료 항목이 모두 `ANALYSIS_FAILED`로 차단/실패했어야 한다.
+- 항목과 이전 `RELATIONSHIP_EXTRACTION` Job이 모두 서비스 부담이고, Job이 lease 없는
+  `FAILED/COMPARISON_VALIDATION_FAILED`이며 관계 이력의 원인이 `COMPARISON_FAILED` 또는
+  `INPUT_TOO_LARGE`다. 일반 Job이나 다른 실패 원인은 대상이 아니다.
+- 항목·이전 Job·관계 이력·현재 회차의 작품, 회차 번호, 세대, 원문 hash/key/version이 맞아야
+  한다. 원문이 보관 중이고 파기 요청·검수 대기·작품 내 진행 중 일반 분석·후행 성공 항목이 없어야 한다.
+- 원래 검증한 현재 회차 관측이 비어 있지 않은 정상 format 1 문맥, request hash, context token,
+  bindings가 보존되어 있어야 한다. 파기·형식 손상·현재 Java 문맥 상한 초과는 복구하지 않는다.
+
+claim은 캠페인→작품→이전 Job 순서의 잠금 아래에서 현재 의존성으로 문맥을 미리 만든다.
+이 preview는 노드를 저장하거나 최초 관측 회차를 변경하지 않는다. 실제 준비와 같은 계산과
+H/N/R 상한을 사용하므로 준비 불가 작품은 차단 상태와 복구 예산을 보존하고 다음 작품으로
+넘어간다. 기존 관측에서 새 비교 문맥을 준비하며 이전 비교 결정은 재사용하지 않는다.
+
+preview를 통과하면 `recoveryAttemptCount`를 1로 기록하고 새 서비스 부담 Job, lease,
+`PREPARED` 문맥을 한 트랜잭션으로 만든다. 실제 준비 중 오류가 나면 항목·횟수·새 Job·그래프
+무효화를 모두 되돌린다. 기존 실패 Job과 사용량 원장은 보존하며 원문 재추출·캐릭터·세계관
+호출이나 사용자 잔액 조회/차감은 없다. 새 Job의 raw 예약 상한도 기존과 같은 2,000,000이다.
+lease 재선점은 같은 Job과 같은 한도를 사용하며 재배포나 재실패로 1회 복구 횟수를 초기화하지 않는다.
+재실패한 작품은 계속 차단되고 후행을 건너뛰어 완료하지 않는다. 성공하면 기존 순서/최종 반영
+검증을 거쳐 모든 회차가 준비된 경우에만 공개 세대를 전환한다.
+
+배포는 Java의 migration·복구 gate를 먼저 적용하고, 분할 비교와 진단을 지원하는 새 AI Worker를
+다음에 배포한다. 새 Worker의 capability 광고가 있어야 자동 복구가 시작되므로 중간에 구 Worker가
+복구 비용을 사용하지 않는다. 운영 DB를 수동 변경하거나 백필을 수동 시작할 필요는 없다.
 
 ## 비용, 중단과 남은 한계
 
@@ -130,6 +171,11 @@ Worker 입력은 `jobType=RELATIONSHIP_EXTRACTION`, `sourceKind=EPISODE`,
   포함하고 실제 사용량이 더 크면 큰 값을 사용한다. 캠페인 전체의 원화/달러 예산은 아니다.
 - Worker는1프로세스·동시Job1·동시모델호출1이다. 기존 관계 Terra 모델/프롬프트를 재사용한다.
   원문 최대2MB·12청크를 넘으면 자르지 않고 실패한다. 캐릭터·세계관·임베딩 호출은 없다.
+  비교 입력이64k를 넘을 때만 인물 쌍과 과거 보류의 연결 범위를 보존해 최대16개 순차 호출로
+  나누며, 첫 호출 전에 전체 계획을 검사한다. 단일 묶음 초과는 그대로 실패한다.
+  원문·관측을 잘라 성공으로 만들거나 비교 출력 repair를 추가하지 않는다.
+  전체 O coverage·관계 슬롯·512개 결정 상한은 결합 후 다시 검사한다.
+  상세 분할·안전한 실패 진단 계약은 [회차 관계 계약](episode-relationships.md)을 따른다.
   Worker 기동은 자동이지만 새 metrics 포트 9109의 Prometheus 수집은 기존 배포 안내에 따른
   target·SG 갱신이 별도로 필요하다. 이는 분석 실행의 필수 조건은 아니다.
 - lease는60초, 전용 Worker heartbeat는20초다. 프로세스가 죽으면 만료 작업을 회수하여
@@ -140,7 +186,8 @@ Worker 입력은 `jobType=RELATIONSHIP_EXTRACTION`, `sourceKind=EPISODE`,
 - 특정 회차가 실패하거나 원문이 교체되면 해당 작품을 `BLOCKED`로 남긴다. 다른 작품은 계속
   처리하지만 차단된 작품의 후행 관계를 자동으로 건너뛰지 않는다. 기존 공개 세대를 유지한다.
   시작 전 삭제된 회차만 건너뛰며, 이미 분석을 시작한 회차의 삭제는 차단한다.
-  원인이 바뀐 작업을 무한 유료 재시도하거나 자동 해제하는 관리 API는 이번 범위에 없다.
+  위 조건을 만족한 서비스 부담 실패만 보존 관측으로 한 번 복구하며, 나머지를 임의로 해제하는
+  관리 API나 무한 재시도는 없다.
 - `RELATIONSHIP_BACKFILL_ENABLED=false`로 배포하면 새 초기화/claim을 멈춘다.
   이미 실행 중인1건은 완료 가능하고 관리 작품의 순서 보존·새 회차 대기 등록은 계속된다.
   다시 true로 배포하면 DB 상태에서 이어간다. flag만 바꾸면 이미 호출한 모델이 취소되지는 않는다.

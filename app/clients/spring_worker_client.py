@@ -156,6 +156,7 @@ class SpringWorkerClient:
             allowed_job_types=[AnalysisJobType.RELATIONSHIP_EXTRACTION],
             model_name="gpt-6.1-terra", supported_analysis_modes=[AnalysisMode.CONFIRMED_ONLY],
             supported_source_kinds=[AnalysisSourceKind.EPISODE], supports_relationship_analysis=True,
+            supports_relationship_recovery=True,
         )
         response = await self._request(
             "POST", self._url("/api/internal/v1/relationship-jobs/claim"),

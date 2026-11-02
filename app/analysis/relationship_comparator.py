@@ -1,4 +1,4 @@
-"""One independent comparison call over a frozen episode relationship context.
+"""Bounded comparison calls over a frozen episode relationship context.
 
 Only request-local references enter the prompt. The backend remains responsible
 for ownership, optimistic concurrency, idempotency, and durable episode history.
@@ -13,6 +13,10 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.analysis.exceptions import ComparisonValidationError, OrderedInputContextError
+from app.analysis.relationship_diagnostics import (
+    RelationshipDecisionValidationError,
+    annotate_relationship_failure,
+)
 from app.analysis.relationship_extractor import DEFAULT_RELATIONSHIP_MODEL, _unique_object
 from app.analysis.relationship_observations import RelationshipInputTooLargeError
 from app.llm.protocols import LlmCallOptions, LlmResponseSchema, TextGenerationClient
@@ -34,6 +38,7 @@ ObservationRef = Annotated[str, StringConstraints(pattern=r"^[OH][1-9][0-9]*$", 
 Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
 Description = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 MAX_OBSERVATIONS = 384
+MAX_COMPARISON_BATCHES = 16
 _MUTATIONS = frozenset({"ADD", "MERGE", "UPDATE", "END"})
 _UUID = re.compile(r"(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b")
 _LOCAL_REF = re.compile(r"(?<![A-Za-z0-9_])[NOHR][1-9][0-9]*(?![A-Za-z0-9_])")
@@ -68,7 +73,10 @@ RELATIONSHIP_COMPARISON_RESPONSE_SCHEMA = LlmResponseSchema(
 
 
 def _invalid_input():
-    raise OrderedInputContextError("Invalid frozen relationship context.")
+    raise annotate_relationship_failure(
+        OrderedInputContextError("Invalid frozen relationship context."),
+        stage="RELATIONSHIP_COMPARE", reason="RELATIONSHIP_CONTEXT_INVALID",
+    ) from None
 
 
 def _ref(value, prefix):
@@ -194,7 +202,11 @@ def relationship_comparison_prompt_data(context: dict) -> dict:
     try:
         return _relationship_comparison_prompt_data(context)
     except (ValueError, TypeError, KeyError):
-        raise OrderedInputContextError("Invalid frozen relationship context.") from None
+        _invalid_input()
+
+
+def _invalid_decision(reason, message):
+    raise RelationshipDecisionValidationError("RELATIONSHIP_" + reason, message)
 
 
 def validate_relationship_decisions(result: RelationshipComparisonResponse, context: dict) -> list[dict]:
@@ -211,63 +223,148 @@ def validate_relationship_decisions(result: RelationshipComparisonResponse, cont
         row = decision.model_dump()
         refs = row["observationRefs"]
         if any(ref not in obs for ref in refs) or len(set(refs)) != len(refs):
-            raise ValueError("Invalid observation coverage")
+            _invalid_decision("OBSERVATION_REFS_INVALID", "Invalid observation coverage")
         indexes = [order[ref] for ref in refs]
         new_indexes = [order[ref] for ref in refs if ref in expected]
         if indexes != sorted(indexes) or not new_indexes:
-            raise ValueError("Decisions require ordered references and new evidence")
+            _invalid_decision("OBSERVATION_ORDER_INVALID", "Decisions require ordered references and new evidence")
         mutates = row["operation"] in _MUTATIONS
         for ref in refs:
             if ref in consumed and not (consumed[ref] and mutates):
-                raise ValueError("An observation cannot be both held/excluded and applied")
+                _invalid_decision("DISPOSITION_CONFLICT", "An observation cannot be both held/excluded and applied")
             consumed[ref] = mutates
         for key in ("label", "summary", "reason"):
             if row[key] is not None and (_UUID.search(row[key]) or _LOCAL_REF.search(row[key])):
-                raise ValueError("Display text contains internal references")
+                _invalid_decision("DISPLAY_REFERENCE_LEAK", "Display text contains internal references")
         target_fields = ("relationshipRef", "sourceNodeRef", "targetNodeRef", "axis", "kind", "label", "summary", "direction")
         if row["operation"] not in _MUTATIONS:
             if any(row[key] is not None for key in target_fields) or not row["reason"]:
-                raise ValueError("Hold/exclude must not propose a graph mutation")
+                _invalid_decision("DISPOSITION_CONTENT_INVALID", "Hold/exclude must not propose a graph mutation")
             validated.append(row)
             continue
         if row["temporalScope"] != "PRESENT":
-            raise ValueError("Non-present observation cannot mutate current state")
+            _invalid_decision("NONPRESENT_MUTATION", "Non-present observation cannot mutate current state")
         if any(row[key] is None for key in target_fields[1:]):
-            raise ValueError("Mutation is missing relationship content")
+            _invalid_decision("MUTATION_CONTENT_MISSING", "Mutation is missing relationship content")
         pair = (row["sourceNodeRef"], row["targetNodeRef"])
         if pair[0] == pair[1]:
-            raise ValueError("Self relationship is invalid")
+            _invalid_decision("SELF_RELATIONSHIP", "Self relationship is invalid")
         for ref in refs:
             source, target = obs[ref]["sourceNodeRefs"], obs[ref]["targetNodeRefs"]
             if len(source) != 1 or len(target) != 1 or pair not in {(source[0], target[0]), (target[0], source[0])}:
-                raise ValueError("Relationship endpoints are not unambiguously grounded")
+                _invalid_decision("ENDPOINTS_UNGROUNDED", "Relationship endpoints are not unambiguously grounded")
         slot = _slot(row)
         if slot in changed:
-            raise ValueError("A relationship slot must have one grouped decision")
+            _invalid_decision("DUPLICATE_SLOT", "A relationship slot must have one grouped decision")
         changed.add(slot)
         if row["operation"] == "ADD":
             if row["relationshipRef"] is not None or slot in slots:
-                raise ValueError("ADD must target a new relationship slot")
+                _invalid_decision("ADD_SLOT_EXISTS", "ADD must target a new relationship slot")
         else:
             target = relationships.get(row["relationshipRef"])
             if (target is None or _slot(target) != slot
                     or (target["sourceNodeRef"], target["targetNodeRef"]) != pair):
-                raise ValueError("Existing relationship reference does not match")
+                _invalid_decision("EXISTING_REF_MISMATCH", "Existing relationship reference does not match")
             if row["relationshipRef"] in used_targets:
-                raise ValueError("An existing relationship cannot be changed twice")
+                _invalid_decision("DUPLICATE_TARGET", "An existing relationship cannot be changed twice")
             used_targets.add(row["relationshipRef"])
             if row["operation"] in {"MERGE", "END"} and target["status"] != "ACTIVE":
-                raise ValueError("MERGE/END require an active relationship")
+                _invalid_decision("INACTIVE_TARGET", "MERGE/END require an active relationship")
             if row["operation"] == "MERGE" and (row["label"], row["summary"]) != (target["label"], target["summary"]):
-                raise ValueError("MERGE only adds evidence and must preserve current content")
+                _invalid_decision("MERGE_CONTENT_CHANGED", "MERGE only adds evidence and must preserve current content")
         validated.append(row)
     if set(consumed).intersection(expected) != expected:
-        raise ValueError("Every new observation must be covered")
+        _invalid_decision("OBSERVATION_COVERAGE_MISSING", "Every new observation must be covered")
     return validated
 
 
+def _comparison_endpoint_sets(payload):
+    return {row["ref"]: (frozenset(row["sourceNodeRefs"]), frozenset(row["targetNodeRefs"]))
+            for row in [*payload["observations"], *payload["heldObservations"]]}
+
+
+def _has_distinct_pair(sources, targets):
+    # Exclude self-only pairs without materializing sources × targets.
+    return bool(sources and targets and not (len(sources) == len(targets) == 1 and sources == targets))
+
+
+def _possible_pairs_overlap(left, right):
+    source_left, target_left = left
+    source_right, target_right = right
+    return (_has_distinct_pair(source_left & source_right, target_left & target_right)
+            or _has_distinct_pair(source_left & target_right, target_left & source_right))
+
+
+def _comparison_components(payload, endpoint_sets=None):
+    """Keep every potentially shared pair, including held bridges, in one component."""
+    observations = [*payload["observations"], *payload["heldObservations"]]
+    if endpoint_sets is None:
+        endpoint_sets = _comparison_endpoint_sets(payload)
+    parents = list(range(len(observations)))
+
+    def root(index):
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    for index, observation in enumerate(observations):
+        for previous in range(index):
+            current_root, previous_root = root(index), root(previous)
+            if current_root != previous_root and _possible_pairs_overlap(
+                endpoint_sets[observation["ref"]], endpoint_sets[observations[previous]["ref"]],
+            ):
+                parents[current_root] = previous_root
+    groups = {}
+    for index, observation in enumerate(observations):
+        groups.setdefault(root(index), []).append(observation)
+    # A held-only component has no new evidence and cannot produce a valid decision.
+    return [group for group in groups.values() if any(row["ref"].startswith("O") for row in group)]
+
+
+def _project_comparison(payload, observations, endpoint_sets=None):
+    """Project by immutable local references, never by names or truncated prose."""
+    refs = {row["ref"] for row in observations}
+    if endpoint_sets is None:
+        endpoint_sets = _comparison_endpoint_sets(payload)
+    endpoints = [endpoint_sets[row["ref"]] for row in observations]
+    relationships = [row for row in payload["relationships"] if any(
+        (row["sourceNodeRef"] in sources and row["targetNodeRef"] in targets)
+        or (row["targetNodeRef"] in sources and row["sourceNodeRef"] in targets)
+        for sources, targets in endpoints
+    )]
+    node_refs = {ref for row in observations for side in ("sourceNodeRefs", "targetNodeRefs")
+                 for ref in row[side]}
+    node_refs.update(ref for row in relationships for ref in (row["sourceNodeRef"], row["targetNodeRef"]))
+    return {
+        "sourceEpisodeNo": payload["sourceEpisodeNo"],
+        "nodes": [row for row in payload["nodes"] if row["ref"] in node_refs],
+        "relationships": relationships,
+        "observations": [row for row in payload["observations"] if row["ref"] in refs],
+        "heldObservations": [row for row in payload["heldObservations"] if row["ref"] in refs],
+    }
+
+
+def _comparison_error(reason):
+    return annotate_relationship_failure(
+        ComparisonValidationError("Invalid relationship comparison response."),
+        stage="RELATIONSHIP_COMPARE", reason=reason,
+    )
+
+
+def _input_too_large():
+    raise annotate_relationship_failure(
+        RelationshipInputTooLargeError("Relationship comparison input exceeds its token budget."),
+        stage="RELATIONSHIP_COMPARE", reason="RELATIONSHIP_INPUT_TOO_LARGE",
+    )
+
+
 class RelationshipComparator:
-    """One explicit Terra/medium request, no repair calls and no silent context trimming."""
+    """One request when it fits; bounded pair partitions only for oversized context.
+
+    There are no output repair calls. All partitions are planned before any paid
+    request, and nothing is persisted until the combined result passes validation.
+    """
 
     def __init__(self, llm_client: TextGenerationClient, *, model: str = DEFAULT_RELATIONSHIP_MODEL,
                  max_output_tokens: int = 16000, max_input_tokens: int = 64000,
@@ -283,10 +380,52 @@ class RelationshipComparator:
         payload = relationship_comparison_prompt_data(context)
         if not payload["observations"]:
             return []
+        if self._fits(payload):
+            return await self._compare_payload(payload)
+        batches = self._plan_batches(payload)
+        decisions = []
+        for batch in batches:
+            decisions.extend(await self._compare_payload(batch))
+        return self._validate_response({"decisions": decisions}, payload)
+
+    def _fits(self, payload):
+        return estimate_text_input_tokens(
+            self.system_prompt, json.dumps(payload, ensure_ascii=False), self.model,
+            RELATIONSHIP_COMPARISON_RESPONSE_SCHEMA,
+        ) <= self.max_input_tokens
+
+    def _plan_batches(self, payload):
+        batches, pending = [], []
+        endpoint_sets = _comparison_endpoint_sets(payload)
+        for component in _comparison_components(payload, endpoint_sets):
+            projected = _project_comparison(payload, component, endpoint_sets)
+            if not self._fits(projected):
+                _input_too_large()
+            combined = [*pending, *component]
+            if pending and not self._fits(_project_comparison(payload, combined, endpoint_sets)):
+                batches.append(_project_comparison(payload, pending, endpoint_sets))
+                pending = component
+            else:
+                pending = combined
+        if pending:
+            batches.append(_project_comparison(payload, pending, endpoint_sets))
+        if len(batches) > MAX_COMPARISON_BATCHES:
+            _input_too_large()
+        return batches
+
+    @staticmethod
+    def _validate_response(raw, payload):
+        try:
+            result = RelationshipComparisonResponse.model_validate(raw)
+        except (ValueError, TypeError):
+            raise _comparison_error("RELATIONSHIP_RESPONSE_SCHEMA_INVALID") from None
+        try:
+            return validate_relationship_decisions(result, payload)
+        except RelationshipDecisionValidationError as exc:
+            raise _comparison_error(exc.reason_code) from None
+
+    async def _compare_payload(self, payload):
         user_prompt = json.dumps(payload, ensure_ascii=False)
-        if estimate_text_input_tokens(self.system_prompt, user_prompt, self.model,
-                                      RELATIONSHIP_COMPARISON_RESPONSE_SCHEMA) > self.max_input_tokens:
-            raise RelationshipInputTooLargeError("Relationship comparison input exceeds its token budget.")
         response = await self.llm_client.create_text_response(
             system_prompt=self.system_prompt, user_prompt=user_prompt, model=self.model,
             max_output_tokens=self.max_output_tokens, prompt_cache_key=RELATIONSHIP_COMPARISON_VERSION,
@@ -295,7 +434,6 @@ class RelationshipComparator:
         )
         try:
             raw = json.loads(response.text, object_pairs_hook=_unique_object)
-            result = RelationshipComparisonResponse.model_validate(raw)
-            return validate_relationship_decisions(result, payload)
         except (ValueError, TypeError):
-            raise ComparisonValidationError("Invalid relationship comparison response.") from None
+            raise _comparison_error("RELATIONSHIP_RESPONSE_JSON_INVALID") from None
+        return self._validate_response(raw, payload)
