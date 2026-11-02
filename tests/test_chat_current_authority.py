@@ -412,3 +412,42 @@ def test_each_mixed_subject_with_unreadable_field_catalog_continues_to_source(tm
     assert finished["limitations"].count(NOTICES["REGISTERED_LOOKUP_INCOMPLETE"]) == 1
     assert [q["tool"] for q in result["spring"].queries].count("CHARACTER_FIELDS") >= 2
     assert result["search"].calls
+
+
+def test_mixed_plan_trims_registered_rows_to_keep_room_for_the_source_answer(tmp_path):
+    # 원문 답변이 필요한 계획에서 등록 행이 답변 입력을 넘치면 되묻지 않고 우선순위 높은 행만 남긴 뒤
+    # 원문 근거 자리를 비워 두고 원문 답변을 계속한다(V2-054 실제 사례).
+    def long_rows(spring):
+        rows = [
+            item(
+                701,
+                "세린",
+                category="PROFILE",
+                key=f"profile.p{n}",
+                label=f"항목 {n}",
+                value="가" * 2000,
+            )
+            for n in range(10)
+        ]
+        spring.catalog = [catalog_subject(701, "세린", current=rows)]
+
+    case = current_case(mixed=True)
+    case["outputs"][0]["registeredCurrentRequired"] = False
+    case["outputs"][0]["subjects"][0]["focus"] = {"factType": "PROFILE", "attribute": None}
+    case["outputs"].insert(1, {"outcome": "ANSWER", "rowRefs": [f"R{n}" for n in range(1, 11)]})
+    case["outputs"].append(source_answer())
+    result = run(
+        tmp_path,
+        case,
+        long_rows,
+        search_setup=search_with(keyword=[passage(SOURCE, 1)]),
+        config={"max_context_characters": 20000, "max_selected_rows": 10},
+        hybrid={"evidence_tokens": 1000},
+    )
+    finished = result["finish"]["result"]
+    assert result["finish"]["failure"] is None, result["finish"]
+    assert finished["outcome"] != "CLARIFICATION", finished
+    assert NOTICES["REGISTERED_ROWS_TRIMMED"] in finished["limitations"]
+    kept = result["raw"].requests[-1]["input"]["rows"]
+    assert 0 < len(kept) < 10
+    assert SOURCE in finished["text"]

@@ -593,9 +593,10 @@ class _HybridSession(_Session):
         self.trim_conversation_to_fit(
             ANSWER_PROMPT, lambda: self.answer_payload(plan), answer_schema
         )
-        if (plan.per_item and len(self.logical_items) > 100) or not self.fits(
-            ANSWER_PROMPT, self.answer_payload(plan), answer_schema
-        ):
+        fits = self.fits(ANSWER_PROMPT, self.answer_payload(plan), answer_schema)
+        if not fits and not plan.per_item and self.chosen:
+            fits = self.trim_rows_for_source_answer(plan, answer_schema)
+        if (plan.per_item and len(self.logical_items) > 100) or not fits:
             return message(
                 "CLARIFICATION",
                 "요청한 설정 항목이 많아 각각의 근거를 함께 확인하기 어렵습니다. 조회할 항목이나 유형을 좁혀 주세요.",
@@ -1569,6 +1570,50 @@ class _HybridSession(_Session):
             if e.direct_ref
         )
         return passages
+
+    def trim_rows_for_source_answer(self, plan, schema):
+        """원문 답변이 필요한 계획에서 등록 행이 답변 입력을 넘치면 되묻는 대신 우선순위가 높은 행만 남긴다.
+
+        현재값 행을 먼저 남기고, 이력 행은 계획의 정렬(EARLIEST는 이른 회차, LATEST는 늦은 회차)부터 남긴다.
+        뒤이어 넣을 원문 근거 예산(evidence_tokens)만큼 자리를 비워 둔다. 한국어 원문은 토큰당 약 1.6자다.
+        """
+        reserve = {
+            "reserve_tokens": self.hcfg.evidence_tokens,
+            "reserve_characters": int(self.hcfg.evidence_tokens * 1.6),
+        }
+        position = {row.ref: index for index, row in enumerate(self.chosen)}
+
+        def priority(row):
+            episode = row.item.source_episode_no
+            if row.item.kind == "CURRENT":
+                return (0, 0, position[row.ref])
+            if episode is None or plan.ordering == "NONE":
+                return (1, 0, position[row.ref])
+            return (1, -episode if plan.ordering == "LATEST" else episode, position[row.ref])
+
+        ordered = sorted(self.chosen, key=priority)
+        low, high, best = 0, len(ordered), 0
+        while low <= high:
+            middle = (low + high) // 2
+            self.chosen = ordered[:middle]
+            if self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema, **reserve):
+                best, low = middle, middle + 1
+            else:
+                high = middle - 1
+        self.chosen = [row for row in ordered[:best]]
+        self.chosen.sort(key=lambda row: position[row.ref])
+        self.focused_refs.intersection_update({row.ref for row in self.chosen})
+        if "REGISTERED_ROWS_TRIMMED" not in self.codes:
+            self.codes.append("REGISTERED_ROWS_TRIMMED")
+        self.trace("registered_rows_trimmed", kept=best, total=len(ordered))
+        if plan.registered_current_required:
+            self.current_requirement_confirmed = self.current_requirement_satisfied(plan)
+            if (
+                not self.current_requirement_confirmed
+                and "REGISTERED_CURRENT_UNCONFIRMED" not in self.codes
+            ):
+                self.codes.append("REGISTERED_CURRENT_UNCONFIRMED")
+        return self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema, **reserve)
 
     def answer_payload(self, plan):
         selected = {r.ref for r in self.chosen}
