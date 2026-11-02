@@ -203,6 +203,16 @@ def test_keyword_rank_weights_rare_words_over_many_common_words(corpus):
     assert all(c.score == pytest.approx(1.0) for c in single)
 
 
+def test_single_character_term_does_not_outweigh_longer_terms(corpus):
+    # '레벨 업'이 띄어쓰기로 갈린 한 글자 '업'은 '업적' 안에서도 일치한다. 희귀하다는 이유로 높은 무게를
+    # 받으면 '비요른'·'레벨'이 든 실제 장면(22화)이 '레벨'·'업적' 청크에 밀려 후보 밖으로 나갔다(#319 V2-053).
+    corpus.chunks(corpus.episode(1), ["비요른 산책"] * 12 + ["업무 회의"] * 3)
+    scene = corpus.chunks(corpus.episode(22), ["비요른 레벨 상승"])[0]
+    noise = corpus.chunks(corpus.episode(23), ["레벨 업적 달성"])[0]
+    ranked = [c.chunk_id for c in corpus.read("keyword", "비요른 레벨 업", limit=20)]
+    assert ranked.index(scene) < ranked.index(noise)
+
+
 def test_keyword_wildcards_are_literal_bound_values(corpus):
     episode = corpus.episode(1)
     literal, other = corpus.chunks(episode, ["100% 능력_a \\ 규칙", "1000 능력Xa x 규칙"])
