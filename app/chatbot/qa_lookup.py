@@ -75,6 +75,14 @@ class FocusedLookup:
             item.category != subject.world_category for item in found
         ):
             raise SettingToolClientError("CONTRACT_ERROR")
+        if complete and len(found) > 1:
+            # 이름 일부만 같은 후보('미궁법', '미궁 전리품') 사이에서 이름이 정확히 같은 등록 대상이
+            # 하나뿐이면 그 대상을 고른다. 같은 이름이 둘 이상(동명이인)이면 기존대로 되묻는다.
+            exact = [
+                item for item in found if normalized(item.subject_name) == normalized(subject.name)
+            ]
+            if len(exact) == 1:
+                found = exact
         if not complete or len(found) > 1:
             labels = []
             for item in found[:5]:
