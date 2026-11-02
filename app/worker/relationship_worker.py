@@ -133,7 +133,8 @@ class RelationshipWorker:
                         except SourceObjectTooLargeError:
                             pipeline.failure_code = "INPUT_TOO_LARGE"
                     if len(chunks) > self._max_chunks:
-                        pipeline.failure_code = "INPUT_TOO_LARGE"
+                        from app.schemas.worker import failure_check
+                        pipeline._record_failure("INPUT_TOO_LARGE", checks=[failure_check("chunkCount", "MAX", self._max_chunks, len(chunks))])
                         chunks = []
                 heartbeat.raise_if_failed()
                 with worker_span("analysis.relationship.process"):

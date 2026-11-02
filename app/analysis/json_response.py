@@ -201,7 +201,13 @@ async def request_validated_model(
         if isinstance(last_error, LlmResponseValidationError)
         else None
     )
-    raise error_type(
+    failure = error_type(
         f"{operation_name} failed after {max_attempts} attempts: "
         f"{summarize_error(last_error)}"
-    ) from sanitized_cause
+    )
+    # Preserve only the validated diagnostic contract when stripping the raw cause.
+    from app.schemas.worker import WorkerFailureDiagnostics
+    diagnostic = getattr(last_error, "failure_diagnostics", None)
+    if isinstance(diagnostic, WorkerFailureDiagnostics):
+        failure.failure_diagnostics = diagnostic
+    raise failure from sanitized_cause
