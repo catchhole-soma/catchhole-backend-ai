@@ -29,8 +29,10 @@ class SyntheticStorage:
 
 
 class SyntheticRelationshipProvider:
-    def __init__(self):
+    def __init__(self, partial_scenario=False):
         self.calls = []
+        self.partial_scenario = partial_scenario
+        self.group_calls = []
 
     async def create_text_response(self, *, user_prompt, model, response_schema, call_options, **_):
         assert model == "gpt-6.1-terra"
@@ -50,6 +52,14 @@ class SyntheticRelationshipProvider:
                     }
                 ]
             }
+            if self.partial_scenario:
+                assert "다라" in spans[0]["text"]
+                result["observations"].append({
+                    "source": {"name": "아라", "mention": "아라"},
+                    "target": {"name": "다라", "mention": "다라"},
+                    "summary": "아라와 다라가 함께 협력했다.",
+                    "evidence_span_ids": [spans[0]["ref"]],
+                })
         elif kind == "relationship_comparison":
             assert len(data["observations"]) == 1
             observation = data["observations"][0]
@@ -83,6 +93,29 @@ class SyntheticRelationshipProvider:
                     }
                 ]
             }
+        elif kind == "relationship_pair_groups":
+            groups = []
+            for group in data["groups"]:
+                names = {row["name"] for row in group["nodes"]}
+                episode = group["sourceEpisodeNo"]
+                self.group_calls.append({"episodeNo": episode, "names": sorted(names),
+                                         "repair": group["validationFeedback"] is not None})
+                if self.partial_scenario and episode == 3:
+                    assert names != {"아라", "보라"}, "Blocked pair must not invoke the model"
+                relation = next((row for row in group["relationships"]
+                                 if row["axis"] == "SOCIAL" and row["kind"] == "COMPANIONSHIP"
+                                 and row["direction"] == "MUTUAL"), None)
+                refs = [row["ref"] for row in group["observations"]]
+                if self.partial_scenario and episode == 2 and names == {"아라", "보라"}:
+                    refs = ["O2"]  # Deliberate cross-pair response, on the repair too.
+                groups.append({"groupRef": group["groupRef"], "decisions": [{
+                    "observationRefs": refs, "operation": "UPDATE" if relation else "ADD",
+                    "relationshipRef": relation["ref"] if relation else None,
+                    "axis": None if relation else "SOCIAL", "kind": None if relation else "COMPANIONSHIP",
+                    "direction": None if relation else "MUTUAL", "label": "동료",
+                    "summary": group["observations"][0]["summary"], "temporalScope": "PRESENT", "reason": None,
+                }]})
+            result = {"groups": groups}
         else:
             raise AssertionError("Non-relationship model call is forbidden in this bridge")
         self.calls.append(kind)
@@ -110,7 +143,7 @@ async def main():
         raise RuntimeError("Local synthetic Spring server required")
     request = json.load(sys.stdin)
     storage = SyntheticStorage(request["sources"])
-    provider = SyntheticRelationshipProvider()
+    provider = SyntheticRelationshipProvider(partial_scenario=request.get("partialScenario", False))
     async with httpx.AsyncClient(timeout=30, trust_env=False) as http:
         client = SpringWorkerClient(base_url, os.environ["SPRING_INTERNAL_API_KEY"], http)
         with (
@@ -144,6 +177,7 @@ async def main():
                 "cachedInputTokens": 20 * len(provider.calls),
                 "outputTokens": 10 * len(provider.calls),
                 "sourceReads": storage.reads,
+                "groupCalls": provider.group_calls,
             }
         )
     )

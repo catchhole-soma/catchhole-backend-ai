@@ -42,6 +42,34 @@ def _payload():
     )
 
 
+def test_relationship_partial_resume_marks_pipeline_and_worker_spans(spans, monkeypatch):
+    from tests.test_relationship_only_worker import setup_worker
+
+    worker, payload, spring, storage, extractor, comparator, _ = setup_worker(
+        monkeypatch, status="APPLIED", observations=[{"ref": "O1"}]
+    )
+    payload.relationship_analysis_contract["supportsPartialResults"] = True
+    spring.get_relationship_analysis.return_value.update({
+        "supportsPartialResults": True,
+        "failures": [{"observationRefs": ["O1"],
+                      "reasonCode": "RELATIONSHIP_OBSERVATION_REFS_INVALID"}],
+    })
+    asyncio.run(worker.process_claimed(payload))
+
+    for name in ("analysis.relationship.compare", "analysis.relationship.process"):
+        span = next(item for item in spans.get_finished_spans() if item.name == name)
+        assert span.status.status_code == StatusCode.ERROR
+        assert span.attributes["outcome"] == "partial"
+        assert span.attributes["analysis.relationship.failed_observation_count"] == 1
+        assert span.attributes["analysis.relationship.failed_group_count"] == 1
+        assert "O1" not in str(dict(span.attributes))
+    spring.complete_relationship_job.assert_awaited_once()
+    spring.fail_relationship_job.assert_not_called()
+    storage.get_text.assert_not_called()
+    extractor.extract_from_chunk.assert_not_called()
+    comparator.compare.assert_not_called()
+
+
 def test_disabled_tracing_creates_no_provider_exporter_or_resources(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("disabled tracing created a resource")

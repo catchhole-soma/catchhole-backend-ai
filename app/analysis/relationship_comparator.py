@@ -4,8 +4,6 @@ Only request-local references enter the prompt. The backend remains responsible
 for ownership, optimistic concurrency, idempotency, and durable episode history.
 """
 
-from app.schemas.worker import failure_check, failure_excerpt, differing_excerpts
-
 import json
 import re
 from itertools import pairwise
@@ -22,6 +20,7 @@ from app.analysis.relationship_diagnostics import (
 from app.analysis.relationship_extractor import DEFAULT_RELATIONSHIP_MODEL, _unique_object
 from app.analysis.relationship_observations import RelationshipInputTooLargeError
 from app.llm.protocols import LlmCallOptions, LlmResponseSchema, TextGenerationClient
+from app.schemas.worker import differing_excerpts, failure_check, failure_excerpt
 from app.usage.metering import estimate_text_input_tokens
 
 RELATIONSHIP_COMPARISON_VERSION = "relationship-comparison:v1"
@@ -414,6 +413,11 @@ class RelationshipComparator:
         for batch in batches:
             decisions.extend(await self._compare_payload(batch))
         return self._validate_response({"decisions": decisions}, payload)
+
+    async def compare_partial(self, context: dict):
+        # Lazy import keeps the legacy provider contract and validator standalone.
+        from app.analysis.relationship_grouped_comparator import GroupedRelationshipComparator
+        return await GroupedRelationshipComparator(self).compare(context)
 
     def _input_tokens(self, payload):
         return estimate_text_input_tokens(

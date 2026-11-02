@@ -101,10 +101,13 @@
 
 - 관계는 EPISODE/SETTING_EXTRACTION에서만 `supportsRelationshipAnalysis=true`와 서버 v1 계약으로 활성화한다. 계약이 없으면 관계 API/모델을 호출하지 않는다. 캐릭터·세계관 prompt/schema/model/평가 Gold는 변경하지 않는다.
 - 관계 1차와 2차는 별도 Terra/medium client, input 64k/output 16k, metering 재시도 0이다. 1차는 기존 두 추출과 병렬, 2차는 기존 세계관 비교와 병렬이며 전역 semaphore·계량을 공유한다.
-- 관계 비교의 전체 문맥이 64k 이내이면 단일 호출을 유지한다. 초과 시에만 O/H의 가능한 unordered endpoint pair가 겹치는 연결 묶음으로 나누며, H의 간접 연결·동일 pair 모든 슬롯·원래 ref/순서/근거를 보존한다. O 없는 H는 소비하지 않는다. 최대16개 순차 호출의 전체 입력 계획을 첫 호출 전에 검사하고 단일 묶음 초과는 실패한다. 결합 후 전체 고정 문맥으로 schema512·coverage·슬롯을 재검증하며 부분 저장·출력 repair·원문 절단을 하지 않는다. 진단은 공통 fixture의 고정 reason/stage만 보존하고 전용 Worker가 원본 provider 오류 문자열을 runner로 전파하지 않는다.
+- GH359는 wire `formatVersion=1`을 유지하고 claim의 `supportsRelationshipPartialResults=true`와 고정 `supportsPartialResults=true` 계약으로만 켠다. 작은 입력도 항상 유일하게 해소된 unordered 인물 쌍별 group으로 투영하고 같은 쌍의 O/H·모든 관계 슬롯·원래 ref/순서/근거를 유지한다. 여러 group을 입력 예산 안에서 묶되 생성·검증은 group별로 격리한다. LLM은 group의 방향·관계 의미와 소유 R만 고르고 Worker가 고정 두 endpoint와 기존 R의 axis/kind/direction·MERGE 내용을 복원한다. 미해소 새 O는 모델 없이 내부 HOLD, 미해소/무관한 과거 H는 소비하지 않는다.
+- GH359는 첫 호출 전에 repair 피드백까지 예약한 전체 입력 계획을 검사한다. 최초 최대16 batch와 각 batch의 실패 group만 한 번 repair(전체 최대32요청, group당 최대1회)하며 남은 schema/도메인 오류·단일쌍/총 batch 입력 상한은 고정 reason의 typed failure로 남긴다. 성공 결정과 실패 O를 함께 원자 완료하며 전체512·coverage·슬롯 불변식을 유지한다. 실패를 HOLD로 덮거나 원문을 자르지 않는다. 과거 실패 쌍은 서버 `blockedPairs`로 후속 비교를 막고 `RELATIONSHIP_PREDECESSOR_INCOMPLETE`로 보존하며 다른 쌍은 진행한다. 모든 호출은 기존 계량·semaphore를 사용하므로 일반 Job의 repair도 기존 회원 과금 대상이며 서비스 부담 Job은 기존 정책을 따른다. provider 전송/출력 절단·권한·lease·quota·고정 입력·Spring 오류는 typed partial로 숨기지 않는다.
+- GH359 비교 batch는 입력뿐 아니라 출력 여유도 계획한다. 쌍당512토큰을 계획값으로 잡고 출력의20% 이상을 추론·변동 여유로 남기며 batch당최대24쌍(기본384쌍은최대16batch)이다. 512는 보장 상한이나 응답 절단 기준이 아니다. 출력 override가 작아도 한 쌍의 전체 O/H는 한 요청에 유지하고 실제 출력 절단은 기존 실패 경계로 남긴다.
+- partial capability가 없는 과거 계약은 v0041 경로를 유지한다: 전체64k 이내 단일 호출, 초과 때 O/H의 가능한 쌍 교집합으로 연결 성분을 투영하고 최대16개 순차 호출, 부분 결과/repair 없음. 두 경로 모두 안전한 공통 reason/stage만 진단에 기록하고 원본 provider 오류 문자열을 runner로 전파하지 않는다.
 - 1차 원문 조각 ID에서 quote·Unicode offset을 복원하고 2차에는 요청별 N/R/O/H 참조만 전달한다. Python은 DB 관계를 직접 쓰지 않으며 lease·원문·권한·quota·Spring 오류를 의미 실패로 숨기지 않는다.
 - ADD/MERGE/UPDATE/END/EXCLUDE/HOLD의 coverage·시점·참조·중복을 검증한다. 보류는 내부 상태로 저장하고 필수 사용자 검토 큐를 만들지 않는다. 이름 없는 1인칭/역할을 주인공으로 추정하지 않으며 자동 해소를 보장하지 않는다.
-- PREPARED는 추출을 재호출하지 않고 COMPLETED/FAILED는 관계 모델을 재호출하지 않는다. 회차 이력/무효화/실제 반영은 Spring 계약을 따른다. 공통 `docs/episode-relationships.md`를 Java·프론트와 동기화하며 실제 모델·합성 매핑·DB 검증을 구분한다.
+- PREPARED는 추출을 재호출하지 않고 COMPLETED/APPLIED/FAILED는 관계 모델을 재호출하지 않는다. partial 계약의 terminal GET에는 `failures`가 필수이며 재claim도 PARTIAL 요약과 실패 관측/그룹 수를 보존한다. Job SUCCEEDED는 실행 완료이며 관계 완전 성공과 다르다. inline 관계 span과 전용 Worker span은 partial/error와 안전한 개수만 남긴다. 회차 이력/무효화/실제 반영은 Spring 계약을 따른다. 공통 `docs/episode-relationships.md`를 Java·프론트와 동기화하며 실제 모델·합성 매핑·DB 검증을 구분한다.
 
 ## Async Worker Runtime
 
@@ -386,6 +389,6 @@
 - 선정 계정·작품·회차 순서는 Spring의 고정 fingerprint manifest/캠페인 대기열이 소유한다. Python은 대상 SQL이나 회원 목록을 복제하지 않는다.
 - `relationship` Worker는 `/api/internal/v1/relationship-jobs/*`에서 `RELATIONSHIP_EXTRACTION`, `EPISODE`, `CONFIRMED_ONLY`, 정수 `relationshipAnalysisContract.formatVersion=1`만 처리한다. 일반 분석 claim/complete와 혼용하지 않는다.
 - 기존 관계 pipeline/extractor/comparator를 재사용하되 S3 고정 key/version/hash와 순수 청킹만 사용한다. SQLAlchemy 세션, 후보·프로필·청크 저장, retrieval embedding을 호출하지 않는다. 동기 원문 읽기는 Worker 소유 `BlockingIoExecutor`에서 `AI_WORKER_BLOCKING_MAX_WORKERS`(운영1) 한도를 지킨다. Job 취소는 즉시 전파하되 남은 읽기는 같은 한도에 포함하며 종료 시 executor를 정리한다. 관계 원문 읽기 예외는 executor에서 결과로 반환하고 살아 있는 Job에서 원래 객체를 다시 던진다. 취소 후 결과는 버려 S3 객체 key/URL이 포함될 수 있는 예외를 detached 로그에 남기지 않는다.
-- PREPARED/COMPLETED 재개는 저장 관측·결정을 쓰며 원문 재읽기와 재추출을 생략한다. 근거 원문 검증·lease·토큰 예약은 우회하지 않는다. 입력 상한 초과는 자르지 않고 실패한다.
+- PREPARED/COMPLETED/APPLIED 재개는 저장 관측·결정·typed failure를 쓰며 원문 재읽기와 재추출을 생략한다. 근거 원문 검증·lease·토큰 예약은 우회하지 않는다. 입력 상한은 자르지 않고 기존 계약에서는 실패, GH359 opt-in에서는 비교 group별 미완료로 보존한다. 추출·고정 입력·provider 중단은 이 partial 범위에 넣지 않는다.
 - 운영 `ai-relationship-worker`는 1프로세스·1Job·1LLM, DB 연결0, metrics host9109다. 런타임/targets/tracing 검사에 네 번째 종류를 포함하되 일반 분석 5×10과 비교 각1은 유지한다.
 - Java API/Flyway를 먼저, AI Worker를 다음에 배포한다. merge 자체가 provider 호출이 아니라 이미지 발행·배포 성공 후 claim이 시작점이다. 원칙/동기화 대상은 `docs/relationship-cohort-backfill.md`와 `docs/episode-relationships.md`다.

@@ -11,6 +11,7 @@ from app.analysis.exceptions import (
     LlmExtractionError,
     OrderedInputContextError,
 )
+from app.analysis.relationship_grouped_comparator import RelationshipComparisonOutcome
 from app.analysis.relationship_observations import (
     LocatedRelationshipEvidence,
     RelationshipExtractionResult,
@@ -213,6 +214,95 @@ def test_spring_relationship_requests_preserve_lease_and_claim_capability():
             assert all(r.headers["X-Internal-Api-Key"] == "internal" for r in requests)
     asyncio.run(run())
     assert [r.url.path.rsplit("/", 1)[-1] for r in requests] == ["relationship-analysis", "prepare", "complete", "fail"]
+
+
+def test_partial_completion_sends_valid_decisions_and_typed_failures_atomically():
+    pipeline, spring, extractor, comparator, context = setup_pipeline(observations=[{"ref": "O1"}, {"ref": "O2"}])
+    pipeline.payload.relationship_analysis_contract = {"formatVersion": 1, "supportsPartialResults": True}
+    context.update(supportsPartialResults=True, blockedPairs=[])
+    spring.get_relationship_analysis.return_value = context
+    decisions = [{"observationRefs": ["O2"], "operation": "ADD"}]
+    failures = [{"observationRefs": ["O1"], "reasonCode": "RELATIONSHIP_OBSERVATION_REFS_INVALID"}]
+    comparator.compare_partial = AsyncMock(return_value=RelationshipComparisonOutcome(decisions, failures))
+
+    async def run():
+        await pipeline.load()
+        return await pipeline.finish([])
+
+    summary = asyncio.run(run())
+    assert summary["relationshipAnalysisStatus"] == "PARTIAL"
+    assert summary["relationshipFailureCount"] == summary["relationshipFailedGroupCount"] == 1
+    assert spring.complete_relationship_analysis.call_args.args[2] == {
+        "formatVersion": 1, "contextToken": "frozen-token", "decisions": decisions, "failures": failures,
+    }
+    spring.complete_relationship_analysis.assert_awaited_once()
+    spring.fail_relationship_analysis.assert_not_called()
+    extractor.extract_from_chunk.assert_not_called()
+    comparator.compare.assert_not_called()
+
+
+@pytest.mark.parametrize("status", ["COMPLETED", "APPLIED"])
+def test_terminal_partial_resume_preserves_failed_count_without_paid_calls(status):
+    pipeline, spring, extractor, comparator, context = setup_pipeline(observations=[{"ref": "O1"}])
+    pipeline.payload.relationship_analysis_contract = {"formatVersion": 1, "supportsPartialResults": True}
+    context.update(status=status, supportsPartialResults=True,
+                   failures=[{"observationRefs": ["O1"], "reasonCode": "RELATIONSHIP_OBSERVATION_REFS_INVALID"}])
+    spring.get_relationship_analysis.return_value = context
+    comparator.compare_partial = AsyncMock()
+
+    async def run():
+        await pipeline.load()
+        return await pipeline.finish([])
+
+    assert asyncio.run(run()) == {"relationshipAnalysisStatus": "PARTIAL", "relationshipFailureCount": 1,
+                                  "relationshipFailedGroupCount": 1}
+    extractor.extract_from_chunk.assert_not_called()
+    comparator.compare.assert_not_called()
+    comparator.compare_partial.assert_not_called()
+    spring.complete_relationship_analysis.assert_not_called()
+
+
+@pytest.mark.parametrize("patch", [
+    {"supportsPartialResults": True}, {"supportsPartialResults": "true"},
+])
+def test_context_cannot_enable_partial_without_frozen_claim_capability(patch):
+    pipeline, spring, _, comparator, context = setup_pipeline(observations=[{"ref": "O1"}])
+    context.update(patch)
+    spring.get_relationship_analysis.return_value = context
+    with pytest.raises(OrderedInputContextError):
+        asyncio.run(pipeline.load())
+    comparator.compare.assert_not_called()
+
+
+@pytest.mark.parametrize("failures", [None, [{"observationRefs": ["O999"], "reasonCode": "RELATIONSHIP_OBSERVATION_REFS_INVALID"}],
+                                        [{"observationRefs": ["O1"], "reasonCode": "private text"}]])
+def test_terminal_partial_missing_or_malformed_failures_cannot_become_success(failures):
+    pipeline, spring, _, _, context = setup_pipeline(observations=[{"ref": "O1"}])
+    pipeline.payload.relationship_analysis_contract = {"formatVersion": 1, "supportsPartialResults": True}
+    context.update(status="COMPLETED", supportsPartialResults=True, failures=failures)
+    spring.get_relationship_analysis.return_value = context
+    with pytest.raises(OrderedInputContextError):
+        asyncio.run(pipeline.load())
+
+
+def test_partial_spring_completion_error_does_not_fall_back_to_hold_or_failure_completion():
+    pipeline, spring, _, comparator, context = setup_pipeline(observations=[{"ref": "O1"}])
+    pipeline.payload.relationship_analysis_contract = {"formatVersion": 1, "supportsPartialResults": True}
+    context.update(supportsPartialResults=True)
+    spring.get_relationship_analysis.return_value = context
+    comparator.compare_partial = AsyncMock(return_value=RelationshipComparisonOutcome([], [
+        {"observationRefs": ["O1"], "reasonCode": "RELATIONSHIP_OBSERVATION_REFS_INVALID"},
+    ]))
+    spring.complete_relationship_analysis.side_effect = SpringWorkerTransportError("private")
+
+    async def run():
+        await pipeline.load()
+        await pipeline.finish([])
+
+    with pytest.raises(SpringWorkerTransportError):
+        asyncio.run(run())
+    spring.complete_relationship_analysis.assert_awaited_once()
+    spring.fail_relationship_analysis.assert_not_called()
 
 
 def test_restored_failed_context_explains_missing_original_diagnostics():

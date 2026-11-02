@@ -109,6 +109,8 @@ _COUNT_ATTRIBUTES = frozenset({
     "analysis.comparison.failed_count", "analysis.comparison.batch_count",
     "analysis.embedding.completed_count", "analysis.embedding.failed_count",
     "analysis.embedding.skipped_count", "analysis.world.reused_chunk_count", "llm.retry_index",
+    "analysis.relationship.failed_observation_count", "analysis.relationship.failed_group_count",
+    "analysis.relationship.decision_count",
 })
 
 
