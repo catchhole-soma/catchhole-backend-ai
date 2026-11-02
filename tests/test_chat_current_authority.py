@@ -453,6 +453,40 @@ def test_mixed_plan_trims_registered_rows_to_keep_room_for_the_source_answer(tmp
     assert SOURCE in finished["text"]
 
 
+def test_required_registered_current_is_not_trimmed_and_still_asks(tmp_path):
+    # 등록 현재값 필수 계획은 같은 인물의 현재값 행 일부가 잘려도 인물 단위로는 확인처럼 보일 수
+    # 있으므로 줄이지 않고 기존대로 항목을 좁혀 달라고 되묻는다(PR #124 리뷰).
+    def long_rows(spring):
+        rows = [
+            item(
+                701,
+                "세린",
+                category="PROFILE",
+                key=f"profile.p{n}",
+                label=f"항목 {n}",
+                value="가" * 2000,
+            )
+            for n in range(10)
+        ]
+        spring.catalog = [catalog_subject(701, "세린", current=rows)]
+
+    case = current_case(mixed=True)
+    case["outputs"][0]["subjects"][0]["focus"] = {"factType": "PROFILE", "attribute": None}
+    case["outputs"].append(source_answer())
+    result = run(
+        tmp_path,
+        case,
+        long_rows,
+        search_setup=search_with(keyword=[passage(SOURCE, 1)]),
+        config={"max_context_characters": 20000, "max_selected_rows": 10},
+        hybrid={"evidence_tokens": 1000},
+    )
+    finished = result["finish"]["result"]
+    assert result["finish"]["failure"] is None, result["finish"]
+    assert finished["outcome"] == "CLARIFICATION", finished
+    assert NOTICES["REGISTERED_ROWS_TRIMMED"] not in finished["limitations"]
+
+
 class _TrimSession:
     """행 줄이기 경계만 보는 가짜 세션. 행 하나는 100자, 안내 문장은 실제 길이로 센다."""
 

@@ -594,7 +594,9 @@ class _HybridSession(_Session):
             ANSWER_PROMPT, lambda: self.answer_payload(plan), answer_schema
         )
         fits = self.fits(ANSWER_PROMPT, self.answer_payload(plan), answer_schema)
-        if not fits and not plan.per_item and self.chosen:
+        if not fits and not plan.per_item and self.chosen and not plan.registered_current_required:
+            # 등록 현재값 필수 계획은 줄이지 않는다. 같은 인물의 현재값 행 일부가 잘려도 인물 단위
+            # 확인으로는 충족처럼 보일 수 있어, 기존대로 항목을 좁혀 달라고 되묻는다.
             fits = self.trim_rows_for_source_answer(plan, answer_schema)
         if (plan.per_item and len(self.logical_items) > 100) or not fits:
             return message(
@@ -1593,7 +1595,8 @@ class _HybridSession(_Session):
         return passages
 
     def trim_rows_for_source_answer(self, plan, schema):
-        """원문 답변이 필요한 계획에서 등록 행이 답변 입력을 넘치면 되묻는 대신 우선순위가 높은 행만 남긴다.
+        """원문 답변이 필요한 계획(등록 현재값 필수 제외)에서 등록 행이 답변 입력을 넘치면 되묻는 대신
+        우선순위가 높은 행만 남긴다.
 
         현재값 행을 먼저 남기고, 이력 행은 계획의 정렬(EARLIEST는 이른 회차, LATEST는 늦은 회차)부터 남긴다.
         뒤이어 넣을 원문 근거 예산(evidence_tokens)만큼 자리를 비워 둔다. 한국어 원문은 토큰당 약 1.6자다.
@@ -1629,13 +1632,6 @@ class _HybridSession(_Session):
         self.chosen.sort(key=lambda row: position[row.ref])
         self.focused_refs.intersection_update({row.ref for row in self.chosen})
         self.trace("registered_rows_trimmed", kept=best, total=len(ordered))
-        if plan.registered_current_required:
-            self.current_requirement_confirmed = self.current_requirement_satisfied(plan)
-            if (
-                not self.current_requirement_confirmed
-                and "REGISTERED_CURRENT_UNCONFIRMED" not in self.codes
-            ):
-                self.codes.append("REGISTERED_CURRENT_UNCONFIRMED")
         # 원문 근거 자리는 행을 고를 때의 선호값이다. 마지막 확인은 자리 없이 해서, 행을 하나도 남기지
         # 못해도 원문 답변으로 계속한다(원문 근거는 답변 직전에 입력에 맞게 줄인다).
         return self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema)
