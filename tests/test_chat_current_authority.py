@@ -9,8 +9,9 @@ import socket
 import pytest
 from pydantic import ValidationError
 
+from app.chatbot.hybrid import _HybridSession
 from app.chatbot.qa import response_schema
-from app.chatbot.qa_render import NOTICES
+from app.chatbot.qa_render import NOTICES, notices
 from app.schemas.chat_execution import ConversationTurn
 from app.schemas.chat_hybrid import HybridPlan
 from tests.test_chat_focused_lookup import catalog_subject, item
@@ -434,7 +435,6 @@ def test_mixed_plan_trims_registered_rows_to_keep_room_for_the_source_answer(tmp
     case = current_case(mixed=True)
     case["outputs"][0]["registeredCurrentRequired"] = False
     case["outputs"][0]["subjects"][0]["focus"] = {"factType": "PROFILE", "attribute": None}
-    case["outputs"].insert(1, {"outcome": "ANSWER", "rowRefs": [f"R{n}" for n in range(1, 11)]})
     case["outputs"].append(source_answer())
     result = run(
         tmp_path,
@@ -451,6 +451,45 @@ def test_mixed_plan_trims_registered_rows_to_keep_room_for_the_source_answer(tmp
     kept = result["raw"].requests[-1]["input"]["rows"]
     assert 0 < len(kept) < 10
     assert SOURCE in finished["text"]
+
+
+class _TrimSession:
+    """행 줄이기 경계만 보는 가짜 세션. 행 하나는 100자, 안내 문장은 실제 길이로 센다."""
+
+    def __init__(self, rows, limit):
+        from types import SimpleNamespace
+
+        self.chosen = [
+            SimpleNamespace(
+                ref=f"R{n}", item=SimpleNamespace(kind="CURRENT", source_episode_no=None)
+            )
+            for n in range(1, rows + 1)
+        ]
+        self.hcfg = SimpleNamespace(evidence_tokens=200)
+        self.codes, self.focused_refs, self.limit = [], set(), limit
+
+    def trace(self, *args, **kwargs):
+        pass
+
+    def answer_payload(self, plan):
+        return {"rows": len(self.chosen), "limitations": notices(self.codes)}
+
+    def fits(self, prompt, payload, schema, *, reserve_tokens=0, reserve_characters=0):
+        size = payload["rows"] * 100 + sum(map(len, payload["limitations"]))
+        return size + reserve_characters <= self.limit
+
+
+@pytest.mark.parametrize(("limit", "kept"), [(640, 2), (300, 0)])
+def test_trimmed_rows_leave_room_for_the_trimming_notice(limit, kept):
+    # 줄인 뒤 붙는 안내 문장도 답변 입력에 들어간다. 행 수를 고른 뒤에 안내를 붙이면 경계에 맞춘 행이
+    # 넘쳐 되묻기로 끝났다(V2-054 재실행, 19행). 원문 근거 자리(200토큰 → 320자)를 비우면 행을 하나도
+    # 못 남기는 경우에도 마지막 확인은 자리 없이 해서 원문 답변으로 계속한다.
+    plan = HybridPlan.model_validate(current_case(mixed=True)["outputs"][0])
+    plan = plan.model_copy(update={"registered_current_required": False})
+    session = _TrimSession(rows=3, limit=limit)
+    assert _HybridSession.trim_rows_for_source_answer(session, plan, schema=None) is True
+    assert len(session.chosen) == kept
+    assert "REGISTERED_ROWS_TRIMMED" in session.codes
 
 
 MAZE = "미궁 1층은 7일째에 폐쇄된다."

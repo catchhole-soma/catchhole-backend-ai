@@ -1613,6 +1613,10 @@ class _HybridSession(_Session):
             return (1, -episode if plan.ordering == "LATEST" else episode, position[row.ref])
 
         ordered = sorted(self.chosen, key=priority)
+        # 안내 문장도 답변 입력에 들어가므로 행 수를 고르기 전에 넣는다. 고른 뒤에 넣으면 경계에 맞춘
+        # 행이 마지막 확인에서 넘친다(V2-054 재실행에서 19행이 되묻기로 끝남).
+        if "REGISTERED_ROWS_TRIMMED" not in self.codes:
+            self.codes.append("REGISTERED_ROWS_TRIMMED")
         low, high, best = 0, len(ordered), 0
         while low <= high:
             middle = (low + high) // 2
@@ -1624,8 +1628,6 @@ class _HybridSession(_Session):
         self.chosen = [row for row in ordered[:best]]
         self.chosen.sort(key=lambda row: position[row.ref])
         self.focused_refs.intersection_update({row.ref for row in self.chosen})
-        if "REGISTERED_ROWS_TRIMMED" not in self.codes:
-            self.codes.append("REGISTERED_ROWS_TRIMMED")
         self.trace("registered_rows_trimmed", kept=best, total=len(ordered))
         if plan.registered_current_required:
             self.current_requirement_confirmed = self.current_requirement_satisfied(plan)
@@ -1634,7 +1636,9 @@ class _HybridSession(_Session):
                 and "REGISTERED_CURRENT_UNCONFIRMED" not in self.codes
             ):
                 self.codes.append("REGISTERED_CURRENT_UNCONFIRMED")
-        return self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema, **reserve)
+        # 원문 근거 자리는 행을 고를 때의 선호값이다. 마지막 확인은 자리 없이 해서, 행을 하나도 남기지
+        # 못해도 원문 답변으로 계속한다(원문 근거는 답변 직전에 입력에 맞게 줄인다).
+        return self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema)
 
     def answer_payload(self, plan):
         selected = {r.ref for r in self.chosen}
