@@ -17,6 +17,7 @@ from app.clients.exceptions import (
 )
 from app.llm.exceptions import LlmOutputTruncatedError
 from app.llm.responses import LlmTextResponse
+from app.usage.metering import estimate_text_input_tokens
 from tests.test_relationship_comparator import context, observation, relationship
 
 
@@ -236,6 +237,74 @@ def test_single_oversized_group_does_not_prevent_other_group(monkeypatch):
     assert len(client.calls) == 1
     assert result.failures == [{"observationRefs": ["O1"], "reasonCode": "RELATIONSHIP_INPUT_TOO_LARGE"}]
     assert result.decisions[0]["observationRefs"] == ["O2"]
+
+
+def test_dense_valid_two_slot_output_is_split_before_provider_truncation():
+    def two_slots(req, out, call):
+        for group, result in zip(req["groups"], out["groups"]):
+            result["decisions"].append(decision(
+                observationRefs=[row["ref"] for row in group["observations"]],
+                axis="ATTITUDE", kind="TRUST", label="신뢰", summary="서로를 신뢰한다.",
+            ))
+        return out
+
+    class OutputLimitedClient(Client):
+        async def create_text_response(self, **kwargs):
+            response = await super().create_text_response(**kwargs)
+            # The original input-only planner sent all 140 groups at once:
+            # compact valid JSON alone needs >16k tokens, before reasoning.
+            compact = json.dumps(json.loads(response.text), ensure_ascii=False, separators=(",", ":"))
+            output_tokens = estimate_text_input_tokens("", compact, kwargs["model"])
+            if output_tokens > kwargs["max_output_tokens"]:
+                raise LlmOutputTruncatedError(
+                    "Synthetic output exceeds its configured limit.",
+                    incomplete_reason="max_output_tokens", max_output_tokens=kwargs["max_output_tokens"],
+                )
+            return response
+
+    client = OutputLimitedClient(two_slots)
+    result = run(client, disjoint(140))
+    assert 1 < len(client.calls) <= 16
+    assert len(result.decisions) == 280 and result.failures == []
+    assert {ref for row in result.decisions for ref in row["observationRefs"]} == {
+        f"O{index}" for index in range(1, 141)
+    }
+
+
+def test_output_plan_keeps_all_384_pairs_within_existing_32_request_ceiling():
+    client = Client(lambda *_: {"groups": []})
+    result = run(client, disjoint(384))
+    assert len(client.calls) == 32
+    assert result.decisions == [] and len(result.failures) == 384
+    assert {row["reasonCode"] for row in result.failures} == {"RELATIONSHIP_OBSERVATION_COVERAGE_MISSING"}
+
+
+def test_smaller_output_budget_reduces_batch_size_without_changing_results():
+    normal, smaller = Client(), Client()
+    expected = run(normal, disjoint(48))
+    actual = run(smaller, disjoint(48), max_output_tokens=8000)
+    assert len(smaller.calls) > len(normal.calls)
+    assert actual == expected
+
+
+@pytest.mark.parametrize("max_output_tokens", [1, 511, 512])
+def test_tiny_output_override_still_attempts_whole_pairs_and_preserves_truncation(max_output_tokens):
+    client = Client(error=LlmOutputTruncatedError(
+        "Synthetic single-pair truncation.", incomplete_reason="max_output_tokens",
+        max_output_tokens=max_output_tokens,
+    ))
+    with pytest.raises(LlmOutputTruncatedError):
+        run(client, disjoint(), max_output_tokens=max_output_tokens)
+    assert len(client.calls) == 1
+    assert len(json.loads(client.calls[0]["user_prompt"])["groups"]) == 1
+
+
+def test_many_observations_for_one_pair_are_never_split_or_failed_by_output_estimate():
+    value = data(observations=[observation(f"O{index}") for index in range(1, 97)])
+    client = Client()
+    result = run(client, value)
+    assert len(client.calls) == 1 and result.failures == []
+    assert result.decisions[0]["observationRefs"] == [f"O{index}" for index in range(1, 97)]
 
 
 def test_successful_local_groups_cannot_bypass_global_512_decision_limit(monkeypatch):
