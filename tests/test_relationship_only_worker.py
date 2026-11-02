@@ -188,23 +188,37 @@ def test_initial_heartbeat_gates_context_and_source_before_periodic_task(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("failure", ["lease", "unexpected", "transport"])
+@pytest.mark.parametrize(
+    "failure", ["lease", "unexpected", "transport", "transport_then_lease", "401", "403"]
+)
 def test_initial_heartbeat_failure_preserves_error_without_provider_or_reservation(
     monkeypatch, initial_heartbeats, failure
 ):
     async def run():
         worker, payload, spring, storage, *_ = setup_worker(monkeypatch)
         request = httpx.Request("POST", "https://synthetic.invalid/heartbeat")
+        lease_error = WorkerLeaseExpiredError(
+            "Synthetic lease conflict", request=request,
+            response=httpx.Response(409, request=request),
+            spring_error_code="ANALYSIS_JOB_LEASE_CONFLICT",
+        )
         original = {
-            "lease": WorkerLeaseExpiredError(
-                "Synthetic lease conflict", request=request,
-                response=httpx.Response(409, request=request),
-                spring_error_code="ANALYSIS_JOB_LEASE_CONFLICT",
-            ),
+            "lease": lease_error,
+            "transport_then_lease": lease_error,
             "unexpected": ValueError("Synthetic heartbeat failure"),
             "transport": SpringWorkerTransportError("Synthetic transport failure"),
+            **{
+                str(status): httpx.HTTPStatusError(
+                    "Synthetic authentication failure", request=request,
+                    response=httpx.Response(status, request=request),
+                )
+                for status in (401, 403)
+            },
         }[failure]
-        spring.heartbeat_relationship_job.side_effect = original
+        spring.heartbeat_relationship_job.side_effect = (
+            [SpringWorkerTransportError("Synthetic temporary outage"), original]
+            if failure == "transport_then_lease" else original
+        )
         # A failed report must not replace the original heartbeat error.
         spring.fail_relationship_job.side_effect = RuntimeError("Synthetic report failure")
         spring.reserve_ai_tokens = AsyncMock()
@@ -216,7 +230,7 @@ def test_initial_heartbeat_failure_preserves_error_without_provider_or_reservati
                 await worker.process_claimed(payload)
             assert caught.value is original
             assert spring.heartbeat_relationship_job.await_count == (
-                3 if failure == "transport" else 1
+                {"transport": 3, "transport_then_lease": 2}.get(failure, 1)
             )
             assert initial_heartbeats[0]._task is None
             assert initial_heartbeats[0]._owner_task is None
@@ -226,7 +240,7 @@ def test_initial_heartbeat_failure_preserves_error_without_provider_or_reservati
             spring.reserve_ai_tokens.assert_not_called()
             spring.complete_relationship_job.assert_not_called()
             spring.fail_relationship_job.assert_awaited_once()
-            if failure == "lease":
+            if failure in {"lease", "transport_then_lease"}:
                 assert spring.fail_relationship_job.call_args.kwargs["failure_code"] == (
                     AnalysisFailureCode.WORKER_LEASE_EXPIRED
                 )
