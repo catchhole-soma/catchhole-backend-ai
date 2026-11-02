@@ -65,7 +65,7 @@ slot은 두 노드 + axis + kind + direction이다. DIRECTED는 순서를 보존
 `direction`: DIRECTED, MUTUAL, UNDIRECTED.
 `temporalScope`: PRESENT, PAST, HYPOTHETICAL, UNKNOWN. PRESENT는 현재 회차에서 새로 드러난 지식이다. PRESENT만 ADD/MERGE/UPDATE/END할 수 있다.
 
-실패 요청은 `{formatVersion:1,sourceHash,contextToken,failureCode}`다. failureCode는 INVALID_RESPONSE, EXTRACTION_FAILED, COMPARISON_FAILED, INPUT_TOO_LARGE다.
+실패 요청은 `{formatVersion:1,sourceHash,contextToken,failureCode,failureDiagnostics?}`다. optional 진단은 공통 v1의 허용 코드·검사·승인된 짧은 구절만 정제해 첫 실패에 보존하며, 구 Worker의 4필드 요청도 허용한다. failureCode는 INVALID_RESPONSE, EXTRACTION_FAILED, COMPARISON_FAILED, INPUT_TOO_LARGE다.
 
 한 prepare 최대 신규 관측 384개, 관측당 인용 1~12개, 한 인용 480 code point 이하, 관측당 인용 총 4000 code point 이하, 이름/mention 100 이하, 관측 summary 300 이하. 관계 설명 summary는 500 이하. 완료 결정 최대 512개, label 60 이하, reason 500 이하. 관련 H가 384개 또는 비교 문맥의 노드/관계가 각각 1536개를 초과하면 자르지 않고 FAILED/INPUT_TOO_LARGE Context를 저장해 반환한다. `rejectedObservationCount`는 검증 탈락을 성공한 빈 결과로 숨기지 않기 위한 비음수 개수다.
 
@@ -77,7 +77,7 @@ slot은 두 노드 + axis + kind + direction이다. DIRECTED는 순서를 보존
 
 각 O는 정확히 한 묶음에 배정하지만 기존 계약처럼 그 O를 서로 다른 관계 결정에 여러 번 사용할 수 있다. 묶음별 결과를 모두 받은 뒤 원래 전체 문맥으로 결정 최대 512개·전체 O coverage·참조·시점·중복 슬롯을 다시 검증한다. 검증 전에는 부분 결과를 Spring에 저장하지 않는다. 다른 인물 쌍의 문맥이 줄어들 수 있으므로 이 분할은 상한 초과 경로에만 적용하며, 실제 모델 의미 품질 개선을 자동으로 보장하지 않는다.
 
-진단은 공통 `relationship-failure-diagnostics-v1.json`의 고정 코드만 사용한다. stage는 `RELATIONSHIP_EXTRACTION`/`RELATIONSHIP_COMPARE`이며, JSON/schema·관측 coverage·순서·슬롯·MERGE 내용 변경·인물 해소·입력 상한 등을 구분한다. 원문·모델 응답·예외 원문은 기록하지 않는다. 관계 pipeline은 원본 실패의 분류와 안전한 진단만 전용 Worker에 전달하고, 상위 runner에는 고정 메시지만 노출한다. 일반 캐릭터/세계관 분석에서 관계 실패를 격리하는 의미는 유지한다.
+진단은 공통 `relationship-failure-diagnostics-v1.json`의 고정 코드만 사용한다. stage는 `RELATIONSHIP_EXTRACTION`/`RELATIONSHIP_COMPARE`이며, JSON/schema·관측 coverage·순서·슬롯·MERGE 내용 변경·인물 해소·입력 상한 등을 구분한다. 전체 원문·전체 모델 응답·예외 원문은 기록하지 않는다. 사용자 승인된 짧은 문제 구절은 GH357의 최대 3개·각 120 code point 제한을 따른다. 관계 pipeline은 원본 실패의 분류와 안전한 진단을 관계 fail API 및 전용 Worker에 전달하고, 상위 runner에는 고정 메시지만 노출한다. 일반 캐릭터/세계관 분석에서 관계 실패를 격리하는 의미는 유지한다.
 
 ## 공개 API
 
@@ -132,3 +132,7 @@ main의 검수 실행·검토 종료 기능이 V92~V100을 사용하므로, 운�
 신규 활성화만 멈추므로, 진행 중 관계 Job이 남은 상태의 Worker 롤백은 별도 확인이 필요하다.
 기존 작품 전체의 자동 유료 백필은 하지 않는다. GH332는 [고정 선정 계정의 관계 전용 캠페인](relationship-cohort-backfill.md)만 운영 배포 후 자동 시작한다. 일반 인용의 위치가 불확실한 경우에는
 [일반 인용 정책](https://github.com/catchhole-soma/catchhole-backend-java/blob/main/docs/analysis-continuity.md)의 GH323 정책으로 인용만 숨기고 설정값을 유지한다.
+
+### V110 부분 실패 알림 (GH357)
+
+일반 회차 SETTING_EXTRACTION에서 관계만 FAILED가 되면 기존 outbox에 RELATIONSHIP_PARTIAL을 저장하고 `관계도만 실패 · 나머지 분석 계속`으로 알린다. 관계도 전용 Job은 기존 Job FAILED 알림만 사용한다. 같은 묶음에 회차 중단 기록이 있으면 전체 중단을 우선 표시한다. 알림 추가가 실패 격리·재시도·반영 정책을 변경하지 않으며, 관계 진단의 발췌도 원문 파기 시 작품 단위로 제거한다.
