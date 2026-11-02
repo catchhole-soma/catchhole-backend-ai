@@ -89,6 +89,9 @@ async def test_invented_subject_name_is_rejected_before_query():
     [
         {"outcome": "ANSWER", "rowRefs": ["R999"]},
         {"outcome": "ANSWER", "rowRefs": ["R1", "R1"]},
+        {"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": ["R999"]},
+        {"outcome": "CLARIFICATION", "rowRefs": ["R1", "R1"]},
+        {"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": [f"R{n}" for n in range(51)]},
         {"outcome": "ANSWER", "rowRefs": ["R1"], "quote": "조작된 원문"},
         {"outcome": "ANSWER", "rowRefs": ["R1"], "text": "마력은 무한대다"},
     ],
@@ -632,9 +635,16 @@ def test_selection_outcome_and_rows_mismatch_is_normalized_conservatively():
     assert (clarify.outcome, clarify.row_refs) == ("CLARIFICATION", [])
     empty = parse({"outcome": "ANSWER", "rowRefs": []})
     assert (empty.outcome, empty.row_refs) == ("INSUFFICIENT_EVIDENCE", [])
-    # 중복은 정규화하지 않고 기존 계약대로 거절한다.
-    with pytest.raises(ValueError):
-        parse({"outcome": "ANSWER", "rowRefs": ["R1", "R1"]})
+    assert dropped.discarded_row_refs() == ("R1",)
+    assert clarify.discarded_row_refs() == ("R1", "R2")
+    # 중복·상한 초과는 판단과 상관없이 정규화하지 않고 기존 계약대로 거절한다.
+    for bad in (
+        {"outcome": "ANSWER", "rowRefs": ["R1", "R1"]},
+        {"outcome": "CLARIFICATION", "rowRefs": ["R1", "R1"]},
+        {"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": [f"R{n}" for n in range(51)]},
+    ):
+        with pytest.raises(ValueError):
+            parse(bad)
 
 
 @pytest.mark.anyio
@@ -642,6 +652,20 @@ async def test_answer_without_rows_ends_as_insufficient_evidence_without_a_retry
     case, catalog = scenario()
     result = await replay_case(
         case, catalog, outputs=[case["modelOutputs"][0], {"outcome": "ANSWER", "rowRefs": []}]
+    )
+    assert result["finish"]["failure"] is None, result["finish"]
+    assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert len(result["modelRequests"]) == 2
+
+
+@pytest.mark.anyio
+async def test_known_rows_on_a_non_answer_are_dropped_without_a_retry():
+    # 답하지 않는 판단에 실제 행을 붙인 응답은 재호출 없이 근거 부족으로 끝난다.
+    case, catalog = scenario()
+    result = await replay_case(
+        case,
+        catalog,
+        outputs=[case["modelOutputs"][0], {"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": ["R1"]}],
     )
     assert result["finish"]["failure"] is None, result["finish"]
     assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"

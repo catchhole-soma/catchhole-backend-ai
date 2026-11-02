@@ -2,7 +2,7 @@
 
 from typing import Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, PrivateAttr, model_validator
 
 from app.schemas.setting_tools import ContractModel
 
@@ -144,24 +144,38 @@ class AnswerSelection(ContractModel):
     outcome: Literal["ANSWER", "CLARIFICATION", "INSUFFICIENT_EVIDENCE"]
     row_refs: list[str] = Field(max_length=50)
 
-    @model_validator(mode="before")
+    # 답하지 않는 판단에서 버린 행. 세션의 실제 행 목록으로 다시 검증해 없는 참조면 재시도한다.
+    _discarded_row_refs: tuple[str, ...] = PrivateAttr(default=())
+
+    @model_validator(mode="wrap")
     @classmethod
-    def normalize_outcome(cls, data):
+    def normalize_outcome(cls, data, handler):
         # 판단과 행 목록이 어긋난 응답은 재호출 대신 보수적으로 맞춘다(V2-036: 두 번 모두
-        # INVALID_SELECTION으로 실행 실패). 답하지 않는 판단에 붙은 행은 버리고, 답한다면서 행이
-        # 없으면 근거 부족으로 본다. 없는 참조·중복·상한 초과는 기존대로 재시도한다.
-        if not isinstance(data, dict):
-            return data
-        key = "rowRefs" if "rowRefs" in data else "row_refs"
-        refs = data.get(key)
-        if not isinstance(refs, list):
-            return data
-        outcome = data.get("outcome")
-        if outcome in ("CLARIFICATION", "INSUFFICIENT_EVIDENCE") and refs:
-            return {**data, key: []}
-        if outcome == "ANSWER" and not refs:
-            return {**data, "outcome": "INSUFFICIENT_EVIDENCE"}
-        return data
+        # INVALID_SELECTION으로 실행 실패). 답한다면서 행이 없으면 근거 부족으로 본다. 답하지 않는
+        # 판단에 붙은 행은 중복·상한 위반이 없을 때만 버리고, 버린 행도 세션에서 실제 행인지 확인한다.
+        # 없는 참조·중복·상한 초과는 판단과 상관없이 기존대로 재시도한다.
+        discarded = ()
+        if isinstance(data, dict):
+            key = "rowRefs" if "rowRefs" in data else "row_refs"
+            refs = data.get(key)
+            outcome = data.get("outcome")
+            if (
+                outcome in ("CLARIFICATION", "INSUFFICIENT_EVIDENCE")
+                and isinstance(refs, list)
+                and refs
+                and len(refs) <= 50
+                and all(isinstance(ref, str) for ref in refs)
+                and len(set(refs)) == len(refs)
+            ):
+                discarded, data = tuple(refs), {**data, key: []}
+            elif outcome == "ANSWER" and refs == []:
+                data = {**data, "outcome": "INSUFFICIENT_EVIDENCE"}
+        selection = handler(data)
+        selection._discarded_row_refs = discarded
+        return selection
+
+    def discarded_row_refs(self) -> tuple[str, ...]:
+        return self._discarded_row_refs
 
     @model_validator(mode="after")
     def valid_selection(self) -> Self:

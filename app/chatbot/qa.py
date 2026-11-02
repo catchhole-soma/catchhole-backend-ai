@@ -808,8 +808,9 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         by_ref = {row.ref: row for row in candidates}
 
         def validate_selection(selection):
+            refs = (*selection.row_refs, *selection.discarded_row_refs())
             if len(selection.row_refs) > self.cfg.max_selected_rows or any(
-                ref not in by_ref for ref in selection.row_refs
+                ref not in by_ref for ref in refs
             ):
                 raise ValueError("Unknown or excessive row references")
 
