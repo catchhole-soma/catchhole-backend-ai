@@ -107,12 +107,16 @@ class RelationshipWorker:
         pipeline = None
         try:
             self._validate_payload(payload)
-            async with WorkerLeaseHeartbeat(
+            heartbeat = WorkerLeaseHeartbeat(
                 self,
                 payload.analysis_job_id,
                 payload.lease_token,
                 interval_seconds=self._heartbeat_interval_seconds,
-            ) as heartbeat:
+            )
+            # Claim preparation can consume the initial lease before the response arrives.
+            # Confirm ownership before loading context, reading source or reserving a paid call.
+            await heartbeat.renew_now()
+            async with heartbeat:
                 pipeline = self._pipeline(payload)
                 await pipeline.load()
                 chunks = []

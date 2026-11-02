@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Protocol
+from typing import Protocol, Self
 from uuid import UUID
 
 import httpx
@@ -48,7 +48,7 @@ class WorkerLeaseHeartbeat:
         self._owner_task: asyncio.Task | None = None
         self._error: Exception | None = None
 
-    async def __aenter__(self) -> "WorkerLeaseHeartbeat":
+    async def __aenter__(self) -> Self:
         self._owner_task = asyncio.current_task()
         self._task = asyncio.create_task(
             self._run(),
@@ -74,6 +74,11 @@ class WorkerLeaseHeartbeat:
     def raise_if_failed(self) -> None:
         if self._error is not None:
             raise RuntimeError("Worker lease heartbeat failed.") from self._error
+
+    async def renew_now(self) -> None:
+        """Renew before starting work, using the same bounded heartbeat retries."""
+        if not await self._heartbeat_with_retry():
+            raise RuntimeError("Worker lease heartbeat stopped.")
 
     async def _run(self) -> None:
         while True:
