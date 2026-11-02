@@ -4,6 +4,8 @@ import asyncio
 import copy
 import itertools
 import json
+import random
+import tracemalloc
 
 import httpx
 import pytest
@@ -11,6 +13,10 @@ import pytest
 from app.analysis.exceptions import ComparisonValidationError, OrderedAnalysisIncompleteError
 from app.analysis.relationship_comparator import (
     RelationshipComparator,
+    _comparison_components,
+    _comparison_endpoint_sets,
+    _possible_pairs_overlap,
+    _project_comparison,
     relationship_comparison_prompt_data,
 )
 from app.analysis.relationship_observations import RelationshipInputTooLargeError
@@ -293,3 +299,109 @@ def test_input_limit_diagnostic_survives_dedicated_worker_failure(monkeypatch):
     diagnostic = spring.fail_relationship_job.call_args.kwargs["failure_diagnostics"]
     assert diagnostic.reason_code == "RELATIONSHIP_INPUT_TOO_LARGE"
     assert diagnostic.stage == "RELATIONSHIP_EXTRACTION"
+
+
+def _cartesian_pairs(source, target):
+    """Small-input reference implementation of the original partition semantics."""
+    return {tuple(sorted((left, right))) for left in source for right in target if left != right}
+
+
+def test_endpoint_intersection_is_equivalent_to_all_small_cartesian_pair_sets():
+    nodes = ["N1", "N2", "N3", "N4"]
+    subsets = [frozenset(group) for count in range(5) for group in itertools.combinations(nodes, count)]
+    endpoints = list(itertools.product(subsets, repeat=2))
+    expected = [_cartesian_pairs(*item) for item in endpoints]
+    for left_index, left in enumerate(endpoints):
+        for right_index, right in enumerate(endpoints):
+            assert _possible_pairs_overlap(left, right) == bool(expected[left_index] & expected[right_index])
+
+
+def _original_cartesian_components(payload):
+    rows = [*payload["observations"], *payload["heldObservations"]]
+    owners, parents = {}, list(range(len(rows)))
+
+    def root(index):
+        while parents[index] != index:
+            index = parents[index]
+        return index
+
+    for index, row in enumerate(rows):
+        for pair in _cartesian_pairs(row["sourceNodeRefs"], row["targetNodeRefs"]):
+            previous = owners.setdefault(pair, index)
+            parents[root(index)] = root(previous)
+    groups = {}
+    for index, row in enumerate(rows):
+        groups.setdefault(root(index), []).append(row)
+    return [group for group in groups.values() if any(row["ref"].startswith("O") for row in group)]
+
+
+def test_components_and_relationship_projection_preserve_cartesian_semantics():
+    rng = random.Random(332)
+    names = [f"N{i}" for i in range(1, 9)]
+    for _ in range(100):
+        new, held = [], []
+        for index in range(12):
+            source, target = (rng.sample(names, rng.randrange(0, 5)) for _ in range(2))
+            row = observation(
+                f"O{index + 1}" if index < 6 else f"H{index - 5}",
+                sourceNodeRefs=source, targetNodeRefs=target, sourceEpisodeNo=1,
+            )
+            (new if index < 6 else held).append(row)
+        data = disjoint_context(4)
+        data.update(observations=new, heldObservations=held)
+        data["relationships"] = [relationship(ref=f"R{i + 1}", sourceNodeRef=left, targetNodeRef=right)
+                                 for i, (left, right) in enumerate(itertools.permutations(names, 2))]
+        before = copy.deepcopy(data)
+        actual = _comparison_components(data)
+        assert actual == _original_cartesian_components(data)
+        for component in actual:
+            pairs = set().union(*[_cartesian_pairs(row["sourceNodeRefs"], row["targetNodeRefs"])
+                                  for row in component])
+            expected = [row for row in data["relationships"]
+                        if tuple(sorted((row["sourceNodeRef"], row["targetNodeRef"]))) in pairs]
+            assert _project_comparison(data, component)["relationships"] == expected
+        assert data == before
+
+
+def test_self_only_observations_stay_separate_even_with_identical_candidate_sets():
+    data = context(observations=[observation("O1", source="N1", target="N1"),
+                                 observation("O2", source="N1", target="N1")])
+    assert [[row["ref"] for row in component] for component in _comparison_components(data)] == [["O1"], ["O2"]]
+
+
+def test_large_ambiguous_endpoint_sets_do_not_allocate_cartesian_pairs():
+    # Each row has over one million distinct unordered pairs. A materialized
+    # pair set costs hundreds of MB here; endpoint intersections remain linear.
+    names = [f"N{i}" for i in range(1, 1537)]
+    data = context(
+        observations=[observation(f"O{i}", sourceNodeRefs=names, targetNodeRefs=names) for i in range(1, 9)],
+        nodes=[{"ref": name, "name": "합성 인물", "profileRegistered": True} for name in names],
+        relationships=[relationship(ref=f"R{i}", sourceNodeRef=names[i - 1], targetNodeRef=names[i])
+                       for i in range(1, 1536)],
+    )
+    # Valid under the same server-owned 1,536-node bound; no lower policy limit.
+    data = relationship_comparison_prompt_data(data)
+    tracemalloc.start()
+    try:
+        endpoints = _comparison_endpoint_sets(data)
+        components = _comparison_components(data, endpoints)
+        projected = _project_comparison(data, components[0], endpoints)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert len(components) == 1
+    assert projected == data
+    assert peak < 16 * 1024 * 1024
+
+
+def test_large_ambiguous_unsplittable_context_fails_before_provider(monkeypatch):
+    observation_budget(monkeypatch)
+    names = [f"N{i}" for i in range(1, 1537)]
+    data = context(
+        observations=[observation(f"O{i}", sourceNodeRefs=names, targetNodeRefs=names) for i in range(1, 3)],
+        nodes=[{"ref": name, "name": "합성 인물", "profileRegistered": True} for name in names],
+    )
+    client = PerPairClient()
+    with pytest.raises(RelationshipInputTooLargeError):
+        run(client, data, 100)
+    assert client.calls == []
