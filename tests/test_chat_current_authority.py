@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import json
 import logging
 import socket
 
@@ -9,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.chatbot.qa import response_schema
+from app.chatbot.qa_render import NOTICES
 from app.schemas.chat_execution import ConversationTurn
 from app.schemas.chat_hybrid import HybridPlan
 from tests.test_chat_focused_lookup import catalog_subject, item
@@ -100,12 +102,18 @@ def test_required_current_decision_is_strict_and_cannot_silently_default():
         HybridPlan.model_validate(plan)
 
 
-@pytest.mark.parametrize(
-    "changes", [{"sourceFallback": True}, {"rdbMode": "NONE"}, {"rdbMode": "HISTORY"}]
-)
+@pytest.mark.parametrize("changes", [{"rdbMode": "NONE"}, {"rdbMode": "HISTORY"}])
 def test_current_requirement_cannot_use_an_incompatible_route(changes):
     with pytest.raises(ValidationError, match="Required current information"):
         HybridPlan.model_validate({**current_case(mixed=True)["outputs"][0], **changes})
+
+
+def test_current_requirement_drops_source_fallback_instead_of_rejecting():
+    # 계획기가 등록값 확인 요구에 원문 보완까지 붙이면 거절(실행 실패)이 아니라 보완만 끈다.
+    plan = HybridPlan.model_validate(
+        {**current_case(mixed=True)["outputs"][0], "sourceFallback": True}
+    )
+    assert plan.registered_current_required is True and plan.source_fallback is False
 
 
 def test_current_value_uses_manual_snapshot_without_manuscript_fallback(tmp_path):
@@ -252,7 +260,11 @@ def test_value_only_correction_repairs_unobserved_attribute_then_maps_real_field
     assert len(result["spring"].reservations) == len(result["spring"].reports) == 3
 
 
-def test_repeated_focus_failure_clarifies_without_changing_scope_or_leaking_terms(tmp_path, caplog):
+def test_repeated_focus_failure_drops_the_attribute_without_changing_scope_or_leaking_terms(
+    tmp_path, caplog
+):
+    # 두 번째 시도도 질문에 없는 항목 이름만 틀렸으면 되묻지 않고 그 이름을 비운 뒤 유형(PROFILE)으로
+    # 진행한다. 대상·범위는 그대로이고 거절값은 로그·재전달 지침에 남지 않는다.
     case = current_case()
     case["question"] = "여자일 텐데?"
     private = "private-unobserved-attribute"
@@ -261,10 +273,14 @@ def test_repeated_focus_failure_clarifies_without_changing_scope_or_leaking_term
     with caplog.at_level(logging.WARNING, logger="app.chatbot.qa"):
         result = run(tmp_path, case, correction_catalog)
     assert result["finish"]["failure"] is None
-    assert result["finish"]["result"]["outcome"] == "CLARIFICATION"
-    assert not result["spring"].queries and not result["search"].calls
+    assert result["finish"]["result"]["outcome"] == "ANSWER"
+    assert NOTICES["FOCUS_ATTRIBUTE_DROPPED"] in result["finish"]["result"]["limitations"]
+    assert [q["tool"] for q in result["spring"].queries][:1] == ["FIND_CHARACTERS"]
+    assert all(q.get("factType") in (None, "PROFILE") for q in result["spring"].queries)
+    assert not result["search"].calls
     assert len(result["raw"].requests) == 2
     assert private not in caplog.text and private not in result["raw"].requests[1]["system"]
+    assert private not in json.dumps(result["spring"].queries, ensure_ascii=False)
 
 
 def test_ambiguous_registered_name_stops_before_current_or_source_lookup(tmp_path):
@@ -282,3 +298,117 @@ def test_ambiguous_registered_name_stops_before_current_or_source_lookup(tmp_pat
     assert result["finish"]["result"]["outcome"] == "CLARIFICATION"
     assert not result["search"].calls
     assert [q["tool"] for q in result["spring"].queries] == ["FIND_CHARACTERS"]
+
+
+def test_two_subject_comparison_reads_current_only_and_says_history_was_skipped(tmp_path):
+    # 두 인물의 현재 속성 비교에 이력까지 읽으면 항목·페이지 조회가 도구 예산을 넘겨
+    # '항목을 모두 확인하지 못함'으로 끝났다(실제 사례). 비교는 현재값만 읽고 이력 생략을 알린다.
+    case = current_case()
+    plan = case["outputs"][0]
+    plan.update(
+        question="세린과 다른 이름의 성별을 비교해줘",
+        rdbMode="CURRENT_AND_HISTORY",
+        subjects=[
+            {
+                "domain": "CHARACTER",
+                "name": "세린",
+                "focus": {"factType": "PROFILE", "attribute": "성별"},
+            },
+            {
+                "domain": "CHARACTER",
+                "name": "다른 이름",
+                "focus": {"factType": "PROFILE", "attribute": "성별"},
+            },
+        ],
+        searchTerms=["세린", "다른 이름"],
+    )
+    case["question"] = plan.pop("question")
+
+    def both(spring):
+        current_catalog(spring)
+        row = item(
+            702, "다른 이름", category="PROFILE", key="profile.gender", label="성별", value="남자"
+        )
+        spring.catalog.append(catalog_subject(702, "다른 이름", current=[row]))
+
+    result = run(tmp_path, case, both)
+    text = result_text(result)
+    assert "여자" in text and "남자" in text
+    tools = [q["tool"] for q in result["spring"].queries]
+    assert "CHARACTER_HISTORY" not in tools and tools.count("CHARACTER_CURRENT") == 2
+    limitations = result["finish"]["result"]["limitations"]
+    assert limitations.count(NOTICES["HISTORY_SKIPPED_FOR_COMPARISON"]) == 1
+
+
+def test_mixed_plan_continues_with_source_when_field_catalog_cannot_be_read_in_budget(tmp_path):
+    # 원문 라운드 예약 때문에 항목이 많은 인물의 등록 항목 목록을 다 읽지 못하면 되묻지 않고
+    # 등록 현재값은 미확인으로 두고 원문 답변을 계속한다(45화 황금 가면 실제 사례).
+    def many_fields(spring):
+        rows = [
+            item(701, "세린", category="PROFILE", key=f"profile.p{n}", label=f"항목 {n}", value="x")
+            for n in range(12)
+        ]
+        spring.catalog = [catalog_subject(701, "세린", current=rows)]
+
+    case = current_case(mixed=True)
+    case["outputs"].append(source_answer())
+    result = run(
+        tmp_path,
+        case,
+        many_fields,
+        search_setup=search_with(keyword=[passage(SOURCE, 1)]),
+        config={"fields_page_size": 1, "max_tool_calls": 12},
+    )
+    text = result_text(result)
+    assert result["finish"]["result"]["outcome"] != "CLARIFICATION"
+    assert SOURCE in text and "현재 등록 설정은 확인하지 못" in text
+    assert NOTICES["REGISTERED_LOOKUP_INCOMPLETE"] in result["finish"]["result"]["limitations"]
+    assert result["search"].calls
+
+
+def test_each_mixed_subject_with_unreadable_field_catalog_continues_to_source(tmp_path):
+    # 항목 목록을 예산 안에 다 읽지 못한 인물이 둘이어도, 두 번째 인물에서 되묻기로 끝나지 않고
+    # 두 인물 모두 등록 현재값을 미확인으로 둔 채 원문 답변을 계속한다.
+    def many_fields(spring):
+        def rows(number, name):
+            return [
+                item(
+                    number,
+                    name,
+                    category="PROFILE",
+                    key=f"profile.p{n}",
+                    label=f"항목 {n}",
+                    value="x",
+                )
+                for n in range(12)
+            ]
+
+        spring.catalog = [
+            catalog_subject(701, "세린", current=rows(701, "세린")),
+            catalog_subject(702, "미라", current=rows(702, "미라")),
+        ]
+
+    case = current_case(mixed=True)
+    case["question"] = "현재 세린과 미라의 성별은? 원문에서는 어떻게 나와?"
+    case["outputs"][0]["subjects"].append(
+        {
+            "domain": "CHARACTER",
+            "name": "미라",
+            "focus": {"factType": "PROFILE", "attribute": "성별"},
+        }
+    )
+    case["outputs"].append(source_answer())
+    result = run(
+        tmp_path,
+        case,
+        many_fields,
+        search_setup=search_with(keyword=[passage(SOURCE, 1)]),
+        config={"fields_page_size": 1, "max_tool_calls": 14},
+    )
+    text = result_text(result)
+    finished = result["finish"]["result"]
+    assert finished["outcome"] != "CLARIFICATION", finished
+    assert SOURCE in text
+    assert finished["limitations"].count(NOTICES["REGISTERED_LOOKUP_INCOMPLETE"]) == 1
+    assert [q["tool"] for q in result["spring"].queries].count("CHARACTER_FIELDS") >= 2
+    assert result["search"].calls

@@ -114,6 +114,9 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         self.selected_rows: list[AnswerRow] = []
         # Internal lookup outcomes, never inferred from public warning strings.
         self.lookup_gaps: set[str] = set()
+        # 직전 항목 탐색(fields) 한 번의 결과. lookup_gaps는 실행 전체에 누적되므로 인물마다의
+        # 되돌림·계속 진행 판단은 이 값으로 한다.
+        self.field_attempt_gaps: set[str] = set()
         self.focused_refs: set[str] = set()
         self.snapshot_versions = {}
         self.last_collection = None
@@ -360,6 +363,25 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     *diagnostic.values(),
                     extra=diagnostic,
                 )
+                if (
+                    attempt + 1 == attempt_limit
+                    and validation_stage == "RESPONSE_CONTRACT"
+                    and feedback
+                    and all(item["code"] == "UNOBSERVED_FOCUS_ATTRIBUTE" for item in feedback)
+                    and hasattr(parsed, "subjects")
+                ):
+                    # 마지막 시도까지 질문에 없는 항목 이름만 남았으면 되묻거나 실패하는 대신
+                    # 그 이름을 비우고 유형으로 진행한다(두 속성 × 두 인물 질문의 실제 사례).
+                    recovered = self.drop_unobserved_focus(parsed)
+                    if recovered is not None:
+                        try:
+                            revalidated = validate(recovered) if validate else None
+                        except (ValidationError, ValueError):
+                            revalidated = None
+                            recovered = None
+                        if recovered is not None:
+                            self.codes.append("FOCUS_ATTRIBUTE_DROPPED")
+                            return revalidated if isinstance(revalidated, cls) else recovered
         if validation_failed:
             if only_focus_failures:
                 raise LookupClarificationRequired()
@@ -438,7 +460,7 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                     world_category=world_category,
                     read_token=read_token,
                     page=page,
-                    size=self.cfg.page_size,
+                    size=self.cfg.fields_page_size if fields else self.cfg.page_size,
                     episode_from=self.source_from if history or source_range else None,
                     episode_to=self.source_to if history or source_range else None,
                 )
@@ -687,6 +709,12 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                 if plan.intent == "CURRENT_AND_HISTORY"
                 else ["HISTORY" if plan.intent == "HISTORY" else "CURRENT"]
             )
+            if modes == ["CURRENT", "HISTORY"] and len(targets) > 1:
+                # 여러 인물의 현재 속성 비교에 이력까지 읽으면 항목·페이지 조회가 도구 예산을 넘겨
+                # '항목을 모두 확인하지 못함'으로 끝났다. 비교는 현재값으로 답하고 이력 생략을 알린다.
+                modes = ["CURRENT"]
+                if "HISTORY_SKIPPED_FOR_COMPARISON" not in self.codes:
+                    self.codes.append("HISTORY_SKIPPED_FOR_COMPARISON")
             stop = await self.subject_rows(subject, target, modes, reserve=current_checks)
             if stop:
                 return stop

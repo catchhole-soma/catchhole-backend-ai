@@ -112,6 +112,24 @@ class FocusedLookup:
             raise SettingToolClientError("CONTRACT_ERROR")
         return item, None
 
+    def drop_unobserved_focus(self, plan):
+        """마지막 계획 시도도 질문에 없는 항목 이름만 틀렸으면 그 이름을 비우고 유형으로 진행한다.
+
+        항목 이름은 FIELD 선택의 힌트일 뿐이라 비워도 질문 본문으로 고를 수 있다. 바뀐 subject가 없으면 None.
+        """
+        observed = self.observed_question_text()
+        subjects = []
+        changed = False
+        for subject in plan.subjects:
+            attribute = subject.focus.attribute if subject.focus else None
+            if attribute and attribute.strip().casefold() not in observed:
+                subject = subject.model_copy(
+                    update={"focus": subject.focus.model_copy(update={"attribute": None})}
+                )
+                changed = True
+            subjects.append(subject)
+        return plan.model_copy(update={"subjects": subjects}) if changed else None
+
     def validate_focus(self, plan):
         observed = self.observed_question_text()
         terms = [s.focus.attribute for s in plan.subjects if s.focus and s.focus.attribute]
@@ -138,7 +156,11 @@ class FocusedLookup:
         condition=False,
         world_category=None,
         current_items=(),
+        allow_value_fallback=False,
     ):
+        # allow_value_fallback: 호출자가 항목 선택 실패 뒤 그 유형의 현재값을 읽어 고를 수 있을 때만
+        # 모호한 인물 항목 선택의 되묻기를 생략한다(원문 보완·혼합 범위·전체 조회·조건 검색은 되묻는다).
+        self.field_attempt_gaps = set()
         items, complete = await self.pages(
             f"{domain}_FIELDS",
             target=target,
@@ -149,6 +171,7 @@ class FocusedLookup:
             reserve=reserve + 1,
         )
         if not complete:
+            self.field_gap("FIELDS_INCOMPLETE")
             return [], message(
                 "CLARIFICATION",
                 "설정 항목을 모두 확인하지 못했습니다. 조회할 유형이나 항목을 좁혀 주세요.",
@@ -166,7 +189,7 @@ class FocusedLookup:
                 merged[key] for key in sorted(merged, key=lambda key: tuple(v or "" for v in key))
             ]
         if not items:
-            self.lookup_gaps.add("NO_FIELDS")
+            self.field_gap("NO_FIELDS")
             return [], None
         # Exact unique display names require no semantic interpretation. World paths
         # with identical labels remain ambiguous, including root versus named scopes.
@@ -221,14 +244,29 @@ class FocusedLookup:
             valid,
         )
         if selected.outcome == "CLARIFICATION":
-            return [], message(
-                "CLARIFICATION",
-                "같은 이름의 항목이나 범위가 있습니다. 어떤 설정을 뜻하는지 알려주세요.",
-                self.codes,
-            )
+            labels = [normalized(item.display_name or "") for item in candidates.values()]
+            asked = normalized(focus.attribute) if focus.attribute else None
+            duplicated = asked is not None and labels.count(asked) > 1
+            if condition or domain != "CHARACTER" or duplicated or not allow_value_fallback:
+                # 조건 검색, 세계관의 같은 경로명(루트/범위), 질문한 속성과 같은 표시명이 둘 이상인 인물 항목,
+                # 값으로 다시 고를 수 없는 호출은 되묻는 편이 맞다. 질문과 무관한 항목의 표시명 중복
+                # (158개 항목 속 '거대화' 2개)은 막지 않는다.
+                return [], message(
+                    "CLARIFICATION",
+                    "같은 이름의 항목이나 범위가 있습니다. 어떤 설정을 뜻하는지 알려주세요.",
+                    self.codes,
+                )
+            # 항목 이름만으로 하나를 고르지 못하면 되묻는 대신 그 유형의 현재값을 읽어 선택 모델이
+            # 실제 값으로 고르게 한다('주무기' ↔ 쌍검/창, 여러 요구를 한 번에 묻는 질문).
+            self.field_gap("FIELD_AMBIGUOUS")
+            return [], None
         if selected.outcome == "INSUFFICIENT_EVIDENCE":
-            self.lookup_gaps.add("NO_RELEVANT_FIELDS")
+            self.field_gap("NO_RELEVANT_FIELDS")
         return [item for ref, item in candidates.items() if ref in selected.field_refs], None
+
+    def field_gap(self, code):
+        self.lookup_gaps.add(code)
+        self.field_attempt_gaps.add(code)
 
     async def subject_rows(self, subject, target, modes, *, reserve=0):
         focus = subject.focus if "focus" in subject.model_fields_set else None
@@ -236,6 +274,7 @@ class FocusedLookup:
         cached_current = None
         current_check_rows = []
         guard_reserve = 0
+        fallback_rows = False
         if focus:
             filters = [{"fact_type": focus.fact_type}]
             if focus.attribute:
@@ -261,6 +300,11 @@ class FocusedLookup:
                             self.codes,
                         )
                     guard_reserve = 1
+                source_fallback = bool(
+                    getattr(getattr(self, "plan", None), "source_fallback", False)
+                )
+                # 원문 보완(sourceFallback)이 허용된 계획은 기존대로 값을 읽지 않고 원문으로 넘어간다.
+                value_fallback = not source_fallback and "CURRENT" in modes and not mixed_range
                 fields, stop = await self.fields(
                     subject.domain,
                     target,
@@ -268,9 +312,31 @@ class FocusedLookup:
                     history=modes == ["HISTORY"] or mixed_range,
                     reserve=reserve + guard_reserve,
                     current_items=cached_current or (),
+                    allow_value_fallback=value_fallback,
                 )
                 if stop:
                     return stop
+                if (
+                    not fields
+                    and "NO_FIELDS" in self.field_attempt_gaps
+                    and focus.fact_type is not None
+                    and not source_fallback
+                    and not mixed_range
+                ):
+                    # 질문의 유형 추정('몇 급'→LEVEL)이 틀려 그 유형의 항목이 없으면 모든 유형의 항목
+                    # 목록에서 다시 고른다. 값은 여전히 선택된 항목만 읽는다.
+                    self.codes.append("FOCUS_TYPE_WIDENED")
+                    focus = focus.model_copy(update={"fact_type": None})
+                    fields, stop = await self.fields(
+                        subject.domain,
+                        target,
+                        focus,
+                        history=modes == ["HISTORY"],
+                        reserve=reserve + guard_reserve,
+                        allow_value_fallback=value_fallback,
+                    )
+                    if stop:
+                        return stop
                 if cached_current is not None:
                     selected_paths = {_field_key(item) for item in fields}
                     cached_current = [
@@ -284,17 +350,28 @@ class FocusedLookup:
                     }
                     for item in fields
                 ]
+                relevant_missing = bool(
+                    {"NO_RELEVANT_FIELDS", "FIELD_AMBIGUOUS"} & self.field_attempt_gaps
+                )
+                if not fields and relevant_missing and value_fallback:
+                    # 항목은 있는데 질문 표현('몇 급 마법사')이 등록 표시명('직업')과 달라 FIELD 선택이
+                    # 비면 포기하지 않고 그 유형의 현재값 전체를 읽어 선택 모델이 고르게 한다.
+                    # 해당 유형의 항목 자체가 없는 경우(NO_FIELDS)는 기존처럼 값 조회 없이 끝낸다.
+                    # 집중 조회가 아니므로 일반 행 상한과 선택 단계를 그대로 거친다.
+                    self.codes.append("FOCUS_FALLBACK")
+                    filters = [{"fact_type": focus.fact_type}]
+                    fallback_rows = True
         for mode in modes:
             collected = []
             complete = True
             if mode == "CURRENT" and cached_current is not None:
                 collected = cached_current
             else:
-                for arguments in filters:
+                for arguments in filters if (mode == "CURRENT" or not fallback_rows) else []:
                     items, page_complete = await self.pages(
                         f"{subject.domain}_{mode}",
                         target=target,
-                        exhaustive=focus is not None,
+                        exhaustive=focus is not None and not fallback_rows,
                         reserve=reserve + guard_reserve,
                         **arguments,
                     )
@@ -312,14 +389,14 @@ class FocusedLookup:
                     key=lambda i: (i.source_episode_no is None, i.source_episode_no or 0)
                 )
             for item in collected:
-                if focus is None and len(self.rows) >= self.cfg.max_items:
+                if (focus is None or fallback_rows) and len(self.rows) >= self.cfg.max_items:
                     self.codes.append("PARTIAL_RESULTS")
                     break
                 row = AnswerRow(f"R{len(self.rows) + 1}", item, subject.domain)
                 self.rows.append(row)
                 if mode == "CURRENT" and cached_current is not None:
                     current_check_rows.append(row)
-                if focus is not None:
+                if focus is not None and not fallback_rows:
                     self.focused_refs.add(self.rows[-1].ref)
         # Cached rows were fetched before the FIELD model call. Protect FACTS
         # rendering too; summary/hybrid synthesis keeps its later final check.

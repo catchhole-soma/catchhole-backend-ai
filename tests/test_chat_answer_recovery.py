@@ -11,8 +11,9 @@ import pytest
 
 from app.chatbot.hybrid import _HybridSession
 from app.chatbot.qa import _Session
+from app.chatbot.qa_render import NOTICES
 from app.chatbot.replay import ScriptedTextClient
-from tests.test_chat_hybrid import replay
+from tests.test_chat_hybrid import replay, scenario
 from tests.test_chat_hybrid_items import passage
 from tests.test_chat_requested_parts import (
     BEHAVIOR,
@@ -207,3 +208,37 @@ def test_soft_timeout_keeps_snapshot_and_unknown_usage_for_cancelled_call(tmp_pa
     assert len(unknown) == 1
     assert unknown[0]["inputTokens"] is None and unknown[0]["outputTokens"] is None
     assert result["spring"].receipts
+
+
+def test_unrecovered_first_answer_truncation_ends_insufficient_instead_of_failing(
+    tmp_path, monkeypatch
+):
+    # 첫 답변이 출력 상한에서 잘리고 복구 호출도 잘리면, 검증된 답이 없어도 실행 실패가 아니라
+    # 부족 안내로 마감한다(두 인물 CURRENT_AND_HISTORY + 원문에서 4,500토큰 답이 잘린 실제 사례).
+    truncated_provider(monkeypatch, first=1, repeat=True)
+    result = asyncio.run(replay(tmp_path, scenario("lexical_scene")))
+    assert result["finish"].get("failure") is None, result["finish"]
+    finished = result["finish"]["result"]
+    assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert NOTICES["ANSWER_LIMIT"] in finished["limitations"]
+
+
+def test_answer_timeout_without_validated_answer_keeps_the_failure_boundary(tmp_path, monkeypatch):
+    # 부족 안내 마감은 출력 상한 절단에만 쓴다. 첫 답변 호출이 출력 없이 시간만 초과하면
+    # 검증된 답이 없으므로 기존 실패 경계를 유지하고 '답변 길이 한도' 안내를 붙이지 않는다.
+    original = ScriptedTextClient.create_text_response
+    original_time = _Session.model_time_left
+
+    async def slow(self, *args, **kwargs):
+        if len(self.requests) >= 1:
+            await asyncio.sleep(1)
+            raise AssertionError("The soft deadline should cancel this call")
+        return await original(self, *args, **kwargs)
+
+    def time_left(self):
+        return 0.02 if self.model_calls >= 2 else original_time(self)
+
+    monkeypatch.setattr(ScriptedTextClient, "create_text_response", slow)
+    monkeypatch.setattr(_Session, "model_time_left", time_left)
+    result = asyncio.run(replay(tmp_path, scenario("lexical_scene")))
+    assert result["finish"] == {"result": None, "failure": "EXECUTION_LIMIT_EXCEEDED"}

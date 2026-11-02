@@ -876,6 +876,13 @@ class _HybridSession(_Session):
                 if plan.rdb_mode == "CURRENT_AND_HISTORY"
                 else ["HISTORY" if plan.rdb_mode == "HISTORY" else "CURRENT"]
             )
+            if modes == ["CURRENT", "HISTORY"] and len(plan.subjects) > 1:
+                # 여러 인물의 현재 속성 비교에 이력까지 읽으면 항목·페이지 조회가 도구 예산을 넘겨
+                # '항목을 모두 확인하지 못함'으로 끝났다. 비교는 현재값으로 답하고 이력 생략을 알린다.
+                modes = ["CURRENT"]
+                if "HISTORY_SKIPPED_FOR_COMPARISON" not in self.codes:
+                    self.codes.append("HISTORY_SKIPPED_FOR_COMPARISON")
+            self.field_attempt_gaps = set()
             stop = await self.subject_rows(
                 subject,
                 item.subject_id,
@@ -888,6 +895,13 @@ class _HybridSession(_Session):
                 ),
             )
             if stop:
+                if plan.source_need != "NONE" and "FIELDS_INCOMPLETE" in self.field_attempt_gaps:
+                    # 원문 라운드 예약 때문에 항목 158개 인물의 등록 항목을 다 읽지 못하면 되묻지 않고
+                    # 등록 현재값은 미확인으로 두고 원문 답변을 계속한다(45화 황금 가면 실제 사례).
+                    self.current_requirement_resolved = False
+                    if "REGISTERED_LOOKUP_INCOMPLETE" not in self.codes:
+                        self.codes.append("REGISTERED_LOOKUP_INCOMPLETE")
+                    continue
                 return stop
         self.chosen, stop = await self.select_rows(plan, allow_missing=True)
         if stop:
@@ -1492,7 +1506,9 @@ class _HybridSession(_Session):
             # rank order. Old unproven lexical scores must not crowd out vector
             # hits; the common item/token/episode caps still bound this context.
             priority_chunk_ids=[c.chunk_id for c in priority],
-            episode_round_robin=not bool(self.plan and self.plan.requested_parts),
+            # 요구 항목이 있어도 전수·개수 질문은 회차를 고루 읽어야 서로 다른 인물·종류가 근거에 들어온다.
+            episode_round_robin=not bool(self.plan and self.plan.requested_parts)
+            or bool(self.plan and self.plan.answer_shape in {"LIST", "COUNT", "DISTINCT"}),
         )
         self.evidences = [replace(e, ref=f"E{index}") for index, e in enumerate(direct, 1)]
         for chunk in bundle.chunks:
@@ -1877,9 +1893,17 @@ class _HybridSession(_Session):
             )
         except (ModelTimeBudgetExceeded, ProviderOutputTruncated) as exc:
             # A failed expansion must not erase an earlier validated answer.
-            # With no supported snapshot the original failure still propagates.
             if not self.supported_evidence:
-                raise
+                if not isinstance(exc, ProviderOutputTruncated):
+                    # 출력 없이 시간만 초과한 경우는 기존 실패 경계(EXECUTION_LIMIT_EXCEEDED)를 유지한다.
+                    raise
+                # 첫 답변이 출력 상한에서 잘리고 복구할 시간이 없으면 실행 실패 대신 부족 안내로 마감한다.
+                # 긴 조회(두 인물 CURRENT_AND_HISTORY + 원문)에서 4,500토큰 답이 잘린 실제 사례.
+                self.codes.append("ANSWER_LIMIT")
+                self.trace(
+                    "answer_truncated_unrecovered", reason=type(exc).__name__, round=self.rounds
+                )
+                return self.empty_source_answer(plan)
             self.codes.append("SEARCH_LIMIT")
             self.trace("answer_expansion_stopped", reason=type(exc).__name__, round=self.rounds)
             return self.empty_source_answer(plan)
