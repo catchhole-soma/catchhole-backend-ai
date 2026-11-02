@@ -2,11 +2,13 @@
 
 import asyncio
 import copy
+import json
 import logging
 import socket
 
 import pytest
 
+from app.chatbot.qa_render import NOTICES
 from app.chatbot.qa_validation import RULES
 from tests.test_chat_current_authority import current_case
 from tests.test_chat_focused_lookup import catalog_subject, item
@@ -51,15 +53,12 @@ def offline_only(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect_ex", reject)
 
 
+# 등록 전용 계획에 남은 requestedParts(PLAN_PARTS_MODE)와 요구 항목 없는 sourceFallback
+# (PLAN_FALLBACK_PARTS_REQUIRED)은 재시도 대신 정규화한다 — tests/test_chat_plan_normalization.py.
 @pytest.mark.parametrize(
     ("changes", "code", "path"),
     [
         ({"requestedFacets": ["TIME"]}, "PLAN_PARTS_MODE", "$.requestedParts"),
-        (
-            {**REGISTERED_PLAN, "requestedParts": [{"ref": "P1", "description": PRIVATE}]},
-            "PLAN_PARTS_MODE",
-            "$.requestedParts",
-        ),
         ({"requestedParts": []}, "PLAN_PARTS_REQUIRED", "$.requestedParts"),
         (
             {"requestedParts": [{"ref": "P2", "description": PRIVATE}]},
@@ -82,11 +81,6 @@ def offline_only(monkeypatch):
             "$.eventContext",
         ),
         ({"eventContext": " "}, "PLAN_EVENT_CONTEXT", "$.eventContext"),
-        (
-            {**REGISTERED_PLAN, "sourceFallback": True},
-            "PLAN_FALLBACK_PARTS_REQUIRED",
-            "$.requestedParts",
-        ),
         ({"disposition": "GREETING"}, "PLAN_CONVERSATION_ONLY", "$"),
     ],
 )
@@ -118,9 +112,9 @@ def test_cross_field_failure_provides_specific_safe_feedback_then_recovers(
     assert all(report["outcome"] == "SUCCESS" for report in result["spring"].reports)
 
 
-def test_unobserved_focus_is_still_rejected_before_any_search_with_bounded_retries(
-    tmp_path, caplog
-):
+def test_unobserved_focus_is_retried_once_then_dropped_before_any_search(tmp_path, caplog):
+    # 질문에 없는 항목 이름은 한 번 재전달하고, 마지막 시도도 같은 오류만 남으면 그 이름을 비운 뒤
+    # 유형(SKILL)으로 진행한다. 거절값은 로그·지침에 남지 않고 검색은 시작하지 않는다.
     case = parts_case()
     invalid = copy.deepcopy(case["outputs"][0])
     invalid["subjects"] = [
@@ -137,7 +131,8 @@ def test_unobserved_focus_is_still_rejected_before_any_search_with_bounded_retri
         result = asyncio.run(replay(tmp_path, case))
 
     assert result["finish"]["failure"] is None
-    assert result["finish"]["result"]["outcome"] == "CLARIFICATION"
+    assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert NOTICES["FOCUS_ATTRIBUTE_DROPPED"] in result["finish"]["result"]["limitations"]
     records = [record for record in caplog.records if record.name == "app.chatbot.qa"]
     assert len(records) == 2
     assert all(record.validation_stage == "RESPONSE_CONTRACT" for record in records)
@@ -150,9 +145,10 @@ def test_unobserved_focus_is_still_rejected_before_any_search_with_bounded_retri
     assert PRIVATE not in caplog.text
     assert "UNOBSERVED_FOCUS_ATTRIBUTE" in result["raw"].requests[1]["system"]
     assert PRIVATE not in result["raw"].requests[1]["system"]
-    assert len(result["raw"].requests) == len(result["spring"].reservations) == 2
-    assert result["search"].calls == []
-    assert result["spring"].receipts == []
+    # 계획 호출은 두 번뿐이고, 비운 항목 이름은 이후 조회·검색 어디에도 전달되지 않는다.
+    assert len(result["raw"].requests) == 2
+    assert PRIVATE not in json.dumps(result["spring"].queries, ensure_ascii=False)
+    assert all(PRIVATE not in str(call) for call in result["search"].calls)
 
 
 @pytest.mark.parametrize(

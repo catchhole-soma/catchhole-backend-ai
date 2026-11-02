@@ -281,7 +281,105 @@ async def test_exact_unique_display_name_uses_server_key_without_extra_model_cal
 
 
 @pytest.mark.anyio
-async def test_missing_field_metadata_does_not_fall_back_to_unfiltered_values():
+async def test_unmatched_field_name_falls_back_to_type_values_for_selection():
+    # 항목은 있지만 질문 표현('몇 급 마법사')이 등록 표시명('직업')과 달라 FIELD 선택이 비는 경우,
+    # 포기하지 않고 그 유형의 현재값을 읽어 선택 모델이 고르게 한다.
+    catalog = [
+        catalog_subject(
+            140,
+            "드왈키",
+            current=[
+                item(
+                    140,
+                    "드왈키",
+                    category="PROFILE",
+                    key="profile.occupation",
+                    label="직업",
+                    value="8급 마법사",
+                ),
+                item(
+                    140,
+                    "드왈키",
+                    category="PROFILE",
+                    key="profile.species",
+                    label="종족",
+                    value="인간",
+                    number=141,
+                ),
+            ],
+        )
+    ]
+    result = await replay_case(
+        case(
+            "드왈키는 몇 급 마법사야?",
+            plan("드왈키", fact_type="PROFILE", attribute="몇 급 마법사"),
+            {"outcome": "INSUFFICIENT_EVIDENCE", "fieldRefs": []},
+            {"outcome": "ANSWER", "rowRefs": ["R1"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    assert actual["outcome"] == "ANSWER" and "8급" in actual["text"]
+    assert [q["tool"] for q in result["queries"]] == [
+        "FIND_CHARACTERS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_CURRENT",
+    ]
+    assert tool_queries(result, "CHARACTER_CURRENT")[0]["factType"] == "PROFILE"
+    assert NOTICES["FOCUS_FALLBACK"] in actual["limitations"]
+
+
+@pytest.mark.anyio
+async def test_ambiguous_character_field_choice_reads_values_instead_of_asking():
+    # '주무기'처럼 항목 이름만으로 하나를 고르지 못하면 되묻지 않고 그 유형의 현재값을 읽어 선택 모델이 고른다.
+    catalog = [
+        catalog_subject(
+            160,
+            "미샤",
+            current=[
+                item(
+                    160,
+                    "미샤",
+                    category="ITEM",
+                    key="item.twin",
+                    label="쌍검",
+                    value="리치 70% 쌍검",
+                ),
+                item(
+                    160,
+                    "미샤",
+                    category="ITEM",
+                    key="item.spear",
+                    label="창",
+                    value="예비 창",
+                    number=161,
+                ),
+            ],
+        )
+    ]
+    result = await replay_case(
+        case(
+            "미샤가 지금 쓰는 주무기는 뭐야?",
+            plan("미샤", fact_type="ITEM", attribute="주무기"),
+            {"outcome": "CLARIFICATION", "fieldRefs": []},
+            {"outcome": "ANSWER", "rowRefs": ["R1"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    assert actual["outcome"] == "ANSWER" and "쌍검" in actual["text"]
+    assert [q["tool"] for q in result["queries"]] == [
+        "FIND_CHARACTERS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_CURRENT",
+    ]
+    assert NOTICES["FOCUS_FALLBACK"] in actual["limitations"]
+
+
+@pytest.mark.anyio
+async def test_missing_type_widens_field_discovery_then_selects_over_type_values():
+    # 질문한 유형(STAT)의 항목이 없으면 모든 유형의 항목 목록에서 다시 고르고, 그래도 관련 항목이 없으면
+    # 현재값 전체를 선택 모델에 넘긴 뒤 없음으로 끝낸다. 집중 행처럼 무조건 답에 넣지는 않는다.
     catalog = [
         catalog_subject(
             107,
@@ -292,11 +390,60 @@ async def test_missing_field_metadata_does_not_fall_back_to_unfiltered_values():
         )
     ]
     result = await replay_case(
-        case("수오의 정신력은?", plan("수오", fact_type="STAT", attribute="정신력")),
+        case(
+            "수오의 정신력은?",
+            plan("수오", fact_type="STAT", attribute="정신력"),
+            {"outcome": "INSUFFICIENT_EVIDENCE", "fieldRefs": []},
+            {"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": []},
+        ),
         catalog,
     )
-    assert answer(result)["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert [q["tool"] for q in result["queries"]] == ["FIND_CHARACTERS", "CHARACTER_FIELDS"]
+    actual = answer(result)
+    assert actual["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert [q["tool"] for q in result["queries"]] == [
+        "FIND_CHARACTERS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_CURRENT",
+    ]
+    assert tool_queries(result, "CHARACTER_FIELDS")[1]["factType"] is None
+    assert NOTICES["FOCUS_TYPE_WIDENED"] in actual["limitations"]
+
+
+@pytest.mark.anyio
+async def test_wrong_type_guess_still_finds_the_item_after_widening():
+    catalog = [
+        catalog_subject(
+            150,
+            "드왈키",
+            current=[
+                item(
+                    150,
+                    "드왈키",
+                    category="PROFILE",
+                    key="profile.occupation",
+                    label="직업",
+                    value="8급 마법사",
+                ),
+            ],
+        )
+    ]
+    result = await replay_case(
+        case(
+            "드왈키는 몇 급 마법사야?",
+            plan("드왈키", fact_type="LEVEL", attribute="몇 급"),
+            {"outcome": "ANSWER", "fieldRefs": ["F1"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    assert actual["outcome"] == "ANSWER" and "8급" in actual["text"]
+    assert [q["tool"] for q in result["queries"]] == [
+        "FIND_CHARACTERS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_FIELDS",
+        "CHARACTER_CURRENT",
+    ]
 
 
 def world_catalog():
@@ -693,7 +840,7 @@ async def test_incomplete_field_catalog_never_resolves_from_only_the_first_page(
     result = await replay_case(
         case("여울의 정신력은?", plan("여울", fact_type="STAT", attribute="정신력")),
         catalog,
-        config={"page_size": 5, "max_tool_calls": 3},
+        config={"page_size": 5, "fields_page_size": 5, "max_tool_calls": 3},
     )
     assert answer(result)["outcome"] == "CLARIFICATION"
     assert NOTICES["PARTIAL_RESULTS"] in answer(result)["limitations"]
@@ -785,3 +932,101 @@ async def test_returned_wrong_field_cannot_cross_requested_filter_boundary():
         spring_setup=wrong_field,
     )
     assert result["finish"] == {"result": None, "failure": "NETWORK_FAILURE"}
+
+
+@pytest.mark.anyio
+async def test_unrelated_duplicate_labels_do_not_block_value_based_selection():
+    # 질문과 무관한 항목의 표시명이 겹쳐도(스킬·상태의 '거대화') 질문한 속성이 하나뿐이면 되묻지 않고
+    # 그 유형의 현재값을 읽어 고른다. 질문한 속성 자체가 겹치는 경우만 되묻는다.
+    catalog = [
+        catalog_subject(
+            170,
+            "비요른",
+            current=[
+                item(
+                    170,
+                    "비요른",
+                    category="PROFILE",
+                    key="profile.species",
+                    label="종족",
+                    value="바바리안",
+                ),
+                item(
+                    170,
+                    "비요른",
+                    category="SKILL",
+                    key="skill.giant",
+                    label="거대화",
+                    value="3단계",
+                    number=171,
+                ),
+                item(
+                    170,
+                    "비요른",
+                    category="STATUS",
+                    key="status.giant",
+                    label="거대화",
+                    value="활성",
+                    number=172,
+                ),
+            ],
+        )
+    ]
+    result = await replay_case(
+        case(
+            "비요른의 종족은?",
+            plan("비요른", fact_type="PROFILE", attribute="종족"),
+            {"outcome": "CLARIFICATION", "fieldRefs": []},
+            {"outcome": "ANSWER", "rowRefs": ["R1"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    assert actual["outcome"] == "ANSWER" and "바바리안" in actual["text"]
+    assert tool_queries(result, "CHARACTER_CURRENT")
+
+
+@pytest.mark.anyio
+async def test_each_subject_gets_its_own_value_fallback_when_field_names_do_not_match():
+    # 항목 탐색 결과는 실행 전체가 아니라 탐색 한 번마다 판단한다. 두 인물 모두 질문 표현('등급')과
+    # 등록 표시명('직업')이 다르면 두 인물 모두 그 유형의 현재값을 읽어야 한다.
+    catalog = [
+        catalog_subject(
+            180,
+            "미샤",
+            current=[
+                item(180, "미샤", category="PROFILE", key="profile.job", label="직업", value="8급")
+            ],
+        ),
+        catalog_subject(
+            181,
+            "에르웬",
+            current=[
+                item(
+                    181, "에르웬", category="PROFILE", key="profile.job", label="직업", value="궁수"
+                )
+            ],
+        ),
+    ]
+    decision = plan("미샤", fact_type="PROFILE", attribute="등급")
+    decision["subjects"].append(
+        {
+            "domain": "CHARACTER",
+            "name": "에르웬",
+            "focus": {"factType": "PROFILE", "attribute": "등급"},
+        }
+    )
+    result = await replay_case(
+        case(
+            "미샤와 에르웬의 등급은?",
+            decision,
+            {"outcome": "INSUFFICIENT_EVIDENCE", "fieldRefs": []},
+            {"outcome": "INSUFFICIENT_EVIDENCE", "fieldRefs": []},
+            {"outcome": "ANSWER", "rowRefs": ["R1", "R2"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    current = tool_queries(result, "CHARACTER_CURRENT")
+    assert len(current) == 2 and all(q["factType"] == "PROFILE" for q in current)
+    assert "8급" in actual["text"] and "궁수" in actual["text"]

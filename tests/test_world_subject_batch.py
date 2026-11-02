@@ -329,3 +329,23 @@ def test_pipeline_saves_one_complete_manuscript_resolution_before_comparison_cla
     assert first.provisional_subject_keys == last.provisional_subject_keys
     assert first.provisional_subject_keys != second.provisional_subject_keys
     assert [item.candidate_id for item in spring.saved[0].resolutions] == [item.candidate_id for item in spring.sources]
+
+
+def test_failed_subject_keeps_expected_and_actual_refs_in_request():
+    outcomes, _, _ = run([candidate(1)], [result(row("C1", ["S9"]))], subjects={"LOCATION": [target()]})
+    assert outcomes[0].failure_code == AnalysisFailureCode.COMPARISON_VALIDATION_FAILED
+    diagnostics = outcomes[0].model_dump(by_alias=True, exclude_none=True)["failureDiagnostics"]
+    assert diagnostics["reasonCode"] == "WORLD_SUBJECT_REFERENCE_INVALID"
+    assert diagnostics["checks"] == [{"field": "selectedSubjectRefs", "rule": "IN_SET", "expected": "S1", "actual": "S9", "itemIndex": 1}]
+
+
+def test_subject_failure_carries_its_candidate_quote_and_selected_response():
+    quote = "백탑은 왕국 북쪽에 있는 마법사들의 거점이었다."
+    outcomes, _, _ = run([candidate(1, quote=quote)], [result(row("C1", ["S9"]))], subjects={"LOCATION": [target()]})
+    excerpts = outcomes[0].model_dump(by_alias=True, exclude_none=True)["failureDiagnostics"].get("excerpts", [])
+    assert len(excerpts) == 3
+    assert outcomes[0].failure_diagnostics.subject_name == "백탑"
+    assert excerpts[1]["text"] == "백탑"
+    assert excerpts[0]["kind"] == "SOURCE" and excerpts[0]["text"] == quote
+    assert excerpts[2]["kind"] == "RESPONSE"
+    assert '"candidate_ref":"C1"' in excerpts[2]["text"] and '"selected_subject_refs":["S9"]' in excerpts[2]["text"]

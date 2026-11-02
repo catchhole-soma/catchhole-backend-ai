@@ -241,14 +241,20 @@ def test_global_response_schema_limit_is_not_bypassed_by_partitioning(monkeypatc
     ([decision(summary="O1의 비공개 원문")], "DISPLAY_REFERENCE_LEAK"),
     ([decision(), decision()], "DUPLICATE_SLOT"),
 ])
-def test_fixed_reason_codes_preserve_no_model_output(rows, reason):
+def test_fixed_reason_codes_keep_safe_message_and_only_approved_excerpt(rows, reason):
     with pytest.raises(ComparisonValidationError) as error:
         run(Client(rows), context(), 64000)
     diagnostic = failure_diagnostics(error.value, stage="EXTRACTION")
     assert diagnostic.reason_code == "RELATIONSHIP_" + reason
     assert diagnostic.stage == "RELATIONSHIP_COMPARE"
     assert str(error.value) == "Invalid relationship comparison response."
-    assert "비공개" not in diagnostic.model_dump_json()
+    assert "비공개" not in diagnostic.model_dump_json(exclude={"excerpts"})
+    if reason == "DISPLAY_REFERENCE_LEAK":
+        excerpt, = diagnostic.excerpts
+        assert excerpt.kind == "RESPONSE" and excerpt.field == "relationshipSummary"
+        assert excerpt.text == "O1의 비공개 원문"
+    else:
+        assert not diagnostic.excerpts
 
 
 @pytest.mark.parametrize("raw,reason", [

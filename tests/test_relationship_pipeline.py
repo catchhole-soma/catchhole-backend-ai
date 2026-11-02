@@ -132,6 +132,10 @@ def test_bad_relation_output_is_isolated_without_saving_raw_error():
     assert extractor.extract_from_chunk.await_count == 1
     comparator.compare.assert_not_called()
     body = spring.fail_relationship_analysis.call_args.args[2]
+    diagnostic = body.pop("failureDiagnostics")
+    assert diagnostic["stage"] == "RELATIONSHIP_EXTRACTION"
+    assert diagnostic["reasonCode"] == "COMPARISON_RESULT_INVALID"
+    assert "private manuscript" not in str(diagnostic)
     assert body == {"formatVersion": 1, "sourceHash": "a" * 64, "contextToken": None,
                     "failureCode": "EXTRACTION_FAILED"}
 
@@ -148,6 +152,32 @@ def test_invalid_comparison_becomes_internal_failure():
     assert asyncio.run(run())["relationshipAnalysisStatus"] == "FAILED"
     assert spring.fail_relationship_analysis.call_args.args[2]["failureCode"] == "COMPARISON_FAILED"
     spring.complete_relationship_analysis.assert_not_called()
+
+
+def test_isolated_failure_sends_actual_comparison_values_without_stopping_core_analysis():
+    from app.analysis.relationship_diagnostics import annotate_relationship_failure
+    from app.schemas.worker import WorkerFailureExcerpt
+
+    pipeline, spring, _, comparator, context = setup_pipeline(observations=[{"ref": "O1"}])
+    spring.get_relationship_analysis.return_value = context
+    comparator.compare.side_effect = annotate_relationship_failure(
+        ComparisonValidationError("unapproved raw error"), stage="RELATIONSHIP_COMPARE",
+        reason="RELATIONSHIP_MERGE_CONTENT_CHANGED", excerpts=[
+            WorkerFailureExcerpt(kind="EXPECTED", field="relationshipSummary", text="서로 경계한다."),
+            WorkerFailureExcerpt(kind="RESPONSE", field="relationshipSummary", text="서로 신뢰한다."),
+        ],
+    )
+
+    async def run():
+        await pipeline.load()
+        return await pipeline.finish([])
+
+    assert asyncio.run(run()) == {"relationshipAnalysisStatus": "FAILED"}
+    body = spring.fail_relationship_analysis.call_args.args[2]
+    assert body["failureDiagnostics"]["reasonCode"] == "RELATIONSHIP_MERGE_CONTENT_CHANGED"
+    assert body["failureDiagnostics"]["stage"] == "RELATIONSHIP_COMPARE"
+    assert [part["text"] for part in body["failureDiagnostics"]["excerpts"]] == ["서로 경계한다.", "서로 신뢰한다."]
+    assert "unapproved raw error" not in str(body)
 
 
 @pytest.mark.parametrize("error", [
@@ -273,3 +303,21 @@ def test_partial_spring_completion_error_does_not_fall_back_to_hold_or_failure_c
         asyncio.run(run())
     spring.complete_relationship_analysis.assert_awaited_once()
     spring.fail_relationship_analysis.assert_not_called()
+
+
+def test_restored_failed_context_explains_missing_original_diagnostics():
+    from app.exceptions.failure_classification import failure_diagnostics
+
+    pipeline, spring, _, _, context = setup_pipeline()
+    context["status"] = "FAILED"
+    spring.get_relationship_analysis.return_value = context
+
+    async def run():
+        await pipeline.load()
+        return await pipeline.finish([])
+
+    assert asyncio.run(run()) == {"relationshipAnalysisStatus": "FAILED"}
+    assert pipeline.failure_exception is not None
+    diagnostic = failure_diagnostics(pipeline.failure_exception, stage=pipeline.failure_stage)
+    assert diagnostic.reason_code == "RELATIONSHIP_PREVIOUS_FAILURE"
+    assert diagnostic.stage == "RELATIONSHIP_RESUME"

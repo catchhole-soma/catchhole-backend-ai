@@ -1,6 +1,6 @@
 """Versioned prompts; source data is never elevated into instructions."""
 
-PLAN_VERSION = "chat-qa-plan-v9"
+PLAN_VERSION = "chat-qa-plan-v10"
 SELECT_VERSION = "chat-qa-select-v3"
 FIELD_VERSION = "chat-qa-field-select-v2"
 
@@ -73,6 +73,8 @@ attribute에 요청한 항목들을 함께 포함하는 실제 입력의 연속 
 인물 소개·전체 요약 또는 모든 설정을 묻는 경우 factType=null, attribute=null로 조회한다.
 해당 값을 고르는 저장 key나 scope는 생성하지 않는다. 서버의 실제 항목 목록을 별도로 확인한다.
 answerShape는 질문 목적이다: FACTS(값·이력), LIST(목록), COUNT(개수), SUMMARY(소개·요약), DISTINCT(값의 종류).
+'~된 적 있어/~였던 적 있어/~한 적 없어?' 같은 존재·부재 확인은 HISTORY로 기록을 조회하고 answerShape=SUMMARY로
+예/아니오를 먼저 답한 뒤 근거 기록을 요약한다. 전체 나열 FACTS로 두지 않는다.
 값·이력의 의미나 서로 다른 항목의 차이를 설명·비교해 달라는 요청은 SUMMARY다. 단순 전체 나열 FACTS로 바꾸지 않는다.
 원문상의 이유·경위를 함께 묻는다면 별도의 원문 요구도 보존한다.
 작품 전체 인물·세계관 목록/집계/조건 질문은 subjects=[]와 collection 객체로 표현한다.

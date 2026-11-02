@@ -340,3 +340,26 @@ def test_fallback_uses_the_last_text_call_without_replanning(tmp_path):
     assert len(result["raw"].requests) == 2
     assert len(result["spring"].reservations) == len(result["spring"].reports) == 2
     assert result["embedding"].inputs == []
+
+
+def test_ambiguous_field_choice_with_source_fallback_still_asks_instead_of_searching(tmp_path):
+    # 원문 보완이 켜진 등록 전용 계획은 값으로 다시 고르는 되돌림을 하지 않는다. 모호한 항목 선택을
+    # 빈 결과로 바꿔 원문 검색으로 넘어가지 않고 기존대로 되묻는다(명확화는 자동 원문 보완 대상이 아니다).
+    case = registered_case(attribute="친구")
+    case["outputs"].append({"outcome": "CLARIFICATION", "fieldRefs": []})
+    rows = [
+        item(701, "미라", category="PROFILE", key="friend.old", label="오랜 친구", value="세린"),
+        item(701, "미라", category="PROFILE", key="friend.new", label="새 친구", value="리안"),
+    ]
+    result = asyncio.run(
+        replay(
+            tmp_path,
+            case,
+            spring_setup=catalog(*rows),
+            search_setup=search_with(keyword=[passage(SOURCE, 1)]),
+        )
+    )
+    assert result["finish"]["failure"] is None, result["finish"]
+    assert result["finish"]["result"]["outcome"] == "CLARIFICATION"
+    assert tools(result) == ["FIND_CHARACTERS", "CHARACTER_FIELDS"]
+    assert_no_search(result)

@@ -17,6 +17,8 @@ class ChatQaSettings(BaseSettings):
     max_input_tokens: int = Field(default=32000, ge=1000, le=32000)
     max_context_characters: int = Field(default=32000, ge=2000, le=64000)
     page_size: int = Field(default=20, ge=1, le=50)
+    # 항목 목록(FIELDS)은 값이 없는 메타데이터라 한 번에 많이 읽어 도구 예산을 아낀다.
+    fields_page_size: int = Field(default=50, ge=1, le=50)
     max_pages: int = Field(default=2, ge=1, le=10)
     max_items: int = Field(default=80, ge=1, le=200)
     max_tool_calls: int = Field(default=16, ge=1, le=100)

@@ -451,6 +451,7 @@ class WorldSettingComparisonPipeline:
                         resolutions.append(WorkerWorldSettingSubjectResolutionRequestItem(
                             candidate_id=candidate.candidate_id, target_world_setting_ids=[],
                             failure_code=failure_code,
+                            failure_diagnostics=failure_diagnostics(exc, stage="WORLD_CONTEXT"),
                         ))
                         logger.warning(
                             "World subject resolution deferred. analysis_job_id=%s candidate_id=%s failure_code=%s",
