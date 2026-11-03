@@ -5,6 +5,8 @@ from pathlib import Path
 from uuid import UUID
 
 from app.analysis.exceptions import LlmExtractionError
+from app.analysis.relationship_diagnostics import annotate_relationship_failure
+from app.schemas.worker import failure_check
 from app.analysis.relationship_observations import (
     RELATIONSHIP_OBSERVATION_VERSION,
     RelationshipExtractionResult,
@@ -83,10 +85,15 @@ class RelationshipExtractor:
             "source_spans": [{"ref": span.ref, "text": span.text}
                              for span in relationship_source_spans(chunk_text)],
         }, ensure_ascii=False)
-        if estimate_text_input_tokens(
+        input_tokens = estimate_text_input_tokens(
             self.system_prompt, user_prompt, self.model, RELATIONSHIP_RESPONSE_SCHEMA,
-        ) > self.max_input_tokens:
-            raise RelationshipInputTooLargeError("Independent relationship input exceeds its token budget.")
+        )
+        if input_tokens > self.max_input_tokens:
+            raise annotate_relationship_failure(
+                RelationshipInputTooLargeError("Independent relationship input exceeds its token budget."),
+                stage="RELATIONSHIP_EXTRACTION", reason="RELATIONSHIP_INPUT_TOO_LARGE",
+                checks=[failure_check("inputTokens", "MAX", self.max_input_tokens, input_tokens)],
+            )
         response = await self.llm_client.create_text_response(
             system_prompt=self.system_prompt,
             user_prompt=user_prompt,

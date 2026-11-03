@@ -43,11 +43,13 @@ FAILURE_DIAGNOSTIC_REASONS = frozenset({
     "RELATIONSHIP_DUPLICATE_TARGET", "RELATIONSHIP_INACTIVE_TARGET",
     "RELATIONSHIP_MERGE_CONTENT_CHANGED", "RELATIONSHIP_OBSERVATION_COVERAGE_MISSING",
     "RELATIONSHIP_RESPONSE_JSON_INVALID", "RELATIONSHIP_RESPONSE_SCHEMA_INVALID",
-    "RELATIONSHIP_INPUT_TOO_LARGE", "RELATIONSHIP_CONTEXT_INVALID",
+    "RELATIONSHIP_INPUT_TOO_LARGE", "RELATIONSHIP_CONTEXT_INVALID", "RELATIONSHIP_PREDECESSOR_INCOMPLETE",
+    "WORLD_SUBJECT_COVERAGE_INVALID", "WORLD_SUBJECT_REFERENCE_INVALID", "WORLD_SUBJECT_RESPONSE_INVALID",
+    "RELATIONSHIP_PREVIOUS_FAILURE", "WORLD_SUBJECT_RESOLUTION_FAILED", "WORLD_COMPARISON_INPUT_TOO_LARGE",
 })
 FAILURE_DIAGNOSTIC_STAGES = frozenset({
     "CLAIM_INPUT", "CHARACTER_CONTEXT", "CHARACTER_COMPARE", "WORLD_CONTEXT", "WORLD_COMPARE", "EXTRACTION", "FINALIZE", "UNKNOWN",
-    "RELATIONSHIP_EXTRACTION", "RELATIONSHIP_COMPARE",
+    "RELATIONSHIP_EXTRACTION", "RELATIONSHIP_COMPARE", "RELATIONSHIP_RESUME",
 })
 PROVIDER_DIAGNOSTIC_CODES = frozenset({
     "rate_limit_exceeded", "server_error", "timeout", "invalid_request_error", "insufficient_quota", "billing_hard_limit_reached",
@@ -55,8 +57,99 @@ PROVIDER_DIAGNOSTIC_CODES = frozenset({
 })
 
 
+class WorkerFailureCheck(BaseModel):
+    """A bounded observed comparison, never an exception message or arbitrary value."""
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    field: str
+    rule: str
+    expected: str
+    actual: str
+    item_index: int | None = Field(default=None, alias="itemIndex")
+
+    @model_validator(mode="after")
+    def safe_values(self):
+        import re
+        numbers = {"inputTokens", "sourceBytes", "chunkCount", "comparisonBatchCount", "distinctNodeCount", "observationCount", "decisionCount", "targetUseCount",
+                   "quoteLength", "sourceLength", "startOffset", "endOffset"}
+        refs = {"observationRefs", "newObservationRefs", "candidateRefs", "selectedSubjectRefs",
+                "sourceNodeRef", "targetNodeRef", "relationshipRef"}
+        booleans = {"quoteMatchesSource", "sourceHashMatches", "quotesNormalizedMatch", "hasIdentityProofs", "ambiguous"}
+        enums = {"temporalScope": {"PRESENT", "PAST", "HYPOTHETICAL", "UNKNOWN"},
+                 "operation": {"ADD", "MERGE", "UPDATE", "END", "HOLD", "EXCLUDE"},
+                 "targetStatus": {"ACTIVE", "ENDED", "MISSING"}}
+        if self.rule not in {"MAX", "MIN", "EQUALS", "IN_SET", "ORDERED", "UNIQUE", "COVERS", "ABSENT", "DIFFERENT"}:
+            raise ValueError("Unsupported check rule")
+        if self.item_index is not None and (type(self.item_index) is not int or not 1 <= self.item_index <= 100000):
+            raise ValueError("Invalid check item index")
+        for value in (self.expected, self.actual):
+            valid = False
+            if self.field in numbers:
+                valid = bool(re.fullmatch(r"-?[0-9]{1,10}", value)) and -2147483648 <= int(value) <= 2147483647
+            elif self.field in refs:
+                valid = len(value) <= 150 and bool(re.fullmatch(r"(?:[CSNROHT][1-9][0-9]{0,7}|NONE|INVALID_REF)(?:,(?:[CSNROHT][1-9][0-9]{0,7}|NONE|INVALID_REF)){0,7}", value))
+            elif self.field in booleans:
+                valid = value in {"true", "false"}
+            elif self.field in enums:
+                valid = value in enums[self.field]
+            if not valid:
+                raise ValueError("Unsupported check value")
+        return self
+
+
+def failure_check(field, rule, expected, actual, *, item_index=None):
+    """Bound ref lists at capture; counts can be recorded in a separate check."""
+    import re
+    def value(raw):
+        if isinstance(raw, (list, tuple, set, frozenset)):
+            items = list(raw)
+            if isinstance(raw, (set, frozenset)):
+                items.sort()
+            return ",".join(str(x) if re.fullmatch(r"[CSNROHT][1-9][0-9]{0,7}", str(x)) else "INVALID_REF"
+                            for x in items[:8]) or "NONE"
+        if isinstance(raw, bool):
+            return str(raw).lower()
+        return "NONE" if raw is None else str(raw)
+    return WorkerFailureCheck(field=field, rule=rule, expected=value(expected), actual=value(actual), itemIndex=item_index)
+
+
+class WorkerFailureExcerpt(BaseModel):
+    """User-approved, bounded diagnostic passage; never headers or exception text."""
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    kind: Literal["SOURCE", "EXPECTED", "RESPONSE"]
+    field: str
+    text: str
+    truncated: bool = False
+    item_index: int | None = Field(default=None, alias="itemIndex")
+
+    @model_validator(mode="after")
+    def bounded_passage(self):
+        allowed = {"SOURCE": {"evidenceQuote"}, "EXPECTED": {"relationshipLabel", "relationshipSummary", "subjectOptions"},
+                   "RESPONSE": {"relationshipLabel", "relationshipSummary", "relationshipReason", "responseJson"}}
+        if self.field not in allowed[self.kind] or not self.text.strip():
+            raise ValueError("Unsupported excerpt")
+        if self.item_index is not None and not 1 <= self.item_index <= 100000:
+            raise ValueError("Invalid excerpt item index")
+        self.truncated = self.truncated or len(self.text) > 120
+        self.text = self.text[:120]
+        return self
+
+
+def failure_excerpt(kind, field, text, *, item_index=None, truncated=False):
+    if not isinstance(text, str) or not text.strip():
+        return None
+    return WorkerFailureExcerpt(kind=kind, field=field, text=text, itemIndex=item_index, truncated=truncated)
+
+
+def differing_excerpts(field, expected, actual, *, item_index):
+    """Keep the first actual difference visible even after a long common prefix."""
+    mismatch = next((i for i, (left, right) in enumerate(zip(expected, actual)) if left != right), min(len(expected), len(actual)))
+    start = max(0, mismatch - 30)
+    return [failure_excerpt(kind, field, text[start:], item_index=item_index, truncated=start > 0)
+            for kind, text in (("EXPECTED", expected), ("RESPONSE", actual))]
+
+
 class WorkerFailureDiagnostics(BaseModel):
-    """Safe v1 failure metadata. Optional malformed fields never contain prose."""
+    """V1 diagnostics with typed checks and optional user-approved bounded excerpts."""
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
     schema_version: Literal[1] = Field(default=1, alias="schemaVersion")
     origin: Literal["SPRING", "PROVIDER", "WORKER"]
@@ -70,6 +163,43 @@ class WorkerFailureDiagnostics(BaseModel):
     source_candidate_id: UUID | None = Field(default=None, alias="sourceCandidateId")
     source_episode_id: UUID | None = Field(default=None, alias="sourceEpisodeId")
     source_episode_no: int | None = Field(default=None, alias="sourceEpisodeNo")
+    checks: list[WorkerFailureCheck] = Field(default_factory=list, exclude_if=lambda value: not value)
+
+    subject_name: str | None = Field(default=None, alias="subjectName", exclude_if=lambda value: value is None)
+
+    @field_validator("subject_name", mode="before")
+    @classmethod
+    def bounded_subject_name(cls, value):
+        return value[:60] if isinstance(value, str) and value.strip() else None
+
+    excerpts: list[WorkerFailureExcerpt] = Field(default_factory=list, exclude_if=lambda value: not value)
+
+    @field_validator("excerpts", mode="before")
+    @classmethod
+    def safe_excerpts(cls, value):
+        if not isinstance(value, (list, tuple)):
+            return []
+        result = []
+        for item in value[:3]:
+            try:
+                result.append(WorkerFailureExcerpt.model_validate(item))
+            except (ValueError, TypeError):
+                continue
+        return result
+
+    @field_validator("checks", mode="before")
+    @classmethod
+    def safe_checks(cls, value):
+        if not isinstance(value, (list, tuple)):
+            return []
+        result = []
+        for item in value[:3]:
+            try:
+                result.append(WorkerFailureCheck.model_validate(item))
+            except (ValueError, TypeError):
+                continue
+        return result
+
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -179,6 +309,9 @@ class WorkerAnalysisJobClaimRequest(BaseModel):
     )
     supports_relationship_recovery: bool | None = Field(
         default=None, alias="supportsRelationshipRecovery", strict=True,
+    )
+    supports_relationship_partial_results: bool | None = Field(
+        default=None, alias="supportsRelationshipPartialResults", strict=True,
     )
 
 
@@ -608,6 +741,8 @@ class WorkerWorldSettingSubjectResolutionRequestItem(BaseModel):
     provisional_subject_keys: list[str] = Field(default_factory=list, alias="provisionalSubjectKeys", max_length=20)
     ambiguous: bool = False
     failure_code: AnalysisFailureCode | None = Field(default=None, alias="failureCode", exclude_if=lambda value: value is None)
+
+    failure_diagnostics: WorkerFailureDiagnostics | None = Field(default=None, alias="failureDiagnostics", exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def validate_selected_identities(self):

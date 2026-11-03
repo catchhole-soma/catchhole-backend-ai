@@ -57,14 +57,14 @@ B의 `ordered_runtime_adapter.build_ordered_prediction_bundle`은 Gold 객체를
 
 ### 결정적 journal mirror
 
-`ordered_journal.py`는 아래 Java v1 형식의 읽기 전용 mirror다.
+`ordered_journal.py`는 Java가 저장한 v1·v2 형식의 읽기 전용 mirror다.
 
 ```text
 {
-  formatVersion: 1, status: SEALED,
+  formatVersion: 1 | 2, status: SEALED,
   runId, workId, generation, sequence, episodeNo, jobId,
   inputStateHash, outputStateHash,
-  changes: [{eventId, path, value, remove, operation, sourceCandidateIds}]
+  changes: [{eventId, path, value, remove, operation, sourceCandidateIds, valueMode?}]
 }
 ```
 
@@ -73,6 +73,20 @@ B의 `ordered_runtime_adapter.build_ordered_prediction_bundle`은 Gold 객체를
 REMOVE leaf는 존재해야 하며 SET null은 허용하지 않는다. 같은 event ID와 같은 변경 내용은
 한 번만 적용하고 내용이 다르면 실패한다. 배열·회차·회차 내부 이벤트 순서를 보존한다.
 run/work/generation이 다르거나 미래 회차·순서 누락·미완성 journal이면 진행하지 않는다.
+
+Java [#365](https://github.com/catchhole-soma/catchhole-backend-java/issues/365)는 큰 누적 이력
+배열을 매 변경마다 복사하지 않도록 v2의 `valueMode: APPEND_HISTORY`를 추가한다. 생략된
+모드 또는 `REPLACE`는 기존 전체 대체이며, `APPEND_HISTORY`의 `value`에는 새 이력만 들어 있다.
+추가는 `characters/<ref>/historyFacts`의 배열에만 허용한다. 기존 필드가 없으면 빈 배열에서
+시작하고, 배열이 아닌 값이 있으면 거절한다. 서로 다른 사건의 같은 사실은 제거하지 않는다.
+보류 복원의 전체 대체와 증분 추가가 섞여도 저장된 순서와 근거를 그대로 복원한다.
+
+v1에 추가 모드를 숨기거나 미지원 버전·모드를 전달하면 거절한다. 양 저장소의 동일한
+`ordered-journal-v2.json`은 구형 전체 대체, 증분, 같은 event 재전달, 전체 복원과 후속 추가를
+함께 검증하며 최종 상태·canonical JSON·SHA-256을 대조한다. 기존 v1 fixture도 유지한다.
+이 버전은 DB journal 저장 형식이며 Worker의 `analysisContext.formatVersion=1`, 운영 추출·비교
+모델과 프롬프트에는 영향을 주지 않는다. 기존 reader만 있는 코드로는 v2를 재생할 수 없으므로
+Java v2 결과를 독립 검증하는 평가·HTTP 하네스에는 이 reader를 먼저 적용한다.
 
 Hash는 객체 key 정렬, 배열 순서 유지, Unicode 유지 compact JSON, 지수 없는 정규화 숫자를
 사용한다. Python 입력은 `load_journal_json`으로 Decimal 정밀도를 보존한다. 큰 Decimal의

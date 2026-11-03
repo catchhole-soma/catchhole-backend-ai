@@ -28,12 +28,16 @@ from app.analysis.schemas import _to_openai_strict_json_schema
 from app.domain.enums import AnalysisFailureCode, AnalysisSourceKind
 from app.exceptions.failure_classification import (
     comparison_failure_code,
+    failure_diagnostics,
     is_candidate_comparison_failure,
 )
 from app.llm.protocols import LlmResponseSchema
 from app.mappers.world_setting_candidate_mapper import normalize_world_setting_name
 from app.schemas.analysis_context import AnalysisStateProvenance
 from app.schemas.worker import (
+    WorkerFailureDiagnostics,
+    failure_check,
+    failure_excerpt,
     WorkerWorldSettingSubject,
     WorkerWorldSettingSubjectResolutionRequestItem,
 )
@@ -98,7 +102,8 @@ _RESPONSE_SCHEMA = LlmResponseSchema(
 
 
 class _BatchValidationError(ComparisonValidationError):
-    def __init__(self, code):
+    def __init__(self, code, *checks, excerpts=(), subject_name=None):
+        self.failure_diagnostics = WorkerFailureDiagnostics(origin="WORKER", stage="WORLD_CONTEXT", reasonCode=code, checks=list(checks), excerpts=list(excerpts), subjectName=subject_name)
         self.code = code
         super().__init__(code)
 
@@ -132,31 +137,48 @@ def _is_book(candidate):
     return candidate.source is not None and candidate.source.source_kind == AnalysisSourceKind.SETTING_BOOK
 
 
-def _resolution(candidate, selected=(), *, ambiguous=False, failure_code=None):
+def _resolution(candidate, selected=(), *, ambiguous=False, failure_code=None, diagnostics=None):
     return WorkerWorldSettingSubjectResolutionRequestItem(
         candidate_id=candidate.candidate_id,
         target_world_setting_ids=[subject.world_setting_id for subject in selected if subject.world_setting_id is not None],
         provisional_subject_keys=[subject.provisional_subject_key for subject in selected if subject.provisional_subject_key is not None],
-        ambiguous=ambiguous, failure_code=failure_code,
+        ambiguous=ambiguous, failure_code=failure_code, failure_diagnostics=diagnostics,
     )
 
 
+def _subject_excerpts(candidate, row, item_index, allowed):
+    response = json.dumps({"candidate_ref": row.candidate_ref, "selected_subject_refs": row.selected_subject_refs,
+                           "ambiguous": row.ambiguous}, ensure_ascii=False, separators=(",", ":"))
+    return [failure_excerpt("SOURCE", "evidenceQuote", candidate.evidence_spans[0].quote, item_index=item_index)
+            if candidate.evidence_spans else None,
+            failure_excerpt("EXPECTED", "subjectOptions", ", ".join(subject.subject_name for subject in allowed.values()) or "(선택 가능한 기존 대상 없음)", item_index=item_index),
+            failure_excerpt("RESPONSE", "responseJson", response, item_index=item_index)]
+
+
 def _replay(result, candidates, initial, *, ordered):
-    if [row.candidate_ref for row in result.decisions] != [ref for ref, _ in candidates]:
-        raise _BatchValidationError("WORLD_SUBJECT_COVERAGE_INVALID")
+    expected_refs = [ref for ref, _ in candidates]
+    actual_refs = [row.candidate_ref for row in result.decisions]
+    if actual_refs != expected_refs:
+        mismatch = next((i for i, (expected, actual) in enumerate(zip(expected_refs, actual_refs)) if expected != actual), min(len(expected_refs), len(actual_refs)))
+        raise _BatchValidationError("WORLD_SUBJECT_COVERAGE_INVALID",
+            failure_check("candidateRefs", "ORDERED", expected_refs[mismatch:mismatch + 8], actual_refs[mismatch:mismatch + 8], item_index=mismatch + 1),
+            failure_check("decisionCount", "EQUALS", len(candidates), len(result.decisions)))
     active = dict(initial)
     outcomes = []
-    for (ref, candidate), row in zip(candidates, result.decisions, strict=True):
+    for item_index, ((ref, candidate), row) in enumerate(zip(candidates, result.decisions, strict=True), 1):
         allowed = {key: subject for key, (category, subject) in active.items() if category == candidate.category}
         selected_refs = row.selected_subject_refs
         if len(selected_refs) != len(set(selected_refs)) or any(key not in allowed for key in selected_refs):
-            raise _BatchValidationError("WORLD_SUBJECT_REFERENCE_INVALID")
+            raise _BatchValidationError("WORLD_SUBJECT_REFERENCE_INVALID",
+                failure_check("selectedSubjectRefs", "UNIQUE" if len(selected_refs) != len(set(selected_refs)) else "IN_SET",
+                              list(dict.fromkeys(selected_refs)) if len(selected_refs) != len(set(selected_refs)) else list(allowed), selected_refs, item_index=item_index),
+                excerpts=_subject_excerpts(candidate, row, item_index, allowed), subject_name=candidate.subject_name)
         if _is_book(candidate):
             validate_book_world_selection(row, candidate, allowed)
         elif row.identity_proofs:
-            raise _BatchValidationError("WORLD_SUBJECT_RESPONSE_INVALID")
+            raise _BatchValidationError("WORLD_SUBJECT_RESPONSE_INVALID", failure_check("hasIdentityProofs", "EQUALS", False, True, item_index=item_index), excerpts=_subject_excerpts(candidate, row, item_index, allowed), subject_name=candidate.subject_name)
         if not ordered and row.ambiguous:
-            raise _BatchValidationError("WORLD_SUBJECT_RESPONSE_INVALID")
+            raise _BatchValidationError("WORLD_SUBJECT_RESPONSE_INVALID", failure_check("ambiguous", "EQUALS", False, row.ambiguous, item_index=item_index), excerpts=_subject_excerpts(candidate, row, item_index, allowed), subject_name=candidate.subject_name)
         selected = [] if row.ambiguous else [allowed[key] for key in selected_refs]
         if ordered and not row.ambiguous:
             if not selected:
@@ -294,7 +316,7 @@ async def resolve_manuscript_subjects(
                 if not continue_on_candidate_failure:
                     raise
                 logger.warning("World subject batch deferred. candidate_count=%s failure_code=%s", len(segment), code)
-                return [_resolution(candidate, failure_code=code) for _, candidate in segment], state
+                return [_resolution(candidate, failure_code=code, diagnostics=failure_diagnostics(exc, stage="WORLD_CONTEXT")) for _, candidate in segment], state
         if result is None:
             # Run recovery outside the exception handler so a later candidate's
             # failure cannot inherit an earlier segment's truncation/error code.

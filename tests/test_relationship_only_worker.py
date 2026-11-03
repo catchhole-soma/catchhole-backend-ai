@@ -331,7 +331,7 @@ def test_failed_relationship_stops_cursor_without_repeat_or_core_completion(monk
     worker, payload, spring, storage, extractor, comparator, _ = setup_worker(
         monkeypatch, status="FAILED"
     )
-    with pytest.raises(ComparisonValidationError):
+    with pytest.raises(OrderedAnalysisIncompleteError):
         asyncio.run(worker.process_claimed(payload))
     storage.get_text.assert_not_called()
     extractor.extract_from_chunk.assert_not_called()
@@ -643,6 +643,7 @@ def test_relationship_job_wire_routes_lease_and_timeouts_are_separate():
     assert json.loads(requests[0].content)["allowedJobTypes"] == ["RELATIONSHIP_EXTRACTION"]
     assert json.loads(requests[0].content)["supportedSourceKinds"] == ["EPISODE"]
     assert json.loads(requests[0].content)["supportsRelationshipRecovery"] is True
+    assert json.loads(requests[0].content)["supportsRelationshipPartialResults"] is True
     assert requests[1].extensions["timeout"]["read"] == 30.0
     assert requests[2].extensions["timeout"]["read"] == 120.0
 

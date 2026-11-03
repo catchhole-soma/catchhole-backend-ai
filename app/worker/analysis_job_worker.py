@@ -140,6 +140,7 @@ class SpringWorkerApi(
         supports_semantic_current_context: bool | None = None,
         supports_frozen_comparison_evidence: bool | None = None,
         supports_relationship_analysis: bool | None = None,
+        supports_relationship_partial_results: bool | None = None,
     ) -> WorkerAnalysisJobPayload | None: ...
 
     # claim 직후 현재 Worker가 어떤 단계에 진입했는지 Spring에 보고한다.
@@ -345,6 +346,7 @@ class AnalysisJobWorker:
             supports_semantic_current_context=True,
             supports_frozen_comparison_evidence=True,
             supports_relationship_analysis=True,
+            supports_relationship_partial_results=True,
         )
 
     async def run_once(self) -> WorkerRunResult:
@@ -369,6 +371,7 @@ class AnalysisJobWorker:
                 not isinstance(relation_contract, dict)
                 or type(relation_contract.get("formatVersion")) is not int
                 or relation_contract["formatVersion"] != 1
+                or type(relation_contract.get("supportsPartialResults", False)) is not bool
                 or payload.source_kind != AnalysisSourceKind.EPISODE
             ):
                 raise OrderedInputContextError("Unsupported relationship analysis contract.")

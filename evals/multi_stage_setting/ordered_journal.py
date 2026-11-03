@@ -1,4 +1,4 @@
-"""Read-only mirror of Java's sealed v1 journal replay, with no Gold or LLM dependency.
+"""Read-only mirror of Java's sealed v1/v2 journal replay, without Gold or LLMs.
 
 This is a structural replay boundary. Domain validation and candidate coverage are
 the Backend seal operation's responsibility; arbitrary Stage1/Stage2 predictions
@@ -12,7 +12,7 @@ import json
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import Field, StrictBool, model_validator
+from pydantic import Field, StrictBool, field_validator, model_validator
 
 from evals.multi_stage_setting.contracts import StrictModel
 
@@ -27,6 +27,9 @@ class JournalChange(StrictModel):
     remove: StrictBool = False
     operation: str = Field(min_length=1)
     source_candidate_ids: list[UUID] = Field(default_factory=list)
+    value_mode: Literal["REPLACE", "APPEND_HISTORY"] = Field(
+        default="REPLACE", exclude_if=lambda value: value == "REPLACE",
+    )
 
     @model_validator(mode="after")
     def validate_change(self) -> "JournalChange":
@@ -36,11 +39,16 @@ class JournalChange(StrictModel):
             raise ValueError("Journal eventId and operation must not be blank.")
         if not self.remove and self.value is None:
             raise ValueError("A journal SET must not contain null.")
+        if self.value_mode == "APPEND_HISTORY" and (
+            self.remove or len(self.path) != 3 or self.path[0] != "characters"
+            or self.path[-1] != "historyFacts" or not isinstance(self.value, list)
+        ):
+            raise ValueError("APPEND_HISTORY must add an array to character historyFacts.")
         return self
 
 
 class SealedJournal(StrictModel):
-    format_version: Literal[1]
+    format_version: Literal[1, 2]
     status: Literal["SEALED"]
     run_id: UUID
     work_id: UUID
@@ -51,6 +59,21 @@ class SealedJournal(StrictModel):
     input_state_hash: str = Field(min_length=1)
     output_state_hash: str = Field(min_length=1)
     changes: list[JournalChange]
+
+    @field_validator("format_version", mode="before")
+    @classmethod
+    def validate_storage_version(cls, value: Any) -> int:
+        if type(value) is not int or value not in (1, 2):
+            raise ValueError("Unsupported journal storage version.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_change_storage_version(self) -> "SealedJournal":
+        if self.format_version == 1 and any(
+            change.value_mode == "APPEND_HISTORY" for change in self.changes
+        ):
+            raise ValueError("APPEND_HISTORY requires journal storage version 2.")
+        return self
 
 
 def load_journal_json(text: str) -> Any:
@@ -155,6 +178,12 @@ def replay_sealed_journals(
                 if leaf not in parent:
                     raise ValueError("Journal REMOVE target does not exist.")
                 del parent[leaf]
+            elif change.value_mode == "APPEND_HISTORY":
+                if leaf not in parent:
+                    parent[leaf] = []
+                if not isinstance(parent[leaf], list):
+                    raise ValueError("APPEND_HISTORY target must be an array.")
+                parent[leaf].extend(deepcopy(change.value))
             else:
                 parent[leaf] = deepcopy(change.value)
             seen[change.event_id] = canonical

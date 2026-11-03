@@ -30,12 +30,17 @@
 
 ## Spring Worker API
 
+- GH357 관계 의미 실패의 `/relationship-analysis/fail` 요청에도 optional `failureDiagnostics`를 전달한다. 허용된 구절/검사값만 보내며 상위 Job을 실패시키거나 실패 분류·재시도 정책을 바꾸지 않는다. 일반 회차 부분 실패와 관계 전용 Job 실패의 구분·알림 snapshot은 서버가 소유한다.
+
 - 분석 상태 API의 read 한도는 `SPRING_WORKER_READ_TIMEOUT_SECONDS`(기본 120초)로 요청별 적용한다. 연결·쓰기·pool과 heartbeat·token 원장의 기존 30초 한도, heartbeat 실패 시 소유 작업 취소, lease 검증은 유지한다. read 한도는 요청 전체 deadline이 아니며 일반 분석 POST를 자동 재전송하지 않는다.
 
-- 선택적 `failureDiagnostics`는 Java/Python 공통 v1 고정 코드 계약이다. 원문·예외 메시지·URL·lease/인증값은 넣지 않으며 실제 관측한 HTTP 상태와 요청/trace ID만 전달한다. Spring 오류의 부가 진단 파싱 실패는 원래 HTTP 실패와 분리하고 `first_failure_code`와 그 실패의 `first_failure_diagnostics`를 묶어 batch→run→Job 실패 보고까지 운반한다. 새 실패에서 이전 시도의 진단을 재사용하거나 상세 원인으로 기존 격리·재시도 분류를 바꾸지 않는다.
+- 사용자 승인(2026-11-02)에 따라 `failureDiagnostics.excerpts`는 고정 kind/field로 후보 근거·기존 관계 값·AI 응답 문제 필드를 최대3개·각120 code point 전달한다. 선택 가능한 실제 대상 이름과 최대60 code point의 subjectName을 보존하며 전체 prompt/context/응답 또는 HTTP 헤더/예외 문자열을 복사하지 않는다. 긴 관계 MERGE 값은 첫 차이 주변을 보존한다. SOURCE는 후보에 저장된 근거이며 원문 재검증을 의미하지 않는다. 분할/재시도 후 최종 실패의 후보·응답을 사용하고 다른 후보나 이전 실패 구절을 이어받지 않는다.
+- 실패 진단의 선택적 `checks`는 실제 검증 지점에서 최대 3개를 수집한다. 고정 field/rule와 제한된 수치·local 참조·enum·boolean의 expected/actual만 허용하고 전체 원문/전체 응답/예외 문자열은 금지한다. 사용자가 승인한 문제 구절은 아래 excerpts 규칙으로만 전달한다. 관계 입력량·관측 참조와 세계관 주체 응답의 참조/순서를 보존하며, 참조가 길면 오류를 일으킨 값을 우선한다. `request_validated_model`의 원시 원인 제거는 검증된 WorkerFailureDiagnostics만 보존한다. 세계관 후보 보류 요청에도 optional 진단을 전달하되 실패 분류·후보 격리·재시도 정책을 바꾸지 않는다.
+- 선택적 `failureDiagnostics`는 Java/Python 공통 v1 고정 코드 계약이다. 전체 원문·예외 메시지·lease/인증값은 넣지 않으며 실제 관측한 HTTP 상태와 요청/trace ID만 전달한다. Spring 오류의 부가 진단 파싱 실패는 원래 HTTP 실패와 분리하고 `first_failure_code`와 그 실패의 `first_failure_diagnostics`를 묶어 batch→run→Job 실패 보고까지 운반한다. 새 실패에서 이전 시도의 진단을 재사용하거나 상세 원인으로 기존 격리·재시도 분류를 바꾸지 않는다.
 
 - 인용 offset 복원은 exact·공백 검색 다음에 `U+0022/U+201C/U+201D` 큰따옴표 차이만 허용하고 유일하게 찾은 원문 slice와 Unicode code point offset을 함께 저장한다. 의미 문자·다른 부호·모호한 반복을 보정하지 않는다. 현재값과 `UNAVAILABLE/QUOTE_NOT_FOUND`인 과거 근거는 별개이며 빈 근거를 만들거나 VERIFIED로 승격하지 않는다.
 - 일반 캐릭터 인용의 위치가 없거나 잘못되어 Spring이 `UNAVAILABLE`로 내린 경우에도 내용·현재값과 분석은 유지한다. `OFFSETS_UNAVAILABLE/INVALID_OFFSETS/EVIDENCE_UNAVAILABLE`를 provider에 보존하고 빈 인용을 복원하지 않는다. 과거 frozen CURRENT·identity·캐릭터 보류 참고의 null/불완전 offset도 provider 투영에서만 제외하며 DTO/hash/raw 기록을 바꾸지 않는다. 로컬 비교 projection은 위치 유무만으로 VERIFIED를 부여하지 않는다. 원문/hash/소유권 경계와 별도 서사시점·관계 근거 검증은 유지한다.
+- GH357의 세계관 준비 진단(`WORLD_SUBJECT_RESOLUTION_FAILED`, `WORLD_COMPARISON_INPUT_TOO_LARGE`)은 Java와 v1 허용목록을 맞춘다. 저장된 FAILED 관계 문맥에 당시 원인이 없으면 `RELATIONSHIP_RESUME`/`RELATIONSHIP_PREVIOUS_FAILURE`로 보고하고 추출 단계 실패로 추정하지 않는다. 고정 진단만 전달하며 실패 판정·복구·모델 실행은 바꾸지 않는다.
 - GH304 내부 진단 수신·additive schema는 Backend부터 배포하고 AI 진단 전송을 뒤에 둔다. 구 Backend는 추가 필드를 무시하므로 실패 처리는 호환되지만 상세 진단은 보존되지 않는다. rollback은 nullable 열을 남긴 코드 복구이며 운영 작업을 자동 재실행하지 않는다. 합성 Java HTTP 연결은 Backend `ComparisonEvidenceHttpPostgresIntegrationTest`와 `tests/support/comparison_evidence_http_client.py`를 사용하고 AI checkout과 기존 venv 경로를 분리한다.
 
 - 기본 `analysis` Worker는 `supportsFrozenComparisonEvidence=true`를 claim에 전송한다. `ORDERED_PROVISIONAL` 응답의 `comparisonEvidenceContract.formatVersion`이 정수 1인지 progress·heartbeat·원문/저장·provider 호출 전에 확인하고, 누락·잘못된 타입·미지원 버전은 기존 lease 기반 fail로 보고한다. 구 `CONFIRMED_ONLY`와 두 hidden 재비교 Worker의 광고는 유지한다.
@@ -97,10 +102,13 @@
 
 - 관계는 EPISODE/SETTING_EXTRACTION에서만 `supportsRelationshipAnalysis=true`와 서버 v1 계약으로 활성화한다. 계약이 없으면 관계 API/모델을 호출하지 않는다. 캐릭터·세계관 prompt/schema/model/평가 Gold는 변경하지 않는다.
 - 관계 1차와 2차는 별도 Terra/medium client, input 64k/output 16k, metering 재시도 0이다. 1차는 기존 두 추출과 병렬, 2차는 기존 세계관 비교와 병렬이며 전역 semaphore·계량을 공유한다.
-- 관계 비교의 전체 문맥이 64k 이내이면 단일 호출을 유지한다. 초과 시에만 O/H의 가능한 unordered endpoint pair가 겹치는 연결 묶음으로 나누며, H의 간접 연결·동일 pair 모든 슬롯·원래 ref/순서/근거를 보존한다. O 없는 H는 소비하지 않는다. 최대16개 순차 호출의 전체 입력 계획을 첫 호출 전에 검사하고 단일 묶음 초과는 실패한다. 결합 후 전체 고정 문맥으로 schema512·coverage·슬롯을 재검증하며 부분 저장·출력 repair·원문 절단을 하지 않는다. 진단은 공통 fixture의 고정 reason/stage만 보존하고 전용 Worker가 원본 provider 오류 문자열을 runner로 전파하지 않는다.
+- GH359는 wire `formatVersion=1`을 유지하고 claim의 `supportsRelationshipPartialResults=true`와 고정 `supportsPartialResults=true` 계약으로만 켠다. 작은 입력도 항상 유일하게 해소된 unordered 인물 쌍별 group으로 투영하고 같은 쌍의 O/H·모든 관계 슬롯·원래 ref/순서/근거를 유지한다. 여러 group을 입력 예산 안에서 묶되 생성·검증은 group별로 격리한다. LLM은 group의 방향·관계 의미와 소유 R만 고르고 Worker가 고정 두 endpoint와 기존 R의 axis/kind/direction·MERGE 내용을 복원한다. 미해소 새 O는 모델 없이 내부 HOLD, 미해소/무관한 과거 H는 소비하지 않는다.
+- GH359는 첫 호출 전에 repair 피드백까지 예약한 전체 입력 계획을 검사한다. 최초 최대16 batch와 각 batch의 실패 group만 한 번 repair(전체 최대32요청, group당 최대1회)하며 남은 schema/도메인 오류·단일쌍/총 batch 입력 상한은 고정 reason의 typed failure로 남긴다. 성공 결정과 실패 O를 함께 원자 완료하며 전체512·coverage·슬롯 불변식을 유지한다. 실패를 HOLD로 덮거나 원문을 자르지 않는다. 과거 실패 쌍은 서버 `blockedPairs`로 후속 비교를 막고 `RELATIONSHIP_PREDECESSOR_INCOMPLETE`로 보존하며 다른 쌍은 진행한다. 모든 호출은 기존 계량·semaphore를 사용하므로 일반 Job의 repair도 기존 회원 과금 대상이며 서비스 부담 Job은 기존 정책을 따른다. provider 전송/출력 절단·권한·lease·quota·고정 입력·Spring 오류는 typed partial로 숨기지 않는다.
+- GH359 비교 batch는 입력뿐 아니라 출력 여유도 계획한다. 쌍당512토큰을 계획값으로 잡고 출력의20% 이상을 추론·변동 여유로 남기며 batch당최대24쌍(기본384쌍은최대16batch)이다. 512는 보장 상한이나 응답 절단 기준이 아니다. 출력 override가 작아도 한 쌍의 전체 O/H는 한 요청에 유지하고 실제 출력 절단은 기존 실패 경계로 남긴다.
+- partial capability가 없는 과거 계약은 v0041 경로를 유지한다: 전체64k 이내 단일 호출, 초과 때 O/H의 가능한 쌍 교집합으로 연결 성분을 투영하고 최대16개 순차 호출, 부분 결과/repair 없음. 두 경로 모두 안전한 공통 reason/stage만 진단에 기록하고 원본 provider 오류 문자열을 runner로 전파하지 않는다.
 - 1차 원문 조각 ID에서 quote·Unicode offset을 복원하고 2차에는 요청별 N/R/O/H 참조만 전달한다. Python은 DB 관계를 직접 쓰지 않으며 lease·원문·권한·quota·Spring 오류를 의미 실패로 숨기지 않는다.
 - ADD/MERGE/UPDATE/END/EXCLUDE/HOLD의 coverage·시점·참조·중복을 검증한다. 보류는 내부 상태로 저장하고 필수 사용자 검토 큐를 만들지 않는다. 이름 없는 1인칭/역할을 주인공으로 추정하지 않으며 자동 해소를 보장하지 않는다.
-- PREPARED는 추출을 재호출하지 않고 COMPLETED/FAILED는 관계 모델을 재호출하지 않는다. 회차 이력/무효화/실제 반영은 Spring 계약을 따른다. 공통 `docs/episode-relationships.md`를 Java·프론트와 동기화하며 실제 모델·합성 매핑·DB 검증을 구분한다.
+- PREPARED는 추출을 재호출하지 않고 COMPLETED/APPLIED/FAILED는 관계 모델을 재호출하지 않는다. partial 계약의 terminal GET에는 `failures`가 필수이며 재claim도 PARTIAL 요약과 실패 관측/그룹 수를 보존한다. Job SUCCEEDED는 실행 완료이며 관계 완전 성공과 다르다. inline 관계 span과 전용 Worker span은 partial/error와 안전한 개수만 남긴다. 회차 이력/무효화/실제 반영은 Spring 계약을 따른다. 공통 `docs/episode-relationships.md`를 Java·프론트와 동기화하며 실제 모델·합성 매핑·DB 검증을 구분한다.
 
 ## Async Worker Runtime
 
@@ -220,6 +228,7 @@
 
 - 기존 ORACLE/FIXED/ROLLING의 입력·상태 적용·채점 의미는 유지한다. 실험 A는 외부 S0를 명시하는 COMMON_START, B는 Java가 검증·seal한 journal을 복원하는 ORDERED_PROVISIONAL/VALIDATED_PROVISIONAL로 별도 구분한다. 기존 ROLLING의 모든 예측 적용 정책을 B로 대신 쓰지 않는다.
 - B의 다음 회차 입력에는 Gold state/identity/결과를 사용하지 않는다. `ordered_journal`의 읽기 전용 mirror와 `ordered_state_projection`이 실제 Backend namespace를 보존하며, Gold 대응은 raw trace를 바꾸지 않는 scorer-only view에서만 수행한다.
+- Java #365의 DB journal v2는 `valueMode=APPEND_HISTORY`로 캐릭터 이력의 새 항목만 저장한다. 읽기 전용 mirror는 v1 전체 대체·v2 증분 혼합을 순서대로 복원하며 동일 event만 멱등 처리하고 서로 다른 사건의 같은 사실은 보존한다. v1의 증분 표시·미지원 버전/모드·배열이 아닌 추가 대상은 거절한다. Worker `analysisContext.formatVersion=1`과 운영 추출/비교는 변경하지 않는다. 양 저장소의 `ordered-journal-v2.json`은 같은 상태·canonical JSON·SHA-256을 검증한다.
 - Backend S0 references의 `HUMAN_REJECTION_POLICY`는 동일 원문 주장 반려를 이어받기 위한 비공개 해시 규칙이다. Worker prompt로 전달하거나 평가 current fact/history로 투영하지 않는다. 전체 journal hash 검증에는 보존하되 사실 projection은 이 kind를 명시적으로 제외한다.
 - saved prediction 평가에서는 runtime input/output hash·source hash·run/generation·sequence·SEALED 상태를 검증한다. 실패 회차를 검토 의도로 바꾸거나 이후 회차를 실행한 것처럼 채우지 않는다. Java domain reducer revision을 runtime policy에 기록한다.
 - DRAFT 정답지와 operation accuracy 평균을 FINAL 품질/완전 결정 일치율로 보고하지 않는다. 지표 분자·분모·평균 방식과 semantic judge 사용 여부를 명시하고 유료 실행은 별도 승인을 받은 경우에만 진행한다. 실행안과 현재 adapter 제한은 `docs/ordered-provisional-evaluation.md`를 따른다.
@@ -335,6 +344,13 @@
 - 대상이 둘 이상인 `CURRENT_AND_HISTORY`는 CURRENT만 읽고 `HISTORY_SKIPPED_FOR_COMPARISON`을 한 번 남긴다. 첫 답변과 복구가 모두 출력 상한에서 잘리면 실행 실패 대신 `ANSWER_LIMIT` 빈 답으로 기존 마감 경로를 따른다. 출력 없이 시간만 초과한 경우는 기존 `EXECUTION_LIMIT_EXCEEDED`를 유지한다. 원문 요구가 있는 혼합 계획에서 원문 라운드 예약 때문에 FIELDS를 다 읽지 못하면 되묻지 않고 등록 현재값을 미확인으로 둔 채 원문을 계속한다(`REGISTERED_LOOKUP_INCOMPLETE`); 등록 전용 계획의 되묻기는 유지한다. 새 notice는 `limitations` 문장으로만 노출하고 저장값·인용·정산을 바꾸지 않는다.
 - plan v13/QA plan v10 지침: 동명이인·전수는 `NONE+SCENE+EARLIEST+LIST/COUNT`와 회차 분산 수집, 부재 확인은 `HISTORY+SUMMARY`, 이름 명시 인물의 현재 속성·비교는 CURRENT만(능력·효과·출처 설명은 SCENE 유지), 이름 없는 규칙·수치 질문은 되묻지 않는다. 25문항 연기 세트와 60발화 회귀의 실제 측정·남은 한계는 `docs/ai-logic-versions/v0033.md`와 공통 `docs/chat-query-quality-v1.md`를 따르며, 발표셋 112문항은 사람 Gold 검토 뒤 실행한다.
 
+### #319 3차 — 막다른 경로 제거·키워드 희귀도 가중 — 2026-11-02
+
+- 현재 버전은 hybrid plan v14 / QA plan v10이며 answer v16·FIELD select v2·select v3은 그대로다. plan v14는 따옴표로 인용한 대사의 화자·상대·앞뒤 장면을 묻는 질문을 인용문 검색어의 `PROCEED + SCENE`으로 계획하고, '주인공'은 등록 이름이 아니므로 subjects에 넣지 않고 사건 단어로 원문을 찾게 한다. 대화에 없는 '그 사람/그는' 지칭은 계속 되묻는다.
+- 키워드 1라운드 순위는 같은 조회 범위 청크의 문서 빈도로 구한 BM25 IDF에 `ln(1+x)`를 씌운 가중치의 일치 비율이다. 1인칭 주인공 이름·'어떻게'처럼 흔한 단어 여러 개가 겹친 청크가 드문 결정 단어의 장면을 밀어내지 않게 하기 위함이다. 한 글자 단어는 다른 단어 안에서도 일치하므로 여러 글자 단어 가중치 중 가장 작은 값을 넘지 않는다. 모든 단어 일치 1.0, 단어 하나, 후보 조건, 동점 순서는 기존과 같다. 검수 실행의 고정 범위 검색은 `rarity_weighted_keyword=False`로 별도 평가 전까지 기존 순위를 유지한다. 가중치 형태는 같은 질문셋의 Gold 원문 위치로 골랐으므로 다른 작품에서 다시 확인한다.
+- 원문 계획(등록 현재값 필수 제외)은 등록 조회의 막다른 경로로 끝내지 않는다. 등록 행이 답변 입력을 넘치면 현재값 행과 계획 정렬 순으로 남기고 원문 근거 예산만큼 자리를 비운다(`REGISTERED_ROWS_TRIMMED`). 안내 문장도 입력에 들어가므로 행 수를 고르기 전에 반영하고, 마지막 확인은 근거 자리 없이 해 행을 하나도 못 남겨도 원문으로 계속한다. 같은 이름의 세계관이 여러 분류에 있거나 등록 항목 선택이 모호하면 등록 정보 없이 원문으로 답한다(`REGISTERED_LOOKUP_AMBIGUOUS`). 인물 이름 모호성, 등록 전용 계획, 등록 현재값 필수 계획의 되묻기는 유지한다. 등록 현재값 필수 계획은 행을 줄이면 같은 인물의 현재값 일부가 빠져도 인물 단위로는 확인처럼 보이므로 줄이지 않는다.
+- 대상 선택에서 세계관은 모든 후보 페이지를 읽었고 이름이 정확히 같은 등록 대상이 하나뿐이면 그 대상을 쓴다. 인물은 성·호칭·동명이인 위험 때문에 정확히 같은 이름이어도 되묻는다(`docs/chat-qa-v1.md` 대상 선택 규칙 3). 구형 행 선택은 판단과 행 목록의 불일치만 정규화하고, 답하지 않는 판단에 붙은 행도 먼저 검증해 없는 참조·중복·상한 초과는 재시도한다. 측정과 남은 한계는 `docs/ai-logic-versions/v0044.md`를 따른다.
+
 ### OPT-33 현재 등록값·후속 정정 — 2026-10-22
 
 - 현재 버전은 QA plan v9/FIELD select v2, hybrid plan v12/answer v16, 등록 설명 v4이다. `registeredCurrentRequired`는 누락을 허용하지 않는 strict boolean이며, 현재 속성·보유·등록 화면 확인의 필수 근거를 표시 옵션과 분리한다. true이면 CURRENT 계열과 sourceFallback=false를 검증한다. 원문·작중/회차 서술만 묻는 질문과 일반 개념 질문에 등록 현재값을 강제하지 않는다.
@@ -375,6 +391,6 @@
 - 선정 계정·작품·회차 순서는 Spring의 고정 fingerprint manifest/캠페인 대기열이 소유한다. Python은 대상 SQL이나 회원 목록을 복제하지 않는다.
 - `relationship` Worker는 `/api/internal/v1/relationship-jobs/*`에서 `RELATIONSHIP_EXTRACTION`, `EPISODE`, `CONFIRMED_ONLY`, 정수 `relationshipAnalysisContract.formatVersion=1`만 처리한다. 일반 분석 claim/complete와 혼용하지 않는다.
 - 기존 관계 pipeline/extractor/comparator를 재사용하되 S3 고정 key/version/hash와 순수 청킹만 사용한다. SQLAlchemy 세션, 후보·프로필·청크 저장, retrieval embedding을 호출하지 않는다. 동기 원문 읽기는 Worker 소유 `BlockingIoExecutor`에서 `AI_WORKER_BLOCKING_MAX_WORKERS`(운영1) 한도를 지킨다. Job 취소는 즉시 전파하되 남은 읽기는 같은 한도에 포함하며 종료 시 executor를 정리한다. 관계 원문 읽기 예외는 executor에서 결과로 반환하고 살아 있는 Job에서 원래 객체를 다시 던진다. 취소 후 결과는 버려 S3 객체 key/URL이 포함될 수 있는 예외를 detached 로그에 남기지 않는다.
-- PREPARED/COMPLETED 재개는 저장 관측·결정을 쓰며 원문 재읽기와 재추출을 생략한다. 근거 원문 검증·lease·토큰 예약은 우회하지 않는다. 입력 상한 초과는 자르지 않고 실패한다.
+- PREPARED/COMPLETED/APPLIED 재개는 저장 관측·결정·typed failure를 쓰며 원문 재읽기와 재추출을 생략한다. 근거 원문 검증·lease·토큰 예약은 우회하지 않는다. 입력 상한은 자르지 않고 기존 계약에서는 실패, GH359 opt-in에서는 비교 group별 미완료로 보존한다. 추출·고정 입력·provider 중단은 이 partial 범위에 넣지 않는다.
 - 운영 `ai-relationship-worker`는 1프로세스·1Job·1LLM, DB 연결0, metrics host9109다. 런타임/targets/tracing 검사에 네 번째 종류를 포함하되 일반 분석 5×10과 비교 각1은 유지한다.
 - Java API/Flyway를 먼저, AI Worker를 다음에 배포한다. merge 자체가 provider 호출이 아니라 이미지 발행·배포 성공 후 claim이 시작점이다. 원칙/동기화 대상은 `docs/relationship-cohort-backfill.md`와 `docs/episode-relationships.md`다.
