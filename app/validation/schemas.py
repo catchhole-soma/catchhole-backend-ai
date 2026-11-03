@@ -13,6 +13,8 @@ import re
 from copy import deepcopy
 
 from app.validation.contracts import (
+    BASIS_QUOTE_LIMIT,
+    MAX_BASIS_QUOTES,
     MAX_SEARCH_QUERIES,
     SEARCH_QUERY_LIMIT,
     TARGET_REF,
@@ -77,6 +79,10 @@ def judge_schema(*, entry_refs, final, search_available):
     properties["evidence_refs"] = _array(known)
     defs["Disagreement"]["properties"]["fact_ref"] = ref_kind("B", values=entry_refs)
     defs["Disagreement"]["properties"]["evidence_ref"] = ref_kind("E")
+    # Exact basis sentences of the comparison side only (an evidence chunk or a stored setting value, never T1).
+    defs["BasisQuoteDraft"]["properties"]["ref"] = ref_kind("B", "E")
+    defs["BasisQuoteDraft"]["properties"]["quote"] = {"type": "string", "minLength": 1, "maxLength": BASIS_QUOTE_LIMIT}
+    properties["basis_quotes"] = _array({"$ref": "#/$defs/BasisQuoteDraft"}, max_items=MAX_BASIS_QUOTES)
     if final:
         properties["action"] = {"type": "string", "enum": ["DECIDED"]}
     else:

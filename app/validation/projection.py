@@ -144,6 +144,34 @@ def source_catalogue(sources):
             for source in sources]
 
 
+def setting_value_leaves(row):
+    """The stored setting values a basis quote may cite (Java parity, shared contract `basisQuotes`).
+
+    `characters`: every string `state.slots.<key>.factValue`; `worldSettings`: every string leaf under
+    `state.propertiesJson` (dict values and list items, recursively; the value itself if it is a string).
+    Keys, names, aliases and any other domain are never quotable.
+    """
+    state = row.get("state") if isinstance(row, dict) else None
+    if not isinstance(state, dict):
+        return []
+    if row.get("domain") == "characters":
+        slots = state.get("slots")
+        return [slot["factValue"] for slot in slots.values()
+                if isinstance(slot, dict) and isinstance(slot.get("factValue"), str)] if isinstance(slots, dict) else []
+    if row.get("domain") != "worldSettings":
+        return []
+    leaves, pending = [], [state.get("propertiesJson")]
+    while pending:
+        value = pending.pop(0)
+        if isinstance(value, str):
+            leaves.append(value)
+        elif isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    return leaves
+
+
 def bundle_settings(rows):
     """GH349 Amendment 2: published bundle settings are refs only; the Backend checks the ref set."""
     return [{"entry_ref": row["entry_ref"], "subject_ref": row["subject_ref"]} for row in rows]

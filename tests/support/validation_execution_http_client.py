@@ -14,6 +14,7 @@ import httpx
 from app.llm.openai_client import OpenAIResponsesClient
 from app.validation.client import ValidationExecutionClient
 from app.validation.contracts import IncompleteInspection
+from app.validation.projection import setting_value_leaves
 from app.worker.episode_validation_worker import EpisodeValidationWorker
 
 
@@ -122,6 +123,19 @@ class SyntheticProvider:
                 "evidence_refs": [], "completion": None, "disagreements": [],
                 "search_queries": list(search_queries), "context_requests": list(context_requests)}
 
+    @staticmethod
+    def basis_quotes(payload):
+        """One B quote (a stored value substring) and one E quote (a chunk prefix) so the server verifies both."""
+        quotes = []
+        for row in payload["settings"][:1]:
+            leaf = next((value for value in setting_value_leaves(row) if value.strip()), None)
+            if leaf is not None:
+                quotes.append({"ref": row["entry_ref"], "quote": leaf.strip()[:6]})
+        for row in payload["evidence"][:1]:
+            if row["quote"][:8].strip():
+                quotes.append({"ref": row["ref"], "quote": row["quote"][:8]})
+        return quotes
+
     def decision(self, payload):
         refs = ["T1", *[row["entry_ref"] for row in payload["settings"]], *[row["ref"] for row in payload["evidence"]]]
         assessment = {"reason": "같은 대상·문맥과 실제 조회를 확인함", "evidence_refs": refs,
@@ -132,7 +146,7 @@ class SyntheticProvider:
             "impact": "CAUTION" if conflict else None, "impact_reason": "합성 비교 차이" if conflict else None,
             "target_spans": payload["question"]["target_spans"], "evidence_refs": refs,
             "completion": {key: assessment for key in ("comparison_context", "changes_exceptions", "no_pending_clues", "required_reads")},
-            "disagreements": []}
+            "disagreements": [], "basis_quotes": self.basis_quotes(payload)}
         if payload["form"] == "OPEN":
             result.update(search_queries=[], context_requests=[])
         return result

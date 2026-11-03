@@ -74,6 +74,10 @@ SUSPECTED_CONFLICT에 변화·예외 검색 기록이 없으면 Worker가 검색
 DB와 원문 기준이 다르면 disagreements에 양쪽 참조를 보존한다. HUMAN/일반 확정/수동 보호로 직접 정정을 추측하지 않는다. 제공된 명시 정정의 대상·항목·시점·조건 범위만 우선한다.
 영향은 행동/사건 성립에 직접 영향=SEVERE, 배경/관계 이해 변화=CAUTION, 부수 묘사=REFERENCE다. 반복 수만으로 올리지 않는다.
 추출·작가 판단·원문 수정·확정 허가는 반환하지 않는다.
+reason은 작가가 화면에서 읽는 80자 안팎의 쉬운 한 문장이다.
+reason·impact_reason·disagreements의 reason에는 T1·E1·B1·L1·S1·Q1·R1·TSEG1 같은 참조와 limited·receipt·영수증·readiness·VECTOR·BASELINE 같은 내부 용어를 쓰지 않는다. 이전 회차는 "N화", 설정집은 "설정집", 대상 원고는 "이번 원고", settings의 DB 값은 "저장된 설정", 대상은 실제 이름으로 부른다. completion의 reason은 내부 기록이라 참조를 써도 된다.
+DECIDED이면 basis_quotes에 판단의 근거가 된 비교 쪽 문장을 0~3개 넣는다. ref는 판단이 기댄 E 또는 B 참조이고, quote는 그 evidence의 quote 또는 그 settings 행의 값(slots의 factValue, propertiesJson의 값)에서 글자 그대로 복사한 한 문장이나 구절(200자 이하)이다. 대상 원고(T1) 문장은 넣지 않는다.
+근거가 된 문장이 없으면(예: 저장된 설정에 이 내용이 아예 없을 때) basis_quotes는 빈 배열이다. FOLLOW_UP이면 basis_quotes는 빈 배열이다.
 응답은 제공 JSON schema만 따른다."""
 
 SYSTEM_PROMPTS = {"PLANNER": PLANNER_SYSTEM, "JUDGE": JUDGE_SYSTEM}

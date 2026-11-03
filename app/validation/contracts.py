@@ -78,6 +78,20 @@ class Disagreement(Contract):
     correction_ref: str | None = None
 
 
+class BasisQuote(Contract):
+    """One exact basis sentence of a decision (the comparison side, never T1).
+
+    An E quote is an absolute span of its evidence source (`source_ref`/`start`/`end` in code points) and is
+    published as a citation; a B quote is a substring of a stored setting value, so it has no source position.
+    """
+
+    ref: str
+    source_ref: str | None
+    start: int | None
+    end: int | None
+    quote: str = Field(min_length=1)
+
+
 _OUTCOME = Literal["CONFLICT", "SUSPECTED_CONFLICT", "NEEDS_CONTEXT", "NO_CONFLICT"]
 _BASIS = Literal["DIRECT_CONTRADICTION", "CHANGE_NOT_FOUND", "AMBIGUOUS_MEANING", "COMPATIBLE", "DB_RAW_DISAGREEMENT"]
 _IMPACT = Literal["SEVERE", "CAUTION", "REFERENCE"]
@@ -98,12 +112,19 @@ class ValidationDecision(Contract):
     follow_ups: list[LookupIntent]
     affected_question_refs: list[str]
     disagreements: list[Disagreement]
+    # Exact basis sentences checked by the Worker (absent in decisions published before this field).
+    basis_quotes: list[BasisQuote] = Field(default_factory=list)
 
 
 # Judge answers (no docstrings: they would become schema descriptions).
 class ContextRequest(Contract):
     start: int = Field(ge=0, strict=True)
     end: int = Field(gt=0, strict=True)
+
+
+class BasisQuoteDraft(Contract):
+    ref: str
+    quote: str = Field(min_length=1)
 
 
 class JudgeOpenAnswer(Contract):
@@ -117,6 +138,8 @@ class JudgeOpenAnswer(Contract):
     evidence_refs: list[str]
     completion: CompletionAssessment | None
     disagreements: list[Disagreement]
+    # Required by the strict schema; the default only tolerates older scripted answers.
+    basis_quotes: list[BasisQuoteDraft] = Field(default_factory=list)
     # Absent from the schema when no search can run; the Worker treats a missing list as empty.
     search_queries: list[str] = Field(default_factory=list)
     context_requests: list[ContextRequest]
@@ -133,10 +156,14 @@ class JudgeFinalAnswer(Contract):
     evidence_refs: list[str]
     completion: CompletionAssessment
     disagreements: list[Disagreement]
+    basis_quotes: list[BasisQuoteDraft] = Field(default_factory=list)
 
 
 def decision_from_answer(answer):
-    """The published ValidationDecision of a DECIDED judge answer (no follow-ups, no re-opened questions)."""
+    """The published ValidationDecision of a DECIDED judge answer (no follow-ups, no re-opened questions).
+
+    `basis_quotes` stays empty here: the judge fills it from the answer after the Worker checked each quote.
+    """
     return ValidationDecision(
         action="DECIDED", outcome=answer.outcome, basis=answer.basis, reason=answer.reason,
         impact=answer.impact, impact_reason=answer.impact_reason, target_spans=list(answer.target_spans),
@@ -235,6 +262,9 @@ TARGET_REF = "T1"
 _SAFE_CODE = re.compile(r"[A-Z][A-Z0-9_]{0,99}")
 SEARCH_QUERY_LIMIT = 1000
 MAX_SEARCH_QUERIES = 3
+# A decision's exact basis sentences (`basis_quotes`): at most 3, each at most 300 code points.
+MAX_BASIS_QUOTES = 3
+BASIS_QUOTE_LIMIT = 300
 
 
 def safe_code(value, fallback=None):

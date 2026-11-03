@@ -13,12 +13,17 @@ Per question, at most MAX_JUDGE_CALLS calls:
 
 import asyncio
 import json
+import re
 from dataclasses import asdict
 from hashlib import sha256
 
+from app.validation.author_text import author_labels, sanitize_decision
 from app.validation.contracts import (
+    BASIS_QUOTE_LIMIT,
+    MAX_BASIS_QUOTES,
     MAX_SEARCH_QUERIES,
     TARGET_REF,
+    BasisQuote,
     IncompleteInspection,
     JudgeFinalAnswer,
     JudgeOpenAnswer,
@@ -31,7 +36,12 @@ from app.validation.contracts import (
 )
 from app.validation.data import MAX_SETTING_SUBJECTS
 from app.validation.models import call_role
-from app.validation.projection import bundle_settings, compact_setting_row, entry_order
+from app.validation.projection import (
+    bundle_settings,
+    compact_setting_row,
+    entry_order,
+    setting_value_leaves,
+)
 from app.validation.schemas import JUDGE_FINAL_SCHEMA_NAME, JUDGE_OPEN_SCHEMA_NAME, judge_schema
 
 # Deliberately separate from the planner's contextChars (1,000): the judge sees ±300 code points per span.
@@ -61,6 +71,62 @@ def change_search_query(draft):
 
 def receipt_wire(receipt):
     return asdict(receipt) | {"intent": receipt.intent.model_dump()}
+
+
+_EVIDENCE_REF = re.compile(r"E[1-9][0-9]*")
+_ENTRY_REF = re.compile(r"B[1-9][0-9]*")
+
+
+def _evidence_quote(ref, quote, row):
+    """The absolute span of `quote` inside one evidence chunk, or None (first occurrence; CRLF chunks retried)."""
+    chunk = row.get("quote") if row is not None else None
+    if not isinstance(chunk, str) or row.get("source_ref") == TARGET_REF or type(row.get("start")) is not int:
+        return None
+    index = chunk.find(quote)
+    if index < 0 and "\n" in quote and "\r\n" in chunk:
+        crlf = quote.replace("\r\n", "\n").replace("\n", "\r\n")
+        index = chunk.find(crlf)
+        quote = crlf
+    if index < 0 or len(quote) > BASIS_QUOTE_LIMIT:
+        return None
+    start = row["start"] + index
+    return BasisQuote(ref=ref, source_ref=row["source_ref"], start=start, end=start + len(quote), quote=quote)
+
+
+def _setting_quote(ref, quote, row):
+    """A B quote is a substring of one stored setting value of that row; it has no source position."""
+    if row is None or not any(quote in leaf for leaf in setting_value_leaves(row)):
+        return None
+    return BasisQuote(ref=ref, source_ref=None, start=None, end=None, quote=quote)
+
+
+def normalize_basis_quotes(drafts, evidence, settings, stats=None):
+    """Checked basis sentences of one decision, in model order, at most MAX_BASIS_QUOTES.
+
+    `E#` must be an exact substring of that evidence row's chunk and becomes an absolute code point span of its
+    source (`start = chunk start + index`); `B#` must be a substring of one setting value leaf of that row. Anything
+    else (unknown/T1 ref, not found, too long, duplicate, over the limit) is dropped and counted as
+    `BASIS_QUOTES_DROPPED`: a missing basis sentence is never a question failure.
+    """
+    by_evidence = {row["ref"]: row for row in evidence}
+    by_setting = {row["entry_ref"]: row for row in settings}
+    kept, seen, dropped = [], set(), 0
+    for draft in drafts:
+        ref, quote = draft.ref, draft.quote.strip()
+        item = None
+        if quote and len(quote) <= BASIS_QUOTE_LIMIT and len(kept) < MAX_BASIS_QUOTES:
+            if _EVIDENCE_REF.fullmatch(ref):
+                item = _evidence_quote(ref, quote, by_evidence.get(ref))
+            elif _ENTRY_REF.fullmatch(ref):
+                item = _setting_quote(ref, quote, by_setting.get(ref))
+        if item is None or (item.ref, item.quote) in seen:
+            dropped += 1
+            continue
+        seen.add((item.ref, item.quote))
+        kept.append(item)
+    if dropped and stats is not None:
+        stats["BASIS_QUOTES_DROPPED"] += dropped
+    return kept
 
 
 def _invalid(cause, code="INVALID_DECISION"):
@@ -103,10 +169,12 @@ class SettingJudge:
     """Judges one question at a time; many run concurrently over one corpus, settings cache and budget."""
 
     def __init__(self, model, budget, runtime, *, corpus, settings, target, source_catalogue, segment_refs,
-                 stats):
+                 stats, subjects=None):
         self.model, self.budget, self.runtime = model, budget, runtime
         self.corpus, self.settings, self.target = corpus, settings, target
         self.source_catalogue, self.segment_refs, self.stats = source_catalogue, frozenset(segment_refs), stats
+        # SUBJECTS catalogue rows: S refs in author text become subject names (None: every S ref is "대상").
+        self.subjects = subjects
         self.search_offered = corpus.search_offered
         # One schema per form for the whole report keeps the system+schema prefix provider-cacheable.
         self.schemas = {
@@ -158,8 +226,13 @@ class SettingJudge:
                 form = "FINAL"
                 continue
             evidence = self._evidence(own)
+            quotes = normalize_basis_quotes(answer.basis_quotes, evidence, rows, self.stats)
             decision = validate_decision(decision_from_answer(answer), question, rows, evidence, own, self.target,
                                          self.stats)
+            decision = decision.model_copy(update={"basis_quotes": quotes})
+            labels = author_labels(evidence=evidence, source_catalogue=self.source_catalogue, settings=rows,
+                                   subjects=self.subjects)
+            decision = sanitize_decision(decision, labels, self.stats)
             row["decided"] = decision.outcome
             return decision, bundle
 
@@ -173,6 +246,8 @@ class SettingJudge:
         if answer.action == "FOLLOW_UP":
             # A follow-up is not a decision: its outcome/impact/completion are never stored or used.
             ignored = {name: None for name in _DECISION_FIELDS if getattr(answer, name) is not None}
+            if answer.basis_quotes:
+                ignored["basis_quotes"] = []
             if ignored:
                 self.stats["FOLLOW_UP_DECISION_FIELDS_IGNORED"] += 1
                 updates.update(ignored)

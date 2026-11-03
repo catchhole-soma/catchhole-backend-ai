@@ -2734,6 +2734,7 @@
         "target_context[]",
         "additional_target_context[]"
       ],
+      "basisQuotes": "basis_quotes[]: an E quote {ref, source_ref, start, end, quote} is a typed span (exact supplied citation, actual source hash/position, inside its bundle evidence row); a B quote {ref, source_ref:null, start:null, end:null, quote} is not source text and must be a substring of a setting value leaf of that bundle setting row",
       "canonicalSettings": "settings[] must exactly equal the server-issued known entry projection; text/quote inside that authenticated state are ordinary domain keys",
       "otherCopies": "text/quote in undeclared payload/checkpoint objects are invalid; typed spans/context still require exact supplied citation and actual source hash/position checks",
       "depthLimit": 50
@@ -3251,7 +3252,7 @@
         "source_catalogue",
         "input_digest"
       ],
-      "publishedDecision": "ValidationDecision shape with follow_ups [] and affected_question_refs [].",
+      "publishedDecision": "ValidationDecision shape with follow_ups [] and affected_question_refs []; basis_quotes holds the checked basis sentences (see basisQuotes) and may be absent in decisions published before it (read as []).",
       "questionFailure": {
         "decision": "Owner decision 2026-11-02 (③): a question that cannot reach a decision because of a question-level error is published alone as an INCOMPLETE unit and the other questions are still judged.",
         "questionLevelCodes": [
@@ -3320,6 +3321,380 @@
         "server": "The check keeps outcome INCOMPLETE and is not completed(): no finding is created, the run cannot be COMPLETED, and results show incompleteChecks plus each INCOMPLETE check's failureCode, failureCause and verified targetSpans.",
         "completion": "The Worker reports Complete.failureCode SETTING_QUESTIONS_INCOMPLETE when the SETTING branch judged every question it could; a run-level SETTING code or a TYPO branch failure code takes precedence. The server derives PARTIAL (FAILED when nothing succeeded) as for any incomplete run.",
         "retry": "The author's same-input RETRY re-judges only INCOMPLETE and unpublished questions from their first judge call on the same check revision; published decisions are kept. A Worker lease recovery also re-judges them within the same run caps."
+      },
+      "basisQuotes": {
+        "rule": "A DECIDED judge answer lists 0-3 basis_quotes {ref, quote}: ref is an E or B ref the decision relies on, quote an exact sentence or clause copied from that evidence chunk or from a stored setting value (never T1). The Worker keeps, in model order and at most maxItems, each quote that after stripping surrounding whitespace is 1..maxQuoteCodePoints code points and: E - an exact substring of that bundle evidence row's quote (first occurrence; if absent and the quote has LF while the chunk has CRLF, the quote with every LF as CRLF), whose row source_ref is not T1, published as the absolute source span start = row.start + index, end = start + length (code points); B - a substring of one setting value leaf of that bundle setting row, published with source_ref/start/end null. The published quote is the exact source/value substring.",
+        "maxItems": 3,
+        "maxQuoteCodePoints": 300,
+        "answerShape": {
+          "ref": "E1|B1",
+          "quote": "exact sentence or clause"
+        },
+        "publishedShapes": {
+          "evidence": {
+            "ref": "E1",
+            "source_ref": "R1",
+            "start": 0,
+            "end": 0,
+            "quote": "..."
+          },
+          "setting": {
+            "ref": "B1",
+            "source_ref": null,
+            "start": null,
+            "end": null,
+            "quote": "..."
+          }
+        },
+        "settingValueLeaves": {
+          "characters": "state.slots.*.factValue strings",
+          "worldSettings": "every string leaf under state.propertiesJson (dict values and list items, recursively; the value itself if it is a string); keys are not values",
+          "other": "names, aliases, keys and other domains are never quotable"
+        },
+        "duplicates": "the same (ref, published quote) twice keeps the first",
+        "invalid": "dropped, counted as BASIS_QUOTES_DROPPED; never a question failure",
+        "followUp": "basis_quotes of a FOLLOW_UP answer are ignored (FOLLOW_UP_DECISION_FIELDS_IGNORED)",
+        "citation": "an E quote is also sent as a citation (payloadCitationPaths.basisQuotes); a B quote is not",
+        "vectors": [
+          {
+            "name": "evidenceExact",
+            "evidence": {
+              "ref": "E1",
+              "source_ref": "R1",
+              "source_kind": "EPISODE",
+              "start": 120,
+              "end": 165,
+              "quote": "민수는 왼손을 잃었다. 그 뒤로 검은 오른손으로만 쥐었다. 성문은 낮에만 열린다.",
+              "method": "VECTOR",
+              "source_context": {
+                "episodeNo": 1
+              }
+            },
+            "setting": null,
+            "answer": {
+              "ref": "E1",
+              "quote": "그 뒤로 검은 오른손으로만 쥐었다."
+            },
+            "published": {
+              "ref": "E1",
+              "source_ref": "R1",
+              "start": 133,
+              "end": 152,
+              "quote": "그 뒤로 검은 오른손으로만 쥐었다."
+            }
+          },
+          {
+            "name": "evidenceWhitespaceTrimmed",
+            "evidence": {
+              "ref": "E1",
+              "source_ref": "R1",
+              "source_kind": "EPISODE",
+              "start": 120,
+              "end": 165,
+              "quote": "민수는 왼손을 잃었다. 그 뒤로 검은 오른손으로만 쥐었다. 성문은 낮에만 열린다.",
+              "method": "VECTOR",
+              "source_context": {
+                "episodeNo": 1
+              }
+            },
+            "setting": null,
+            "answer": {
+              "ref": "E1",
+              "quote": "  성문은 낮에만 열린다.\n"
+            },
+            "published": {
+              "ref": "E1",
+              "source_ref": "R1",
+              "start": 153,
+              "end": 165,
+              "quote": "성문은 낮에만 열린다."
+            }
+          },
+          {
+            "name": "evidenceCrlfRetry",
+            "evidence": {
+              "ref": "E2",
+              "source_ref": "R2",
+              "source_kind": "SETTING_BOOK",
+              "start": 40,
+              "end": 62,
+              "quote": "첫 줄이다.\r\n둘째 줄이다.\r\n셋째 줄.",
+              "method": "VECTOR",
+              "source_context": {
+                "revisionNo": 2,
+                "referenceTimeKind": "WORK_START"
+              }
+            },
+            "setting": null,
+            "answer": {
+              "ref": "E2",
+              "quote": "첫 줄이다.\n둘째 줄이다."
+            },
+            "published": {
+              "ref": "E2",
+              "source_ref": "R2",
+              "start": 40,
+              "end": 55,
+              "quote": "첫 줄이다.\r\n둘째 줄이다."
+            }
+          },
+          {
+            "name": "evidenceNotFound",
+            "evidence": {
+              "ref": "E1",
+              "source_ref": "R1",
+              "source_kind": "EPISODE",
+              "start": 120,
+              "end": 165,
+              "quote": "민수는 왼손을 잃었다. 그 뒤로 검은 오른손으로만 쥐었다. 성문은 낮에만 열린다.",
+              "method": "VECTOR",
+              "source_context": {
+                "episodeNo": 1
+              }
+            },
+            "setting": null,
+            "answer": {
+              "ref": "E1",
+              "quote": "민수는 두 손으로 검을 쥐었다."
+            },
+            "published": null
+          },
+          {
+            "name": "evidenceFromTargetIsNotABasis",
+            "evidence": {
+              "ref": "E3",
+              "source_ref": "T1",
+              "source_kind": "EPISODE",
+              "start": 0,
+              "end": 11,
+              "quote": "이번 원고 문장이다.",
+              "method": "VECTOR",
+              "source_context": {
+                "episodeNo": 1
+              }
+            },
+            "setting": null,
+            "answer": {
+              "ref": "E3",
+              "quote": "이번 원고 문장이다."
+            },
+            "published": null
+          },
+          {
+            "name": "settingCharacterFactValue",
+            "evidence": null,
+            "setting": {
+              "entry_ref": "B1",
+              "subject_ref": "S1",
+              "domain": "characters",
+              "name": "민수",
+              "aliases": [],
+              "state": {
+                "name": "민수",
+                "slots": {
+                  "STATUS:손": {
+                    "factKey": "손",
+                    "factType": "STATUS",
+                    "factValue": "왼손 상실"
+                  }
+                }
+              }
+            },
+            "answer": {
+              "ref": "B1",
+              "quote": "왼손 상실"
+            },
+            "published": {
+              "ref": "B1",
+              "source_ref": null,
+              "start": null,
+              "end": null,
+              "quote": "왼손 상실"
+            }
+          },
+          {
+            "name": "settingWorldNestedLeaf",
+            "evidence": null,
+            "setting": {
+              "entry_ref": "B2",
+              "subject_ref": "S2",
+              "domain": "worldSettings",
+              "name": "성문",
+              "aliases": [],
+              "state": {
+                "name": "성문",
+                "propertiesJson": {
+                  "개방": {
+                    "시간": "낮에만 열린다",
+                    "예외": [
+                      "축제 때는 밤에도 열린다"
+                    ]
+                  }
+                }
+              }
+            },
+            "answer": {
+              "ref": "B2",
+              "quote": "축제 때는 밤에도"
+            },
+            "published": {
+              "ref": "B2",
+              "source_ref": null,
+              "start": null,
+              "end": null,
+              "quote": "축제 때는 밤에도"
+            }
+          },
+          {
+            "name": "settingKeyIsNotAValue",
+            "evidence": null,
+            "setting": {
+              "entry_ref": "B2",
+              "subject_ref": "S2",
+              "domain": "worldSettings",
+              "name": "성문",
+              "aliases": [],
+              "state": {
+                "name": "성문",
+                "propertiesJson": {
+                  "개방": {
+                    "시간": "낮에만 열린다",
+                    "예외": [
+                      "축제 때는 밤에도 열린다"
+                    ]
+                  }
+                }
+              }
+            },
+            "answer": {
+              "ref": "B2",
+              "quote": "개방"
+            },
+            "published": null
+          },
+          {
+            "name": "settingNameIsNotAValue",
+            "evidence": null,
+            "setting": {
+              "entry_ref": "B1",
+              "subject_ref": "S1",
+              "domain": "characters",
+              "name": "민수",
+              "aliases": [],
+              "state": {
+                "name": "민수",
+                "slots": {
+                  "STATUS:손": {
+                    "factKey": "손",
+                    "factType": "STATUS",
+                    "factValue": "왼손 상실"
+                  }
+                }
+              }
+            },
+            "answer": {
+              "ref": "B1",
+              "quote": "민수"
+            },
+            "published": null
+          },
+          {
+            "name": "settingNotFound",
+            "evidence": null,
+            "setting": {
+              "entry_ref": "B1",
+              "subject_ref": "S1",
+              "domain": "characters",
+              "name": "민수",
+              "aliases": [],
+              "state": {
+                "name": "민수",
+                "slots": {
+                  "STATUS:손": {
+                    "factKey": "손",
+                    "factType": "STATUS",
+                    "factValue": "왼손 상실"
+                  }
+                }
+              }
+            },
+            "answer": {
+              "ref": "B1",
+              "quote": "오른손 상실"
+            },
+            "published": null
+          }
+        ]
+      },
+      "authorText": {
+        "fields": [
+          "reason",
+          "impact_reason",
+          "disagreements[].reason"
+        ],
+        "untouched": "completion.*.reason stays an internal record and may keep refs",
+        "tokenPattern": "(?<![A-Za-z0-9])(T1|TSEG[1-9]\\d*|[EBRSLQ][1-9]\\d*)(?![0-9])",
+        "labels": {
+          "T1": "이번 원고",
+          "TSEG#": "이번 원고",
+          "E#": "{episodeNo}화 for EPISODE evidence (source_context.episodeNo), 설정집 for SETTING_BOOK",
+          "R#": "the same via source_catalogue",
+          "B#": "저장된 설정 (the question's bundle setting rows)",
+          "S#": "the SUBJECTS catalogue name (대상 when the row has no name or no catalogue was given)"
+        },
+        "particles": "after a replaced token 은/는, 이/가 (only when not followed by a Hangul syllable), 을/를, 과/와 and 으로/로 (로 after ㄹ) follow the label's final consonant; a label not ending in Hangul keeps the written particle",
+        "sentenceSplit": "after . ! ? … followed by whitespace",
+        "dropSentenceWhen": [
+          "an unknown ref token remains (L#, Q#, or an E/B/R/S ref with no label)",
+          "an internal word appears: limited, receipt, receipts, readiness, vector, baseline, target_context, keyword, evidence_refs, receipt_refs, source_ref, evidence_bundle, rag (ASCII, case-insensitive, not inside a longer ASCII word) or 영수증"
+        ],
+        "unchanged": "text with no ref token and no internal word is kept byte for byte",
+        "fallbacks": {
+          "reason": {
+            "CONFLICT": "저장된 설정과 이번 원고의 내용이 서로 맞지 않아요.",
+            "SUSPECTED_CONFLICT": "저장된 설정과 달라 보이지만 그 사이의 변화나 예외를 찾지 못했어요.",
+            "NEEDS_CONTEXT": "대상·시점·해석이 분명하지 않아 비교 판단이 어려워요.",
+            "NO_CONFLICT": "저장된 설정과 이번 원고가 서로 맞아요."
+          },
+          "impact_reason": {
+            "SEVERE": "장면의 행동이나 사건 성립에 직접 영향을 줘요.",
+            "CAUTION": "배경이나 관계 이해에 영향을 줄 수 있어요.",
+            "REFERENCE": "부수 묘사라 영향이 작아요."
+          },
+          "disagreement": "저장된 설정과 이전 원고의 내용이 서로 달라요."
+        },
+        "counter": "AUTHOR_TEXT_SANITIZED",
+        "examples": {
+          "labels": {
+            "T1": "이번 원고",
+            "E1": "18화",
+            "E2": "설정집",
+            "B1": "저장된 설정",
+            "S1": "민수"
+          },
+          "cases": [
+            {
+              "text": "T1의 장면은 E1과 다르다.",
+              "expected": "이번 원고의 장면은 18화와 다르다."
+            },
+            {
+              "text": "S1은 B1을 따르지 않는다.",
+              "expected": "민수는 저장된 설정을 따르지 않는다."
+            },
+            {
+              "text": "검색 영수증은 limited로 표시되어 있다. E2에는 이 규칙이 없다.",
+              "expected": "설정집에는 이 규칙이 없다."
+            },
+            {
+              "text": "L3 기록만 확인했다.",
+              "expected": ""
+            },
+            {
+              "text": "저장된 설정과 이번 원고가 서로 맞아요.",
+              "expected": "저장된 설정과 이번 원고가 서로 맞아요."
+            }
+          ]
+        }
       }
     },
     "workerUnusedRoutes": {

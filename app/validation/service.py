@@ -177,7 +177,8 @@ class SettingValidationService:
             await settings.rows([ref for question in queue for ref in question.draft.subject_refs])
             judge = SettingJudge(self.model, budget, self.roles["JUDGE"], corpus=corpus, settings=settings,
                                  target=target, source_catalogue=catalogue,
-                                 segment_refs=[segment.ref for segment in segments], stats=stats)
+                                 segment_refs=[segment.ref for segment in segments], stats=stats,
+                                 subjects=subjects)
             stopped = await self._judge_all(judge, queue, checks, decisions, bundles, failures, traces)
             if stopped is not None:
                 raise stopped
