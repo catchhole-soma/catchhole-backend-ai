@@ -602,3 +602,53 @@ def test_status_preserves_snapshot_and_supported_scope(runtime, monkeypatch):
     }
     monkeypatch.setattr(obj, "compose", lambda *a, **k: json.dumps(status))
     assert obj.backfill("status") == {**status, "reason": None}
+
+
+WRITER = "postgresql+psycopg://admin:test@10.0.0.3/catchhole"
+
+
+def _validation_index_fill(configs, *, url=WRITER, flag=True, **search):
+    """Intake index fill (2026-11-02): the Worker's shared writer DSN, opted in through its own variable."""
+    _validation_semantic_search(configs, **search)
+    validation = configs["worker"]["ai-validation-worker"]
+    if flag:
+        validation["command"] += ["--index-url-env", "VALIDATION_INDEX_DATABASE_URL"]
+    validation["environment"]["VALIDATION_INDEX_DATABASE_URL"] = url
+
+
+def test_validation_index_fill_adds_one_writer_connection_per_job_slot(runtime):
+    obj, configs = runtime
+    _validation_index_fill(configs)
+    budget = configs["retrieval"]["retrieval-index"]["environment"]
+    budget["AI_RUNTIME_DB_CONNECTION_BUDGET"] = "38"
+    result = obj.validate()
+    assert result["validationRetrieval"] is True and result["validationIndexFill"] is True
+    # 31 existing + 3 read-only + 3 writer connections (1 process x 3 slots each).
+    assert result["databaseConnections"] == 37 and result["databaseConnectionsDuringPreflight"] == 38
+    budget["AI_RUNTIME_DB_CONNECTION_BUDGET"] = "37"
+    with pytest.raises(deploy.DeploymentError, match="^DATABASE_CONNECTION_BUDGET_EXCEEDED$"):
+        obj.validate()
+
+
+@pytest.mark.parametrize("url", ["", None])
+def test_empty_validation_index_url_keeps_the_fill_off(runtime, url):
+    obj, configs = runtime
+    _validation_index_fill(configs, url=url)
+    configs["retrieval"]["retrieval-index"]["environment"]["AI_RUNTIME_DB_CONNECTION_BUDGET"] = "35"
+    result = obj.validate()
+    assert result["validationIndexFill"] is False and result["databaseConnections"] == 34
+
+
+@pytest.mark.parametrize("case", ["other-writer", "no-flag", "no-reader"])
+def test_inconsistent_validation_index_fill_stops_before_service_changes(runtime, monkeypatch, case):
+    obj, configs = runtime
+    _validation_index_fill(configs, url="postgresql+psycopg://other:test@10.0.0.3/catchhole" if case == "other-writer"
+                           else WRITER, flag=case != "no-flag")
+    if case == "no-reader":  # Filling without the frozen RAG reader could never be judged ready.
+        configs["worker"]["ai-validation-worker"]["environment"]["VALIDATION_READONLY_DATABASE_URL"] = ""
+    configs["retrieval"]["retrieval-index"]["environment"]["AI_RUNTIME_DB_CONNECTION_BUDGET"] = "100"
+    calls = []
+    monkeypatch.setattr(obj, "compose", lambda *args, **kwargs: calls.append(args))
+    with pytest.raises(deploy.DeploymentError, match="^INCONSISTENT_VALIDATION_INDEX_DATABASE_URL$"):
+        obj.deploy()
+    assert not calls
