@@ -117,7 +117,7 @@ GH331 모델 출력 정규화(실제 Terra 관측 반영, grid v4에서도 유�
   (`FOLLOW_UP_DECISION_FIELDS_IGNORED`), DECIDED에 붙은 검색·문맥 요청은 실행하지 않고 지운다(`DECIDED_REQUESTS_IGNORED`). NO_CONFLICT의 impact도 null로 둔다.
 - `completion.required_reads.receipt_refs`는 Worker가 질문의 실제 성공 receipt 전체로 확정한다. 모델이 인용한 receipt/근거가 실제로 없으면 거절하고, 빠진 receipt만 채운다.
   다른 세 completion 항목은 근거·receipt를 하나 이상 인용해야 한다.
-- DECIDED의 `target_spans`는 질문 span 자체다(Backend가 같은 집합을 요구). 원고에 없는 인용은 `INVALID_EXACT_SPAN`으로 거절한다.
+- DECIDED의 `target_spans`는 항상 질문 span 자체다(Backend가 같은 집합을 요구). 판정이 다시 적어 보낸 span은 쓰지 않고 질문 span으로 바꾸며, 잘못 옮긴 인용이어도 질문 실패로 만들지 않는다(`TARGET_SPANS_REPLACED`, 2026-11-03 31화 틀린 문장 시험의 판정 위치 오기).
 
 결과는 CONFLICT / SUSPECTED_CONFLICT / NEEDS_CONTEXT / NO_CONFLICT이며 실패는 INCOMPLETE로 별도다.
 SUSPECTED_CONFLICT/CHANGE_NOT_FOUND는 실제 성공한 변화/예외 VECTOR 검색 receipt가 있어야 한다.
