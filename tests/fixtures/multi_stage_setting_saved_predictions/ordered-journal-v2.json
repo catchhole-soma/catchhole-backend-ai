@@ -1,0 +1,228 @@
+{
+  "formatVersion": 2,
+  "baseState": {
+    "characters": {
+      "hero": {
+        "name": "서린",
+        "historyFacts": [
+          {
+            "factValue": "검술 1단",
+            "supportingSource": {
+              "sourceEpisodeNo": 1,
+              "evidenceSpans": [
+                {
+                  "quote": "첫 근거"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "worldSettings": {},
+    "references": {}
+  },
+  "changes": [
+    {
+      "eventId": "legacy",
+      "path": [
+        "characters",
+        "hero",
+        "historyFacts"
+      ],
+      "value": [
+        {
+          "factValue": "검술 1단",
+          "supportingSource": {
+            "sourceEpisodeNo": 1,
+            "evidenceSpans": [
+              {
+                "quote": "첫 근거"
+              }
+            ]
+          }
+        },
+        {
+          "factValue": "검술 2단",
+          "supportingSource": {
+            "sourceEpisodeNo": 2,
+            "evidenceSpans": [
+              {
+                "quote": "두 번째 근거 😀"
+              }
+            ]
+          }
+        }
+      ],
+      "remove": false,
+      "operation": "UPDATE",
+      "sourceCandidateIds": [
+        "00000000-0000-0000-0000-000000000001"
+      ]
+    },
+    {
+      "eventId": "append",
+      "path": [
+        "characters",
+        "hero",
+        "historyFacts"
+      ],
+      "value": [
+        {
+          "factValue": "검술 3단",
+          "supportingSource": {
+            "sourceEpisodeNo": 3,
+            "evidenceSpans": [
+              {
+                "quote": "보류된 변화"
+              }
+            ]
+          }
+        }
+      ],
+      "remove": false,
+      "operation": "UPDATE",
+      "sourceCandidateIds": [
+        "00000000-0000-0000-0000-000000000001"
+      ],
+      "valueMode": "APPEND_HISTORY"
+    },
+    {
+      "eventId": "append",
+      "path": [
+        "characters",
+        "hero",
+        "historyFacts"
+      ],
+      "value": [
+        {
+          "factValue": "검술 3단",
+          "supportingSource": {
+            "sourceEpisodeNo": 3,
+            "evidenceSpans": [
+              {
+                "quote": "보류된 변화"
+              }
+            ]
+          }
+        }
+      ],
+      "remove": false,
+      "operation": "UPDATE",
+      "sourceCandidateIds": [
+        "00000000-0000-0000-0000-000000000001"
+      ],
+      "valueMode": "APPEND_HISTORY"
+    },
+    {
+      "eventId": "restore",
+      "path": [
+        "characters",
+        "hero",
+        "historyFacts"
+      ],
+      "value": [
+        {
+          "factValue": "검술 1단",
+          "supportingSource": {
+            "sourceEpisodeNo": 1,
+            "evidenceSpans": [
+              {
+                "quote": "첫 근거"
+              }
+            ]
+          }
+        },
+        {
+          "factValue": "검술 2단",
+          "supportingSource": {
+            "sourceEpisodeNo": 2,
+            "evidenceSpans": [
+              {
+                "quote": "두 번째 근거 😀"
+              }
+            ]
+          }
+        }
+      ],
+      "remove": false,
+      "operation": "REVIEW_REQUIRED",
+      "sourceCandidateIds": [
+        "00000000-0000-0000-0000-000000000001"
+      ]
+    },
+    {
+      "eventId": "history",
+      "path": [
+        "characters",
+        "hero",
+        "historyFacts"
+      ],
+      "value": [
+        {
+          "factValue": "과거 검술 관측",
+          "supportingSource": {
+            "sourceEpisodeNo": 4,
+            "evidenceSpans": [
+              {
+                "quote": "별도로 보존할 근거"
+              }
+            ]
+          }
+        }
+      ],
+      "remove": false,
+      "operation": "HISTORY_ONLY",
+      "sourceCandidateIds": [
+        "00000000-0000-0000-0000-000000000001"
+      ],
+      "valueMode": "APPEND_HISTORY"
+    }
+  ],
+  "expectedState": {
+    "characters": {
+      "hero": {
+        "name": "서린",
+        "historyFacts": [
+          {
+            "factValue": "검술 1단",
+            "supportingSource": {
+              "sourceEpisodeNo": 1,
+              "evidenceSpans": [
+                {
+                  "quote": "첫 근거"
+                }
+              ]
+            }
+          },
+          {
+            "factValue": "검술 2단",
+            "supportingSource": {
+              "sourceEpisodeNo": 2,
+              "evidenceSpans": [
+                {
+                  "quote": "두 번째 근거 😀"
+                }
+              ]
+            }
+          },
+          {
+            "factValue": "과거 검술 관측",
+            "supportingSource": {
+              "sourceEpisodeNo": 4,
+              "evidenceSpans": [
+                {
+                  "quote": "별도로 보존할 근거"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "worldSettings": {},
+    "references": {}
+  },
+  "expectedCanonical": "{\"characters\":{\"hero\":{\"historyFacts\":[{\"factValue\":\"검술 1단\",\"supportingSource\":{\"evidenceSpans\":[{\"quote\":\"첫 근거\"}],\"sourceEpisodeNo\":1}},{\"factValue\":\"검술 2단\",\"supportingSource\":{\"evidenceSpans\":[{\"quote\":\"두 번째 근거 😀\"}],\"sourceEpisodeNo\":2}},{\"factValue\":\"과거 검술 관측\",\"supportingSource\":{\"evidenceSpans\":[{\"quote\":\"별도로 보존할 근거\"}],\"sourceEpisodeNo\":4}}],\"name\":\"서린\"}},\"references\":{},\"worldSettings\":{}}",
+  "expectedHash": "08009a2f1c5409c40c7d4d82fda63a14bbd2542568806b9378000be282851d28"
+}
