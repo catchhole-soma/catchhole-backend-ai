@@ -109,6 +109,8 @@
 - ADD/MERGE/UPDATE/END/EXCLUDE/HOLD의 coverage·시점·참조·중복을 검증한다. 보류는 내부 상태로 저장하고 필수 사용자 검토 큐를 만들지 않는다. 이름 없는 1인칭/역할을 주인공으로 추정하지 않으며 자동 해소를 보장하지 않는다.
 - PREPARED는 추출을 재호출하지 않고 COMPLETED/APPLIED/FAILED는 관계 모델을 재호출하지 않는다. partial 계약의 terminal GET에는 `failures`가 필수이며 재claim도 PARTIAL 요약과 실패 관측/그룹 수를 보존한다. Job SUCCEEDED는 실행 완료이며 관계 완전 성공과 다르다. inline 관계 span과 전용 Worker span은 partial/error와 안전한 개수만 남긴다. 회차 이력/무효화/실제 반영은 Spring 계약을 따른다. 공통 `docs/episode-relationships.md`를 Java·프론트와 동기화하며 실제 모델·합성 매핑·DB 검증을 구분한다.
 
+- GH367 일반 관계는 각 회차에서 확정한 독립 이력으로 유지한다. 앞 회차의 후발 자동 반영으로 후행 분석을 무효화하거나 다시 호출하지 않는다. Spring은 같은 Job 재개에서 검증된 구 관측으로 PREPARED 문맥을 복구할 수 있으며, Python은 기존 v1 응답을 그대로 처리한다. 이때 관계 추출은 생략하고 비교는 새 예약으로 실행한다. 새 계약의 COMPLETED/APPLIED/FAILED는 종전처럼 모델을 호출하지 않는다. 실제 원문·lease·사용자 정정/삭제 충돌은 무시하지 않고, GH332 전용 백필 계약과 유료 상한은 유지한다.
+
 ## Async Worker Runtime
 
 - `ORDERED_PROVISIONAL`은 claim의 명시적 `analysisMode`와 고정 `analysisContext`가 있을 때만 사용한다. Worker는 `supportedAnalysisModes`로 지원을 광고하고 누적 모드를 파일 수·남은 Job 수·임시 데이터 존재 여부로 추론하지 않는다. `CONFIRMED_ONLY`의 기존 모델·입력 의미와 구버전 응답 기본값을 유지한다. 최신 main의 공통 prompt를 기준으로 자연어 이유·세계관 주체 연결·일반 검토 지침만 더한다. main #65의 세계관 추출·분류 기준을 유지한다. user payload·schema·모델 계약은 유지하며 과거 80d 기준과 main 05d9c2d 기준은 별도 golden으로 보존한다.
