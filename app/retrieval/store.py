@@ -25,8 +25,17 @@ FROM episodes e JOIN works w ON w.id=e.work_id JOIN members m ON m.id=w.member_i
 
 
 class RetrievalStore:
+    """Episode retrieval index (V76). The model/owner hooks let another source kind reuse every write rule."""
+
+    source_model = RetrievalSource
+    chunk_model = RetrievalChunk
+    owner = "episode_id"
+
     def __init__(self, session_factory):
         self.sessions = session_factory
+
+    def source_id(self, source):
+        return getattr(source, self.owner)
 
     def backfill_snapshot(self, work_ids=()):
         """Freeze eligible works and episode upper bounds in one database snapshot.
@@ -185,8 +194,7 @@ class RetrievalStore:
         if current.state != "AVAILABLE" or current.fingerprint != source.fingerprint:
             raise SourceChanged()
 
-    @staticmethod
-    def _matches(header, source, spec):
+    def _matches(self, header, source, spec):
         return (
             header is not None
             and header.work_id == source.work_id
@@ -196,15 +204,19 @@ class RetrievalStore:
             and header.chunk_policy == spec.policy
         )
 
-    @staticmethod
-    def _chunks(session, episode_id):
+    def _chunks(self, session, source_id):
+        model = self.chunk_model
         return list(
             session.scalars(
-                select(RetrievalChunk)
-                .where(RetrievalChunk.episode_id == episode_id)
-                .order_by(RetrievalChunk.chunk_index)
+                select(model).where(getattr(model, self.owner) == source_id).order_by(model.chunk_index)
             )
         )
+
+    def _header(self, session, source):
+        return session.get(self.source_model, self.source_id(source))
+
+    def _new_header(self, source):
+        return self.source_model(**{self.owner: self.source_id(source)})
 
     @staticmethod
     def chunk_state(chunk, spec):
@@ -225,14 +237,14 @@ class RetrievalStore:
     def existing(self, source, spec):
         with self.sessions() as session:
             self._current(session, source)
-            if not self._matches(session.get(RetrievalSource, source.episode_id), source, spec):
+            if not self._matches(self._header(session, source), source, spec):
                 return []
-            return self._chunks(session, source.episode_id)
+            return self._chunks(session, self.source_id(source))
 
     def inspect(self, source, spec):
         with self.sessions() as session:
-            header = session.get(RetrievalSource, source.episode_id)
-            chunks = self._chunks(session, source.episode_id)
+            header = self._header(session, source)
+            chunks = self._chunks(session, self.source_id(source))
             if source.state != "AVAILABLE":
                 return {
                     "state": source.state,
@@ -277,8 +289,8 @@ class RetrievalStore:
     def prepare(self, source, spec, slices):
         with self.sessions() as session, session.begin():
             self._current(session, source, lock=True)
-            header = session.get(RetrievalSource, source.episode_id)
-            old = self._chunks(session, source.episode_id)
+            header = self._header(session, source)
+            old = self._chunks(session, self.source_id(source))
             intact = len(old) == len(slices) and all(
                 c.chunk_index == s.index
                 and c.chunk_hash == s.content_hash
@@ -291,10 +303,12 @@ class RetrievalStore:
             if self._matches(header, source, spec) and intact:
                 return old
             session.execute(
-                delete(RetrievalChunk).where(RetrievalChunk.episode_id == source.episode_id)
+                delete(self.chunk_model).where(
+                    getattr(self.chunk_model, self.owner) == self.source_id(source)
+                )
             )
             if header is None:
-                header = RetrievalSource(episode_id=source.episode_id)
+                header = self._new_header(source)
                 session.add(header)
             header.work_id, header.source_key = source.work_id, source.key
             header.source_version, header.source_hash = source.version, source.content_hash
@@ -302,9 +316,9 @@ class RetrievalStore:
             header.prepared_at = datetime.now()
             session.flush()
             chunks = [
-                RetrievalChunk(
+                self.chunk_model(
                     id=uuid4(),
-                    episode_id=source.episode_id,
+                    **{self.owner: self.source_id(source)},
                     chunk_index=s.index,
                     chunk_text=s.text,
                     start_offset=s.start,
@@ -322,21 +336,18 @@ class RetrievalStore:
 
     def _validate(self, session, source, spec, chunks):
         self._current(session, source, lock=True)
-        if not self._matches(session.get(RetrievalSource, source.episode_id), source, spec):
+        if not self._matches(self._header(session, source), source, spec):
             raise SourceChanged()
+        model = self.chunk_model
         actual = list(
-            session.scalars(
-                select(RetrievalChunk)
-                .where(RetrievalChunk.id.in_([c.id for c in chunks]))
-                .with_for_update()
-            )
+            session.scalars(select(model).where(model.id.in_([c.id for c in chunks])).with_for_update())
         )
         by_id = {c.id: c for c in actual}
         for previous in chunks:
             row = by_id.get(previous.id)
             if (
                 row is None
-                or row.episode_id != source.episode_id
+                or getattr(row, self.owner) != self.source_id(source)
                 or row.chunk_hash != previous.chunk_hash
                 or row.chunk_text != previous.chunk_text
                 or row.start_offset != previous.start_offset
