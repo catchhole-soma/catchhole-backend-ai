@@ -46,6 +46,7 @@ class FakeCheckpoint:
         self.grid = {"gridVersion": grid_version, "segments": [segment_wire(segment) for segment in segments]}
         self.decided = set(decided)
         self.checks = {}
+        self.fail_with = None
 
     def bind_sources(self, frozen):
         self.frozen = frozen
@@ -75,6 +76,12 @@ class FakeCheckpoint:
 
     async def decide(self, ref, decision, bundle):
         self.published.append(("units", ref, decision.outcome, bundle["check_revision"]))
+
+    async def fail(self, ref, question, code, cause=None, call=0):
+        if self.fail_with is not None:
+            raise self.fail_with
+        self.published.append(("units", ref, "INCOMPLETE", code, cause, call,
+                               [span.model_dump() for span in question.target_spans]))
 
 
 SAVED_DECISION = {
@@ -165,10 +172,12 @@ def test_fake_receipts_and_target_only_contradictions_are_rejected():
         return value
 
     result = inspect(model=ScriptedModel({"TSEG1": [draft()]}, forged))
-    assert (result.failure_code, result.failure_cause) == ("INVALID_DECISION", "INVALID_DECISION_COMPARISON_CONTEXT")
+    assert result.failure_code == "SETTING_QUESTIONS_INCOMPLETE"
+    assert result.question_failures["Q1"] == {"code": "INVALID_DECISION", "cause": "INVALID_DECISION_COMPARISON_CONTEXT",
+                                              "call": 1}
     target_only = inspect(model=ScriptedModel({"TSEG1": [draft()]}, lambda payload, n: decided(
         payload, "CONFLICT", evidence_refs=["T1"])))
-    assert target_only.failure_cause == "INVALID_DECISION_EXTERNAL_EVIDENCE_MISSING"
+    assert target_only.question_failures["Q1"]["cause"] == "INVALID_DECISION_EXTERNAL_EVIDENCE_MISSING"
 
 
 def evidence_then(answer):
@@ -272,3 +281,45 @@ def test_settings_read_failure_is_a_run_level_stop():
     result = inspect(data, ScriptedModel({"TSEG1": [draft()]}), experiment=True)
     assert result.failure_code == "DATA_ACCESS_FAILED" and result.failure_stage == "JUDGE"
     assert result.question_failures == {}
+
+
+def test_execution_publishes_a_failed_question_incomplete_and_still_judges_the_others():
+    """Decision ③: the failed question's spans and safe codes are published; the other decisions too."""
+    checkpoint = FakeCheckpoint(segments_of())
+
+    def judge(payload, n):
+        return "{not json" if payload["question_ref"] == "Q2" else decided(payload)
+
+    result = inspect(model=ScriptedModel(two_segment_plans(), judge), checkpoint=checkpoint, segment_chars=20)
+    assert result.status == "INCOMPLETE" and result.failure_code == "SETTING_QUESTIONS_INCOMPLETE"
+    units = sorted(row for row in checkpoint.published if row[0] == "units")
+    assert units[0] == ("units", "Q1", "NO_CONFLICT", 2)
+    (_, ref, outcome, code, cause, call, spans) = units[1]
+    assert (ref, outcome, code, cause, call) == ("Q2", "INCOMPLETE", "MODEL_CONTRACT_INVALID",
+                                                "MODEL_CONTRACT_JSON_INVALID", 1)
+    assert [span["quote"] for span in spans] == [SECOND]
+
+
+def test_a_failed_incomplete_publication_is_a_run_level_stop():
+    from app.validation.contracts import IncompleteInspection
+
+    checkpoint = FakeCheckpoint(segments_of())
+    checkpoint.fail_with = IncompleteInspection("EXECUTION_HTTP_REJECTED")
+
+    def judge(payload, n):
+        return "{not json" if payload["question_ref"] == "Q1" else decided(payload)
+
+    result = inspect(model=ScriptedModel(two_segment_plans(), judge), checkpoint=checkpoint, segment_chars=20)
+    assert result.status == "INCOMPLETE" and result.failure_code == "EXECUTION_HTTP_REJECTED"
+    assert result.failure_stage == "JUDGE:Q1"
+    assert not any(row[2] == "INCOMPLETE" for row in checkpoint.published if row[0] == "units")
+
+
+def test_resume_judges_an_incomplete_question_again():
+    """The Java checkpoint turns an INCOMPLETE check into an unpublished one; resume judges it from call 1."""
+    first = FakeCheckpoint(segments_of())
+    inspect(model=ScriptedModel(two_segment_plans()), checkpoint=first, segment_chars=20)
+    resumed = FakeCheckpoint(segments_of(), stages=first.stages, decided={"Q1"})
+    model = ScriptedModel(two_segment_plans())
+    result = inspect(model=model, checkpoint=resumed, segment_chars=20)
+    assert result.status == "COMPLETED" and [call["question_ref"] for call in model.judge_calls()] == ["Q2"]

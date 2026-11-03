@@ -219,7 +219,9 @@ def test_remaining_decision_rules_stay_strict_with_specific_causes(change, cause
             return value
 
     result = inspect(Strict())
-    assert (result.status, result.failure_code, result.failure_cause) == ("INCOMPLETE", "INVALID_DECISION", cause)
+    # Decision ③: the run reports SETTING_QUESTIONS_INCOMPLETE; each failed question keeps its specific cause.
+    assert (result.status, result.failure_code) == ("INCOMPLETE", "SETTING_QUESTIONS_INCOMPLETE")
+    assert {(row["code"], row["cause"]) for row in result.question_failures.values()} == {("INVALID_DECISION", cause)}
 
 
 def test_judge_span_echo_is_replaced_by_the_question_spans_but_invented_quotes_are_rejected():
@@ -239,8 +241,9 @@ def test_judge_span_echo_is_replaced_by_the_question_spans_but_invented_quotes_a
         assert result.status == "COMPLETED" and result.normalizations["TARGET_SPANS_REPLACED"] == 1
         assert result.decisions["Q1"].target_spans == result.questions[0].draft.target_spans
     invented = inspect(Echo([{"source_ref": "T1", "start": 0, "end": 5, "quote": "없는 인용"}]))
-    assert (invented.failure_code, invented.failure_cause, invented.failure_stage) == (
-        "INVALID_INSPECTION_CONTRACT", "INVALID_EXACT_SPAN", "JUDGE:Q1")
+    assert invented.failure_code == "SETTING_QUESTIONS_INCOMPLETE"
+    assert {key: row["code"] for key, row in invented.question_failures.items()} == {"Q1": "INVALID_INSPECTION_CONTRACT"}
+    assert invented.question_failures["Q1"]["cause"] == "INVALID_EXACT_SPAN"
 
 
 def test_model_contract_and_provider_failures_keep_a_class_level_cause_only():
@@ -249,7 +252,9 @@ def test_model_contract_and_provider_failures_keep_a_class_level_cause_only():
             return {**super().judge(payload), "action": "DONE"}
 
     result = inspect(Literal())
-    assert (result.failure_code, result.failure_cause) == ("MODEL_CONTRACT_INVALID", "MODEL_CONTRACT_LITERAL_ERROR")
+    assert result.failure_code == "SETTING_QUESTIONS_INCOMPLETE"
+    assert {(row["code"], row["cause"]) for row in result.question_failures.values()} == {
+        ("MODEL_CONTRACT_INVALID", "MODEL_CONTRACT_LITERAL_ERROR")}
 
     class Broken(RecordedTerra):
         async def create_text_response(self, **kwargs):
@@ -268,6 +273,8 @@ def test_worker_reports_the_specific_cause_and_keeps_typo_codes():
                                  failure_cause="INVALID_EXACT_SPAN")
     assert reported_failure_code(collapsed) == "INVALID_EXACT_SPAN"
     assert reported_failure_code(InspectionResult("INCOMPLETE", failure_code="BUDGET_EXHAUSTED")) == "BUDGET_EXHAUSTED"
+    questions = InspectionResult("INCOMPLETE", failure_code="SETTING_QUESTIONS_INCOMPLETE", failure_stage="JUDGE")
+    assert reported_failure_code(questions) == "SETTING_QUESTIONS_INCOMPLETE"
     typo = TypoCheckResult(target_hash="a" * 64, status="INCOMPLETE", segments=[], suggestions=[],
                            failure_code="INVALID_EXACT_SPAN")
     assert reported_failure_code(typo) == "INVALID_EXACT_SPAN"

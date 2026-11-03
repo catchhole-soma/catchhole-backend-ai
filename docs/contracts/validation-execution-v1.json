@@ -3171,7 +3171,76 @@
         "source_catalogue",
         "input_digest"
       ],
-      "publishedDecision": "ValidationDecision shape with follow_ups [] and affected_question_refs []."
+      "publishedDecision": "ValidationDecision shape with follow_ups [] and affected_question_refs [].",
+      "questionFailure": {
+        "decision": "Owner decision 2026-11-02 (③): a question that cannot reach a decision because of a question-level error is published alone as an INCOMPLETE unit and the other questions are still judged.",
+        "questionLevelCodes": [
+          "MODEL_CONTRACT_INVALID*",
+          "MODEL_OUTPUT_TRUNCATED",
+          "MODEL_CALL_FAILED",
+          "REQUIRED_CONTEXT_TOO_LARGE",
+          "INPUT_COUNT_FAILED",
+          "INVALID_DECISION*",
+          "INVALID_FOLLOW_UP*",
+          "INVALID_INSPECTION_CONTRACT",
+          "VECTOR_NOT_READY",
+          "VECTOR_INDEX_PARTIAL",
+          "SEARCH_FAILED"
+        ],
+        "runLevel": "Budget, input/source change, gate stop, quota, lease/HTTP and data access failures still stop dispatching new judges; judges already running finish and publish. A failed INCOMPLETE publication is itself run-level.",
+        "payloadFields": [
+          "action",
+          "outcome",
+          "failure_code",
+          "failure_cause",
+          "failed_call",
+          "target_spans"
+        ],
+        "payloadRules": "action and outcome are INCOMPLETE; failure_code is a safe code ([A-Z][A-Z0-9_]{0,99}); failure_cause is null or a safe code; failed_call is the judge call 0..3 it failed on; target_spans equal the check draft's target_spans as a set and are cited like any span. No other key.",
+        "unit": {
+          "scope": {
+            "contractVersion": 1,
+            "reportId": "00000000-0000-4000-8000-000000000001",
+            "generation": 1,
+            "inputDigest": "95c2c10f544ee6c9c0bc7e5cc38cc9fea3d499ce853debfb76676c7b79099711"
+          },
+          "idempotencyKey": "synthetic-setting-Q1-r1-incomplete",
+          "branch": "SETTING",
+          "ref": "Q1",
+          "checkId": "00000000-0000-4000-8000-000000000008",
+          "expectedCheckRevision": 1,
+          "checkInputDigest": "f50a902cf0e7ab0123c385ade04e858e84015cb2f452a3d4287269298c445cf0",
+          "outcome": "INCOMPLETE",
+          "payload": {
+            "action": "INCOMPLETE",
+            "outcome": "INCOMPLETE",
+            "failure_code": "MODEL_CONTRACT_INVALID",
+            "failure_cause": "MODEL_CONTRACT_JSON_INVALID",
+            "failed_call": 1,
+            "target_spans": [
+              {
+                "source_ref": "T1",
+                "start": 0,
+                "end": 2,
+                "quote": "😀가"
+              }
+            ]
+          },
+          "citations": [
+            {
+              "sourceRef": "T1",
+              "sourceHash": "cbffc647909dfd2bd0ed0cb498a186c1c0036cf0bc0a60cc877534ec8af41f67",
+              "sourceVersion": "synthetic-v1",
+              "start": 0,
+              "end": 2,
+              "quote": "😀가"
+            }
+          ]
+        },
+        "server": "The check keeps outcome INCOMPLETE and is not completed(): no finding is created, the run cannot be COMPLETED, and results show incompleteChecks plus each INCOMPLETE check's failureCode, failureCause and verified targetSpans.",
+        "completion": "The Worker reports Complete.failureCode SETTING_QUESTIONS_INCOMPLETE when the SETTING branch judged every question it could; a run-level SETTING code or a TYPO branch failure code takes precedence. The server derives PARTIAL (FAILED when nothing succeeded) as for any incomplete run.",
+        "retry": "The author's same-input RETRY re-judges only INCOMPLETE and unpublished questions from their first judge call on the same check revision; published decisions are kept. A Worker lease recovery also re-judges them within the same run caps."
+      }
     },
     "workerUnusedRoutes": {
       "routes": [

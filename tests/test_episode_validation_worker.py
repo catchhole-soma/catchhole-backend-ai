@@ -671,12 +671,32 @@ class GridBackend(httpx.AsyncBaseTransport):
                                          "usage": {"input_tokens": 23, "output_tokens": 7}})
 
 
-def run_grid_backend(grid=None):
+class BrokenRoleBackend(GridBackend):
+    """GridBackend whose provider answers the given roles with invalid JSON (a question/segment-level failure)."""
+
+    def __init__(self, grid=None, broken=()):
+        super().__init__(grid)
+        self.broken = set(broken)
+
+    async def provider(self, request):
+        import json
+        body = json.loads(request.content)
+        if not request.url.path.endswith("input_tokens"):
+            payload = json.loads(body["input"][1]["content"][0]["text"])
+            role = payload.get("role", "TYPO")
+            if role in self.broken:
+                self.provider_roles.append(role)
+                return httpx.Response(200, json={"status": "completed", "output_text": "{not json",
+                                                 "usage": {"input_tokens": 23, "output_tokens": 7}})
+        return await super().provider(request)
+
+
+def run_grid_backend(grid=None, broken=()):
     from app.validation.client import ValidationClaim, ValidationExecutionClient
     from app.worker.episode_validation_worker import EpisodeValidationWorker
 
     async def run():
-        backend = GridBackend(grid)
+        backend = BrokenRoleBackend(grid, broken) if broken else GridBackend(grid)
         async with (httpx.AsyncClient(transport=backend) as http,
                     httpx.AsyncClient(transport=httpx.MockTransport(backend.provider)) as provider):
             client = ValidationExecutionClient("https://spring.invalid", "synthetic", http)
@@ -709,6 +729,21 @@ def test_worker_plans_checks_the_v4_grid_merges_and_publishes_the_judged_unit():
     # Reloaded once when the first publication created the grid; three generation roles are metered.
     assert backend.checkpoint_reads == 2
     assert sorted(backend.reserved) == ["JUDGE", "PLANNER", "TYPO"]
+
+
+def test_worker_publishes_an_incomplete_question_and_completes_with_the_questions_code():
+    """Decision ③: a judge format error ends that question only; Complete never reports a clean success."""
+    backend = run_grid_backend(broken=("JUDGE",))
+    assert backend.completed == ["SETTING_QUESTIONS_INCOMPLETE"]
+    (unit,) = [row for row in backend.units if row["branch"] == "SETTING"]
+    assert unit["outcome"] == "INCOMPLETE" and unit["payload"]["failure_code"] == "MODEL_CONTRACT_INVALID"
+    assert unit["payload"]["target_spans"] == backend.published[0][2]["questions"][0]["target_spans"]
+    assert unit["citations"] and all(row["sourceRef"] == "T1" for row in unit["citations"])
+
+
+def test_a_typo_branch_failure_outranks_the_incomplete_questions_code():
+    backend = run_grid_backend(broken=("JUDGE", "TYPO"))
+    assert len(backend.completed) == 1 and backend.completed[0] not in {None, "SETTING_QUESTIONS_INCOMPLETE"}
 
 
 @pytest.mark.parametrize(("grid", "code"), [

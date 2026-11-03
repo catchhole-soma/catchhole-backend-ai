@@ -220,3 +220,32 @@ def test_typo_resume_preserves_classification_and_calls_only_failed_segment():
             assert len([path for path, _ in fixture.requests if path.endswith("responses")]) == count + 1
 
     asyncio.run(check())
+
+
+def test_a_question_level_failure_publishes_one_incomplete_unit_that_the_next_run_judges_again():
+    """Owner decision ③ through the real checkpoint: the failed question's spans are cited, the rest is judged."""
+    segments = split_setting_segments(TARGET, unit_chars=10000, context_chars=100)
+    data, claim = SyntheticData(), execution_claim()
+    java = RecordingJava(segments)
+    result = run(data, ScriptedModel({"TSEG1": [draft()]}, lambda payload, n: "{not json"), real_checkpoint(java, claim))
+    assert (result.status, result.failure_code) == ("INCOMPLETE", "SETTING_QUESTIONS_INCOMPLETE")
+    (unit,) = java.published("units")
+    assert (unit["ref"], unit["checkId"], unit["expectedCheckRevision"], unit["outcome"]) == ("Q1", "check-Q1", 1,
+                                                                                             "INCOMPLETE")
+    spans = result.questions[0].draft.target_spans
+    assert unit["payload"] == {"action": "INCOMPLETE", "outcome": "INCOMPLETE", "failure_code": "MODEL_CONTRACT_INVALID",
+                               "failure_cause": "MODEL_CONTRACT_JSON_INVALID", "failed_call": 1,
+                               "target_spans": [span.model_dump() for span in spans]}
+    assert [(row["sourceRef"], row["start"], row["end"], row["quote"]) for row in unit["citations"]] == [
+        ("T1", span.start, span.end, span.quote) for span in spans]
+
+    merged = next(body for body in java.published("plans") if body["stage"] == "MERGED_PLAN")
+    incomplete = [{"localRef": "Q1", "checkId": "check-Q1", "revision": 1, "checkInputDigest": "d" * 64,
+                   "outcome": "INCOMPLETE", "decision": unit["payload"],
+                   "state": merged["payload"]["questions"][0]["state"]}]
+    retry_java, retry_model = RecordingJava(segments), ScriptedModel({"TSEG1": [draft()]})
+    retried = run(data, retry_model, real_checkpoint(retry_java, claim, stages=stages_of(java), checks=incomplete,
+                                                     requiredGrid={"SETTING": java.grid}))
+    assert retried.status == "COMPLETED" and [role for role, _, _ in retry_model.calls] == ["JUDGE"]
+    (decided,) = retry_java.published("units")
+    assert (decided["ref"], decided["expectedCheckRevision"], decided["outcome"]) == ("Q1", 1, "NO_CONFLICT")

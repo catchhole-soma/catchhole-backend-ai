@@ -29,6 +29,12 @@ def inspect(data=None, model=None, *, search=None, embedding=None, experiment=Fa
     return asyncio.run(service.inspect())
 
 
+def failed_question(result, ref="Q1"):
+    """Decision ③: a question-level failure is recorded per question; the run reports SETTING_QUESTIONS_INCOMPLETE."""
+    assert result.status == "INCOMPLETE" and result.failure_code == "SETTING_QUESTIONS_INCOMPLETE"
+    return result.question_failures[ref]["code"], result.question_failures[ref]["cause"]
+
+
 def one_question(**changes):
     return {"TSEG1": [draft(**changes)]}
 
@@ -142,7 +148,7 @@ def test_episodes_without_a_ready_index_offer_no_search_and_fail_a_needed_change
     model = ScriptedModel(one_question(), judge)
     fake = FakeSearch(data, ready=False) if search == "not-ready" else None
     result = inspect(data, model, search=fake, embedding=FakeEmbedding())
-    assert result.status == "INCOMPLETE" and result.failure_code == "VECTOR_NOT_READY"
+    assert result.status == "INCOMPLETE" and failed_question(result) == ("VECTOR_NOT_READY", None)
     _, _, kwargs = next(call for call in model.calls if call[0] == "JUDGE")
     assert "search_queries" not in kwargs["response_schema"].schema["properties"]
     failed = [row for row in result.receipts if row.status == "FAILED"]
@@ -165,7 +171,7 @@ def test_partial_index_at_search_time_keeps_the_failed_receipt_and_readiness():
 
     flaky = Flaky(data, partial=True)
     result = inspect(data, model, search=flaky, embedding=FakeEmbedding())
-    assert result.failure_code == "VECTOR_INDEX_PARTIAL"
+    assert failed_question(result)[0] == "VECTOR_INDEX_PARTIAL"
     (failed,) = [row for row in result.receipts if row.status == "FAILED"]
     assert failed.readiness["vector_status"] == "PARTIAL" and "VECTOR_INDEX_PARTIAL" in failed.readiness["limitations"]
 
@@ -248,7 +254,24 @@ def test_experiment_mode_records_a_contract_error_and_judges_the_rest():
     assert result.traces["Q1"][0]["error"] == "MODEL_CONTRACT_INVALID"
 
 
-def test_production_fails_fast_but_keeps_judges_already_running():
+def test_production_records_the_failed_question_and_judges_the_rest():
+    """Owner decision ③: a question-level error ends that question only; the run is still not a clean success."""
+    plans = {"TSEG1": [draft(f"q{n}", prop=f"속성{n}") for n in range(8)]}
+
+    def judge(payload, n):
+        return "{not json" if payload["question_ref"] == "Q1" else decided(payload)
+
+    model = ScriptedModel(plans, judge)
+    result = inspect(SyntheticData(), model, concurrency=2)
+    assert result.status == "INCOMPLETE" and result.failure_code == "SETTING_QUESTIONS_INCOMPLETE"
+    assert result.failure_stage == "JUDGE" and result.failure_cause is None
+    assert result.question_failures == {"Q1": {"code": "MODEL_CONTRACT_INVALID", "cause": "MODEL_CONTRACT_JSON_INVALID",
+                                               "call": 1}}
+    assert set(result.decisions) == {f"Q{n}" for n in range(2, 9)} and len(model.judge_calls()) == 8
+
+
+def test_switching_the_policy_off_restores_fail_fast_but_keeps_judges_already_running(monkeypatch):
+    monkeypatch.setattr("app.validation.failures.CONTINUE_AFTER_QUESTION_FAILURE", False)
     plans = {"TSEG1": [draft(f"q{n}", prop=f"속성{n}") for n in range(8)]}
 
     def judge(payload, n):
@@ -273,7 +296,7 @@ def test_unreadable_follow_ups_are_rejected_before_any_read(answer, cause):
     embedding = FakeEmbedding()
     result = inspect(data, ScriptedModel(one_question(), lambda payload, n: answer(payload)),
                      search=FakeSearch(data), embedding=embedding)
-    assert (result.failure_code, result.failure_cause) == ("INVALID_FOLLOW_UP", cause)
+    assert failed_question(result) == ("INVALID_FOLLOW_UP", cause)
     assert embedding.queries == []
 
 
@@ -285,7 +308,7 @@ def test_final_form_cannot_follow_up_and_decided_requests_are_ignored():
 
     data = SyntheticData()
     result = inspect(data, ScriptedModel(one_question(), judge), search=FakeSearch(data), embedding=FakeEmbedding())
-    assert result.failure_code == "MODEL_CONTRACT_INVALID"
+    assert failed_question(result)[0] == "MODEL_CONTRACT_INVALID"
 
     def ignored(payload, n):
         return decided(payload, search_queries=["무시됨"], context_requests=[{"start": 0, "end": 2}])

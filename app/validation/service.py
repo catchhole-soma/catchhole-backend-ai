@@ -15,7 +15,11 @@ from app.validation.contracts import (
     ValidationDecision,
 )
 from app.validation.corpus import ValidationCorpus
-from app.validation.failures import continues_after_question_failure, is_question_level
+from app.validation.failures import (
+    QUESTIONS_INCOMPLETE_CODE,
+    continues_after_question_failure,
+    is_question_level,
+)
 from app.validation.judging import JUDGE_CONCURRENCY, SettingJudge, SettingsCache
 from app.validation.planning import SettingPlanner, staged
 from app.validation.projection import source_catalogue
@@ -168,7 +172,14 @@ class SettingValidationService:
                     trace[-1].update(error=failure.code, cause=failure.cause)
                 if is_question_level(failure.code) and continues_after_question_failure(self.experiment):
                     failures[qref] = {"code": failure.code, "cause": failure.cause, "call": call}
-                    return
+                    if self.checkpoint is None:
+                        return
+                    try:
+                        # Decision ③: only this question is published INCOMPLETE; the others keep being judged.
+                        await self.checkpoint.fail(qref, question.draft, failure.code, failure.cause, call)
+                        return
+                    except (IncompleteInspection, ValueError, KeyError, TypeError) as published:
+                        failure = staged(published, f"JUDGE:{qref}")  # lease/HTTP/conflict: a run-level stop
                 if stop["failure"] is None:
                     stop["failure"] = failure
             except asyncio.CancelledError as exc:
@@ -201,8 +212,17 @@ class SettingValidationService:
         return dict(sorted(values.items(), key=lambda item: order.get(item[0], len(order))))
 
     def _result(self, questions, decisions, receipts, coverage, bundles, stats, failures, traces):
-        if not failures and set(decisions) != {question.ref for question in questions}:
+        if {question.ref for question in questions} - set(decisions) - set(failures):
             raise IncompleteInspection("JUDGING_INCOMPLETE", stage="JUDGE")  # never report a silent gap as done
+        if failures and not self.experiment:
+            # Decision ③: every question was decided or published INCOMPLETE. The run still is not a clean success.
+            logger.warning("setting inspection finished with incomplete questions count=%d codes=%s normalizations=%s",
+                           len(failures), dict(sorted(Counter(row["code"] for row in failures.values()).items())),
+                           dict(sorted(stats.items())))
+            return InspectionResult("INCOMPLETE", questions, self._ordered(questions, decisions), tuple(receipts),
+                                    tuple(coverage), QUESTIONS_INCOMPLETE_CODE, self._ordered(questions, bundles),
+                                    failure_stage="JUDGE", normalizations=dict(stats),
+                                    question_failures=self._ordered(questions, failures), traces=dict(traces))
         if failures:
             order = {f"PLANNER:{row['segment_ref']}": index for index, row in enumerate(coverage)}
             order.update({question.ref: len(order) + index for index, question in enumerate(questions)})

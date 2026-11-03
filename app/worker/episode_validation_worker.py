@@ -16,6 +16,7 @@ from app.validation.execution import (
     claim_roles,
     metered_embedding,
 )
+from app.validation.failures import QUESTIONS_INCOMPLETE_CODE
 from app.validation.search import FrozenRetrievalSearchService
 from app.validation.service import SettingValidationService
 from app.validation.typo import check_typos
@@ -118,7 +119,10 @@ class EpisodeValidationWorker:
                     if result.failure_code in _SHARED_FAILURES:
                         gate.stop()
                         raise IncompleteInspection(result.failure_code)
-                    failure = failure or reported_failure_code(result)
+                    code = reported_failure_code(result)
+                    # A branch that stopped (or a typo failure) outranks a setting run that only left questions INCOMPLETE.
+                    if failure is None or failure == QUESTIONS_INCOMPLETE_CODE and code is not None:
+                        failure = code if code is not None else failure
             gate.require()
             return await self.client.leased(claim, "complete", gate=gate,
                 idempotencyKey=payload_key("complete", {"generation": claim.scope.generation,

@@ -104,6 +104,21 @@ class ValidationCheckpoint:
                             checkInputDigest=check["checkInputDigest"], outcome=decision.outcome)
         check.update(outcome=decision.outcome, decision=decision.model_dump(), bundle=bundle)
 
+    async def fail(self, ref, draft, code, cause=None, call=0):
+        """Publish one question as INCOMPLETE (owner decision ③): a question-level failure ends only this question.
+
+        The payload names the sentences that could not be checked (the question's own target spans, cited) and why
+        (safe `failure_code`/`failure_cause`, the judge call it failed on). The check stays re-judgeable: the
+        server never counts it as completed, so the author's retry judges it again on the same revision.
+        """
+        check = self.checks[ref]
+        payload = {"action": "INCOMPLETE", "outcome": "INCOMPLETE", "failure_code": code, "failure_cause": cause,
+                   "failed_call": call, "target_spans": [span.model_dump() for span in draft.target_spans]}
+        await self._publish("units", payload, ref=ref, checkId=check["checkId"],
+                            expectedCheckRevision=check["revision"],
+                            checkInputDigest=check["checkInputDigest"], outcome="INCOMPLETE")
+        check.update(outcome=None, decision=None, failure=payload)
+
     async def typo(self, ref, payload):
         await self._publish("units", payload, ref=ref, checkId=None,
                             expectedCheckRevision=None, checkInputDigest=None, outcome="COMPLETED")
