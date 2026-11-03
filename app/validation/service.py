@@ -2,6 +2,9 @@
 
 No extraction writes. In an execution job each PLANNER stage, the MERGED_PLAN and each decided question are
 published to Java as soon as they are valid; without a checkpoint the same code runs as a callable.
+
+With an index fill (owner decision 2026-11-02) the gaps of the frozen RAG scope (prior episodes, current setting
+books) are filled while planning runs; judging waits for the fill, then reads readiness once.
 """
 
 import asyncio
@@ -14,28 +17,32 @@ from app.validation.contracts import (
     InspectionResult,
     ValidationDecision,
 )
-from app.validation.corpus import ValidationCorpus
+from app.validation.corpus import NOT_READY_CODE, ValidationCorpus
 from app.validation.failures import (
     QUESTIONS_INCOMPLETE_CODE,
     continues_after_question_failure,
     is_question_level,
 )
+from app.validation.index_fill import FILL_FAILED_CODE, IndexFillOutcome
 from app.validation.judging import JUDGE_CONCURRENCY, SettingJudge, SettingsCache
 from app.validation.planning import SettingPlanner, staged
 from app.validation.projection import source_catalogue
-from app.validation.search import vector_ready
+from app.validation.search import indexed_sources, vector_ready
 
 logger = logging.getLogger(__name__)
 # GH344: the one readiness read before planning may never spend the inspection's seconds budget.
 VECTOR_READINESS_TIMEOUT_SECONDS = 5.0
+# Judging waits at most this long (and never beyond the run's seconds) for the intake index fill.
+INDEX_FILL_TIMEOUT_SECONDS = 1200.0
 _DISCARDING_FAILURES = frozenset({"INPUT_CHANGED", "SOURCE_CHANGED", "SOURCE_PURGED"})
 
 
 class SettingValidationService:
     def __init__(self, data_client, model_client, budget, roles, *, search=None, embedding_client=None,
-                 checkpoint=None, experiment=False, judge_concurrency=JUDGE_CONCURRENCY):
+                 checkpoint=None, experiment=False, judge_concurrency=JUDGE_CONCURRENCY, index_fill=None):
         """`roles` maps PLANNER and JUDGE to their RoleRuntime. `experiment=True` records question-level
-        failures and continues (see app.validation.failures); it never publishes, so it needs no checkpoint."""
+        failures and continues (see app.validation.failures); it never publishes, so it needs no checkpoint.
+        `index_fill` (`app.validation.index_fill.ValidationIndexFill`) fills the frozen RAG gaps before judging."""
         if experiment and checkpoint is not None:
             raise ValueError("Experiment mode never publishes to an execution checkpoint")
         if type(judge_concurrency) is not int or judge_concurrency < 1:
@@ -43,15 +50,17 @@ class SettingValidationService:
         self.data, self.model, self.limits, self.roles = data_client, model_client, budget, dict(roles)
         self.search, self.embedding_client = search, embedding_client
         self.checkpoint, self.experiment, self.judge_concurrency = checkpoint, experiment, judge_concurrency
+        self.index_fill = index_fill
 
     async def _search_ready(self, frozen, budget, stats):
         """Whether the frozen episode index can serve VECTOR searches for this job (GH344, one read).
 
-        Without episode sources nothing needs an index. Without frozen RAG or a query embedding client, or if
-        the read fails or times out (capped at VECTOR_READINESS_TIMEOUT_SECONDS), search is not offered and
-        any required change search ends that question with VECTOR_NOT_READY.
+        Without RAG sources (prior episodes, current setting books) nothing needs an index. Without frozen RAG or
+        a query embedding client, or if the read fails or times out (capped at VECTOR_READINESS_TIMEOUT_SECONDS),
+        search is not offered and any required change search ends that question INCOMPLETE (VECTOR_NOT_READY,
+        or VECTOR_INDEX_FILL_FAILED when the intake fill failed).
         """
-        episodes = sum(source.kind == "EPISODE" for source in frozen.sources)
+        episodes = len(indexed_sources(frozen.sources))
         job = frozen.context.job_id or "-"
         if not episodes:
             stats["VECTOR_OFFERED"] = 1
@@ -72,15 +81,50 @@ class SettingValidationService:
             return False
         offered = vector_ready(readiness, self.embedding_client) and readiness.source_count == episodes
         stats["VECTOR_OFFERED"] = int(offered)
-        logger.info("vector search offered=%s sources=%d ready=%d chunks=%d episodes=%d job=%s", offered,
+        logger.info("vector search offered=%s sources=%d ready=%d chunks=%d scope=%d job=%s", offered,
                     readiness.source_count, readiness.vector_ready_sources, readiness.vector_chunks, episodes, job)
         return offered
+
+    def _start_fill(self, frozen):
+        if self.index_fill is None or not indexed_sources(frozen.sources):
+            return None
+        return asyncio.create_task(self.index_fill.fill(frozen, self.data), name="validation-index-fill")
+
+    async def _finish_fill(self, task, budget, stats):
+        """The fill outcome before judging. A run-level failure is raised; anything else ends only the fill."""
+        if task is None:
+            return None
+        timeout = min(budget.remaining(), INDEX_FILL_TIMEOUT_SECONDS)
+        try:
+            outcome = await asyncio.wait_for(asyncio.shield(task), timeout)
+        except TimeoutError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            outcome = IndexFillOutcome("FAILED", "INDEX_FILL_TIMEOUT")
+        except IncompleteInspection:
+            raise
+        except Exception as exc:  # noqa: BLE001 - an unexpected fill error never stops judging; type only.
+            logger.warning("validation index fill failed error=%s", type(exc).__name__)
+            outcome = IndexFillOutcome("FAILED", "INDEX_FILL_UNEXPECTED")
+        stats[f"INDEX_FILL_{outcome.status}"] = 1
+        stats["INDEX_FILL_EMBEDDED_CHUNKS"] = int(outcome.counts.get("embeddedChunks", 0))
+        return outcome
+
+    @staticmethod
+    def _unavailable(outcome):
+        """What a needed search fails with when the index is not offered after the fill."""
+        if outcome is not None and outcome.failed:
+            return FILL_FAILED_CODE, outcome.cause
+        if outcome is not None and outcome.status == "UNAVAILABLE":
+            return NOT_READY_CODE, outcome.cause
+        return NOT_READY_CODE, None
 
     async def inspect(self):
         budget, stats = BudgetState(self.limits), Counter()
         questions, coverage, decisions, bundles, failures, traces = (), [], {}, {}, {}, {}
         receipts = []
         stage = "INPUT"
+        fill_task = None
 
         async def read(action, *args):
             budget.consume("lookup")
@@ -100,10 +144,8 @@ class SettingValidationService:
             subjects = await read(self.data.read_subjects)
             catalogue = (frozen.model_source_catalogue if frozen.model_source_catalogue is not None
                          else source_catalogue(frozen.sources))
-            available = await self._search_ready(frozen, budget, stats)
-            corpus = ValidationCorpus(frozen, budget, search=self.search, embedding_client=self.embedding_client,
-                                      available=available, stats=stats)
-            receipts = corpus.receipts
+            # The intake fill runs while planning; nothing before judging reads the index.
+            fill_task = self._start_fill(frozen)
 
             stage = "PLANNER"
             planner = SettingPlanner(self.model, budget, self.roles["PLANNER"], checkpoint=self.checkpoint,
@@ -121,6 +163,13 @@ class SettingValidationService:
                     decisions[ref] = ValidationDecision.model_validate(check["decision"])
                     bundles[ref] = check.get("bundle", {})
             queue = [question for question in questions if question.ref not in decisions]
+
+            stage = "INDEX_FILL"
+            fill = await self._finish_fill(fill_task, budget, stats)
+            available = await self._search_ready(frozen, budget, stats)
+            corpus = ValidationCorpus(frozen, budget, search=self.search, embedding_client=self.embedding_client,
+                                      available=available, stats=stats, unavailable=self._unavailable(fill))
+            receipts = corpus.receipts
 
             stage = "JUDGE"
             settings = SettingsCache(lambda refs: read(self.data.read_settings, refs))
@@ -145,6 +194,10 @@ class SettingValidationService:
             return InspectionResult("INCOMPLETE", questions, self._ordered(questions, decisions), tuple(receipts),
                                     tuple(coverage), failure.code, self._ordered(questions, bundles),
                                     **self._diagnostics(failure, stats, failures, traces))
+        finally:
+            if fill_task is not None and not fill_task.done():
+                fill_task.cancel()
+                await asyncio.gather(fill_task, return_exceptions=True)
 
     async def _judge_all(self, judge, queue, checks, decisions, bundles, failures, traces):
         """Dispatch up to `judge_concurrency` judges; return the failure that stopped dispatching, if any.

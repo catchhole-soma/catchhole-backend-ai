@@ -426,7 +426,7 @@ class MeteredEmbeddingClient:
         purpose: str = "CHUNK_EMBEDDING",
     ) -> None:
         _validate_retry_configuration(max_retries, retry_base_seconds, jitter_max_seconds)
-        if purpose not in {"CHUNK_EMBEDDING", "VALIDATION_QUERY_EMBEDDING"}:
+        if purpose not in {"CHUNK_EMBEDDING", "VALIDATION_QUERY_EMBEDDING", "VALIDATION_INDEX_EMBEDDING"}:
             raise ValueError("Unsupported embedding metering purpose.")
         self.purpose = purpose
         self.delegate = delegate

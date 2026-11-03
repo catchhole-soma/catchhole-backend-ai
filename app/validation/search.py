@@ -1,5 +1,11 @@
-"""Exact frozen-manifest predicates apply before every rank/LIMIT; validation searches are VECTOR only."""
+"""Exact frozen-manifest predicates apply before every rank/LIMIT; validation searches are VECTOR only.
 
+The frozen RAG scope is every frozen prior episode plus every frozen setting-book revision the server marked
+`currentRevision` at intake (the book's current, non-archived revision). Both indexes are ranked together.
+"""
+
+import asyncio
+import math
 import re
 from dataclasses import dataclass, field
 from uuid import UUID
@@ -7,10 +13,45 @@ from uuid import UUID
 from sqlalchemy import text
 
 from app.retrieval.contracts import IndexSpec
-from app.retrieval.search import RetrievalSearchService
-from app.retrieval.search_contracts import SearchReadiness, SearchScope, SearchScopeUnavailable
+from app.retrieval.search_contracts import (
+    SearchReadiness,
+    SearchScope,
+    SearchScopeUnavailable,
+    validate_limit,
+)
 from app.retrieval.search_repository import CURRENT_FROM, RetrievalSearchRepository
 from app.validation.contracts import IncompleteInspection
+
+EPISODE, SETTING_BOOK = "EPISODE", "SETTING_BOOK"
+
+
+def indexed_sources(sources):
+    """The frozen RAG scope in manifest order: prior episodes and current setting-book revisions."""
+    return tuple(source for source in sources
+                 if source.kind == EPISODE or source.kind == SETTING_BOOK and source.metadata.get("currentRevision") is True)
+
+
+@dataclass(frozen=True)
+class FrozenChunk:
+    """One ranked chunk of the frozen scope; `source_id` is the episode ID or the setting-book revision ID."""
+
+    source_kind: str
+    source_id: UUID
+    chunk_id: UUID
+    chunk_index: int
+    text: str = field(repr=False)
+    start_offset: int
+    end_offset: int
+    chunk_hash: str
+    source_hash: str
+    score: float
+
+
+@dataclass(frozen=True)
+class FrozenSearchResult:
+    chunks: tuple[FrozenChunk, ...]
+    readiness: SearchReadiness
+    limited: bool = False
 
 
 @dataclass(frozen=True)
@@ -67,11 +108,39 @@ FROZEN_FILTER = f"""
 """
 
 
+# Setting-book chunks of one frozen, current revision (V114). A book edit or archive invalidates the report and
+# deletes its baseline sources, so the manifest identity plus the running report fence is the authority here.
+BOOK_FROM = f"""
+FROM retrieval_setting_book_chunks c
+JOIN retrieval_setting_book_sources s ON s.revision_id=c.revision_id
+JOIN works w ON w.id=s.work_id
+JOIN members m ON m.id=w.member_id
+WHERE w.id=:work AND w.member_id=:member AND w.lifecycle_status='ACTIVE' AND m.status='ACTIVE'
+ AND s.source_hash ~ '^[a-f0-9]{{64}}$' AND s.source_key <> ''
+ AND s.chunk_policy=:policy
+ AND c.start_offset >= 0 AND c.end_offset > c.start_offset
+ AND char_length(c.chunk_text)=c.end_offset-c.start_offset
+ AND encode(sha256(convert_to(c.chunk_text,'UTF8')),'hex')=c.chunk_hash
+ AND (c.embedding IS NULL OR (c.embedding_model=:model AND c.embedding_version=:version))
+ AND EXISTS (SELECT 1 {REPORT_FROM}
+ AND EXISTS (SELECT 1 FROM validation_baseline_sources b WHERE b.report_id=r.id
+  AND b.setting_book_revision_id=s.revision_id
+  AND b.source_manifest->>'sourceKind'='SETTING_BOOK'
+  AND b.source_manifest->>'currentRevision'='true'
+  AND b.source_manifest->>'revisionId'=s.revision_id::text
+  AND b.source_manifest->>'settingBookId'=s.setting_book_id::text
+  AND b.source_manifest->>'contentHash'=s.source_hash
+  AND b.source_manifest->>'contentS3Key'=s.source_key
+  AND b.source_manifest->>'contentS3Version' IS NOT DISTINCT FROM s.source_version))
+"""
+
+
 class FrozenRetrievalRepository(RetrievalSearchRepository):
     from_clause = CURRENT_FROM.replace(
         "WHERE p.episode_id=e.id)",
         "WHERE p.episode_id=e.id AND (p.retained_content_key IS NULL OR p.retained_content_key<>e.content_s3_key))",
     ) + FROZEN_FILTER
+    book_from_clause = BOOK_FROM
 
     def __init__(self, session, scope: FrozenSearchScope, spec):
         if not isinstance(scope, FrozenSearchScope):
@@ -98,6 +167,26 @@ class FrozenRetrievalRepository(RetrievalSearchRepository):
             LEFT JOIN valid v ON v.episode_id=b.episode_id
             WHERE b.report_id=:report AND b.episode_id IS NOT NULL
             GROUP BY b.episode_id,s.chunk_count
+            """),
+                self.params,
+            )
+            .mappings()
+            .all()
+        )
+        # Only the current setting-book revisions marked at intake are in the RAG scope (V114 index).
+        rows += (
+            self.session.execute(
+                text(f"""
+            WITH valid AS MATERIALIZED (SELECT c.revision_id,c.status,c.embedding {self.book_from_clause})
+            SELECT b.setting_book_revision_id, s.chunk_count,
+              count(v.revision_id) AS texts,
+              count(v.revision_id) FILTER (WHERE v.status='READY' AND v.embedding IS NOT NULL) AS vectors
+            FROM validation_baseline_sources b
+            LEFT JOIN retrieval_setting_book_sources s ON s.revision_id=b.setting_book_revision_id
+            LEFT JOIN valid v ON v.revision_id=b.setting_book_revision_id
+            WHERE b.report_id=:report AND b.setting_book_revision_id IS NOT NULL
+              AND b.source_manifest->>'currentRevision'='true'
+            GROUP BY b.setting_book_revision_id,s.chunk_count
             """),
                 self.params,
             )
@@ -131,8 +220,49 @@ class FrozenRetrievalRepository(RetrievalSearchRepository):
         )
 
 
+    def frozen_vector(self, embedding, *, limit=20):
+        """Exact top-k over the whole frozen scope: episode and current setting-book chunks ranked together.
+
+        Every validity and frozen-manifest predicate applies inside each branch before the shared ORDER BY/LIMIT.
+        Equal distances order episodes before setting books, then by episode number / revision, chunk and ID.
+        """
+        validate_limit(limit)
+        if (
+            len(embedding) != self.spec.dimensions
+            or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in embedding)
+            or not any(v != 0 for v in embedding)
+        ):
+            raise ValueError("Invalid query embedding")
+        rows = self.session.execute(
+            text(f"""
+            SELECT * FROM (
+              SELECT 'EPISODE' AS source_kind, 0 AS kind_order, c.episode_id AS source_id, e.episode_no AS source_order,
+                c.id, c.chunk_index, c.chunk_text, c.start_offset, c.end_offset, c.chunk_hash, s.source_hash,
+                c.embedding <=> CAST(:vector AS vector) AS distance
+              {self.from_clause} AND c.id IN (SELECT id FROM retrieval_current_chunks)
+               AND c.embedding_model=:model AND c.embedding_version=:version
+              UNION ALL
+              SELECT 'SETTING_BOOK' AS source_kind, 1 AS kind_order, c.revision_id AS source_id, 0 AS source_order,
+                c.id, c.chunk_index, c.chunk_text, c.start_offset, c.end_offset, c.chunk_hash, s.source_hash,
+                c.embedding <=> CAST(:vector AS vector) AS distance
+              {self.book_from_clause} AND c.status='READY' AND c.embedding IS NOT NULL
+               AND c.embedding_model=:model AND c.embedding_version=:version
+            ) ranked
+            ORDER BY distance, kind_order, source_order, source_id, chunk_index, id LIMIT :limit
+            """),
+            {**self.params, "vector": "[" + ",".join(str(float(v)) for v in embedding) + "]", "limit": limit},
+        ).mappings()
+        return [
+            FrozenChunk(row["source_kind"], row["source_id"], row["id"], row["chunk_index"], row["chunk_text"],
+                        row["start_offset"], row["end_offset"], row["chunk_hash"], row["source_hash"],
+                        1.0 - float(row["distance"]))
+            for row in rows
+        ]
+
+
 def vector_ready(readiness, embedding_client):
-    """A VECTOR read can run: a query embedding client and every frozen episode source fully embedded."""
+    """A VECTOR read can run: a query embedding client and every frozen RAG source (episodes and current
+    setting-book revisions) fully embedded. A partial index is never offered as ready."""
     return (embedding_client is not None and readiness.vector_chunks > 0
             and readiness.vector_ready_sources == readiness.source_count)
 
@@ -140,11 +270,13 @@ def vector_ready(readiness, embedding_client):
 class FrozenRetrievalSearchService:
     """Uses an explicitly injected read-only session factory; no default DB or embeddings."""
 
-    def __init__(self, session_factory, spec=None):
+    def __init__(self, session_factory, spec=None, *, blocking_runner=None):
         self.sessions, self.spec = session_factory, spec or IndexSpec()
-        self.service = RetrievalSearchService(
-            session_factory, self.spec, repository_factory=FrozenRetrievalRepository
-        )
+        self.blocking_runner = blocking_runner or asyncio.to_thread
+
+    def _read(self, scope, action):
+        with self.sessions() as session:
+            return action(FrozenRetrievalRepository(session, scope, self.spec))
 
     @staticmethod
     def _scope(frozen):
@@ -160,17 +292,29 @@ class FrozenRetrievalSearchService:
 
     async def readiness(self, frozen):
         """GH344: one read of the job's frozen index readiness, before VECTOR is offered to the model."""
-        return await self.service.readiness(self._scope(frozen))
+        scope = self._scope(frozen)
+        return await self.blocking_runner(lambda: self._read(scope, lambda repository: repository.readiness()))
 
     async def search(self, frozen, query, embedding_client, limit):
-        """One VECTOR search over the job's frozen episode scope (grid v4: no keyword, direct or neighbor reads).
+        """One VECTOR search over the job's frozen scope (grid v4: no keyword, direct or neighbor reads).
 
-        The underlying service authorizes and reads readiness before embedding and again after ranking; the
-        corpus checks that readiness covers every frozen episode source before accepting any evidence.
+        Readiness is read (and the job authorized) before the query embedding is paid for and again after the
+        ranking; the corpus checks that readiness covers every frozen RAG source before accepting any evidence.
+        The Backend verifies every cited quote against the hash-verified full source at publication.
         """
         scope = self._scope(frozen)
         try:
-            return await self.service.vector(scope, query, embedding_client, limit=limit)
+            if (embedding_client is None or embedding_client.model != self.spec.model
+                    or embedding_client.version != self.spec.version):
+                raise ValueError("Query embedding client must match the retrieval index")
+            readiness = await self.readiness(frozen)
+            if readiness.vector_chunks == 0:
+                return FrozenSearchResult((), readiness)
+            embedding = await embedding_client.create_embedding(query)
+            chunks = await self.blocking_runner(
+                lambda: self._read(scope, lambda repository: repository.frozen_vector(embedding, limit=limit)))
+            readiness = await self.readiness(frozen)
+            return FrozenSearchResult(tuple(chunks), readiness, limited=len(chunks) >= limit)
         except IncompleteInspection:
             raise
         except SearchScopeUnavailable:

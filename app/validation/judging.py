@@ -201,7 +201,7 @@ class SettingJudge:
         except ValueError as exc:
             raise _invalid(exc.args[0], "INVALID_FOLLOW_UP") from None
         if queries and not self.search_offered:
-            raise IncompleteInspection("VECTOR_NOT_READY")
+            raise IncompleteInspection(*self.corpus.unavailable)
         for index, (start, end) in enumerate(ranges, 1):
             own.append(self.corpus.mint(LookupIntent(
                 ref=f"{qref}-TARGET_CONTEXT-{index}", kind="COMPARISON_CONTEXT", operation="TARGET_CONTEXT",

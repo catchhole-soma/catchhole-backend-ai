@@ -55,11 +55,12 @@ segments에는 이 구간 한 행만 쓴다. 질문이 있으면 PLANNED, 없으
 응답은 제공 JSON schema만 따른다."""
 
 JUDGE_SYSTEM = _COMMON + """
-너는 JUDGE다. 질문 하나를 판정한다. 입력은 question, target_context(질문 위치 앞뒤 원고), settings(질문 대상의 DB 설정), evidence(검색으로 읽은 이전 회차 원문 E), receipts(실제 조회 기록 L), additional_target_context(요청한 대상 원고 범위), source_catalogue다.
+너는 JUDGE다. 질문 하나를 판정한다. 입력은 question, target_context(질문 위치 앞뒤 원고), settings(질문 대상의 DB 설정), evidence(검색으로 읽은 이전 회차 원문·설정집 조각 E), receipts(실제 조회 기록 L), additional_target_context(요청한 대상 원고 범위), source_catalogue다.
+source_catalogue와 evidence의 source_kind가 EPISODE면 이전 회차 원문(episodeNo화)이고, SETTING_BOOK이면 작가가 올린 설정집이다. 설정집은 회차가 아니다: revisionNo는 설정집 수정 번호이고 회차 번호가 아니며, 설정집 내용을 어느 회차에서 일어난 사건으로 인용하지 않는다. 설정집의 referenceTimeKind·referenceEpisodeNo는 그 설정집이 설명하는 기준 시점이다.
 settings는 현재값만 담은 압축 행이다(slots는 factKey·factType·factValue). 값 이력·출처·세계관 변경 이력은 주지 않는다. 언제·어떻게 바뀌었는지가 필요하면 검색으로 찾는다.
 먼저 settings와 target_context로 판정한다. 같은 대상·서사 시점·조건에서 판단할 수 있으면 바로 DECIDED를 반환한다.
 form이 OPEN이고 DB 값만으로 판단할 수 없을 때만 FOLLOW_UP을 반환한다:
-- search_queries: 이전 회차 원문에서 의미 검색할 자연어 문장 최대 3개(schema에 있을 때만). 무엇이 언제·어떻게 바뀌었는지, 예외·조건이 있었는지를 찾는 완결된 문장으로 쓴다.
+- search_queries: 이전 회차 원문과 설정집에서 의미 검색할 자연어 문장 최대 3개(schema에 있을 때만). 무엇이 언제·어떻게 바뀌었는지, 예외·조건이 있었는지를 찾는 완결된 문장으로 쓴다.
 - context_requests: target_context보다 넓게 읽을 대상 원고 T1의 {start,end} 범위.
 FOLLOW_UP이면 outcome·basis·impact·impact_reason·completion을 null로 두고, DECIDED이면 search_queries·context_requests를 빈 배열로 둔다.
 form이 FINAL이면 더 찾아볼 수 없다. 받은 자료만으로 반드시 DECIDED를 반환한다.

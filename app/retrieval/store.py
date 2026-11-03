@@ -9,7 +9,12 @@ from uuid import uuid4
 from sqlalchemy import delete, select, text
 
 from app.retrieval.contracts import IndexBusy, Source, SourceChanged
-from app.retrieval.models import RetrievalChunk, RetrievalSource
+from app.retrieval.models import (
+    RetrievalChunk,
+    RetrievalSource,
+    SettingBookRetrievalChunk,
+    SettingBookRetrievalSource,
+)
 
 SOURCE_SQL = """
 SELECT e.id, e.work_id, e.episode_no, e.content_s3_key, e.content_s3_version, e.content_hash,
@@ -25,7 +30,7 @@ FROM episodes e JOIN works w ON w.id=e.work_id JOIN members m ON m.id=w.member_i
 
 
 class RetrievalStore:
-    """Episode retrieval index (V76). The model/owner hooks let another source kind reuse every write rule."""
+    """Episode retrieval index (V76). `SettingBookRetrievalStore` reuses every write rule for setting books."""
 
     source_model = RetrievalSource
     chunk_model = RetrievalChunk
@@ -363,10 +368,12 @@ class RetrievalStore:
             self._validate(session, source, spec, chunks)
 
     def attempted(self, source, spec, chunks, operation_id):
+        """Count one provider attempt. A validation index fill has no operational run (operation_id None)."""
         with self.sessions() as session, session.begin():
             for row in self._validate(session, source, spec, chunks).values():
                 row.attempt_count += 1
-                row.last_operation_id = operation_id
+                if operation_id is not None:
+                    row.last_operation_id = operation_id
 
     def save(self, source, spec, chunks, vectors):
         with self.sessions() as session, session.begin():
@@ -412,3 +419,62 @@ class RetrievalStore:
                 ).mappings()
                 if sha256(row["chunk_text"].encode("utf-8")).hexdigest() == row["chunk_hash"]
             ]
+
+
+BOOK_SOURCE_SQL = """
+SELECT r.id AS revision_id, f.id AS setting_book_id, b.work_id, r.revision_no,
+       r.content_s3_key, r.content_s3_version, r.content_hash
+FROM setting_book_revisions r
+JOIN upload_files f ON f.id=r.setting_book_id
+JOIN upload_batches b ON b.id=f.batch_id
+JOIN works w ON w.id=b.work_id JOIN members m ON m.id=w.member_id
+WHERE r.id=:id AND b.work_id=:work AND f.file_role='SETTING_BOOK' AND f.archived_at IS NULL
+  AND f.current_setting_book_revision_id=r.id
+  AND w.lifecycle_status='ACTIVE' AND m.status='ACTIVE'
+"""
+
+
+class SettingBookRetrievalStore(RetrievalStore):
+    """Setting-book retrieval index (V114) with the episode store's prepare/validate/save rules.
+
+    Only the current revision of a non-archived setting book is a writable source; a revision that stopped being
+    current (edited or archived book) raises SourceChanged before any chunk or vector is written.
+    """
+
+    source_model = SettingBookRetrievalSource
+    chunk_model = SettingBookRetrievalChunk
+    owner = "revision_id"
+
+    def _current(self, session, source, *, lock=False):
+        if lock:
+            session.execute(
+                text("SELECT id FROM works WHERE id=:work FOR UPDATE"), {"work": source.work_id}
+            ).first()
+        row = (
+            session.execute(text(BOOK_SOURCE_SQL), {"id": source.revision_id, "work": source.work_id})
+            .mappings()
+            .first()
+        )
+        if (
+            not row
+            or source.state != "AVAILABLE"
+            or (row["work_id"], row["setting_book_id"], row["revision_id"], row["content_s3_key"],
+                row["content_s3_version"], row["content_hash"]) != source.fingerprint
+            or not isinstance(source.content_hash, str)
+            or len(source.content_hash) != 64
+            or not source.key
+        ):
+            raise SourceChanged()
+
+    def _matches(self, header, source, spec):
+        return super()._matches(header, source, spec) and header.setting_book_id == source.setting_book_id
+
+    def _new_header(self, source):
+        return self.source_model(revision_id=source.revision_id, setting_book_id=source.setting_book_id)
+
+    def sources(self, scope):
+        # Episode paging has no setting-book equivalent: book sources come from a frozen validation manifest.
+        raise NotImplementedError("Setting-book sources come from a frozen validation manifest")
+
+    def backfill_snapshot(self, work_ids=()):
+        raise NotImplementedError("Setting books are filled at validation intake only")

@@ -600,7 +600,8 @@
         "role": "PLANNER",
         "model": "gpt-6.1-terra",
         "reservedTokens": 120,
-        "queryInput": null
+        "queryInput": null,
+        "indexInput": null
       },
       "settle": {
         "scope": {
@@ -2783,6 +2784,76 @@
       "reuse": "Within one run only: the corpus reuses the successful receipt of an identical stripped query (reused_from) without a lookup or embedding call. No reuse across retries.",
       "deny": "A failed, partial or not-ready search is never reused; the role caps of the run stay authoritative."
     },
+    "indexFill": {
+      "meaning": "Owner decision 2026-11-02: at intake the validation run fills only the gaps of its frozen RAG scope (prior episodes and the setting-book revisions marked currentRevision) before judging; works that never submit a validation are never touched.",
+      "role": "INDEX_EMBEDDING",
+      "purpose": "VALIDATION_INDEX_EMBEDDING",
+      "chargePolicy": "SERVICE_PAID_V1",
+      "optional": "A claim without any INDEX_EMBEDDING model or cap fills nothing; a role that is present but differs from the index or has no positive cap is EMBEDDING_CONFIGURATION_INVALID. The server accepts INDEX_EMBEDDING only together with QUERY_EMBEDDING.",
+      "scope": "Frozen manifest sources with sourceKind EPISODE, plus sourceKind SETTING_BOOK with currentRevision true (the book's current, non-archived revision at intake). Past revisions stay provenance only.",
+      "manifestCurrentRevision": "Every SETTING_BOOK manifest row written at intake carries a boolean currentRevision.",
+      "tables": {
+        "EPISODE": [
+          "retrieval_sources",
+          "retrieval_chunks"
+        ],
+        "SETTING_BOOK": [
+          "retrieval_setting_book_sources",
+          "retrieval_setting_book_chunks"
+        ]
+      },
+      "gapRule": "A source is complete when its header equals the frozen key/version/hash and chunk policy and every chunk is a valid READY vector of the index model/version; complete sources are skipped without reading text. Otherwise the full text is read through READ_SOURCE, cut by cl100k-800-100-boundary-v1, an intact chunk set is kept (a changed source is re-chunked, never mixed) and only chunks that are not READY are embedded.",
+      "batchChunks": 32,
+      "timing": "The fill runs while planning; judging waits for it, then reads readiness once. VECTOR is offered only when every scope source is fully embedded.",
+      "failure": "A provider error, role cap, writer-database error, source change, timeout or unreadable source ends only the fill: judging continues and a question that needs a search ends INCOMPLETE with failure_code VECTOR_INDEX_FILL_FAILED and a failure_cause INDEX_FILL_*. Without a writer connection or role the code stays VECTOR_NOT_READY. Lease loss and input changes still stop the run.",
+      "failureCauses": [
+        "INDEX_FILL_PROVIDER_FAILED",
+        "INDEX_FILL_LIMIT_EXCEEDED",
+        "INDEX_FILL_QUOTA_EXHAUSTED",
+        "INDEX_FILL_LEDGER_FAILED",
+        "INDEX_FILL_SOURCE_CHANGED",
+        "INDEX_FILL_SOURCE_UNREADABLE",
+        "INDEX_FILL_DATABASE_FAILED",
+        "INDEX_FILL_TIMEOUT",
+        "INDEX_FILL_UNEXPECTED"
+      ],
+      "reservation": {
+        "scope": {
+          "contractVersion": 1,
+          "reportId": "00000000-0000-4000-8000-000000000001",
+          "generation": 1,
+          "inputDigest": "95c2c10f544ee6c9c0bc7e5cc38cc9fea3d499ce853debfb76676c7b79099711"
+        },
+        "requestId": "00000000-0000-4000-8000-000000000019",
+        "role": "INDEX_EMBEDDING",
+        "model": "text-embedding-3-small",
+        "reservedTokens": 4096,
+        "queryInput": null,
+        "indexInput": {
+          "contractVersion": 1,
+          "inputDigest": "95c2c10f544ee6c9c0bc7e5cc38cc9fea3d499ce853debfb76676c7b79099711",
+          "manifestHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sourceRef": "R1",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "chunkCount": 2,
+          "chunkDigest": "1e80e4c3810460adcfff4b68b7577b3efec97255c817e55e8f007426648f6c97",
+          "indexModel": "text-embedding-3-small",
+          "indexVersion": "v1",
+          "indexDimensions": 1536
+        }
+      },
+      "chunkDigestRule": "SHA-256 of the batch's chunk_hash values joined by a newline, in chunk order.",
+      "chunkDigestVector": {
+        "chunkHashes": [
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ],
+        "sha256": "1e80e4c3810460adcfff4b68b7577b3efec97255c817e55e8f007426648f6c97"
+      },
+      "reservationRule": "INDEX_EMBEDDING requires indexInput and no queryInput; every other role sends no indexInput. inputDigest/manifestHash/index identity must equal the job, sourceRef must be a frozen EPISODE or currentRevision SETTING_BOOK source and sourceHash its contentHash. Embedding roles are bounded by their per-run maxCalls/maxReservedTokens, not by the branch inputTokens. Service-paid usage holds and charges 0 on the author's account; raw tokens stay in the ledger.",
+      "evidence": "A setting-book chunk becomes an E ref of that SETTING_BOOK source (source_kind SETTING_BOOK, source_context revisionNo/referenceTimeKind/referenceEpisodeNo); the server verifies its quote by slicing the hash-verified full setting-book text like any other citation.",
+      "usageView": "The usage view keeps its v1 keys: an INDEX_EMBEDDING row shows its bound indexInput under queryInput (the immutable call-input column)."
+    },
     "subjectCatalogueVector": {
       "meaning": "SUBJECTS groups the frozen baseline entries exactly like the server settings projection: S refs in first-seen subject order, the first entry of a subject supplies domain and name, aliases are the ordered union over that subject's entries. SETTINGS returns the projection rows of the requested subjects whose domain is characters or worldSettings, in B order; worldHistory rows are never returned.",
       "entries": [
@@ -3065,6 +3136,10 @@
             "QUERY_EMBEDDING": {
               "maxCalls": 250,
               "maxReservedTokens": 400000
+            },
+            "INDEX_EMBEDDING": {
+              "maxCalls": 400,
+              "maxReservedTokens": 40000000
             }
           }
         },
@@ -3084,6 +3159,11 @@
             "reasoningEffort": "low"
           },
           "QUERY_EMBEDDING": {
+            "model": "text-embedding-3-small",
+            "version": "v1",
+            "dimensions": 1536
+          },
+          "INDEX_EMBEDDING": {
             "model": "text-embedding-3-small",
             "version": "v1",
             "dimensions": 1536
@@ -3141,8 +3221,8 @@
       ],
       "workerChangeSearchPurpose": "Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색",
       "ragReuse": "Within a run, a VECTOR query is keyed by its stripped text; a reused result gets a new L ref with reused_from and spends no lookup and no embedding call.",
-      "noEpisodes": "No prior episode sources: VECTOR succeeds with no evidence, readiness.vector_status=NOT_APPLICABLE, no embedding.",
-      "notReady": "Episodes but no fully ready index: search is not offered and a needed change search fails the question with VECTOR_NOT_READY.",
+      "noEpisodes": "No RAG sources (no prior episode and no current setting book): VECTOR succeeds with no evidence, readiness.vector_status=NOT_APPLICABLE, no embedding.",
+      "notReady": "RAG sources (prior episodes, current setting books) but no fully ready index: search is not offered and a needed change search fails the question with VECTOR_NOT_READY, or VECTOR_INDEX_FILL_FAILED when the intake index fill failed.",
       "removed": [
         "KEYWORD",
         "DIRECT",

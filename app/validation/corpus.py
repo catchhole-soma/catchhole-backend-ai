@@ -1,8 +1,8 @@
 """Run-level frozen RAG reads: L receipts, the E-ref registry and one VECTOR search per distinct query.
 
 Grid v4 removes keyword, direct, neighbor and raw/book reads. Evidence comes from the frozen retrieval index
-only, and the Backend verifies every cited quote against the actual source at publication, so the Worker no
-longer re-reads each chunk through READ_SOURCE.
+only: prior episodes and the current setting-book revisions (filled at intake), and the Backend verifies every
+cited quote against the actual source at publication, so the Worker no longer re-reads each chunk.
 """
 
 import asyncio
@@ -10,18 +10,34 @@ from collections import Counter
 from dataclasses import asdict
 
 from app.validation.contracts import IncompleteInspection, LookupReceipt
+from app.validation.search import EPISODE, indexed_sources
 
-VECTOR_SCOPE = "ELIGIBLE_EPISODES"
+# Frozen prior episodes plus the setting-book revisions that were current at intake.
+VECTOR_SCOPE = "ELIGIBLE_EPISODES_AND_CURRENT_SETTING_BOOKS"
+NOT_READY_CODE = "VECTOR_NOT_READY"
+
+
+def _chunk_source(chunk):
+    """(kind, id) of a ranked chunk; an episode-only `ChunkEvidence` (local experiment search) is an episode."""
+    if hasattr(chunk, "source_kind"):
+        return chunk.source_kind, str(chunk.source_id)
+    return EPISODE, str(chunk.episode_id)
 
 
 class ValidationCorpus:
-    def __init__(self, frozen, budget, *, search=None, embedding_client=None, available=False, stats=None):
-        """`available` is the start-of-job offer decision (readiness complete and an embedding client present)."""
+    def __init__(self, frozen, budget, *, search=None, embedding_client=None, available=False, stats=None,
+                 unavailable=(NOT_READY_CODE, None)):
+        """`available` is the before-judging offer decision (readiness complete and an embedding client present).
+
+        `unavailable` is the `(code, cause)` a needed search fails with when it is not offered: VECTOR_NOT_READY
+        when the index could not be filled at all, VECTOR_INDEX_FILL_FAILED when the intake fill failed.
+        """
         self.frozen, self.budget = frozen, budget
         self.search, self.embedding_client = search, embedding_client
         self.sources = {source.ref: source for source in frozen.sources}
-        self.episodes = tuple(source for source in frozen.sources if source.kind == "EPISODE")
+        self.indexed = indexed_sources(frozen.sources)
         self.available = bool(available) and search is not None and embedding_client is not None
+        self.unavailable = unavailable
         self.stats = stats if stats is not None else Counter()
         self.evidence = {}
         self.receipts = []
@@ -32,8 +48,8 @@ class ValidationCorpus:
 
     @property
     def search_offered(self):
-        """VECTOR can be offered to the judge: no prior episodes (empty, NOT_APPLICABLE) or a ready index."""
-        return not self.episodes or self.available
+        """VECTOR can be offered to the judge: an empty RAG scope (NOT_APPLICABLE) or a ready index."""
+        return not self.indexed or self.available
 
     def mint(self, intent, status, evidence_refs=(), limited=False, *, failure_code=None, reused_from=None,
              readiness=None):
@@ -66,7 +82,7 @@ class ValidationCorpus:
                          reused_from=original.ref, readiness=original.readiness)
 
     def _readiness(self, status, found=None):
-        value = {"scope_source_refs": tuple(source.ref for source in self.episodes), "executed_methods": ("VECTOR",),
+        value = {"scope_source_refs": tuple(source.ref for source in self.indexed), "executed_methods": ("VECTOR",),
                  "vector_scope": VECTOR_SCOPE, "vector_status": status}
         if found is not None:
             # Counts may arrive as Decimal from SQL sum(); receipts are JSON (bundle digest, publication).
@@ -77,14 +93,16 @@ class ValidationCorpus:
     async def vector(self, intent):
         """One VECTOR receipt for `intent`; a query already searched in this run is reused (new L, `reused_from`).
 
-        Without prior episodes there is nothing to search: an empty NOT_APPLICABLE success, no lookup and no
-        embedding. With episodes but no ready index the search fails with VECTOR_NOT_READY.
+        Without prior episodes or current setting books there is nothing to search: an empty NOT_APPLICABLE
+        success, no lookup and no embedding. With a scope but no ready index the search fails with the
+        `unavailable` code (VECTOR_NOT_READY, or VECTOR_INDEX_FILL_FAILED after a failed intake fill).
         """
-        if not self.episodes:
+        if not self.indexed:
             return self.mint(intent, "SUCCEEDED", readiness=self._readiness("NOT_APPLICABLE"))
         if not self.available:
-            self.mint(intent, "FAILED", failure_code="VECTOR_NOT_READY", readiness=self._readiness("NOT_READY"))
-            raise IncompleteInspection("VECTOR_NOT_READY")
+            code, cause = self.unavailable
+            self.mint(intent, "FAILED", failure_code=code, readiness=self._readiness("NOT_READY"))
+            raise IncompleteInspection(code, cause)
         key = intent.query.strip()
         if key in self._results:
             return self._reuse(intent, self._results[key])
@@ -110,7 +128,7 @@ class ValidationCorpus:
         except TimeoutError:
             raise IncompleteInspection("BUDGET_EXHAUSTED") from None
         found = result.readiness
-        if (found is None or found.source_count != len(self.episodes)
+        if (found is None or found.source_count != len(self.indexed)
                 or found.vector_ready_sources < found.source_count or "VECTOR_INDEX_PARTIAL" in found.limitations):
             exc = IncompleteInspection("VECTOR_INDEX_PARTIAL")
             exc.readiness = self._readiness("PARTIAL", found)
@@ -119,10 +137,11 @@ class ValidationCorpus:
         proof = getattr(self.embedding_client, "last_receipt", None)
         if proof is not None:
             readiness["query_embedding"] = dict(proof)
-        by_episode = {source.metadata.get("episodeId"): source for source in self.episodes}
+        by_source = {(source.kind, source.metadata.get("episodeId" if source.kind == EPISODE else "revisionId")): source
+                     for source in self.indexed}
         refs = []
         for chunk in result.chunks:
-            source = by_episode.get(str(chunk.episode_id))
+            source = by_source.get(_chunk_source(chunk))
             if source is None:
                 raise IncompleteInspection("SOURCE_OUTSIDE_MANIFEST")
             if chunk.source_hash != source.content_hash:

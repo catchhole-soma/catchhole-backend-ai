@@ -11,6 +11,9 @@ one model answer or one search for one question. Owner decision ③ (2026-11-02)
 - experiment (`experiment=True`): the same continuation, recorded as `{code, cause, call}` per question without
   publishing anything.
 
+A failed intake index fill is not a run failure either: judging continues on the index as it is, and only a
+question that needs a search ends INCOMPLETE with VECTOR_INDEX_FILL_FAILED (cause INDEX_FILL_*).
+
 A planner segment failure is not a question failure: without that PLANNER stage there is no merged plan, so the
 SETTING branch still stops there (experiment mode records it and merges the other segments).
 """
@@ -18,7 +21,7 @@ SETTING branch still stops there (experiment mode records it and merges the othe
 QUESTION_LEVEL_CODES = frozenset({
     "MODEL_CONTRACT_INVALID", "MODEL_OUTPUT_TRUNCATED", "MODEL_CALL_FAILED", "REQUIRED_CONTEXT_TOO_LARGE",
     "INPUT_COUNT_FAILED", "INVALID_DECISION", "INVALID_FOLLOW_UP", "INVALID_INSPECTION_CONTRACT",
-    "VECTOR_NOT_READY", "VECTOR_INDEX_PARTIAL", "SEARCH_FAILED",
+    "VECTOR_NOT_READY", "VECTOR_INDEX_PARTIAL", "VECTOR_INDEX_FILL_FAILED", "SEARCH_FAILED",
 })
 _QUESTION_LEVEL_PREFIXES = ("MODEL_CONTRACT_INVALID", "INVALID_DECISION_", "INVALID_FOLLOW_UP")
 # The branch failure code of a run that judged every question it could but left some INCOMPLETE (Complete.failureCode).

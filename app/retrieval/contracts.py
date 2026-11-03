@@ -83,6 +83,24 @@ class Source:
         return (self.work_id, self.episode_id, self.key, self.version, self.content_hash)
 
 
+@dataclass(frozen=True)
+class BookSource:
+    """One setting-book revision as a retrieval source (V114). Only a current, non-archived revision is indexed."""
+
+    work_id: UUID
+    setting_book_id: UUID
+    revision_id: UUID
+    revision_no: int
+    key: str | None = field(repr=False)
+    version: str | None
+    content_hash: str | None
+    state: str = "AVAILABLE"
+
+    @property
+    def fingerprint(self):
+        return (self.work_id, self.setting_book_id, self.revision_id, self.key, self.version, self.content_hash)
+
+
 class SourceChanged(RuntimeError):
     def __init__(self):
         super().__init__("SOURCE_CHANGED")

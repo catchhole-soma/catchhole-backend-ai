@@ -29,7 +29,7 @@ class CrashClient(ValidationExecutionClient):
         bundle = kwargs.get("payload", {}).get("evidence_bundle") or {}
         receipts = bundle.get("receipts", [])
         setting_unit = operation == "units" and kwargs.get("branch") == "SETTING"
-        if ((self.mode == "vector-lookup-crash" and setting_unit
+        if ((self.mode in {"vector-lookup-crash", "vector-fill-crash"} and setting_unit
              and any(row["intent"]["operation"] == "VECTOR" for row in receipts))
             # Grid v4: VECTOR is only searched while the index is ready, so the "missing embedding" retry case
             # stores the merged plan and crashes before any judge runs.
@@ -58,9 +58,15 @@ class SyntheticProvider:
         body = json.loads(request.content)
         if request.url.path.endswith("embeddings"):
             assert body["model"] == "text-embedding-3-small" and body["dimensions"] == 1536
-            self.calls["QUERY_EMBEDDING"] += 1
+            # The search sentence of the vector modes; anything else is an intake index fill of retrieval chunks.
+            query = any("의수" in value for value in body["input"])
+            role = "QUERY_EMBEDDING" if query else "INDEX_EMBEDDING"
+            self.calls[role] += 1
+            if role == "INDEX_EMBEDDING" and self.mode == "vector-fill-fail":
+                return httpx.Response(503)
             return httpx.Response(200, json={"model": "text-embedding-3-small", "usage": {"prompt_tokens": 10},
-                "data": [{"index": 0, "embedding": [1.0] + [0.0] * 1535}]})
+                "data": [{"index": index, "embedding": [1.0] + [0.0] * 1535}
+                         for index in range(len(body["input"]))]})
         if request.url.path.endswith("input_tokens"):
             assert body["model"] in {model for model, _ in RUNTIMES.values()}
             return httpx.Response(200, json={"input_tokens": 23})
@@ -137,7 +143,7 @@ async def main(args):
     async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
         raw = OpenAIResponsesClient("synthetic-only", "gpt-6.1-terra", "https://provider.invalid/responses", http_client=http)
         client = CrashClient(args.base_url, "gh310-synthetic-internal", mode=args.mode)
-        embedding, sessions, engine = None, None, None
+        embedding, sessions, engine, index_sessions, writer = None, None, None, None, None
         if args.readonly_url:
             from sqlalchemy import create_engine
             from sqlalchemy.engine import make_url
@@ -150,8 +156,18 @@ async def main(args):
             sessions = sessionmaker(engine, autoflush=False, expire_on_commit=False)
             embedding = OpenAIEmbeddingsClient("synthetic", "text-embedding-3-small", 1536, "v1",
                                               "https://provider.invalid/embeddings", http)
+        if args.index_url:
+            from sqlalchemy import create_engine
+            from sqlalchemy.engine import make_url
+            from sqlalchemy.orm import sessionmaker
+
+            parsed = make_url(args.index_url)
+            assert parsed.host == "127.0.0.1" and parsed.database == "gh310_execution_test"
+            writer = create_engine(args.index_url)
+            index_sessions = sessionmaker(writer, autoflush=False, expire_on_commit=False)
         worker = EpisodeValidationWorker(client, raw, enabled=True, worker_id="gh310-http-synthetic",
-                                         readonly_sessions=sessions, embedding_client=embedding)
+                                         readonly_sessions=sessions, embedding_client=embedding,
+                                         index_sessions=index_sessions)
         claim = await worker.claim_next()
         assert claim is not None, "fixture must have queued validation"
         state = None
@@ -165,6 +181,8 @@ async def main(args):
             await worker.aclose()
             if engine is not None:
                 engine.dispose()
+            if writer is not None:
+                writer.dispose()
         print("GH310_WORKER_RESULT " + json.dumps({"calls": provider.calls, "judges": provider.judges, "result": state}), flush=True)
 
 
@@ -174,5 +192,6 @@ if __name__ == "__main__":
     parser.add_argument("--mode", required=True)
     parser.add_argument("--wait-file")
     parser.add_argument("--readonly-url")
+    parser.add_argument("--index-url", help="Writer URL of the intake index fill (retrieval tables only)")
     parser.add_argument("--subject-mentions", choices=("none", "resolved", "null"), default="none")
     asyncio.run(main(parser.parse_args()))
