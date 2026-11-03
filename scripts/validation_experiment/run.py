@@ -17,9 +17,11 @@ import argparse
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 from collections import Counter
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -36,7 +38,7 @@ from app.validation.contracts import (
     QuestionBatch,
 )
 from app.validation.execution import ValidationRoleClients
-from app.validation.models import SCHEMA_VERSION, RoleRuntime
+from app.validation.models import SCHEMA_VERSION, SYSTEM_PROMPTS, RoleRuntime
 from app.validation.planning import SettingPlanner
 from app.validation.projection import source_catalogue
 from app.validation.service import SettingValidationService
@@ -130,7 +132,9 @@ def header(args, fixture):
     return {"at": utc_stamp(), "schemaVersion": SCHEMA_VERSION, "logicVersion": LOGIC_VERSION,
             "aiGit": git_identity(REPO_ROOT), "fixtureSha256": fixture_hash(fixture),
             "fake": bool(getattr(args, "fake", False)), "budgets": {"setting": SETTING, "typo": TYPO},
-            "outputTokens": OUTPUT_TOKENS, "llmConcurrency": LLM_CONCURRENCY}
+            "outputTokens": OUTPUT_TOKENS, "llmConcurrency": LLM_CONCURRENCY,
+            # Tells judge runs of the same logic version apart (e.g. the 2026-11-03 judge rule change).
+            "judgePromptSha256": sha256(SYSTEM_PROMPTS["JUDGE"].encode()).hexdigest()}
 
 
 # --- steps -----------------------------------------------------------------------------------------
@@ -300,7 +304,8 @@ async def cmd_judge(args):
               "questions": [{"ref": q.ref, "draft": q.draft.model_dump()} for q in result.questions],
               "decisions": {ref: decision.model_dump() for ref, decision in result.decisions.items()},
               "receipts": [{"ref": r.ref, "operation": r.intent.operation, "kind": r.intent.kind,
-                            "query": r.intent.query, "status": r.status, "evidence": list(r.evidence_refs),
+                            "purpose": r.intent.purpose, "query": r.intent.query, "status": r.status,
+                            "evidence": list(r.evidence_refs),
                             "reusedFrom": r.reused_from, "failureCode": r.failure_code} for r in result.receipts],
               "embeddingCalls": getattr(embedding, "calls", 0)}
     write_json(directory / "result.json", record)
@@ -332,7 +337,9 @@ async def cmd_typo(args):
 def cmd_report(args):
     from scripts.validation_experiment.report import write_report
 
-    paths = write_report(outside_repo(args.out), judges=args.judge, typos=args.typo)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", args.name):
+        raise HarnessError("--name must be one plain directory name")
+    paths = write_report(outside_repo(args.out), judges=args.judge, typos=args.typo, name=args.name)
     print(json.dumps({key: str(value) for key, value in paths.items()}, ensure_ascii=False))
 
 
@@ -391,6 +398,7 @@ def parser():
     command = add("report")
     command.add_argument("--judge", action="append", default=[], help="judge label (repeat; first two are compared)")
     command.add_argument("--typo", action="append", default=[], help="typo label (repeat; first two are compared)")
+    command.add_argument("--name", default="report", help="report directory name under --out (default: report)")
     return root
 
 

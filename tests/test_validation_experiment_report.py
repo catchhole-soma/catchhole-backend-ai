@@ -28,12 +28,27 @@ def test_offline_pipeline_plans_judges_records_contract_errors_and_reports(tmp_p
     # Without a RAG database search is not offered, so the follow-up searches fail their questions only.
     assert {run["questionFailures"][ref]["code"] for ref in ("Q1", "Q2")} == {"VECTOR_NOT_READY"}
     assert set(run["decisions"]) == {"Q4", "Q5", "Q6"}
+    # Q4's scripted CONFLICT has no basis quote: the judge-rule guard publishes NO_CONFLICT and counts it.
+    assert run["decisions"]["Q4"]["outcome"] == "NO_CONFLICT"
+    assert run["normalizations"]["CONFLICT_QUOTE_MISSING_CLEARED"] == 1 and len(run["judgePromptSha256"]) == 64
     calls = [json.loads(line) for line in (out / "judge" / "a" / "calls.jsonl").read_text().splitlines()]
     assert {row["model"] for row in calls} == {"gpt-6.1-terra"} and all("Authorization" not in row for row in calls)
     report = json.loads((out / "report" / "report.json").read_text())
     assert report["agreement"]["percentAgreement"] == 1.0 and report["agreement"]["questions"] == 6
-    assert report["judges"][0]["hardErrors"]["perQuestion"]["VECTOR_NOT_READY"] == 2
-    assert (out / "report" / "report.md").read_text().startswith("# 검수 실험 보고서")
+    summary = report["judges"][0]
+    assert summary["hardErrors"]["perQuestion"]["VECTOR_NOT_READY"] == 2
+    assert summary["ruleGuard"] == {"CONFLICT_QUOTE_MISSING_CLEARED": 1, "SUSPECTED_CONFLICT_QUOTE_MISSING_CLEARED": 0,
+                                    "total": 1}
+    assert summary["findingCounts"] == {"CONFLICT": 0, "SUSPECTED_CONFLICT": 0, "NEEDS_CONTEXT": 0}
+    assert [(row["ref"], row["outcome"], row["clearedFrom"], row["impact"], row["reason"])
+            for row in summary["findings"]] == [("Q4", "NO_CONFLICT", "CONFLICT", "CAUTION", "합성 판정")]
+    assert set(summary["searches"]) >= {"judgePerQuestion", "targetPerQuestion", "changePerQuestion",
+                                        "totalPerQuestion", "totalDistribution", "maxPerQuestion"}
+    markdown = (out / "report" / "report.md").read_text()
+    assert markdown.startswith("# 검수 실험 보고서") and "규칙 보정" in markdown and "검색 내역/질문" in markdown
+    assert main(["report", "--out", str(out), "--judge", "a", "--name", "report-rules"]) == 0
+    assert (out / "report-rules" / "report.json").exists()
+    assert main(["report", "--out", str(out), "--judge", "a", "--name", "../escape"]) == 2
 
 
 def test_paid_steps_require_explicit_confirmation(tmp_path, capsys):

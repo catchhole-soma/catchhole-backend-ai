@@ -1,7 +1,12 @@
 """Experiment report: judge agreement (first two judge labels), answer-form errors, flow, cost/latency and typo.
 
 Reads `<out>/judge/<label>/{result.json,ledger.jsonl}` and `<out>/typo/<label>/{result.json,ledger.jsonl}` and
-writes `<out>/report/{report.json,report.md,disagreements.csv}`.
+writes `<out>/<name>/{report.json,report.md,disagreements.csv}` (`name` defaults to `report`).
+
+Per judge run it counts outcomes and findings (CONFLICT/SUSPECTED_CONFLICT/NEEDS_CONTEXT, listed per question),
+the judge-rule guard (findings without a contradicting quote cleared to NO_CONFLICT, 2026-11-03) and searches per
+question split into judge queries, the Worker target-text search and the Worker change search. Runs recorded
+before those fields existed read them as 0.
 """
 
 import csv
@@ -16,7 +21,11 @@ OUTCOMES = ("CONFLICT", "SUSPECTED_CONFLICT", "NEEDS_CONTEXT", "NO_CONFLICT", "I
 FINDINGS = {"CONFLICT", "SUSPECTED_CONFLICT"}
 SOFT = ("SPAN_REANCHORED", "TARGET_REF_ALIAS", "REQUIRED_READS_COMPLETED", "CHANGE_SEARCH_RECEIPT_FILLED",
         "FOLLOW_UP_DECISION_FIELDS_IGNORED", "NO_CONFLICT_IMPACT_CLEARED", "TARGET_SPANS_REPLACED",
-        "DECIDED_REQUESTS_IGNORED", "COMPARISON_CONTEXT_TARGET_FILLED")
+        "DECIDED_REQUESTS_IGNORED", "COMPARISON_CONTEXT_TARGET_FILLED", "BASIS_QUOTES_DROPPED",
+        "AUTHOR_TEXT_SANITIZED")
+# Judge rule guard (2026-11-03): a finding without a checked contradicting basis quote is published as NO_CONFLICT.
+RULE_GUARD = ("CONFLICT_QUOTE_MISSING_CLEARED", "SUSPECTED_CONFLICT_QUOTE_MISSING_CLEARED")
+FLAGGED = ("CONFLICT", "SUSPECTED_CONFLICT", "NEEDS_CONTEXT")
 
 
 def ledger_rows(directory):
@@ -64,6 +73,54 @@ def outcome_of(run, ref):
     return decision["outcome"] if decision else "INCOMPLETE"
 
 
+def search_counts(run, refs):
+    """Per question VECTOR searches from the traces: judge queries, Worker target-text search, Worker change search."""
+    traces = run.get("traces", {})
+
+    def count(ref, key):
+        return sum(int(bool(row.get(key))) if key == "change_search" else row.get(key, 0)
+                   for row in traces.get(ref, []))
+
+    rows = {ref: {"judge": count(ref, "searches"), "target": count(ref, "worker_searches"),
+                  "change": count(ref, "change_search")} for ref in refs}
+    totals = [sum(row.values()) for row in rows.values()]
+
+    def mean(values):
+        return round(statistics.mean(values), 3) if values else 0
+
+    return {"judgePerQuestion": mean([row["judge"] for row in rows.values()]),
+            "targetPerQuestion": mean([row["target"] for row in rows.values()]),
+            "changePerQuestion": mean([row["change"] for row in rows.values()]),
+            "totalPerQuestion": mean(totals),
+            "totalDistribution": {str(key): value for key, value in sorted(Counter(totals).items())},
+            "maxPerQuestion": max(totals, default=0),
+            "searchReceipts": sum(totals),
+            "embeddedSearches": run["normalizations"].get("VECTOR_SEARCHES", 0),
+            "reusedSearches": run["normalizations"].get("RAG_CACHE_HITS", 0)}
+
+
+def findings(run, refs):
+    """Every CONFLICT/SUSPECTED_CONFLICT/NEEDS_CONTEXT decision and every cleared one, in question order.
+
+    A cleared row shows the judge's original impact and reason (from the trace), so the guard can be reviewed.
+    """
+    drafts = {question["ref"]: question["draft"] for question in run["questions"]}
+    traces = run.get("traces", {})
+    rows = []
+    for ref in refs:
+        decision = run["decisions"].get(ref)
+        guard = next((row for row in traces.get(ref, []) if row.get("cleared")), {})
+        if decision is None or (decision["outcome"] not in FLAGGED and not guard):
+            continue
+        rows.append({"ref": ref, "outcome": decision["outcome"], "clearedFrom": guard.get("cleared"),
+                     "basis": decision["basis"], "impact": decision["impact"] or guard.get("cleared_impact"),
+                     "property": drafts[ref]["property_or_rule"],
+                     "basisQuotes": len(decision.get("basis_quotes") or []),
+                     "headline": decision.get("headline"),
+                     "reason": guard.get("cleared_reason") or decision["reason"]})
+    return rows
+
+
 def judge_summary(run, rows):
     refs = [question["ref"] for question in run["questions"]]
     traces = run.get("traces", {})
@@ -72,16 +129,24 @@ def judge_summary(run, rows):
     per_call_errors = Counter(row["error"] for ref in refs for row in traces.get(ref, []) if row.get("error"))
     causes = Counter(failure.get("cause") or failure["code"] for failure in run["questionFailures"].values())
     searches = [sum(row.get("searches", 0) for row in traces.get(ref, [])) for ref in refs]
+    outcomes = Counter(outcome_of(run, ref) for ref in refs)
+    guard = {key: run["normalizations"].get(key, 0) for key in RULE_GUARD}
     return {
         "label": run["label"], "model": run["model"], "effort": run["effort"], "status": run["status"],
         "wallSeconds": run["wallSeconds"], "questions": len(refs),
-        "outcomes": dict(Counter(outcome_of(run, ref) for ref in refs)),
+        "outcomes": dict(outcomes),
+        "findingCounts": {key: outcomes.get(key, 0) for key in FLAGGED},
+        "findings": findings(run, refs),
+        "ruleGuard": {**guard, "total": sum(guard.values())},
+        "searches": search_counts(run, refs),
+        "judgePromptSha256": run.get("judgePromptSha256"),
         "callsPerQuestion": {str(key): value for key, value in sorted(calls.items())},
         "followUpRate": round(follow_ups / len(refs), 4) if refs else None,
         "searchesPerQuestion": round(statistics.mean(searches), 3) if searches else 0,
         "cacheHits": run["normalizations"].get("RAG_CACHE_HITS", 0),
         "vectorSearches": run["normalizations"].get("VECTOR_SEARCHES", 0),
         "changeSearches": run["normalizations"].get("CHANGE_SEARCH_INSERTED", 0),
+        "targetSearches": run["normalizations"].get("TARGET_SEARCH_INSERTED", 0),
         "contextRequests": sum(row.get("context_requests", 0) for ref in refs for row in traces.get(ref, [])),
         "hardErrors": {"perQuestion": dict(Counter(f["code"] for f in run["questionFailures"].values())),
                        "perQuestionCause": dict(causes), "perCall": dict(per_call_errors)},
@@ -168,9 +233,24 @@ def markdown(report):
                   f"FOLLOW_UP 비율 {summary['followUpRate']}"),
                   (f"- 검색/질문 {summary['searchesPerQuestion']}, 실제 검색 {summary['vectorSearches']}, 캐시 재사용 "
                   f"{summary['cacheHits']}, 변화 검색 {summary['changeSearches']}, 문맥 요청 {summary['contextRequests']}"),
+                  (f"- 검색 내역/질문: 판정 {summary['searches']['judgePerQuestion']} + 대상 문장 "
+                   f"{summary['searches']['targetPerQuestion']} + 변화 {summary['searches']['changePerQuestion']} = "
+                   f"{summary['searches']['totalPerQuestion']} (최대 {summary['searches']['maxPerQuestion']}, 분포 "
+                   f"{summary['searches']['totalDistribution']}, 임베딩 {summary['searches']['embeddedSearches']}, "
+                   f"재사용 {summary['searches']['reusedSearches']})"),
+                  (f"- 지적: {summary['findingCounts']}, 규칙 보정(근거 문장 없는 지적 → 문제없음): "
+                   f"{summary['ruleGuard']}"),
                   f"- 양식 오류(질문): {summary['hardErrors']['perQuestionCause']}",
                   f"- 양식 오류(호출): {summary['hardErrors']['perCall']}",
                   f"- 정규화: {summary['softNormalizations']}", ""]
+        if summary["findings"]:
+            lines += ["| 질문 | 결과 | 보정 전 결과 | 영향 | 근거 문장 | 항목 | 제목 | 사유(보정된 것은 판정 원래 사유) |",
+                      "|---|---|---|---|---|---|---|---|"]
+            for row in summary["findings"]:
+                cells = [row["ref"], row["outcome"], row["clearedFrom"] or "", row["impact"] or "",
+                         str(row["basisQuotes"]), row["property"], row.get("headline") or "", row["reason"]]
+                lines.append("| " + " | ".join(str(cell).replace("|", "/").replace("\n", " ") for cell in cells) + " |")
+            lines.append("")
         lines += ["| 역할 | 호출 | 입력 | 캐시 입력 | 출력 | USD | p50 ms | p95 ms |", "|---|---|---|---|---|---|---|---|"]
         for role, row in summary["cost"].items():
             lines.append(f"| {role} | {row['calls']} | {row['inputTokens']} | {row['cachedInputTokens']} | "
@@ -195,7 +275,7 @@ def markdown(report):
     return "\n".join(lines) + "\n"
 
 
-def write_report(out, *, judges=(), typos=()):
+def write_report(out, *, judges=(), typos=(), name="report"):
     out = Path(out)
     runs = [read_json(out / "judge" / label / "result.json") for label in judges]
     rows = {label: ledger_rows(out / "judge" / label) for label in judges}
@@ -211,7 +291,7 @@ def write_report(out, *, judges=(), typos=()):
         report["agreement"] = agreement(runs[0], runs[1])
     if len(typo_runs) >= 2:
         report["typoAgreement"] = typo_agreement(typo_runs[0], typo_runs[1])
-    directory = out / "report"
+    directory = out / name
     paths = {"json": write_json(directory / "report.json", report)}
     (directory / "report.md").write_text(markdown(report), encoding="utf-8")
     paths["md"] = directory / "report.md"

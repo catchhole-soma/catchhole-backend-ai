@@ -1,10 +1,11 @@
 """Offline OpenAI stand-in for harness dry runs (httpx.MockTransport). No network, no key, no cost.
 
 The planner asks one question per sentence of the segment core; the judge follows a fixed script that covers
-every flow: Q1 FOLLOW_UP with a search then FINAL, Q2 the same search (cache hit) plus a context read then a
-SUSPECTED_CONFLICT that triggers the Worker change search and a FINAL call, Q3 an unparsable answer (contract
-error), every other question DECIDED NO_CONFLICT on the OPEN call. Typo answers NO_CHECK. Embeddings are
-deterministic non-zero unit vectors.
+every flow: Q1 FOLLOW_UP with a search (plus the Worker's target-text search) then FINAL, Q2 the same search (cache
+hit) plus a context read then a SUSPECTED_CONFLICT quoting an earlier sentence that triggers the Worker change
+search and a FINAL call, Q3 an unparsable answer (contract error), Q4 a CONFLICT without any basis quote on the
+OPEN call (the judge-rule guard publishes it as NO_CONFLICT), every other question DECIDED NO_CONFLICT on the OPEN
+call. Typo answers NO_CHECK. Embeddings are deterministic non-zero unit vectors.
 """
 
 import json
@@ -13,6 +14,8 @@ import re
 from hashlib import sha256
 
 import httpx
+
+from app.validation.projection import setting_value_leaves
 
 SHARED_QUERY = "주인공이 예전에 사용한 능력과 그 조건"
 
@@ -54,20 +57,35 @@ def planner(payload):
                                                   "reason": "합성 계획"}]}
 
 
-def _decided(payload, outcome="NO_CONFLICT"):
+def _first_quote(payload):
+    """An exact earlier sentence for a finding: the first evidence chunk's opening, else a stored setting value."""
+    for row in payload["evidence"]:
+        quote = row["quote"][:40].strip()
+        if quote:
+            return [{"ref": row["ref"], "quote": quote}]
+    for row in payload["settings"]:
+        leaf = next((value.strip()[:40] for value in setting_value_leaves(row) if value.strip()), None)
+        if leaf:
+            return [{"ref": row["entry_ref"], "quote": leaf}]
+    return []
+
+
+def _decided(payload, outcome="NO_CONFLICT", quotes=()):
     facts = [row["entry_ref"] for row in payload["settings"]]
     refs = ["T1", *facts, *(row["ref"] for row in payload["evidence"])]
     assessment = {"reason": "합성 판정 근거", "evidence_refs": refs,
                   "receipt_refs": [row["ref"] for row in payload["receipts"]]}
     finding = outcome != "NO_CONFLICT"
     result = {"action": "DECIDED", "outcome": outcome,
-              "basis": {"NO_CONFLICT": "COMPATIBLE", "SUSPECTED_CONFLICT": "CHANGE_NOT_FOUND"}[outcome],
+              "basis": {"NO_CONFLICT": "COMPATIBLE", "SUSPECTED_CONFLICT": "CHANGE_NOT_FOUND",
+                        "CONFLICT": "DIRECT_CONTRADICTION"}[outcome],
+              "headline": "합성 대상의 확인 항목이 기존 설정과 달라요" if finding else None,
               "reason": "합성 판정", "impact": "CAUTION" if finding else None,
               "impact_reason": "합성 영향" if finding else None, "target_spans": payload["question"]["target_spans"],
               "evidence_refs": (facts or refs) if finding else refs,
               "completion": {key: dict(assessment) for key in ("comparison_context", "changes_exceptions",
                                                                "no_pending_clues", "required_reads")},
-              "disagreements": []}
+              "disagreements": [], "basis_quotes": list(quotes)}
     if payload["form"] == "OPEN":
         result.update(search_queries=[], context_requests=[])
     return result
@@ -88,7 +106,9 @@ def judge(payload):
         span = payload["question"]["target_spans"][0]
         return _follow_up(payload, contexts=[(span["start"], span["end"])] if qref == "Q2" else ())
     if qref == "Q2" and payload["question"]["subject_refs"]:
-        return _decided(payload, "SUSPECTED_CONFLICT")
+        return _decided(payload, "SUSPECTED_CONFLICT", _first_quote(payload))
+    if qref == "Q4" and form == "OPEN":
+        return _decided(payload, "CONFLICT")  # no basis quote: the Worker's rule guard clears it
     return _decided(payload)
 
 
