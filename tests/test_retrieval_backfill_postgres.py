@@ -27,6 +27,12 @@ def writer_permissions(database):
         connection.exec_driver_sql(f'GRANT SELECT ON ALL TABLES IN SCHEMA "{schema}" TO "{role}"')
         connection.exec_driver_sql(f'GRANT INSERT, UPDATE ON retrieval_sources TO "{role}"')
         connection.exec_driver_sql(f'GRANT INSERT, UPDATE, DELETE ON retrieval_chunks TO "{role}"')
+        connection.exec_driver_sql(
+            f'GRANT INSERT, UPDATE ON retrieval_setting_book_sources TO "{role}"'
+        )
+        connection.exec_driver_sql(
+            f'GRANT INSERT, UPDATE, DELETE ON retrieval_setting_book_chunks TO "{role}"'
+        )
         # FOR UPDATE requires UPDATE on any column, not table-wide UPDATE.
         connection.exec_driver_sql(f'GRANT UPDATE(id) ON works TO "{role}"')
         connection.exec_driver_sql(f'SET LOCAL ROLE "{role}"')
@@ -57,6 +63,16 @@ def test_preflight_accepts_index_writer_with_only_column_level_work_lock_permiss
         ("members", "SELECT"),
         ("episodes", "SELECT"),
         ("episode_source_purge_requests", "SELECT"),
+        ("upload_files", "SELECT"),
+        ("upload_batches", "SELECT"),
+        ("setting_book_revisions", "SELECT"),
+        ("retrieval_setting_book_sources", "SELECT"),
+        ("retrieval_setting_book_sources", "INSERT"),
+        ("retrieval_setting_book_sources", "UPDATE"),
+        ("retrieval_setting_book_chunks", "SELECT"),
+        ("retrieval_setting_book_chunks", "INSERT"),
+        ("retrieval_setting_book_chunks", "UPDATE"),
+        ("retrieval_setting_book_chunks", "DELETE"),
     ],
 )
 def test_preflight_rejects_each_missing_writer_or_source_privilege(

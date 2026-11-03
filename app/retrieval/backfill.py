@@ -2,6 +2,8 @@
 
 No dotenv loading. A campaign's scope, index specification and total input admission
 budget are immutable. SQLite contains private cursor IDs, never source text or keys.
+Each sweep covers every in-scope work's current episodes and, since 2026-11-03, the current
+revision of each non-archived setting book (V114 tables), under the same campaign budget.
 """
 
 import argparse
@@ -29,7 +31,7 @@ from app.retrieval.cli import exclusive_outbox
 from app.retrieval.contracts import IndexBusy, IndexSpec, Limits, Scope, SourceChanged
 from app.retrieval.provider import IndexProviderFailure, OperationalEmbeddingProvider
 from app.retrieval.service import RetrievalIndexService
-from app.retrieval.store import RetrievalStore
+from app.retrieval.store import RetrievalStore, SettingBookRetrievalStore
 from app.storage.s3 import S3TextObjectStorage
 from app.usage.metering import _estimate_embedding_token_upper_bound
 
@@ -47,6 +49,15 @@ NORMAL_STATES = {
     "RESUMED",
     "NOT_STARTED",
 }
+# 2026-11-03: setting books join the sweep. The per-work book cursor and book counters are added in place, so a
+# state file written by the episode-only code keeps its campaign identity, admitted budget, uncertainty marker and
+# in-flight episode cursors. Every new column has a default: the previous image can still run on a migrated file.
+STATE_MIGRATIONS = (
+    ("work_cursors", "book_after", f"TEXT NOT NULL DEFAULT '{ZERO_UUID}'"),
+    ("campaigns", "book_seen", "INTEGER NOT NULL DEFAULT 0"),
+    ("campaigns", "book_ready", "INTEGER NOT NULL DEFAULT 0"),
+    ("campaigns", "book_excluded", "INTEGER NOT NULL DEFAULT 0"),
+)
 
 
 def _boolean(value):
@@ -168,6 +179,7 @@ class CampaignState:
                 PRIMARY KEY (campaign, work));
         """)
         try:
+            self._migrate()
             with self.db:
                 old = self.db.execute(
                     "SELECT identity FROM campaigns WHERE id=?", (config.campaign_id,)
@@ -184,6 +196,13 @@ class CampaignState:
         except BaseException:
             self.db.close()
             raise
+
+    def _migrate(self):
+        with self.db:
+            for table, name, definition in STATE_MIGRATIONS:
+                present = {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}
+                if name not in present:
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
     def close(self):
         self.db.close()
@@ -210,11 +229,16 @@ class CampaignState:
             "sweep": row["sweep"],
             "sweepInProgress": bool(row["scanning"]),
             "snapshotAt": snapshot,
+            # Totals cover both kinds; the setting-book share is reported separately.
             "checkedSources": row["seen"],
             "readySources": row["ready"],
             "excludedOrUnavailableSources": row["excluded"],
-            "supportedSourceTypes": ["CURRENT_EPISODE"],
-            "unsupportedSourceTypes": ["SETTING_BOOK", "PAST_EPISODE_VERSION"],
+            "checkedSettingBooks": row["book_seen"],
+            "readySettingBooks": row["book_ready"],
+            "excludedOrUnavailableSettingBooks": row["book_excluded"],
+            # SETTING_BOOK: the current revision of each non-archived setting book only.
+            "supportedSourceTypes": ["CURRENT_EPISODE", "SETTING_BOOK"],
+            "unsupportedSourceTypes": ["PAST_EPISODE_VERSION"],
             "userTokenDebit": False,
             **extra,
         }
@@ -272,7 +296,8 @@ class CampaignState:
                 ],
             )
             self.db.execute(
-                "UPDATE campaigns SET sweep=sweep+1,scanning=1,seen=0,ready=0,excluded=0 WHERE id=?",
+                "UPDATE campaigns SET sweep=sweep+1,scanning=1,seen=0,ready=0,excluded=0,"
+                "book_seen=0,book_ready=0,book_excluded=0 WHERE id=?",
                 (self.config.campaign_id,),
             )
 
@@ -296,6 +321,19 @@ class CampaignState:
             self.db.execute(
                 "UPDATE campaigns SET seen=seen+1,ready=ready+?,excluded=excluded+?,no_progress=0 WHERE id=?",
                 (int(ready), int(not ready), self.config.campaign_id),
+            )
+
+    def advance_book(self, source, *, ready):
+        # The episode cursor is untouched; books follow the work's episodes keyset by setting-book ID.
+        with self.db:
+            self.db.execute(
+                "UPDATE work_cursors SET book_after=? WHERE campaign=? AND work=?",
+                (str(source.setting_book_id), self.config.campaign_id, str(source.work_id)),
+            )
+            self.db.execute(
+                "UPDATE campaigns SET seen=seen+1,ready=ready+?,excluded=excluded+?,book_seen=book_seen+1,"
+                "book_ready=book_ready+?,book_excluded=book_excluded+?,no_progress=0 WHERE id=?",
+                (int(ready), int(not ready), int(ready), int(not ready), self.config.campaign_id),
             )
 
     def work_done(self, work_id):
@@ -377,10 +415,22 @@ class CampaignProvider:
 
 
 class CampaignRunner:
-    def __init__(self, config, state, service, provider):
+    """One bounded sweep step. Per work: current episodes first, then current setting-book revisions.
+
+    Both kinds share the per-work advisory lock, the campaign budget/uncertainty marker, the provider,
+    batching/retries/limits/deadline and every result branch below.
+    """
+
+    def __init__(self, config, state, service, provider, *, book_service):
         self.config, self.state, self.service = config, state, service
+        self.book_service = book_service
         self.store = service.store
         self.provider = CampaignProvider(provider, state)
+
+    def _status(self, **extra):
+        return self.state.status(
+            embeddedChunks=self.embedded, providerAttempts=self.provider.attempts, **extra
+        )
 
     async def run(self, deadline):
         state, cfg = self.state, self.config
@@ -391,17 +441,16 @@ class CampaignRunner:
         if not state.row()["scanning"]:
             snapshot = await asyncio.to_thread(self.store.backfill_snapshot, cfg.work_ids)
             state.start_sweep(snapshot)
-        embedded, checked, selected = 0, 0, 0
+        self.embedded, self.checked, self.selected = 0, 0, 0
         loop = asyncio.get_running_loop()
         while loop.time() < deadline:
             cursor = state.next_work()
             if cursor is None:
                 state.finish_sweep()
-                return state.status(
-                    embeddedChunks=embedded, providerAttempts=self.provider.attempts
-                )
+                return self._status()
             work_id = UUID(cursor["work"])
             with self.store.exclusive(work_id):
+                service, advance = self.service, state.advance
                 sources = await asyncio.to_thread(
                     self.store.backfill_sources,
                     work_id,
@@ -412,104 +461,100 @@ class CampaignRunner:
                     cfg.page_size,
                 )
                 if not sources:
+                    # Episodes done: the work's current setting-book revisions, same lock and rules.
+                    service, advance = self.book_service, state.advance_book
+                    sources = await asyncio.to_thread(
+                        service.store.backfill_sources,
+                        work_id,
+                        UUID(cursor["book_after"]),
+                        cfg.page_size,
+                    )
+                if not sources:
                     state.work_done(work_id)
                     continue
                 for source in sources:
-                    if loop.time() >= deadline or selected >= cfg.max_chunks:
+                    if loop.time() >= deadline or self.selected >= cfg.max_chunks:
                         break
-                    if source.state != "AVAILABLE":
-                        state.advance(source, ready=False)
-                        checked += 1
-                        continue
-                    current = await asyncio.to_thread(self.store.inspect, source, self.service.spec)
-                    if current["state"] == "READY":
-                        state.advance(source, ready=True)
-                        checked += 1
-                        continue
-                    report = await self.service.run(
-                        Scope(work_id, (source.episode_id,), max_sources=1),
-                        self.provider,
-                        enabled=True,
-                        source_snapshot=source,
-                        deadline=deadline,
-                        limits=Limits(
-                            cfg.max_chunks - selected,
-                            1000000,
-                            cfg.batch_size,
-                            cfg.max_retries,
-                            cfg.max_seconds,
-                        ),
-                    )
-                    produced = report["embeddedChunks"]
-                    embedded += produced
-                    selected += produced + report["failedChunks"] + report["changedChunks"]
-                    if produced:
-                        state.outcome("PROGRESS", progress=True)
-                    if state.row()["inflight"]:
-                        state.outcome("BLOCKED", "UNKNOWN_USAGE")
-                        return state.status(
-                            embeddedChunks=embedded, providerAttempts=self.provider.attempts
-                        )
-                    if report["state"] == "BUDGET_EXHAUSTED":
-                        state.outcome("BUDGET_EXHAUSTED")
-                        return state.status(
-                            embeddedChunks=embedded, providerAttempts=self.provider.attempts
-                        )
-                    if report["state"] == "REPORTS_PENDING":
-                        state.outcome("PROGRESS", "REPORTS_PENDING")
-                        return state.status(
-                            state="REPORTS_PENDING",
-                            embeddedChunks=embedded,
-                            providerAttempts=self.provider.attempts,
-                        )
-                    if report["state"] == "LEDGER_RETRYABLE":
-                        state.no_progress("LEDGER_FAILURE")
-                        return state.status(
-                            embeddedChunks=embedded, providerAttempts=self.provider.attempts
-                        )
-                    if report["state"] in {"CHUNK_LIMIT", "TIME_LIMIT"}:
-                        state.outcome(report["state"])
-                        if not produced:
-                            state.no_progress(report["state"])
-                        return state.status(
-                            embeddedChunks=embedded, providerAttempts=self.provider.attempts
-                        )
-                    if report["sourceFailures"] or report["changedChunks"]:
-                        codes = {r["code"] for r in report["sourceFailures"]}
-                        if codes <= {"SOURCE_CHANGED"}:
-                            state.no_progress("SOURCE_CHANGED")
-                        else:
-                            state.outcome("BLOCKED", "SOURCE_UNREADABLE")
-                        return state.status(
-                            embeddedChunks=embedded, providerAttempts=self.provider.attempts
-                        )
-                    if report["failedChunks"] or report["state"] not in {"COMPLETED", "PARTIAL"}:
-                        state.outcome(
-                            "BLOCKED",
-                            report["state"]
-                            if report["state"] != "PARTIAL"
-                            else "PROVIDER_RETRIES_EXHAUSTED",
-                        )
-                        return state.status(
-                            embeddedChunks=embedded, providerAttempts=self.provider.attempts
-                        )
-                    current = await asyncio.to_thread(self.store.inspect, source, self.service.spec)
-                    if current["state"] != "READY":
-                        state.no_progress("SOURCE_CHANGED")
-                        return state.status(
-                            embeddedChunks=embedded, providerAttempts=self.provider.attempts
-                        )
-                    state.advance(source, ready=True)
-                    checked += 1
-            if selected >= cfg.max_chunks:
+                    stopped = await self._index(service, advance, work_id, source, deadline)
+                    if stopped is not None:
+                        return stopped
+            if self.selected >= cfg.max_chunks:
                 state.outcome("CHUNK_LIMIT")
-                return state.status(
-                    embeddedChunks=embedded, providerAttempts=self.provider.attempts
-                )
+                return self._status()
         state.outcome("TIME_LIMIT")
-        if not embedded and not checked:
+        if not self.embedded and not self.checked:
             state.no_progress("TIME_LIMIT")
-        return state.status(embeddedChunks=embedded, providerAttempts=self.provider.attempts)
+        return self._status()
+
+    async def _index(self, service, advance, work_id, source, deadline):
+        """Index one source. None once the cursor advanced past it, otherwise this run's final status."""
+        state, cfg = self.state, self.config
+        if source.state != "AVAILABLE":
+            advance(source, ready=False)
+            self.checked += 1
+            return None
+        current = await asyncio.to_thread(service.store.inspect, source, service.spec)
+        if current["state"] == "READY":
+            advance(source, ready=True)
+            self.checked += 1
+            return None
+        report = await service.run(
+            # The scope's single ID is the store's source ID (episode or setting-book revision).
+            Scope(work_id, (service.store.source_id(source),), max_sources=1),
+            self.provider,
+            enabled=True,
+            source_snapshot=source,
+            deadline=deadline,
+            limits=Limits(
+                cfg.max_chunks - self.selected,
+                1000000,
+                cfg.batch_size,
+                cfg.max_retries,
+                cfg.max_seconds,
+            ),
+        )
+        produced = report["embeddedChunks"]
+        self.embedded += produced
+        self.selected += produced + report["failedChunks"] + report["changedChunks"]
+        if produced:
+            state.outcome("PROGRESS", progress=True)
+        if state.row()["inflight"]:
+            state.outcome("BLOCKED", "UNKNOWN_USAGE")
+            return self._status()
+        if report["state"] == "BUDGET_EXHAUSTED":
+            state.outcome("BUDGET_EXHAUSTED")
+            return self._status()
+        if report["state"] == "REPORTS_PENDING":
+            state.outcome("PROGRESS", "REPORTS_PENDING")
+            return self._status(state="REPORTS_PENDING")
+        if report["state"] == "LEDGER_RETRYABLE":
+            state.no_progress("LEDGER_FAILURE")
+            return self._status()
+        if report["state"] in {"CHUNK_LIMIT", "TIME_LIMIT"}:
+            state.outcome(report["state"])
+            if not produced:
+                state.no_progress(report["state"])
+            return self._status()
+        if report["sourceFailures"] or report["changedChunks"]:
+            codes = {r["code"] for r in report["sourceFailures"]}
+            if codes <= {"SOURCE_CHANGED"}:
+                state.no_progress("SOURCE_CHANGED")
+            else:
+                state.outcome("BLOCKED", "SOURCE_UNREADABLE")
+            return self._status()
+        if report["failedChunks"] or report["state"] not in {"COMPLETED", "PARTIAL"}:
+            state.outcome(
+                "BLOCKED",
+                report["state"] if report["state"] != "PARTIAL" else "PROVIDER_RETRIES_EXHAUSTED",
+            )
+            return self._status()
+        current = await asyncio.to_thread(service.store.inspect, source, service.spec)
+        if current["state"] != "READY":
+            state.no_progress("SOURCE_CHANGED")
+            return self._status()
+        advance(source, ready=True)
+        self.checked += 1
+        return None
 
 
 async def operations_ready(client):
@@ -603,6 +648,8 @@ async def preflight(config, settings, spec):
         with engine.connect() as connection:
             connection.execute(text("SELECT 1 FROM retrieval_sources LIMIT 0"))
             connection.execute(text("SELECT 1 FROM retrieval_chunks LIMIT 0"))
+            connection.execute(text("SELECT 1 FROM retrieval_setting_book_sources LIMIT 0"))
+            connection.execute(text("SELECT 1 FROM retrieval_setting_book_chunks LIMIT 0"))
             _check_database_permissions(connection)
         return {"state": "PREFLIGHT_READY", "providerAttempts": 0, "userTokenDebit": False}
     finally:
@@ -629,7 +676,17 @@ def _check_database_permissions(connection):
             ('retrieval_chunks', 'SELECT'),
             ('retrieval_chunks', 'INSERT'),
             ('retrieval_chunks', 'UPDATE'),
-            ('retrieval_chunks', 'DELETE')
+            ('retrieval_chunks', 'DELETE'),
+            ('upload_files', 'SELECT'),
+            ('upload_batches', 'SELECT'),
+            ('setting_book_revisions', 'SELECT'),
+            ('retrieval_setting_book_sources', 'SELECT'),
+            ('retrieval_setting_book_sources', 'INSERT'),
+            ('retrieval_setting_book_sources', 'UPDATE'),
+            ('retrieval_setting_book_chunks', 'SELECT'),
+            ('retrieval_setting_book_chunks', 'INSERT'),
+            ('retrieval_setting_book_chunks', 'UPDATE'),
+            ('retrieval_setting_book_chunks', 'DELETE')
         ) AS required(relation, privilege)
         """)
     )
@@ -724,7 +781,9 @@ async def main(mode, env=None):
                         await operations_ready(client)
                     engine = _engine(settings)
                     try:
-                        store = RetrievalStore(sessionmaker(engine, expire_on_commit=False))
+                        # One pool (2 connections) for both kinds: the work lock plus short transactions.
+                        sessions = sessionmaker(engine, expire_on_commit=False)
+                        store = RetrievalStore(sessions)
                         if state.row()["inflight"] or state.row()["state"] in {
                             "BLOCKED",
                             "BUDGET_EXHAUSTED",
@@ -734,15 +793,17 @@ async def main(mode, env=None):
                             return state.status(providerAttempts=0)
                         delegate = OpenAIEmbeddingsClient.from_settings(settings)
                         try:
-                            service = RetrievalIndexService(
-                                store, _storage(settings, connect=True), spec
+                            storage = _storage(settings, connect=True)
+                            service = RetrievalIndexService(store, storage, spec)
+                            book_service = RetrievalIndexService(
+                                SettingBookRetrievalStore(sessions), storage, spec
                             )
                             provider = OperationalEmbeddingProvider(
                                 client, delegate, outbox, spec, config.actor
                             )
-                            result = await CampaignRunner(config, state, service, provider).run(
-                                deadline
-                            )
+                            result = await CampaignRunner(
+                                config, state, service, provider, book_service=book_service
+                            ).run(deadline)
                             result["pendingReports"] = outbox.count()
                             if outbox.count():
                                 result["state"] = "REPORTS_PENDING"

@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.chatbot.client import ChatTransportError
 from app.retrieval.chunking import RetrievalSplitter
-from app.retrieval.contracts import Limits, SourceChanged
+from app.retrieval.contracts import BookSource, Limits, SourceChanged
 from app.retrieval.provider import IndexProviderFailure
 
 MAX_SOURCE_BYTES = 2_000_000
@@ -19,6 +19,17 @@ class RetrievalIndexService:
     def __init__(self, store, storage, spec, *, splitter=None):
         self.store, self.storage, self.spec = store, storage, spec
         self.splitter = splitter or RetrievalSplitter()
+
+    @staticmethod
+    def _source_id(source):
+        # A setting-book revision (V114) is one source; its ID is the revision, not an episode.
+        return source.revision_id if isinstance(source, BookSource) else source.episode_id
+
+    @classmethod
+    def _ref(cls, source):
+        # Episodes keep the CLI's `episodeId`; a setting-book revision reports `revisionId`.
+        key = "revisionId" if isinstance(source, BookSource) else "episodeId"
+        return {key: str(cls._source_id(source))}
 
     def _slices(self, source):
         self.store.check_source(source)
@@ -188,8 +199,9 @@ class RetrievalIndexService:
         else:
             # The campaign runner owns pagination. Every use of this snapshot still passes
             # the same current-source validation before reading, calling and saving.
+            # A setting-book snapshot is scoped by its revision ID (the store's source ID).
             if source_snapshot.work_id != scope.work_id or scope.episode_ids != (
-                source_snapshot.episode_id,
+                self._source_id(source_snapshot),
             ):
                 raise ValueError("Snapshot does not match the explicit source scope")
             sources, more = [source_snapshot], False
@@ -204,7 +216,7 @@ class RetrievalIndexService:
                 break
             if source.state != "AVAILABLE":
                 report["sourceFailures"].append(
-                    {"episodeId": str(source.episode_id), "code": source.state}
+                    {**self._ref(source), "code": source.state}
                 )
                 continue
             try:
@@ -212,7 +224,7 @@ class RetrievalIndexService:
                 chunks = await asyncio.to_thread(self.store.prepare, source, self.spec, slices)
             except SourceChanged:
                 report["sourceFailures"].append(
-                    {"episodeId": str(source.episode_id), "code": "SOURCE_CHANGED"}
+                    {**self._ref(source), "code": "SOURCE_CHANGED"}
                 )
                 continue
             except SQLAlchemyError:
@@ -220,7 +232,7 @@ class RetrievalIndexService:
                 break
             except Exception:
                 report["sourceFailures"].append(
-                    {"episodeId": str(source.episode_id), "code": "SOURCE_UNREADABLE"}
+                    {**self._ref(source), "code": "SOURCE_UNREADABLE"}
                 )
                 continue
             missing = [c for c in chunks if self.store.chunk_state(c, self.spec) != "READY"]
@@ -303,7 +315,7 @@ class RetrievalIndexService:
                         break
                 if source_changed:
                     report["sourceFailures"].append(
-                        {"episodeId": str(source.episode_id), "code": "SOURCE_CHANGED"}
+                        {**self._ref(source), "code": "SOURCE_CHANGED"}
                     )
                     break
                 if (
