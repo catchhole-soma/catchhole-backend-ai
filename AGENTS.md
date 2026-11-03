@@ -227,6 +227,7 @@
 
 - 기존 ORACLE/FIXED/ROLLING의 입력·상태 적용·채점 의미는 유지한다. 실험 A는 외부 S0를 명시하는 COMMON_START, B는 Java가 검증·seal한 journal을 복원하는 ORDERED_PROVISIONAL/VALIDATED_PROVISIONAL로 별도 구분한다. 기존 ROLLING의 모든 예측 적용 정책을 B로 대신 쓰지 않는다.
 - B의 다음 회차 입력에는 Gold state/identity/결과를 사용하지 않는다. `ordered_journal`의 읽기 전용 mirror와 `ordered_state_projection`이 실제 Backend namespace를 보존하며, Gold 대응은 raw trace를 바꾸지 않는 scorer-only view에서만 수행한다.
+- Java #365의 DB journal v2는 `valueMode=APPEND_HISTORY`로 캐릭터 이력의 새 항목만 저장한다. 읽기 전용 mirror는 v1 전체 대체·v2 증분 혼합을 순서대로 복원하며 동일 event만 멱등 처리하고 서로 다른 사건의 같은 사실은 보존한다. v1의 증분 표시·미지원 버전/모드·배열이 아닌 추가 대상은 거절한다. Worker `analysisContext.formatVersion=1`과 운영 추출/비교는 변경하지 않는다. 양 저장소의 `ordered-journal-v2.json`은 같은 상태·canonical JSON·SHA-256을 검증한다.
 - Backend S0 references의 `HUMAN_REJECTION_POLICY`는 동일 원문 주장 반려를 이어받기 위한 비공개 해시 규칙이다. Worker prompt로 전달하거나 평가 current fact/history로 투영하지 않는다. 전체 journal hash 검증에는 보존하되 사실 projection은 이 kind를 명시적으로 제외한다.
 - saved prediction 평가에서는 runtime input/output hash·source hash·run/generation·sequence·SEALED 상태를 검증한다. 실패 회차를 검토 의도로 바꾸거나 이후 회차를 실행한 것처럼 채우지 않는다. Java domain reducer revision을 runtime policy에 기록한다.
 - DRAFT 정답지와 operation accuracy 평균을 FINAL 품질/완전 결정 일치율로 보고하지 않는다. 지표 분자·분모·평균 방식과 semantic judge 사용 여부를 명시하고 유료 실행은 별도 승인을 받은 경우에만 진행한다. 실행안과 현재 adapter 제한은 `docs/ordered-provisional-evaluation.md`를 따른다.
