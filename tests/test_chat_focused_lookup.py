@@ -1030,3 +1030,64 @@ async def test_each_subject_gets_its_own_value_fallback_when_field_names_do_not_
     current = tool_queries(result, "CHARACTER_CURRENT")
     assert len(current) == 2 and all(q["factType"] == "PROFILE" for q in current)
     assert "8급" in actual["text"] and "궁수" in actual["text"]
+
+
+@pytest.mark.anyio
+async def test_exact_registered_name_wins_over_partial_name_candidates():
+    # '미궁'을 물으면 이름에 '미궁'이 들어간 '미궁법'·'미궁 전리품'이 함께 검색돼도,
+    # 이름이 정확히 같은 등록 대상이 하나뿐이면 되묻지 않고 그 대상을 고른다.
+    catalog = [
+        catalog_subject(
+            301,
+            "미궁",
+            domain="WORLD",
+            current=[
+                item(
+                    301,
+                    "미궁",
+                    category="POWER_SYSTEM",
+                    key="closing",
+                    label="닫히는 날",
+                    value="1층은 7일째에 닫힌다",
+                )
+            ],
+        ),
+        catalog_subject(302, "미궁법", domain="WORLD"),
+        catalog_subject(303, "미궁 전리품", domain="WORLD"),
+    ]
+    result = await replay_case(
+        case(
+            "미궁은 층마다 며칠째에 닫혀?",
+            plan("미궁", domain="WORLD", fact_type=None, attribute=None),
+            {"outcome": "ANSWER", "rowRefs": ["R1"]},
+        ),
+        catalog,
+    )
+    actual = answer(result)
+    assert actual["outcome"] == "ANSWER" and "7일째" in actual["text"]
+    assert tool_queries(result, "WORLD_CURRENT")[0]["targetId"] == uid(301)
+
+
+@pytest.mark.anyio
+async def test_same_exact_world_name_twice_still_asks_which_one():
+    # 세계관도 이름이 정확히 같은 대상이 둘 이상이면 기존대로 되묻는다.
+    catalog = [
+        catalog_subject(321, "미궁", domain="WORLD"),
+        catalog_subject(322, "미궁", domain="WORLD"),
+        catalog_subject(323, "미궁법", domain="WORLD"),
+    ]
+    result = await replay_case(
+        case("미궁은 언제 닫혀?", plan("미궁", domain="WORLD", fact_type=None, attribute=None)),
+        catalog,
+    )
+    assert answer(result)["outcome"] == "CLARIFICATION"
+    assert not tool_queries(result, "WORLD_CURRENT")
+
+
+@pytest.mark.anyio
+async def test_character_exact_name_among_longer_names_still_asks_which_one():
+    # 인물은 성·호칭·동명이인 위험 때문에 정확히 같은 이름이 하나여도 임의로 고르지 않는다.
+    catalog = [catalog_subject(311, "한스"), catalog_subject(313, "한스 스토브")]
+    result = await replay_case(case("한스의 레벨은?", plan("한스")), catalog)
+    assert answer(result)["outcome"] == "CLARIFICATION"
+    assert not tool_queries(result, "CHARACTER_CURRENT")

@@ -46,6 +46,8 @@ NOTICES = {
     "HISTORY_SKIPPED_FOR_COMPARISON": "여러 인물을 함께 조회해 변경 이력은 생략하고 현재 등록값으로 답했습니다.",
     "CONTEXT_LIMIT": "입력 문맥 한도로 일부 항목을 검토하지 못했습니다.",
     "SELECTION_LIMIT": "답변 항목 상한에 도달해 일부 항목만 표시합니다.",
+    "REGISTERED_LOOKUP_AMBIGUOUS": "같은 이름의 등록 대상이나 항목이 여러 개라 등록 정보는 쓰지 않고 원문으로 답했습니다.",
+    "REGISTERED_ROWS_TRIMMED": "등록 이력이 많아 일부 등록 항목만 답변 근거로 사용했습니다.",
     "ANSWER_LIMIT": "답변 길이 한도로 일부 항목 또는 인용을 표시하지 못했습니다.",
     "EVIDENCE_LIMIT": "직접 근거 조회 한도로 일부 연결 원문을 확인하지 못했습니다.",
     "VALUE_LIMIT": "서버가 반환한 설정값 일부가 잘려 있습니다.",

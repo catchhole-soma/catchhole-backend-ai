@@ -89,6 +89,9 @@ async def test_invented_subject_name_is_rejected_before_query():
     [
         {"outcome": "ANSWER", "rowRefs": ["R999"]},
         {"outcome": "ANSWER", "rowRefs": ["R1", "R1"]},
+        {"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": ["R999"]},
+        {"outcome": "CLARIFICATION", "rowRefs": ["R1", "R1"]},
+        {"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": [f"R{n}" for n in range(51)]},
         {"outcome": "ANSWER", "rowRefs": ["R1"], "quote": "조작된 원문"},
         {"outcome": "ANSWER", "rowRefs": ["R1"], "text": "마력은 무한대다"},
     ],
@@ -618,4 +621,52 @@ async def test_truncated_named_item_is_unknown_without_hiding_other_complete_ite
     assert "확인한 결과에는 포함하지 않았어요:" in text
     items = result["modelRequests"][1]["input"]["items"]
     assert [group["itemRef"] for group in items] == ["I1"]
+    assert len(result["modelRequests"]) == 2
+
+
+def test_selection_outcome_and_rows_mismatch_is_normalized_conservatively():
+    # 답하지 않는 판단에 붙은 행은 버리고, 답한다면서 행이 없으면 근거 부족으로 본다.
+    def parse(data):
+        return AnswerSelection.model_validate(data)
+
+    dropped = parse({"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": ["R1"]})
+    assert (dropped.outcome, dropped.row_refs) == ("INSUFFICIENT_EVIDENCE", [])
+    clarify = parse({"outcome": "CLARIFICATION", "rowRefs": ["R1", "R2"]})
+    assert (clarify.outcome, clarify.row_refs) == ("CLARIFICATION", [])
+    empty = parse({"outcome": "ANSWER", "rowRefs": []})
+    assert (empty.outcome, empty.row_refs) == ("INSUFFICIENT_EVIDENCE", [])
+    assert dropped.discarded_row_refs() == ("R1",)
+    assert clarify.discarded_row_refs() == ("R1", "R2")
+    # 중복·상한 초과는 판단과 상관없이 정규화하지 않고 기존 계약대로 거절한다.
+    for bad in (
+        {"outcome": "ANSWER", "rowRefs": ["R1", "R1"]},
+        {"outcome": "CLARIFICATION", "rowRefs": ["R1", "R1"]},
+        {"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": [f"R{n}" for n in range(51)]},
+    ):
+        with pytest.raises(ValueError):
+            parse(bad)
+
+
+@pytest.mark.anyio
+async def test_answer_without_rows_ends_as_insufficient_evidence_without_a_retry():
+    case, catalog = scenario()
+    result = await replay_case(
+        case, catalog, outputs=[case["modelOutputs"][0], {"outcome": "ANSWER", "rowRefs": []}]
+    )
+    assert result["finish"]["failure"] is None, result["finish"]
+    assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert len(result["modelRequests"]) == 2
+
+
+@pytest.mark.anyio
+async def test_known_rows_on_a_non_answer_are_dropped_without_a_retry():
+    # 답하지 않는 판단에 실제 행을 붙인 응답은 재호출 없이 근거 부족으로 끝난다.
+    case, catalog = scenario()
+    result = await replay_case(
+        case,
+        catalog,
+        outputs=[case["modelOutputs"][0], {"outcome": "INSUFFICIENT_EVIDENCE", "rowRefs": ["R1"]}],
+    )
+    assert result["finish"]["failure"] is None, result["finish"]
+    assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
     assert len(result["modelRequests"]) == 2

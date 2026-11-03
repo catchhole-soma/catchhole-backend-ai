@@ -42,6 +42,9 @@ c.chunk_hash,s.source_key,s.source_version,s.source_hash,s.chunk_policy"""
 
 class RetrievalSearchRepository:
     from_clause = CURRENT_FROM
+    # 키워드 순위를 단어 희귀도(완만한 BM25 IDF)로 가중한다. 하위 저장소가 별도 평가 전까지 기존
+    # 일치 단어 비율 순위를 유지해야 하면 False로 둔다.
+    rarity_weighted_keyword = True
 
     def __init__(self, session, scope: SearchScope, spec: IndexSpec):
         self.session, self.scope, self.spec = session, scope, spec
@@ -106,12 +109,67 @@ class RetrievalSearchRepository:
             for n, term in enumerate(terms)
         }
         matches = [f"c.chunk_text ILIKE :pattern_{n} ESCAPE '\\'" for n in range(len(terms))]
+        if self.rarity_weighted_keyword:
+            return self._rarity_weighted_keyword(
+                terms, matches, params, limit, preferred_episode_ids
+            )
         score = " + ".join(f"CASE WHEN {match} THEN 1.0 ELSE 0.0 END" for match in matches)
         return self._rows(
             f"SELECT {FIELDS},({score})/{len(terms)} AS score {self.from_clause} "
             f"AND ({' OR '.join(matches)}) "
             "ORDER BY score DESC,(e.id=ANY(CAST(:preferred AS uuid[]))) DESC,"
             "e.episode_no,c.chunk_index,c.id LIMIT :limit",
+            {**params, "limit": limit, "preferred": list(dict.fromkeys(preferred_episode_ids))},
+            "KEYWORD",
+        )
+
+    def _rarity_weighted_keyword(self, terms, matches, params, limit, preferred_episode_ids):
+        """일치한 단어의 희귀도 가중치 합을 전체 가중치 합으로 나눈 값으로 순위를 매긴다.
+
+        일치 비율만 쓰면 1인칭 주인공 이름이나 '어떻게'·'처음'처럼 흔한 단어 여러 개가 겹친 무관한
+        청크가 결정적인 단어('죽인')가 든 실제 장면보다 앞선다. 가중치는 같은 조회 범위 청크의 문서
+        빈도로 계산한 BM25 IDF ln(1 + (N - df + 0.5) / (df + 0.5))에 ln(1 + x)를 한 번 더 씌운 값이며
+        항상 양수다. 원문에 없는 활용형·바꿔 쓴 단어가 희귀하다는 이유만으로 실제 장면을 밀어내지
+        않도록 가중치 차이를 완만하게 줄였다. 모든 단어가 일치하면 1.0이고 단어가 하나면 기존 순위와
+        같다. 후보 조건(한 단어 이상 일치)과 동점 처리 순서는 기존과 같다.
+
+        한 글자 단어('레벨 업'의 '업')는 다른 단어 안에서도 일치하므로('업적') 희귀하다는 이유로
+        높은 무게를 받지 않게, 여러 글자 단어 가중치 중 가장 작은 값을 넘지 않게 한다.
+        """
+        count = range(len(matches))
+        hits = ",".join(
+            f"CASE WHEN {match} THEN 1 ELSE 0 END AS hit_{n}" for n, match in enumerate(matches)
+        )
+        frequencies = ",".join(
+            f"CAST(coalesce(sum(hit_{n}),0) AS double precision) AS df_{n}" for n in count
+        )
+        raw = ",".join(f"ln(1.0+ln(1.0+(total-df_{n}+0.5)/(df_{n}+0.5))) AS r_{n}" for n in count)
+        longer = [f"r_{n}" for n in count if len(terms[n]) > 1]
+        weights = ",".join(
+            f"LEAST(r_{n},{','.join(longer)}) AS w_{n}"
+            if len(terms[n]) == 1 and longer
+            else f"r_{n} AS w_{n}"
+            for n in count
+        )
+        matched = " + ".join(f"h.hit_{n}*w.w_{n}" for n in count)
+        total = " + ".join(f"w.w_{n}" for n in count)
+        order = "score DESC,preferred DESC,episode_no,chunk_index,id"
+        # 범위 안 모든 청크의 본문을 중간 결과에 쌓지 않도록 일치 표시만 계산하고, 상위 후보만 본문을 읽는다.
+        return self._rows(
+            f"WITH hits AS (SELECT c.id,c.episode_id AS hit_episode_id,e.episode_no AS hit_episode_no,"
+            f"c.chunk_index AS hit_chunk_index,{hits} {self.from_clause}),"
+            f"stats AS (SELECT CAST(count(*) AS double precision) AS total,{frequencies} FROM hits),"
+            f"raw_weights AS (SELECT {raw} FROM stats),"
+            f"weights AS (SELECT {weights} FROM raw_weights),"
+            f"ranked AS (SELECT h.id,({matched})/({total}) AS score,"
+            "(h.hit_episode_id=ANY(CAST(:preferred AS uuid[]))) AS preferred,"
+            "h.hit_episode_no AS episode_no,h.hit_chunk_index AS chunk_index "
+            f"FROM hits h CROSS JOIN weights w WHERE {' OR '.join(f'h.hit_{n}=1' for n in count)} "
+            f"ORDER BY {order} LIMIT :limit) "
+            f"SELECT {FIELDS},r.score FROM ranked r JOIN retrieval_chunks c ON c.id=r.id "
+            "JOIN retrieval_sources s ON s.episode_id=c.episode_id "
+            "JOIN episodes e ON e.id=s.episode_id AND e.work_id=s.work_id "
+            "ORDER BY r.score DESC,r.preferred DESC,r.episode_no,r.chunk_index,r.id",
             {**params, "limit": limit, "preferred": list(dict.fromkeys(preferred_episode_ids))},
             "KEYWORD",
         )

@@ -73,6 +73,8 @@ class FrozenRetrievalRepository(RetrievalSearchRepository):
         "WHERE p.episode_id=e.id)",
         "WHERE p.episode_id=e.id AND (p.retained_content_key IS NULL OR p.retained_content_key<>e.content_s3_key))",
     ) + FROZEN_FILTER
+    # 검수 실행의 근거 검색은 별도 평가 전까지 기존 일치 단어 비율 순위를 유지한다.
+    rarity_weighted_keyword = False
 
     def __init__(self, session, scope: FrozenSearchScope, spec):
         if not isinstance(scope, FrozenSearchScope):

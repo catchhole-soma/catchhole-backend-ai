@@ -180,11 +180,20 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
     def record_model_response(self, purpose, response):
         pass
 
-    def fits(self, prompt: str, payload: dict, schema: LlmResponseSchema) -> bool:
+    def fits(
+        self,
+        prompt: str,
+        payload: dict,
+        schema: LlmResponseSchema,
+        *,
+        reserve_tokens: int = 0,
+        reserve_characters: int = 0,
+    ) -> bool:
         text = encode(payload)
         return (
-            len(prompt) + len(text) <= self.cfg.max_context_characters
+            len(prompt) + len(text) + reserve_characters <= self.cfg.max_context_characters
             and _estimate_text_token_upper_bound(prompt, text, self.cfg.model, 0, schema)
+            + reserve_tokens
             <= self.cfg.max_input_tokens
         )
 
@@ -799,8 +808,9 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         by_ref = {row.ref: row for row in candidates}
 
         def validate_selection(selection):
+            refs = (*selection.row_refs, *selection.discarded_row_refs())
             if len(selection.row_refs) > self.cfg.max_selected_rows or any(
-                ref not in by_ref for ref in selection.row_refs
+                ref not in by_ref for ref in refs
             ):
                 raise ValueError("Unknown or excessive row references")
 

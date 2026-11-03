@@ -593,9 +593,12 @@ class _HybridSession(_Session):
         self.trim_conversation_to_fit(
             ANSWER_PROMPT, lambda: self.answer_payload(plan), answer_schema
         )
-        if (plan.per_item and len(self.logical_items) > 100) or not self.fits(
-            ANSWER_PROMPT, self.answer_payload(plan), answer_schema
-        ):
+        fits = self.fits(ANSWER_PROMPT, self.answer_payload(plan), answer_schema)
+        if not fits and not plan.per_item and self.chosen and not plan.registered_current_required:
+            # 등록 현재값 필수 계획은 줄이지 않는다. 같은 인물의 현재값 행 일부가 잘려도 인물 단위
+            # 확인으로는 충족처럼 보일 수 있어, 기존대로 항목을 좁혀 달라고 되묻는다.
+            fits = self.trim_rows_for_source_answer(plan, answer_schema)
+        if (plan.per_item and len(self.logical_items) > 100) or not fits:
             return message(
                 "CLARIFICATION",
                 "요청한 설정 항목이 많아 각각의 근거를 함께 확인하기 어렵습니다. 조회할 항목이나 유형을 좁혀 주세요.",
@@ -866,6 +869,11 @@ class _HybridSession(_Session):
         for index, subject in enumerate(plan.subjects):
             item, stop = await self.resolve_subject(subject, allow_missing=True)
             if stop:
+                if subject.domain == "WORLD" and self.source_answer_continues(plan):
+                    # 같은 이름의 세계관이 여러 분류에 등록돼 있어도('미궁' 지역·세계 규칙) 원문 계획은
+                    # 등록 정보 없이 원문으로 답한다. 인물은 원문 답변도 사람을 구분해야 하므로 되묻는다.
+                    self.registered_lookup_ambiguous()
+                    continue
                 return stop
             if item is None:
                 self.current_requirement_resolved = False
@@ -902,6 +910,13 @@ class _HybridSession(_Session):
                     if "REGISTERED_LOOKUP_INCOMPLETE" not in self.codes:
                         self.codes.append("REGISTERED_LOOKUP_INCOMPLETE")
                     continue
+                if (
+                    "FIELD_CLARIFICATION" in self.field_attempt_gaps
+                    and self.source_answer_continues(plan)
+                ):
+                    # 대상은 찾았고 어느 등록 항목인지만 모호하면 원문 답변을 막지 않는다.
+                    self.registered_lookup_ambiguous()
+                    continue
                 return stop
         self.chosen, stop = await self.select_rows(plan, allow_missing=True)
         if stop:
@@ -910,6 +925,15 @@ class _HybridSession(_Session):
             self.codes.append("NO_RELATED_SETTING")
         self.current_requirement_targets = targets
         return None
+
+    def source_answer_continues(self, plan):
+        """등록 조회의 모호성이 원문 답변을 끝내지 않는 계획인지 확인한다(등록 현재값 필수 제외)."""
+        return plan.source_need != "NONE" and not plan.registered_current_required
+
+    def registered_lookup_ambiguous(self):
+        self.current_requirement_resolved = False
+        if "REGISTERED_LOOKUP_AMBIGUOUS" not in self.codes:
+            self.codes.append("REGISTERED_LOOKUP_AMBIGUOUS")
 
     def current_requirement_satisfied(self, plan):
         """A manuscript passage cannot satisfy a required registered-current read."""
@@ -1569,6 +1593,48 @@ class _HybridSession(_Session):
             if e.direct_ref
         )
         return passages
+
+    def trim_rows_for_source_answer(self, plan, schema):
+        """원문 답변이 필요한 계획(등록 현재값 필수 제외)에서 등록 행이 답변 입력을 넘치면 되묻는 대신
+        우선순위가 높은 행만 남긴다.
+
+        현재값 행을 먼저 남기고, 이력 행은 계획의 정렬(EARLIEST는 이른 회차, LATEST는 늦은 회차)부터 남긴다.
+        뒤이어 넣을 원문 근거 예산(evidence_tokens)만큼 자리를 비워 둔다. 한국어 원문은 토큰당 약 1.6자다.
+        """
+        reserve = {
+            "reserve_tokens": self.hcfg.evidence_tokens,
+            "reserve_characters": int(self.hcfg.evidence_tokens * 1.6),
+        }
+        position = {row.ref: index for index, row in enumerate(self.chosen)}
+
+        def priority(row):
+            episode = row.item.source_episode_no
+            if row.item.kind == "CURRENT":
+                return (0, 0, position[row.ref])
+            if episode is None or plan.ordering == "NONE":
+                return (1, 0, position[row.ref])
+            return (1, -episode if plan.ordering == "LATEST" else episode, position[row.ref])
+
+        ordered = sorted(self.chosen, key=priority)
+        # 안내 문장도 답변 입력에 들어가므로 행 수를 고르기 전에 넣는다. 고른 뒤에 넣으면 경계에 맞춘
+        # 행이 마지막 확인에서 넘친다(V2-054 재실행에서 19행이 되묻기로 끝남).
+        if "REGISTERED_ROWS_TRIMMED" not in self.codes:
+            self.codes.append("REGISTERED_ROWS_TRIMMED")
+        low, high, best = 0, len(ordered), 0
+        while low <= high:
+            middle = (low + high) // 2
+            self.chosen = ordered[:middle]
+            if self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema, **reserve):
+                best, low = middle, middle + 1
+            else:
+                high = middle - 1
+        self.chosen = [row for row in ordered[:best]]
+        self.chosen.sort(key=lambda row: position[row.ref])
+        self.focused_refs.intersection_update({row.ref for row in self.chosen})
+        self.trace("registered_rows_trimmed", kept=best, total=len(ordered))
+        # 원문 근거 자리는 행을 고를 때의 선호값이다. 마지막 확인은 자리 없이 해서, 행을 하나도 남기지
+        # 못해도 원문 답변으로 계속한다(원문 근거는 답변 직전에 입력에 맞게 줄인다).
+        return self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema)
 
     def answer_payload(self, plan):
         selected = {r.ref for r in self.chosen}
