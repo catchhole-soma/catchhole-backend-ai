@@ -72,7 +72,7 @@ LLM이나 외부 사용자에게 직접 노출한 DB 조회 API가 아니다. #2
   회차와 같은 작품 잠금·조각 정책·모델/버전·batch·재시도·상한·deadline, 같은 campaign 누적 예산과 운영 원장(`OPERATIONAL_BACKFILL`,
   `RETRIEVAL_INDEX_SERVICE_PAID_V1`, 같은 actor)을 쓴다. 원장 요청에는 작품만 있고 출처 식별값이 없어 Spring 계약은 그대로다.
   회차가 없고 설정집만 있는 작품도 순회한다. 원문은 그 revision에 저장된 key/version/hash로 S3에서 같은 2,000,000 byte 상한으로 읽고,
-  초과는 회차와 같이 `SOURCE_UNREADABLE`로 campaign을 멈춘다(READY로 표시하지 않는다).
+  초과하거나 읽을 수 없는 설정집은 회차와 달리 campaign을 멈추지 않고 그 설정집만 제외로 센다(`PARTIAL`, READY로 표시하지 않는다).
 - 챗봇 검색과 그 readiness는 설정집 표를 읽지 않으며, 단건 CLI `status`의 `unsupportedSourceTypes`도 그대로다.
   운영 백필 `status`만 `supportedSourceTypes`에 `SETTING_BOOK`(현재 판)을 넣고 설정집 수(`checkedSettingBooks`/`readySettingBooks`/
   `excludedOrUnavailableSettingBooks`)를 합계와 따로 보인다.

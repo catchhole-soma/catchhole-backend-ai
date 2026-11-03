@@ -134,8 +134,9 @@ sudo journalctl -u catchhole-retrieval-backfill.service -n 30 --no-pager
 `READY`는 해당 순회에서 확인한 현재 원문 범위의 준비이며 이후 변경/검색 품질까지 보증하지 않는다.
 `checkedSources`·`readySources`·`excludedOrUnavailableSources`는 회차와 설정집의 합계이고 그중 설정집 몫은
 `checkedSettingBooks`·`readySettingBooks`·`excludedOrUnavailableSettingBooks`다. `supportedSourceTypes`는 `CURRENT_EPISODE`·`SETTING_BOOK`(현재 판),
-`unsupportedSourceTypes`는 `PAST_EPISODE_VERSION`이다. 2,000,000 byte를 넘는 설정집은 회차와 같이 `BLOCKED / SOURCE_UNREADABLE`로 멈추고
-`resume`만으로는 지나가지 않는다. 자동 첫 공개 판정도 이 합계를 쓰므로 설정집의 제외·차단도 첫 공개를 보류한다.
+`unsupportedSourceTypes`는 `PAST_EPISODE_VERSION`이다. 2,000,000 byte를 넘거나 읽을 수 없는 설정집은 회차와 달리 campaign을 멈추지 않고 그 설정집만 제외로 세며
+(순회 결과 `PARTIAL`, READY로 표시하지 않음) 다른 작품의 회차·설정집은 계속 채운다(소유자 결정 2026-11-03, 업로드는 10MiB까지 허용).
+회차의 2,000,000 byte 초과는 그대로 `BLOCKED / SOURCE_UNREADABLE`이다. 자동 첫 공개 판정도 이 합계를 쓰므로 설정집의 제외도 첫 공개를 보류한다.
 `TIME_LIMIT`/`CHUNK_LIMIT`은 다음 주기에 이어지고, `INDEX_BUSY`는 동시 실행 중이다.
 `PARTIAL`, `REPORTS_PENDING`, `BLOCKED`, `BUDGET_EXHAUSTED`는 자동 첫 공개 조건을 충족하지 않는다.
 대상이 실제로 없는 완료 순회만 EMPTY로 인정한다.
