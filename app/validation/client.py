@@ -8,6 +8,7 @@ import httpx
 from pydantic import Field
 
 from app.validation.contracts import Contract, IncompleteInspection
+from app.validation.data import PROJECTION_VERSION
 
 
 class ExecutionScope(Contract):
@@ -26,8 +27,9 @@ class ValidationClaim:
 
     @classmethod
     def from_wire(cls, value):
-        if any(type(value.get(key)) is not int or value[key] != 1
-               for key in ("contractVersion", "projectionVersion", "clueVersion")):
+        # Grid v4 (projectionVersion 2): SUBJECTS/SETTINGS, no modelClues/clueVersion, current-only settings.
+        if any(type(value.get(key)) is not int or value[key] != expected
+               for key, expected in (("contractVersion", 1), ("projectionVersion", PROJECTION_VERSION))):
             raise IncompleteInspection("UNSUPPORTED_EXECUTION_CONTRACT")
         for key in ("memberId", "baselineRevision", "reportRevision", "attempt"):
             if type(value.get(key)) is not int or value[key] < 1:

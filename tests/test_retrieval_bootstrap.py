@@ -194,8 +194,10 @@ def test_managed_reader_grants_select_on_the_validation_frozen_rag_relations():
         "retrieval_chunks", "retrieval_sources", "retrieval_current_chunks", "episodes", "works", "members",
         "episode_source_purge_requests",
     )
-    assert b.RELATIONS[7:] == ("validation_reports", "validation_jobs", "validation_baseline_sources")
-    assert len(set(b.RELATIONS)) == len(b.RELATIONS) == 10
+    assert b.RELATIONS[7:10] == ("validation_reports", "validation_jobs", "validation_baseline_sources")
+    # Intake index fill: the frozen scope ranks current setting-book chunks too (V114 tables, SELECT only).
+    assert b.RELATIONS[10:] == ("retrieval_setting_book_chunks", "retrieval_setting_book_sources")
+    assert len(set(b.RELATIONS)) == len(b.RELATIONS) == 12
 
 
 @pytest.mark.parametrize("repository", ["chatbot", "validation"])
@@ -240,7 +242,6 @@ def test_reader_allow_list_covers_every_relation_the_search_repositories_read(re
         scope = FrozenSearchScope(1, uuid4(), report_id=uuid4(), baseline_hash="a" * 64, target_hash="b" * 64,
                                   job_id=uuid4(), lease_token=uuid4(), generation=1, input_digest="c" * 64)
         target = FrozenRetrievalRepository(session, scope, spec)
-        target.indexed_episode_ids()
     seed = ChunkEvidence(uuid4(), uuid4(), 1, 0, "본문", 0, 2, "d" * 64, "key", None, "e" * 64, spec.policy,
                          ("KEYWORD",), 1.0)
     target.readiness()
@@ -249,6 +250,8 @@ def test_reader_allow_list_covers_every_relation_the_search_repositories_read(re
     target.neighbors([seed], limit=5)
     target.keyword_ordered(["민수"], ["의수"], order="EARLIEST", limit=5)
     target.vector([1.0] + [0.0] * (spec.dimensions - 1), limit=5)
+    if repository == "validation":
+        target.frozen_vector([1.0] + [0.0] * (spec.dimensions - 1), limit=5)
     sql = "\n".join(session.sql)
     ctes = set(re.findall(r"\b([a-z_][a-z0-9_]*) AS (?:MATERIALIZED )?\(", sql))
     relations = {name for name in re.findall(r"\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)\b(?!\.)", sql)} - ctes

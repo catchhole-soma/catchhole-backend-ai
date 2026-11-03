@@ -124,6 +124,8 @@ services:
     # metrics·tracing·S3를 쓰지 않고 API 내부 키와 provider 키만 분석 Worker와 공유한다.
     # 과거 원고 의미 검색은 VALIDATION_READONLY_DATABASE_URL(챗봇과 같은 SELECT 전용 URL)을 채울 때만 켜진다.
     # 비어 있으면 runner가 로그 한 줄을 남기고 키워드 검색만 쓴다. 켜면 프로세스당 DB 연결 AI_WORKER_CONCURRENCY개.
+    # 접수 때 색인 채우기(2026-11-02)는 VALIDATION_INDEX_DATABASE_URL(Worker 공통 DATABASE_URL과 같은 값)을 채울 때만
+    # 켜진다. 검색 색인 표만 쓰며 프로세스당 DB 연결 AI_WORKER_CONCURRENCY개가 더 든다. 비어 있으면 채우지 않는다.
     deploy:
       replicas: ${VALIDATION_WORKER_PROCESS_COUNT:-0}
     command: ["python", "scripts/run_validation_worker.py", "--enable",
@@ -132,7 +134,8 @@ services:
               "--worker-id", "${VALIDATION_WORKER_ID:-validation-prod}",
               "--internal-key-env", "SPRING_INTERNAL_API_KEY", "--model-key-env", "LLM_API_KEY",
               "--readonly-url-env", "VALIDATION_READONLY_DATABASE_URL", "--query-embedding",
-              "--index-version", "${VALIDATION_WORKER_INDEX_VERSION:-v1}"]
+              "--index-version", "${VALIDATION_WORKER_INDEX_VERSION:-v1}",
+              "--index-url-env", "VALIDATION_INDEX_DATABASE_URL"]
     environment:
       <<: *worker-environment
       AI_WORKER_METRICS_ENABLED: "false"
@@ -140,3 +143,4 @@ services:
       AI_WORKER_CONCURRENCY: ${VALIDATION_WORKER_CONCURRENCY:-3}
       LLM_MAX_CONCURRENT_REQUESTS: ${VALIDATION_WORKER_LLM_CONCURRENCY:-4}
       VALIDATION_READONLY_DATABASE_URL: ${VALIDATION_READONLY_DATABASE_URL:-}
+      VALIDATION_INDEX_DATABASE_URL: ${VALIDATION_INDEX_DATABASE_URL:-}

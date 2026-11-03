@@ -82,7 +82,7 @@
   },
   "execution": {
     "contractVersion": 1,
-    "projectionVersion": 1,
+    "projectionVersion": 2,
     "maxPublicationBytes": 1048576,
     "synthetic": true,
     "envelope": "All HTTP responses use CommonResponse; examples below are data, claim with no queued job has data=null.",
@@ -206,7 +206,6 @@
               "conditions": [],
               "assertion_mode": "NARRATION",
               "check_intent": "고정 기준과 대조",
-              "lookup_intents": [],
               "reason": "합성 계획"
             }
           ],
@@ -216,9 +215,7 @@
               "status": "PLANNED",
               "reason": "합성 처리"
             }
-          ],
-          "rules": [],
-          "clue_checks": []
+          ]
         },
         "citations": [
           {
@@ -270,7 +267,6 @@
                   "conditions": [],
                   "assertion_mode": "NARRATION",
                   "check_intent": "고정 기준과 대조",
-                  "lookup_intents": [],
                   "reason": "합성 계획"
                 },
                 "lookup_obligations": []
@@ -302,7 +298,7 @@
         "ref": "Q1",
         "checkId": "00000000-0000-4000-8000-000000000008",
         "expectedCheckRevision": 1,
-        "checkInputDigest": "55fd358360e55d48868d3567bf250966d4c9f66f96c9dded2dae5409ef6c9a74",
+        "checkInputDigest": "f50a902cf0e7ab0123c385ade04e858e84015cb2f452a3d4287269298c445cf0",
         "outcome": "NO_CONFLICT",
         "payload": {
           "action": "DECIDED",
@@ -389,7 +385,6 @@
               "conditions": [],
               "assertion_mode": "NARRATION",
               "check_intent": "고정 기준과 대조",
-              "lookup_intents": [],
               "reason": "합성 계획"
             },
             "target_context": [
@@ -407,7 +402,7 @@
                   "ref": "Q1-BASELINE",
                   "kind": "COMPARISON_CONTEXT",
                   "operation": "BASELINE",
-                  "purpose": "고정 자료 확인",
+                  "purpose": "같은 대상·시점·조건의 고정 비교 자료 확인",
                   "query": null,
                   "source_ref": null,
                   "start": null,
@@ -427,7 +422,7 @@
                   "ref": "Q1-TARGET_CONTEXT",
                   "kind": "COMPARISON_CONTEXT",
                   "operation": "TARGET_CONTEXT",
-                  "purpose": "고정 자료 확인",
+                  "purpose": "같은 대상·시점·조건의 고정 비교 자료 확인",
                   "query": null,
                   "source_ref": null,
                   "start": null,
@@ -444,12 +439,9 @@
                 "readiness": null
               }
             ],
-            "question_refs": [
-              "Q1"
-            ],
             "additional_target_context": [],
             "source_catalogue": [],
-            "input_digest": "f098ec7e974e7a8c8615ff9ac30ca891a27ea2b0e096585c9b2712368bad3cc0"
+            "input_digest": "851c40514b76def9689239d9f9ed3a09c66f152f174843e095bf9c6f71b28c45"
           }
         },
         "citations": [
@@ -511,7 +503,7 @@
           {
             "checkId": "00000000-0000-4000-8000-000000000008",
             "expectedRevision": 1,
-            "expectedInputDigest": "55fd358360e55d48868d3567bf250966d4c9f66f96c9dded2dae5409ef6c9a74",
+            "expectedInputDigest": "f50a902cf0e7ab0123c385ade04e858e84015cb2f452a3d4287269298c445cf0",
             "state": {
               "draft": {
                 "local_ref": "local-1",
@@ -532,7 +524,6 @@
                 "conditions": [],
                 "assertion_mode": "NARRATION",
                 "check_intent": "고정 기준과 대조",
-                "lookup_intents": [],
                 "reason": "합성 계획"
               },
               "lookup_obligations": [
@@ -609,7 +600,8 @@
         "role": "PLANNER",
         "model": "gpt-6.1-terra",
         "reservedTokens": 120,
-        "queryInput": null
+        "queryInput": null,
+        "indexInput": null
       },
       "settle": {
         "scope": {
@@ -679,17 +671,9 @@
             "model": "gpt-6.1-terra",
             "reasoningEffort": "medium"
           },
-          "RELATED_SELECTION": {
-            "model": "gpt-6.1-terra",
-            "reasoningEffort": "high"
-          },
-          "COVERAGE": {
-            "model": "gpt-6.1-terra",
-            "reasoningEffort": "high"
-          },
           "JUDGE": {
-            "model": "gpt-6.1-terra",
-            "reasoningEffort": "medium"
+            "model": "gpt-6-luna",
+            "reasoningEffort": "high"
           },
           "TYPO": {
             "model": "gpt-6.1-terra",
@@ -702,10 +686,8 @@
             "lookups": 100,
             "seconds": 60.0,
             "inputTokens": 1000,
-            "outputTokens": 100,
             "segmentChars": 100,
             "contextChars": 10,
-            "cataloguePageSize": 100,
             "searchLimit": 10
           },
           "typo": {
@@ -713,32 +695,25 @@
             "lookups": 100,
             "seconds": 60.0,
             "inputTokens": 1000,
-            "outputTokens": 100,
             "segmentChars": 100,
             "contextChars": 10,
-            "cataloguePageSize": 100,
             "searchLimit": 10
           },
           "roles": {
             "PLANNER": {
               "maxCalls": 20,
-              "maxReservedTokens": 22000
-            },
-            "RELATED_SELECTION": {
-              "maxCalls": 20,
-              "maxReservedTokens": 22000
-            },
-            "COVERAGE": {
-              "maxCalls": 20,
-              "maxReservedTokens": 22000
+              "maxReservedTokens": 22000,
+              "outputTokens": 100
             },
             "JUDGE": {
               "maxCalls": 20,
-              "maxReservedTokens": 22000
+              "maxReservedTokens": 22000,
+              "outputTokens": 100
             },
             "TYPO": {
               "maxCalls": 20,
-              "maxReservedTokens": 22000
+              "maxReservedTokens": 22000,
+              "outputTokens": 100
             }
           }
         },
@@ -757,8 +732,8 @@
         },
         "usage": [],
         "budgetRevision": 1,
-        "projectionVersion": 1,
-        "clueVersion": 1
+        "projectionVersion": 2,
+        "configurationVersion": 2
       },
       "heartbeat": {
         "scope": {
@@ -807,7 +782,7 @@
               "PLANNER:TSEG1:local-1"
             ],
             "revision": 1,
-            "checkInputDigest": "55fd358360e55d48868d3567bf250966d4c9f66f96c9dded2dae5409ef6c9a74",
+            "checkInputDigest": "f50a902cf0e7ab0123c385ade04e858e84015cb2f452a3d4287269298c445cf0",
             "state": {
               "draft": {
                 "local_ref": "local-1",
@@ -828,7 +803,6 @@
                 "conditions": [],
                 "assertion_mode": "NARRATION",
                 "check_intent": "고정 기준과 대조",
-                "lookup_intents": [],
                 "reason": "합성 계획"
               },
               "lookup_obligations": []
@@ -872,8 +846,7 @@
         "targetHash": "cbffc647909dfd2bd0ed0cb498a186c1c0036cf0bc0a60cc877534ec8af41f67",
         "manifestHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "status": "READY",
-        "projectionVersion": 1,
-        "clueVersion": 1,
+        "projectionVersion": 2,
         "target": {
           "sourceRef": "T1",
           "sourceKind": "EPISODE",
@@ -899,8 +872,7 @@
         "targetHash": "cbffc647909dfd2bd0ed0cb498a186c1c0036cf0bc0a60cc877534ec8af41f67",
         "manifestHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "status": "READY",
-        "projectionVersion": 1,
-        "clueVersion": 1,
+        "projectionVersion": 2,
         "entries": [],
         "modelSettings": [],
         "authorCorrectionProofs": [],
@@ -918,15 +890,44 @@
         "targetHash": "cbffc647909dfd2bd0ed0cb498a186c1c0036cf0bc0a60cc877534ec8af41f67",
         "manifestHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "status": "READY",
-        "projectionVersion": 1,
-        "clueVersion": 1,
+        "projectionVersion": 2,
         "sourceRef": "T1",
         "contentHash": "cbffc647909dfd2bd0ed0cb498a186c1c0036cf0bc0a60cc877534ec8af41f67",
         "start": 0,
         "end": 4,
         "totalCodePoints": 4,
-        "text": "😀가😀가",
-        "modelClues": []
+        "text": "😀가😀가"
+      },
+      "dataSubjects": {
+        "formatVersion": 1,
+        "reportId": "00000000-0000-4000-8000-000000000001",
+        "baselineRevision": 1,
+        "reportRevision": 1,
+        "reportVersion": 4,
+        "reportMode": "BEFORE_CONFIRMATION",
+        "baselineHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "targetHash": "cbffc647909dfd2bd0ed0cb498a186c1c0036cf0bc0a60cc877534ec8af41f67",
+        "manifestHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "status": "READY",
+        "projectionVersion": 2,
+        "subjects": [],
+        "subjectCount": 0,
+        "entryCount": 0
+      },
+      "dataSettings": {
+        "formatVersion": 1,
+        "reportId": "00000000-0000-4000-8000-000000000001",
+        "baselineRevision": 1,
+        "reportRevision": 1,
+        "reportVersion": 4,
+        "reportMode": "BEFORE_CONFIRMATION",
+        "baselineHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "targetHash": "cbffc647909dfd2bd0ed0cb498a186c1c0036cf0bc0a60cc877534ec8af41f67",
+        "manifestHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "status": "READY",
+        "projectionVersion": 2,
+        "settings": [],
+        "authorCorrectionProofs": []
       }
     },
     "models": {
@@ -934,17 +935,9 @@
         "model": "gpt-6.1-terra",
         "reasoningEffort": "medium"
       },
-      "RELATED_SELECTION": {
-        "model": "gpt-6.1-terra",
-        "reasoningEffort": "high"
-      },
-      "COVERAGE": {
-        "model": "gpt-6.1-terra",
-        "reasoningEffort": "high"
-      },
       "JUDGE": {
-        "model": "gpt-6.1-terra",
-        "reasoningEffort": "medium"
+        "model": "gpt-6-luna",
+        "reasoningEffort": "high"
       },
       "TYPO": {
         "model": "gpt-6.1-terra",
@@ -1008,13 +1001,12 @@
             "conditions": [],
             "assertion_mode": "NARRATION",
             "check_intent": "고정 기준과 대조",
-            "lookup_intents": [],
             "reason": "합성 계획"
           },
           "lookup_obligations": []
         },
-        "canonicalJson": "{\"draft\":{\"assertion_mode\":\"NARRATION\",\"check_intent\":\"고정 기준과 대조\",\"conditions\":[],\"local_ref\":\"local-1\",\"lookup_intents\":[],\"property_or_rule\":\"age\",\"reason\":\"합성 계획\",\"subject_mentions\":[\"합성 신규 내용\"],\"subject_refs\":[],\"target_spans\":[{\"end\":2,\"quote\":\"😀가\",\"source_ref\":\"T1\",\"start\":0}],\"time_context\":\"현재\"},\"lookup_obligations\":[]}",
-        "sha256": "55fd358360e55d48868d3567bf250966d4c9f66f96c9dded2dae5409ef6c9a74"
+        "canonicalJson": "{\"draft\":{\"assertion_mode\":\"NARRATION\",\"check_intent\":\"고정 기준과 대조\",\"conditions\":[],\"local_ref\":\"local-1\",\"property_or_rule\":\"age\",\"reason\":\"합성 계획\",\"subject_mentions\":[\"합성 신규 내용\"],\"subject_refs\":[],\"target_spans\":[{\"end\":2,\"quote\":\"😀가\",\"source_ref\":\"T1\",\"start\":0}],\"time_context\":\"현재\"},\"lookup_obligations\":[]}",
+        "sha256": "f50a902cf0e7ab0123c385ade04e858e84015cb2f452a3d4287269298c445cf0"
       }
     ],
     "workerBundleDigestVector": {
@@ -1040,7 +1032,6 @@
           "conditions": [],
           "assertion_mode": "NARRATION",
           "check_intent": "고정 기준과 대조",
-          "lookup_intents": [],
           "reason": "합성 계획"
         },
         "target_context": [
@@ -1058,7 +1049,7 @@
               "ref": "Q1-BASELINE",
               "kind": "COMPARISON_CONTEXT",
               "operation": "BASELINE",
-              "purpose": "고정 자료 확인",
+              "purpose": "같은 대상·시점·조건의 고정 비교 자료 확인",
               "query": null,
               "source_ref": null,
               "start": null,
@@ -1078,7 +1069,7 @@
               "ref": "Q1-TARGET_CONTEXT",
               "kind": "COMPARISON_CONTEXT",
               "operation": "TARGET_CONTEXT",
-              "purpose": "고정 자료 확인",
+              "purpose": "같은 대상·시점·조건의 고정 비교 자료 확인",
               "query": null,
               "source_ref": null,
               "start": null,
@@ -1095,20 +1086,17 @@
             "readiness": null
           }
         ],
-        "question_refs": [
-          "Q1"
-        ],
         "additional_target_context": [],
         "source_catalogue": []
       },
-      "canonicalJson": "{\"additional_target_context\": [], \"check_revision\": 1, \"evidence\": [], \"question\": {\"assertion_mode\": \"NARRATION\", \"check_intent\": \"고정 기준과 대조\", \"conditions\": [], \"local_ref\": \"local-1\", \"lookup_intents\": [], \"property_or_rule\": \"age\", \"reason\": \"합성 계획\", \"subject_mentions\": [\"합성 신규 내용\"], \"subject_refs\": [], \"target_spans\": [{\"end\": 2, \"quote\": \"😀가\", \"source_ref\": \"T1\", \"start\": 0}], \"time_context\": \"현재\"}, \"question_ref\": \"Q1\", \"question_refs\": [\"Q1\"], \"receipts\": [{\"evidence_refs\": [], \"failure_code\": null, \"intent\": {\"end\": null, \"evidence_refs\": [], \"kind\": \"COMPARISON_CONTEXT\", \"operation\": \"BASELINE\", \"purpose\": \"고정 자료 확인\", \"query\": null, \"ref\": \"Q1-BASELINE\", \"source_ref\": null, \"start\": null}, \"limited\": false, \"readiness\": null, \"ref\": \"L1\", \"reused_from\": null, \"status\": \"SUCCEEDED\"}, {\"evidence_refs\": [\"T1\"], \"failure_code\": null, \"intent\": {\"end\": null, \"evidence_refs\": [], \"kind\": \"COMPARISON_CONTEXT\", \"operation\": \"TARGET_CONTEXT\", \"purpose\": \"고정 자료 확인\", \"query\": null, \"ref\": \"Q1-TARGET_CONTEXT\", \"source_ref\": null, \"start\": null}, \"limited\": false, \"readiness\": null, \"ref\": \"L2\", \"reused_from\": null, \"status\": \"SUCCEEDED\"}], \"settings\": [], \"source_catalogue\": [], \"target_context\": [{\"start\": 0, \"text\": \"😀가😀가\"}]}",
-      "sha256": "f098ec7e974e7a8c8615ff9ac30ca891a27ea2b0e096585c9b2712368bad3cc0"
+      "canonicalJson": "{\"additional_target_context\": [], \"check_revision\": 1, \"evidence\": [], \"question\": {\"assertion_mode\": \"NARRATION\", \"check_intent\": \"고정 기준과 대조\", \"conditions\": [], \"local_ref\": \"local-1\", \"property_or_rule\": \"age\", \"reason\": \"합성 계획\", \"subject_mentions\": [\"합성 신규 내용\"], \"subject_refs\": [], \"target_spans\": [{\"end\": 2, \"quote\": \"😀가\", \"source_ref\": \"T1\", \"start\": 0}], \"time_context\": \"현재\"}, \"question_ref\": \"Q1\", \"receipts\": [{\"evidence_refs\": [], \"failure_code\": null, \"intent\": {\"end\": null, \"evidence_refs\": [], \"kind\": \"COMPARISON_CONTEXT\", \"operation\": \"BASELINE\", \"purpose\": \"같은 대상·시점·조건의 고정 비교 자료 확인\", \"query\": null, \"ref\": \"Q1-BASELINE\", \"source_ref\": null, \"start\": null}, \"limited\": false, \"readiness\": null, \"ref\": \"L1\", \"reused_from\": null, \"status\": \"SUCCEEDED\"}, {\"evidence_refs\": [\"T1\"], \"failure_code\": null, \"intent\": {\"end\": null, \"evidence_refs\": [], \"kind\": \"COMPARISON_CONTEXT\", \"operation\": \"TARGET_CONTEXT\", \"purpose\": \"같은 대상·시점·조건의 고정 비교 자료 확인\", \"query\": null, \"ref\": \"Q1-TARGET_CONTEXT\", \"source_ref\": null, \"start\": null}, \"limited\": false, \"readiness\": null, \"ref\": \"L2\", \"reused_from\": null, \"status\": \"SUCCEEDED\"}], \"settings\": [], \"source_catalogue\": [], \"target_context\": [{\"start\": 0, \"text\": \"😀가😀가\"}]}",
+      "sha256": "851c40514b76def9689239d9f9ed3a09c66f152f174843e095bf9c6f71b28c45"
     },
     "digestRules": {
       "inputDigest": "Opaque Java-issued immutable report/input token. Worker stores and echoes; no recomputation.",
       "checkInputDigest": "Opaque Java-issued current semantic state token. Distinct from worker model bundle digest.",
       "serverCanonical": "Java AnalysisStateJournal: UTF-16 lexicographically sorted object keys, no whitespace, array order preserved, unescaped Unicode/no NFC normalization, JSON null, finite plain minimal decimal numbers.",
-      "workerBundle": "Existing Python json.dumps(payload, ensure_ascii=False, sort_keys=True) including default spaces, before adding input_digest. Preserve unchanged; metadata only, never authorization.",
+      "workerBundle": "Existing Python json.dumps(payload, ensure_ascii=False, sort_keys=True) including default spaces, before adding input_digest. Grid v4 bundles have no question_refs. Metadata only, never authorization.",
       "idempotency": "Server hashes operation + typed command (null fields retained); scope excluded for same-input cross-generation semantic replay, except COMPLETE includes scope. Publication keys are report-wide across branches."
     },
     "gridCases": [
@@ -1123,10 +1111,8 @@
               "lookups": 100,
               "seconds": 60.0,
               "inputTokens": 1000,
-              "outputTokens": 100,
               "segmentChars": 2,
               "contextChars": 1,
-              "cataloguePageSize": 2,
               "searchLimit": 10
             },
             "typo": {
@@ -1134,10 +1120,8 @@
               "lookups": 100,
               "seconds": 60.0,
               "inputTokens": 1000,
-              "outputTokens": 100,
               "segmentChars": 2,
               "contextChars": 1,
-              "cataloguePageSize": 2,
               "searchLimit": 10
             }
           }
@@ -1154,101 +1138,48 @@
           "R1": ""
         },
         "expectedSetting": {
-          "gridVersion": 3,
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 1,
+              "contextStart": 0,
+              "contextEnd": 2
+            },
+            {
+              "ref": "TSEG2",
+              "start": 1,
+              "end": 3,
+              "contextStart": 0,
+              "contextEnd": 4
+            },
+            {
+              "ref": "TSEG3",
+              "start": 3,
+              "end": 5,
+              "contextStart": 2,
+              "contextEnd": 5
+            }
+          ],
           "units": [
             {
               "stage": "PLANNER",
               "ref": "TSEG1"
             },
             {
-              "stage": "SUBJECT_RESOLUTION",
-              "ref": "TSEG1"
-            },
-            {
-              "stage": "COVERAGE",
-              "ref": "TSEG1"
-            },
-            {
               "stage": "PLANNER",
-              "ref": "TSEG2"
-            },
-            {
-              "stage": "SUBJECT_RESOLUTION",
-              "ref": "TSEG2"
-            },
-            {
-              "stage": "COVERAGE",
               "ref": "TSEG2"
             },
             {
               "stage": "PLANNER",
               "ref": "TSEG3"
-            },
-            {
-              "stage": "SUBJECT_RESOLUTION",
-              "ref": "TSEG3"
-            },
-            {
-              "stage": "COVERAGE",
-              "ref": "TSEG3"
-            },
-            {
-              "stage": "BOOK_SOURCE",
-              "ref": "R1"
             },
             {
               "stage": "MERGED_PLAN",
               "ref": "PLAN"
             }
-          ],
-          "segments": [
-            {
-              "ref": "TSEG1",
-              "start": 0,
-              "end": 2,
-              "contextStart": 0,
-              "contextEnd": 3
-            },
-            {
-              "ref": "TSEG2",
-              "start": 2,
-              "end": 4,
-              "contextStart": 1,
-              "contextEnd": 5
-            },
-            {
-              "ref": "TSEG3",
-              "start": 4,
-              "end": 5,
-              "contextStart": 3,
-              "contextEnd": 5
-            }
-          ],
-          "segmentSubjects": [
-            {
-              "segmentRef": "TSEG1",
-              "subjectRefs": []
-            },
-            {
-              "segmentRef": "TSEG2",
-              "subjectRefs": []
-            },
-            {
-              "segmentRef": "TSEG3",
-              "subjectRefs": []
-            }
-          ],
-          "books": [
-            {
-              "sourceRef": "R1",
-              "totalCodePoints": 0,
-              "plannedChecks": 0,
-              "segments": []
-            }
-          ],
-          "clueVersion": 1,
-          "modelClues": [],
-          "pendingBookRefs": []
+          ]
         },
         "expectedTypo": {
           "gridVersion": 1,
@@ -1302,10 +1233,8 @@
               "lookups": 100,
               "seconds": 60.0,
               "inputTokens": 1000,
-              "outputTokens": 100,
               "segmentChars": 2,
               "contextChars": 1,
-              "cataloguePageSize": 2,
               "searchLimit": 10
             },
             "typo": {
@@ -1313,10 +1242,8 @@
               "lookups": 100,
               "seconds": 60.0,
               "inputTokens": 1000,
-              "outputTokens": 100,
               "segmentChars": 2,
               "contextChars": 1,
-              "cataloguePageSize": 2,
               "searchLimit": 10
             }
           }
@@ -1340,135 +1267,37 @@
           "R2": "책"
         },
         "expectedSetting": {
-          "gridVersion": 3,
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 1,
+              "contextStart": 0,
+              "contextEnd": 2
+            },
+            {
+              "ref": "TSEG2",
+              "start": 1,
+              "end": 3,
+              "contextStart": 0,
+              "contextEnd": 3
+            }
+          ],
           "units": [
             {
               "stage": "PLANNER",
               "ref": "TSEG1"
             },
             {
-              "stage": "SUBJECT_RESOLUTION",
-              "ref": "TSEG1"
-            },
-            {
-              "stage": "COVERAGE",
-              "ref": "TSEG1"
-            },
-            {
               "stage": "PLANNER",
               "ref": "TSEG2"
-            },
-            {
-              "stage": "SUBJECT_RESOLUTION",
-              "ref": "TSEG2"
-            },
-            {
-              "stage": "COVERAGE",
-              "ref": "TSEG2"
-            },
-            {
-              "stage": "BOOK_SOURCE",
-              "ref": "R1"
-            },
-            {
-              "stage": "BOOK_COVERAGE",
-              "ref": "TSEG1:R1SEG1"
-            },
-            {
-              "stage": "BOOK_COVERAGE",
-              "ref": "TSEG1:R1SEG2"
-            },
-            {
-              "stage": "BOOK_COVERAGE",
-              "ref": "TSEG2:R1SEG1"
-            },
-            {
-              "stage": "BOOK_COVERAGE",
-              "ref": "TSEG2:R1SEG2"
-            },
-            {
-              "stage": "BOOK_SOURCE",
-              "ref": "R2"
-            },
-            {
-              "stage": "BOOK_COVERAGE",
-              "ref": "TSEG1:R2SEG1"
-            },
-            {
-              "stage": "BOOK_COVERAGE",
-              "ref": "TSEG2:R2SEG1"
             },
             {
               "stage": "MERGED_PLAN",
               "ref": "PLAN"
             }
-          ],
-          "segments": [
-            {
-              "ref": "TSEG1",
-              "start": 0,
-              "end": 2,
-              "contextStart": 0,
-              "contextEnd": 3
-            },
-            {
-              "ref": "TSEG2",
-              "start": 2,
-              "end": 3,
-              "contextStart": 1,
-              "contextEnd": 3
-            }
-          ],
-          "segmentSubjects": [
-            {
-              "segmentRef": "TSEG1",
-              "subjectRefs": []
-            },
-            {
-              "segmentRef": "TSEG2",
-              "subjectRefs": []
-            }
-          ],
-          "books": [
-            {
-              "sourceRef": "R1",
-              "totalCodePoints": 3,
-              "plannedChecks": 4,
-              "segments": [
-                {
-                  "ref": "TSEG1",
-                  "start": 0,
-                  "end": 2,
-                  "contextStart": 0,
-                  "contextEnd": 3
-                },
-                {
-                  "ref": "TSEG2",
-                  "start": 2,
-                  "end": 3,
-                  "contextStart": 1,
-                  "contextEnd": 3
-                }
-              ]
-            },
-            {
-              "sourceRef": "R2",
-              "totalCodePoints": 1,
-              "plannedChecks": 2,
-              "segments": [
-                {
-                  "ref": "TSEG1",
-                  "start": 0,
-                  "end": 1,
-                  "contextStart": 0,
-                  "contextEnd": 1
-                }
-              ]
-            }
-          ],
-          "clueVersion": 1,
-          "modelClues": [],
-          "pendingBookRefs": []
+          ]
         },
         "expectedTypo": {
           "gridVersion": 1,
@@ -1511,10 +1340,8 @@
               "lookups": 100,
               "seconds": 60.0,
               "inputTokens": 1000,
-              "outputTokens": 100,
               "segmentChars": 2,
               "contextChars": 1,
-              "cataloguePageSize": 2,
               "searchLimit": 10
             },
             "typo": {
@@ -1522,10 +1349,8 @@
               "lookups": 100,
               "seconds": 60.0,
               "inputTokens": 1000,
-              "outputTokens": 100,
               "segmentChars": 2,
               "contextChars": 1,
-              "cataloguePageSize": 2,
               "searchLimit": 10
             }
           }
@@ -1535,20 +1360,18 @@
         "expectedError": "VALIDATION_RESULT_INVALID"
       },
       {
-        "name": "unicode-whitespace-repeated-name-and-clues",
+        "name": "unicode-whitespace-single-segment",
         "target": "😀준우 준우 20\u001c살 월요일 사흘",
         "entryCount": 1,
         "configuration": {
           "budgets": {
             "setting": {
               "segmentChars": 100,
-              "contextChars": 1,
-              "cataloguePageSize": 2
+              "contextChars": 1
             },
             "typo": {
               "segmentChars": 100,
-              "contextChars": 1,
-              "cataloguePageSize": 2
+              "contextChars": 1
             }
           }
         },
@@ -1567,25 +1390,7 @@
         "sources": [],
         "sourceTexts": {},
         "expectedSetting": {
-          "gridVersion": 3,
-          "units": [
-            {
-              "stage": "PLANNER",
-              "ref": "TSEG1"
-            },
-            {
-              "stage": "SUBJECT_RESOLUTION",
-              "ref": "TSEG1"
-            },
-            {
-              "stage": "COVERAGE",
-              "ref": "TSEG1"
-            },
-            {
-              "stage": "MERGED_PLAN",
-              "ref": "PLAN"
-            }
-          ],
+          "gridVersion": 4,
           "segments": [
             {
               "ref": "TSEG1",
@@ -1595,69 +1400,16 @@
               "contextEnd": 18
             }
           ],
-          "segmentSubjects": [
+          "units": [
             {
-              "segmentRef": "TSEG1",
-              "subjectRefs": [
-                "S1"
-              ]
+              "stage": "PLANNER",
+              "ref": "TSEG1"
+            },
+            {
+              "stage": "MERGED_PLAN",
+              "ref": "PLAN"
             }
-          ],
-          "clueVersion": 1,
-          "modelClues": [
-            {
-              "ref": "CL1",
-              "kind": "REPEATED_NAME",
-              "span": {
-                "source_ref": "T1",
-                "start": 1,
-                "end": 3,
-                "quote": "준우"
-              }
-            },
-            {
-              "ref": "CL2",
-              "kind": "REPEATED_NAME",
-              "span": {
-                "source_ref": "T1",
-                "start": 4,
-                "end": 6,
-                "quote": "준우"
-              }
-            },
-            {
-              "ref": "CL3",
-              "kind": "NUMBER_DATE",
-              "span": {
-                "source_ref": "T1",
-                "start": 7,
-                "end": 11,
-                "quote": "20\u001c살"
-              }
-            },
-            {
-              "ref": "CL4",
-              "kind": "WEEKDAY",
-              "span": {
-                "source_ref": "T1",
-                "start": 12,
-                "end": 15,
-                "quote": "월요일"
-              }
-            },
-            {
-              "ref": "CL5",
-              "kind": "RELATIVE_TIME",
-              "span": {
-                "source_ref": "T1",
-                "start": 16,
-                "end": 18,
-                "quote": "사흘"
-              }
-            }
-          ],
-          "books": [],
-          "pendingBookRefs": []
+          ]
         },
         "expectedTypo": {
           "gridVersion": 1,
@@ -1679,8 +1431,9 @@
         }
       },
       {
-        "name": "successful-first-book-with-unreadable-pending-second",
-        "target": "가😀나",
+        "name": "v4-length-at-most-unit",
+        "meaning": "L <= U gives one segment [0,L) with full context.",
+        "target": "가나다\n라마",
         "entryCount": 0,
         "configuration": {
           "budgets": {
@@ -1689,10 +1442,8 @@
               "lookups": 100,
               "seconds": 60.0,
               "inputTokens": 1000,
-              "outputTokens": 100,
-              "segmentChars": 2,
-              "contextChars": 1,
-              "cataloguePageSize": 2,
+              "segmentChars": 10,
+              "contextChars": 3,
               "searchLimit": 10
             },
             "typo": {
@@ -1700,45 +1451,112 @@
               "lookups": 100,
               "seconds": 60.0,
               "inputTokens": 1000,
-              "outputTokens": 100,
-              "segmentChars": 2,
-              "contextChars": 1,
-              "cataloguePageSize": 2,
+              "segmentChars": 2000,
+              "contextChars": 100,
               "searchLimit": 10
             }
           }
         },
-        "sources": [
-          {
-            "sourceKind": "SETTING_BOOK",
-            "sourceRef": "R1",
-            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "contentS3Version": "v1"
-          },
-          {
-            "sourceKind": "SETTING_BOOK",
-            "sourceRef": "R2",
-            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "contentS3Version": "v1"
-          }
-        ],
-        "sourceTexts": {
-          "R1": "😀가나",
-          "R2": "책"
-        },
+        "sources": [],
+        "sourceTexts": {},
         "expectedSetting": {
-          "gridVersion": 3,
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 6,
+              "contextStart": 0,
+              "contextEnd": 6
+            }
+          ],
           "units": [
             {
               "stage": "PLANNER",
               "ref": "TSEG1"
             },
             {
-              "stage": "SUBJECT_RESOLUTION",
+              "stage": "MERGED_PLAN",
+              "ref": "PLAN"
+            }
+          ]
+        },
+        "expectedTypo": {
+          "gridVersion": 1,
+          "units": [
+            {
+              "stage": "TYPO_SEGMENT",
               "ref": "TSEG1"
+            }
+          ],
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 6,
+              "contextStart": 0,
+              "contextEnd": 6
+            }
+          ]
+        }
+      },
+      {
+        "name": "v4-exact-multiple",
+        "meaning": "L = 12 = 3U: n = 3, each cut is the newline position nearest to kL/n inside its window.",
+        "target": "가나다\n라마바\n사아자\n",
+        "entryCount": 0,
+        "configuration": {
+          "budgets": {
+            "setting": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 4,
+              "contextChars": 1,
+              "searchLimit": 10
+            },
+            "typo": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 2000,
+              "contextChars": 100,
+              "searchLimit": 10
+            }
+          }
+        },
+        "sources": [],
+        "sourceTexts": {},
+        "expectedSetting": {
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 4,
+              "contextStart": 0,
+              "contextEnd": 5
             },
             {
-              "stage": "COVERAGE",
+              "ref": "TSEG2",
+              "start": 4,
+              "end": 8,
+              "contextStart": 3,
+              "contextEnd": 9
+            },
+            {
+              "ref": "TSEG3",
+              "start": 8,
+              "end": 12,
+              "contextStart": 7,
+              "contextEnd": 12
+            }
+          ],
+          "units": [
+            {
+              "stage": "PLANNER",
               "ref": "TSEG1"
             },
             {
@@ -1746,42 +1564,606 @@
               "ref": "TSEG2"
             },
             {
-              "stage": "SUBJECT_RESOLUTION",
-              "ref": "TSEG2"
-            },
-            {
-              "stage": "COVERAGE",
-              "ref": "TSEG2"
-            },
-            {
-              "stage": "BOOK_SOURCE",
-              "ref": "R1"
-            },
-            {
-              "stage": "BOOK_COVERAGE",
-              "ref": "TSEG1:R1SEG1"
-            },
-            {
-              "stage": "BOOK_COVERAGE",
-              "ref": "TSEG1:R1SEG2"
-            },
-            {
-              "stage": "BOOK_COVERAGE",
-              "ref": "TSEG2:R1SEG1"
-            },
-            {
-              "stage": "BOOK_COVERAGE",
-              "ref": "TSEG2:R1SEG2"
-            },
-            {
-              "stage": "BOOK_SOURCE",
-              "ref": "R2"
+              "stage": "PLANNER",
+              "ref": "TSEG3"
             },
             {
               "stage": "MERGED_PLAN",
               "ref": "PLAN"
             }
+          ]
+        },
+        "expectedTypo": {
+          "gridVersion": 1,
+          "units": [
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG1"
+            }
           ],
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 12,
+              "contextStart": 0,
+              "contextEnd": 12
+            }
+          ]
+        }
+      },
+      {
+        "name": "v4-no-newline-fallback",
+        "meaning": "No U+000A inside a window: cut = max(t, lo+1).",
+        "target": "가나다라마바사아자차",
+        "entryCount": 0,
+        "configuration": {
+          "budgets": {
+            "setting": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 4,
+              "contextChars": 1,
+              "searchLimit": 10
+            },
+            "typo": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 2000,
+              "contextChars": 100,
+              "searchLimit": 10
+            }
+          }
+        },
+        "sources": [],
+        "sourceTexts": {},
+        "expectedSetting": {
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 3,
+              "contextStart": 0,
+              "contextEnd": 4
+            },
+            {
+              "ref": "TSEG2",
+              "start": 3,
+              "end": 6,
+              "contextStart": 2,
+              "contextEnd": 7
+            },
+            {
+              "ref": "TSEG3",
+              "start": 6,
+              "end": 10,
+              "contextStart": 5,
+              "contextEnd": 10
+            }
+          ],
+          "units": [
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG1"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG3"
+            },
+            {
+              "stage": "MERGED_PLAN",
+              "ref": "PLAN"
+            }
+          ]
+        },
+        "expectedTypo": {
+          "gridVersion": 1,
+          "units": [
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG1"
+            }
+          ],
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 10,
+              "contextStart": 0,
+              "contextEnd": 10
+            }
+          ]
+        }
+      },
+      {
+        "name": "v4-newline-tie",
+        "meaning": "Newlines after positions 4 and 6 are both 1 from t = 5: the smaller position wins.",
+        "target": "가나다\n마\n사아자차",
+        "entryCount": 0,
+        "configuration": {
+          "budgets": {
+            "setting": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 5,
+              "contextChars": 2,
+              "searchLimit": 10
+            },
+            "typo": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 2000,
+              "contextChars": 100,
+              "searchLimit": 10
+            }
+          }
+        },
+        "sources": [],
+        "sourceTexts": {},
+        "expectedSetting": {
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 4,
+              "contextStart": 0,
+              "contextEnd": 6
+            },
+            {
+              "ref": "TSEG2",
+              "start": 4,
+              "end": 10,
+              "contextStart": 2,
+              "contextEnd": 10
+            }
+          ],
+          "units": [
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG1"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "MERGED_PLAN",
+              "ref": "PLAN"
+            }
+          ]
+        },
+        "expectedTypo": {
+          "gridVersion": 1,
+          "units": [
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG1"
+            }
+          ],
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 10,
+              "contextStart": 0,
+              "contextEnd": 10
+            }
+          ]
+        }
+      },
+      {
+        "name": "v4-crlf",
+        "meaning": "Only U+000A counts, so a cut falls right after \\n and never splits \\r\\n.",
+        "target": "가나\r\n다라\r\n마바\r\n사아",
+        "entryCount": 0,
+        "configuration": {
+          "budgets": {
+            "setting": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 7,
+              "contextChars": 2,
+              "searchLimit": 10
+            },
+            "typo": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 2000,
+              "contextChars": 100,
+              "searchLimit": 10
+            }
+          }
+        },
+        "sources": [],
+        "sourceTexts": {},
+        "expectedSetting": {
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 8,
+              "contextStart": 0,
+              "contextEnd": 10
+            },
+            {
+              "ref": "TSEG2",
+              "start": 8,
+              "end": 14,
+              "contextStart": 6,
+              "contextEnd": 14
+            }
+          ],
+          "units": [
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG1"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "MERGED_PLAN",
+              "ref": "PLAN"
+            }
+          ]
+        },
+        "expectedTypo": {
+          "gridVersion": 1,
+          "units": [
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG1"
+            }
+          ],
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 14,
+              "contextStart": 0,
+              "contextEnd": 14
+            }
+          ]
+        }
+      },
+      {
+        "name": "v4-non-bmp-code-points",
+        "meaning": "Offsets are Unicode code points; one emoji is one position.",
+        "target": "😀가😀\n😀나😀\n😀다😀",
+        "entryCount": 0,
+        "configuration": {
+          "budgets": {
+            "setting": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 4,
+              "contextChars": 2,
+              "searchLimit": 10
+            },
+            "typo": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 2000,
+              "contextChars": 100,
+              "searchLimit": 10
+            }
+          }
+        },
+        "sources": [],
+        "sourceTexts": {},
+        "expectedSetting": {
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 4,
+              "contextStart": 0,
+              "contextEnd": 6
+            },
+            {
+              "ref": "TSEG2",
+              "start": 4,
+              "end": 8,
+              "contextStart": 2,
+              "contextEnd": 10
+            },
+            {
+              "ref": "TSEG3",
+              "start": 8,
+              "end": 11,
+              "contextStart": 6,
+              "contextEnd": 11
+            }
+          ],
+          "units": [
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG1"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG3"
+            },
+            {
+              "stage": "MERGED_PLAN",
+              "ref": "PLAN"
+            }
+          ]
+        },
+        "expectedTypo": {
+          "gridVersion": 1,
+          "units": [
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG1"
+            }
+          ],
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 11,
+              "contextStart": 0,
+              "contextEnd": 11
+            }
+          ]
+        }
+      },
+      {
+        "name": "v4-context-clipped-both-ends",
+        "meaning": "Context is clipped to [0, L) on both sides.",
+        "target": "가나\n다라\n마바",
+        "entryCount": 0,
+        "configuration": {
+          "budgets": {
+            "setting": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 3,
+              "contextChars": 100,
+              "searchLimit": 10
+            },
+            "typo": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 2000,
+              "contextChars": 100,
+              "searchLimit": 10
+            }
+          }
+        },
+        "sources": [],
+        "sourceTexts": {},
+        "expectedSetting": {
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 3,
+              "contextStart": 0,
+              "contextEnd": 8
+            },
+            {
+              "ref": "TSEG2",
+              "start": 3,
+              "end": 6,
+              "contextStart": 0,
+              "contextEnd": 8
+            },
+            {
+              "ref": "TSEG3",
+              "start": 6,
+              "end": 8,
+              "contextStart": 0,
+              "contextEnd": 8
+            }
+          ],
+          "units": [
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG1"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG3"
+            },
+            {
+              "stage": "MERGED_PLAN",
+              "ref": "PLAN"
+            }
+          ]
+        },
+        "expectedTypo": {
+          "gridVersion": 1,
+          "units": [
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG1"
+            }
+          ],
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 8,
+              "contextStart": 0,
+              "contextEnd": 8
+            }
+          ]
+        }
+      },
+      {
+        "name": "v4-unit-one",
+        "meaning": "U = 1 gives one segment per code point.",
+        "target": "가나\n다",
+        "entryCount": 0,
+        "configuration": {
+          "budgets": {
+            "setting": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 1,
+              "contextChars": 1,
+              "searchLimit": 10
+            },
+            "typo": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 2000,
+              "contextChars": 100,
+              "searchLimit": 10
+            }
+          }
+        },
+        "sources": [],
+        "sourceTexts": {},
+        "expectedSetting": {
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 1,
+              "contextStart": 0,
+              "contextEnd": 2
+            },
+            {
+              "ref": "TSEG2",
+              "start": 1,
+              "end": 2,
+              "contextStart": 0,
+              "contextEnd": 3
+            },
+            {
+              "ref": "TSEG3",
+              "start": 2,
+              "end": 3,
+              "contextStart": 1,
+              "contextEnd": 4
+            },
+            {
+              "ref": "TSEG4",
+              "start": 3,
+              "end": 4,
+              "contextStart": 2,
+              "contextEnd": 4
+            }
+          ],
+          "units": [
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG1"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG3"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG4"
+            },
+            {
+              "stage": "MERGED_PLAN",
+              "ref": "PLAN"
+            }
+          ]
+        },
+        "expectedTypo": {
+          "gridVersion": 1,
+          "units": [
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG1"
+            }
+          ],
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 4,
+              "contextStart": 0,
+              "contextEnd": 4
+            }
+          ]
+        }
+      },
+      {
+        "name": "v4-unit-two",
+        "meaning": "U = 2: n = 3 with windows of about L/n code points.",
+        "target": "가나다\n라마",
+        "entryCount": 0,
+        "configuration": {
+          "budgets": {
+            "setting": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 2,
+              "contextChars": 1,
+              "searchLimit": 10
+            },
+            "typo": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 2000,
+              "contextChars": 100,
+              "searchLimit": 10
+            }
+          }
+        },
+        "sources": [],
+        "sourceTexts": {},
+        "expectedSetting": {
+          "gridVersion": 4,
           "segments": [
             {
               "ref": "TSEG1",
@@ -1793,51 +2175,127 @@
             {
               "ref": "TSEG2",
               "start": 2,
-              "end": 3,
+              "end": 4,
               "contextStart": 1,
-              "contextEnd": 3
-            }
-          ],
-          "segmentSubjects": [
-            {
-              "segmentRef": "TSEG1",
-              "subjectRefs": []
+              "contextEnd": 5
             },
             {
-              "segmentRef": "TSEG2",
-              "subjectRefs": []
+              "ref": "TSEG3",
+              "start": 4,
+              "end": 6,
+              "contextStart": 3,
+              "contextEnd": 6
             }
           ],
-          "books": [
+          "units": [
             {
-              "sourceRef": "R1",
-              "totalCodePoints": 3,
-              "plannedChecks": 4,
-              "segments": [
-                {
-                  "ref": "TSEG1",
-                  "start": 0,
-                  "end": 2,
-                  "contextStart": 0,
-                  "contextEnd": 3
-                },
-                {
-                  "ref": "TSEG2",
-                  "start": 2,
-                  "end": 3,
-                  "contextStart": 1,
-                  "contextEnd": 3
-                }
-              ]
+              "stage": "PLANNER",
+              "ref": "TSEG1"
             },
             {
-              "sourceRef": "R2"
+              "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG3"
+            },
+            {
+              "stage": "MERGED_PLAN",
+              "ref": "PLAN"
+            }
+          ]
+        },
+        "expectedTypo": {
+          "gridVersion": 1,
+          "units": [
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG1"
             }
           ],
-          "clueVersion": 1,
-          "modelClues": [],
-          "pendingBookRefs": [
-            "R2"
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 6,
+              "contextStart": 0,
+              "contextEnd": 6
+            }
+          ]
+        }
+      },
+      {
+        "name": "v4-25000-three-segments",
+        "meaning": "25,000 code points with a newline every 50 give 3 segments cut at the newline nearest to kL/3; the target is targetRepeat.unit repeated targetRepeat.count times.",
+        "target": null,
+        "entryCount": 0,
+        "configuration": {
+          "budgets": {
+            "setting": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 10000,
+              "contextChars": 1000,
+              "searchLimit": 10
+            },
+            "typo": {
+              "modelCalls": 20,
+              "lookups": 100,
+              "seconds": 60.0,
+              "inputTokens": 1000,
+              "segmentChars": 2000,
+              "contextChars": 100,
+              "searchLimit": 10
+            }
+          }
+        },
+        "sources": [],
+        "sourceTexts": {},
+        "expectedSetting": {
+          "gridVersion": 4,
+          "segments": [
+            {
+              "ref": "TSEG1",
+              "start": 0,
+              "end": 8350,
+              "contextStart": 0,
+              "contextEnd": 9350
+            },
+            {
+              "ref": "TSEG2",
+              "start": 8350,
+              "end": 16650,
+              "contextStart": 7350,
+              "contextEnd": 17650
+            },
+            {
+              "ref": "TSEG3",
+              "start": 16650,
+              "end": 25000,
+              "contextStart": 15650,
+              "contextEnd": 25000
+            }
+          ],
+          "units": [
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG1"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG2"
+            },
+            {
+              "stage": "PLANNER",
+              "ref": "TSEG3"
+            },
+            {
+              "stage": "MERGED_PLAN",
+              "ref": "PLAN"
+            }
           ]
         },
         "expectedTypo": {
@@ -1850,31 +2308,150 @@
             {
               "stage": "TYPO_SEGMENT",
               "ref": "TSEG2"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG3"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG4"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG5"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG6"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG7"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG8"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG9"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG10"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG11"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG12"
+            },
+            {
+              "stage": "TYPO_SEGMENT",
+              "ref": "TSEG13"
             }
           ],
           "segments": [
             {
               "ref": "TSEG1",
               "start": 0,
-              "end": 2,
+              "end": 2000,
               "contextStart": 0,
-              "contextEnd": 3
+              "contextEnd": 2100
             },
             {
               "ref": "TSEG2",
-              "start": 2,
-              "end": 3,
-              "contextStart": 1,
-              "contextEnd": 3
+              "start": 2000,
+              "end": 4000,
+              "contextStart": 1900,
+              "contextEnd": 4100
+            },
+            {
+              "ref": "TSEG3",
+              "start": 4000,
+              "end": 6000,
+              "contextStart": 3900,
+              "contextEnd": 6100
+            },
+            {
+              "ref": "TSEG4",
+              "start": 6000,
+              "end": 8000,
+              "contextStart": 5900,
+              "contextEnd": 8100
+            },
+            {
+              "ref": "TSEG5",
+              "start": 8000,
+              "end": 10000,
+              "contextStart": 7900,
+              "contextEnd": 10100
+            },
+            {
+              "ref": "TSEG6",
+              "start": 10000,
+              "end": 12000,
+              "contextStart": 9900,
+              "contextEnd": 12100
+            },
+            {
+              "ref": "TSEG7",
+              "start": 12000,
+              "end": 14000,
+              "contextStart": 11900,
+              "contextEnd": 14100
+            },
+            {
+              "ref": "TSEG8",
+              "start": 14000,
+              "end": 16000,
+              "contextStart": 13900,
+              "contextEnd": 16100
+            },
+            {
+              "ref": "TSEG9",
+              "start": 16000,
+              "end": 18000,
+              "contextStart": 15900,
+              "contextEnd": 18100
+            },
+            {
+              "ref": "TSEG10",
+              "start": 18000,
+              "end": 20000,
+              "contextStart": 17900,
+              "contextEnd": 20100
+            },
+            {
+              "ref": "TSEG11",
+              "start": 20000,
+              "end": 22000,
+              "contextStart": 19900,
+              "contextEnd": 22100
+            },
+            {
+              "ref": "TSEG12",
+              "start": 22000,
+              "end": 24000,
+              "contextStart": 21900,
+              "contextEnd": 24100
+            },
+            {
+              "ref": "TSEG13",
+              "start": 24000,
+              "end": 25000,
+              "contextStart": 23900,
+              "contextEnd": 25000
             }
           ]
         },
-        "prepareBookRefs": [
-          "R1"
-        ],
-        "unreadableSourceRefs": [
-          "R2"
-        ]
+        "targetRepeat": {
+          "unit": "가나다라마바사아자차카타파하가나다라마바사아자차카타파하가나다라마바사아자차카타파하가나다라마바아\n",
+          "count": 500
+        }
       }
     ],
     "projectionVector": {
@@ -2005,19 +2582,6 @@
         }
       ]
     },
-    "bookSourceRead": {
-      "stage": "BOOK_SOURCE",
-      "ref": "R1",
-      "payload": {
-        "source_ref": "R1",
-        "source_read_status": "READY",
-        "planned_checks": 0,
-        "completed_checks": 0,
-        "status": "PROCESSED",
-        "reason": "EMPTY_SOURCE_READ"
-      },
-      "meaning": "Only full book read is complete; target×book review is separate BOOK_COVERAGE grid, even while Python aggregate BOOK_SOURCE.status is still UNPROCESSED."
-    },
     "authorCorrectionProofs": {
       "projectionAuthority": "author_correction is null; raw plural proof metadata is trusted-server transport only, never wildcard time/condition authority.",
       "pageExample": [
@@ -2056,38 +2620,25 @@
     "completion": "Only current completed checks, completed typo segments, and server-derived fully covered NO_CHECK segments count as successful processing. Planner/read/grid preparation alone is not PARTIAL. Both full required grids and all current checks are required for COMPLETED.",
     "publicResultBoundary": "Only status/counts/coverage summaries/check summaries/findings/verified source quotes. No full evidence_bundle, catalogue, checkpoint, lease or provider usage-call ledger.",
     "retryBudgetPolicy": {
-      "trigger": "Explicit same-input RETRY only",
+      "trigger": "Explicit same-input author RETRY only; automatic lease recovery (expire) continues the same run",
+      "runCaps": "Role caps count usage rows with validationGeneration >= validation_jobs.run_start_generation and status not RELEASED. ValidationJob.retry() sets run_start_generation to the new generation; expire() never changes it. The Worker's InvocationBudget (modelCalls, lookups, seconds) stays per claim attempt.",
       "preserved": [
-        "Job-wide prior actual/reserved/UNKNOWN usage",
         "successful semantic stages/check IDs",
         "segmentChars",
         "contextChars",
-        "cataloguePageSize",
         "searchLimit",
         "generation models/reasoning"
       ],
       "refreshedFromExplicitConfiguration": [
         "roles.maxCalls",
         "roles.maxReservedTokens",
-        "setting/typo modelCalls/lookups/seconds/inputTokens/outputTokens"
+        "roles.outputTokens",
+        "setting/typo modelCalls/lookups/seconds/inputTokens"
       ],
+      "legacyConfiguration": "A job without configurationVersion 2 is legacy: budgets.setting is rebuilt from the properties, budgets.typo too except its stored segmentChars/contextChars, PLANNER and JUDGE models are rebuilt, a stored TYPO model is kept, retired roles RELATED_SELECTION and COVERAGE are dropped, configurationVersion becomes 2 and budgetHistory records it. The SETTING branch is discarded when the stored grid is not v4 or the configuration is legacy; the TYPO grid is kept.",
       "audit": "Job.configuration budgetRevision and budgetHistory (before/after/generation)",
-      "exhausted": "409 VALIDATION_EXECUTION_LIMIT_EXCEEDED if any required unfinished role remains exhausted",
       "replay": "Original immutable RETRY response_snapshot, no new generation/budget refresh",
-      "optionalEmbedding": "First explicit role+model introduction only if no earlier embedding calls or successful vector receipt, using existing retrieval-compatible text-embedding-3-small; used model is never silently replaced",
-      "requiredTask3EmbeddingPreflight": {
-        "implemented": true,
-        "deny": "Actually required new embedding with exhausted cumulative cap returns 409 before queueing.",
-        "allow": "Verified compatible successful query receipt with only JUDGE remaining is admitted with zero extra embedding calls.",
-        "proofSource": "Original immutable validation_call_input and authenticated typed semantic checkpoint; never model output or a VECTOR string alone."
-      }
-    },
-    "clueAuthority": {
-      "version": 1,
-      "source": "Full T1 READ_SOURCE response.modelClues (clueVersion=1); same grid.modelClues after first semantic publication",
-      "execution": "Worker must use server CL refs/spans; only nojob callable may recalculate Python collect_clues",
-      "matching": "Existing ASCII [0-9] only, Python Unicode whitespace including U+001C..001F, codepoint [start,end), sorted unique (start,end,kind); repeated literal nonempty names only when count>1; deduplicate aliases",
-      "modelInput": "Only clues whose start falls in current segment core; exact clue_checks set with CHECKED/NOT_APPLICABLE required. Hints never findings/facts."
+      "optionalEmbedding": "QUERY_EMBEDDING model/cap come from the explicit configuration; a run never reuses query embeddings across retries (each run starts its own RAG cache)."
     },
     "dataRequest": {
       "expectedBaselineHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -2099,98 +2650,61 @@
       "expectedSourceHash": null,
       "expectedSourceVersion": null,
       "start": null,
-      "end": null
+      "end": null,
+      "subjectRefs": null
     },
     "bootstrapOrder": [
-      "claim: trusted scope, versions, limits, models, existing checkpoint",
+      "claim: trusted scope, contractVersion 1, projectionVersion 2, configurationVersion 2, models, budgets, existing checkpoint",
       "GET checkpoint is permitted with gridReady=false and does not read any source",
       "INPUT: frozen manifest + modelSourceCatalogue",
-      "ENTRIES pages: canonical modelSettings + authorCorrectionProofs (global stable S-refs)",
-      "full T1 READ_SOURCE: validated text + clueVersion=1/modelClues",
-      "SETTING/TYPO run independently; persist each validated target stage and book stage immediately. Finish each ready book before the next; pendingBookRefs never become empty books.",
-      "publish each validated semantic stage, then MERGED_PLAN before first JUDGE; restore stable server check IDs/revisions",
-      "publish DECIDED + original evidence_bundle/current server checkInputDigest, or successful TYPO segment",
+      "full T1 READ_SOURCE: validated text (no modelClues)",
+      "SUBJECTS: one subject catalogue read at start (no paging)",
+      "SETTING: every PLANNER segment in parallel, each published as soon as it is valid; then the v4 grid segments must equal the local split (GRID_SEGMENTS_MISMATCH), then MERGED_PLAN",
+      "SETTINGS: current rows of the questions' subjects in batches of at most 100 subjects",
+      "JUDGE: four questions at a time; publish each DECIDED unit with its evidence_bundle and the current server checkInputDigest",
+      "TYPO runs independently with its fixed v1 segments and publishes each successful TYPO segment",
       "complete: server required-grid/check/no-check/typo aggregation"
     ],
     "stagePayloads": {
-      "SUBJECT_RESOLUTION": {
-        "stage": "SUBJECT_RESOLUTION",
+      "PLANNER": {
+        "stage": "PLANNER",
         "ref": "TSEG1",
         "payload": {
-          "mentions": [
+          "questions": [
             {
-              "mention": "그녀",
-              "subject_ref": "S3",
-              "reason": "직전 문장의 서윤을 가리킨다"
-            },
-            {
-              "mention": "노인",
-              "subject_ref": null,
-              "reason": "카탈로그에 없는 인물"
+              "local_ref": "local-1",
+              "target_spans": [
+                {
+                  "source_ref": "T1",
+                  "start": 0,
+                  "end": 2,
+                  "quote": "😀가"
+                }
+              ],
+              "subject_refs": [],
+              "subject_mentions": [
+                "합성 신규 내용"
+              ],
+              "property_or_rule": "age",
+              "time_context": "현재",
+              "conditions": [],
+              "assertion_mode": "NARRATION",
+              "check_intent": "고정 기준과 대조",
+              "reason": "합성 계획"
             }
-          ]
-        }
-      },
-      "COVERAGE": {
-        "ref": "TSEG1",
-        "payload": {
-          "questions": [],
+          ],
           "segments": [
             {
               "segment_ref": "TSEG1",
-              "status": "NO_CHECK",
-              "reason": "필수 규칙과 단서를 확인함"
-            }
-          ],
-          "rules": [
-            {
-              "entry_ref": "B2",
-              "status": "CHECKED",
-              "reason": "고정 규칙 확인"
-            }
-          ],
-          "clue_checks": [
-            {
-              "entry_ref": "CL1",
-              "status": "CHECKED",
-              "reason": "서버 발급 단서 확인"
+              "status": "PLANNED",
+              "reason": "합성 처리"
             }
           ]
-        }
-      },
-      "BOOK_SOURCE": {
-        "stage": "BOOK_SOURCE",
-        "ref": "R1",
-        "payload": {
-          "source_ref": "R1",
-          "source_read_status": "READY",
-          "planned_checks": 0,
-          "completed_checks": 0,
-          "status": "PROCESSED",
-          "reason": "EMPTY_SOURCE_READ"
         },
-        "meaning": "Only full book read is complete; target×book review is separate BOOK_COVERAGE grid, even while Python aggregate BOOK_SOURCE.status is still UNPROCESSED."
+        "rules": "Only PLANNER stages exist for target segments in grid v4. `rules`, `clue_checks` and every draft `lookup_intents` must be absent. Every span lies in the segment core [start,end) (the context is read-only). status is PLANNED iff questions is non-empty."
       },
-      "BOOK_COVERAGE": {
-        "ref": "TSEG1:R1SEG1",
-        "payload": {
-          "questions": [],
-          "segments": [
-            {
-              "segment_ref": "TSEG1",
-              "status": "NO_CHECK",
-              "reason": "실제 고정 설정집 구간 대조"
-            }
-          ],
-          "rules": [
-            {
-              "entry_ref": "R1SEG1",
-              "status": "CHECKED",
-              "reason": "필수 book rule 확인"
-            }
-          ],
-          "clue_checks": []
-        }
+      "MERGED_PLAN": {
+        "rules": "questions[].originalRefs are only PLANNER:TSEGn:<local_ref>; state is {draft, lookup_obligations: []}; merge key unchanged (subject_refs set, property_or_rule, time_context, conditions set, assertion_mode); spans of merged drafts are kept in segment order."
       }
     },
     "stagePayloadExamplesAreIndependent": true,
@@ -2204,24 +2718,7 @@
       ],
       "rawSourceRead": "No S3 under the Work recovery lock; leased source reader verifies actual bytes before models/publication"
     },
-    "plansBoundary": "SETTING only; TYPO_SEGMENT must use /units classification/suggestion/coverage validation. /plans TYPO returns 400 without any stage/publication/version write.",
-    "progressiveSourceGrid": {
-      "gridVersion": 3,
-      "serverAuthority": "All manifest BOOK_SOURCE obligations exist before book lengths are known; client required-grid or lengths never authorize completion",
-      "pendingBookRow": {
-        "sourceRef": "R2"
-      },
-      "readyBookRow": "Existing sourceRef/totalCodePoints/plannedChecks/segments, created only by successful full-source validation plus BOOK_SOURCE publication",
-      "pendingBookRefs": [
-        "R2"
-      ],
-      "semantics": "Pending is unknown length and required review, never an empty book or zero required checks",
-      "publication": "PLANNER/SUBJECT_RESOLUTION/COVERAGE/checkpoint save without reading unrelated books. BOOK_SOURCE reads only its missing source. Citations still require actual bytes for their exact refs.",
-      "commit": "Under Work, merge discoveries monotonically with the latest grid and revalidate all frozen source metadata/current input/lease. Different known dimensions or source changes are conflicts.",
-      "completion": "Any pending book blocks MERGED_PLAN, SETTING completion, and NO_CHECK success. After all book lengths are known, a fully covered target segment remains successful while other segments are incomplete.",
-      "retry": "Restore successful stage payloads/server book segments/receipt IDs; read only unfinished book rules. Actual Worker/provider-count tests prove saved planner and successful first-book processing calls0; first book full reads0 in zero-question resume.",
-      "vector": "gridCases.successful-first-book-with-unreadable-pending-second"
-    },
+    "plansBoundary": "SETTING only (PLANNER, MERGED_PLAN); TYPO_SEGMENT must use /units classification/suggestion/coverage validation. /plans TYPO returns 400 without any stage/publication/version write.",
     "comparisonEvidenceBoundary": {
       "target": "T1 context or an E-ref whose actual source_ref is T1 remains valid context, but cannot authorize CONFLICT/SUSPECTED_CONFLICT",
       "allowed": "A validated frozen fact or E-ref whose actual verified frozen source is not T1"
@@ -2237,6 +2734,7 @@
         "target_context[]",
         "additional_target_context[]"
       ],
+      "basisQuotes": "basis_quotes[]: an E quote {ref, source_ref, start, end, quote} is a typed span (exact supplied citation, actual source hash/position, inside its bundle evidence row); a B quote {ref, source_ref:null, start:null, end:null, quote} is not source text and must be a substring of a setting value leaf of that bundle setting row",
       "canonicalSettings": "settings[] must exactly equal the server-issued known entry projection; text/quote inside that authenticated state are ordinary domain keys",
       "otherCopies": "text/quote in undeclared payload/checkpoint objects are invalid; typed spans/context still require exact supplied citation and actual source hash/position checks",
       "depthLimit": 50
@@ -2284,19 +2782,1070 @@
         "dimensions": 1536
       },
       "versionSource": "Existing chat.retrieval-embedding-version, including explicit override; dimensions are existing retrieval_chunks vector(1536).",
-      "reuse": "Authenticated v1 semantic checkpoint receipt for the current exact VECTOR obligation, SUCCEEDED/READY with complete authenticated index scope at the original lookup, original SETTLED SUCCESS query usage with exactly matching queryInput, current input/manifest/model/version/dimensions. JUDGE-only retry consumes zero extra embedding calls.",
-      "deny": "Originally failed/partial/not-ready or incompatible/changed-query/input/manifest/index proof cannot bypass an exhausted role cap; retry responds 409 VALIDATION_EXECUTION_LIMIT_EXCEEDED before queueing.",
-      "indexLifecycle": "A verified successful original VECTOR lookup is frozen with its evidence. Temporary live-index rebuild/FAILED/embedding-null does not create a new lookup obligation for JUDGE-only resume; current input/source/hash and original proof compatibility are still revalidated."
+      "reuse": "Within one run only: the corpus reuses the successful receipt of an identical stripped query (reused_from) without a lookup or embedding call. No reuse across retries.",
+      "deny": "A failed, partial or not-ready search is never reused; the role caps of the run stay authoritative."
     },
-    "semanticCheckpoint": {
-      "version": 1,
-      "authority": "Current server checkId/revision/checkInputDigest/outcome/state.lookup_obligations, not checkpoint completion flags.",
-      "phase": "PLANNING or JUDGING; evidence exists in only one phase location.",
-      "planning": "Only book_origins and exact evidence needed by actual book questions. BOOK_SOURCE and BOOK_COVERAGE stages and server book segments are the restoration source; no whole-book text copy.",
-      "runtime": "Typed global receipts plus question own_receipt_refs, remaining LookupIntent/bool queue, targetContexts/additional_target_context text spans, baseline selections and observed check revisions. No stage payload or saved decision duplication.",
-      "revision": "All affected checks revise atomically. The same-input checkpoint version advances while authenticated receipts remain. Source/report invalidation still deletes all copies. Reclaim after revise-before-checkpoint reconstructs missing obligations from current server checks.",
-      "books": "Finish and publish each book before reading another. Resume successful stages with zero provider calls; unfinished book rules use the existing lease-scoped READ_SOURCE range and exact source verification.",
-      "transport": "1048576-byte publication ceiling (raised from 131072 for MERGED_PLAN, GH349 follow-up) and exact citation validation; no hidden text fields."
+    "indexFill": {
+      "meaning": "Owner decision 2026-11-02: at intake the validation run fills only the gaps of its frozen RAG scope (prior episodes and the setting-book revisions marked currentRevision) before judging; works that never submit a validation are never touched.",
+      "role": "INDEX_EMBEDDING",
+      "purpose": "VALIDATION_INDEX_EMBEDDING",
+      "chargePolicy": "SERVICE_PAID_V1",
+      "optional": "A claim without any INDEX_EMBEDDING model or cap fills nothing; a role that is present but differs from the index or has no positive cap is EMBEDDING_CONFIGURATION_INVALID. The server accepts INDEX_EMBEDDING only together with QUERY_EMBEDDING.",
+      "scope": "Frozen manifest sources with sourceKind EPISODE, plus sourceKind SETTING_BOOK with currentRevision true (the book's current, non-archived revision at intake). Past revisions stay provenance only.",
+      "manifestCurrentRevision": "Every SETTING_BOOK manifest row written at intake carries a boolean currentRevision.",
+      "tables": {
+        "EPISODE": [
+          "retrieval_sources",
+          "retrieval_chunks"
+        ],
+        "SETTING_BOOK": [
+          "retrieval_setting_book_sources",
+          "retrieval_setting_book_chunks"
+        ]
+      },
+      "gapRule": "A source is complete when its header equals the frozen key/version/hash and chunk policy and every chunk is a valid READY vector of the index model/version; complete sources are skipped without reading text. Otherwise the full text is read through READ_SOURCE, cut by cl100k-800-100-boundary-v1, an intact chunk set is kept (a changed source is re-chunked, never mixed) and only chunks that are not READY are embedded.",
+      "batchChunks": 32,
+      "timing": "The fill runs while planning; judging waits for it, then reads readiness once. VECTOR is offered only when every scope source is fully embedded.",
+      "failure": "A provider error, role cap, writer-database error, source change, timeout or unreadable source ends only the fill: judging continues and a question that needs a search ends INCOMPLETE with failure_code VECTOR_INDEX_FILL_FAILED and a failure_cause INDEX_FILL_*. Without a writer connection or role the code stays VECTOR_NOT_READY. Lease loss and input changes still stop the run.",
+      "failureCauses": [
+        "INDEX_FILL_PROVIDER_FAILED",
+        "INDEX_FILL_LIMIT_EXCEEDED",
+        "INDEX_FILL_QUOTA_EXHAUSTED",
+        "INDEX_FILL_LEDGER_FAILED",
+        "INDEX_FILL_SOURCE_CHANGED",
+        "INDEX_FILL_SOURCE_UNREADABLE",
+        "INDEX_FILL_DATABASE_FAILED",
+        "INDEX_FILL_TIMEOUT",
+        "INDEX_FILL_UNEXPECTED"
+      ],
+      "reservation": {
+        "scope": {
+          "contractVersion": 1,
+          "reportId": "00000000-0000-4000-8000-000000000001",
+          "generation": 1,
+          "inputDigest": "95c2c10f544ee6c9c0bc7e5cc38cc9fea3d499ce853debfb76676c7b79099711"
+        },
+        "requestId": "00000000-0000-4000-8000-000000000019",
+        "role": "INDEX_EMBEDDING",
+        "model": "text-embedding-3-small",
+        "reservedTokens": 4096,
+        "queryInput": null,
+        "indexInput": {
+          "contractVersion": 1,
+          "inputDigest": "95c2c10f544ee6c9c0bc7e5cc38cc9fea3d499ce853debfb76676c7b79099711",
+          "manifestHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sourceRef": "R1",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "chunkCount": 2,
+          "chunkDigest": "1e80e4c3810460adcfff4b68b7577b3efec97255c817e55e8f007426648f6c97",
+          "indexModel": "text-embedding-3-small",
+          "indexVersion": "v1",
+          "indexDimensions": 1536
+        }
+      },
+      "chunkDigestRule": "SHA-256 of the batch's chunk_hash values joined by a newline, in chunk order.",
+      "chunkDigestVector": {
+        "chunkHashes": [
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ],
+        "sha256": "1e80e4c3810460adcfff4b68b7577b3efec97255c817e55e8f007426648f6c97"
+      },
+      "reservationRule": "INDEX_EMBEDDING requires indexInput and no queryInput; every other role sends no indexInput. inputDigest/manifestHash/index identity must equal the job, sourceRef must be a frozen EPISODE or currentRevision SETTING_BOOK source and sourceHash its contentHash. Embedding roles are bounded by their per-run maxCalls/maxReservedTokens, not by the branch inputTokens. Service-paid usage holds and charges 0 on the author's account; raw tokens stay in the ledger.",
+      "evidence": "A setting-book chunk becomes an E ref of that SETTING_BOOK source (source_kind SETTING_BOOK, source_context revisionNo/referenceTimeKind/referenceEpisodeNo); the server verifies its quote by slicing the hash-verified full setting-book text like any other citation.",
+      "usageView": "The usage view keeps its v1 keys: an INDEX_EMBEDDING row shows its bound indexInput under queryInput (the immutable call-input column)."
+    },
+    "subjectCatalogueVector": {
+      "meaning": "SUBJECTS groups the frozen baseline entries exactly like the server settings projection: S refs in first-seen subject order, the first entry of a subject supplies domain and name, aliases are the ordered union over that subject's entries. SETTINGS returns the projection rows of the requested subjects whose domain is characters or worldSettings, in B order; worldHistory rows are never returned.",
+      "entries": [
+        {
+          "domain": "characters",
+          "subjectRef": "server-character-a",
+          "state": {
+            "name": "합성 인물",
+            "aliases": [
+              "합성 별칭"
+            ],
+            "slots": {
+              "AGE:age": {
+                "factType": "AGE",
+                "factKey": "age",
+                "factValue": "20"
+              }
+            }
+          }
+        },
+        {
+          "domain": "worldSettings",
+          "state": {
+            "name": "합성 왕국",
+            "targetWorldSettingId": "00000000-0000-4000-8000-000000000013",
+            "propertiesJson": {
+              "기후": "한랭"
+            },
+            "version": 0
+          }
+        },
+        {
+          "domain": "characters",
+          "subjectRef": "server-character-a",
+          "state": {
+            "name": "합성 인물",
+            "aliases": [
+              "합성 별칭",
+              "두 번째 별칭"
+            ]
+          }
+        },
+        {
+          "domain": "worldHistory",
+          "state": {
+            "name": "합성 왕국",
+            "targetWorldSettingId": "00000000-0000-4000-8000-000000000013",
+            "value": "온화",
+            "operation": "UPDATE"
+          }
+        },
+        {
+          "domain": "characters",
+          "subjectRef": "server-character-b",
+          "state": {
+            "name": "다른 인물",
+            "aliases": []
+          }
+        }
+      ],
+      "subjects": [
+        {
+          "subject_ref": "S1",
+          "domain": "characters",
+          "name": "합성 인물",
+          "aliases": [
+            "합성 별칭",
+            "두 번째 별칭"
+          ]
+        },
+        {
+          "subject_ref": "S2",
+          "domain": "worldSettings",
+          "name": "합성 왕국",
+          "aliases": []
+        },
+        {
+          "subject_ref": "S3",
+          "domain": "characters",
+          "name": "다른 인물",
+          "aliases": []
+        }
+      ],
+      "subjectCount": 3,
+      "entryCount": 5,
+      "settingsRequests": [
+        {
+          "subjectRefs": [
+            "S1"
+          ],
+          "entryRefs": [
+            "B1",
+            "B3"
+          ]
+        },
+        {
+          "subjectRefs": [
+            "S2"
+          ],
+          "entryRefs": [
+            "B2"
+          ]
+        },
+        {
+          "subjectRefs": [
+            "S3",
+            "S1"
+          ],
+          "entryRefs": [
+            "B1",
+            "B3",
+            "B5"
+          ]
+        },
+        {
+          "subjectRefs": [
+            "S2",
+            "S3"
+          ],
+          "entryRefs": [
+            "B2",
+            "B5"
+          ]
+        }
+      ],
+      "invalidSettingsRequests": [
+        [],
+        [
+          "S9"
+        ],
+        [
+          "B1"
+        ],
+        [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5",
+          "S6",
+          "S7",
+          "S8",
+          "S9",
+          "S10",
+          "S11",
+          "S12",
+          "S13",
+          "S14",
+          "S15",
+          "S16",
+          "S17",
+          "S18",
+          "S19",
+          "S20",
+          "S21",
+          "S22",
+          "S23",
+          "S24",
+          "S25",
+          "S26",
+          "S27",
+          "S28",
+          "S29",
+          "S30",
+          "S31",
+          "S32",
+          "S33",
+          "S34",
+          "S35",
+          "S36",
+          "S37",
+          "S38",
+          "S39",
+          "S40",
+          "S41",
+          "S42",
+          "S43",
+          "S44",
+          "S45",
+          "S46",
+          "S47",
+          "S48",
+          "S49",
+          "S50",
+          "S51",
+          "S52",
+          "S53",
+          "S54",
+          "S55",
+          "S56",
+          "S57",
+          "S58",
+          "S59",
+          "S60",
+          "S61",
+          "S62",
+          "S63",
+          "S64",
+          "S65",
+          "S66",
+          "S67",
+          "S68",
+          "S69",
+          "S70",
+          "S71",
+          "S72",
+          "S73",
+          "S74",
+          "S75",
+          "S76",
+          "S77",
+          "S78",
+          "S79",
+          "S80",
+          "S81",
+          "S82",
+          "S83",
+          "S84",
+          "S85",
+          "S86",
+          "S87",
+          "S88",
+          "S89",
+          "S90",
+          "S91",
+          "S92",
+          "S93",
+          "S94",
+          "S95",
+          "S96",
+          "S97",
+          "S98",
+          "S99",
+          "S100",
+          "S101"
+        ]
+      ]
+    },
+    "configurationV2": {
+      "meaning": "Job configuration written in one place on the server (queue time and legacy upgrade). The claim carries configurationVersion, models and budgets. PLANNER, JUDGE and TYPO each need {model, reasoningEffort in none|minimal|low|medium|high|xhigh} and roles[R].outputTokens >= 1, otherwise the Worker fails with EXECUTION_BUDGET_CONFIGURATION_INVALID. Per call reservedTokens <= budgets[branch].inputTokens + roles[role].outputTokens.",
+      "configuration": {
+        "configurationVersion": 2,
+        "leaseMillis": 60000,
+        "maxLeaseRecoveries": 2,
+        "budgets": {
+          "setting": {
+            "modelCalls": 200,
+            "lookups": 300,
+            "seconds": 3600.0,
+            "inputTokens": 80000,
+            "segmentChars": 10000,
+            "contextChars": 1000,
+            "searchLimit": 10
+          },
+          "typo": {
+            "modelCalls": 20,
+            "lookups": 20,
+            "seconds": 900.0,
+            "inputTokens": 20000,
+            "segmentChars": 2000,
+            "contextChars": 100,
+            "searchLimit": 10
+          },
+          "roles": {
+            "PLANNER": {
+              "maxCalls": 10,
+              "maxReservedTokens": 800000,
+              "outputTokens": 50000
+            },
+            "JUDGE": {
+              "maxCalls": 200,
+              "maxReservedTokens": 10000000,
+              "outputTokens": 20000
+            },
+            "TYPO": {
+              "maxCalls": 20,
+              "maxReservedTokens": 640000,
+              "outputTokens": 12000
+            },
+            "QUERY_EMBEDDING": {
+              "maxCalls": 250,
+              "maxReservedTokens": 400000
+            },
+            "INDEX_EMBEDDING": {
+              "maxCalls": 400,
+              "maxReservedTokens": 40000000
+            }
+          }
+        },
+        "budgetRevision": 1,
+        "budgetHistory": [],
+        "models": {
+          "PLANNER": {
+            "model": "gpt-6.1-terra",
+            "reasoningEffort": "medium"
+          },
+          "JUDGE": {
+            "model": "gpt-6-luna",
+            "reasoningEffort": "high"
+          },
+          "TYPO": {
+            "model": "gpt-6.1-terra",
+            "reasoningEffort": "low"
+          },
+          "QUERY_EMBEDDING": {
+            "model": "text-embedding-3-small",
+            "version": "v1",
+            "dimensions": 1536
+          },
+          "INDEX_EMBEDDING": {
+            "model": "text-embedding-3-small",
+            "version": "v1",
+            "dimensions": 1536
+          }
+        }
+      },
+      "invalidClaims": [
+        {
+          "meaning": "legacy configuration (no configurationVersion)",
+          "remove": [
+            "configurationVersion"
+          ]
+        },
+        {
+          "meaning": "retired-only roles without JUDGE",
+          "removeRole": "JUDGE"
+        },
+        {
+          "meaning": "missing outputTokens",
+          "removeRoleKey": [
+            "PLANNER",
+            "outputTokens"
+          ]
+        },
+        {
+          "meaning": "unknown reasoning effort",
+          "setModel": [
+            "TYPO",
+            {
+              "model": "gpt-6-luna",
+              "reasoningEffort": "max"
+            }
+          ]
+        }
+      ]
+    },
+    "judgeFlow": {
+      "schemas": {
+        "PLANNER": "validation_planner_v3",
+        "JUDGE_OPEN": "validation_judge_open_v3",
+        "JUDGE_FINAL": "validation_judge_final_v3"
+      },
+      "maxCallsPerQuestion": 3,
+      "concurrency": 4,
+      "targetContextChars": 300,
+      "maxSearchQueries": 3,
+      "searchQueryCodePoints": [
+        1,
+        1000
+      ],
+      "calls": [
+        "1 OPEN: draft, target_context (±300 code points per span), compact current rows of the question's subjects (characters/worldSettings only), receipts L BASELINE/COMPARISON_CONTEXT (evidence_refs = those B refs) and L TARGET_CONTEXT/COMPARISON_CONTEXT. Answer DECIDED or FOLLOW_UP with search_queries (omitted from the schema when search is unavailable) and/or context_requests {start,end} on T1.",
+        "FOLLOW_UP: each query is one VECTOR search {kind: COMPARISON_CONTEXT, operation: VECTOR, purpose: 판정이 요청한 의미 검색, query} with top-k searchLimit; each context request is a TARGET_CONTEXT receipt (no lookup). The next call is FINAL (DECIDED only).",
+        "DECIDED SUSPECTED_CONFLICT before the call limit without a successful CHANGES_EXCEPTIONS VECTOR receipt: one Worker VECTOR search {kind: CHANGES_EXCEPTIONS, operation: VECTOR, purpose: WORKER_CHANGE_SEARCH_PURPOSE, query: check_intent then the question's target sentences in target order (whitespace runs collapsed, duplicates dropped, cut to searchQueryCodePoints)}, then the next call is FINAL."
+      ],
+      "workerChangeSearchPurpose": "Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색",
+      "ragReuse": "Within a run, a VECTOR query is keyed by its stripped text; a reused result gets a new L ref with reused_from and spends no lookup and no embedding call.",
+      "noEpisodes": "No RAG sources (no prior episode and no current setting book): VECTOR succeeds with no evidence, readiness.vector_status=NOT_APPLICABLE, no embedding.",
+      "notReady": "RAG sources (prior episodes, current setting books) but no fully ready index: search is not offered and a needed change search fails the question with VECTOR_NOT_READY, or VECTOR_INDEX_FILL_FAILED when the intake index fill failed.",
+      "removed": [
+        "KEYWORD",
+        "DIRECT",
+        "NEIGHBORS",
+        "BASELINE expansion/history rows",
+        "affected_question_refs re-open",
+        "/revisions",
+        "JUDGING runtime checkpoint"
+      ],
+      "intentOperations": [
+        "BASELINE",
+        "TARGET_CONTEXT",
+        "VECTOR"
+      ],
+      "suspectedRule": "SUSPECTED_CONFLICT needs a receipt in completion.changes_exceptions.receipt_refs with kind CHANGES_EXCEPTIONS and operation VECTOR.",
+      "bundleSettings": "The bundle settings ref set equals the entries of the question's subject_refs whose domain is characters or worldSettings (plus BASELINE obligation refs, always empty in v4).",
+      "bundleKeys": [
+        "question_ref",
+        "check_revision",
+        "question",
+        "target_context",
+        "additional_target_context",
+        "settings",
+        "evidence",
+        "receipts",
+        "source_catalogue",
+        "input_digest"
+      ],
+      "publishedDecision": "ValidationDecision shape with follow_ups [] and affected_question_refs []; basis_quotes holds the checked basis sentences (see basisQuotes) and may be absent in decisions published before it (read as []); headline is the judge-written finding title or null (see headline) and may be absent in decisions published before it (read as null).",
+      "questionFailure": {
+        "decision": "Owner decision 2026-11-02 (③): a question that cannot reach a decision because of a question-level error is published alone as an INCOMPLETE unit and the other questions are still judged.",
+        "questionLevelCodes": [
+          "MODEL_CONTRACT_INVALID*",
+          "MODEL_OUTPUT_TRUNCATED",
+          "MODEL_CALL_FAILED",
+          "REQUIRED_CONTEXT_TOO_LARGE",
+          "INPUT_COUNT_FAILED",
+          "INVALID_DECISION*",
+          "INVALID_FOLLOW_UP*",
+          "INVALID_INSPECTION_CONTRACT",
+          "VECTOR_NOT_READY",
+          "VECTOR_INDEX_PARTIAL",
+          "SEARCH_FAILED"
+        ],
+        "runLevel": "Budget, input/source change, gate stop, quota, lease/HTTP and data access failures still stop dispatching new judges; judges already running finish and publish. A failed INCOMPLETE publication is itself run-level.",
+        "payloadFields": [
+          "action",
+          "outcome",
+          "failure_code",
+          "failure_cause",
+          "failed_call",
+          "target_spans"
+        ],
+        "payloadRules": "action and outcome are INCOMPLETE; failure_code is a safe code ([A-Z][A-Z0-9_]{0,99}); failure_cause is null or a safe code; failed_call is the judge call 0..3 it failed on; target_spans equal the check draft's target_spans as a set and are cited like any span. No other key.",
+        "unit": {
+          "scope": {
+            "contractVersion": 1,
+            "reportId": "00000000-0000-4000-8000-000000000001",
+            "generation": 1,
+            "inputDigest": "95c2c10f544ee6c9c0bc7e5cc38cc9fea3d499ce853debfb76676c7b79099711"
+          },
+          "idempotencyKey": "synthetic-setting-Q1-r1-incomplete",
+          "branch": "SETTING",
+          "ref": "Q1",
+          "checkId": "00000000-0000-4000-8000-000000000008",
+          "expectedCheckRevision": 1,
+          "checkInputDigest": "f50a902cf0e7ab0123c385ade04e858e84015cb2f452a3d4287269298c445cf0",
+          "outcome": "INCOMPLETE",
+          "payload": {
+            "action": "INCOMPLETE",
+            "outcome": "INCOMPLETE",
+            "failure_code": "MODEL_CONTRACT_INVALID",
+            "failure_cause": "MODEL_CONTRACT_JSON_INVALID",
+            "failed_call": 1,
+            "target_spans": [
+              {
+                "source_ref": "T1",
+                "start": 0,
+                "end": 2,
+                "quote": "😀가"
+              }
+            ]
+          },
+          "citations": [
+            {
+              "sourceRef": "T1",
+              "sourceHash": "cbffc647909dfd2bd0ed0cb498a186c1c0036cf0bc0a60cc877534ec8af41f67",
+              "sourceVersion": "synthetic-v1",
+              "start": 0,
+              "end": 2,
+              "quote": "😀가"
+            }
+          ]
+        },
+        "server": "The check keeps outcome INCOMPLETE and is not completed(): no finding is created, the run cannot be COMPLETED, and results show incompleteChecks plus each INCOMPLETE check's failureCode, failureCause and verified targetSpans.",
+        "completion": "The Worker reports Complete.failureCode SETTING_QUESTIONS_INCOMPLETE when the SETTING branch judged every question it could; a run-level SETTING code or a TYPO branch failure code takes precedence. The server derives PARTIAL (FAILED when nothing succeeded) as for any incomplete run.",
+        "retry": "The author's same-input RETRY re-judges only INCOMPLETE and unpublished questions from their first judge call on the same check revision; published decisions are kept. A Worker lease recovery also re-judges them within the same run caps."
+      },
+      "basisQuotes": {
+        "rule": "A DECIDED judge answer lists 0-3 basis_quotes {ref, quote}: ref is an E or B ref the decision relies on, quote an exact sentence or clause copied from that evidence chunk or from a stored setting value (never T1). The Worker keeps, in model order and at most maxItems, each quote that after stripping surrounding whitespace is 1..maxQuoteCodePoints code points and: E - an exact substring of that bundle evidence row's quote (first occurrence; if absent and the quote has LF while the chunk has CRLF, the quote with every LF as CRLF), whose row source_ref is not T1, published as the absolute source span start = row.start + index, end = start + length (code points); B - a substring of one setting value leaf of that bundle setting row, published with source_ref/start/end null. The published quote is the exact source/value substring.",
+        "maxItems": 3,
+        "maxQuoteCodePoints": 300,
+        "answerShape": {
+          "ref": "E1|B1",
+          "quote": "exact sentence or clause"
+        },
+        "publishedShapes": {
+          "evidence": {
+            "ref": "E1",
+            "source_ref": "R1",
+            "start": 0,
+            "end": 0,
+            "quote": "..."
+          },
+          "setting": {
+            "ref": "B1",
+            "source_ref": null,
+            "start": null,
+            "end": null,
+            "quote": "..."
+          }
+        },
+        "settingValueLeaves": {
+          "characters": "state.slots.*.factValue strings",
+          "worldSettings": "every string leaf under state.propertiesJson (dict values and list items, recursively; the value itself if it is a string); keys are not values",
+          "other": "names, aliases, keys and other domains are never quotable"
+        },
+        "duplicates": "the same (ref, published quote) twice keeps the first",
+        "invalid": "dropped, counted as BASIS_QUOTES_DROPPED; never a question failure",
+        "followUp": "basis_quotes of a FOLLOW_UP answer are ignored (FOLLOW_UP_DECISION_FIELDS_IGNORED)",
+        "citation": "an E quote is also sent as a citation (payloadCitationPaths.basisQuotes); a B quote is not",
+        "vectors": [
+          {
+            "name": "evidenceExact",
+            "evidence": {
+              "ref": "E1",
+              "source_ref": "R1",
+              "source_kind": "EPISODE",
+              "start": 120,
+              "end": 165,
+              "quote": "민수는 왼손을 잃었다. 그 뒤로 검은 오른손으로만 쥐었다. 성문은 낮에만 열린다.",
+              "method": "VECTOR",
+              "source_context": {
+                "episodeNo": 1
+              }
+            },
+            "setting": null,
+            "answer": {
+              "ref": "E1",
+              "quote": "그 뒤로 검은 오른손으로만 쥐었다."
+            },
+            "published": {
+              "ref": "E1",
+              "source_ref": "R1",
+              "start": 133,
+              "end": 152,
+              "quote": "그 뒤로 검은 오른손으로만 쥐었다."
+            }
+          },
+          {
+            "name": "evidenceWhitespaceTrimmed",
+            "evidence": {
+              "ref": "E1",
+              "source_ref": "R1",
+              "source_kind": "EPISODE",
+              "start": 120,
+              "end": 165,
+              "quote": "민수는 왼손을 잃었다. 그 뒤로 검은 오른손으로만 쥐었다. 성문은 낮에만 열린다.",
+              "method": "VECTOR",
+              "source_context": {
+                "episodeNo": 1
+              }
+            },
+            "setting": null,
+            "answer": {
+              "ref": "E1",
+              "quote": "  성문은 낮에만 열린다.\n"
+            },
+            "published": {
+              "ref": "E1",
+              "source_ref": "R1",
+              "start": 153,
+              "end": 165,
+              "quote": "성문은 낮에만 열린다."
+            }
+          },
+          {
+            "name": "evidenceCrlfRetry",
+            "evidence": {
+              "ref": "E2",
+              "source_ref": "R2",
+              "source_kind": "SETTING_BOOK",
+              "start": 40,
+              "end": 62,
+              "quote": "첫 줄이다.\r\n둘째 줄이다.\r\n셋째 줄.",
+              "method": "VECTOR",
+              "source_context": {
+                "revisionNo": 2,
+                "referenceTimeKind": "WORK_START"
+              }
+            },
+            "setting": null,
+            "answer": {
+              "ref": "E2",
+              "quote": "첫 줄이다.\n둘째 줄이다."
+            },
+            "published": {
+              "ref": "E2",
+              "source_ref": "R2",
+              "start": 40,
+              "end": 55,
+              "quote": "첫 줄이다.\r\n둘째 줄이다."
+            }
+          },
+          {
+            "name": "evidenceNotFound",
+            "evidence": {
+              "ref": "E1",
+              "source_ref": "R1",
+              "source_kind": "EPISODE",
+              "start": 120,
+              "end": 165,
+              "quote": "민수는 왼손을 잃었다. 그 뒤로 검은 오른손으로만 쥐었다. 성문은 낮에만 열린다.",
+              "method": "VECTOR",
+              "source_context": {
+                "episodeNo": 1
+              }
+            },
+            "setting": null,
+            "answer": {
+              "ref": "E1",
+              "quote": "민수는 두 손으로 검을 쥐었다."
+            },
+            "published": null
+          },
+          {
+            "name": "evidenceFromTargetIsNotABasis",
+            "evidence": {
+              "ref": "E3",
+              "source_ref": "T1",
+              "source_kind": "EPISODE",
+              "start": 0,
+              "end": 11,
+              "quote": "이번 원고 문장이다.",
+              "method": "VECTOR",
+              "source_context": {
+                "episodeNo": 1
+              }
+            },
+            "setting": null,
+            "answer": {
+              "ref": "E3",
+              "quote": "이번 원고 문장이다."
+            },
+            "published": null
+          },
+          {
+            "name": "settingCharacterFactValue",
+            "evidence": null,
+            "setting": {
+              "entry_ref": "B1",
+              "subject_ref": "S1",
+              "domain": "characters",
+              "name": "민수",
+              "aliases": [],
+              "state": {
+                "name": "민수",
+                "slots": {
+                  "STATUS:손": {
+                    "factKey": "손",
+                    "factType": "STATUS",
+                    "factValue": "왼손 상실"
+                  }
+                }
+              }
+            },
+            "answer": {
+              "ref": "B1",
+              "quote": "왼손 상실"
+            },
+            "published": {
+              "ref": "B1",
+              "source_ref": null,
+              "start": null,
+              "end": null,
+              "quote": "왼손 상실"
+            }
+          },
+          {
+            "name": "settingWorldNestedLeaf",
+            "evidence": null,
+            "setting": {
+              "entry_ref": "B2",
+              "subject_ref": "S2",
+              "domain": "worldSettings",
+              "name": "성문",
+              "aliases": [],
+              "state": {
+                "name": "성문",
+                "propertiesJson": {
+                  "개방": {
+                    "시간": "낮에만 열린다",
+                    "예외": [
+                      "축제 때는 밤에도 열린다"
+                    ]
+                  }
+                }
+              }
+            },
+            "answer": {
+              "ref": "B2",
+              "quote": "축제 때는 밤에도"
+            },
+            "published": {
+              "ref": "B2",
+              "source_ref": null,
+              "start": null,
+              "end": null,
+              "quote": "축제 때는 밤에도"
+            }
+          },
+          {
+            "name": "settingKeyIsNotAValue",
+            "evidence": null,
+            "setting": {
+              "entry_ref": "B2",
+              "subject_ref": "S2",
+              "domain": "worldSettings",
+              "name": "성문",
+              "aliases": [],
+              "state": {
+                "name": "성문",
+                "propertiesJson": {
+                  "개방": {
+                    "시간": "낮에만 열린다",
+                    "예외": [
+                      "축제 때는 밤에도 열린다"
+                    ]
+                  }
+                }
+              }
+            },
+            "answer": {
+              "ref": "B2",
+              "quote": "개방"
+            },
+            "published": null
+          },
+          {
+            "name": "settingNameIsNotAValue",
+            "evidence": null,
+            "setting": {
+              "entry_ref": "B1",
+              "subject_ref": "S1",
+              "domain": "characters",
+              "name": "민수",
+              "aliases": [],
+              "state": {
+                "name": "민수",
+                "slots": {
+                  "STATUS:손": {
+                    "factKey": "손",
+                    "factType": "STATUS",
+                    "factValue": "왼손 상실"
+                  }
+                }
+              }
+            },
+            "answer": {
+              "ref": "B1",
+              "quote": "민수"
+            },
+            "published": null
+          },
+          {
+            "name": "settingNotFound",
+            "evidence": null,
+            "setting": {
+              "entry_ref": "B1",
+              "subject_ref": "S1",
+              "domain": "characters",
+              "name": "민수",
+              "aliases": [],
+              "state": {
+                "name": "민수",
+                "slots": {
+                  "STATUS:손": {
+                    "factKey": "손",
+                    "factType": "STATUS",
+                    "factValue": "왼손 상실"
+                  }
+                }
+              }
+            },
+            "answer": {
+              "ref": "B1",
+              "quote": "오른손 상실"
+            },
+            "published": null
+          }
+        ]
+      },
+      "authorText": {
+        "fields": [
+          "headline",
+          "reason",
+          "impact_reason",
+          "disagreements[].reason"
+        ],
+        "untouched": "completion.*.reason stays an internal record and may keep refs",
+        "tokenPattern": "(?<![A-Za-z0-9])(T1|TSEG[1-9]\\d*|[EBRSLQ][1-9]\\d*)(?![0-9])",
+        "labels": {
+          "T1": "이번 원고",
+          "TSEG#": "이번 원고",
+          "E#": "{episodeNo}화 for EPISODE evidence (source_context.episodeNo), 설정집 for SETTING_BOOK",
+          "R#": "the same via source_catalogue",
+          "B#": "저장된 설정 (the question's bundle setting rows)",
+          "S#": "the SUBJECTS catalogue name (대상 when the row has no name or no catalogue was given)"
+        },
+        "particles": "after a replaced token 은/는, 이/가 (only when not followed by a Hangul syllable), 을/를, 과/와 and 으로/로 (로 after ㄹ) follow the label's final consonant; a label not ending in Hangul keeps the written particle",
+        "sentenceSplit": "after . ! ? … followed by whitespace",
+        "dropSentenceWhen": [
+          "an unknown ref token remains (L#, Q#, or an E/B/R/S ref with no label)",
+          "an internal word appears: limited, receipt, receipts, readiness, vector, baseline, target_context, keyword, evidence_refs, receipt_refs, source_ref, evidence_bundle, rag (ASCII, case-insensitive, not inside a longer ASCII word) or 영수증"
+        ],
+        "unchanged": "text with no ref token and no internal word is kept byte for byte",
+        "fallbacks": {
+          "reason": {
+            "CONFLICT": "저장된 설정과 이번 원고의 내용이 서로 맞지 않아요.",
+            "SUSPECTED_CONFLICT": "저장된 설정과 달라 보이지만 그 사이의 변화나 예외를 찾지 못했어요.",
+            "NEEDS_CONTEXT": "대상·시점·해석이 분명하지 않아 비교 판단이 어려워요.",
+            "NO_CONFLICT": "저장된 설정과 이번 원고가 서로 맞아요."
+          },
+          "impact_reason": {
+            "SEVERE": "장면의 행동이나 사건 성립에 직접 영향을 줘요.",
+            "CAUTION": "배경이나 관계 이해에 영향을 줄 수 있어요.",
+            "REFERENCE": "부수 묘사라 영향이 작아요."
+          },
+          "disagreement": "저장된 설정과 이전 원고의 내용이 서로 달라요."
+        },
+        "counter": "AUTHOR_TEXT_SANITIZED",
+        "examples": {
+          "labels": {
+            "T1": "이번 원고",
+            "E1": "18화",
+            "E2": "설정집",
+            "B1": "저장된 설정",
+            "S1": "민수"
+          },
+          "cases": [
+            {
+              "text": "T1의 장면은 E1과 다르다.",
+              "expected": "이번 원고의 장면은 18화와 다르다."
+            },
+            {
+              "text": "S1은 B1을 따르지 않는다.",
+              "expected": "민수는 저장된 설정을 따르지 않는다."
+            },
+            {
+              "text": "검색 영수증은 limited로 표시되어 있다. E2에는 이 규칙이 없다.",
+              "expected": "설정집에는 이 규칙이 없다."
+            },
+            {
+              "text": "L3 기록만 확인했다.",
+              "expected": ""
+            },
+            {
+              "text": "저장된 설정과 이번 원고가 서로 맞아요.",
+              "expected": "저장된 설정과 이번 원고가 서로 맞아요."
+            }
+          ]
+        },
+        "headlineFallback": "headline has no fixed fallback: nothing left after sanitizing publishes null and the author screen builds its own title"
+      },
+      "headline": {
+        "rule": "Every DECIDED judge answer carries headline, the author-facing title of the finding written by the judge in plain Korean (about 40 characters, no refs or internal words). CONFLICT: '{subjects}의 {item}이 기존 설정과 달라요' ('…N화와 달라요' or '…설정집과 달라요' when the contradicting basis is an earlier episode or a setting book). SUSPECTED_CONFLICT: the same with '…다를 수 있어요'. NEEDS_CONTEXT: what is unclear, e.g. ''그'가 누구인지 확인이 필요해요'. The subjects are the ones whose stored values or earlier sentences actually conflict, never the narrator or a mere mention. NO_CONFLICT and FOLLOW_UP answers have headline null.",
+        "reasonRule": "reason of CONFLICT/SUSPECTED_CONFLICT is two plain sentences, cause then result, about 120 characters: '기존 설정은(or N화에서는 / 설정집은) {subjects}의 {item}을 {basis value}(이)라고 해요(명시하고 있어요). 그런데 {target}에서는 {target value}(이)라고 해요.' with values paraphrased briefly. {target} is '{target_episode_no}화' from the judge input, or '이번 원고' when it is null. NEEDS_CONTEXT/NO_CONFLICT keep one plain sentence of about 80 characters.",
+        "judgeInput": "The model payload (not the evidence bundle, whose keys and input_digest are unchanged) adds target_episode_no: the target episode number from INPUT target.episodeNo, or null.",
+        "answerShape": "string or null; required (nullable) by the strict OPEN and FINAL JUDGE schemas",
+        "maxCodePoints": 80,
+        "worker": [
+          "FOLLOW_UP: ignored like the other decision fields (FOLLOW_UP_DECISION_FIELDS_IGNORED)",
+          "NO_CONFLICT: a non-null headline is cleared to null (NO_CONFLICT_HEADLINE_CLEARED)",
+          "surrounding whitespace is stripped; blank becomes null",
+          "the authorText sanitizer applies as for reason (AUTHOR_TEXT_SANITIZED); nothing left becomes null (HEADLINE_DROPPED)",
+          "more than maxCodePoints code points after sanitizing becomes null (HEADLINE_DROPPED)",
+          "CONFLICT/SUSPECTED_CONFLICT/NEEDS_CONTEXT published without a headline is counted as HEADLINE_MISSING",
+          "the judge-rule guard (clear_unquoted_finding) and the DB_RAW_DISAGREEMENT NEEDS_CONTEXT rewrite publish null"
+        ],
+        "server": "Accepted when absent or null. Otherwise it must be a string, non-blank after strip, with at most maxCodePoints code points; a NO_CONFLICT decision with a non-null headline is VALIDATION_RESULT_INVALID. Exposed as headline on the finding detail and the list summary: null for decisions without it and when the stored text still looks like an internal ref.",
+        "vectors": [
+          {
+            "name": "conflict",
+            "outcome": "CONFLICT",
+            "headline": "민수의 왼손 상태가 기존 설정과 달라요",
+            "valid": true
+          },
+          {
+            "name": "suspectedEpisode",
+            "outcome": "SUSPECTED_CONFLICT",
+            "headline": "민수의 왼손 상태가 1화와 다를 수 있어요",
+            "valid": true
+          },
+          {
+            "name": "needsContext",
+            "outcome": "NEEDS_CONTEXT",
+            "headline": "‘그’가 누구인지 확인이 필요해요",
+            "valid": true
+          },
+          {
+            "name": "findingNull",
+            "outcome": "CONFLICT",
+            "headline": null,
+            "valid": true
+          },
+          {
+            "name": "findingAbsent",
+            "outcome": "CONFLICT",
+            "omit": true,
+            "valid": true
+          },
+          {
+            "name": "noConflictNull",
+            "outcome": "NO_CONFLICT",
+            "headline": null,
+            "valid": true
+          },
+          {
+            "name": "noConflictAbsent",
+            "outcome": "NO_CONFLICT",
+            "omit": true,
+            "valid": true
+          },
+          {
+            "name": "astralAtLimit",
+            "outcome": "CONFLICT",
+            "headline": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+            "valid": true
+          },
+          {
+            "name": "noConflictText",
+            "outcome": "NO_CONFLICT",
+            "headline": "민수의 왼손 상태가 기존 설정과 같아요",
+            "valid": false
+          },
+          {
+            "name": "blank",
+            "outcome": "CONFLICT",
+            "headline": "   ",
+            "valid": false
+          },
+          {
+            "name": "tooLong",
+            "outcome": "CONFLICT",
+            "headline": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+            "valid": false
+          },
+          {
+            "name": "notText",
+            "outcome": "CONFLICT",
+            "headline": 7,
+            "valid": false
+          }
+        ],
+        "workerCases": [
+          {
+            "name": "stripped",
+            "outcome": "CONFLICT",
+            "answer": "  민수의 왼손 상태가 기존 설정과 달라요 ",
+            "published": "민수의 왼손 상태가 기존 설정과 달라요"
+          },
+          {
+            "name": "sanitized",
+            "outcome": "CONFLICT",
+            "answer": "S1의 왼손 상태가 E1과 달라요",
+            "published": "민수의 왼손 상태가 18화와 달라요"
+          },
+          {
+            "name": "internalOnly",
+            "outcome": "SUSPECTED_CONFLICT",
+            "answer": "L3 영수증 확인 필요",
+            "published": null
+          },
+          {
+            "name": "blank",
+            "outcome": "NEEDS_CONTEXT",
+            "answer": "  ",
+            "published": null
+          },
+          {
+            "name": "missing",
+            "outcome": "CONFLICT",
+            "answer": null,
+            "published": null
+          },
+          {
+            "name": "tooLong",
+            "outcome": "CONFLICT",
+            "answer": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+            "published": null
+          },
+          {
+            "name": "noConflict",
+            "outcome": "NO_CONFLICT",
+            "answer": "민수의 왼손 상태가 기존 설정과 같아요",
+            "published": null
+          }
+        ],
+        "workerLabels": {
+          "T1": "이번 원고",
+          "E1": "18화",
+          "B1": "저장된 설정",
+          "S1": "민수"
+        }
+      }
+    },
+    "workerUnusedRoutes": {
+      "routes": [
+        "revisions",
+        "checkpoint"
+      ],
+      "meaning": "Grid v4 Workers never revise checks or save a runtime checkpoint; the examples stay valid server input."
     }
   }
 }

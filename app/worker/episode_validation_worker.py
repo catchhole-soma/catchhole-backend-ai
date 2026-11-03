@@ -13,8 +13,12 @@ from app.validation.execution import (
     ValidationLedger,
     ValidationRoleClients,
     claim_budgets,
+    claim_roles,
     metered_embedding,
+    metered_index_embedding,
 )
+from app.validation.failures import QUESTIONS_INCOMPLETE_CODE
+from app.validation.index_fill import ValidationIndexFill
 from app.validation.search import FrozenRetrievalSearchService
 from app.validation.service import SettingValidationService
 from app.validation.typo import check_typos
@@ -34,7 +38,10 @@ def reported_failure_code(result):
 
 class EpisodeValidationWorker:
     def __init__(self, client, raw_model, *, enabled=False, worker_id="validation-worker",
-                 readonly_sessions=None, embedding_client=None, index_spec=None, llm_request_semaphore=None):
+                 readonly_sessions=None, embedding_client=None, index_spec=None, llm_request_semaphore=None,
+                 index_sessions=None):
+        """`index_sessions` is the optional writer session factory that fills the frozen RAG gaps at intake
+        (retrieval index tables only); without it, or without a claimed INDEX_EMBEDDING role, nothing is filled."""
         if not enabled:
             raise ValueError("Validation runtime is disabled; explicit enable and server budgets are required.")
         if type(raw_model) is not OpenAIResponsesClient:
@@ -43,6 +50,8 @@ class EpisodeValidationWorker:
         self.spec = index_spec or IndexSpec()
         self.search = FrozenRetrievalSearchService(readonly_sessions, self.spec) if readonly_sessions else None
         self.embedding = embedding_client
+        # Filling needs the read-only search to judge readiness afterwards and the shared embedding transport.
+        self.index_sessions = index_sessions if readonly_sessions and embedding_client else None
         # One process-wide provider cap shared by every concurrent job; None keeps calls uncapped.
         self.llm_request_semaphore = llm_request_semaphore
         self._active = set()
@@ -74,12 +83,20 @@ class EpisodeValidationWorker:
     async def _process_claimed(self, payload):
         claim = payload if isinstance(payload, ValidationClaim) else ValidationClaim.from_wire(payload)
         limits = claim_budgets(claim)
+        runtimes = claim_roles(claim)
         gate = ExecutionGate()
         ledger = ValidationLedger(self.client, claim, gate)
         self._ledgers.add(ledger)
-        roles = ValidationRoleClients(self.raw_model, ledger, claim, request_semaphore=self.llm_request_semaphore)
+        roles = ValidationRoleClients(self.raw_model, ledger, claim, runtimes,
+                                      request_semaphore=self.llm_request_semaphore)
         embedding = metered_embedding(self.embedding, ledger, claim, self.spec,
                                       request_semaphore=self.llm_request_semaphore)
+        index_fill = None
+        if self.index_sessions is not None and embedding is not None:
+            index_embedding = metered_index_embedding(self.embedding, ledger, claim, self.spec,
+                                                      request_semaphore=self.llm_request_semaphore)
+            if index_embedding is not None:
+                index_fill = ValidationIndexFill(self.index_sessions, index_embedding, self.spec, gate=gate)
         view = await self.client.load_checkpoint(claim, gate)
         setting = ValidationCheckpoint(self.client, claim, view, gate)
         typo = ValidationCheckpoint(self.client, claim, view, gate, "TYPO")
@@ -89,15 +106,15 @@ class EpisodeValidationWorker:
             job_id=claim.job_id, lease_token=claim.lease_token, manifest_hash=wire["manifestHash"],
             report_revision=wire["reportRevision"], target_revision=wire["targetRevision"],
             generation=claim.scope.generation, input_digest=claim.scope.inputDigest)
-        # Independent clients keep page accumulation separate; the HTTP pool and lease are shared.
+        # Independent clients per branch; the HTTP pool and lease are shared.
         def data():
             return ValidationDataClient(self.client.base_url, self.client.key, context, self.client.http)
         children = {
-            asyncio.create_task(SettingValidationService(data(), roles, limits["SETTING"],
-                search=self.search, embedding_client=embedding, checkpoint=setting).inspect(),
+            asyncio.create_task(SettingValidationService(data(), roles, limits["SETTING"], runtimes,
+                search=self.search, embedding_client=embedding, checkpoint=setting, index_fill=index_fill).inspect(),
                 name="validation-setting"),
             asyncio.create_task(check_typos(data(), roles.for_validation_role("TYPO"),
-                budget=limits["TYPO"], checkpoint=typo), name="validation-typo"),
+                budget=limits["TYPO"], role=runtimes["TYPO"], checkpoint=typo), name="validation-typo"),
         }
         self._active.update(children)
         heartbeat = asyncio.create_task(self._heartbeat(claim, gate), name="validation-heartbeat")
@@ -115,7 +132,10 @@ class EpisodeValidationWorker:
                     if result.failure_code in _SHARED_FAILURES:
                         gate.stop()
                         raise IncompleteInspection(result.failure_code)
-                    failure = failure or reported_failure_code(result)
+                    code = reported_failure_code(result)
+                    # A branch that stopped (or a typo failure) outranks a setting run that only left questions INCOMPLETE.
+                    if failure is None or failure == QUESTIONS_INCOMPLETE_CODE and code is not None:
+                        failure = code if code is not None else failure
             gate.require()
             return await self.client.leased(claim, "complete", gate=gate,
                 idempotencyKey=payload_key("complete", {"generation": claim.scope.generation,

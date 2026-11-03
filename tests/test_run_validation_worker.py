@@ -692,3 +692,48 @@ def test_readonly_engine_bounds_match_the_service_readiness_timeout():
         assert (engine.pool.size(), engine.pool._max_overflow, engine.pool._timeout) == (2, 0, 5)
     finally:
         engine.dispose()
+
+
+INDEX_ENV = "SYNTHETIC_VALIDATION_INDEX_URL"
+
+
+def test_index_url_adds_a_bounded_writer_pool_for_the_intake_fill(monkeypatch, caplog):
+    """Intake index fill (2026-11-02): a separate explicit writer pool; retrieval tables only, bounded waits."""
+    engines = []
+    seen = _captured_worker(monkeypatch, engines=engines)
+    monkeypatch.setenv(READONLY_ENV, "postgresql+psycopg://readonly:synthetic@db.invalid/catchhole")
+    monkeypatch.setenv(INDEX_ENV, "postgresql+psycopg://writer:synthetic@db.invalid/catchhole")
+    caplog.set_level(logging.INFO, logger=RUNNER_LOGGER)
+    asyncio.run(run(_cli("--readonly-url-env", READONLY_ENV, "--query-embedding", "--index-version", "v1",
+                         "--index-url-env", INDEX_ENV, "--concurrency", "2")))
+
+    reader, writer = engines
+    assert writer.url.startswith("postgresql+psycopg://writer:") and writer.disposed and reader.disposed
+    assert writer.options == {
+        "pool_size": 2, "max_overflow": 0, "pool_timeout": 5,
+        "connect_args": {"connect_timeout": 5,
+                         "options": "-c lock_timeout=5000 -c statement_timeout=30000"
+                                    " -c idle_in_transaction_session_timeout=10000"},
+    }
+    assert "default_transaction_read_only" not in writer.options["connect_args"]["options"]
+    assert seen["worker"].index_sessions is not None
+    assert "index fill disabled" not in caplog.text and "synthetic@" not in caplog.text
+
+
+@pytest.mark.parametrize("readonly", [True, False])
+def test_empty_index_url_or_missing_search_never_fills(monkeypatch, caplog, readonly):
+    engines = []
+    seen = _captured_worker(monkeypatch, engines=engines)
+    if readonly:
+        monkeypatch.setenv(READONLY_ENV, "postgresql+psycopg://readonly:synthetic@db.invalid/catchhole")
+        monkeypatch.setenv(INDEX_ENV, "  ")
+    else:
+        monkeypatch.delenv(READONLY_ENV, raising=False)
+        monkeypatch.setenv(INDEX_ENV, "postgresql+psycopg://writer:synthetic@db.invalid/catchhole")
+    caplog.set_level(logging.INFO, logger=RUNNER_LOGGER)
+    asyncio.run(run(_cli("--readonly-url-env", READONLY_ENV, "--query-embedding", "--index-url-env", INDEX_ENV)))
+
+    assert seen["worker"].index_sessions is None and len(engines) == int(readonly)
+    expected = (f"index fill disabled: {INDEX_ENV} is empty" if readonly
+                else "index fill disabled: no frozen retrieval sessions or query embedding")
+    assert [row.getMessage() for row in caplog.records if row.name == RUNNER_LOGGER].count(expected) == 1

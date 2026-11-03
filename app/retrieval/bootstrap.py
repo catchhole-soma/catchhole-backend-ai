@@ -39,6 +39,9 @@ RELATIONS = (
     "validation_reports",
     "validation_jobs",
     "validation_baseline_sources",
+    # Intake index fill (2026-11-02): the frozen scope also ranks the current setting-book revisions (V114).
+    "retrieval_setting_book_chunks",
+    "retrieval_setting_book_sources",
 )
 ADMIN_HEADROOM = 5
 

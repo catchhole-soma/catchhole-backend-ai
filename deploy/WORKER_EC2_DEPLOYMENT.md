@@ -299,6 +299,17 @@ sudo -u ubuntu docker compose --env-file worker.env -f compose.worker.prod.yml l
 
 끄려면 `VALIDATION_READONLY_DATABASE_URL`을 다시 비우고 5단계로 검수 Worker만 재기동한다. 자동 배포의 `manage-ai-runtime.py`는 URL이 비어 있으면 아무것도 검사하지 않고, 값이 있으면 챗봇의 `CHAT_RETRIEVAL_DATABASE_URL`과 같은지(`INCONSISTENT_VALIDATION_READONLY_DATABASE_URL`), `--index-version`이 `CHAT_RETRIEVAL_EMBEDDING_VERSION`과 같은지(`INCONSISTENT_VALIDATION_WORKER_INDEX_VERSION`) 확인한 뒤 위 연결 수를 예산에 넣는다. 결과 JSON의 `validationRetrieval`로 켜짐 여부를 확인한다.
 
+### 접수 때 색인 채우기 (2026-11-02, 선택)
+
+검수 Job이 판정 전에 그 작품의 빈 색인(앞 회차·현재 설정집)만 채우게 하려면 위 읽기 전용 URL을 켠 상태에서 다음을 추가한다.
+
+1. API 검수 예산 JSON(`SPRING_APPLICATION_JSON`)의 `roles`에 `INDEX_EMBEDDING`(`max-calls`, `max-reserved-tokens`)을 넣는다. 운영 예시는 Backend `deploy/validation-execution.prod.example.json`이다. 비용은 서비스 부담(작가 차감 0)으로 원장에 남는다.
+2. 읽기 전용 계정에 설정집 색인 표 SELECT를 준다: 같은 이미지로 `python -m app.retrieval.bootstrap prepare`를 다시 실행하면 관리 계정에 `retrieval_setting_book_sources`·`retrieval_setting_book_chunks` SELECT를 멱등 부여한다.
+3. `worker.env`의 `VALIDATION_INDEX_DATABASE_URL`에 Worker 공통 `DATABASE_URL`과 같은 값을 넣고 검수 Worker만 재기동한다. 프로세스마다 연결 `VALIDATION_WORKER_CONCURRENCY`개가 더 든다.
+4. Job 로그에 `validation index fill status=NOT_NEEDED|COMPLETED|FAILED ...`가 남는다. `FAILED`면 그 Job은 계속 판정하고 검색이 필요한 질문만 `VECTOR_INDEX_FILL_FAILED`로 남는다(원인 `INDEX_FILL_*`).
+
+`manage-ai-runtime.py`는 값이 있으면 읽기 전용 URL이 켜져 있는지, 값이 `DATABASE_URL`과 같은지, Compose가 `--index-url-env VALIDATION_INDEX_DATABASE_URL`을 넘기는지(`INCONSISTENT_VALIDATION_INDEX_DATABASE_URL`) 확인하고 쓰기 연결 수를 예산에 더한다. 결과 JSON의 `validationIndexFill`로 확인한다.
+
 ## 데이터베이스 연결 수 예산
 
 | 실행 주체 | 프로세스 수 | 프로세스당 최대 연결 수 | 합계 |

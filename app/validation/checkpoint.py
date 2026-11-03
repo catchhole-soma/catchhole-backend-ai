@@ -1,44 +1,13 @@
-"""Typed semantic state plus durable Java check identities; never a provider response cache."""
+"""Durable Java stage/check identities; never a provider response cache or a runtime state blob.
+
+Grid v4 keeps no JUDGING runtime checkpoint: published PLANNER stages, MERGED_PLAN checks and decided units
+are the resume points, and an unpublished question restarts at its first judge call.
+"""
 import json
 from copy import deepcopy
 from hashlib import sha256
-from typing import Literal
 
-from pydantic import Field
-
-from app.validation.contracts import Contract, IncompleteInspection, LookupIntent
-
-
-class QuestionRuntime(Contract):
-    evidence: list[dict]
-    receipts: list[dict]
-    own_receipts: dict[str, list[dict]]
-    pending: dict[str, list[tuple[LookupIntent, bool]]]
-    target_context_reads: dict[str, list[dict]]
-    baseline_selections: dict[str, list[str]]
-    revisions: dict[str, int]
-
-
-class SemanticState(Contract):
-    checkpointVersion: int = Field(default=1, ge=1, le=1, strict=True)
-    inputDigest: str = Field(pattern=r"^[a-f0-9]{64}$")
-    phase: Literal["PLANNING", "JUDGING"]
-    planning: dict = Field(default_factory=dict)
-    runtime: QuestionRuntime | None = None
-
-
-def lookup_operations(*payloads):
-    """Lookup operations named anywhere in saved semantic payloads (plans, obligations, receipts, queue)."""
-    found, stack = set(), list(payloads)
-    while stack:
-        node = stack.pop()
-        if isinstance(node, dict):
-            if isinstance(node.get("operation"), str):
-                found.add(node["operation"])
-            stack.extend(node.values())
-        elif isinstance(node, list):
-            stack.extend(node)
-    return found
+from app.validation.contracts import IncompleteInspection
 
 
 def payload_key(kind, payload):
@@ -55,8 +24,6 @@ class ValidationCheckpoint:
         self.stages = {(row["stage"], row["ref"]): row["payload"] for row in view["stages"]
                        if row["successful"] and row["branch"] == branch}
         self.checks = {row["localRef"]: self._check(row) for row in view["checks"]}
-        saved = view["branches"].get(branch, {})
-        self.version, self.saved = saved.get("version", 0), saved.get("payload")
         self.sources = {}
         self.grid = view.get("requiredGrid") or {}
 
@@ -74,6 +41,7 @@ class ValidationCheckpoint:
 
     def citations(self, payload):
         found = {}
+
         def visit(node, key=None):
             if isinstance(node, list):
                 for value in node:
@@ -105,18 +73,12 @@ class ValidationCheckpoint:
     def stage(self, stage, ref):
         return deepcopy(self.stages.get((stage, ref)))
 
-    def planned_operations(self):
-        """GH344: what an earlier attempt already saved; a resumed VECTOR plan or receipt stays valid."""
-        return lookup_operations(list(self.stages.values()), list(self.checks.values()), self.saved)
-
     async def save_stage(self, stage, ref, payload):
         await self._publish("plans", payload, stage=stage, ref=ref, failureCode=None)
         self.stages[stage, ref] = deepcopy(payload)
-        if stage == "BOOK_SOURCE":
-            self.grid = (await self.client.load_checkpoint(self.claim, self.gate))["requiredGrid"]
 
     async def setting_grid(self):
-        """The server-prepared SETTING grid (GH349 `segmentSubjects`), or None if the server has none yet.
+        """The server-prepared SETTING grid, or None if the server has none yet.
 
         The first semantic publication creates it, so a missing branch is reloaded once from Java.
         """
@@ -124,65 +86,15 @@ class ValidationCheckpoint:
             self.grid = (await self.client.load_checkpoint(self.claim, self.gate)).get("requiredGrid") or {}
         return deepcopy(self.grid.get(self.branch))
 
-    def book_segments(self, source_ref):
-        book = next(row for row in self.grid["SETTING"]["books"] if row["sourceRef"] == source_ref)
-        if "segments" not in book:
-            raise IncompleteInspection("BOOK_NOT_COMPLETE")
-        return book["segments"]
-
     async def merge(self, questions):
         if self.stage("MERGED_PLAN", "PLAN") is None:
             payload = {"questions": [{"localRef": q.ref, "originalRefs": list(q.original_refs),
-                        "state": {"draft": q.draft.model_dump(),
-                                  "lookup_obligations": [i.model_dump() for i in q.draft.lookup_intents]}}
+                        "state": {"draft": q.draft.model_dump(), "lookup_obligations": []}}
                         for q in questions]}
             response = await self._publish("plans", payload, stage="MERGED_PLAN", ref="PLAN", failureCode=None)
             self.stages["MERGED_PLAN", "PLAN"] = payload
             self.checks = {row["localRef"]: self._check(row) for row in response["checks"]}
         return self.checks
-
-    def load_state(self):
-        if not self.saved:
-            return None
-        wire = deepcopy(self.saved)
-        for data in (wire.get("runtime"),):
-            if data is not None:
-                data["target_context_reads"] = {row["question_ref"]: row["additional_target_context"]
-                                                for row in data.pop("targetContexts")}
-                receipts = {row["ref"]: row for row in data["receipts"]}
-                data["own_receipts"] = {ref: [receipts[key] for key in refs]
-                                         for ref, refs in data.pop("own_receipt_refs").items()}
-                wire["planning"]["evidence"] = deepcopy(data["evidence"])
-        state = SemanticState.model_validate(wire)
-        if state.inputDigest != self.claim.scope.inputDigest:
-            raise IncompleteInspection("CHECKPOINT_SCOPE_CHANGED")
-        result = state.model_dump(exclude={"checkpointVersion", "inputDigest"})
-        planning = result["planning"]
-        evidence = {row["ref"]: row for row in planning.get("evidence", [])}
-        for rows in planning.get("book_rules", {}).values():
-            for row in rows:
-                row.update(evidence[row["evidence_ref"]] | {"ref": row["ref"]})
-        return result
-
-    async def save_state(self, state):
-        value = deepcopy(state)
-        if value["phase"] == "PLANNING":
-            value = {"phase": "PLANNING", "planning": {k: v for k, v in value.items() if k != "phase"}}
-        value.update(checkpointVersion=1, inputDigest=self.claim.scope.inputDigest)
-        value = SemanticState.model_validate(value).model_dump(mode="json")
-        for rows in value["planning"].get("book_rules", {}).values():
-            for row in rows:
-                row.pop("quote", None)
-        if value["runtime"] is not None:
-            runtime = value["runtime"]
-            value["planning"].pop("evidence", None)
-            runtime["own_receipt_refs"] = {ref: [row["ref"] for row in rows]
-                                             for ref, rows in runtime.pop("own_receipts").items()}
-            runtime["targetContexts"] = [{"question_ref": ref, "additional_target_context": rows}
-                                          for ref, rows in runtime.pop("target_context_reads").items()]
-        response = await self._publish("checkpoint", value, expectedVersion=self.version)
-        self.version = response["version"]
-        self.saved = value
 
     async def decide(self, ref, decision, bundle):
         check = self.checks[ref]
@@ -192,22 +104,20 @@ class ValidationCheckpoint:
                             checkInputDigest=check["checkInputDigest"], outcome=decision.outcome)
         check.update(outcome=decision.outcome, decision=decision.model_dump(), bundle=bundle)
 
-    async def revise(self, affected, pending, questions, reason):
-        changes = [{"checkId": self.checks[ref]["checkId"], "expectedRevision": self.checks[ref]["revision"],
-                    "expectedInputDigest": self.checks[ref]["checkInputDigest"],
-                    "state": {"draft": questions[ref].draft.model_dump(),
-                              "lookup_obligations": self.checks[ref]["state"]["lookup_obligations"] +
-                                  [i.model_dump() for i in pending[ref]]}}
-                   for ref in sorted(affected)]
-        body = {"reason": reason, "changes": changes, "citations": self.citations(changes)}
-        response = await self.client.leased(self.claim, "revisions", gate=self.gate,
-                                            idempotencyKey=payload_key("revisions", body), **body)
-        current = await self.client.load_checkpoint(self.claim, self.gate)
-        self.version = current["branches"][self.branch]["version"]
-        self.saved = current["branches"][self.branch]["payload"]
-        for row in response["checks"]:
-            self.checks[row["localRef"]] = self._check(row)
-        return self.checks
+    async def fail(self, ref, draft, code, cause=None, call=0):
+        """Publish one question as INCOMPLETE (owner decision ③): a question-level failure ends only this question.
+
+        The payload names the sentences that could not be checked (the question's own target spans, cited) and why
+        (safe `failure_code`/`failure_cause`, the judge call it failed on). The check stays re-judgeable: the
+        server never counts it as completed, so the author's retry judges it again on the same revision.
+        """
+        check = self.checks[ref]
+        payload = {"action": "INCOMPLETE", "outcome": "INCOMPLETE", "failure_code": code, "failure_cause": cause,
+                   "failed_call": call, "target_spans": [span.model_dump() for span in draft.target_spans]}
+        await self._publish("units", payload, ref=ref, checkId=check["checkId"],
+                            expectedCheckRevision=check["revision"],
+                            checkInputDigest=check["checkInputDigest"], outcome="INCOMPLETE")
+        check.update(outcome=None, decision=None, failure=payload)
 
     async def typo(self, ref, payload):
         await self._publish("units", payload, ref=ref, checkId=None,

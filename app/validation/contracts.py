@@ -21,9 +21,11 @@ class Span(Contract):
 
 
 class LookupIntent(Contract):
+    """A Worker-issued read; v3 judges only ask for VECTOR searches and target context (grid v4)."""
+
     ref: str
     kind: Literal["COMPARISON_CONTEXT", "CHANGES_EXCEPTIONS", "NEW_CLUE"]
-    operation: Literal["BASELINE", "TARGET_CONTEXT", "DIRECT", "KEYWORD", "VECTOR", "NEIGHBORS"]
+    operation: Literal["BASELINE", "TARGET_CONTEXT", "VECTOR"]
     purpose: str = Field(min_length=1)
     query: str | None = None
     source_ref: str | None = None
@@ -42,7 +44,6 @@ class QuestionDraft(Contract):
     conditions: list[str]
     assertion_mode: Literal["NARRATION", "DIALOGUE", "THOUGHT", "HYPOTHETICAL", "UNKNOWN"]
     check_intent: str = Field(min_length=1)
-    lookup_intents: list[LookupIntent]
     reason: str = Field(min_length=1)
 
 
@@ -52,29 +53,9 @@ class SegmentCoverage(Contract):
     reason: str = Field(min_length=1)
 
 
-class RuleCoverage(Contract):
-    entry_ref: str
-    status: Literal["CHECKED", "NOT_APPLICABLE", "UNPROCESSED"]
-    reason: str = Field(min_length=1)
-
-
 class QuestionBatch(Contract):
     questions: list[QuestionDraft]
     segments: list[SegmentCoverage]
-    rules: list[RuleCoverage]
-    clue_checks: list[RuleCoverage] = Field(default_factory=list)
-
-
-# GH349 SUBJECT_RESOLUTION stage payload (no docstrings: they would become schema descriptions).
-# One non-literal mention in the segment text and the catalogue subject it refers to, or null.
-class MentionResolution(Contract):
-    mention: str = Field(min_length=1)
-    subject_ref: str | None
-    reason: str = Field(min_length=1)
-
-
-class SubjectResolution(Contract):
-    mentions: list[MentionResolution]
 
 
 class Assessment(Contract):
@@ -97,13 +78,33 @@ class Disagreement(Contract):
     correction_ref: str | None = None
 
 
+class BasisQuote(Contract):
+    """One exact basis sentence of a decision (the comparison side, never T1).
+
+    An E quote is an absolute span of its evidence source (`source_ref`/`start`/`end` in code points) and is
+    published as a citation; a B quote is a substring of a stored setting value, so it has no source position.
+    """
+
+    ref: str
+    source_ref: str | None
+    start: int | None
+    end: int | None
+    quote: str = Field(min_length=1)
+
+
+_OUTCOME = Literal["CONFLICT", "SUSPECTED_CONFLICT", "NEEDS_CONTEXT", "NO_CONFLICT"]
+_BASIS = Literal["DIRECT_CONTRADICTION", "CHANGE_NOT_FOUND", "AMBIGUOUS_MEANING", "COMPATIBLE", "DB_RAW_DISAGREEMENT"]
+_IMPACT = Literal["SEVERE", "CAUTION", "REFERENCE"]
+
+
 class ValidationDecision(Contract):
+    """The published unit shape (unchanged); v3 always publishes empty follow_ups/affected_question_refs."""
+
     action: Literal["FOLLOW_UP", "DECIDED"]
-    outcome: Literal["CONFLICT", "SUSPECTED_CONFLICT", "NEEDS_CONTEXT", "NO_CONFLICT"] | None
-    basis: Literal["DIRECT_CONTRADICTION", "CHANGE_NOT_FOUND", "AMBIGUOUS_MEANING",
-                   "COMPATIBLE", "DB_RAW_DISAGREEMENT"] | None
+    outcome: _OUTCOME | None
+    basis: _BASIS | None
     reason: str = Field(min_length=1)
-    impact: Literal["SEVERE", "CAUTION", "REFERENCE"] | None
+    impact: _IMPACT | None
     impact_reason: str | None
     target_spans: list[Span]
     evidence_refs: list[str]
@@ -111,6 +112,69 @@ class ValidationDecision(Contract):
     follow_ups: list[LookupIntent]
     affected_question_refs: list[str]
     disagreements: list[Disagreement]
+    # Exact basis sentences checked by the Worker (absent in decisions published before this field).
+    basis_quotes: list[BasisQuote] = Field(default_factory=list)
+    # The judge-written finding title after the Worker's author-text check (absent before 2026-11-03, read as None).
+    headline: str | None = None
+
+
+# Judge answers (no docstrings: they would become schema descriptions).
+class ContextRequest(Contract):
+    start: int = Field(ge=0, strict=True)
+    end: int = Field(gt=0, strict=True)
+
+
+class BasisQuoteDraft(Contract):
+    ref: str
+    quote: str = Field(min_length=1)
+
+
+class JudgeOpenAnswer(Contract):
+    action: Literal["FOLLOW_UP", "DECIDED"]
+    outcome: _OUTCOME | None
+    basis: _BASIS | None
+    # Required (nullable) by the strict schema; the default only tolerates older scripted answers.
+    headline: str | None = None
+    reason: str = Field(min_length=1)
+    impact: _IMPACT | None
+    impact_reason: str | None
+    target_spans: list[Span]
+    evidence_refs: list[str]
+    completion: CompletionAssessment | None
+    disagreements: list[Disagreement]
+    # Required by the strict schema; the default only tolerates older scripted answers.
+    basis_quotes: list[BasisQuoteDraft] = Field(default_factory=list)
+    # Absent from the schema when no search can run; the Worker treats a missing list as empty.
+    search_queries: list[str] = Field(default_factory=list)
+    context_requests: list[ContextRequest]
+
+
+class JudgeFinalAnswer(Contract):
+    action: Literal["DECIDED"]
+    outcome: _OUTCOME
+    basis: _BASIS
+    headline: str | None = None
+    reason: str = Field(min_length=1)
+    impact: _IMPACT | None
+    impact_reason: str | None
+    target_spans: list[Span]
+    evidence_refs: list[str]
+    completion: CompletionAssessment
+    disagreements: list[Disagreement]
+    basis_quotes: list[BasisQuoteDraft] = Field(default_factory=list)
+
+
+def decision_from_answer(answer):
+    """The published ValidationDecision of a DECIDED judge answer (no follow-ups, no re-opened questions).
+
+    `basis_quotes` stays empty here: the judge fills it from the answer after the Worker checked each quote.
+    `headline` is copied as answered; the author-text check (`author_text.sanitize_decision`) normalizes it.
+    """
+    return ValidationDecision(
+        action="DECIDED", outcome=answer.outcome, basis=answer.basis, reason=answer.reason, headline=answer.headline,
+        impact=answer.impact, impact_reason=answer.impact_reason, target_spans=list(answer.target_spans),
+        evidence_refs=list(answer.evidence_refs), completion=answer.completion, follow_ups=[],
+        affected_question_refs=[], disagreements=list(answer.disagreements))
 
 
 class TypoCheckInput(Contract):
@@ -151,6 +215,7 @@ class Segment:
 
 
 def split_segments(text, *, core_chars, context_chars):
+    """TYPO's fixed split (TYPO grid v1); SETTING uses `split_setting_segments` (grid v4)."""
     if type(core_chars) is not int or core_chars < 1 or type(context_chars) is not int or context_chars < 0:
         raise ValueError("Invalid segment budget")
     return tuple(Segment(f"TSEG{n + 1}", start, min(len(text), start + core_chars),
@@ -158,8 +223,56 @@ def split_segments(text, *, core_chars, context_chars):
                  for n, start in enumerate(range(0, len(text), core_chars)))
 
 
+def setting_cuts(text, unit_chars):
+    """SETTING grid v4 cut points (normative, identical in Java; integer arithmetic on code points only).
+
+    n = ceil(L/U) segments of equal target length; cut k is the position right after a U+000A in the window
+    ((2k-1)L/2n, (2k+1)L/2n] nearest to t = kL/n (tie: the smaller position), else max(t, lo+1). The windows
+    never overlap and hi > lo because L >= n, so cuts strictly increase and no segment is empty.
+    """
+    length = len(text)
+    n = (length + unit_chars - 1) // unit_chars
+    cuts = []
+    for k in range(1, n):
+        t = (k * length) // n
+        lo = ((2 * k - 1) * length) // (2 * n)
+        hi = ((2 * k + 1) * length) // (2 * n)
+        best = None
+        for p in range(lo + 1, hi + 1):
+            if text[p - 1] == "\n" and (best is None or abs(p - t) < abs(best - t)):
+                best = p  # ascending p: an equal distance keeps the smaller position
+        cuts.append(best if best is not None else max(t, lo + 1))
+    return cuts
+
+
+def split_setting_segments(text, *, unit_chars, context_chars):
+    """SETTING grid v4: TSEGn cores of equal length cut after newlines, each with read-only context."""
+    if type(unit_chars) is not int or unit_chars < 1 or type(context_chars) is not int or context_chars < 0:
+        raise ValueError("Invalid segment budget")
+    length = len(text)
+    if not length:
+        return ()
+    bounds = [0, *setting_cuts(text, unit_chars), length]
+    return tuple(Segment(f"TSEG{i}", bounds[i - 1], bounds[i], max(0, bounds[i - 1] - context_chars),
+                         min(length, bounds[i] + context_chars))
+                 for i in range(1, len(bounds)))
+
+
+def segment_wire(segment):
+    """The server grid's segment row (`{"ref","start","end","contextStart","contextEnd"}`)."""
+    return {"ref": segment.ref, "start": segment.start, "end": segment.end,
+            "contextStart": segment.context_start, "contextEnd": segment.context_end}
+
+
 TARGET_REF = "T1"
 _SAFE_CODE = re.compile(r"[A-Z][A-Z0-9_]{0,99}")
+SEARCH_QUERY_LIMIT = 1000
+MAX_SEARCH_QUERIES = 3
+# A decision's exact basis sentences (`basis_quotes`): at most 3, each at most 300 code points.
+MAX_BASIS_QUOTES = 3
+BASIS_QUOTE_LIMIT = 300
+# A published headline has at most 80 code points (the prompt asks for about 40); longer ones are dropped to None.
+HEADLINE_LIMIT = 80
 
 
 def safe_code(value, fallback=None):
@@ -210,90 +323,50 @@ def anchor_span(span, text, *, aliases=frozenset(), accept=None, stats=None):
     return span.model_copy(update=updates)
 
 
-def normalize_intent(intent, aliases, stats=None):
-    """TARGET_CONTEXT may name the target by a segment alias; every other ref stays as given."""
-    if intent.operation == "TARGET_CONTEXT" and intent.source_ref != TARGET_REF and intent.source_ref in aliases:
-        if stats is not None:
-            stats["TARGET_REF_ALIAS"] += 1
-        return intent.model_copy(update={"source_ref": TARGET_REF})
-    return intent
-
-
 def normalize_batch(batch, target, *, aliases, accept=None, stats=None):
-    """Normalize every question span/intent of one planner/coverage batch; duplicates collapse."""
+    """Normalize every question span of one planner batch; duplicate spans collapse."""
     questions = []
     for question in batch.questions:
         spans = list(dict.fromkeys(anchor_span(span, target, aliases=aliases, accept=accept, stats=stats)
                                    for span in question.target_spans))
-        intents = [normalize_intent(intent, aliases, stats) for intent in question.lookup_intents]
-        if spans != question.target_spans or intents != question.lookup_intents:
-            question = question.model_copy(update={"target_spans": spans, "lookup_intents": intents})
+        if spans != question.target_spans:
+            question = question.model_copy(update={"target_spans": spans})
         questions.append(question)
     return batch.model_copy(update={"questions": questions})
 
 
-@dataclass(frozen=True)
-class IntentRefs:
-    """Actually readable references for lookup intents at the time a plan/follow-up is accepted."""
-
-    entry_refs: frozenset = frozenset()
-    source_refs: frozenset = frozenset()
-    evidence_refs: frozenset = frozenset()
-    target_length: int = 0
-    # VECTOR is offered only when this Worker can execute it (frozen RAG configured or no episodes).
-    search_operations: frozenset = frozenset({"KEYWORD", "VECTOR"})
+def validate_context_request(start, end, target_length):
+    """A judge's TARGET_CONTEXT request: an exact non-empty [start,end) range of T1."""
+    if type(start) is not int or type(end) is not int or not 0 <= start < end <= target_length:
+        raise ValueError("INVALID_TARGET_CONTEXT_REQUEST")
+    return start, end
 
 
-def validate_intents(intents, refs):
-    """Reject unreadable intents before they become durable obligations (GH331 S6)."""
-    for intent in intents:
-        operation = intent.operation
-        if operation == "BASELINE" and not set(intent.evidence_refs) <= refs.entry_refs:
-            raise ValueError("UNKNOWN_BASELINE_REFERENCE")
-        if operation == "DIRECT" and intent.source_ref not in refs.source_refs:
-            raise ValueError("UNKNOWN_SOURCE_REFERENCE")
-        if operation == "NEIGHBORS" and (not intent.evidence_refs
-                                         or not set(intent.evidence_refs) <= refs.evidence_refs):
-            raise ValueError("UNKNOWN_EVIDENCE_REFERENCE")
-        if operation == "TARGET_CONTEXT":
-            start = 0 if intent.start is None else intent.start
-            end = refs.target_length if intent.end is None else intent.end
-            if intent.source_ref not in {None, TARGET_REF} or not 0 <= start < end <= refs.target_length:
-                raise ValueError("INVALID_TARGET_CONTEXT_REQUEST")
-        if operation in {"KEYWORD", "VECTOR"} and (not intent.query or not intent.query.strip()
-                                                    or len(intent.query) > 1000):
-            raise ValueError("INVALID_SEARCH_REQUEST")
-        if operation in {"KEYWORD", "VECTOR"} and operation not in refs.search_operations:
-            raise ValueError("VECTOR_NOT_READY")
+def validate_search_query(query):
+    """A judge's natural-language VECTOR search sentence: 1 to SEARCH_QUERY_LIMIT characters, not blank."""
+    if not isinstance(query, str) or not query.strip() or len(query) > SEARCH_QUERY_LIMIT:
+        raise ValueError("INVALID_SEARCH_REQUEST")
+    return query
 
 
-def validate_batch(batch, segments, subjects, entries, target, *, intent_refs=None):
-    expected = {s.ref for s in segments}
-    if len(batch.segments) != len(expected) or {s.segment_ref for s in batch.segments} != expected:
+def validate_batch(batch, segment, subjects, target):
+    """One PLANNER batch of one segment: spans inside the core (context is read-only), PLANNED iff questions."""
+    if len(batch.segments) != 1 or batch.segments[0].segment_ref != segment.ref:
         raise ValueError("SEGMENT_COVERAGE_MISSING")
-    if any(s.status == "UNPROCESSED" for s in batch.segments):
+    status = batch.segments[0].status
+    if status == "UNPROCESSED":
         raise ValueError("SEGMENT_COVERAGE_UNPROCESSED")
-    if len(batch.rules) != len(entries) or {r.entry_ref for r in batch.rules} != set(entries):
-        raise ValueError("RULE_COVERAGE_MISSING")
-    if any(r.status == "UNPROCESSED" for r in batch.rules):
-        raise ValueError("RULE_COVERAGE_UNPROCESSED")
     if len({q.local_ref for q in batch.questions}) != len(batch.questions):
         raise ValueError("DUPLICATE_QUESTION")
     for question in batch.questions:
         if not set(question.subject_refs) <= set(subjects):
             raise ValueError("UNKNOWN_SUBJECT_REFERENCE")
-        if intent_refs is not None:
-            validate_intents(question.lookup_intents, intent_refs)
         for span in question.target_spans:
             validate_span(span, target)
-            if not any(s.context_start <= span.start < span.end <= s.context_end for s in segments):
+            if not segment.start <= span.start < span.end <= segment.end:
                 raise ValueError("SPAN_OUTSIDE_SEGMENT")
-    for segment in segments:
-        has_question = any(any(span.start < segment.end and span.end > segment.start
-                               for span in q.target_spans) for q in batch.questions)
-        status = next(s.status for s in batch.segments if s.segment_ref == segment.ref)
-        if (status == "PLANNED") != has_question:
-            raise ValueError("SEGMENT_QUESTION_COVERAGE_MISMATCH")
+    if (status == "PLANNED") != bool(batch.questions):
+        raise ValueError("SEGMENT_QUESTION_COVERAGE_MISMATCH")
 
 
 @dataclass(frozen=True)
@@ -319,45 +392,47 @@ def merge_questions(drafts):
         else:
             previous = merged[index]
             spans = list(dict.fromkeys(previous.draft.target_spans + draft.target_spans))
-            intents = list(previous.draft.lookup_intents)
-            intents.extend(intent for intent in draft.lookup_intents if intent not in intents)
-            combined = previous.draft.model_copy(update={"target_spans": spans, "lookup_intents": intents})
+            combined = previous.draft.model_copy(update={"target_spans": spans})
             merged[index] = MergedQuestion(previous.ref, combined, previous.original_refs + (original,))
     return tuple(merged)
 
 
 class IncompleteInspection(RuntimeError):
-    """`code` is the stable category; optional `cause` is the specific safe rule code (GH331)."""
+    """`code` is the stable category; optional `cause` is the specific safe rule code (GH331).
 
-    def __init__(self, code, cause=None):
+    `stage` (`PLANNER:TSEG1`, `JUDGE:Q3`) is attached where the failure happened, because planner and judge
+    calls run concurrently and one shared "current stage" would be wrong.
+    """
+
+    def __init__(self, code, cause=None, *, stage=None):
         self.code = code
         self.cause = safe_code(cause)
+        self.stage = stage
         super().__init__(code)
 
 
 @dataclass(frozen=True)
 class InvocationBudget:
-    """Caller-supplied execution limits; no production quality/cost limits are implied."""
+    """Caller-supplied per-attempt execution limits of one branch; per-role output caps live in RoleRuntime."""
 
     model_calls: int
     lookups: int
     seconds: float
     input_tokens: int
-    output_tokens: int
     segment_chars: int
     context_chars: int
-    catalogue_page_size: int
     search_limit: int
 
     def __post_init__(self):
-        for name in ("model_calls", "lookups", "input_tokens", "output_tokens", "segment_chars",
-                     "catalogue_page_size", "search_limit"):
+        for name in ("model_calls", "lookups", "input_tokens", "segment_chars", "search_limit"):
             if type(getattr(self, name)) is not int or getattr(self, name) < 1:
                 raise ValueError("Invalid invocation budget")
-        if type(self.context_chars) is not int or self.context_chars < 0 or not math.isfinite(self.seconds) or self.seconds <= 0:
+        if (type(self.context_chars) is not int or self.context_chars < 0
+                or isinstance(self.seconds, bool) or not isinstance(self.seconds, (int, float))
+                or not math.isfinite(self.seconds) or self.seconds <= 0):
             raise ValueError("Invalid invocation budget")
-        if self.search_limit > 100 or self.catalogue_page_size > 100:
-            raise ValueError("Page/search transport limit is 100")
+        if self.search_limit > 100:
+            raise ValueError("Search transport limit is 100")
 
 
 @dataclass
@@ -407,3 +482,8 @@ class InspectionResult:
     failure_cause: str | None = None
     failure_stage: str | None = None
     normalizations: dict[str, int] = field(default_factory=dict)
+    # Experiment mode: question (or planner segment) -> {code, cause, call}; the run continued past them.
+    question_failures: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Per question judge flow (calls, forms, searches, cache hits); diagnostics only, never published or logged.
+    # A finding the rule guard cleared also keeps the judge's original impact and reason for review (experiment).
+    traces: dict[str, list[dict[str, Any]]] = field(default_factory=dict)

@@ -17,7 +17,7 @@ from app.llm.exceptions import (
     LlmResponseValidationError,
 )
 from app.llm.openai_client import OpenAIResponsesClient
-from app.llm.protocols import LlmCallOptions, LlmResponseSchema
+from app.llm.protocols import LlmResponseSchema
 from app.usage.metering import MeteredTextGenerationClient
 from app.validation.contracts import (
     BudgetState,
@@ -34,6 +34,7 @@ from app.validation.contracts import (
     validate_span,
 )
 from app.validation.data import ValidationDataClient
+from app.validation.models import RoleRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,6 @@ class _TypoBatch(Contract):
 
 _SCHEMA = LlmResponseSchema("typo_check_v1", _TypoBatch.model_json_schema())
 _PROMPT = (Path(__file__).resolve().parents[1] / "llm/prompts/typo_check.md").read_text()
-_OPTIONS = LlmCallOptions(reasoning_effort="low")
-_MODEL = "gpt-6.1-terra"
 
 
 async def _call(state, operation, *args, kind=None, **kwargs):
@@ -92,14 +91,28 @@ def _validated_batch(response, segment, text, accepted, aliases=frozenset(), sta
     except ValidationError:
         raise IncompleteInspection("TYPO_RESPONSE_INVALID") from None
     batch = batch.model_copy(update={"suggestions": _anchored(batch.suggestions, segment, text, aliases, stats)})
+    if len(batch.segments) == 1 and batch.segments[0].segment_ref != segment.ref:
+        # One coverage row for the one segment asked about, echoed with another ref: it can only mean this segment.
+        batch = batch.model_copy(update={"segments": [batch.segments[0].model_copy(update={"segment_ref": segment.ref})]})
+        if stats is not None:
+            stats["TYPO_SEGMENT_REF_ALIGNED"] += 1
     probe = ClassifiedTypoCheckResult(target_hash="", status="COMPLETED", segments=batch.segments,
                                       suggestions=batch.suggestions, failure_code=None)
     try:
         probe.require_coverage([segment.ref])
     except ValueError:
+        # Which shape failed, without any manuscript text (2026-11-03: the cause was not recoverable from logs).
+        logger.warning("typo coverage invalid segment=%s rows=%d statuses=%s suggestions=%d", segment.ref,
+                       len(batch.segments), [row.status for row in batch.segments], len(batch.suggestions))
         raise IncompleteInspection("TYPO_COVERAGE_INVALID") from None
-    if (batch.segments[0].status == "PLANNED") != bool(batch.suggestions):
-        raise IncompleteInspection("TYPO_COVERAGE_INVALID")
+    planned = batch.segments[0].status == "PLANNED"
+    if planned != bool(batch.suggestions):
+        # A PLANNED segment whose suggestions were all dropped while anchoring (or a NO_CHECK row that still
+        # carries suggestions) is a labelling mismatch, not a coverage gap: align the status to what remains.
+        status = "PLANNED" if batch.suggestions else "NO_CHECK"
+        batch = batch.model_copy(update={"segments": [batch.segments[0].model_copy(update={"status": status})]})
+        if stats is not None:
+            stats["TYPO_SEGMENT_STATUS_ALIGNED"] += 1
     ordered = sorted(batch.suggestions, key=lambda suggestion: suggestion.span.start)
     for index, suggestion in enumerate(ordered):
         span = suggestion.span
@@ -118,9 +131,9 @@ def _validated_batch(response, segment, text, accepted, aliases=frozenset(), sta
     return batch.segments[0], ordered
 
 
-async def _inspect(llm, state, prompt):
-    request = {"system_prompt": _PROMPT, "user_prompt": prompt, "model": _MODEL,
-               "response_schema": _SCHEMA, "call_options": _OPTIONS}
+async def _inspect(llm, state, prompt, role):
+    request = {"system_prompt": _PROMPT, "user_prompt": prompt, "model": role.model,
+               "response_schema": _SCHEMA, "call_options": role.call_options}
     if state.model_calls >= state.limits.model_calls:
         raise IncompleteInspection("BUDGET_EXHAUSTED")
     try:
@@ -130,7 +143,7 @@ async def _inspect(llm, state, prompt):
         if count > state.limits.input_tokens:
             raise IncompleteInspection("INPUT_BUDGET_EXCEEDED")
         return await _call(state, llm.create_text_response, **request, kind="model",
-                           max_output_tokens=state.limits.output_tokens)
+                           max_output_tokens=role.max_output_tokens)
     except LlmInputTokenCountError:
         raise IncompleteInspection("INPUT_TOKEN_COUNT_FAILED") from None
     except LlmOutputTruncatedError:
@@ -148,9 +161,12 @@ async def _inspect(llm, state, prompt):
 
 async def check_typos(
     data: ValidationDataClient, llm: OpenAIResponsesClient | MeteredTextGenerationClient,
-    *, budget: InvocationBudget, checkpoint=None,
+    *, budget: InvocationBudget, role: RoleRuntime, checkpoint=None,
 ) -> ClassifiedTypoCheckResult:
-    """Return suggestions only; orchestration, billing and persistence are caller-owned."""
+    """Return suggestions only; orchestration, billing and persistence are caller-owned.
+
+    `role` is the TYPO RoleRuntime frozen in the job configuration (model, reasoning effort, output cap).
+    """
     state = BudgetState(budget)
     try:
         # Closed injection boundary: unknown/nested wrappers may hide retries or double metering.
@@ -184,7 +200,7 @@ async def check_typos(
         try:
             saved = checkpoint.stage("TYPO_SEGMENT", segment.ref) if checkpoint else None
             if saved is None:
-                response = await _inspect(llm, state, prompt)
+                response = await _inspect(llm, state, prompt, role)
             else:
                 from app.llm.responses import LlmTextResponse
                 response = LlmTextResponse(text=json.dumps({"segments": saved["segments"],

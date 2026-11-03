@@ -181,6 +181,16 @@ class Runtime:
             version = arguments[arguments.index(flag) + 1] if flag in arguments[:-1] else None
             if version != c.get("CHAT_RETRIEVAL_EMBEDDING_VERSION"):
                 raise DeploymentError("INCONSISTENT_VALIDATION_WORKER_INDEX_VERSION")
+        # Optional intake index fill (2026-11-02): empty keeps the index as it is. When set, it is the Worker's
+        # shared writer DATABASE_URL, needs the frozen RAG reader above and adds one pool per job slot.
+        validation_index = bool(str(v.get("VALIDATION_INDEX_DATABASE_URL") or "").strip())
+        if validation_index:
+            arguments = validation.get("command")
+            arguments = arguments if isinstance(arguments, list) else []
+            if (not validation_retrieval or v.get("VALIDATION_INDEX_DATABASE_URL") != w.get("DATABASE_URL")
+                    or "--index-url-env" not in arguments[:-1]
+                    or arguments[arguments.index("--index-url-env") + 1] != "VALIDATION_INDEX_DATABASE_URL"):
+                raise DeploymentError("INCONSISTENT_VALIDATION_INDEX_DATABASE_URL")
         try:
             bind = ipaddress.ip_address(chat["ports"][0]["host_ip"])
             if bind.is_unspecified or bind.is_loopback or not bind.is_private:
@@ -217,6 +227,9 @@ class Runtime:
                 if validation_slots < 1:
                     raise ValueError()
                 connections += validation_replicas * validation_slots
+                if validation_index:
+                    # The intake index fill's writer pool also holds one connection per job slot.
+                    connections += validation_replicas * validation_slots
             # Read-only preflight probes need one temporary connection alongside old runtime.
             if min(replicas, pool, api_pool, budget) < 1 or connections + 1 > budget:
                 raise ValueError()
@@ -227,6 +240,7 @@ class Runtime:
             "analysisReplicas": replicas,
             "validationReplicas": validation_replicas,
             "validationRetrieval": validation_retrieval,
+            "validationIndexFill": validation_index,
             "databaseConnections": connections,
             "databaseConnectionsDuringPreflight": connections + 1,
             "tracingWorkerServices": tracing_services,
