@@ -31,7 +31,7 @@ PR 테스트와 별개이며, merge 이후 배포 단계에서 시작된다. 배
 | 항목 | 최초 정책 |
 |---|---|
 | 챗봇 | 독립 FastAPI, `gpt-6-luna`, QA 및 원문 검색 활성화 |
-| 백필 대상 | `active-works`: 활성 작품의 현재 회차 원문, 이후 추가·수정분 포함 |
+| 백필 대상 | `active-works`: 활성 작품의 현재 회차 원문과 보관되지 않은 설정집의 현재 판(2026-11-03), 이후 추가·수정분 포함 |
 | campaign | `retrieval-v1-rollout`, 운영 주체 `scheduled-retrieval` |
 | 누적 입력 상한 | `50,000,000` 보수적 입력 단위, 재배포/재시작으로 충전하지 않음 |
 | 청크·모델 | 기존 800/100 토큰, `text-embedding-3-small`, 1536차원, v1 |
@@ -42,7 +42,9 @@ PR 테스트와 별개이며, merge 이후 배포 단계에서 시작된다. 배
 5천만은 공급자에게 반드시 소비하는 양이나 400회차의 측정 결과가 아니라 **유료 호출을 제한하는
 누적 실행 상한**이다. 예산은 현재 원고와 이후 추가/수정분이 공유한다. 실제 provider 사용량은 별도 원장에 기록한다.
 같은 campaign의 범위·모델·버전·예산·운영 주체는 최초 실행 후 바꾸지 않는다.
-새 ID는 새 예산이므로 장애 복구 목적으로 자동 생성하지 않는다. 설정집·과거 버전은 지원 범위가 아니다.
+새 ID는 새 예산이므로 장애 복구 목적으로 자동 생성하지 않는다. 과거 회차 버전과 설정집의 과거 판은 지원 범위가 아니다.
+2026-11-03부터 설정집 현재 판도 같은 campaign·예산·운영 주체로 채운다. campaign identity는 바뀌지 않아
+배포 뒤 기존 `retrieval-v1-rollout`이 새 ID·예산 없이 이어지며, `backfill.sqlite3`는 그 자리에서 설정집 cursor·집계 열만 더한다.
 
 처음부터 특정 작품만 원하는 경우 배포 전에 기존 `retrieval.env`에 `RETRIEVAL_BACKFILL_WORK_IDS`와
 해당 범위를 명시할 수 있다. 자동화는 기존 allowlist를 모든 작품으로 넓히지 않는다.
@@ -72,7 +74,8 @@ PR 테스트와 별개이며, merge 이후 배포 단계에서 시작된다. 배
 API·Worker 두 인스턴스의 SSM 명령 실행/결과 조회 권한이 필요하다.
 권한이 없으면 해당 단계가 고정 오류 코드로 멈추며 IAM 권한을 스스로 확대하지 않는다.
 기존 worker DB 계정에는 검색 계정 생성과 필요한 SELECT 부여 권한이 있어야 한다.
-백필 preflight는 조회·검색 테이블 쓰기·작품 행 잠금 권한과 read-only 세션 여부를 실제 데이터 변경 없이 검사한다.
+백필 preflight는 조회·검색 테이블(설정집 색인 표와 `upload_files`·`upload_batches`·`setting_book_revisions` 조회 포함) 쓰기·작품 행 잠금 권한과
+read-only 세션 여부를 실제 데이터 변경 없이 검사한다.
 운영 권한 충족 여부는 실제 배포 전 확인해야 하며 로컬 합성 테스트 통과가 운영 IAM 검증을 대신하지 않는다.
 
 검색 계정은 실제 DB CONNECT, public USAGE와 `retrieval_chunks`, `retrieval_sources`,
@@ -101,11 +104,14 @@ Docker나 종료 처리가 지연되면 실행 중인 같은 one-shot의 다음 
 엄격한 컨테이너 수명 제한은 컨테이너 종료 확인과 불확실 사용량 복구를 함께 설계해야 한다.
 
 한 순회 시작 시 작품·회차 번호 상한·생성 시점을 고정하고 `(episode_no, id)` 키셋으로 순회한다.
+작품마다 회차가 끝나면 같은 작품 잠금 아래 보관되지 않은 설정집의 현재 판을 설정집 ID 키셋으로 읽는다.
+설정집은 순회 시작 시점에 고정하지 않고 그 작품 차례의 현재 판을 쓰며, 회차가 없고 설정집만 있는 작품도 순회한다.
+설정집 수정·보관은 Spring이 그 설정집의 색인 행을 지우고, 다음 순회가 새 현재 판을 채운다.
 임베딩 호출 전 Spring 등록·시작·예약에서 일시 오류가 난 경우, 실제 provider 시도가 늘지 않았음을
 확인한 때만 불확실 표식을 해제하고 다음 timer에서 다시 시도한다. 연속 세 번 실패하면 중단한다.
 인증·권한 등 영구 거절은 즉시 중단하고, 어느 경우도 이미 예약한 누적 입력 상한은 환급하지 않는다.
 임베딩 호출 후 오류·취소·저장 실패의 불확실 보호는 유지한다. 정상 순회 완료는 EMPTY도 무진행 횟수를 초기화한다.
-회차의 현재 청크가 모두 READY인 경우만 전진하며, 시간/청크 제한 뒤 같은 위치에서 계속한다.
+회차·설정집의 현재 청크가 모두 READY인 경우만 전진하며, 시간/청크 제한 뒤 같은 위치에서 계속한다.
 다음 순회는 새 원고·수정분을 찾고 완료 청크는 재호출하지 않는다.
 
 입력 상한은 provider 호출 전에 SQLite에 기록하고 실패/재시작으로 환급하지 않는다.
@@ -126,6 +132,10 @@ sudo journalctl -u catchhole-retrieval-backfill.service -n 30 --no-pager
 
 첫 성공 전에는 `current-chat-release`가 없다. one-shot 서비스는 실행 사이 `inactive`여도 정상이다.
 `READY`는 해당 순회에서 확인한 현재 원문 범위의 준비이며 이후 변경/검색 품질까지 보증하지 않는다.
+`checkedSources`·`readySources`·`excludedOrUnavailableSources`는 회차와 설정집의 합계이고 그중 설정집 몫은
+`checkedSettingBooks`·`readySettingBooks`·`excludedOrUnavailableSettingBooks`다. `supportedSourceTypes`는 `CURRENT_EPISODE`·`SETTING_BOOK`(현재 판),
+`unsupportedSourceTypes`는 `PAST_EPISODE_VERSION`이다. 2,000,000 byte를 넘는 설정집은 회차와 같이 `BLOCKED / SOURCE_UNREADABLE`로 멈추고
+`resume`만으로는 지나가지 않는다. 자동 첫 공개 판정도 이 합계를 쓰므로 설정집의 제외·차단도 첫 공개를 보류한다.
 `TIME_LIMIT`/`CHUNK_LIMIT`은 다음 주기에 이어지고, `INDEX_BUSY`는 동시 실행 중이다.
 `PARTIAL`, `REPORTS_PENDING`, `BLOCKED`, `BUDGET_EXHAUSTED`는 자동 첫 공개 조건을 충족하지 않는다.
 대상이 실제로 없는 완료 순회만 EMPTY로 인정한다.

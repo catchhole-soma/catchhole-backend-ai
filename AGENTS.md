@@ -284,7 +284,7 @@
 - 기존 저장 원고의 검색 읽기는 Java 인용 검증과 같은 UTF-8 2,000,000 byte 상한을 적용하고 신규 업로드·수정 글자 수 정책과 분리한다. byte 상한 초과는 `SOURCE_UNREADABLE`, 실제 hash/출처 변경은 `SOURCE_CHANGED`로 구분하며 원문을 잘라 상한을 우회하지 않는다.
 - 새 분석의 `RETRIEVAL_PREPARATION_ENABLED=false`는 검색 청크 준비만 제어한다. 별도 one-shot CLI가 기존 `EMBEDDING_GENERATION_ENABLED=false`로 벡터 생성 여부를 결정한다. 검색 준비는 기존 분석의 사용자 과금 경로를 호출하지 않고 OPERATIONAL_BACKFILL/RETRIEVAL_INDEX_SERVICE_PAID_V1로 기록한다.
 - CLI는 명시한 작품/회차/입력·청크·시도·시간 상한을 유지하며 .env를 읽지 않는다. S3/DB/원장/임베딩 실사용은 dry-run과 구분한다. SQLite outbox를 먼저 복구하고 성공 벡터는 공유 PostgreSQL에서 판정한다. API 응답 후 DB 반영 전 종료의 중복 호출 가능성을 숨기지 않는다.
-- 검색 소비자는 `retrieval_current_chunks`에 서버 범위와 policy/model/version 필터를 함께 적용한다. 모델·차원·tokenizer 변경은 기존 공간과 혼합하지 않고 명시적 재생성/전환 계획이 필요하다. 설정집/과거 버전은 지원 전 READY로 표시하지 않는다.
+- 검색 소비자는 `retrieval_current_chunks`에 서버 범위와 policy/model/version 필터를 함께 적용한다. 모델·차원·tokenizer 변경은 기존 공간과 혼합하지 않고 명시적 재생성/전환 계획이 필요하다. 과거 버전은 지원 전 READY로 표시하지 않는다. 설정집은 현재 판만 V114 표에 채우며(운영 백필·검수 접수 때 채우기) 챗봇은 그 표를 읽지 않는다.
 - 별도 `compose.retrieval.prod.yml`은 #258에서 명시적 범위·고정 campaign ID·누적 예산을 가진 one-shot timer에 연결한다. 기본 OFF이며 같은 ID의 예산은 재배포/재시작으로 초기화하지 않는다. 기존 27 + 챗봇2 + 백필2 + preflight1 = 32개와 별도 관리 여유를 실제 RDS 기준으로 확인한다. 기존 워커 수/pool은 자동 변경하지 않고 민감 상태/outbox 볼륨과 Spring 파기 경로를 유지한다.
 
 ### RDB·원문 결합 답변 (#240)
@@ -365,6 +365,7 @@
 
 - `deploy/manage-ai-runtime.py`는 같은 SHA의 워커·챗봇·백필 파일을 환경/연결 사전 검사한 뒤 배포한다. `worker.env`의 공통 설정을 서비스별 env가 덮어쓰고 이미지 SHA는 배포 인자로 고정한다. 기존 custom 값과 비밀값을 보존하고 비밀값/Compose rendered config를 로그에 출력하지 않는다.
 - `app.retrieval.backfill`의 `run/status/preflight/resume`은 고정 campaign 범위·모델·버전·전체 입력 상한과 영속 SQLite를 사용한다. active works 또는 UUID allowlist를 명시하며 키셋 순회·원문 재검증·완료 청크 건너뛰기를 유지한다. 정상 순회 후 신규/수정분을 다시 탐색한다.
+- 2026-11-03(소유자 결정, 업로드 때 색인 Job 대신 작은 선택): 같은 순회가 작품마다 현재 회차 다음에 보관되지 않은 설정집의 현재 판을 `SettingBookRetrievalStore`로 채운다(설정집 ID 키셋, 설정집만 있는 작품 포함). 이전에는 검수 접수 때만 색인돼 검수를 접수하지 않은 작품의 설정집에 벡터가 없었기 때문이다. 같은 작품 잠금·조각/모델/버전·batch/재시도/상한/deadline·campaign 누적 예산·운영 원장(`OPERATIONAL_BACKFILL`, 같은 actor)을 쓰고 campaign identity JSON은 바꾸지 않는다(SQLite는 기본값 있는 열만 제자리 추가해 운영 `retrieval-v1-rollout`·예산·진행 cursor가 이어지고 이전 이미지도 같은 파일을 쓸 수 있어야 한다). 2,000,000 byte 초과는 회차와 같은 BLOCKED/SOURCE_UNREADABLE, `status`는 합계와 별도로 `checked/ready/excludedOrUnavailableSettingBooks`를 보이고 `unsupportedSourceTypes`는 `PAST_EPISODE_VERSION`만이다. 원장 요청은 작품 단위라 Backend 계약 변경은 없고, 챗봇 검색과 DB 연결 수(2)는 그대로다.
 - 호출 전 보수적인 입력 상한을 영속 차감하고 DB 저장까지 불확실 표식을 유지한다. 불명/실패 재시도 소진은 BLOCKED로 멈추며 명시적 resume도 예산을 환급하지 않는다. 유료 실행 없이 preflight를 검사하며 기존 실행과 병행해도 상태/outbox를 변경하지 않는다.
 - 5분 systemd timer는 같은 one-shot을 중복 기동하지 않는다. 내부 작업·임베딩 deadline은 300초이며 프로세스 벽시계 상한과 구분한다. Docker 실행/정리를 포함한 호스트 호출은 780초, systemd는 900초와 종료 유예 45초다. 장애로 종료가 지연되면 다음 timer를 건너뛸 수 있다. 실행 중인 백필의 이미지/프로세스를 재배포로 중단하지 않는다. 배포 성공과 색인 완료를 구분하며 AI 서비스 재생성 전에 설정/연결 검증을 완료한다. `docs/chat-runtime-operations.md`가 최초 설정·상태/복구 운영 계약이다.
 - 최초 배포는 `bootstrap-chat-aws.py` → `bootstrap-chat-runtime.py` → `app.retrieval.bootstrap`으로 기존 운영 설정을 보완한다. 현재 AI publish SHA와 Java의 공통 잠금 지원을 확인하고, 같은 VPC의 유일한 API 인스턴스 및 실제 부착된 API/Worker SG를 검증한다. Worker TCP 8082에 API SG만 허용하며 IAM·인스턴스 용량을 자동 확대하지 않는다. API 경로/사용자는 기존 `/opt/catchhole`·`ubuntu` 계약이며 Worker의 custom 경로와 혼동하지 않는다.
