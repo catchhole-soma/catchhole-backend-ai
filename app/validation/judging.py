@@ -145,6 +145,33 @@ def clear_unquoted_finding(answer, quotes, stats=None):
     return cleared, answer.outcome
 
 
+_BASIS_FOR_OUTCOME = {"CONFLICT": "DIRECT_CONTRADICTION", "SUSPECTED_CONFLICT": "CHANGE_NOT_FOUND",
+                      "NEEDS_CONTEXT": "AMBIGUOUS_MEANING", "NO_CONFLICT": "COMPATIBLE"}
+
+
+def drop_invalid_disagreements(answer, settings, evidence, stats=None):
+    """Keep only DB/raw disagreements that pair a stored setting row (B) with an earlier-source evidence (E).
+
+    `disagreements` is for "the stored value and an earlier episode disagree"; judges sometimes put the target
+    contradiction itself there (e.g. fact B vs T1). That used to fail the whole question
+    (INVALID_DECISION_DISAGREEMENT_REFERENCE) and hid a real finding, so such rows are dropped and counted instead.
+    When nothing is left a DB_RAW_DISAGREEMENT basis falls back to the outcome's own basis.
+    """
+    if not answer.disagreements:
+        return answer
+    facts = {row["entry_ref"] for row in settings}
+    actual = {row["ref"] for row in evidence if row.get("source_ref") != TARGET_REF}
+    kept = [row for row in answer.disagreements if row.fact_ref in facts and row.evidence_ref in actual]
+    if len(kept) == len(answer.disagreements):
+        return answer
+    if stats is not None:
+        stats["INVALID_DISAGREEMENTS_DROPPED"] += len(answer.disagreements) - len(kept)
+    update = {"disagreements": kept}
+    if not kept and answer.basis == "DB_RAW_DISAGREEMENT" and answer.outcome in _BASIS_FOR_OUTCOME:
+        update["basis"] = _BASIS_FOR_OUTCOME[answer.outcome]
+    return answer.model_copy(update=update)
+
+
 def receipt_wire(receipt):
     return asdict(receipt) | {"intent": receipt.intent.model_dump()}
 
@@ -302,6 +329,7 @@ class SettingJudge:
                 form = "FINAL"
                 continue
             evidence = self._evidence(own)
+            answer = drop_invalid_disagreements(answer, rows, evidence, self.stats)
             quotes = normalize_basis_quotes(answer.basis_quotes, evidence, rows, self.stats)
             # The rule guard runs before validation: a finding without a contradicting quote is NO_CONFLICT, not a
             # question failure (e.g. a CONFLICT that cites no external evidence at all).
@@ -491,6 +519,12 @@ def validate_decision(value, question, settings, evidence, receipts, target, sta
         raise fail("NO_CONFLICT_IMPACT")
     expected_basis = {"CONFLICT": "DIRECT_CONTRADICTION", "SUSPECTED_CONFLICT": "CHANGE_NOT_FOUND",
                       "NEEDS_CONTEXT": "AMBIGUOUS_MEANING", "NO_CONFLICT": "COMPATIBLE"}
+    if value.outcome == "NO_CONFLICT" and value.basis not in {"COMPATIBLE", "DB_RAW_DISAGREEMENT"}:
+        # NO_CONFLICT has a single meaning; a "not found" basis code on it (e.g. CHANGE_NOT_FOUND) is a
+        # labelling slip, not a different decision. Fill it instead of failing the question.
+        value = value.model_copy(update={"basis": "COMPATIBLE"})
+        if stats is not None:
+            stats["NO_CONFLICT_BASIS_NORMALIZED"] += 1
     if value.basis not in {expected_basis[value.outcome], "DB_RAW_DISAGREEMENT"}:
         raise fail("BASIS_MISMATCH")
     if value.outcome in {"CONFLICT", "SUSPECTED_CONFLICT"} and not set(value.evidence_refs) & (set(facts) | set(actual)):

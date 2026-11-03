@@ -285,3 +285,49 @@ def test_the_java_http_driver_rebuilds_the_worker_target_query_from_the_judge_pa
     for payload in model.judge_calls():
         expected = target_search_query(QuestionDraft.model_validate(payload["question"]), text)
         assert SyntheticProvider.worker_target_query(payload) == expected and expected
+
+
+# --- NO_CONFLICT basis labelling slip (31화 rerun: 7 questions failed with NO_CONFLICT + CHANGE_NOT_FOUND) -----
+
+@pytest.mark.parametrize("basis", ["CHANGE_NOT_FOUND", "AMBIGUOUS_MEANING", "DIRECT_CONTRADICTION"])
+def test_no_conflict_with_another_basis_code_is_normalized_instead_of_failing(basis):
+    result = inspect(one(lambda payload, n: decided(payload, "NO_CONFLICT", basis)))
+    assert result.status == "COMPLETED" and result.question_failures == {}
+    assert (result.decisions["Q1"].outcome, result.decisions["Q1"].basis) == ("NO_CONFLICT", "COMPATIBLE")
+    assert result.normalizations["NO_CONFLICT_BASIS_NORMALIZED"] == 1
+
+
+def test_a_finding_with_the_wrong_basis_still_fails():
+    result = inspect(one(lambda payload, n: decided(payload, "NEEDS_CONTEXT", "COMPATIBLE")))
+    assert result.question_failures["Q1"]["cause"] == "INVALID_DECISION_BASIS_MISMATCH"
+
+
+def test_judge_prompt_treats_hedged_character_guesses_as_no_conflict_and_fixes_basis_per_outcome():
+    assert "인물의 착각·오판이므로 NO_CONFLICT" in JUDGE_SYSTEM
+    assert "찾지 못해서 NO_CONFLICT인 경우에도 basis는 COMPATIBLE" in JUDGE_SYSTEM
+
+
+# --- disagreements misused for the target contradiction (planted-error test: P1 was lost this way) -----------
+
+def test_a_target_disagreement_is_dropped_and_the_quoted_conflict_is_kept():
+    misuse = [{"fact_ref": "B1", "evidence_ref": "T1", "reason": "저장된 설정과 이번 원고가 다르다"}]
+    result = inspect(one(lambda payload, n: decided(payload, "CONFLICT", evidence_refs=["B1"], basis_quotes=STORED,
+                                                    disagreements=misuse)))
+    assert result.question_failures == {}
+    decision = result.decisions["Q1"]
+    assert decision.outcome == "CONFLICT" and decision.disagreements == []
+    assert result.normalizations["INVALID_DISAGREEMENTS_DROPPED"] == 1
+
+
+def test_a_db_raw_basis_with_only_invalid_disagreements_falls_back_to_the_outcome_basis():
+    misuse = [{"fact_ref": "B1", "evidence_ref": "T1", "reason": "다르다"}]
+    result = inspect(one(lambda payload, n: decided(payload, "CONFLICT", "DB_RAW_DISAGREEMENT", evidence_refs=["B1"],
+                                                    basis_quotes=STORED, disagreements=misuse)))
+    assert result.question_failures == {}
+    assert (result.decisions["Q1"].outcome, result.decisions["Q1"].basis) == ("CONFLICT", "DIRECT_CONTRADICTION")
+
+
+def test_prompts_scope_disagreements_name_stored_settings_and_add_places_to_subjects():
+    assert "대상 원고(T1)와 이전 기록의 차이는 disagreements가 아니라" in JUDGE_SYSTEM
+    assert "settings 값을 \"설정집\"이라고 부르지 않는다" in JUDGE_SYSTEM
+    assert "그 장소도 subject_refs에 함께 넣는다" in PLANNER_SYSTEM
