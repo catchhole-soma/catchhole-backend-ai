@@ -153,14 +153,9 @@ def test_typo_role_runtime_from_the_job_configuration_reaches_count_and_generati
 
 @pytest.mark.parametrize("reply,code", [
     ({"segments": [], "suggestions": []}, "TYPO_COVERAGE_INVALID"),
-    (batch("TSEG2"), "TYPO_COVERAGE_INVALID"),
     ({"segments": batch()["segments"] * 2, "suggestions": []}, "TYPO_COVERAGE_INVALID"),
     ({"segments": [{"segment_ref": "TSEG1", "status": "UNPROCESSED", "reason": "미검사"}],
       "suggestions": []}, "TYPO_COVERAGE_INVALID"),
-    ({"segments": [{"segment_ref": "TSEG1", "status": "PLANNED", "reason": "오타 있음"}],
-      "suggestions": []}, "TYPO_COVERAGE_INVALID"),
-    ({"segments": batch()["segments"], "suggestions": [suggestion(0, "됬다", "됐다")]},
-     "TYPO_COVERAGE_INVALID"),
     # GH331: offsets are re-anchored on the model's own quote, so only an absent quote is rejected.
     (batch(suggestions=[suggestion(1, "됬어", "됐어")]), "INVALID_EXACT_SPAN"),
     (batch(suggestions=[suggestion(0, "됐다", "됐다")]), "INVALID_EXACT_SPAN"),
@@ -559,3 +554,25 @@ def test_metered_zero_retries_has_one_provider_attempt_and_keeps_reservation_sem
     assert len(ledger.releases) == int(fail)
     assert len(ledger.settlements) == int(not fail)
     assert clients[0].max_retries == 0
+
+
+# 2026-11-03 31화 planted run: one segment said PLANNED with no suggestions and the whole TYPO branch ended
+# TYPO_COVERAGE_INVALID. A status/suggestion mismatch is aligned to what was actually returned and counted.
+@pytest.mark.parametrize("reply, status, suggestions", [
+    ({"segments": [{"segment_ref": "TSEG1", "status": "PLANNED", "reason": "오타 있음"}], "suggestions": []},
+     "NO_CHECK", 0),
+    ({"segments": batch()["segments"], "suggestions": [suggestion(0, "됬다", "됐다")]}, "PLANNED", 1),
+])
+def test_a_status_suggestion_mismatch_is_aligned_instead_of_failing_the_branch(reply, status, suggestions):
+    fixture = OfflineRun("됬다.", {"TSEG1": reply})
+    result = asyncio.run(fixture.run())
+    assert (result.status, result.failure_code, len(result.suggestions)) == ("COMPLETED", None, suggestions)
+    assert [(s.segment_ref, s.status) for s in result.segments] == [("TSEG1", status)]
+
+
+def test_a_single_coverage_row_with_another_ref_is_aligned_to_the_asked_segment():
+    reply = {"segments": [{"segment_ref": "TSEG9", "status": "NO_CHECK", "reason": "오탈자 없음"}], "suggestions": []}
+    fixture = OfflineRun("됬다.", {"TSEG1": reply})
+    result = asyncio.run(fixture.run())
+    assert (result.status, result.failure_code) == ("COMPLETED", None)
+    assert [(s.segment_ref, s.status) for s in result.segments] == [("TSEG1", "NO_CHECK")]

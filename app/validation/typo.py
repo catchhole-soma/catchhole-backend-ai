@@ -91,14 +91,28 @@ def _validated_batch(response, segment, text, accepted, aliases=frozenset(), sta
     except ValidationError:
         raise IncompleteInspection("TYPO_RESPONSE_INVALID") from None
     batch = batch.model_copy(update={"suggestions": _anchored(batch.suggestions, segment, text, aliases, stats)})
+    if len(batch.segments) == 1 and batch.segments[0].segment_ref != segment.ref:
+        # One coverage row for the one segment asked about, echoed with another ref: it can only mean this segment.
+        batch = batch.model_copy(update={"segments": [batch.segments[0].model_copy(update={"segment_ref": segment.ref})]})
+        if stats is not None:
+            stats["TYPO_SEGMENT_REF_ALIGNED"] += 1
     probe = ClassifiedTypoCheckResult(target_hash="", status="COMPLETED", segments=batch.segments,
                                       suggestions=batch.suggestions, failure_code=None)
     try:
         probe.require_coverage([segment.ref])
     except ValueError:
+        # Which shape failed, without any manuscript text (2026-11-03: the cause was not recoverable from logs).
+        logger.warning("typo coverage invalid segment=%s rows=%d statuses=%s suggestions=%d", segment.ref,
+                       len(batch.segments), [row.status for row in batch.segments], len(batch.suggestions))
         raise IncompleteInspection("TYPO_COVERAGE_INVALID") from None
-    if (batch.segments[0].status == "PLANNED") != bool(batch.suggestions):
-        raise IncompleteInspection("TYPO_COVERAGE_INVALID")
+    planned = batch.segments[0].status == "PLANNED"
+    if planned != bool(batch.suggestions):
+        # A PLANNED segment whose suggestions were all dropped while anchoring (or a NO_CHECK row that still
+        # carries suggestions) is a labelling mismatch, not a coverage gap: align the status to what remains.
+        status = "PLANNED" if batch.suggestions else "NO_CHECK"
+        batch = batch.model_copy(update={"segments": [batch.segments[0].model_copy(update={"status": status})]})
+        if stats is not None:
+            stats["TYPO_SEGMENT_STATUS_ALIGNED"] += 1
     ordered = sorted(batch.suggestions, key=lambda suggestion: suggestion.span.start)
     for index, suggestion in enumerate(ordered):
         span = suggestion.span
