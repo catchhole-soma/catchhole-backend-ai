@@ -11,11 +11,20 @@ canonical author_correction=null을 자유 문자열 서사 시점·조건의 �
 - `contracts.py`: 계약·`split_setting_segments`(grid v4)·`split_segments`(TYPO)·판정 답 `JudgeOpenAnswer`/`JudgeFinalAnswer`·예산.
 - `planning.py`: 구간 PLANNER 병렬 호출·정규화·게시·MERGED_PLAN 병합·서버 grid 대조.
 - `judging.py`: 판정 상태 기계(OPEN → 검색·문맥 → FINAL, 충돌 의심 변화 검색, 최대 3회)·`SettingsCache`·판정 검증.
-- `corpus.py`: L receipt·E-ref 발급과 실행 단위 RAG 재사용(lock 하나, 같은 문장 1회 검색).
-- `failures.py`: 질문 단위/실행 단위 실패 분류와 정책 스위치(운영 fail-fast, 실험 계속).
-- `service.py`: 조율(입력 읽기 → 계획 → 판정 4개씩).
+  판정 규칙 보완(2026-11-03): 충돌(CONFLICT·SUSPECTED_CONFLICT)은 대상 문장과 직접 어긋나는 이전 문장이 있을 때만이고, 그 문장은
+  `basis_quotes`에 글자 그대로 옮겨야 한다. 확인된 근거 문장이 하나도 없는 충돌 판정은 저장 전에 NO_CONFLICT로 바꾼다
+  (`clear_unquoted_finding`, `CONFLICT_QUOTE_MISSING_CLEARED`/`SUSPECTED_CONFLICT_QUOTE_MISSING_CLEARED`, 질문 실패 아님,
+  DB·원문 불일치(`disagreements`)가 있는 판정은 기존 NEEDS_CONTEXT 규칙 그대로). 검색을 요청한 FOLLOW_UP마다 Worker가 질문의
+  대상 문장과 앞뒤 100자(줄 단위로 맞춤)로 만든 VECTOR 검색 하나를 판정 검색 뒤에 더 한다(`target_search_query`, 판정의 3개와 별도,
+  `TARGET_SEARCH_INSERTED`). 충돌 의심 변화 검색 문장은 `check_intent` + 대상 문장이다(`change_search_query`).
+- `author_text.py`: 작가가 읽는 판정 문장(`headline`·`reason`·`impact_reason`·`disagreements[].reason`)의 내부 참조를 "이번 원고"·"N화"·"저장된 설정"·대상 이름으로 바꾸고 모르는 참조·내부 용어 문장은 버리는 저장 전 안전망(`AUTHOR_TEXT_SANITIZED`). 판정 근거 문장 `basis_quotes`는 `judging.normalize_basis_quotes`가 evidence 조각(절대 위치 인용)·저장 설정 값(부분 문자열)으로 확인하고 틀린 것은 버린다(`BASIS_QUOTES_DROPPED`, 질문 실패 아님). 판정 작성 제목 `headline`(2026-11-03)은 고정 대체 문장 없이 정제하고, 비거나 80 code point를 넘거나 NO_CONFLICT면 None으로 게시한다(`HEADLINE_DROPPED`·`HEADLINE_MISSING`·`NO_CONFLICT_HEADLINE_CLEARED`, 판정 입력 `target_episode_no`).
+- `corpus.py`: L receipt·E-ref 발급과 실행 단위 RAG 재사용(lock 하나, 같은 문장 1회 검색). 범위는 앞 회차와 현재 판 설정집.
+- `search.py`: report fence가 있는 frozen readiness와 회차·설정집 조각을 한 순위로 고르는 VECTOR(`frozen_vector`), 범위 `indexed_sources`.
+- `index_fill.py`: 접수 때 색인 채우기(2026-11-02 결정) — 범위의 빈 곳만 READ_SOURCE 원문으로 다시 자르고 READY가 아닌 조각만 임베딩.
+- `failures.py`: 질문 단위/실행 단위 실패 분류와 정책 스위치 `CONTINUE_AFTER_QUESTION_FAILURE`(결정 ③: 운영도 실패한 질문만 INCOMPLETE로 게시하고 나머지를 계속 판정, 실험은 게시 없이 계속).
+- `service.py`: 조율(입력 읽기 → 색인 채우기와 계획 동시 → 채우기 대기·readiness → 판정 4개씩).
 - `models.py`/`schemas.py`: `RoleRuntime`, PLANNER/JUDGE 지시문, `call_role`, v3 strict schema.
-- `execution.py`: claim 예산·역할 runtime(`claim_roles`), 역할별 metered client, query embedding(lock).
+- `execution.py`: claim 예산·역할 runtime(`claim_roles`), 역할별 metered client, query embedding(lock), 색인 채우기 embedding(`INDEX_EMBEDDING`, `indexInput`).
 
 PLANNER 단계를 검증 즉시 저장하고 서버 v4 grid를 확인한 뒤 MERGED_PLAN의 서버 check UUID/revision/digest로 판정한다.
 결정된 질문과 오탈자 segment도 즉시 저장한다. 같은 입력의 crash/reclaim은 저장된 PLANNER·결정·구간을 재호출하지 않고,
@@ -29,9 +38,13 @@ PLANNER 단계를 검증 즉시 저장하고 서버 v4 grid를 확인한 뒤 MER
 SELECT 전용 session factory를 명시하면 frozen RAG를 사용한다. optional embedding은 실제 index와
 model/version/1536 차원·명시 cap이 일치할 때만 실행한다. 같은 실행 안의 같은 검색 문장은 한 번만 embedding·검색하고
 결과를 재사용한다(`reused_from`). 실행 사이(retry)의 재사용은 없다. 미준비 vector는 정상 빈 결과가 아니다.
-검색은 Job 시작 때 읽은 readiness가 완전하고 query embedding client가 있을 때만 판정에 제안한다(GH344).
+검색은 판정 직전에 읽은 readiness가 범위(앞 회차·현재 판 설정집) 전체에서 완전하고 query embedding client가 있을 때만 판정에 제안한다(GH344).
 readiness 읽기는 최대 5초이고, 실패·초과하면 그 Job은 검색 없이 진행하며 변화 검색이 필요한 질문은 `VECTOR_NOT_READY`다.
-과거 회차가 없으면 검색은 근거 없이 성공한다(`NOT_APPLICABLE`). claim에 QUERY_EMBEDDING 역할이 아예 없으면 embedding 없이 실행하고,
+범위가 비면 검색은 근거 없이 성공한다(`NOT_APPLICABLE`).
+접수 때 색인 채우기: 쓰기 session factory(`index_sessions`, runner `--index-url-env`)와 claim의 INDEX_EMBEDDING 역할이 있으면 INPUT 직후 계획과
+동시에 범위의 빈 곳만 채우고(이미 READY인 조각은 다시 임베딩하지 않음, 바뀐 원고는 다시 자름) 판정은 그 뒤에 시작한다. 채우기 실패(provider·cap·DB·
+원문 문제)는 실행을 멈추지 않고 검색이 필요한 질문만 `VECTOR_INDEX_FILL_FAILED`(원인 `INDEX_FILL_*`)로 남긴다. 비용은 서비스 부담이다.
+설정집 조각 근거는 `source_kind=SETTING_BOOK` E ref이며 판정 프롬프트는 회차가 아닌 설정집으로 표시한다. claim에 QUERY_EMBEDDING 역할이 아예 없으면 embedding 없이 실행하고,
 있는데 index와 다르면 계속 거절한다.
 
 기본 추출·챗봇 모델/재시도, 추출 Job·후보·자동 확정/철회는 바꾸지 않는다. #312/#314는 별도 범위다.

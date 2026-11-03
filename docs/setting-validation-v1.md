@@ -51,6 +51,8 @@ quote가 정확하지 않은 위치에 있으면 **모델 자신의 quote**가 �
 
 `FrozenRetrievalRepository`는 DB report와 validation_baseline_sources를 검색의 공통 SQL 조건에 결합한다.
 회원/작품/수명·target·정확한 허용 출처 hash/key/version·대상 이전 회차 필터를 순위/LIMIT 전에 적용한다.
+접수 때 색인 채우기(2026-11-02) 뒤로는 고정 manifest에서 `currentRevision: true`인 설정집 revision의 V114 색인도 같은 report fence와 manifest
+identity로 묶어 readiness에 넣고, VECTOR는 회차·설정집 조각을 한 거리 순위로 합쳐 top-k를 고른다(`FrozenRetrievalRepository.frozen_vector`).
 `FrozenRetrievalSearchService`는 호출자가 명시적으로 주입한 읽기 session factory만 사용하며 기본 DB/embedding provider를 만들지 않는다.
 grid v4의 검색은 VECTOR 하나다. 벡터 호출에는 같은 index spec의 계량 embedding client를 주입한다.
 
@@ -58,15 +60,22 @@ grid v4의 검색은 VECTOR 하나다. 벡터 호출에는 같은 index spec의 
 한 실행 안에서 한 번만 실제로 검색한다(조회 1회, embedding 1회). 재사용한 결과는 새 L-ref에 `reused_from`을 단다.
 embedding·검색·proof 기록 전체를 실행당 lock 하나로 직렬화하므로 동시에 같은 문장을 묻는 두 판정도 검색은 한 번이다.
 키워드·직접·인접 읽기, 미색인 회차/설정집 원문 읽기, 조각마다 저장소를 다시 읽는 확인은 없다. 인용 검증은 게시 때 서버가 한다.
-과거 회차 출처가 없으면 VECTOR는 근거 없이 성공하고(`vector_status=NOT_APPLICABLE`) embedding을 만들지 않는다.
-회차 출처가 있는데 색인이 완전하지 않으면 검색을 제안하지 않으며, 필요한 변화 검색은 `VECTOR_NOT_READY`로 그 질문을 끝낸다.
-검색 시점 readiness가 허용 회차 전체를 덮지 못하면 실패 receipt에 readiness를 남기고 `VECTOR_INDEX_PARTIAL`이다.
-설정집은 RAG 색인이 생길 때까지 직접 참조하지 않는다(#349 결정).
+RAG 범위(`search.indexed_sources`)는 앞 회차와 현재 판 설정집이다. 범위가 비면 VECTOR는 근거 없이 성공하고(`vector_status=NOT_APPLICABLE`)
+embedding을 만들지 않는다. 범위가 있는데 색인이 완전하지 않으면 검색을 제안하지 않으며, 필요한 변화 검색은 그 질문을 INCOMPLETE로 끝낸다:
+접수 때 색인 채우기가 실패했으면 `VECTOR_INDEX_FILL_FAILED`(원인 `INDEX_FILL_*`), 채울 수 없었으면 `VECTOR_NOT_READY`.
+검색 시점 readiness가 범위 전체를 덮지 못하면 실패 receipt에 readiness를 남기고 `VECTOR_INDEX_PARTIAL`이다.
+설정집은 원문을 통째로 읽지 않고 RAG 조각으로만 참조한다. 설정집 조각의 E ref는 `source_kind=SETTING_BOOK`이며 판정 프롬프트는 이를 회차가 아닌
+설정집으로 표시한다.
+
+**접수 때 색인 채우기**(`app/validation/index_fill.py`, `ValidationIndexFill`): 실행의 INDEX_EMBEDDING 역할과 쓰기 연결이 있으면 INPUT 직후
+계획과 동시에 범위의 빈 곳만 채우고, 판정은 그 결과를 기다린 뒤 readiness를 한 번 읽는다. 완전한 출처는 원문도 읽지 않고, 아니면 READ_SOURCE 전문을
+같은 규칙으로 잘라 `store.prepare`(같으면 유지·다르면 다시 자름) 뒤 READY가 아닌 조각만 32개씩 임베딩한다. provider·cap·DB·원문 문제는 채우기만
+실패시키고 실행은 계속된다. lease 상실·입력 변경은 실행 단위 실패다. 비용은 서비스 부담(SERVICE_PAID_V1)이며 상세는 `docs/validation-execution-v1.md`.
 
 ## 질문·판정 (grid v4, #349 개편)
 
 `SettingValidationService(data_client, model_client, budget, roles, search=None, embedding_client=None, checkpoint=None,
-experiment=False, judge_concurrency=4).inspect()`가 진입점이다. `roles`는 PLANNER·JUDGE의 `RoleRuntime(model, call_options,
+experiment=False, judge_concurrency=4, index_fill=None).inspect()`가 진입점이다(`index_fill`은 접수 때 색인 채우기). `roles`는 PLANNER·JUDGE의 `RoleRuntime(model, call_options,
 max_output_tokens)`이다. `model_client`는 create_text_response와 exact count_input_tokens를 제공해야 한다(`for_validation_role`이 있으면 역할별 client).
 검수 과금/Worker 원장 연결은 GH310의 책임이다. 기존 추출용 MeteredTextGenerationClient를 재사용하기 위해 가짜 AnalysisJob/lease를 생성하지 않는다.
 
@@ -81,6 +90,7 @@ max_output_tokens)`이다. `model_client`는 create_text_response와 exact count
 5. 질문 주체의 현재값 행을 SETTINGS로 100개씩 읽어 실행 안에 캐시한다(`SettingsCache`, 중복 요청 합침). `worldHistory` 행과 값 이력은 판정에 보내지 않는다.
 6. JUDGE를 4개씩 동시에 실행한다(`app/validation/judging.py`). 질문당 최대 3회: OPEN(DB 현재값과 앞뒤 300자로 판정, 판단할 수 없을 때만 FOLLOW_UP으로
    자연어 검색 문장 최대 3개와 T1 문맥 범위를 요청) → 요청한 검색·문맥을 읽은 뒤 FINAL(DECIDED만) → 충돌 의심이면 Worker 변화 검색 뒤 FINAL.
+   검색을 요청한 FOLLOW_UP에는 Worker가 대상 문장 검색 하나를 더 한다(아래 "판정 규칙·검색 보완").
 7. 코드가 실제 제공 참조·정확한 target 위치·성공 receipt·필수 읽기 처리를 검사한다. 모델의 true 네 개를 그대로 완료 조건으로 쓰지 않는다.
 
 판정 입력은 `{question_ref, check_revision, question, target_context, additional_target_context, settings, evidence, receipts, source_catalogue,
@@ -91,9 +101,14 @@ provider prompt cache가 유지된다. 계획 schema는 `validation_planner_v3` 
 빈 FOLLOW_UP은 `INVALID_FOLLOW_UP_EMPTY`, 빈·1000자 초과 문장은 `INVALID_SEARCH_REQUEST`, T1 밖 범위는 `INVALID_TARGET_CONTEXT_REQUEST` 원인이다.
 FINAL 답이 FOLLOW_UP이면 `MODEL_CONTRACT_INVALID`다.
 
-실패 정책(`app/validation/failures.py` 한 곳): 실행 단위 실패는 새 판정 시작을 멈추고 진행 중 판정은 끝내 게시한다. 질문 단위 실패(모델 양식·잘림·판정 규칙·
-FOLLOW_UP 형식·검색 미준비/실패·입력 초과)도 운영에서는 같은 fail-fast이며(정책 재검토 예정), `experiment=True`는 `question_failures[qref]={code,cause,call}`로
-기록하고 나머지를 계속 판정한다. `InspectionResult.traces`는 질문별 호출 기록(형식·응답·검색 수·캐시 재사용·변화 검색·오류)이며 게시하지 않는다.
+실패 정책(`app/validation/failures.py` 한 곳, 스위치 `CONTINUE_AFTER_QUESTION_FAILURE`): 실행 단위 실패(예산·입력/출처 변경·gate 중단·사용량·lease/HTTP·자료 접근)는
+새 판정 시작을 멈추고 진행 중 판정은 끝내 게시한다. 질문 단위 실패(모델 양식·잘림·판정 규칙·FOLLOW_UP 형식·검색 미준비/실패·입력 초과, `QUESTION_LEVEL_CODES`)는
+**결정 ③(2026-11-02)**에 따라 운영에서도 그 질문만 끝낸다: 실행 Job에서는 `ValidationCheckpoint.fail`이 그 질문을 INCOMPLETE unit
+(`failure_code`·`failure_cause`·`failed_call`·질문의 `target_spans`)으로 게시하고 나머지 질문을 계속 판정한다. INCOMPLETE 게시 자체가 실패하면 실행 단위 중단이다.
+모든 질문이 결정되거나 INCOMPLETE로 끝나면 결과는 `INCOMPLETE` + `SETTING_QUESTIONS_INCOMPLETE`(깨끗한 성공이 아님)이고 질문별 원인은
+`question_failures[qref]={code,cause,call}`에 남는다. 작가 retry와 lease 회수는 INCOMPLETE·미게시 질문만 다시 판정한다. `experiment=True`는 게시 없이
+같은 방식으로 계속하되 결과 코드는 처음 실패한 질문(또는 계획 구간)의 코드다. 계획 구간 실패는 질문 실패가 아니어서(합칠 PLANNER 단계가 없다) 운영에서는
+SETTING 분기를 멈춘다. `InspectionResult.traces`는 질문별 호출 기록(형식·응답·검색 수·캐시 재사용·변화 검색·오류)이며 게시하지 않는다.
 
 GH331 모델 출력 정규화(실제 Terra 관측 반영, grid v4에서도 유지):
 
@@ -110,11 +125,45 @@ DB 현재값과 확보한 근거가 충분하면 검색을 생략할 수 있으�
 검색 0건 자체로 직접 모순이나 예외 부재를 증명하지 않는다. 같은 신규 회차만의 모순은 판정하지 않는다.
 
 GH341(grid v4): DECIDED SUSPECTED_CONFLICT가 호출 한도 전에 왔는데 그 질문에 성공한 `CHANGES_EXCEPTIONS` VECTOR receipt가 없으면, Worker가 ref
-`Qn-CHANGES_EXCEPTIONS`, 고정 purpose `Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색`, query = 중복 없는 비어 있지 않은 `subject_mentions` 뒤에
-`property_or_rule`(1000자 이내)인 VECTOR 검색 하나를 실행하고 FINAL로 다시 묻는다(`CHANGE_SEARCH_INSERTED`). 세 번째 호출은 이 경로로만 가므로 최종
-SUSPECTED_CONFLICT에는 항상 그 receipt가 있다. query를 만들 수 없으면 `INVALID_DECISION_CHANGE_SEARCH_MISSING`, 검색을 쓸 수 없으면 `VECTOR_NOT_READY`다.
+`Qn-CHANGES_EXCEPTIONS`, 고정 purpose `Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색`, query = 질문의 `check_intent` 뒤에 대상 span quote들(원고 순서,
+공백 묶음은 한 칸, 중복 제외, 1000자 이내, 2026-11-03부터. 이전에는 `subject_mentions` + `property_or_rule`)인 VECTOR 검색 하나를 실행하고 FINAL로 다시
+묻는다(`CHANGE_SEARCH_INSERTED`). 세 번째 호출은 이 경로로만 가므로 최종
+SUSPECTED_CONFLICT에는 항상 그 receipt가 있다. query를 만들 수 없으면 `INVALID_DECISION_CHANGE_SEARCH_MISSING`, 검색을 쓸 수 없으면 `VECTOR_NOT_READY`(채우기 실패 뒤에는 `VECTOR_INDEX_FILL_FAILED`)다.
 다시 받은 판정이 그 receipt를 인용하지 않으면 Worker가 receipt와 알려진 근거(없으면 `T1`)를 덧붙인다(`CHANGE_SEARCH_RECEIPT_FILLED`).
 모든 판정은 대상 원고 T1 문맥을 받으므로, `completion.comparison_context.evidence_refs`에 `T1`이 빠지면 Worker가 앞에 덧붙인다(`COMPARISON_CONTEXT_TARGET_FILLED`). 판정·사유·등급은 바꾸지 않는다.
+
+### 판정 규칙·검색 보완 (2026-11-03)
+
+31화 로컬 실행의 오탐은 모두 "이전 기록에 없다·못 찾았다"를 충돌로 올린 경우였다(새로 나온 규칙, 회상한 앞 장면, 처음 하는 희귀도 비교, 앞 회차의 약속).
+판정 규칙과 Worker 검사를 다음처럼 바꾼다(schema·wire는 그대로 v3).
+
+- 판정 지시(`JUDGE_SYSTEM` "판정 규칙"): CONFLICT는 특정한 이전 문장(저장된 값 또는 evidence 문장)이 같은 대상·서사 시점·조건에서 대상 문장과 함께 참일 수
+  없다고 직접 말할 때, SUSPECTED_CONFLICT는 그런 문장이 있고 변화·예외 검색에서 설명을 찾지 못했을 때만이다. 기록 없음·검색 미발견·처음 나온 설정/규칙/수치·
+  처음 하는 비교·평가·일반 서술과 양립하는 구체 서술·반대 문장 없는 추측/전해 들은 말/회상/계획은 NO_CONFLICT다. NEEDS_CONTEXT는 대상 원고 자체의 뜻이
+  모호할 때만이다. 결론 전에 받은 settings·evidence를 처음부터 끝까지(조각 끝의 대사·합의까지) 다시 읽고, 대상 문장을 뒷받침하는 이전 문장이 있으면 NO_CONFLICT다.
+  CONFLICT·SUSPECTED_CONFLICT의 `basis_quotes` 첫 항목은 그 어긋나는 이전 문장이다.
+- 규칙 검사(`judging.clear_unquoted_finding`): Worker가 받아들이는 DECIDED(변화 검색 뒤의 FINAL 포함) 중 CONFLICT·SUSPECTED_CONFLICT인데 확인된
+  `basis_quotes`(`normalize_basis_quotes`를 통과한 E·B 인용)가 하나도 없고 `disagreements`도 없으면 NO_CONFLICT/COMPATIBLE, impact·impact_reason null,
+  사유 고정 문장으로 바꾼다. 원래 결과별로 `CONFLICT_QUOTE_MISSING_CLEARED`/`SUSPECTED_CONFLICT_QUOTE_MISSING_CLEARED`를 세고 trace에 `cleared`·`cleared_impact`·`cleared_reason`(판정 원래 결과·등급·사유, 메모리 진단이며 실험 harness만 파일로 쓴다. 로그·게시 없음)을 남긴다.
+  질문 실패가 아니며 판정 검증보다 먼저 한다(외부 근거 없는 CONFLICT도 실패 대신 NO_CONFLICT). 호출 한도 전 SUSPECTED_CONFLICT의 변화 검색 → FINAL 흐름은
+  그대로라 근거 문장 없는 OPEN SUSPECTED도 변화 검색 결과를 본 FINAL에서 다시 결정한다. 인용이 의미상 "어긋나는 문장"인지는 Worker가 판단하지 않는다(지시문 몫).
+  `disagreements`가 있는 판정은 기존 DB_RAW_DISAGREEMENT → NEEDS_CONTEXT 규칙을 따른다.
+- 대상 문장 검색(`judging.target_search_query`): 검색 문장을 하나 이상 요청한 FOLLOW_UP마다 판정 검색들 뒤에 Worker가 VECTOR 검색 하나를 더 한다. intent는
+  `{ref: Qn-TARGET_VECTOR, kind: COMPARISON_CONTEXT, operation: VECTOR, purpose: "Worker가 대상 문장과 앞뒤 원고로 만든 이전 장면 의미 검색", query}`.
+  query는 각 span 앞뒤 100 code point(늘린 부분이 줄 중간에서 끝나면 그 안의 가장 가까운 줄바꿈까지 줄임, span은 자르지 않음)를 원고 순서로 합치고 겹치는
+  범위는 하나로 묶은 뒤 공백 묶음을 한 칸으로 바꾼 글이다. 1000자를 넘으면 span quote만 쓴다. 판정 검색 3개와 별도라 FOLLOW_UP 한 번에 최대 4개, 질문당
+  최대 5개(변화 검색 포함) VECTOR receipt다. 다른 검색처럼 조회 예산 1과 query embedding 1을 쓰며, 같은 실행의 같은 문장(같은 span의 다른 질문)은
+  재사용한다(`reused_from`, 예산·embedding 없음). 문맥 범위만 요청한 FOLLOW_UP과 DB로 끝난 판정에는 없다. trace의 `worker_searches`, 집계
+  `TARGET_SEARCH_INSERTED`. 키워드·원문 훑기가 아니라 대상 원고 글로 만든 의미 검색이다.
+
+### 판정 작성 제목·설명 (2026-11-03)
+
+오류 리포트 제목과 설명은 판정이 쓴다(schema·이름 v3 그대로). DECIDED 판정은 필수(nullable) `headline`에 제목 한 줄을 쓴다: CONFLICT
+`{대상}의 {항목}이 기존 설정과 달라요`(이전 회차면 `…N화와 달라요`, 설정집이면 `…설정집과 달라요`), SUSPECTED_CONFLICT `…다를 수 있어요`,
+NEEDS_CONTEXT는 무엇이 분명하지 않은지. {대상}은 저장 값·이전 문장이 실제로 어긋나는 대상이며 서술자나 이름만 나온 인물이 아니다. FOLLOW_UP·NO_CONFLICT는 null.
+CONFLICT·SUSPECTED의 `reason`은 원인→결과 두 문장(`기존 설정은 … (이)라고 해요. 그런데 31화에서는 … (이)라고 해요.`)이고 판정 입력에 `target_episode_no`가 있다.
+Worker는 headline을 `reason`과 같은 작가용 정제로 다루되 고정 대체 문장 없이 None으로 둘 수 있다(80 code point 초과·빈 값·NO_CONFLICT). 상세는
+`docs/validation-execution-v1.md` "판정 작성 제목(headline)과 원인→결과 사유", 공통 fixture `judgeFlow.headline`.
 
 모델 입력 투영(GH349 후속, grid v4에서도 유지): JUDGE의 `settings`는 `app/validation/projection.py`의 `compact_setting_row`로 만든 압축 현재값 행이다.
 행은 `entry_ref`, `subject_ref`, `domain`, `name`, `aliases`, `state`(+행에 있으면 `author_correction` 그대로)다. `state`에는 스칼라 값, 스칼라 목록,
@@ -140,8 +189,8 @@ DB↔원문 불일치는 두 참조를 유지하고 명시 정정의 정확한 �
 
 ## 모델·예산·오탈자 공통 계약
 
-모델과 추론 강도는 코드에 고정하지 않고 Job configuration v2의 역할별 설정이 정한다(`claim_roles`). 운영 권장값은 PLANNER `gpt-6.1-terra` medium이고
-JUDGE·TYPO는 31화로 Terra와 `gpt-6-luna`를 비교한 뒤 정한다(판정 medium, 오탈자 low). 출력 상한도 역할별이다(계획 5만, 판정 2만, 오탈자 1.2만).
+모델과 추론 강도는 코드에 고정하지 않고 Job configuration v2의 역할별 설정이 정한다(`claim_roles`). 운영값은 31화 Terra/Luna 비교 실험으로 정했다:
+PLANNER `gpt-6.1-terra` medium, JUDGE `gpt-6-luna` high, TYPO `gpt-6.1-terra` low. 출력 상한도 역할별이다(계획 5만, 판정 2만, 오탈자 1.2만).
 frozen `LlmCallOptions`를 count/생성 양쪽에 동일하게 전달하고 공유 client 기본 속성을 바꾸지 않는다. 기존 추출/챗봇의 모델·추론 기본값은 유지한다.
 
 `InvocationBudget`의 model_calls/lookups/seconds/input_tokens/segment_chars/context_chars/search_limit는 모두 호출자가 정한다(claim 시도 단위).
@@ -154,6 +203,9 @@ TYPO 모델·추론 강도·출력 상한을 받는다. 오탈자 실행·작가
 
 로컬 실험 harness(`scripts/validation_experiment/`)는 같은 계획·판정·오탈자 코드를 실행 Job 없이(`checkpoint=None`, `experiment=True`) 읽기 전용 export로 만든
 fixture와 loopback 일회용 DB(`validation_experiment_*`)에서 돌린다. 유료 단계는 `--confirm-paid`가 필요하고 출력은 저장소 밖에 둔다.
+`report`는 판정 실행마다 결과 분포·지적 수(CONFLICT/SUSPECTED_CONFLICT/NEEDS_CONTEXT)와 질문별 지적 표(규칙 검사로 바뀐 질문은 원래 결과·사유),
+규칙 검사 횟수(`ruleGuard`), 질문당 검색(판정·대상 문장·변화·합계·분포·임베딩·재사용)을 쓰고, `--name`으로 보고서 폴더 이름을 정한다(기본 `report`).
+판정 결과에는 JUDGE 지시문 SHA-256(`judgePromptSha256`)이 남아 같은 로직 버전 안의 지시문 변경을 구분한다.
 
 ## 재현
 

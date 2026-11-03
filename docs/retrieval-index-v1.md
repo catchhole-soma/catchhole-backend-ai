@@ -59,6 +59,18 @@ LLM이나 외부 사용자에게 직접 노출한 DB 조회 API가 아니다. #2
 동일 조건을 적용하고 답변 전달 전 재검증한다. 예전 `EpisodeChunkVectorSearchService`를
 그대로 챗봇에 붙이면 이 유효성 계약을 충족하지 않는다.
 
+## 설정집 색인과 검수 접수 때 채우기 (2026-11-02)
+
+- V114 `retrieval_setting_book_sources`(PK `revision_id`, `setting_book_id`·`work_id`, 현재 원문 key/version/hash, 같은 조각 정책)와
+  `retrieval_setting_book_chunks`(회차 조각과 같은 열, `last_operation_id` 없음)는 설정집 revision 하나를 출처 하나로 저장한다.
+  분석용 `setting_book_chunks`(Job·revision 격리, 임베딩 없음)와 별개다. 회차 표와 같은 `prepare`/`validate`/`save` 규칙을
+  `app.retrieval.store.SettingBookRetrievalStore`가 재사용하며, 보관되지 않은 설정집의 현재 revision만 쓸 수 있다(아니면 `SOURCE_CHANGED`).
+- 채우는 곳은 검수 Worker의 접수 때 채우기뿐이다(`docs/validation-execution-v1.md`). 그 실행의 고정 manifest가 `currentRevision: true`로 표시한
+  revision의 빈 곳과 앞 회차의 빈 곳만 채우며, 임베딩은 검수 역할 `INDEX_EMBEDDING`(서비스 부담 `SERVICE_PAID_V1`)으로 원장에 남는다.
+  운영 백필 campaign과 챗봇 readiness는 계속 `CURRENT_EPISODE`만 다룬다(챗봇의 `unsupportedSourceTypes`는 그대로다).
+- 설정집 수정·보관은 Spring이 그 설정집의 색인 행을 같은 트랜잭션에서 지우고(`SettingBookRetrievalIndexCleanup`), 작품 파기도 두 표를 지운다.
+  검수 frozen reader(`catchhole_chat_reader`)는 두 표의 SELECT가 더 필요하다(`app/retrieval/bootstrap.py` RELATIONS).
+
 ## 준비 상태와 dry-run
 
 `status`는 DB만 읽으며 source별 상태/대상 수/READY·MISSING·FAILED·MODEL_VERSION_MISMATCH·CHUNK_MISMATCH 수를 반환한다.
