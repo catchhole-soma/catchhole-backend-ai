@@ -125,7 +125,7 @@ BASELINE 확장 행(`expanded_setting_row`)과 이력 요청은 없다(#349 결�
 `current_settings`, `source_catalogue`, `CURRENT_DOMAINS`)도 두며 Job 없는 호출형·실험 fixture client가 쓰고 공통 fixture 벡터로 서버와 대조한다.
 
 legacy(grid v1~v3): 구간별 SUBJECT_RESOLUTION(RELATED_SELECTION 역할)·COVERAGE(rules/clue_checks)·기계 매칭 `segmentSubjects`·서버 `modelClues`·
-설정집 BOOK_SOURCE/BOOK_COVERAGE·키워드/직접/인접 읽기·FOLLOW_UP의 `affected_question_refs` 재개와 `/revisions`·JUDGING checkpoint는 v0043에서 제거했다.
+설정집 BOOK_SOURCE/BOOK_COVERAGE·키워드/직접/인접 읽기·FOLLOW_UP의 `affected_question_refs` 재개와 `/revisions`·JUDGING checkpoint는 v0045에서 제거했다.
 과거 규칙은 git 이력과 v0038~v0042 상세를 따른다.
 
 DB↔원문 불일치는 두 참조를 유지하고 명시 정정의 정확한 대상/항목/시점/조건 범위를 검증한다.
