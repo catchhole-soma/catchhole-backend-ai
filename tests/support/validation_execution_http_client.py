@@ -13,7 +13,8 @@ import httpx
 
 from app.llm.openai_client import OpenAIResponsesClient
 from app.validation.client import ValidationExecutionClient
-from app.validation.contracts import IncompleteInspection
+from app.validation.contracts import IncompleteInspection, QuestionDraft
+from app.validation.judging import target_search_query
 from app.validation.projection import setting_value_leaves
 from app.worker.episode_validation_worker import EpisodeValidationWorker
 
@@ -54,13 +55,14 @@ class SyntheticProvider:
     def __init__(self, mode, wait_file=None, subject_mentions="none"):
         self.mode, self.wait_file, self.subject_mentions = mode, wait_file, subject_mentions
         self.calls, self.judges = Counter(), Counter()
+        self.queries = set()  # stripped search sentences this synthetic judge asked for
 
     async def __call__(self, request):
         body = json.loads(request.content)
         if request.url.path.endswith("embeddings"):
             assert body["model"] == "text-embedding-3-small" and body["dimensions"] == 1536
             # The search sentence of the vector modes; anything else is an intake index fill of retrieval chunks.
-            query = any("의수" in value for value in body["input"])
+            query = any("의수" in value or value.strip() in self.queries for value in body["input"])
             role = "QUERY_EMBEDDING" if query else "INDEX_EMBEDDING"
             self.calls[role] += 1
             if role == "INDEX_EMBEDDING" and self.mode == "vector-fill-fail":
@@ -99,7 +101,12 @@ class SyntheticProvider:
             result = self.decision(payload)
             if payload["form"] == "OPEN" and self.mode.startswith("vector"):
                 # One natural-language VECTOR search through the frozen index; the query identity is hashed exactly.
-                result = self.follow_up(payload, search_queries=["  합성 의수  "])
+                # Since 2026-11-03 the Worker adds its own target-text search to every searching FOLLOW_UP; this
+                # judge asks for that same sentence (padded), so the run-level reuse keeps one query embedding and the
+                # Java fixtures' QUERY_EMBEDDING cap of 1 still holds.
+                query = self.worker_target_query(payload) or "합성 의수"
+                self.queries.add(query)
+                result = self.follow_up(payload, search_queries=[f"  {query}  "])
             elif payload["form"] == "OPEN" and self.mode == "followup-crash" and payload["question_ref"] == "Q3":
                 result = self.follow_up(payload, context_requests=[{"start": 0, "end": 2}])
         await asyncio.sleep(0)
@@ -115,6 +122,17 @@ class SyntheticProvider:
             "subject_refs": subjects, "subject_mentions": ["합성 인물"], "property_or_rule": f"합성 비교 {index}",
             "time_context": "현재", "conditions": [], "assertion_mode": "NARRATION", "check_intent": "고정 원문 대조",
             "reason": "실제 과거 출처 확인"}
+
+    @staticmethod
+    def worker_target_query(payload):
+        """The Worker's target-text query rebuilt from the payload (target_context covers ±300 around each span)."""
+        contexts = payload.get("target_context") or []
+        if not contexts:
+            return ""
+        chars = ["\x00"] * max(row["start"] + len(row["text"]) for row in contexts)
+        for row in contexts:
+            chars[row["start"]:row["start"] + len(row["text"])] = row["text"]
+        return target_search_query(QuestionDraft.model_validate(payload["question"]), "".join(chars))
 
     @staticmethod
     def follow_up(payload, search_queries=(), context_requests=()):

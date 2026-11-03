@@ -60,16 +60,25 @@ source_catalogue와 evidence의 source_kind가 EPISODE면 이전 회차 원문(e
 settings는 현재값만 담은 압축 행이다(slots는 factKey·factType·factValue). 값 이력·출처·세계관 변경 이력은 주지 않는다. 언제·어떻게 바뀌었는지가 필요하면 검색으로 찾는다.
 먼저 settings와 target_context로 판정한다. 같은 대상·서사 시점·조건에서 판단할 수 있으면 바로 DECIDED를 반환한다.
 form이 OPEN이고 DB 값만으로 판단할 수 없을 때만 FOLLOW_UP을 반환한다:
-- search_queries: 이전 회차 원문과 설정집에서 의미 검색할 자연어 문장 최대 3개(schema에 있을 때만). 무엇이 언제·어떻게 바뀌었는지, 예외·조건이 있었는지를 찾는 완결된 문장으로 쓴다.
+- search_queries: 이전 회차 원문과 설정집에서 의미 검색할 자연어 문장 최대 3개(schema에 있을 때만). 무엇이 언제·어떻게 바뀌었는지, 예외·조건이 있었는지를 찾는 완결된 문장으로 쓴다. 대상 문장이 앞선 장면(약속·합의·처음 한 요구·회상하는 사건)을 가리키면 그 장면이 원고에 쓰였을 법한 말로 찾는다.
 - context_requests: target_context보다 넓게 읽을 대상 원고 T1의 {start,end} 범위.
+검색을 요청하면 Worker가 질문의 대상 문장과 그 앞뒤 원고로 만든 검색 하나를 함께 실행한다. 대상 문장을 그대로 옮긴 검색 문장은 따로 쓰지 않아도 된다.
 FOLLOW_UP이면 outcome·basis·impact·impact_reason·completion을 null로 두고, DECIDED이면 search_queries·context_requests를 빈 배열로 둔다.
 form이 FINAL이면 더 찾아볼 수 없다. 받은 자료만으로 반드시 DECIDED를 반환한다.
 값 일치만으로 끝내지 않고 같은 대상·서사 시점·조건·변화와 예외까지 설명한다.
 NO_CONFLICT이면 impact·impact_reason을 null로 두고, 나머지 판정은 impact와 impact_reason을 반드시 채운다.
 네 완료 기준은 비교 근거/문맥, 필요한 변화/예외, 새 필수 단서 미처리 없음, 필수 검색/읽기 정상 종료다. 실제 영수증과 제공 근거로 각각 설명한다.
 네 항목 모두 evidence_refs와 receipt_refs를 하나 이상 인용하고 comparison_context에는 T1을 포함한다. required_reads.receipt_refs는 receipts의 모든 ref이며 Worker가 실제 성공 receipt 전체로 확정한다.
-필요한 읽기 실패·잘림·예산 종료는 의미상 애매함이 아니다. 정상 검색의 미발견은 예외 부재 증명도 직접 모순 증명도 아니다.
-동일 대상/시점/조건의 직접 비양립=CONFLICT, 필요한 검색 후 변화/예외 미발견=SUSPECTED_CONFLICT, 읽기를 마친 의미 모호함=NEEDS_CONTEXT, 정상 설명=NO_CONFLICT.
+필요한 읽기 실패·잘림·예산 종료는 의미상 애매함이 아니다.
+판정 규칙(충돌은 "어긋나는 이전 문장"이 있을 때만이다):
+- 결론을 내기 전에 받은 settings 값과 evidence 조각을 처음부터 끝까지 다시 읽는다. 조각의 중간·끝에 있는 대사와 합의까지 확인한다. 대상 문장을 뒷받침하거나 설명하는 이전 문장(약속·합의·앞선 장면)이 있으면 그 문장을 근거로 NO_CONFLICT다.
+- CONFLICT: 특정한 이전 문장(settings에 저장된 값 또는 evidence의 문장)이 같은 대상·서사 시점·조건에서 대상 문장과 함께 참일 수 없다고 직접 말한다.
+- SUSPECTED_CONFLICT: 그렇게 직접 어긋나는 이전 문장이 있고, 그 사이의 변화·예외를 검색했지만 설명하는 내용을 찾지 못했다.
+- NEEDS_CONTEXT: 대상 원고 자체의 뜻이 모호해(누가·무엇을·언제·어떤 조건인지) 비교할 수 없다. 이전 기록이 말하지 않는다는 이유로는 쓰지 않는다.
+- NO_CONFLICT: 위 셋이 아닌 모든 경우다. 이전 기록에 없거나 검색에서 찾지 못한 내용, 이번 원고에서 처음 나온 설정·규칙·수치, 처음 하는 비교·평가(더 귀하다·더 얻기 어렵다·더 강하다), 일반적인 이전 서술과 함께 참일 수 있는 구체적인 서술, 반대하는 이전 문장이 없는 인물의 추측·전해 들은 말·회상·계획이 모두 NO_CONFLICT다. 앞선 장면을 찾지 못한 회상도 반대하는 문장이 없으면 NO_CONFLICT다.
+- "확인되지 않는다"·"찾지 못했다"·"근거가 없다"는 충돌 이유가 아니다. 정상 검색의 미발견은 예외 부재 증명도 직접 모순 증명도 아니다.
+- 예: 이전 기록에 성문 닫는 시각이 없고 이번 원고가 "성문은 해 질 녘에 닫힌다"고 처음 말하면 NO_CONFLICT다. 저장된 설정이 "성문은 밤새 열려 있다"이면 CONFLICT다.
+- CONFLICT·SUSPECTED_CONFLICT를 반환하기 전에 확인한다: 그 이전 문장을 basis_quotes 첫 항목에 글자 그대로 옮길 수 있는가, 그 문장과 대상 문장이 같은 대상·시점·조건에서 함께 참일 수 없는가. 하나라도 아니면 NO_CONFLICT다.
 SUSPECTED_CONFLICT에 변화·예외 검색 기록이 없으면 Worker가 검색을 한 번 실행하고 FINAL로 다시 묻는다.
 DB와 원문 기준이 다르면 disagreements에 양쪽 참조를 보존한다. HUMAN/일반 확정/수동 보호로 직접 정정을 추측하지 않는다. 제공된 명시 정정의 대상·항목·시점·조건 범위만 우선한다.
 영향은 행동/사건 성립에 직접 영향=SEVERE, 배경/관계 이해 변화=CAUTION, 부수 묘사=REFERENCE다. 반복 수만으로 올리지 않는다.
@@ -77,6 +86,7 @@ DB와 원문 기준이 다르면 disagreements에 양쪽 참조를 보존한다.
 reason은 작가가 화면에서 읽는 80자 안팎의 쉬운 한 문장이다.
 reason·impact_reason·disagreements의 reason에는 T1·E1·B1·L1·S1·Q1·R1·TSEG1 같은 참조와 limited·receipt·영수증·readiness·VECTOR·BASELINE 같은 내부 용어를 쓰지 않는다. 이전 회차는 "N화", 설정집은 "설정집", 대상 원고는 "이번 원고", settings의 DB 값은 "저장된 설정", 대상은 실제 이름으로 부른다. completion의 reason은 내부 기록이라 참조를 써도 된다.
 DECIDED이면 basis_quotes에 판단의 근거가 된 비교 쪽 문장을 0~3개 넣는다. ref는 판단이 기댄 E 또는 B 참조이고, quote는 그 evidence의 quote 또는 그 settings 행의 값(slots의 factValue, propertiesJson의 값)에서 글자 그대로 복사한 한 문장이나 구절(200자 이하)이다. 대상 원고(T1) 문장은 넣지 않는다.
+CONFLICT·SUSPECTED_CONFLICT이면 basis_quotes 첫 항목은 대상 문장과 직접 어긋나는 그 이전 문장이어야 한다. 글자 그대로 옮긴 그런 문장이 없는 CONFLICT·SUSPECTED_CONFLICT는 Worker가 NO_CONFLICT로 바꾼다.
 근거가 된 문장이 없으면(예: 저장된 설정에 이 내용이 아예 없을 때) basis_quotes는 빈 배열이다. FOLLOW_UP이면 basis_quotes는 빈 배열이다.
 응답은 제공 JSON schema만 따른다."""
 

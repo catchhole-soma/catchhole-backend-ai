@@ -4,7 +4,11 @@ import asyncio
 
 import pytest
 
-from app.validation.judging import JUDGE_TARGET_CONTEXT_CHARS, WORKER_CHANGE_SEARCH_PURPOSE
+from app.validation.judging import (
+    JUDGE_TARGET_CONTEXT_CHARS,
+    WORKER_CHANGE_SEARCH_PURPOSE,
+    WORKER_TARGET_SEARCH_PURPOSE,
+)
 from app.validation.service import SettingValidationService
 from tests.support.validation_synthetic import (
     ROLES,
@@ -83,16 +87,24 @@ def test_follow_up_runs_searches_and_context_then_asks_in_final_form():
     assert second["additional_target_context"] == [{"source_ref": "T1", "start": far, "end": far + 2, "text": "성문"}]
     operations = [(row["intent"]["operation"], row["intent"]["kind"]) for row in second["receipts"]]
     assert operations == [("BASELINE", "COMPARISON_CONTEXT"), ("TARGET_CONTEXT", "COMPARISON_CONTEXT"),
-                          ("TARGET_CONTEXT", "COMPARISON_CONTEXT"), ("VECTOR", "COMPARISON_CONTEXT")]
+                          ("TARGET_CONTEXT", "COMPARISON_CONTEXT"), ("VECTOR", "COMPARISON_CONTEXT"),
+                          ("VECTOR", "COMPARISON_CONTEXT")]
     assert second["receipts"][3]["intent"]["purpose"] == "판정이 요청한 의미 검색"
+    # The Worker's own target-text search runs after the judge's queries (2026-11-03).
+    assert second["receipts"][4]["intent"]["purpose"] == WORKER_TARGET_SEARCH_PURPOSE
     assert [row["source_ref"] for row in second["evidence"]] == ["R2"]
-    assert embedding.queries == ["민수가 의수를 얻은 장면"]
-    assert result.traces["Q1"][0]["searches"] == 1 and result.traces["Q1"][0]["context_requests"] == 1
+    assert embedding.queries == ["민수가 의수를 얻은 장면", "민수는 양손으로 검을 쥐었다. 그는 성문 앞에서 기다렸다."]
+    trace = result.traces["Q1"][0]
+    assert trace["searches"] == 1 and trace["worker_searches"] == 1 and trace["context_requests"] == 1
+
+
+# The stored value that contradicts "양손으로 검을 쥐었다" (B1 STATUS:손 = 왼손 상실): a finding's basis quote.
+CONTRADICTION = [{"ref": "B1", "quote": "왼손 상실"}]
 
 
 def test_suspected_conflict_gets_one_worker_change_search_then_a_final_call():
     def judge(payload, n):
-        return decided(payload, "SUSPECTED_CONFLICT", evidence_refs=["B1"])
+        return decided(payload, "SUSPECTED_CONFLICT", evidence_refs=["B1"], basis_quotes=CONTRADICTION)
 
     data = SyntheticData()
     model, embedding = ScriptedModel(one_question(), judge), FakeEmbedding()
@@ -101,9 +113,11 @@ def test_suspected_conflict_gets_one_worker_change_search_then_a_final_call():
     assert [payload["form"] for payload in model.judge_calls("Q1")] == ["OPEN", "FINAL"]
     change = [row for row in result.receipts if row.intent.kind == "CHANGES_EXCEPTIONS"]
     assert len(change) == 1 and change[0].intent.operation == "VECTOR"
-    assert change[0].intent.purpose == WORKER_CHANGE_SEARCH_PURPOSE and change[0].intent.query == "민수 손 사용"
+    # 2026-11-03: check_intent, then the target sentence (no longer subject mentions + property).
+    assert change[0].intent.purpose == WORKER_CHANGE_SEARCH_PURPOSE
+    assert change[0].intent.query == "양손 사용 가능 여부 민수는 양손으로 검을 쥐었다."
     decision = result.decisions["Q1"]
-    assert decision.outcome == "SUSPECTED_CONFLICT"
+    assert decision.outcome == "SUSPECTED_CONFLICT" and [row.quote for row in decision.basis_quotes] == ["왼손 상실"]
     assert change[0].ref in decision.completion.changes_exceptions.receipt_refs
     assert result.normalizations["CHANGE_SEARCH_INSERTED"] == 1
 
@@ -112,19 +126,19 @@ def test_three_calls_at_most_follow_up_then_suspected_then_change_search():
     def judge(payload, n):
         if n == 1:
             return follow_up(payload, searches=["민수의 손 상태 변화"])
-        return decided(payload, "SUSPECTED_CONFLICT", evidence_refs=["B1"])
+        return decided(payload, "SUSPECTED_CONFLICT", evidence_refs=["B1"], basis_quotes=CONTRADICTION)
 
     data = SyntheticData()
     model = ScriptedModel(one_question(), judge)
     result = inspect(data, model, search=FakeSearch(data), embedding=FakeEmbedding())
-    assert result.status == "COMPLETED"
+    assert result.status == "COMPLETED" and result.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
     assert [payload["form"] for payload in model.judge_calls("Q1")] == ["OPEN", "FINAL", "FINAL"]
     assert [row["call"] for row in result.traces["Q1"]] == [1, 2, 3]
 
 
 def test_no_prior_episodes_vector_is_not_applicable_and_never_embeds():
     def judge(payload, n):
-        return decided(payload, "SUSPECTED_CONFLICT", evidence_refs=["B1"])
+        return decided(payload, "SUSPECTED_CONFLICT", evidence_refs=["B1"], basis_quotes=CONTRADICTION)
 
     data = SyntheticData(prior={})
     embedding = FakeEmbedding()
@@ -189,12 +203,15 @@ def test_identical_queries_reuse_one_search_and_one_embedding_even_in_flight():
     embedding, search = FakeEmbedding(), FakeSearch(data)
     result = inspect(data, ScriptedModel(plans, judge), search=search, embedding=embedding)
     assert result.status == "COMPLETED"
-    assert embedding.queries == ["  성문과 민수의 이전 설정  "] and len(search.searches) == 1
-    vectors = [row for row in result.receipts if row.intent.operation == "VECTOR"]
-    assert len(vectors) == 2
-    original, reused = sorted(vectors, key=lambda row: row.reused_from is not None)
+    judged = [row for row in result.receipts if row.intent.purpose == "판정이 요청한 의미 검색"]
+    assert len(judged) == 2 and embedding.queries.count("  성문과 민수의 이전 설정  ") == 1
+    original, reused = sorted(judged, key=lambda row: row.reused_from is not None)
     assert reused.reused_from == original.ref and reused.evidence_refs == original.evidence_refs
-    assert result.normalizations["RAG_CACHE_HITS"] == 1 and result.normalizations["VECTOR_SEARCHES"] == 1
+    # Both questions span the whole short target, so their Worker target-text searches are one search too.
+    targets = [row for row in result.receipts if row.intent.purpose == WORKER_TARGET_SEARCH_PURPOSE]
+    assert len(targets) == 2 and sum(row.reused_from is not None for row in targets) == 1
+    assert len(search.searches) == 2 and len(embedding.queries) == 2
+    assert result.normalizations["RAG_CACHE_HITS"] == 2 and result.normalizations["VECTOR_SEARCHES"] == 2
 
 
 def test_settings_are_read_in_batches_of_100_subjects_once_per_run():
@@ -338,8 +355,8 @@ def test_sql_decimal_readiness_counts_become_json_integers_in_receipts():
     data = SyntheticData()
     result = inspect(data, ScriptedModel(one_question(), judge), search=DecimalSearch(data), embedding=FakeEmbedding())
     assert result.status == "COMPLETED"
-    (vector,) = [row for row in result.receipts if row.intent.operation == "VECTOR"]
-    assert type(vector.readiness["vector_chunks"]) is int
+    vectors = [row for row in result.receipts if row.intent.operation == "VECTOR"]
+    assert len(vectors) == 2 and all(type(row.readiness["vector_chunks"]) is int for row in vectors)
     json.dumps(result.evidence_bundles["Q1"])
 
 

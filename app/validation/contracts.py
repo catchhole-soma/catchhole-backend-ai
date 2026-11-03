@@ -476,5 +476,6 @@ class InspectionResult:
     normalizations: dict[str, int] = field(default_factory=dict)
     # Experiment mode: question (or planner segment) -> {code, cause, call}; the run continued past them.
     question_failures: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # Per question judge flow (calls, forms, searches, cache hits); diagnostics only, never published.
+    # Per question judge flow (calls, forms, searches, cache hits); diagnostics only, never published or logged.
+    # A finding the rule guard cleared also keeps the judge's original impact and reason for review (experiment).
     traces: dict[str, list[dict[str, Any]]] = field(default_factory=dict)

@@ -5,10 +5,17 @@ Per question, at most MAX_JUDGE_CALLS calls:
 1. OPEN: the draft, ±JUDGE_TARGET_CONTEXT_CHARS of target context and compact current rows of the question's
    subjects. The answer is DECIDED, or FOLLOW_UP with up to MAX_SEARCH_QUERIES natural-language VECTOR searches
    and/or T1 context ranges.
-2. After a FOLLOW_UP the Worker runs those reads and asks again in FINAL form (DECIDED only).
+2. After a FOLLOW_UP the Worker runs those reads and asks again in FINAL form (DECIDED only). A FOLLOW_UP with at
+   least one search also gets one Worker VECTOR search built from the question's own target text
+   (`target_search_query`), on top of the judge's queries, so earlier scenes phrased like the target are found.
 3. A DECIDED SUSPECTED_CONFLICT from a non-final-limit call without a change search gets one Worker VECTOR
-   change search, then the next call is FINAL. A third call is only reachable that way, so a final
-   SUSPECTED_CONFLICT always carries that receipt.
+   change search (`change_search_query`: check_intent + target sentence), then the next call is FINAL. A third
+   call is only reachable that way, so a final SUSPECTED_CONFLICT always carries that receipt.
+
+Judge rule guard (2026-11-03): a CONFLICT/SUSPECTED_CONFLICT is a finding only when a specific earlier statement
+contradicts the target, and that statement is what the judge copies into `basis_quotes`. An accepted decision with
+one of those outcomes but no valid basis quote (and no DB/raw disagreement) is normalized to NO_CONFLICT
+(`clear_unquoted_finding`): absent evidence is not a contradiction. It is counted, never a question failure.
 """
 
 import asyncio
@@ -22,6 +29,7 @@ from app.validation.contracts import (
     BASIS_QUOTE_LIMIT,
     MAX_BASIS_QUOTES,
     MAX_SEARCH_QUERIES,
+    SEARCH_QUERY_LIMIT,
     TARGET_REF,
     BasisQuote,
     IncompleteInspection,
@@ -53,7 +61,14 @@ JUDGE_SEARCH_PURPOSE = "판정이 요청한 의미 검색"
 JUDGE_CONTEXT_PURPOSE = "판정이 요청한 대상 원고 문맥"
 # GH341: marks the single change search the Worker itself issues before accepting SUSPECTED_CONFLICT.
 WORKER_CHANGE_SEARCH_PURPOSE = "Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색"
-_SEARCH_QUERY_LIMIT = 1000
+# 2026-11-03: marks the one search the Worker adds to every FOLLOW_UP that asks for searches.
+WORKER_TARGET_SEARCH_PURPOSE = "Worker가 대상 문장과 앞뒤 원고로 만든 이전 장면 의미 검색"
+# Code points of target text taken before and after each span for that search (cut back to whole lines).
+TARGET_QUERY_CONTEXT_CHARS = 100
+FINDING_OUTCOMES = frozenset({"CONFLICT", "SUSPECTED_CONFLICT"})
+# Author sentence of a finding the guard cleared (polite style of author_text.REASON_FALLBACKS).
+UNQUOTED_FINDING_REASON = "이전 기록에 이번 원고와 직접 어긋나는 문장이 없어 새로 나온 내용으로 봐요."
+_SEARCH_QUERY_LIMIT = SEARCH_QUERY_LIMIT
 _DECISION_FIELDS = ("outcome", "basis", "impact", "impact_reason", "completion")
 
 
@@ -63,10 +78,71 @@ def is_change_search(receipt):
             and receipt.intent.operation == "VECTOR")
 
 
+def _one_line(text):
+    return " ".join(text.split())
+
+
+def _span_quotes(draft):
+    spans = sorted(draft.target_spans, key=lambda span: (span.start, span.end))
+    return list(dict.fromkeys(quote for quote in (_one_line(span.quote) for span in spans) if quote))
+
+
 def change_search_query(draft):
-    """Deterministic query: unique non-empty subject mentions, then the property; '' if none."""
-    parts = dict.fromkeys(text.strip() for text in (*draft.subject_mentions, draft.property_or_rule))
-    return " ".join(part for part in parts if part)[:_SEARCH_QUERY_LIMIT].strip()
+    """Deterministic change-search query: the question's check_intent, then its target sentences in target order.
+
+    Whitespace runs become one space, duplicates are dropped and the result is cut to SEARCH_QUERY_LIMIT; '' if
+    nothing is left. (Before 2026-11-03 it concatenated subject_mentions and property_or_rule, which read like
+    keywords and missed earlier scenes written in the target's own words.)
+    """
+    parts = dict.fromkeys(part for part in (_one_line(draft.check_intent), *_span_quotes(draft)) if part)
+    return " ".join(parts)[:_SEARCH_QUERY_LIMIT].strip()
+
+
+def target_search_query(draft, target):
+    """The Worker's VECTOR query from the question's own target text (a semantic query, never a keyword scan).
+
+    Each span is widened by up to TARGET_QUERY_CONTEXT_CHARS code points on both sides; a widening that ends
+    mid-line is cut back to the nearest line break inside the added context (the span itself is never cut).
+    Overlapping windows merge, windows join in target order with whitespace runs collapsed to one space. If that
+    exceeds SEARCH_QUERY_LIMIT, the span quotes alone are used; the result is cut to the limit ('' if empty).
+    Questions on the same span therefore build the same query and share one search per run.
+    """
+    windows = []
+    length = len(target)
+    for span in sorted(draft.target_spans, key=lambda item: (item.start, item.end)):
+        start, end = max(0, min(span.start, length)), max(0, min(span.end, length))
+        low, high = max(0, start - TARGET_QUERY_CONTEXT_CHARS), min(length, end + TARGET_QUERY_CONTEXT_CHARS)
+        if low > 0 and target[low - 1] != "\n":
+            cut = target.find("\n", low, start)
+            low = cut + 1 if cut >= 0 else low
+        if high < length and target[high] != "\n":
+            cut = target.rfind("\n", end, high)
+            high = cut if cut >= 0 else high
+        if windows and low <= windows[-1][1]:
+            windows[-1] = (windows[-1][0], max(windows[-1][1], high))
+        else:
+            windows.append((low, high))
+    query = " ".join(part for part in (_one_line(target[low:high]) for low, high in windows) if part)
+    if len(query) > _SEARCH_QUERY_LIMIT:
+        query = " ".join(_span_quotes(draft))
+    return query[:_SEARCH_QUERY_LIMIT].strip()
+
+
+def clear_unquoted_finding(answer, quotes, stats=None):
+    """`(answer, cleared_outcome)`: the judge-rule guard on an accepted DECIDED answer (2026-11-03).
+
+    CONFLICT/SUSPECTED_CONFLICT need a specific earlier statement that contradicts the target, copied as a basis
+    quote. With no checked quote (`quotes` is the output of `normalize_basis_quotes`) and no DB/raw
+    `disagreements` (those keep their own NEEDS_CONTEXT rule), the answer becomes NO_CONFLICT/COMPATIBLE without an
+    impact and with UNQUOTED_FINDING_REASON, counted as `<OUTCOME>_QUOTE_MISSING_CLEARED`. Never a question failure.
+    """
+    if answer.outcome not in FINDING_OUTCOMES or quotes or answer.disagreements:
+        return answer, None
+    if stats is not None:
+        stats[f"{answer.outcome}_QUOTE_MISSING_CLEARED"] += 1
+    cleared = answer.model_copy(update={"outcome": "NO_CONFLICT", "basis": "COMPATIBLE", "impact": None,
+                                        "impact_reason": None, "reason": UNQUOTED_FINDING_REASON})
+    return cleared, answer.outcome
 
 
 def receipt_wire(receipt):
@@ -208,7 +284,7 @@ class SettingJudge:
             row.update(action=answer.action, outcome=answer.outcome)
             if answer.action == "FOLLOW_UP":
                 before = self.stats["RAG_CACHE_HITS"]
-                row.update(await self._follow_up(qref, answer, own, extra_context))
+                row.update(await self._follow_up(qref, draft, answer, own, extra_context))
                 row["cache_hits"] = self.stats["RAG_CACHE_HITS"] - before
                 form = "FINAL"
                 continue
@@ -227,6 +303,13 @@ class SettingJudge:
                 continue
             evidence = self._evidence(own)
             quotes = normalize_basis_quotes(answer.basis_quotes, evidence, rows, self.stats)
+            # The rule guard runs before validation: a finding without a contradicting quote is NO_CONFLICT, not a
+            # question failure (e.g. a CONFLICT that cites no external evidence at all).
+            original = answer
+            answer, cleared = clear_unquoted_finding(answer, quotes, self.stats)
+            if cleared is not None:
+                # In-memory diagnostics for reviewing the guard (the experiment writes them; never logged/published).
+                row.update(cleared=cleared, cleared_impact=original.impact, cleared_reason=original.reason)
             decision = validate_decision(decision_from_answer(answer), question, rows, evidence, own, self.target,
                                          self.stats)
             decision = decision.model_copy(update={"basis_quotes": quotes})
@@ -262,7 +345,12 @@ class SettingJudge:
                 updates.update(impact=None, impact_reason=None)
         return answer.model_copy(update=updates) if updates else answer
 
-    async def _follow_up(self, qref, answer, own, extra_context):
+    async def _follow_up(self, qref, draft, answer, own, extra_context):
+        """Run the judge's reads; with at least one search, also the Worker's target-text search (after them).
+
+        That search is extra to the judge's MAX_SEARCH_QUERIES (at most 3 + 1 per follow-up). It spends a lookup
+        and a query embedding like any search unless the same query already ran in this run (then reused).
+        """
         queries, requests = list(answer.search_queries), list(answer.context_requests)
         if not queries and not requests:
             raise _invalid("INVALID_FOLLOW_UP_EMPTY", "INVALID_FOLLOW_UP")
@@ -287,8 +375,16 @@ class SettingJudge:
             own.append(await self.corpus.vector(LookupIntent(
                 ref=f"{qref}-VECTOR-{index}", kind="COMPARISON_CONTEXT", operation="VECTOR",
                 purpose=JUDGE_SEARCH_PURPOSE, query=query)))
+        worker = 0
+        target_query = target_search_query(draft, self.target) if queries else ""
+        if target_query:
+            own.append(await self.corpus.vector(LookupIntent(
+                ref=f"{qref}-TARGET_VECTOR", kind="COMPARISON_CONTEXT", operation="VECTOR",
+                purpose=WORKER_TARGET_SEARCH_PURPOSE, query=target_query)))
+            self.stats["TARGET_SEARCH_INSERTED"] += 1
+            worker = 1
         self.stats["FOLLOW_UPS"] += 1
-        return {"searches": len(queries), "context_requests": len(ranges)}
+        return {"searches": len(queries), "worker_searches": worker, "context_requests": len(ranges)}
 
     def _evidence(self, own):
         refs = {ref for receipt in own for ref in receipt.evidence_refs}

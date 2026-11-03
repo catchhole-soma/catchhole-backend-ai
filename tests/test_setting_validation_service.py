@@ -160,7 +160,10 @@ def test_legitimate_zero_questions_has_complete_coverage():
 @pytest.mark.parametrize("outcome", ["CONFLICT", "SUSPECTED_CONFLICT", "NEEDS_CONTEXT"])
 def test_semantic_outcomes_remain_distinct(outcome):
     data = SyntheticData()
-    model = ScriptedModel({"TSEG1": [draft()]}, lambda payload, n: decided(payload, outcome, evidence_refs=["B1"]))
+    # A finding carries the contradicting stored value as its basis quote (judge rule guard, 2026-11-03).
+    quotes = [{"ref": "B1", "quote": "왼손 상실"}] if outcome != "NEEDS_CONTEXT" else []
+    model = ScriptedModel({"TSEG1": [draft()]}, lambda payload, n: decided(payload, outcome, evidence_refs=["B1"],
+                                                                          basis_quotes=quotes))
     result = inspect(data, model, search=FakeSearch(data), embedding=FakeEmbedding())
     assert result.status == "COMPLETED" and result.decisions["Q1"].outcome == outcome
 
@@ -176,8 +179,13 @@ def test_fake_receipts_and_target_only_contradictions_are_rejected():
     assert result.question_failures["Q1"] == {"code": "INVALID_DECISION", "cause": "INVALID_DECISION_COMPARISON_CONTEXT",
                                               "call": 1}
     target_only = inspect(model=ScriptedModel({"TSEG1": [draft()]}, lambda payload, n: decided(
-        payload, "CONFLICT", evidence_refs=["T1"])))
+        payload, "CONFLICT", evidence_refs=["T1"], basis_quotes=[{"ref": "B1", "quote": "왼손 상실"}])))
     assert target_only.question_failures["Q1"]["cause"] == "INVALID_DECISION_EXTERNAL_EVIDENCE_MISSING"
+    # Without any contradicting quote the same answer is no finding at all: cleared, not a question failure.
+    unquoted = inspect(model=ScriptedModel({"TSEG1": [draft()]}, lambda payload, n: decided(
+        payload, "CONFLICT", evidence_refs=["T1"])))
+    assert unquoted.status == "COMPLETED" and unquoted.decisions["Q1"].outcome == "NO_CONFLICT"
+    assert unquoted.normalizations["CONFLICT_QUOTE_MISSING_CLEARED"] == 1
 
 
 def evidence_then(answer):

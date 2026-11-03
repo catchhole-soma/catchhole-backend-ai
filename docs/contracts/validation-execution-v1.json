@@ -3218,7 +3218,7 @@
       "calls": [
         "1 OPEN: draft, target_context (±300 code points per span), compact current rows of the question's subjects (characters/worldSettings only), receipts L BASELINE/COMPARISON_CONTEXT (evidence_refs = those B refs) and L TARGET_CONTEXT/COMPARISON_CONTEXT. Answer DECIDED or FOLLOW_UP with search_queries (omitted from the schema when search is unavailable) and/or context_requests {start,end} on T1.",
         "FOLLOW_UP: each query is one VECTOR search {kind: COMPARISON_CONTEXT, operation: VECTOR, purpose: 판정이 요청한 의미 검색, query} with top-k searchLimit; each context request is a TARGET_CONTEXT receipt (no lookup). The next call is FINAL (DECIDED only).",
-        "DECIDED SUSPECTED_CONFLICT before the call limit without a successful CHANGES_EXCEPTIONS VECTOR receipt: one Worker VECTOR search {kind: CHANGES_EXCEPTIONS, operation: VECTOR, purpose: WORKER_CHANGE_SEARCH_PURPOSE, query: unique subject_mentions then property_or_rule}, then the next call is FINAL."
+        "DECIDED SUSPECTED_CONFLICT before the call limit without a successful CHANGES_EXCEPTIONS VECTOR receipt: one Worker VECTOR search {kind: CHANGES_EXCEPTIONS, operation: VECTOR, purpose: WORKER_CHANGE_SEARCH_PURPOSE, query: check_intent then the question's target sentences in target order (whitespace runs collapsed, duplicates dropped, cut to searchQueryCodePoints)}, then the next call is FINAL."
       ],
       "workerChangeSearchPurpose": "Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색",
       "ragReuse": "Within a run, a VECTOR query is keyed by its stripped text; a reused result gets a new L ref with reused_from and spends no lookup and no embedding call.",

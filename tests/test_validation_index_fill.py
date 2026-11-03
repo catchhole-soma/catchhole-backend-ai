@@ -75,7 +75,7 @@ class StubFill:
 
 def suspected(payload, n):
     # The contradicting stored value is the finding's basis quote (judge rule guard, 2026-11-03).
-    return decided(payload, "SUSPECTED_CONFLICT", evidence_refs=["B1"])
+    return decided(payload, "SUSPECTED_CONFLICT", evidence_refs=["B1"], basis_quotes=[{"ref": "B1", "quote": "왼손 상실"}])
 
 
 def inspect(data, model, *, search, fill, **limits):
