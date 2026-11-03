@@ -604,7 +604,30 @@ def test_status_preserves_snapshot_and_supported_scope(runtime, monkeypatch):
     assert obj.backfill("status") == {**status, "reason": None}
 
 
-WRITER = "postgresql+psycopg://admin:test@10.0.0.3/catchhole"
+def test_status_keeps_setting_book_coverage_counts(runtime, monkeypatch):
+    # 2026-11-03: the sweep also fills current setting-book revisions and reports their share of the totals.
+    obj, _ = runtime
+    status = {
+        "state": "PARTIAL",
+        "checkedSources": 7,
+        "readySources": 6,
+        "excludedOrUnavailableSources": 1,
+        "checkedSettingBooks": 2,
+        "readySettingBooks": 1,
+        "excludedOrUnavailableSettingBooks": 1,
+        "supportedSourceTypes": ["CURRENT_EPISODE", "SETTING_BOOK"],
+        "unsupportedSourceTypes": ["PAST_EPISODE_VERSION"],
+    }
+    monkeypatch.setattr(obj, "compose", lambda *a, **k: json.dumps(status))
+    assert obj.backfill("status") == {**status, "reason": None}
+    monkeypatch.setattr(
+        obj, "compose", lambda *a, **k: json.dumps({**status, "readySettingBooks": -1})
+    )
+    with pytest.raises(deploy.DeploymentError, match="INVALID_BACKFILL_STATUS"):
+        obj.backfill("status")
+
+
+WRITER ="postgresql+psycopg://admin:test@10.0.0.3/catchhole"
 
 
 def _validation_index_fill(configs, *, url=WRITER, flag=True, **search):
