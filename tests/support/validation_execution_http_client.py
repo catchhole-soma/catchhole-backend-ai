@@ -42,7 +42,9 @@ class CrashClient(ValidationExecutionClient):
         return result
 
 
-EFFORTS = {"PLANNER": "medium", "JUDGE": "medium", "TYPO": "low"}
+# The Java synthetic fixture freezes the production pairing (configuration v2): PLANNER Terra medium, JUDGE Luna high,
+# TYPO Terra low. Every call must carry its role's frozen model and effort.
+RUNTIMES = {"PLANNER": ("gpt-6.1-terra", "medium"), "JUDGE": ("gpt-6-luna", "high"), "TYPO": ("gpt-6.1-terra", "low")}
 
 
 class SyntheticProvider:
@@ -59,13 +61,13 @@ class SyntheticProvider:
             self.calls["QUERY_EMBEDDING"] += 1
             return httpx.Response(200, json={"model": "text-embedding-3-small", "usage": {"prompt_tokens": 10},
                 "data": [{"index": 0, "embedding": [1.0] + [0.0] * 1535}]})
-        assert body["model"] == "gpt-6.1-terra"
         if request.url.path.endswith("input_tokens"):
+            assert body["model"] in {model for model, _ in RUNTIMES.values()}
             return httpx.Response(200, json={"input_tokens": 23})
         payload = json.loads(body["input"][1]["content"][0]["text"])
         role = payload.get("role", "TYPO")
         self.calls[role] += 1
-        assert body["reasoning"]["effort"] == EFFORTS[role]
+        assert (body["model"], body["reasoning"]["effort"]) == RUNTIMES[role]
         if self.mode == "all-fail" or (role == "JUDGE" and self.mode in {"judge-fail", "vector-judge-fail"}) or (
             role == "TYPO" and self.mode == "typo-fail"):
             return httpx.Response(503)

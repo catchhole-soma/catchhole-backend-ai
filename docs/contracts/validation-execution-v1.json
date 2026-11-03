@@ -671,8 +671,8 @@
             "reasoningEffort": "medium"
           },
           "JUDGE": {
-            "model": "gpt-6.1-terra",
-            "reasoningEffort": "medium"
+            "model": "gpt-6-luna",
+            "reasoningEffort": "high"
           },
           "TYPO": {
             "model": "gpt-6.1-terra",
@@ -935,8 +935,8 @@
         "reasoningEffort": "medium"
       },
       "JUDGE": {
-        "model": "gpt-6.1-terra",
-        "reasoningEffort": "medium"
+        "model": "gpt-6-luna",
+        "reasoningEffort": "high"
       },
       "TYPO": {
         "model": "gpt-6.1-terra",
@@ -3076,8 +3076,8 @@
             "reasoningEffort": "medium"
           },
           "JUDGE": {
-            "model": "gpt-6.1-terra",
-            "reasoningEffort": "medium"
+            "model": "gpt-6-luna",
+            "reasoningEffort": "high"
           },
           "TYPO": {
             "model": "gpt-6.1-terra",

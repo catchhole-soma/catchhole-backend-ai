@@ -378,7 +378,9 @@ def test_llm_request_semaphore_reaches_every_role_and_query_embedding_client(mon
     semaphore = asyncio.run(run())
     clients = [built["roles"].for_validation_role(role) for role in GENERATION_ROLES]
     assert len(clients) == 3 and set(built["roles"].clients) == set(GENERATION_ROLES)
-    assert {client.default_model for client in clients} == {"gpt-6.1-terra"}
+    # The shared fixture freezes the production pairing: PLANNER/TYPO Terra, JUDGE Luna (configuration v2).
+    assert [client.default_model for client in clients] == [
+        {"PLANNER": "gpt-6.1-terra", "JUDGE": "gpt-6-luna", "TYPO": "gpt-6.1-terra"}[role] for role in GENERATION_ROLES]
     assert all(client.request_semaphore is semaphore for client in clients)
     assert built["embedding"].metered.request_semaphore is semaphore
     assert (semaphore is not None) == capped
@@ -768,7 +770,8 @@ def test_java_http_synthetic_provider_answers_grid_v4_roles(mode):
     provider = SyntheticProvider(mode)
 
     def call(payload, effort):
-        body = {"model": "gpt-6.1-terra", "reasoning": {"effort": effort},
+        model = "gpt-6-luna" if payload["role"] == "JUDGE" else "gpt-6.1-terra"
+        body = {"model": model, "reasoning": {"effort": effort},
                 "input": [{}, {"content": [{"text": json.dumps(payload, ensure_ascii=False)}]}]}
         request = httpx.Request("POST", "https://provider.invalid/responses", json=body)
         return json.loads(asyncio.run(provider(request)).json()["output_text"])
@@ -779,6 +782,6 @@ def test_java_http_synthetic_provider_answers_grid_v4_roles(mode):
     assert bool(planner["questions"]) == (mode != "zero")
     question = {"target_spans": [{"source_ref": "T1", "start": 0, "end": 2, "quote": "가나"}]}
     judge = call({"role": "JUDGE", "form": "OPEN", "question_ref": "Q3", "question": question,
-                  "settings": [], "evidence": [], "receipts": [{"ref": "L1"}]}, "medium")
+                  "settings": [], "evidence": [], "receipts": [{"ref": "L1"}]}, "high")
     expected = "FOLLOW_UP" if mode in {"vector-judge", "followup-crash"} else "DECIDED"
     assert judge["action"] == expected and "follow_ups" not in judge
