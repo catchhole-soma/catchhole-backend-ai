@@ -22,6 +22,13 @@ logs `query embedding disabled` and runs without it. --once behaves the same. Th
 most --concurrency connections; connect (5 s), statement (5 s), idle-in-transaction (10 s) and pool waits
 (5 s) are bounded by the database/driver, because a cancelled asyncio wait does not stop a blocking read. Per job, VECTOR is offered only when the frozen index is ready and the claim
 configured QUERY_EMBEDDING (`vector search offered=...`).
+
+Intake index fill (owner decision 2026-11-02) is a third explicit flag: --index-url-env names the writer DB URL
+variable (the Worker's DATABASE_URL in production). With it, frozen RAG sessions and query embedding, a claim that
+configured INDEX_EMBEDDING fills only the missing/stale chunks of its prior episodes and current setting books
+before judging (retrieval index tables only; validation state stays in Java). Unset or empty logs one INFO line
+(`index fill disabled: ...`) and the run judges on the index as it is. The writer pool holds at most
+--concurrency connections with connect (5 s), lock (5 s), statement (30 s) and pool (5 s) bounds.
 """
 import argparse
 import asyncio
@@ -50,6 +57,8 @@ READONLY_CONNECT_TIMEOUT_SECONDS = 5
 READONLY_STATEMENT_TIMEOUT_MS = 5000
 READONLY_IDLE_IN_TRANSACTION_TIMEOUT_MS = 10000
 READONLY_POOL_TIMEOUT_SECONDS = 5
+INDEX_LOCK_TIMEOUT_MS = 5000
+INDEX_STATEMENT_TIMEOUT_MS = 30000
 
 
 def readonly_engine(url, slots):
@@ -60,6 +69,14 @@ def readonly_engine(url, slots):
     """
     options = ("-c default_transaction_read_only=on"
                f" -c statement_timeout={READONLY_STATEMENT_TIMEOUT_MS}"
+               f" -c idle_in_transaction_session_timeout={READONLY_IDLE_IN_TRANSACTION_TIMEOUT_MS}")
+    return create_engine(url, pool_size=slots, max_overflow=0, pool_timeout=READONLY_POOL_TIMEOUT_SECONDS,
+                         connect_args={"connect_timeout": READONLY_CONNECT_TIMEOUT_SECONDS, "options": options})
+
+
+def index_engine(url, slots):
+    """Writer engine for the intake index fill: retrieval chunk rows and their vectors only, bounded waits."""
+    options = (f"-c lock_timeout={INDEX_LOCK_TIMEOUT_MS} -c statement_timeout={INDEX_STATEMENT_TIMEOUT_MS}"
                f" -c idle_in_transaction_session_timeout={READONLY_IDLE_IN_TRANSACTION_TIMEOUT_MS}")
     return create_engine(url, pool_size=slots, max_overflow=0, pool_timeout=READONLY_POOL_TIMEOUT_SECONDS,
                          connect_args={"connect_timeout": READONLY_CONNECT_TIMEOUT_SECONDS, "options": options})
@@ -316,7 +333,7 @@ async def run(args):
     internal_key, model_key = os.environ[args.internal_key_env], os.environ[args.model_key_env]
     spec = IndexSpec(version=args.index_version)
     engine, embedding = None, None
-    sessions = None
+    sessions = index_sessions = writer = None
     if args.readonly_url_env:
         url = os.environ.get(args.readonly_url_env, "").strip()
         if url:
@@ -331,13 +348,22 @@ async def run(args):
         else:
             embedding = OpenAIEmbeddingsClient(model_key, spec.model, spec.dimensions, spec.version,
                                                args.embedding_url)
+    if args.index_url_env:
+        url = os.environ.get(args.index_url_env, "").strip()
+        if not url:
+            logger.info("index fill disabled: %s is empty", args.index_url_env)
+        elif embedding is None:
+            logger.info("index fill disabled: no frozen retrieval sessions or query embedding")
+        else:
+            writer = index_engine(url, args.concurrency)
+            index_sessions = sessionmaker(writer, autoflush=False, expire_on_commit=False)
     raw = OpenAIResponsesClient(model_key, "gpt-6.1-terra", args.responses_url)
     client = ValidationExecutionClient(args.backend_url, internal_key)
     # One process-wide cap shared by every job's metered role and query-embedding clients.
     llm_requests = asyncio.Semaphore(args.llm_concurrency) if args.llm_concurrency is not None else None
     worker = EpisodeValidationWorker(client, raw, enabled=True, worker_id=args.worker_id,
         readonly_sessions=sessions, embedding_client=embedding, index_spec=spec,
-        llm_request_semaphore=llm_requests)
+        llm_request_semaphore=llm_requests, index_sessions=index_sessions)
     stop_event = asyncio.Event()
     if not args.once:
         _install_signal_handlers(stop_event)
@@ -351,6 +377,8 @@ async def run(args):
             await embedding.http_client.aclose()
         if engine:
             engine.dispose()
+        if writer:
+            writer.dispose()
 
 
 def _env_default(name, convert, fallback):
@@ -378,6 +406,9 @@ def parser():
     result.add_argument("--query-embedding", action="store_true")
     result.add_argument("--embedding-url", default="https://api.openai.com/v1/embeddings")
     result.add_argument("--index-version", default="v1")
+    result.add_argument("--index-url-env",
+                        help="Writer DB URL variable for the intake index fill (retrieval tables only); "
+                             "unset or empty disables filling.")
     result.add_argument("--concurrency", type=int, default=_env_default("AI_WORKER_CONCURRENCY", int, 1),
                         help="Jobs running at once in this process (AI_WORKER_CONCURRENCY, default 1). "
                              "Ignored by --once.")
