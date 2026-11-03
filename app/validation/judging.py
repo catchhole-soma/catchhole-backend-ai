@@ -40,7 +40,6 @@ from app.validation.contracts import (
     decision_from_answer,
     validate_context_request,
     validate_search_query,
-    validate_span,
 )
 from app.validation.data import MAX_SETTING_SUBJECTS
 from app.validation.models import call_role
@@ -460,9 +459,9 @@ def validate_decision(value, question, settings, evidence, receipts, target, sta
         raise fail("COMPLETION_MISSING")
     if value.outcome is None or value.basis is None:
         raise fail("OUTCOME_MISSING")
-    for span in value.target_spans:
-        validate_span(span, target)  # an echoed span must still be real target text
     if set(value.target_spans) != set(question.draft.target_spans):
+        # The judged spans are always the question's own spans; an echoed span the judge mis-copied is replaced
+        # instead of failing the question (31화 planted run: Q66 INVALID_EXACT_SPAN).
         # GH331: the judged spans are the question's own spans (Backend requires exactly those).
         value = value.model_copy(update={"target_spans": list(question.draft.target_spans)})
         if stats is not None:

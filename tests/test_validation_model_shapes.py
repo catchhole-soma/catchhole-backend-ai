@@ -224,7 +224,7 @@ def test_remaining_decision_rules_stay_strict_with_specific_causes(change, cause
     assert {(row["code"], row["cause"]) for row in result.question_failures.values()} == {("INVALID_DECISION", cause)}
 
 
-def test_judge_span_echo_is_replaced_by_the_question_spans_but_invented_quotes_are_rejected():
+def test_judge_span_echo_is_always_replaced_by_the_question_spans():
     class Echo(RecordedTerra):
         def __init__(self, spans):
             super().__init__()
@@ -240,10 +240,12 @@ def test_judge_span_echo_is_replaced_by_the_question_spans_but_invented_quotes_a
         result = inspect(Echo(spans))
         assert result.status == "COMPLETED" and result.normalizations["TARGET_SPANS_REPLACED"] == 1
         assert result.decisions["Q1"].target_spans == result.questions[0].draft.target_spans
+    # 2026-11-03: a mis-copied echo (31화 planted run Q66) no longer fails the question; the decision is still
+    # published on the question's own spans, which the Backend verifies.
     invented = inspect(Echo([{"source_ref": "T1", "start": 0, "end": 5, "quote": "없는 인용"}]))
-    assert invented.failure_code == "SETTING_QUESTIONS_INCOMPLETE"
-    assert {key: row["code"] for key, row in invented.question_failures.items()} == {"Q1": "INVALID_INSPECTION_CONTRACT"}
-    assert invented.question_failures["Q1"]["cause"] == "INVALID_EXACT_SPAN"
+    assert invented.status == "COMPLETED" and invented.question_failures == {}
+    assert invented.decisions["Q1"].target_spans == invented.questions[0].draft.target_spans
+    assert invented.normalizations["TARGET_SPANS_REPLACED"] == 1
 
 
 def test_model_contract_and_provider_failures_keep_a_class_level_cause_only():
