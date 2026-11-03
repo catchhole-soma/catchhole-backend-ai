@@ -109,7 +109,8 @@ def decided(payload, outcome="NO_CONFLICT", basis=None, evidence_refs=None, *, f
     refs = evidence_refs or known
     assessment = {"reason": "대상·시점·조건과 확보 자료를 확인했다", "evidence_refs": known, "receipt_refs": receipts}
     answer = {
-        "action": "DECIDED", "outcome": outcome, "basis": basis, "reason": "합성 판정",
+        "action": "DECIDED", "outcome": outcome, "basis": basis,
+        "headline": None if outcome == "NO_CONFLICT" else "민수의 손 상태가 기존 설정과 달라요", "reason": "합성 판정",
         "impact": None if outcome == "NO_CONFLICT" else "CAUTION",
         "impact_reason": None if outcome == "NO_CONFLICT" else "설정 이해에 영향",
         "target_spans": payload["question"]["target_spans"], "evidence_refs": refs,
@@ -124,7 +125,7 @@ def decided(payload, outcome="NO_CONFLICT", basis=None, evidence_refs=None, *, f
 
 
 def follow_up(payload, *, searches=(), contexts=()):
-    return {"action": "FOLLOW_UP", "outcome": None, "basis": None, "reason": "DB 값만으로 판단할 수 없다",
+    return {"action": "FOLLOW_UP", "outcome": None, "basis": None, "headline": None, "reason": "DB 값만으로 판단할 수 없다",
             "impact": None, "impact_reason": None, "target_spans": payload["question"]["target_spans"],
             "evidence_refs": [], "completion": None, "disagreements": [], "search_queries": list(searches),
             "context_requests": [{"start": start, "end": end} for start, end in contexts]}

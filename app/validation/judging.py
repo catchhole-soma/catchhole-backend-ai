@@ -69,7 +69,7 @@ FINDING_OUTCOMES = frozenset({"CONFLICT", "SUSPECTED_CONFLICT"})
 # Author sentence of a finding the guard cleared (polite style of author_text.REASON_FALLBACKS).
 UNQUOTED_FINDING_REASON = "이전 기록에 이번 원고와 직접 어긋나는 문장이 없어 새로 나온 내용으로 봐요."
 _SEARCH_QUERY_LIMIT = SEARCH_QUERY_LIMIT
-_DECISION_FIELDS = ("outcome", "basis", "impact", "impact_reason", "completion")
+_DECISION_FIELDS = ("outcome", "basis", "headline", "impact", "impact_reason", "completion")
 
 
 def is_change_search(receipt):
@@ -141,7 +141,7 @@ def clear_unquoted_finding(answer, quotes, stats=None):
     if stats is not None:
         stats[f"{answer.outcome}_QUOTE_MISSING_CLEARED"] += 1
     cleared = answer.model_copy(update={"outcome": "NO_CONFLICT", "basis": "COMPATIBLE", "impact": None,
-                                        "impact_reason": None, "reason": UNQUOTED_FINDING_REASON})
+                                        "impact_reason": None, "reason": UNQUOTED_FINDING_REASON, "headline": None})
     return cleared, answer.outcome
 
 
@@ -272,12 +272,14 @@ class SettingJudge:
     """Judges one question at a time; many run concurrently over one corpus, settings cache and budget."""
 
     def __init__(self, model, budget, runtime, *, corpus, settings, target, source_catalogue, segment_refs,
-                 stats, subjects=None):
+                 stats, subjects=None, target_episode_no=None):
         self.model, self.budget, self.runtime = model, budget, runtime
         self.corpus, self.settings, self.target = corpus, settings, target
         self.source_catalogue, self.segment_refs, self.stats = source_catalogue, frozenset(segment_refs), stats
         # SUBJECTS catalogue rows: S refs in author text become subject names (None: every S ref is "대상").
         self.subjects = subjects
+        # The target's episode number, so the author sentence can say "31화" (model payload only, not the bundle).
+        self.target_episode_no = target_episode_no if type(target_episode_no) is int else None
         self.search_offered = corpus.search_offered
         # One schema per form for the whole report keeps the system+schema prefix provider-cacheable.
         self.schemas = {
@@ -300,7 +302,9 @@ class SettingJudge:
         while True:
             calls += 1
             bundle = self._bundle(question, revision, rows, own, extra_context)
-            payload = {**bundle, "form": form, "settings": [compact_setting_row(row) for row in rows]}
+            # target_episode_no is a model-only input: the bundle (and its input_digest) stays the Backend's shape.
+            payload = {**bundle, "form": form, "target_episode_no": self.target_episode_no,
+                       "settings": [compact_setting_row(row) for row in rows]}
             answer_type = JudgeOpenAnswer if form == "OPEN" else JudgeFinalAnswer
             row = {"call": calls, "form": form}
             trace.append(row)
@@ -371,6 +375,10 @@ class SettingJudge:
                 # NO_CONFLICT is never a finding, so an impact grade has no meaning (Backend rejects it).
                 self.stats["NO_CONFLICT_IMPACT_CLEARED"] += 1
                 updates.update(impact=None, impact_reason=None)
+            if answer.outcome == "NO_CONFLICT" and answer.headline is not None:
+                # No finding, no title (Backend rejects a NO_CONFLICT headline).
+                self.stats["NO_CONFLICT_HEADLINE_CLEARED"] += 1
+                updates["headline"] = None
         return answer.model_copy(update=updates) if updates else answer
 
     async def _follow_up(self, qref, draft, answer, own, extra_context):
@@ -547,7 +555,7 @@ def validate_decision(value, question, settings, evidence, receipts, target, sta
         refs = list(dict.fromkeys(value.evidence_refs + [ref for row in unresolved
                                                          for ref in (row.fact_ref, row.evidence_ref)]))
         return value.model_copy(update={
-            "outcome": "NEEDS_CONTEXT", "basis": "DB_RAW_DISAGREEMENT",
+            "outcome": "NEEDS_CONTEXT", "basis": "DB_RAW_DISAGREEMENT", "headline": None,
             "reason": "비교 기준과 원문이 달라 적용 범위를 확정할 수 없습니다. " + " ".join(row.reason for row in unresolved),
             "impact": value.impact or "REFERENCE", "impact_reason": value.impact_reason or "비교 기준 확인 필요",
             "evidence_refs": refs,

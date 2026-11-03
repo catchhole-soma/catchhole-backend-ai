@@ -3252,7 +3252,7 @@
         "source_catalogue",
         "input_digest"
       ],
-      "publishedDecision": "ValidationDecision shape with follow_ups [] and affected_question_refs []; basis_quotes holds the checked basis sentences (see basisQuotes) and may be absent in decisions published before it (read as []).",
+      "publishedDecision": "ValidationDecision shape with follow_ups [] and affected_question_refs []; basis_quotes holds the checked basis sentences (see basisQuotes) and may be absent in decisions published before it (read as []); headline is the judge-written finding title or null (see headline) and may be absent in decisions published before it (read as null).",
       "questionFailure": {
         "decision": "Owner decision 2026-11-02 (③): a question that cannot reach a decision because of a question-level error is published alone as an INCOMPLETE unit and the other questions are still judged.",
         "questionLevelCodes": [
@@ -3628,6 +3628,7 @@
       },
       "authorText": {
         "fields": [
+          "headline",
           "reason",
           "impact_reason",
           "disagreements[].reason"
@@ -3694,6 +3695,148 @@
               "expected": "저장된 설정과 이번 원고가 서로 맞아요."
             }
           ]
+        },
+        "headlineFallback": "headline has no fixed fallback: nothing left after sanitizing publishes null and the author screen builds its own title"
+      },
+      "headline": {
+        "rule": "Every DECIDED judge answer carries headline, the author-facing title of the finding written by the judge in plain Korean (about 40 characters, no refs or internal words). CONFLICT: '{subjects}의 {item}이 기존 설정과 달라요' ('…N화와 달라요' or '…설정집과 달라요' when the contradicting basis is an earlier episode or a setting book). SUSPECTED_CONFLICT: the same with '…다를 수 있어요'. NEEDS_CONTEXT: what is unclear, e.g. ''그'가 누구인지 확인이 필요해요'. The subjects are the ones whose stored values or earlier sentences actually conflict, never the narrator or a mere mention. NO_CONFLICT and FOLLOW_UP answers have headline null.",
+        "reasonRule": "reason of CONFLICT/SUSPECTED_CONFLICT is two plain sentences, cause then result, about 120 characters: '기존 설정은(or N화에서는 / 설정집은) {subjects}의 {item}을 {basis value}(이)라고 해요(명시하고 있어요). 그런데 {target}에서는 {target value}(이)라고 해요.' with values paraphrased briefly. {target} is '{target_episode_no}화' from the judge input, or '이번 원고' when it is null. NEEDS_CONTEXT/NO_CONFLICT keep one plain sentence of about 80 characters.",
+        "judgeInput": "The model payload (not the evidence bundle, whose keys and input_digest are unchanged) adds target_episode_no: the target episode number from INPUT target.episodeNo, or null.",
+        "answerShape": "string or null; required (nullable) by the strict OPEN and FINAL JUDGE schemas",
+        "maxCodePoints": 80,
+        "worker": [
+          "FOLLOW_UP: ignored like the other decision fields (FOLLOW_UP_DECISION_FIELDS_IGNORED)",
+          "NO_CONFLICT: a non-null headline is cleared to null (NO_CONFLICT_HEADLINE_CLEARED)",
+          "surrounding whitespace is stripped; blank becomes null",
+          "the authorText sanitizer applies as for reason (AUTHOR_TEXT_SANITIZED); nothing left becomes null (HEADLINE_DROPPED)",
+          "more than maxCodePoints code points after sanitizing becomes null (HEADLINE_DROPPED)",
+          "CONFLICT/SUSPECTED_CONFLICT/NEEDS_CONTEXT published without a headline is counted as HEADLINE_MISSING",
+          "the judge-rule guard (clear_unquoted_finding) and the DB_RAW_DISAGREEMENT NEEDS_CONTEXT rewrite publish null"
+        ],
+        "server": "Accepted when absent or null. Otherwise it must be a string, non-blank after strip, with at most maxCodePoints code points; a NO_CONFLICT decision with a non-null headline is VALIDATION_RESULT_INVALID. Exposed as headline on the finding detail and the list summary: null for decisions without it and when the stored text still looks like an internal ref.",
+        "vectors": [
+          {
+            "name": "conflict",
+            "outcome": "CONFLICT",
+            "headline": "민수의 왼손 상태가 기존 설정과 달라요",
+            "valid": true
+          },
+          {
+            "name": "suspectedEpisode",
+            "outcome": "SUSPECTED_CONFLICT",
+            "headline": "민수의 왼손 상태가 1화와 다를 수 있어요",
+            "valid": true
+          },
+          {
+            "name": "needsContext",
+            "outcome": "NEEDS_CONTEXT",
+            "headline": "‘그’가 누구인지 확인이 필요해요",
+            "valid": true
+          },
+          {
+            "name": "findingNull",
+            "outcome": "CONFLICT",
+            "headline": null,
+            "valid": true
+          },
+          {
+            "name": "findingAbsent",
+            "outcome": "CONFLICT",
+            "omit": true,
+            "valid": true
+          },
+          {
+            "name": "noConflictNull",
+            "outcome": "NO_CONFLICT",
+            "headline": null,
+            "valid": true
+          },
+          {
+            "name": "noConflictAbsent",
+            "outcome": "NO_CONFLICT",
+            "omit": true,
+            "valid": true
+          },
+          {
+            "name": "astralAtLimit",
+            "outcome": "CONFLICT",
+            "headline": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+            "valid": true
+          },
+          {
+            "name": "noConflictText",
+            "outcome": "NO_CONFLICT",
+            "headline": "민수의 왼손 상태가 기존 설정과 같아요",
+            "valid": false
+          },
+          {
+            "name": "blank",
+            "outcome": "CONFLICT",
+            "headline": "   ",
+            "valid": false
+          },
+          {
+            "name": "tooLong",
+            "outcome": "CONFLICT",
+            "headline": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+            "valid": false
+          },
+          {
+            "name": "notText",
+            "outcome": "CONFLICT",
+            "headline": 7,
+            "valid": false
+          }
+        ],
+        "workerCases": [
+          {
+            "name": "stripped",
+            "outcome": "CONFLICT",
+            "answer": "  민수의 왼손 상태가 기존 설정과 달라요 ",
+            "published": "민수의 왼손 상태가 기존 설정과 달라요"
+          },
+          {
+            "name": "sanitized",
+            "outcome": "CONFLICT",
+            "answer": "S1의 왼손 상태가 E1과 달라요",
+            "published": "민수의 왼손 상태가 18화와 달라요"
+          },
+          {
+            "name": "internalOnly",
+            "outcome": "SUSPECTED_CONFLICT",
+            "answer": "L3 영수증 확인 필요",
+            "published": null
+          },
+          {
+            "name": "blank",
+            "outcome": "NEEDS_CONTEXT",
+            "answer": "  ",
+            "published": null
+          },
+          {
+            "name": "missing",
+            "outcome": "CONFLICT",
+            "answer": null,
+            "published": null
+          },
+          {
+            "name": "tooLong",
+            "outcome": "CONFLICT",
+            "answer": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+            "published": null
+          },
+          {
+            "name": "noConflict",
+            "outcome": "NO_CONFLICT",
+            "answer": "민수의 왼손 상태가 기존 설정과 같아요",
+            "published": null
+          }
+        ],
+        "workerLabels": {
+          "T1": "이번 원고",
+          "E1": "18화",
+          "B1": "저장된 설정",
+          "S1": "민수"
         }
       }
     },

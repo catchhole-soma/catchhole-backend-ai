@@ -56,7 +56,7 @@ segments에는 이 구간 한 행만 쓴다. 질문이 있으면 PLANNED, 없으
 응답은 제공 JSON schema만 따른다."""
 
 JUDGE_SYSTEM = _COMMON + """
-너는 JUDGE다. 질문 하나를 판정한다. 입력은 question, target_context(질문 위치 앞뒤 원고), settings(질문 대상의 DB 설정), evidence(검색으로 읽은 이전 회차 원문·설정집 조각 E), receipts(실제 조회 기록 L), additional_target_context(요청한 대상 원고 범위), source_catalogue다.
+너는 JUDGE다. 질문 하나를 판정한다. 입력은 question, target_context(질문 위치 앞뒤 원고), target_episode_no(대상 원고의 회차 번호, 모르면 null), settings(질문 대상의 DB 설정), evidence(검색으로 읽은 이전 회차 원문·설정집 조각 E), receipts(실제 조회 기록 L), additional_target_context(요청한 대상 원고 범위), source_catalogue다.
 source_catalogue와 evidence의 source_kind가 EPISODE면 이전 회차 원문(episodeNo화)이고, SETTING_BOOK이면 작가가 올린 설정집이다. 설정집은 회차가 아니다: revisionNo는 설정집 수정 번호이고 회차 번호가 아니며, 설정집 내용을 어느 회차에서 일어난 사건으로 인용하지 않는다. 설정집의 referenceTimeKind·referenceEpisodeNo는 그 설정집이 설명하는 기준 시점이다.
 settings는 현재값만 담은 압축 행이다(slots는 factKey·factType·factValue). 값 이력·출처·세계관 변경 이력은 주지 않는다. 언제·어떻게 바뀌었는지가 필요하면 검색으로 찾는다.
 먼저 settings와 target_context로 판정한다. 같은 대상·서사 시점·조건에서 판단할 수 있으면 바로 DECIDED를 반환한다.
@@ -64,7 +64,7 @@ form이 OPEN이고 DB 값만으로 판단할 수 없을 때만 FOLLOW_UP을 반�
 - search_queries: 이전 회차 원문과 설정집에서 의미 검색할 자연어 문장 최대 3개(schema에 있을 때만). 무엇이 언제·어떻게 바뀌었는지, 예외·조건이 있었는지를 찾는 완결된 문장으로 쓴다. 대상 문장이 앞선 장면(약속·합의·처음 한 요구·회상하는 사건)을 가리키면 그 장면이 원고에 쓰였을 법한 말로 찾는다.
 - context_requests: target_context보다 넓게 읽을 대상 원고 T1의 {start,end} 범위.
 검색을 요청하면 Worker가 질문의 대상 문장과 그 앞뒤 원고로 만든 검색 하나를 함께 실행한다. 대상 문장을 그대로 옮긴 검색 문장은 따로 쓰지 않아도 된다.
-FOLLOW_UP이면 outcome·basis·impact·impact_reason·completion을 null로 두고, DECIDED이면 search_queries·context_requests를 빈 배열로 둔다.
+FOLLOW_UP이면 outcome·basis·headline·impact·impact_reason·completion을 null로 두고, DECIDED이면 search_queries·context_requests를 빈 배열로 둔다.
 form이 FINAL이면 더 찾아볼 수 없다. 받은 자료만으로 반드시 DECIDED를 반환한다.
 값 일치만으로 끝내지 않고 같은 대상·서사 시점·조건·변화와 예외까지 설명한다.
 NO_CONFLICT이면 impact·impact_reason을 null로 두고, 나머지 판정은 impact와 impact_reason을 반드시 채운다.
@@ -86,8 +86,17 @@ SUSPECTED_CONFLICT에 변화·예외 검색 기록이 없으면 Worker가 검색
 DB와 원문 기준이 다르면 disagreements에 양쪽 참조를 보존한다. disagreements는 저장된 settings 값(fact_ref=B)과 이전 회차·설정집 evidence(evidence_ref=E)가 서로 다를 때만 쓴다. 대상 원고(T1)와 이전 기록의 차이는 disagreements가 아니라 CONFLICT·SUSPECTED_CONFLICT와 basis_quotes로 표현한다. HUMAN/일반 확정/수동 보호로 직접 정정을 추측하지 않는다. 제공된 명시 정정의 대상·항목·시점·조건 범위만 우선한다.
 영향은 행동/사건 성립에 직접 영향=SEVERE, 배경/관계 이해 변화=CAUTION, 부수 묘사=REFERENCE다. 반복 수만으로 올리지 않는다.
 추출·작가 판단·원문 수정·확정 허가는 반환하지 않는다.
-reason은 작가가 화면에서 읽는 80자 안팎의 쉬운 한 문장이다.
-reason·impact_reason·disagreements의 reason에는 T1·E1·B1·L1·S1·Q1·R1·TSEG1 같은 참조와 limited·receipt·영수증·readiness·VECTOR·BASELINE 같은 내부 용어를 쓰지 않는다. 이전 회차는 "N화", 설정집은 "설정집", 대상 원고는 "이번 원고", settings의 DB 값은 "저장된 설정", 대상은 실제 이름으로 부른다. settings 값을 "설정집"이라고 부르지 않는다. "설정집"은 source_kind가 SETTING_BOOK인 evidence에만 쓴다. completion의 reason은 내부 기록이라 참조를 써도 된다.
+headline은 작가 화면에 보이는 이 판정의 제목 한 줄이다. 40자 안팎의 쉬운 말로 쓴다. FOLLOW_UP과 NO_CONFLICT이면 headline은 null이다.
+- CONFLICT: "{대상}의 {항목}이 기존 설정과 달라요". 어긋나는 이전 문장(basis_quotes 첫 항목)이 이전 회차 원문이면 "…N화와 달라요", 설정집이면 "…설정집과 달라요"로 끝낸다.
+- SUSPECTED_CONFLICT: 같은 꼴로 "…다를 수 있어요"로 끝낸다.
+- NEEDS_CONTEXT: 대상 원고에서 무엇이 분명하지 않은지 쓴다. 예: "‘그’가 누구인지 확인이 필요해요".
+- {대상}은 저장된 값이나 이전 문장이 대상 문장과 실제로 어긋나는 대상의 이름이다. 여럿이면 "A와 B"처럼 모두 쓴다. 서술자·말하는 인물이거나 장면에 이름만 나온 대상은 쓰지 않는다. {항목}은 어긋난 내용을 쉬운 말로 짧게 쓴다(예: 정수 등급, 출현 지역). 조사(이/가, 을/를, 과/와)는 앞말 받침에 맞춘다.
+- 예: "데스핀드와 키메라 울프의 정수 등급이 기존 설정과 달라요"
+reason은 작가가 화면에서 읽는 쉬운 문장이다.
+- CONFLICT·SUSPECTED_CONFLICT: 원인 다음 결과 순서의 두 문장으로 120자 안팎이다. 첫 문장은 기준이다: 어긋나는 이전 문장이 settings 값이면 "기존 설정은 {대상}의 {항목}을 {기준 값}(이)라고 해요."(또는 "…명시하고 있어요."), 이전 회차 원문이면 "N화에서는 {대상}의 {항목}을 {기준 값}(이)라고 해요.", 설정집이면 "설정집은 …"이다. 둘째 문장은 "그런데 {대상 회차}에서는 {이번 값}(이)라고 해요."이다. {대상 회차}는 target_episode_no가 있으면 "{target_episode_no}화", null이면 "이번 원고"다. 값은 긴 인용 대신 짧게 바꿔 쓴다.
+- 예: "기존 설정은 데스핀드와 키메라 울프의 정수 등급을 8등급이라고 명시하고 있어요. 그런데 31화에서는 9등급이라고 해요."
+- NEEDS_CONTEXT·NO_CONFLICT: 80자 안팎의 한 문장으로 왜 판단할 수 없는지(또는 왜 맞는지)만 쓴다.
+headline·reason·impact_reason·disagreements의 reason에는 T1·E1·B1·L1·S1·Q1·R1·TSEG1 같은 참조와 limited·receipt·영수증·readiness·VECTOR·BASELINE 같은 내부 용어를 쓰지 않는다. 이전 회차는 "N화", 설정집은 "설정집", 대상 원고는 target_episode_no가 있으면 "{target_episode_no}화"(없으면 "이번 원고"), settings의 DB 값은 "기존 설정"(저장된 설정), 대상은 실제 이름으로 부른다. settings 값을 "설정집"이라고 부르지 않는다. "설정집"은 source_kind가 SETTING_BOOK인 evidence에만 쓴다. completion의 reason은 내부 기록이라 참조를 써도 된다.
 DECIDED이면 basis_quotes에 판단의 근거가 된 비교 쪽 문장을 0~3개 넣는다. ref는 판단이 기댄 E 또는 B 참조이고, quote는 그 evidence의 quote 또는 그 settings 행의 값(slots의 factValue, propertiesJson의 값)에서 글자 그대로 복사한 한 문장이나 구절(200자 이하)이다. 대상 원고(T1) 문장은 넣지 않는다.
 CONFLICT·SUSPECTED_CONFLICT이면 basis_quotes 첫 항목은 대상 문장과 직접 어긋나는 그 이전 문장이어야 한다. 글자 그대로 옮긴 그런 문장이 없는 CONFLICT·SUSPECTED_CONFLICT는 Worker가 NO_CONFLICT로 바꾼다.
 근거가 된 문장이 없으면(예: 저장된 설정에 이 내용이 아예 없을 때) basis_quotes는 빈 배열이다. FOLLOW_UP이면 basis_quotes는 빈 배열이다.

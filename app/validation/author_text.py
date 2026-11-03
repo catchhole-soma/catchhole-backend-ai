@@ -1,13 +1,19 @@
 """Author-facing decision text without internal refs or pipeline words (owner feedback on the 31화 report, 2026-11-02).
 
 The judge prompt already asks for plain sentences; this is the Worker's deterministic safety net for the strings an
-author reads (`reason`, `impact_reason`, `disagreements[].reason`). Completion reasons are audit records and keep
-their refs. Known refs become author words ("이번 원고", "18화", "설정집", "저장된 설정", a subject name) with the
+author reads (`headline`, `reason`, `impact_reason`, `disagreements[].reason`). Completion reasons are audit records and
+keep their refs. Known refs become author words ("이번 원고", "18화", "설정집", "저장된 설정", a subject name) with the
 following Korean particle fixed; a sentence that still holds an unknown ref or an internal word is dropped, and an
 empty result falls back to a fixed sentence. Quotes, names and setting values are never rewritten otherwise.
+
+`headline` (the judge-written finding title, 2026-11-03) has no fixed fallback: it is stripped, sanitized the same way
+and published as None when nothing is left, when it is longer than HEADLINE_LIMIT code points, when it is blank or when
+the decision is NO_CONFLICT. The author screen then builds its own title.
 """
 
 import re
+
+from app.validation.contracts import HEADLINE_LIMIT
 
 TARGET_LABEL = "이번 원고"
 SETTING_LABEL = "저장된 설정"
@@ -27,6 +33,10 @@ IMPACT_REASON_FALLBACKS = {
 }
 DISAGREEMENT_FALLBACK = "저장된 설정과 이전 원고의 내용이 서로 달라요."
 COUNTER = "AUTHOR_TEXT_SANITIZED"
+HEADLINE_DROPPED = "HEADLINE_DROPPED"
+HEADLINE_MISSING = "HEADLINE_MISSING"
+# Outcomes the author sees as findings; they should carry a headline.
+FINDING_OUTCOMES = frozenset({"CONFLICT", "SUSPECTED_CONFLICT", "NEEDS_CONTEXT"})
 
 # Next to Hangul `\b` does not split ("T1의"), so ASCII-only lookarounds decide the token edges.
 _TOKEN = re.compile(r"(?<![A-Za-z0-9])(T1|TSEG[1-9]\d*|[EBRSLQ][1-9]\d*)(?![0-9])")
@@ -151,8 +161,28 @@ class _SubjectFallback(dict):
         return super().get(key, default)
 
 
+def clean_headline(text, labels):
+    """`(headline, sanitized)`: the stripped and sanitized title, or None when blank, emptied or too long.
+
+    `sanitized` is True when the author-text check rewrote or dropped part of it (counted as AUTHOR_TEXT_SANITIZED).
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None, False
+    stripped = text.strip()
+    cleaned = clean_author_text(stripped, labels).strip()
+    sanitized = cleaned != stripped
+    if not cleaned or len(cleaned) > HEADLINE_LIMIT:
+        return None, sanitized
+    return cleaned, sanitized
+
+
 def sanitize_decision(decision, labels, stats=None):
-    """Clean `reason`, `impact_reason` and each disagreement reason; count rewritten fields as AUTHOR_TEXT_SANITIZED."""
+    """Clean `headline`, `reason`, `impact_reason` and each disagreement reason; count the changes in `stats`.
+
+    Counters: AUTHOR_TEXT_SANITIZED per rewritten field, HEADLINE_DROPPED when a non-blank headline is published as
+    None (nothing left or over HEADLINE_LIMIT), HEADLINE_MISSING when a finding outcome ends without a headline.
+    A NO_CONFLICT headline is never published (the judge step clears and counts it before this).
+    """
     changed = 0
 
     def clean(text, fallback):
@@ -169,8 +199,15 @@ def sanitize_decision(decision, labels, stats=None):
                                          IMPACT_REASON_FALLBACKS.get(decision.impact, IMPACT_REASON_FALLBACKS["REFERENCE"]))
     disagreements = [row.model_copy(update={"reason": clean(row.reason, DISAGREEMENT_FALLBACK)})
                      for row in decision.disagreements]
-    if not changed:
-        return decision
+    headline, sanitized = (None, False) if decision.outcome == "NO_CONFLICT" else clean_headline(decision.headline, labels)
+    changed += sanitized
     if stats is not None:
+        if headline is None and isinstance(decision.headline, str) and decision.headline.strip():
+            stats[HEADLINE_DROPPED] += 1
+        if headline is None and decision.outcome in FINDING_OUTCOMES:
+            stats[HEADLINE_MISSING] += 1
+    if not changed and headline == decision.headline:
+        return decision
+    if changed and stats is not None:
         stats[COUNTER] += changed
-    return decision.model_copy(update={**updates, "disagreements": disagreements})
+    return decision.model_copy(update={**updates, "disagreements": disagreements, "headline": headline})

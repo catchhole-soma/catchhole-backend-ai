@@ -114,6 +114,8 @@ class ValidationDecision(Contract):
     disagreements: list[Disagreement]
     # Exact basis sentences checked by the Worker (absent in decisions published before this field).
     basis_quotes: list[BasisQuote] = Field(default_factory=list)
+    # The judge-written finding title after the Worker's author-text check (absent before 2026-11-03, read as None).
+    headline: str | None = None
 
 
 # Judge answers (no docstrings: they would become schema descriptions).
@@ -131,6 +133,8 @@ class JudgeOpenAnswer(Contract):
     action: Literal["FOLLOW_UP", "DECIDED"]
     outcome: _OUTCOME | None
     basis: _BASIS | None
+    # Required (nullable) by the strict schema; the default only tolerates older scripted answers.
+    headline: str | None = None
     reason: str = Field(min_length=1)
     impact: _IMPACT | None
     impact_reason: str | None
@@ -149,6 +153,7 @@ class JudgeFinalAnswer(Contract):
     action: Literal["DECIDED"]
     outcome: _OUTCOME
     basis: _BASIS
+    headline: str | None = None
     reason: str = Field(min_length=1)
     impact: _IMPACT | None
     impact_reason: str | None
@@ -163,9 +168,10 @@ def decision_from_answer(answer):
     """The published ValidationDecision of a DECIDED judge answer (no follow-ups, no re-opened questions).
 
     `basis_quotes` stays empty here: the judge fills it from the answer after the Worker checked each quote.
+    `headline` is copied as answered; the author-text check (`author_text.sanitize_decision`) normalizes it.
     """
     return ValidationDecision(
-        action="DECIDED", outcome=answer.outcome, basis=answer.basis, reason=answer.reason,
+        action="DECIDED", outcome=answer.outcome, basis=answer.basis, reason=answer.reason, headline=answer.headline,
         impact=answer.impact, impact_reason=answer.impact_reason, target_spans=list(answer.target_spans),
         evidence_refs=list(answer.evidence_refs), completion=answer.completion, follow_ups=[],
         affected_question_refs=[], disagreements=list(answer.disagreements))
@@ -265,6 +271,8 @@ MAX_SEARCH_QUERIES = 3
 # A decision's exact basis sentences (`basis_quotes`): at most 3, each at most 300 code points.
 MAX_BASIS_QUOTES = 3
 BASIS_QUOTE_LIMIT = 300
+# A published headline has at most 80 code points (the prompt asks for about 40); longer ones are dropped to None.
+HEADLINE_LIMIT = 80
 
 
 def safe_code(value, fallback=None):

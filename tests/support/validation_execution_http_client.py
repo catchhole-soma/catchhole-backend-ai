@@ -160,7 +160,8 @@ class SyntheticProvider:
                       "receipt_refs": [row["ref"] for row in payload["receipts"]]}
         conflict = self.mode == "conflict"
         result = {"action": "DECIDED", "outcome": "CONFLICT" if conflict else "NO_CONFLICT",
-            "basis": "DIRECT_CONTRADICTION" if conflict else "COMPATIBLE", "reason": "합성 검증 결과",
+            "basis": "DIRECT_CONTRADICTION" if conflict else "COMPATIBLE",
+            "headline": "합성 대상의 확인 항목이 기존 설정과 달라요" if conflict else None, "reason": "합성 검증 결과",
             "impact": "CAUTION" if conflict else None, "impact_reason": "합성 비교 차이" if conflict else None,
             "target_spans": payload["question"]["target_spans"], "evidence_refs": refs,
             "completion": {key: assessment for key in ("comparison_context", "changes_exceptions", "no_pending_clues", "required_reads")},
