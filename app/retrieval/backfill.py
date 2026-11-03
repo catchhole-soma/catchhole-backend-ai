@@ -539,6 +539,14 @@ class CampaignRunner:
             codes = {r["code"] for r in report["sourceFailures"]}
             if codes <= {"SOURCE_CHANGED"}:
                 state.no_progress("SOURCE_CHANGED")
+            elif (advance == state.advance_book and codes == {"SOURCE_UNREADABLE"}
+                  and not report["changedChunks"]):
+                # A setting book over the 2,000,000-byte cap (uploads allow 10 MiB) or otherwise unreadable is
+                # excluded, so one book does not stop every work's episodes and books (owner decision 2026-11-03).
+                # The sweep ends PARTIAL; it is never marked READY.
+                advance(source, ready=False)
+                self.checked += 1
+                return None
             else:
                 state.outcome("BLOCKED", "SOURCE_UNREADABLE")
             return self._status()

@@ -135,20 +135,27 @@ def test_archived_books_are_skipped_and_archiving_during_the_call_writes_nothing
     assert not racing.chunks and not archived.chunks
 
 
-def test_oversized_setting_book_blocks_like_an_oversized_episode(tmp_path):
-    corpus, work = Corpus(), uuid4()
+def test_oversized_setting_book_is_excluded_and_the_sweep_continues(tmp_path):
+    # Owner decision 2026-11-03: unlike an episode, one oversized book must not stop the whole campaign.
+    corpus, work, other = Corpus(), uuid4(), uuid4()
     corpus.add(work, 1)
-    corpus.books.add(work, "😀" * (MAX_SOURCE_BYTES // 4) + "a")
-    cfg = config(tmp_path)
-    report = invoke(cfg, corpus)
-    assert report["state"] == "BLOCKED" and report["reason"] == "SOURCE_UNREADABLE"
-    assert report["providerAttempts"] == 1  # the episode only; the book never reached the provider
-    assert report["readySettingBooks"] == report["checkedSettingBooks"] == 0
+    big = corpus.books.add(work, "😀" * (MAX_SOURCE_BYTES // 4) + "a")
+    small = corpus.books.add(work, SHORT)
+    corpus.add(other, 1)
+    report = invoke(config(tmp_path), corpus)
+    assert report["state"] == "PARTIAL" and report["reason"] is None
+    assert not big.chunks and ready(small)
+    assert report["checkedSettingBooks"] == 2 and report["readySettingBooks"] == 1
+    assert report["excludedOrUnavailableSettingBooks"] == 1
+    assert report["readySources"] == report["checkedSources"] - 1 == 3
     assert not report["uncertainAttempt"]
-    # Same as an episode: resume does not skip it or mark it READY.
-    resumed = invoke(cfg, corpus, resume=True)
-    assert resumed["state"] == "BLOCKED" and resumed["reason"] == "SOURCE_UNREADABLE"
-    assert resumed["providerAttempts"] == 0 and resumed["readySettingBooks"] == 0
+
+
+def test_oversized_episode_still_blocks_the_campaign(tmp_path):
+    corpus, work = Corpus(), uuid4()
+    corpus.add(work, 1, "😀" * (MAX_SOURCE_BYTES // 4) + "a")
+    report = invoke(config(tmp_path), corpus)
+    assert report["state"] == "BLOCKED" and report["reason"] == "SOURCE_UNREADABLE"
 
 
 def test_unidentified_book_is_excluded_and_the_sweep_is_partial(tmp_path):
