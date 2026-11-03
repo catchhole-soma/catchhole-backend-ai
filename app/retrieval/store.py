@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from sqlalchemy import delete, select, text
 
-from app.retrieval.contracts import IndexBusy, Source, SourceChanged
+from app.retrieval.contracts import BookSource, IndexBusy, Source, SourceChanged
 from app.retrieval.models import (
     RetrievalChunk,
     RetrievalSource,
@@ -47,20 +47,31 @@ class RetrievalStore:
 
         Only private IDs, a timestamp and numeric bounds reach the durable cursor.
         New works/episodes and changes behind the cursor are discovered next sweep.
+        A work with a current setting-book revision but no episode is included with bound 0
+        (its episode page is empty and the sweep goes straight to its setting books).
         """
         with self.sessions() as session:
             return [
                 (row["work_id"], row["episode_to"], row["snapshot_at"].isoformat())
                 for row in session.execute(
                     text("""
-                    SELECT w.id AS work_id, max(e.episode_no) AS episode_to,
+                    SELECT w.id AS work_id,
+                           coalesce((SELECT max(e.episode_no) FROM episodes e
+                                     WHERE e.work_id=w.id AND e.status <> 'ARCHIVED'), 0) AS episode_to,
                            statement_timestamp() AS snapshot_at
                     FROM works w JOIN members m ON m.id=w.member_id
-                    JOIN episodes e ON e.work_id=w.id
                     WHERE w.lifecycle_status='ACTIVE' AND m.status='ACTIVE'
-                      AND e.status <> 'ARCHIVED'
                       AND (:all_works OR w.id=ANY(:ids))
-                    GROUP BY w.id ORDER BY w.id"""),
+                      AND (EXISTS (SELECT 1 FROM episodes e
+                                   WHERE e.work_id=w.id AND e.status <> 'ARCHIVED')
+                           OR EXISTS (SELECT 1 FROM upload_files f
+                                      JOIN upload_batches b ON b.id=f.batch_id
+                                      JOIN setting_book_revisions r
+                                        ON r.id=f.current_setting_book_revision_id
+                                       AND r.setting_book_id=f.id
+                                      WHERE b.work_id=w.id AND f.file_role='SETTING_BOOK'
+                                        AND f.archived_at IS NULL))
+                    ORDER BY w.id"""),
                     {"all_works": not work_ids, "ids": list(work_ids)},
                 ).mappings()
             ]
@@ -368,11 +379,15 @@ class RetrievalStore:
             self._validate(session, source, spec, chunks)
 
     def attempted(self, source, spec, chunks, operation_id):
-        """Count one provider attempt. A validation index fill has no operational run (operation_id None)."""
+        """Count one provider attempt. A validation index fill has no operational run (operation_id None).
+
+        Only the episode table (V76) records the operational run; V114 setting-book chunks have no such column.
+        """
+        record = operation_id is not None and hasattr(self.chunk_model, "last_operation_id")
         with self.sessions() as session, session.begin():
             for row in self._validate(session, source, spec, chunks).values():
                 row.attempt_count += 1
-                if operation_id is not None:
+                if record:
                     row.last_operation_id = operation_id
 
     def save(self, source, spec, chunks, vectors):
@@ -433,6 +448,23 @@ WHERE r.id=:id AND b.work_id=:work AND f.file_role='SETTING_BOOK' AND f.archived
   AND w.lifecycle_status='ACTIVE' AND m.status='ACTIVE'
 """
 
+# One operational backfill page: the current revision of each non-archived setting book, keyset by book ID.
+# Archived books and non-current revisions are never listed (and never writable, see `_current`).
+BOOK_BACKFILL_SQL = """
+SELECT r.id AS revision_id, f.id AS setting_book_id, b.work_id, r.revision_no,
+       r.content_s3_key, r.content_s3_version, r.content_hash,
+ CASE WHEN w.lifecycle_status <> 'ACTIVE' OR m.status <> 'ACTIVE' THEN 'UNAVAILABLE'
+      WHEN r.content_s3_key IS NULL OR r.content_s3_key='' OR r.content_hash IS NULL
+        OR r.content_hash !~ '^[a-f0-9]{64}$' THEN 'SOURCE_UNIDENTIFIED'
+      ELSE 'AVAILABLE' END AS source_state
+FROM upload_files f
+JOIN upload_batches b ON b.id=f.batch_id
+JOIN setting_book_revisions r ON r.id=f.current_setting_book_revision_id AND r.setting_book_id=f.id
+JOIN works w ON w.id=b.work_id JOIN members m ON m.id=w.member_id
+WHERE b.work_id=:work AND f.file_role='SETTING_BOOK' AND f.archived_at IS NULL AND f.id > :after
+ORDER BY f.id LIMIT :limit
+"""
+
 
 class SettingBookRetrievalStore(RetrievalStore):
     """Setting-book retrieval index (V114) with the episode store's prepare/validate/save rules.
@@ -473,8 +505,36 @@ class SettingBookRetrievalStore(RetrievalStore):
         return self.source_model(revision_id=source.revision_id, setting_book_id=source.setting_book_id)
 
     def sources(self, scope):
-        # Episode paging has no setting-book equivalent: book sources come from a frozen validation manifest.
-        raise NotImplementedError("Setting-book sources come from a frozen validation manifest")
+        # Episode-range paging has no setting-book equivalent: validation reads a frozen manifest and the
+        # operational backfill lists current revisions per work (`backfill_sources`).
+        raise NotImplementedError("Setting-book sources come from a frozen manifest or the backfill listing")
 
     def backfill_snapshot(self, work_ids=()):
-        raise NotImplementedError("Setting books are filled at validation intake only")
+        # The episode store freezes one work list for both kinds (works with only setting books included).
+        raise NotImplementedError("The episode store freezes the backfill work list")
+
+    def backfill_sources(self, work_id, after_book_id, limit):
+        """Keyset page of a work's current setting-book revisions for the operational backfill (2026-11-03).
+
+        Books are read when the sweep reaches the work, not frozen at the sweep snapshot: a book edited or archived
+        behind the cursor is re-read next sweep, and Spring has already deleted its old revision's index rows.
+        """
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid backfill page size")
+        with self.sessions() as session:
+            return [
+                BookSource(
+                    row["work_id"],
+                    row["setting_book_id"],
+                    row["revision_id"],
+                    row["revision_no"],
+                    row["content_s3_key"],
+                    row["content_s3_version"],
+                    row["content_hash"],
+                    row["source_state"],
+                )
+                for row in session.execute(
+                    text(BOOK_BACKFILL_SQL),
+                    {"work": work_id, "after": after_book_id, "limit": limit},
+                ).mappings()
+            ]

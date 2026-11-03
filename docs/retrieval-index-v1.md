@@ -59,17 +59,27 @@ LLM이나 외부 사용자에게 직접 노출한 DB 조회 API가 아니다. #2
 동일 조건을 적용하고 답변 전달 전 재검증한다. 예전 `EpisodeChunkVectorSearchService`를
 그대로 챗봇에 붙이면 이 유효성 계약을 충족하지 않는다.
 
-## 설정집 색인과 검수 접수 때 채우기 (2026-11-02)
+## 설정집 색인: 검수 접수 때 채우기(2026-11-02)와 운영 백필(2026-11-03)
 
 - V114 `retrieval_setting_book_sources`(PK `revision_id`, `setting_book_id`·`work_id`, 현재 원문 key/version/hash, 같은 조각 정책)와
   `retrieval_setting_book_chunks`(회차 조각과 같은 열, `last_operation_id` 없음)는 설정집 revision 하나를 출처 하나로 저장한다.
   분석용 `setting_book_chunks`(Job·revision 격리, 임베딩 없음)와 별개다. 회차 표와 같은 `prepare`/`validate`/`save` 규칙을
   `app.retrieval.store.SettingBookRetrievalStore`가 재사용하며, 보관되지 않은 설정집의 현재 revision만 쓸 수 있다(아니면 `SOURCE_CHANGED`).
-- 채우는 곳은 검수 Worker의 접수 때 채우기뿐이다(`docs/validation-execution-v1.md`). 그 실행의 고정 manifest가 `currentRevision: true`로 표시한
+- 채우는 곳은 두 곳이다. 검수 Worker의 접수 때 채우기(`docs/validation-execution-v1.md`)는 그 실행의 고정 manifest가 `currentRevision: true`로 표시한
   revision의 빈 곳과 앞 회차의 빈 곳만 채우며, 임베딩은 검수 역할 `INDEX_EMBEDDING`(서비스 부담 `SERVICE_PAID_V1`)으로 원장에 남는다.
-  운영 백필 campaign과 챗봇 readiness는 계속 `CURRENT_EPISODE`만 다룬다(챗봇의 `unsupportedSourceTypes`는 그대로다).
+- 2026-11-03부터 5분 운영 백필(`app.retrieval.backfill`)도 작품마다 현재 회차 다음에 보관되지 않은 설정집의 현재 revision을 채운다.
+  예전에는 검수를 접수한 작품의 설정집만 색인돼, 검수를 한 번도 접수하지 않은 작품의 설정집에는 벡터가 없었다. 업로드 때 색인 Job은 만들지 않는다.
+  회차와 같은 작품 잠금·조각 정책·모델/버전·batch·재시도·상한·deadline, 같은 campaign 누적 예산과 운영 원장(`OPERATIONAL_BACKFILL`,
+  `RETRIEVAL_INDEX_SERVICE_PAID_V1`, 같은 actor)을 쓴다. 원장 요청에는 작품만 있고 출처 식별값이 없어 Spring 계약은 그대로다.
+  회차가 없고 설정집만 있는 작품도 순회한다. 원문은 그 revision에 저장된 key/version/hash로 S3에서 같은 2,000,000 byte 상한으로 읽고,
+  초과하거나 읽을 수 없는 설정집은 회차와 달리 campaign을 멈추지 않고 그 설정집만 제외로 센다(`PARTIAL`, READY로 표시하지 않는다).
+- 챗봇 검색과 그 readiness는 설정집 표를 읽지 않으며, 단건 CLI `status`의 `unsupportedSourceTypes`도 그대로다.
+  운영 백필 `status`만 `supportedSourceTypes`에 `SETTING_BOOK`(현재 판)을 넣고 설정집 수(`checkedSettingBooks`/`readySettingBooks`/
+  `excludedOrUnavailableSettingBooks`)를 합계와 따로 보인다.
 - 설정집 수정·보관은 Spring이 그 설정집의 색인 행을 같은 트랜잭션에서 지우고(`SettingBookRetrievalIndexCleanup`), 작품 파기도 두 표를 지운다.
+  새 현재 판은 다음 백필 순회나 검수 접수가 채운다.
   검수 frozen reader(`catchhole_chat_reader`)는 두 표의 SELECT가 더 필요하다(`app/retrieval/bootstrap.py` RELATIONS).
+  백필 쓰기 계정은 두 표의 SELECT·INSERT·UPDATE(조각은 DELETE도)와 `upload_files`·`upload_batches`·`setting_book_revisions` SELECT가 필요하며 preflight가 검사한다.
 
 ## 준비 상태와 dry-run
 
@@ -97,7 +107,7 @@ DB를 쓰거나 embedding client/사용량 예약을 생성하지 않는다. S3 
 | provider 동시성 | 1, 같은 작품의 겹친 운영 실행은 PostgreSQL advisory lock으로 거절 |
 | 추가 재시도 | 1 / 2, 일시 provider 오류만; 인증/계약/DB/원장 오류는 중단 |
 | 시간 | 900 / 3,600초, 새 작업/호출 허용 한도와 진행 중 provider timeout; 동기 저장소/DB 취소의 hard deadline은 아님 |
-| 원문 읽기 | 회차당 UTF-8 2,000,000 bytes, 경계값 포함 |
+| 원문 읽기 | 출처(회차·설정집 revision)당 UTF-8 2,000,000 bytes, 경계값 포함 |
 | 금액 | `--usd-per-million`과 `--max-cost-usd`를 함께 지정하면 입력량 기반 추정액으로 호출 전 제한 |
 
 기존 저장 원고는 신규 업로드 정책보다 클 수 있으므로 검색 읽기 상한을 업로드 글자 수 제한과 분리한다.

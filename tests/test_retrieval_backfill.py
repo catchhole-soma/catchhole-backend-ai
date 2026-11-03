@@ -21,12 +21,128 @@ from app.retrieval.backfill import (
     main,
     operations_ready,
 )
-from app.retrieval.contracts import IndexBusy, IndexSpec
+from app.retrieval.contracts import BookSource, IndexBusy, IndexSpec, SourceChanged
 from app.retrieval.provider import IndexProviderFailure
 from app.retrieval.service import RetrievalIndexService
 from tests.test_retrieval_service import MemoryStore, Provider, TEXT
 
 SHORT = "A synthetic scene."
+BOOK = "Synthetic setting book: the river spirit answers only at night."
+
+
+class BookCorpus:
+    """Fake `SettingBookRetrievalStore`: one MemoryStore per revision, Spring's current-revision/archive rules.
+
+    `revise` and `archive` mirror Spring: the book's current revision changes (or it is archived) and
+    `SettingBookRetrievalIndexCleanup` deletes every revision's index rows in the same transaction.
+    """
+
+    chunk_state = staticmethod(MemoryStore.chunk_state)
+
+    def __init__(self):
+        self.revisions, self.texts, self.prepared = {}, {}, {}
+        self.current, self.archived = {}, set()
+        self.page_calls, self.reads = [], []
+
+    def add(self, work, value=BOOK, *, book=None, revision_no=1, state="AVAILABLE"):
+        book = book or uuid4()
+        memory = MemoryStore()
+        revision = uuid4()
+        memory.source = BookSource(
+            work, book, revision, revision_no, f"synthetic/book/{revision}", f"v{revision_no}",
+            sha256(value.encode()).hexdigest(), state,
+        )
+        self.revisions[revision], self.texts[revision] = memory, value
+        self.current[book] = revision
+        return memory
+
+    def _cleanup(self, book):
+        for revision, memory in self.revisions.items():
+            if memory.source.setting_book_id == book:
+                memory.chunks, memory.spec = [], None
+                self.prepared.pop(revision, None)
+
+    def revise(self, book, value):
+        old = self.revisions[self.current[book]].source
+        self._cleanup(book)
+        return self.add(old.work_id, value, book=book, revision_no=old.revision_no + 1)
+
+    def archive(self, book):
+        self._cleanup(book)
+        self.archived.add(book)
+
+    def is_current(self, source):
+        return (
+            source.setting_book_id not in self.archived
+            and self.current.get(source.setting_book_id) == source.revision_id
+            and self.revisions[source.revision_id].source.fingerprint == source.fingerprint
+        )
+
+    def current_books(self, work=None):
+        return [
+            self.revisions[revision].source
+            for book, revision in self.current.items()
+            if book not in self.archived
+            and (work is None or self.revisions[revision].source.work_id == work)
+        ]
+
+    def backfill_sources(self, work, after, limit):
+        selected = sorted(
+            [s for s in self.current_books(work) if s.setting_book_id > after],
+            key=lambda s: s.setting_book_id,
+        )[:limit]
+        self.page_calls.append((work, after, len(selected)))
+        return selected
+
+    def source_id(self, source):
+        return source.revision_id
+
+    def exclusive(self, _):
+        raise AssertionError("The episode store takes the shared per-work lock")
+
+    def check_source(self, source):
+        if not self.is_current(source):
+            raise SourceChanged()
+        self.revisions[source.revision_id].check_source(source)
+        self.current_source = source
+
+    def inspect(self, source, spec):
+        if not self.is_current(source):
+            return {"state": "SOURCE_CHANGED"}
+        if self.prepared.get(source.revision_id) != source.fingerprint:
+            return {"state": "UNPREPARED"}
+        chunks = self.revisions[source.revision_id].chunks
+        return {"state": "READY" if all(self.chunk_state(c, spec) == "READY" for c in chunks) else "PARTIAL"}
+
+    def prepare(self, source, spec, slices):
+        self.check_source(source)
+        memory = self.revisions[source.revision_id]
+        if self.prepared.get(source.revision_id) != source.fingerprint:
+            memory.chunks = []
+        result = memory.prepare(source, spec, slices)
+        self.prepared[source.revision_id] = source.fingerprint
+        return result
+
+    def __getattr__(self, method):
+        if method.startswith("__"):
+            raise AttributeError(method)
+
+        def invoke(source, *args):
+            if not self.is_current(source):
+                raise SourceChanged()
+            return getattr(self.revisions[source.revision_id], method)(source, *args)
+
+        return invoke
+
+    def get_text(self, key, *, version_id, max_bytes):
+        # Same bounded read as S3: the stored key/version of the revision being indexed.
+        source = self.current_source
+        assert key == source.key and version_id == source.version and max_bytes == 2_000_000
+        self.reads.append(source.revision_id)
+        return self.texts[source.revision_id]
+
+    def service(self):
+        return RetrievalIndexService(self, SimpleNamespace(get_text=self.get_text), IndexSpec())
 
 
 class Corpus:
@@ -40,6 +156,8 @@ class Corpus:
         self.clock = datetime.now(UTC)
         self.page_calls = []
         self.snapshot_calls = 0
+        self.locked = []
+        self.books = BookCorpus()
 
     def add(self, work, number, value=SHORT, *, episode_id=None):
         memory = MemoryStore()
@@ -56,12 +174,14 @@ class Corpus:
         return memory
 
     def backfill_snapshot(self, work_ids):
+        # Like the real query: works with a non-archived episode or a current setting book; bound 0 if no episode.
         self.snapshot_calls += 1
-        works = sorted({m.source.work_id for m in self.items.values()})
+        live = [m.source for m in self.items.values() if m.source.state != "ARCHIVED"]
+        works = sorted({s.work_id for s in live} | {s.work_id for s in self.books.current_books()})
         return [
             (
                 work,
-                max(m.source.episode_no for m in self.items.values() if m.source.work_id == work),
+                max((s.episode_no for s in live if s.work_id == work), default=0),
                 self.clock.isoformat(),
             )
             for work in works
@@ -84,8 +204,12 @@ class Corpus:
         self.page_calls.append((work, after_no, after_id, len(selected)))
         return selected
 
-    def exclusive(self, _):
+    def exclusive(self, work):
+        self.locked.append(work)
         return nullcontext()
+
+    def source_id(self, source):
+        return source.episode_id
 
     def get_text(self, key, **kwargs):
         # Service only gets the per-source storage adapter below.
@@ -151,7 +275,11 @@ def invoke(cfg, corpus, provider=None, *, resume=False):
 
             async def run():
                 return await CampaignRunner(
-                    cfg, state, corpus.service(), provider or Provider()
+                    cfg,
+                    state,
+                    corpus.service(),
+                    provider or Provider(),
+                    book_service=corpus.books.service(),
                 ).run(asyncio.get_running_loop().time() + cfg.max_seconds)
 
             return asyncio.run(run())
@@ -541,8 +669,10 @@ def test_preflight_is_readonly_and_can_run_while_campaign_lock_is_held(tmp_path,
     )
     with exclusive_campaign(cfg.state_path):
         report = asyncio.run(preflight(cfg, settings, IndexSpec()))
-    assert report["state"] == "PREFLIGHT_READY" and len(queries) == 3
+    # Episode and setting-book index tables exist, then one read-only ACL check.
+    assert report["state"] == "PREFLIGHT_READY" and len(queries) == 5
     assert all(query.strip().startswith("SELECT") for query in queries)
+    assert any("retrieval_setting_book_chunks" in query for query in queries[:4])
     assert "transaction_read_only" in queries[-1] and "has_table_privilege" in queries[-1]
     assert before == (tmp_path / "state.sqlite").read_bytes()
     checked.assert_awaited_once()
