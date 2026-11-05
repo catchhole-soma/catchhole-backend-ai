@@ -9,8 +9,10 @@
 
 신뢰 서버가 `ValidationContext(member_id, work_id, report_id, baseline_hash, target_hash)`를 만든다.
 서버 ID·SQL·저장소 key·lease·작품/기준 선택 권한을 모델에서 받지 않는다.
-현재 GH303에는 별도 검수 Job/lease가 없으므로 report가 고정 기준을 식별하며 baselineRevision은 1이다.
-별도 기준 revision 저장이 도입되면 계약 버전을 올려 연결한다. 현재 값을 과거 기준으로 재구성하지 않는다.
+GH306 최초 접수/read 계약의 baselineRevision은 1이다. GH310의 재검수 Java 응답은 실제 baselineRevision과
+reportMode·원고 contentRevision을 제공한다. 실행 연결은 신뢰된 claim의 expected revision과 함께 검증하며
+기존 Python의 상수 1 검증을 그대로 재검수에 사용할 수 없다. 접수·정정 범위는 `docs/validation-execution-v1.md`를 따른다.
+현재 값을 과거 기준으로 재구성하지 않는다.
 
 `ValidationDataClient`는 다음 내부 API를 호출한다.
 
@@ -24,12 +26,13 @@ X-Validation-Member-Id: <인증된 실행의 회원>
 
 공통 요청: `expectedBaselineHash`, `expectedTargetHash`, `operation`, `offset >= 0`, `1 <= limit <= 100`, 선택 `subjectRefs`.
 `INPUT`은 고정 target·허용 sources·entryCount, `SUBJECTS`는 주체 카탈로그(주체당 한 행), `SETTINGS`는 요청 주체(최대 100)의
-현재값 행(`characters`·`worldSettings`만, `worldHistory` 제외)을 반환한다. `ENTRIES`(저장된 baseline_entries 페이지)는 legacy로 남는다.
+현재값 행(`characters`·`worldSettings`만, `worldHistory` 제외)을 반환한다. `ENTRIES`(저장된 baseline_entries 페이지)는 #381에서 없앴다.
+#381 이후 report의 SUBJECTS·SETTINGS는 접수 때 복사본이 아니라 현재 확정 설정에서 만든다(아래 "현재 설정 읽기와 확정 설정 잠금").
 `READ_SOURCE`는 `sourceRef`, `expectedSourceHash`, `expectedSourceVersion`, 선택적 `start/end`를 받는다.
 `VALIDATE`는 report/target/허용 출처의 현재 접근·원본 metadata를 다시 확인한다.
 응답은 기존 `CommonResponse.data` 안에 formatVersion/reportId/baselineRevision/baselineHash/targetHash/manifestHash/status를 갖는다.
 
-대상은 `T1`, 과거 회차/설정집은 `R1...`, 고정 항목은 `B1...`, 모델용 대상은 `S1...`, 실제 읽은 구간은 `E1...`다.
+대상은 `T1`, 과거 회차/설정집은 `R1...`, 기준 항목은 `B1...`, 모델용 대상은 `S1...`, 실제 읽은 구간은 `E1...`다.
 내부 JSON은 source IDs/key/hash/version을 보존하지만 모델 입력에서는 짧은 참조와 읽을 값/시점/조건만 제공한다.
 Fact 출처의 ID/hash가 manifest와 맞을 때만 원문 참조로 연결한다. 제공되지 않은 대상/설정 후보를 만들지 않는다.
 
@@ -186,6 +189,7 @@ DB↔원문 불일치는 두 참조를 유지하고 명시 정정의 정확한 �
 `failure_stage`(`PLANNER:TSEG1`, `JUDGE:Q3` 같은 단계), `normalizations`(정규화·검색·캐시 횟수), `question_failures`, `traces`가 있다.
 원문·예외 메시지·ID는 넣지 않는다. 미완료는 정상 0건으로 집계하지 않는다. 입력/출처 변경·파기를 감지하면 이전의 게시 가능한 질문/판정/근거를 반환하지 않는다.
 최종 VALIDATE 재확인은 없다: 원고·설정이 바뀌면 서버가 report를 무효로 바꾸고 Worker의 모든 요청을 거절한다.
+#381 이후 검수 중의 확정 설정 변경은 서버 잠금이 막고, 이벤트 없이 바뀐 설정은 확정 설정 버전 지문이 409로 잡는다.
 
 ## 모델·예산·오탈자 공통 계약
 
@@ -223,3 +227,34 @@ Java는 GH306_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:<port>/gh306_test를
 GH306_AI_CHECKOUT/GH306_PYTHON을 함께 주면 실제 Spring HTTP→Python adapter를 검증한다.
 기본 관련 전체 검증은 AI pytest, Backend ./gradlew test bootJar다. 선택 환경 미지정 skip을 통과로 세지 않는다.
 테스트는 합성 원고·모델 출력/HTTP provider 대역·원문 저장소 대역과 실제 DB/HTTP를 구분한다. 실제 Terra recall이나 운영 배포 검증으로 표현하지 않는다.
+
+
+## 현재 설정 읽기와 확정 설정 잠금 (#381)
+
+결정과 버린 대안은 Java 저장소의 `docs/adr/0004-validation-live-settings-lock.md`다.
+
+- 접수는 확정 설정을 복사하지 않는다(확정 전 검수·확정 뒤 진단 모두). report에는 출처 manifest(`validation_baseline_sources`)와 확정 설정 버전 지문만 남는다.
+  지문은 ACTIVE 인물 (id, snapshotVersion)과 세계관 (id, version)의 hash이고 `baselineHash`(Worker의 `expectedBaselineHash`)와 같은 값이다. `baseline_seed`·`baseline_entries`는 NULL이다.
+- Java가 SUBJECTS·SETTINGS를 현재 DB에서 만든다. 주체 하나에 행 하나라서 B 번호와 S 번호가 같다. 응답 모양, `projectionVersion=2`, AI 모델 투영 뒤의 값은 이전 복사본과 같다.
+  Worker의 읽기 코드는 바뀌지 않는다.
+- 일관성은 Java 잠금이 보장한다. 검수 Job이 대기·실행 중이거나 실행이 끝나고 검토 종료 전인 동안 사람의 확정 설정 쓰기는 409 `VALIDATION_SETTINGS_LOCKED`다.
+  같은 작품의 자동 추출·비교는 claim에서 기다린다. Worker가 죽어도 lease 만료나 대기 잠금 시간 뒤에 풀린다.
+- 모든 data 호출은 읽기 전후 지문을 다시 계산하고 다르면 기존 409다. Worker는 이를 `INPUT_CHANGED`로 받아 실행을 멈춘다.
+- `FrozenRetrievalRepository`의 report fence(`app/validation/search.py` `REPORT_FROM`)는 seed·entries 열을 보지 않는다. 소유권·현재성·`baseline_hash`·READY·원고 fingerprint·manifest 조건은 그대로다.
+  옛 fence는 seed 없는 report를 찾지 못하므로 AI를 Java보다 먼저 배포한다. 새 fence는 seed가 있는 이전 report도 그대로 찾는다.
+- seed가 있는 V119 이전 report는 Java가 저장 기준 항목을 계속 읽는다. 공통 fixture에서는 `execution.responses.dataEntries`를 지웠다.
+
+## GH310 실행 scope와 서버 모델 projection
+
+전용 ValidationJob이 있는 report는 data 호출마다 기존 내부 key/회원 헤더에
+`X-Validation-Job-Id`와 실제 `X-Worker-Lease-Token`을 추가한다. 서버는 원문 I/O 전후 lease/current/input을 검사한다.
+Job 없는 기존 callable 계약은 유지하지만 queue/running Job의 무인증 lease 우회는 허용하지 않는다.
+
+응답의 projectionVersion=2(#349 grid v4)에서 실행 Worker는 INPUT.modelSourceCatalogue, SUBJECTS의 주체 목록, SETTINGS의 현재값 행을 그대로 사용한다.
+S-ref는 전체 기준 항목 순서(#381 이후 report는 현재 주체 색인)에서 생성되어 요청 묶음과 무관하다(`ValidationDataMapper.toValidationSubjectCatalogue`·`toValidationCurrentSettings`,
+공통 fixture `subjectCatalogueVector`). SETTINGS.authorCorrectionProofs는 반환한 행의 실제 typed 정정 사실이며 자유문자열 시점/조건 권위가 아니다.
+canonical author_correction은 null이고 DB_RAW_DISAGREEMENT는 NEEDS_CONTEXT로 남긴다. 자동 정정 범위 매핑이 구현된 것은 아니다.
+T1 전문 READ_SOURCE는 더 이상 `clueVersion`/`modelClues`(서버 기계 단서)를 주지 않는다. ENTRIES 연산(modelSettings 페이지)은 #381에서 없앴다.
+별도 Job/lease·저장·재시도/예산/완료 증명과 SETTING grid v4는 `docs/validation-execution-v1.md`와 공통 fixture.execution을 따른다.
+결과의 T1 출처 E-ref는 현재 문맥이며 외부 충돌 근거가 아니다. canonical 설정 state의 정상 text/quote 속성은 그대로
+전달하고, 원문 인용은 공통 fixture.execution.payloadCitationPaths의 계약 경로와 실제 citation으로 보낸다.

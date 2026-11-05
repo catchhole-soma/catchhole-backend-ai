@@ -19,7 +19,7 @@ canonical author_correction=null을 자유 문자열 서사 시점·조건의 �
   `TARGET_SEARCH_INSERTED`). 충돌 의심 변화 검색 문장은 `check_intent` + 대상 문장이다(`change_search_query`).
 - `author_text.py`: 작가가 읽는 판정 문장(`headline`·`reason`·`impact_reason`·`disagreements[].reason`)의 내부 참조를 "이번 원고"·"N화"·"저장된 설정"·대상 이름으로 바꾸고 모르는 참조·내부 용어 문장은 버리는 저장 전 안전망(`AUTHOR_TEXT_SANITIZED`). 판정 근거 문장 `basis_quotes`는 `judging.normalize_basis_quotes`가 evidence 조각(절대 위치 인용)·저장 설정 값(부분 문자열)으로 확인하고 틀린 것은 버린다(`BASIS_QUOTES_DROPPED`, 질문 실패 아님). 판정 작성 제목 `headline`(2026-11-03)은 고정 대체 문장 없이 정제하고, 비거나 80 code point를 넘거나 NO_CONFLICT면 None으로 게시한다(`HEADLINE_DROPPED`·`HEADLINE_MISSING`·`NO_CONFLICT_HEADLINE_CLEARED`, 판정 입력 `target_episode_no`).
 - `corpus.py`: L receipt·E-ref 발급과 실행 단위 RAG 재사용(lock 하나, 같은 문장 1회 검색). 범위는 앞 회차와 현재 판 설정집.
-- `search.py`: report fence가 있는 frozen readiness와 회차·설정집 조각을 한 순위로 고르는 VECTOR(`frozen_vector`), 범위 `indexed_sources`.
+- `search.py`: report fence가 있는 frozen readiness와 회차·설정집 조각을 한 순위로 고르는 VECTOR(`frozen_vector`), 범위 `indexed_sources`. fence는 report의 소유권·현재성·`baseline_hash`·READY·원고 fingerprint와 출처 manifest를 보며, #381부터 seed·entries 열은 요구하지 않는다(서버가 확정 설정을 복사하지 않고 현재 설정을 읽는다).
 - `index_fill.py`: 접수 때 색인 채우기(2026-11-02 결정) — 범위의 빈 곳만 READ_SOURCE 원문으로 다시 자르고 READY가 아닌 조각만 임베딩.
 - `failures.py`: 질문 단위/실행 단위 실패 분류와 정책 스위치 `CONTINUE_AFTER_QUESTION_FAILURE`(결정 ③: 운영도 실패한 질문만 INCOMPLETE로 게시하고 나머지를 계속 판정, 실험은 게시 없이 계속).
 - `service.py`: 조율(입력 읽기 → 색인 채우기와 계획 동시 → 채우기 대기·readiness → 판정 4개씩).

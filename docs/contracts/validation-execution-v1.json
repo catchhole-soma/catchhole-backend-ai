@@ -77,7 +77,7 @@
     "candidateGeneration": null,
     "candidateDigest": null,
     "nullExpectedBaselineHash": "Only when the current server report has neither a baseline fingerprint nor a saved seed",
-    "diagnosticWithoutVerifiedPreApplicationInput": "HELD_INCOMPLETE/DIAGNOSTIC_BASELINE_UNAVAILABLE",
+    "diagnosticBaseline": "#381: DIAGNOSTIC_ONLY reads the current confirmed settings like every report; there is no pre-application input baseline and DIAGNOSTIC_BASELINE_UNAVAILABLE is no longer produced",
     "correctionTimeAndConditions": "CURRENT_VALUE scope is not proof of arbitrary narrative time or conditions; unresolved mapping remains NEEDS_CONTEXT"
   },
   "execution": {
@@ -860,24 +860,6 @@
         "sources": [],
         "entryCount": 0,
         "modelSourceCatalogue": []
-      },
-      "dataEntries": {
-        "formatVersion": 1,
-        "reportId": "00000000-0000-4000-8000-000000000001",
-        "baselineRevision": 1,
-        "reportRevision": 1,
-        "reportVersion": 4,
-        "reportMode": "BEFORE_CONFIRMATION",
-        "baselineHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "targetHash": "cbffc647909dfd2bd0ed0cb498a186c1c0036cf0bc0a60cc877534ec8af41f67",
-        "manifestHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "status": "READY",
-        "projectionVersion": 2,
-        "entries": [],
-        "modelSettings": [],
-        "authorCorrectionProofs": [],
-        "nextOffset": 0,
-        "hasMore": false
       },
       "dataReadTarget": {
         "formatVersion": 1,
@@ -2614,7 +2596,7 @@
           ]
         }
       ],
-      "disagreementPolicy": "DB_RAW_DISAGREEMENT remains NEEDS_CONTEXT in v1. Actual CURRENT_VALUE correction is recorded and applied to new frozen baseline, but free-text narrative time/condition authority is never inferred."
+      "disagreementPolicy": "DB_RAW_DISAGREEMENT remains NEEDS_CONTEXT in v1. Actual CURRENT_VALUE correction is recorded and sent with the next report's SETTINGS rows as authorCorrectionProofs, but free-text narrative time/condition authority is never inferred."
     },
     "runtimeDefault": "DISABLED; no implicit historical backfill. Explicit START/RECHECK same-key recovery or RETRY queues ready reports.",
     "completion": "Only current completed checks, completed typo segments, and server-derived fully covered NO_CHECK segments count as successful processing. Planner/read/grid preparation alone is not PARTIAL. Both full required grids and all current checks are required for COMPLETED.",
@@ -2709,9 +2691,10 @@
     },
     "stagePayloadExamplesAreIndependent": true,
     "savedSeedRecovery": {
-      "sameInput": "Verify original seed hash/fingerprint, unchanged target and full frozen source row/lifetime metadata under Work, reuse materialize, queue same report/baselineRevision",
+      "sameInput": "Legacy seed report: verify original seed hash/fingerprint, unchanged target and full frozen source row/lifetime metadata under Work, reuse materialize, queue same report/baselineRevision",
+      "liveSettingsReport": "#381: a report without a seed is READY at intake; RETRY re-checks the settings fingerprint and the frozen source rows under Work and queues the same report/baselineRevision without materialize",
       "neverRestore": [
-        "seedless",
+        "seedless report without a baseline hash",
         "source-invalidated",
         "purged",
         "retired report"
@@ -2856,7 +2839,7 @@
       "usageView": "The usage view keeps its v1 keys: an INDEX_EMBEDDING row shows its bound indexInput under queryInput (the immutable call-input column)."
     },
     "subjectCatalogueVector": {
-      "meaning": "SUBJECTS groups the frozen baseline entries exactly like the server settings projection: S refs in first-seen subject order, the first entry of a subject supplies domain and name, aliases are the ordered union over that subject's entries. SETTINGS returns the projection rows of the requested subjects whose domain is characters or worldSettings, in B order; worldHistory rows are never returned.",
+      "meaning": "SUBJECTS groups the baseline entries (since #381 the live index rows, one entry per subject) exactly like the server settings projection: S refs in first-seen subject order, the first entry of a subject supplies domain and name, aliases are the ordered union over that subject's entries. SETTINGS returns the projection rows of the requested subjects whose domain is characters or worldSettings, in B order; worldHistory rows are never returned.",
       "entries": [
         {
           "domain": "characters",
