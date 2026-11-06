@@ -9,8 +9,10 @@ import asyncio
 import copy
 import hashlib
 import json
+import logging
 import tempfile
 import unicodedata
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
@@ -21,6 +23,7 @@ from app.chatbot.client import ChatExecutionClient
 from app.chatbot.outbox import Outbox
 from app.chatbot.qa import ChatQaHandler
 from app.chatbot.qa_config import ChatQaSettings
+from app.chatbot.qa_render import NOTICES, UNREGISTERED_NOTICE
 from app.chatbot.runtime import ChatRuntime
 from app.llm.responses import LlmTextResponse
 from app.schemas.chat_execution import Dispatch, ExecutionContext
@@ -51,6 +54,43 @@ def load_fixture(path: Path):
         catalogs[name] = catalog
     fixture["catalogs"] = catalogs
     return fixture
+
+
+class NoticeCodes(list):
+    """Recorded code names. Asking about a name which is not a notice code is a mistake."""
+
+    def __contains__(self, code):
+        if code not in NOTICES and code != UNREGISTERED_NOTICE:
+            # A misspelt name would otherwise satisfy every ``not in`` assertion.
+            raise KeyError(code)
+        return super().__contains__(code)
+
+
+@contextmanager
+def recorded_notice_codes():
+    """Collect the code names which publication records for each finished result.
+
+    Replays and tests read which codes fired from the same diagnostic record
+    operators use, not from the sentences shown to the author.
+    """
+    records = []
+
+    class Collector(logging.Handler):
+        def emit(self, record):
+            codes = getattr(record, "notice_codes", None)
+            if codes is not None:
+                records.append(NoticeCodes(codes))
+
+    target = logging.getLogger("app.chatbot.qa_render")
+    handler, level = Collector(logging.INFO), target.level
+    target.addHandler(handler)
+    if not target.isEnabledFor(logging.INFO):
+        target.setLevel(logging.INFO)
+    try:
+        yield records
+    finally:
+        target.removeHandler(handler)
+        target.setLevel(level)
 
 
 class ScriptedTextClient:
@@ -359,8 +399,9 @@ async def replay_case(case, catalog, *, outputs=None, config=None, spring_setup=
                 handler=ChatQaHandler(raw, cfg),
             )
             try:
-                runtime.submit(dispatch)
-                await asyncio.gather(*list(runtime.tasks.values()))
+                with recorded_notice_codes() as notice_codes:
+                    runtime.submit(dispatch)
+                    await asyncio.gather(*list(runtime.tasks.values()))
                 await runtime.deliver()
                 if len(spring.finishes) != 1:
                     raise AssertionError("Offline runtime did not report exactly one finish")
@@ -369,6 +410,8 @@ async def replay_case(case, catalog, *, outputs=None, config=None, spring_setup=
                     "question": case["question"],
                     "queries": spring.queries,
                     "finish": spring.finishes[0],
+                    # Code names behind the result's notices, read from the diagnostic record.
+                    "noticeCodes": notice_codes[-1] if notice_codes else NoticeCodes(),
                     "reservations": spring.reservations,
                     "usageReports": spring.reports,
                     "modelRequests": raw.requests,

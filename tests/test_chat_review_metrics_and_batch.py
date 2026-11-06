@@ -13,7 +13,6 @@ import pytest
 
 from app.chatbot.hybrid_prompts import PLAN_VERSION
 from app.chatbot.qa_prompts import FIELD_VERSION
-from app.chatbot.qa_render import NOTICES
 from app.chatbot.replay import ScriptedTextClient
 from tests.test_chat_focused_lookup import catalog_subject, item
 from tests.test_chat_hybrid import replay, scenario
@@ -204,7 +203,7 @@ def assert_complete_count(result, count):
     answer = result["finish"]["result"]
     assert f"확인한 인물은 {count}명" in answer["text"]
     assert "아직 검토하지 못한" not in answer["text"]
-    assert NOTICES["CONTEXT_LIMIT"] not in answer["limitations"]
+    assert "CONTEXT_LIMIT" not in result["noticeCodes"]
     observed = [
         entry["itemRef"] for r in condition_requests(result) for entry in r["input"]["items"]
     ]
@@ -292,7 +291,7 @@ def test_tight_call_budget_keeps_unreviewed_people_out_of_the_confirmed_count(
     reviewed = 10 if limit_kind == "retry" else 20
     assert f"확인한 인물은 {reviewed}명" in text
     assert f"아직 검토하지 못한 {100 - reviewed}명" in text
-    assert NOTICES["CONTEXT_LIMIT"] in result["finish"]["result"]["limitations"]
+    assert "CONTEXT_LIMIT" in result["noticeCodes"]
     assert len(result["spring"].reservations) == len(result["raw"].requests) == 3
     assert metric_counts(result, "chat_retrieval_model_calls_total") == Counter(
         CHAT_INTERPRETATION=1, CHAT_ANSWER=2

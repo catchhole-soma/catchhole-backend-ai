@@ -354,6 +354,14 @@
 - 원문 계획(등록 현재값 필수 제외)은 등록 조회의 막다른 경로로 끝내지 않는다. 등록 행이 답변 입력을 넘치면 현재값 행과 계획 정렬 순으로 남기고 원문 근거 예산만큼 자리를 비운다(`REGISTERED_ROWS_TRIMMED`). 안내 문장도 입력에 들어가므로 행 수를 고르기 전에 반영하고, 마지막 확인은 근거 자리 없이 해 행을 하나도 못 남겨도 원문으로 계속한다. 같은 이름의 세계관이 여러 분류에 있거나 등록 항목 선택이 모호하면 등록 정보 없이 원문으로 답한다(`REGISTERED_LOOKUP_AMBIGUOUS`). 인물 이름 모호성, 등록 전용 계획, 등록 현재값 필수 계획의 되묻기는 유지한다. 등록 현재값 필수 계획은 행을 줄이면 같은 인물의 현재값 일부가 빠져도 인물 단위로는 확인처럼 보이므로 줄이지 않는다.
 - 대상 선택에서 세계관은 모든 후보 페이지를 읽었고 이름이 정확히 같은 등록 대상이 하나뿐이면 그 대상을 쓴다. 인물은 성·호칭·동명이인 위험 때문에 정확히 같은 이름이어도 되묻는다(`docs/chat-qa-v1.md` 대상 선택 규칙 3). 구형 행 선택은 판단과 행 목록의 불일치만 정규화하고, 답하지 않는 판단에 붙은 행도 먼저 검증해 없는 참조·중복·상한 초과는 재시도한다. 측정과 남은 한계는 `docs/ai-logic-versions/v0044.md`를 따른다.
 
+### #319 답변 안내 문구 공개 범위 — 2026-11-06
+
+- 챗봇 결과의 공개 `limitations`에는 `qa_render.PUBLIC_NOTICES`의 문장만 싣는다. 부분 답변, 등록 설정·원고 충돌, 검색 준비가 덜 된 회차, 원고·검색 저장소 오류 네 가지다. 평가 85문항에서 절반가량의 답에 조회 과정 설명이 붙었지만 작가가 할 수 있는 일이 없었고 붙은 답과 안 붙은 답의 정답률도 비슷했기 때문이다. 새 안내 코드는 기본이 숨김이다. 작가가 행동할 수 있고 그 결과에서 사실인 문구만 표에 올리며 표와 문구는 `docs/chat-qa-v1.md`와 함께 고친다.
+- `NOTICES`는 내부 안내 문장으로 유지한다. hybrid 답변 모델 입력의 `limitations`와 실행 내부 결과가 이 문장을 쓰므로 문장이나 발생 조건을 바꾸면 프롬프트 입력을 바꾸는 것과 같다. 공개 변환은 handler가 아니라 실행 경계(`ChatRuntime._run` → `qa_render.publish`) 한 곳에서 하고, 표에 없는 문장은 내보내지 않는다. handler와 `hybrid.py`의 `public_codes` 판단은 공개 문구를 줄이려고 고치지 않는다.
+- `PARTIAL_ANSWER`·`SETTING_SOURCE_CONFLICT` 문구는 `ANSWER`에만 붙인다. 보류한 답변에 남은 코드로 답했다고 말하지 않기 위함이다. `INDEX_PARTIAL`·`NO_SUPPORTED_SOURCES`는 숨기고 `TEXT_INDEX_PARTIAL`·`VECTOR_INDEX_PARTIAL`에만 검색 준비 문구를 연결한다. 범위에 회차가 없는 경우를 준비 미완료로 말하지 않기 위함이다.
+- 숨긴 코드는 결과마다 `chat_answer_notices attempt=… outcome=… codes=[…] shown=[…]`(logger `app.chatbot.qa_render`, INFO)로 남긴다. 코드 이름만 기록하고 질문·원문·답변·ID·표에 없는 문장은 넣지 않는다. `http_app`은 QA를 켠 프로세스에서 이 logger에 검색 추적과 같은 출력 handler를 붙인다.
+- 테스트는 공개 문장이 아니라 이 기록으로 코드 발생을 검사한다. `replay_case`와 `tests/test_chat_hybrid.replay`가 결과의 `noticeCodes`로 돌려주며 없는 코드 이름을 물으면 `KeyError`다. 공개 문장과 묶음·숨김 규칙은 `tests/test_chat_answer_notices.py`가 맡는다. 위 절들의 "CLARIFICATION에서만 표시", "안내 유지", "`limitations` 문장으로만 노출"은 이 날짜부터 내부 안내 코드와 기록 기준으로 읽는다.
+
 ### #319 4차 — 모델 주도 원문 탐색·두 단계 답변 — 2026-11-06
 
 - `CHAT_RETRIEVAL_AGENT=false`가 기본이다. 꺼져 있으면 계획·고정 라운드·답변 요청(프롬프트·버전·응답 schema)·검증이 이전과 같아야 한다. 탐색 전용 코드는 `app/chatbot/hybrid_agent.py`의 mixin에 두고, 공용 경로에는 스위치 분기와 기본값만 추가한다. 기존 `GroundedAnswer`/`GroundedClaim`의 상한은 바꾸지 않고 탐색 답변만 `AgentGroundedAnswer`(문장 1,200자·12개·인용 12개)를 쓴다. 답을 다시 만드는 공용 함수는 받은 답의 모델(`type(answer)`)을 유지한다. 꺼진 실행의 provider 요청이 달라지지 않게 하기 위함이다.

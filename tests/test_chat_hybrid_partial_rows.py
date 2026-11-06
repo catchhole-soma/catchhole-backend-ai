@@ -8,7 +8,6 @@ import pytest
 
 from app.chatbot.hybrid import _Evidence, _HybridSession
 from app.chatbot.hybrid_config import HybridSettings
-from app.chatbot.qa_render import NOTICES
 from app.schemas.chat_hybrid import GroundedAnswer, HybridPlan
 from tests.test_chat_focused_lookup import catalog_subject, item, uid
 from tests.test_chat_hybrid import replay, scenario, source_chunk
@@ -136,7 +135,7 @@ def test_partial_history_with_four_quotes_and_five_rows_is_published_without_ret
     assert len(result["raw"].requests) == 2  # One plan and one valid answer; no schema retry.
     assert len(result["spring"].reservations) == len(result["spring"].reports) == 2
     assert len(final["sources"]) == 4
-    assert NOTICES["PARTIAL_ANSWER"] not in final["limitations"]
+    assert "PARTIAL_ANSWER" not in result["noticeCodes"]
     assert "확인하지 못했습니다" in final["text"]
     if missing_facet:
         assert "경위·방법 정보는" in final["text"]
@@ -200,7 +199,7 @@ def test_partial_history_still_withholds_answer_when_its_source_changes(tmp_path
     assert result["finish"]["failure"] is None
     final = result["finish"]["result"]
     assert final["outcome"] == "INSUFFICIENT_EVIDENCE" and not final["sources"]
-    assert NOTICES["SOURCE_CHANGED"] in final["limitations"]
+    assert "SOURCE_CHANGED" in result["noticeCodes"]
 
 
 def session_for_postprocessing():

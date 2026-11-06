@@ -11,7 +11,6 @@ from uuid import UUID
 import pytest
 import tiktoken
 
-from app.chatbot.qa_render import notices
 from app.schemas.chat_qa import SettingFocus
 from app.schemas.setting_tools import SettingToolResponse
 from app.usage.metering import _estimate_text_token_byte_upper_bound, estimate_text_input_tokens
@@ -198,7 +197,7 @@ def test_third_round_runs_only_while_partial_and_time_remains(tmp_path, monkeypa
     assert len(result["embedding"].inputs) == 2
     # 계획 1회 + 답변 3회. 모델 호출 상한 6은 유지된다.
     assert len(result["raw"].requests) == 4
-    assert notices(["PARTIAL_ANSWER"])[0] not in finished["limitations"]
+    assert "PARTIAL_ANSWER" not in result["noticeCodes"]
 
 
 def test_third_round_is_skipped_when_the_deadline_is_near(tmp_path, monkeypatch):

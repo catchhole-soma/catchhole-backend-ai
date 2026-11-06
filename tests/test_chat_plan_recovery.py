@@ -8,7 +8,6 @@ import socket
 
 import pytest
 
-from app.chatbot.qa_render import NOTICES
 from app.chatbot.qa_validation import RULES
 from tests.test_chat_current_authority import current_case
 from tests.test_chat_focused_lookup import catalog_subject, item
@@ -132,7 +131,7 @@ def test_unobserved_focus_is_retried_once_then_dropped_before_any_search(tmp_pat
 
     assert result["finish"]["failure"] is None
     assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert NOTICES["FOCUS_ATTRIBUTE_DROPPED"] in result["finish"]["result"]["limitations"]
+    assert "FOCUS_ATTRIBUTE_DROPPED" in result["noticeCodes"]
     records = [record for record in caplog.records if record.name == "app.chatbot.qa"]
     assert len(records) == 2
     assert all(record.validation_stage == "RESPONSE_CONTRACT" for record in records)

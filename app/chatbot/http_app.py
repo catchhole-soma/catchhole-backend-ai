@@ -43,9 +43,20 @@ def create_app(*, runtime: ChatRuntime | None = None, api_key: str | None = None
         provider_http = None
         lock = None
         engine = None
-        trace_logger = logging.getLogger("app.chatbot.hybrid")
-        trace_handler = None
-        previous_trace = (trace_logger.level, trace_logger.propagate)
+        traces = []
+
+        def trace(name):
+            # Only bounded metadata is logged by these modules: retrieval steps and
+            # the names of the notice codes behind each published result.
+            # Keep HTTP/provider loggers (which can contain payloads) unchanged.
+            target = logging.getLogger(name)
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+            traces.append((target, handler, target.level, target.propagate))
+            target.addHandler(handler)
+            target.setLevel(logging.INFO)
+            target.propagate = False
+
         if runtime is None:
             qa = ChatQaSettings()
             hybrid = HybridSettings()
@@ -111,13 +122,8 @@ def create_app(*, runtime: ChatRuntime | None = None, api_key: str | None = None
                     handler = HybridQaHandler(
                         delegate, search, embedding, qa, hybrid, HybridMetrics(registry)
                     )
-                    # Only bounded retrieval metadata is logged by this module.
-                    # Keep HTTP/provider loggers (which can contain payloads) unchanged.
-                    trace_handler = logging.StreamHandler()
-                    trace_handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
-                    trace_logger.addHandler(trace_handler)
-                    trace_logger.setLevel(logging.INFO)
-                    trace_logger.propagate = False
+                    trace("app.chatbot.hybrid")
+                trace("app.chatbot.qa_render")
             app.state.runtime = ChatRuntime(
                 ChatExecutionClient(url, key, http),
                 Outbox(path),
@@ -155,11 +161,11 @@ def create_app(*, runtime: ChatRuntime | None = None, api_key: str | None = None
                     await provider_http.aclose()
                 if engine is not None:
                     engine.dispose()
-                if trace_handler is not None:
-                    trace_logger.removeHandler(trace_handler)
+                for target, trace_handler, level, propagate in traces:
+                    target.removeHandler(trace_handler)
                     trace_handler.close()
-                    trace_logger.setLevel(previous_trace[0])
-                    trace_logger.propagate = previous_trace[1]
+                    target.setLevel(level)
+                    target.propagate = propagate
                 lock.close()
 
     app = FastAPI(

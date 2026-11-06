@@ -537,7 +537,7 @@ def test_conflict_for_another_or_uncertain_event_is_not_preserved_as_a_disagreem
     assert "vector" in result["search"].calls
     assert matching_text in response["text"]
     assert "다르게 나타납니다" not in response["text"]
-    assert "어느 쪽이 옳은지" not in " ".join(response["limitations"])
+    assert "SETTING_SOURCE_CONFLICT" not in result["noticeCodes"]
     assert [source["chunkId"] for source in response["retrievalSources"]] == [
         str(matching.chunk_id)
     ]

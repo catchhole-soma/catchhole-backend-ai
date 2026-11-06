@@ -7,7 +7,6 @@ from uuid import UUID
 
 import pytest
 
-from app.chatbot.qa_render import notices
 from app.chatbot.replay import ScriptedTextClient
 from tests.test_chat_hybrid import answer, replay, scenario, source_chunk
 
@@ -51,7 +50,7 @@ def test_later_none_restores_partial_answer_with_its_original_evidence(tmp_path)
     finished = result["finish"]["result"]
     assert finished["outcome"] == "ANSWER"
     assert "질문의 일부만 답할 수 있었어요" in finished["text"]
-    assert notices(["PARTIAL_ANSWER"])[0] not in finished["limitations"]
+    assert "PARTIAL_ANSWER" not in result["noticeCodes"]
     assert [source["sourceEpisodeNo"] for source in finished["retrievalSources"]] == [3]
     assert "반지" in finished["retrievalSources"][0]["quote"]
     assert "비가 내렸다" not in finished["text"]
@@ -75,7 +74,7 @@ def test_later_complete_answer_takes_priority_over_saved_partial(tmp_path):
     finished = result["finish"]["result"]
     assert finished["outcome"] == "ANSWER"
     assert [source["sourceEpisodeNo"] for source in finished["retrievalSources"]] == [10]
-    assert notices(["PARTIAL_ANSWER"])[0] not in finished["limitations"]
+    assert "PARTIAL_ANSWER" not in result["noticeCodes"]
 
 
 def test_equal_partial_coverage_keeps_first_supported_answer_without_quality_guess(tmp_path):
@@ -109,7 +108,7 @@ def test_saved_partial_is_withheld_when_its_source_changed_during_expansion(tmp_
     assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
     assert "반지를 강물" not in finished["text"]
     assert result["search"].calls[-1] == "revalidate"
-    assert notices(["SOURCE_CHANGED"])[0] in finished["limitations"]
+    assert "SOURCE_CHANGED" in result["noticeCodes"]
 
 
 def test_no_partial_answer_keeps_insufficient_evidence_result(tmp_path):
@@ -148,7 +147,7 @@ def test_direct_partial_snapshot_is_restored_and_requeried(tmp_path, changed):
         assert "화염구" in finished["text"]
         assert finished["sources"] and not finished.get("retrievalSources")
         assert "질문의 일부만 답할 수 있었어요" in finished["text"]
-        assert notices(["PARTIAL_ANSWER"])[0] not in finished["limitations"]
+        assert "PARTIAL_ANSWER" not in result["noticeCodes"]
 
 
 def test_partial_snapshot_survives_later_invalid_responses_with_its_original_source(tmp_path):

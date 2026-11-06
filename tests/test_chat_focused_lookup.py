@@ -12,7 +12,6 @@ from uuid import UUID
 
 import pytest
 
-from app.chatbot.qa_render import NOTICES
 from app.chatbot.replay import replay_case
 
 
@@ -163,8 +162,8 @@ async def test_current_level_is_filtered_before_unrelated_settings_pagination(na
     assert tool_queries(result, "CHARACTER_CURRENT")[0]["factType"] == "LEVEL"
     assert tool_queries(result, "CHARACTER_CURRENT")[0]["targetId"] == uid(number)
     assert len(result["modelRequests"]) == 1
-    assert NOTICES["PARTIAL_RESULTS"] not in actual["limitations"]
-    assert NOTICES["SETTING_BOOK_UNSUPPORTED"] not in actual["limitations"]
+    assert "PARTIAL_RESULTS" not in result["noticeCodes"]
+    assert "SETTING_BOOK_UNSUPPORTED" not in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -198,8 +197,8 @@ async def test_focused_history_exceeds_old_page_and_row_caps_without_losing_reco
     assert positions == sorted(positions)
     assert len(result["modelRequests"]) == 1
     assert "무관한 장비" not in actual["text"]
-    assert NOTICES["PARTIAL_RESULTS"] not in actual["limitations"]
-    assert NOTICES["SELECTION_LIMIT"] not in actual["limitations"]
+    assert "PARTIAL_RESULTS" not in result["noticeCodes"]
+    assert "SELECTION_LIMIT" not in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -326,7 +325,7 @@ async def test_unmatched_field_name_falls_back_to_type_values_for_selection():
         "CHARACTER_CURRENT",
     ]
     assert tool_queries(result, "CHARACTER_CURRENT")[0]["factType"] == "PROFILE"
-    assert NOTICES["FOCUS_FALLBACK"] in actual["limitations"]
+    assert "FOCUS_FALLBACK" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -373,7 +372,7 @@ async def test_ambiguous_character_field_choice_reads_values_instead_of_asking()
         "CHARACTER_FIELDS",
         "CHARACTER_CURRENT",
     ]
-    assert NOTICES["FOCUS_FALLBACK"] in actual["limitations"]
+    assert "FOCUS_FALLBACK" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -407,7 +406,7 @@ async def test_missing_type_widens_field_discovery_then_selects_over_type_values
         "CHARACTER_CURRENT",
     ]
     assert tool_queries(result, "CHARACTER_FIELDS")[1]["factType"] is None
-    assert NOTICES["FOCUS_TYPE_WIDENED"] in actual["limitations"]
+    assert "FOCUS_TYPE_WIDENED" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -655,7 +654,7 @@ async def test_character_list_follows_all_matching_pages_not_answer_row_cap():
     assert actual["outcome"] == "ANSWER"
     assert all(name in actual["text"] for name in names)
     assert [q["page"] for q in tool_queries(result, "FIND_CHARACTERS")] == [0, 1, 2, 3, 4]
-    assert NOTICES["PARTIAL_RESULTS"] not in actual["limitations"]
+    assert "PARTIAL_RESULTS" not in result["noticeCodes"]
     assert len(result["modelRequests"]) == 1
 
 
@@ -815,7 +814,7 @@ async def test_tool_budget_keeps_observed_history_with_explicit_partial_notice()
     assert [q["page"] for q in tool_queries(result, "CHARACTER_HISTORY")] == [0, 1]
     assert all(str(2000 + n) in actual["text"] for n in range(1, 11))
     assert "2011" not in actual["text"]
-    assert NOTICES["PARTIAL_RESULTS"] in actual["limitations"]
+    assert "PARTIAL_RESULTS" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -843,7 +842,7 @@ async def test_incomplete_field_catalog_never_resolves_from_only_the_first_page(
         config={"page_size": 5, "fields_page_size": 5, "max_tool_calls": 3},
     )
     assert answer(result)["outcome"] == "CLARIFICATION"
-    assert NOTICES["PARTIAL_RESULTS"] in answer(result)["limitations"]
+    assert "PARTIAL_RESULTS" in result["noticeCodes"]
     assert not tool_queries(result, "CHARACTER_CURRENT")
 
 
@@ -876,7 +875,7 @@ async def test_server_partial_field_response_cannot_prove_a_unique_display_name(
         spring_setup=partial_fields,
     )
     assert answer(result)["outcome"] == "CLARIFICATION"
-    assert NOTICES["PARTIAL_RESULTS"] in answer(result)["limitations"]
+    assert "PARTIAL_RESULTS" in result["noticeCodes"]
     assert not tool_queries(result, "CHARACTER_CURRENT")
     assert len(result["modelRequests"]) == 1
 

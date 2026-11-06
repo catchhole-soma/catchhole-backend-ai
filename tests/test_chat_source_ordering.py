@@ -106,7 +106,7 @@ def test_earliest_ordering_reads_first_mention_episodes_before_lexical_hits(tmp_
     }
     assert notices(["ORDERED_SEARCH_EARLIEST"])[0] in request["limitations"]
     assert [source["sourceEpisodeNo"] for source in finished["retrievalSources"]] == [3]
-    assert notices(["ORDERED_SEARCH_EARLIEST"])[0] in finished["limitations"]
+    assert "ORDERED_SEARCH_EARLIEST" in result["noticeCodes"]
 
 
 def test_latest_ordering_reverses_the_returned_order(tmp_path):

@@ -7,7 +7,6 @@ import socket
 
 import pytest
 
-from app.chatbot.qa_render import NOTICES
 from tests.test_chat_focused_lookup import catalog_subject, item
 from tests.test_chat_hybrid import replay, scenario, source_chunk
 
@@ -129,7 +128,7 @@ def test_mixed_range_selects_current_and_bounded_history_paths_and_reuses_curren
     )
     assert actual["outcome"] == "ANSWER"
     assert all(value in actual["text"] for value in ("90", "30", "20", "10"))
-    assert NOTICES["PARTIAL_RESULTS"] not in actual["limitations"]
+    assert "PARTIAL_RESULTS" not in result["noticeCodes"]
     field_queries = queries(result, f"{domain}_FIELDS")
     assert len(field_queries) == 1
     assert (field_queries[0]["episodeFrom"], field_queries[0]["episodeTo"]) == (10, 20)
@@ -209,7 +208,7 @@ def test_field_selection_cannot_publish_current_values_changed_after_prefetch(
     )
     actual = response(result)
     assert actual["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert NOTICES["CURRENT_CHANGED"] in actual["limitations"]
+    assert "CURRENT_CHANGED" in result["noticeCodes"]
     assert "90" not in actual["text"] and "30" not in actual["text"]
     assert len(queries(result, f"{domain}_CURRENT")) == 2
 
@@ -239,7 +238,7 @@ def test_incomplete_field_union_stops_before_selection(tmp_path, incomplete):
     )
     actual = response(result)
     assert actual["outcome"] == "CLARIFICATION"
-    assert NOTICES["PARTIAL_RESULTS"] in actual["limitations"]
+    assert "PARTIAL_RESULTS" in result["noticeCodes"]
     assert len(result["raw"].requests) == 1
     assert not queries(result, "CHARACTER_HISTORY")
     assert len(result["spring"].queries) < 6
@@ -251,7 +250,7 @@ def test_history_pagination_cannot_spend_the_cached_current_check_budget(tmp_pat
     result = asyncio.run(replay(tmp_path, spec, spring_setup=setup_catalog("CHARACTER")))
     actual = response(result)
     assert actual["outcome"] == "ANSWER"
-    assert NOTICES["PARTIAL_RESULTS"] in actual["limitations"]
+    assert "PARTIAL_RESULTS" in result["noticeCodes"]
     assert len(result["spring"].queries) == 6
     assert result["spring"].queries[-1]["tool"] == "CHARACTER_CURRENT"
     assert result["spring"].queries[-1]["size"] == 1
@@ -326,7 +325,7 @@ def test_later_synthesis_keeps_its_own_final_current_check(tmp_path, changed, so
     )
     if changed:
         assert actual["outcome"] == "INSUFFICIENT_EVIDENCE"
-        assert NOTICES["CURRENT_CHANGED"] in actual["limitations"]
+        assert "CURRENT_CHANGED" in result["noticeCodes"]
         assert not actual["sources"] and not actual.get("retrievalSources")
     else:
         assert actual["outcome"] == "ANSWER"

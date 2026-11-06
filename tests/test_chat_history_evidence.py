@@ -13,7 +13,6 @@ import socket
 
 import pytest
 
-from app.chatbot.qa_render import NOTICES
 from tests.test_chat_focused_lookup import catalog_subject, item, uid
 from tests.test_chat_hybrid import replay, scenario
 
@@ -159,10 +158,10 @@ def test_history_and_each_source_survive_multiple_pages_without_answer_generatio
     assert len(result["raw"].requests) == 1  # Authored planner only; no answer/row selector.
     assert result["search"].calls == result["embedding"].inputs == []
     assert [r["purpose"] for r in result["spring"].reservations] == ["CHAT_INTERPRETATION"]
-    assert NOTICES["PARTIAL_RESULTS"] not in answer["limitations"]
-    assert NOTICES["EVIDENCE_LIMIT"] not in answer["limitations"]
+    assert "PARTIAL_RESULTS" not in result["noticeCodes"]
+    assert "EVIDENCE_LIMIT" not in result["noticeCodes"]
     assert "원문 미확인" not in answer["text"]
-    assert NOTICES["HISTORY_IS_NOT_A_STATE_SNAPSHOT"] in answer["limitations"]
+    assert "HISTORY_IS_NOT_A_STATE_SNAPSHOT" in result["noticeCodes"]
     # Source text is owned by the validated Spring reference, never rewritten by the model.
     model_inputs = json.dumps([r["input"] for r in result["raw"].requests], ensure_ascii=False)
     assert "합성 원문" not in model_inputs
@@ -184,7 +183,7 @@ def test_unavailable_one_source_keeps_every_history_record_and_other_sources(tmp
     assert f"{LABEL}: 27 (출처 3화) · 원문 미확인" in answer["text"]
     assert answer["text"].count("원문 미확인") == 1
     assert all(f"(출처 {episode}화)" in answer["text"] for episode in range(1, 6))
-    assert NOTICES[status] in answer["limitations"]
+    assert status in result["noticeCodes"]
     assert len(result["raw"].requests) == 1
 
 
@@ -199,7 +198,7 @@ def test_missing_source_reference_is_not_a_missing_history_or_provider_error(tmp
     assert "(출처 2화)" in answer["text"]
     assert f"{LABEL}: 27 (출처 2화) · 원문 미확인" in answer["text"]
     assert answer["text"].count("원문 미확인") == 1
-    assert NOTICES["NO_SOURCE"] in answer["limitations"]
+    assert "NO_SOURCE" in result["noticeCodes"]
 
 
 def test_all_sources_unavailable_still_returns_every_registered_history_record(tmp_path):
@@ -213,7 +212,7 @@ def test_all_sources_unavailable_still_returns_every_registered_history_record(t
     assert len(queries(result, "CHARACTER_EVIDENCE")) == 5
     assert all(f"(출처 {episode}화)" in answer["text"] for episode in range(1, 6))
     assert answer["text"].count("원문 미확인") == 5
-    assert NOTICES["SOURCE_PURGED"] in answer["limitations"]
+    assert "SOURCE_PURGED" in result["noticeCodes"]
     assert len(result["raw"].requests) == 1
 
 
@@ -227,8 +226,8 @@ def test_history_without_requested_sources_never_queries_or_marks_sources_missin
     assert answer["sources"] == queries(result, "CHARACTER_EVIDENCE") == []
     assert all(f"(출처 {episode}화)" in answer["text"] for episode in range(1, 6))
     assert "원문 미확인" not in answer["text"]
-    assert NOTICES["NO_SOURCE"] not in answer["limitations"]
-    assert NOTICES["EVIDENCE_LIMIT"] not in answer["limitations"]
+    assert "NO_SOURCE" not in result["noticeCodes"]
+    assert "EVIDENCE_LIMIT" not in result["noticeCodes"]
     assert len(result["raw"].requests) == 1
 
 
@@ -243,7 +242,7 @@ def test_single_current_value_marks_missing_source_only_when_requested(tmp_path,
     assert answer["text"].startswith(f"{NAME}의 현재 {LABEL}은 89입니다.")
     assert "(직접 입력한 설정)" in answer["text"]
     assert ("연결된 원문은 확인하지 못했어요." in answer["text"]) == include_evidence
-    assert (NOTICES["NO_SOURCE"] in answer["limitations"]) == include_evidence
+    assert ("NO_SOURCE" in result["noticeCodes"]) == include_evidence
     assert answer["sources"] == queries(result, "CHARACTER_EVIDENCE") == []
     assert "출처" not in answer["text"]
 
@@ -256,7 +255,7 @@ def test_history_source_range_applies_to_metadata_values_and_each_direct_source(
         assert all((q["episodeFrom"], q["episodeTo"]) == (2, 4) for q in queries(result, tool))
     assert "출처 1화" not in answer["text"] and "출처 5화" not in answer["text"]
     assert [r["targetId"] for r in answer["sources"]] == [uid(n) for n in [30002, 30003, 30004]]
-    assert NOTICES["SOURCE_RANGE"] in answer["limitations"]
+    assert "SOURCE_RANGE" in result["noticeCodes"]
 
 
 def test_evidence_limit_preserves_all_records_and_discloses_unchecked_sources(tmp_path):
@@ -265,8 +264,8 @@ def test_evidence_limit_preserves_all_records_and_discloses_unchecked_sources(tm
     assert len(queries(result, "CHARACTER_EVIDENCE")) == len(answer["sources"]) == 2
     assert all(f"(출처 {episode}화)" in answer["text"] for episode in range(1, 6))
     assert answer["text"].count("원문 미확인") == 3
-    assert NOTICES["EVIDENCE_LIMIT"] in answer["limitations"]
-    assert NOTICES["PARTIAL_RESULTS"] not in answer["limitations"]
+    assert "EVIDENCE_LIMIT" in result["noticeCodes"]
+    assert "PARTIAL_RESULTS" not in result["noticeCodes"]
     assert len(result["raw"].requests) == 1
 
 
