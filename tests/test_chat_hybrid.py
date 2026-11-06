@@ -19,6 +19,7 @@ from app.chatbot.hybrid import HybridQaHandler
 from app.chatbot.hybrid_config import HybridSettings
 from app.chatbot.hybrid_metrics import HybridMetrics
 from app.chatbot.outbox import Outbox
+from app.chatbot.qa_render import PUBLIC_NOTICES
 from app.chatbot.replay import (
     NoticeCodes,
     ReplaySpring,
@@ -292,6 +293,8 @@ def test_authored_offline_replays_through_http_execution_and_sqlite_outbox(tmp_p
     expected, finish = case["expected"], result["finish"]
     assert finish["failure"] is None, (case["id"], finish)
     assert finish["result"]["outcome"] == expected["outcome"]
+    # 어떤 사례에서도 작가에게 보이는 문구는 공개 표의 문장뿐이다.
+    assert set(finish["result"]["limitations"]) <= set(PUBLIC_NOTICES.values())
     assert len(result["embedding"].inputs) == expected["embeddings"]
     assert result["search"].calls == expected["searches"]
     for value in expected["contains"]:
@@ -502,6 +505,7 @@ def test_tool_budget_stops_before_receipt_and_answer_generation(tmp_path):
     assert result["finish"]["failure"] is None
     assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
     assert "SEARCH_LIMIT" in result["noticeCodes"]
+    assert result["finish"]["result"]["limitations"] == []
     assert len(result["raw"].requests) == 1
     assert result["search"].calls == []
     assert not result["spring"].receipts
@@ -514,6 +518,8 @@ def test_partial_text_readiness_can_answer_with_available_keyword_source(tmp_pat
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert not result["embedding"].inputs
     assert result["noticeCodes"] == ["TEXT_INDEX_PARTIAL", "VECTOR_INDEX_PARTIAL", "INDEX_PARTIAL"]
+    # 묶인 코드가 여러 개 떠도 작가에게는 한 문장만 보인다.
+    assert result["finish"]["result"]["limitations"] == [PUBLIC_NOTICES["TEXT_INDEX_PARTIAL"]]
 
 
 def test_partial_answer_stays_explicit_when_search_round_budget_ends(tmp_path):

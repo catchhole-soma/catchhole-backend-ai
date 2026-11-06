@@ -172,7 +172,7 @@ def test_no_registered_rows_does_not_report_unrelated_conversation_limit():
     assert result["modelRequests"][0]["input"]["conversationTruncated"] is True
 
 
-def test_ambiguous_followup_keeps_conversation_limit_in_clarification():
+def test_ambiguous_followup_records_conversation_limit_without_showing_it():
     case, catalog = scenario()
     case.update(question="그건?", modelOutputs=[conversational_plan("CLARIFICATION")])
     result = asyncio.run(replay_case(case, catalog, spring_setup=truncated_history))
@@ -180,10 +180,12 @@ def test_ambiguous_followup_keeps_conversation_limit_in_clarification():
     assert result["finish"]["failure"] is None
     assert answer["outcome"] == "CLARIFICATION"
     assert "CONVERSATION_LIMIT" in result["noticeCodes"]
+    # 본문이 이미 대상을 다시 알려 달라고 말하므로 화면 문구로는 붙이지 않는다.
+    assert answer["limitations"] == []
     assert result["queries"] == []
 
 
-def test_display_filter_preserves_evidence_and_data_limit_notices():
+def test_internal_notices_keep_evidence_and_data_limits_before_publication():
     codes = ["CONVERSATION_LIMIT", "SOURCE_CHANGED", "PARTIAL_RESULTS", "CONTEXT_LIMIT"]
     expected = [NOTICES[c] for c in codes[1:]]
     assert notices(codes) == expected

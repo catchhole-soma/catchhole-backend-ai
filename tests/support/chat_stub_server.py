@@ -32,7 +32,8 @@ async def handler(execution):
             outcome="INSUFFICIENT_EVIDENCE",
             text="테스트 실행 완료",
             sources=[],
-            limitations=["테스트 전용 고정 핸들러입니다."],
+            # 공개 표에 없는 문장은 실행 경계에서 빠지므로 스텁도 안내를 붙이지 않는다.
+            limitations=[],
         )
     )
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.chatbot.qa import encode, response_schema
+from app.chatbot.qa_render import PUBLIC_NOTICES
 from app.chatbot.replay import check_expected, load_fixture, offline_settings, replay_case
 from app.schemas.chat_qa import AnswerSelection, QuestionPlan
 
@@ -42,6 +43,8 @@ async def run(name="current_ability", **kwargs):
 async def test_authored_question_and_evidence_replays(case):
     result = await replay_case(case, FIXTURE["catalogs"][case["catalog"]])
     check_expected(case, result)
+    # 어떤 사례에서도 작가에게 보이는 문구는 공개 표의 문장뿐이다.
+    assert set(result["finish"]["result"]["limitations"]) <= set(PUBLIC_NOTICES.values())
     assert len(result["reservations"]) == len(result["modelRequests"])
     assert len(result["usageReports"]) == len(result["modelRequests"])
     assert {r["purpose"] for r in result["reservations"]} <= {"CHAT_INTERPRETATION", "CHAT_ANSWER"}
