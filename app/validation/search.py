@@ -86,7 +86,6 @@ WHERE r.id=:report AND r.work_id=:work AND r.member_id=:member AND rw.member_id=
           AND j.generation=:generation AND j.input_digest=:input_digest))
  AND r.baseline_hash=:baseline AND r.source_content_hash=:target_hash
  AND r.baseline_status='READY' AND r.status<>'INVALIDATED'
- AND r.baseline_seed IS NOT NULL AND r.baseline_entries IS NOT NULL
  AND target.content_hash=r.source_content_hash AND target.content_s3_key=r.source_content_s3_key
  AND target.content_s3_version IS NOT DISTINCT FROM r.source_content_s3_version
  AND target.episode_no=r.source_episode_no AND target.status<>'ARCHIVED'

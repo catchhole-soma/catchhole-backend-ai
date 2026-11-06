@@ -107,8 +107,9 @@ def test_stage_payload_examples_have_the_grid_v4_shapes():
 def test_data_wire_has_subjects_and_settings_and_no_clues():
     wire = fixture()
     assert list(wire["dataRequest"])[-1] == "subjectRefs" and wire["dataRequest"]["subjectRefs"] is None
-    for name in ("dataInput", "dataEntries", "dataReadTarget", "dataSubjects", "dataSettings"):
+    for name in ("dataInput", "dataReadTarget", "dataSubjects", "dataSettings"):
         assert wire["responses"][name]["projectionVersion"] == 2 and "clueVersion" not in wire["responses"][name]
+    assert "dataEntries" not in wire["responses"]  # #381: the ENTRIES operation is gone
     assert "modelClues" not in wire["responses"]["dataReadTarget"]
     assert {"subjects", "subjectCount", "entryCount"} <= set(wire["responses"]["dataSubjects"])
     assert {"settings", "authorCorrectionProofs"} <= set(wire["responses"]["dataSettings"])
