@@ -301,3 +301,92 @@ class GroundedAnswer(ContractModel):
         ):
             object.__setattr__(self, "coverage", "PARTIAL")
         return self
+
+
+# ---- 모델 주도 원문 탐색(CHAT_RETRIEVAL_AGENT). 아래 모델은 탐색을 켠 실행에서만 쓴다. ----
+
+# 답 하나가 인용할 수 있는 서로 다른 원문 조각 수. Spring의 인용 등록·결과 계약(60개)과 같다.
+RETRIEVAL_SOURCE_LIMIT = 60
+
+
+class AgentGroundedClaim(GroundedClaim):
+    """탐색 답변의 문장. 읽은 원문이 많아 세부를 빠짐없이 쓸 수 있게 길이·인용 수만 넓혔다.
+
+    기존 GroundedClaim/GroundedAnswer는 바꾸지 않는다. 탐색을 끈 실행의 provider schema와 검증은
+    지금과 같아야 하기 때문이다. 필드 순서(= 모델의 출력 순서)와 나머지 규칙은 부모와 같다.
+    """
+
+    text: str = Field(min_length=1, max_length=1200)
+    evidence_refs: list[str] = Field(min_length=1, max_length=12)
+    supports: list[EvidenceSupport] = Field(default_factory=list, max_length=12)
+
+
+class AgentGroundedAnswer(GroundedAnswer):
+    claims: list[AgentGroundedClaim] = Field(max_length=12)
+
+
+class ExplorationStep(ContractModel):
+    """모델이 고른 다음 원문 조회 행동. 사실 답변이 아니며 공개되지 않는다.
+
+    검색어는 재현율에만 영향을 주는 조회 입력이라 질문에 없는 표현도 허용한다. 회차 번호는 서버가
+    허용 범위와 유효성을 다시 확인하고, 개수 상한을 넘는 요청은 서버 설정만큼만 실행한다.
+    """
+
+    # 필드 순서가 곧 모델의 출력 순서다. 메모와 요구별 점검을 먼저 쓰게 한 뒤 충분 여부·행동을 정하게 한다.
+    note: str = Field(max_length=600)
+    unsupported_parts: list[str] = Field(max_length=4)
+    enough: bool = Field(strict=True)
+    searches: list[str] = Field(max_length=6)
+    search_order: Literal["RELEVANCE", "EARLIEST", "LATEST"]
+    read_episodes: list[int] = Field(max_length=5)
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        if any(len(term) > 200 for term in self.searches) or any(
+            len(ref) > 20 for ref in self.unsupported_parts
+        ):
+            raise ValueError("Search text is too long")
+        if any(isinstance(n, bool) or not 1 <= n <= 2147483647 for n in self.read_episodes):
+            raise ValueError("Episode numbers must be positive")
+        return self
+
+
+class ExtractedFact(ContractModel):
+    """원문 묶음에서 뽑은 사실 하나. 서버가 quote를 조각 본문의 정확한 부분 문자열로 확인한 것만 쓴다."""
+
+    text: str = Field(min_length=1, max_length=600)
+    evidence_ref: str = Field(min_length=1, max_length=10)
+    quote: str = Field(min_length=1, max_length=400)
+
+
+class FactExtraction(ContractModel):
+    facts: list[ExtractedFact] = Field(max_length=60)
+
+
+class ComposedClaim(ContractModel):
+    """검증된 사실(F*)만 참조하는 답 문장. 서버가 사실의 인용문을 supports로 옮겨 기존 검증에 넘긴다."""
+
+    text: str = Field(min_length=1, max_length=1200)
+    fact_refs: list[str] = Field(min_length=1, max_length=12)
+    row_refs: list[str] = Field(max_length=50)
+    answered_facets: list[RequestedFacet] = Field(max_length=4)
+    related_facets: list[RequestedFacet] = Field(max_length=4)
+    event_status: EventStatus | None
+    event_match: Literal["MATCH", "OTHER", "UNCERTAIN"] | None
+
+
+class ComposedConflict(ContractModel):
+    row_refs: list[str] = Field(min_length=1, max_length=3)
+    fact_refs: list[str] = Field(min_length=1, max_length=3)
+    event_match: Literal["MATCH", "OTHER", "UNCERTAIN"] | None
+
+
+class ComposedAnswer(ContractModel):
+    # 필드 순서가 출력 순서다. 나열·계산·요구별 점검(working)을 먼저 쓰게 한 뒤 답 문장을 쓰게 한다.
+    working: str = Field(max_length=3000)
+    relevant_fact_refs: list[str] = Field(max_length=200)
+    claims: list[ComposedClaim] = Field(max_length=12)
+    conflicts: list[ComposedConflict] = Field(max_length=4)
+    unanswered_row_refs: list[str] = Field(max_length=100)
+    missing_facets: list[RequestedFacet] = Field(max_length=4)
+    missing_explanations: list[MissingExplanation] = Field(max_length=4)

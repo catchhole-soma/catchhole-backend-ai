@@ -53,7 +53,7 @@ class ChatResult(ContractModel):
     text: str = Field(min_length=1, max_length=16000, repr=False)
     sources: list[SourceReference] = Field(max_length=50)
     retrieval_sources: list[RetrievalReference] = Field(
-        default_factory=list, max_length=12, exclude_if=lambda value: not value
+        default_factory=list, max_length=60, exclude_if=lambda value: not value
     )
     limitations: list[str] = Field(max_length=20)
 

@@ -5,10 +5,12 @@ import math
 from dataclasses import dataclass, replace
 
 import tiktoken
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.chatbot.answer_recovery import recover_claims
 from app.chatbot.client import ChatTransportError
+from app.chatbot.hybrid_agent import AgentRetrieval
 from app.chatbot.hybrid_config import HybridSettings
 from app.chatbot.hybrid_grounding import resolve_support_quotes, resolve_support_references
 from app.chatbot.hybrid_items import (
@@ -28,7 +30,15 @@ from app.chatbot.hybrid_items import (
     validate_item_answer,
 )
 from app.chatbot.hybrid_metrics import HybridMetrics, ObservedEmbeddingClient, ObservedTextClient
-from app.chatbot.hybrid_prompts import ANSWER_PROMPT, ANSWER_VERSION, PLAN_PROMPT, PLAN_VERSION
+from app.chatbot.hybrid_prompts import (
+    AGENT_ANSWER_PROMPT,
+    AGENT_ANSWER_VERSION,
+    ANSWER_PROMPT,
+    ANSWER_VERSION,
+    EXPLORE_VERSION,
+    PLAN_PROMPT,
+    PLAN_VERSION,
+)
 from app.chatbot.providers import ChatEmbeddingClient
 from app.chatbot.qa import ChatQaHandler, ModelTimeBudgetExceeded, _Session, response_schema
 from app.chatbot.qa_prompts import FIELD_VERSION
@@ -53,6 +63,8 @@ from app.retrieval.evidence import compose_evidence
 from app.retrieval.search_contracts import SearchScope, SearchScopeUnavailable
 from app.schemas.chat_execution import ChatResult, Finish
 from app.schemas.chat_hybrid import (
+    RETRIEVAL_SOURCE_LIMIT,
+    AgentGroundedAnswer,
     EvidenceConflict,
     EvidenceSupport,
     GroundedAnswer,
@@ -135,7 +147,10 @@ class HybridQaHandler(ChatQaHandler):
     def __init__(self, delegate, search, embedding, settings=None, hybrid=None, metrics=None):
         self.metrics = metrics or HybridMetrics()
         super().__init__(
-            ObservedTextClient(delegate, self.metrics, (PLAN_VERSION, FIELD_VERSION)), settings
+            ObservedTextClient(
+                delegate, self.metrics, (PLAN_VERSION, FIELD_VERSION, EXPLORE_VERSION)
+            ),
+            settings,
         )
         self.search, self.embedding = search, embedding
         self.hybrid = hybrid or HybridSettings()
@@ -204,9 +219,10 @@ class HybridQaHandler(ChatQaHandler):
         return result
 
 
-class _HybridSession(_Session):
+class _HybridSession(AgentRetrieval, _Session):
     def __init__(self, handler, execution):
         super().__init__(handler, execution)
+        self.agent_init()  # 원문 탐색 상태. CHAT_RETRIEVAL_AGENT=false면 쓰이지 않는다.
         self.hcfg, self.metrics = handler.hybrid, handler.metrics
         self.model_calls = self.embedding_calls = self.rounds = 0
         self.evidences = []
@@ -229,6 +245,21 @@ class _HybridSession(_Session):
         self.answer_validation_failed = False
         self.ordered_coverage = None
         self.ordered_kept = ()
+
+    @staticmethod
+    def new_evidence(ref, chunk):
+        return _Evidence(ref, chunk.text, chunk.episode_no, chunk=chunk)
+
+    @property
+    def answer_contract(self):
+        """답변 호출의 (응답 모델, 프롬프트, 프롬프트 버전).
+
+        원문 탐색에 들어온 실행만 조회 범위 사용법을 덧붙인 프롬프트와 길이·인용 수를 넓힌 모델을 쓴다.
+        그 밖의 실행은 기존 모델·프롬프트·버전 그대로다.
+        """
+        if self.agent_active:
+            return AgentGroundedAnswer, AGENT_ANSWER_PROMPT, AGENT_ANSWER_VERSION
+        return GroundedAnswer, ANSWER_PROMPT, ANSWER_VERSION
 
     def trace(self, stage, **data):
         # No questions, source text, model output, member/work IDs or secrets.
@@ -266,11 +297,18 @@ class _HybridSession(_Session):
     @property
     def scope(self):
         ctx = self.execution.context
-        return SearchScope(
-            ctx.member_id, ctx.work_id, self.source_from or 1, self.source_to or 2147483647
-        )
+        lo, hi = self.source_from, self.source_to
+        if self.agent_wide_range:
+            # 원문 탐색(agent_relax_plan_range): 계획이 좁힌 범위 대신 서버가 이 질문에 허용한 원래
+            # 범위에서 읽는다. 서버 범위 밖으로는 넓어지지 않는다.
+            lo, hi = ctx.episode_from, ctx.episode_to
+        return SearchScope(ctx.member_id, ctx.work_id, lo or 1, hi or 2147483647)
 
     async def search(self, method, *args, **kwargs):
+        return (await self.search_result(method, *args, **kwargs)).chunks
+
+    async def search_result(self, method, *args, **kwargs):
+        """조회 한 번의 전체 결과. 조각만 필요하면 search()를 쓴다."""
         self.consume(method)
         with self.metrics.latency.labels(method).time():
             result = await getattr(self.handler.search, method)(self.scope, *args, **kwargs)
@@ -296,21 +334,29 @@ class _HybridSession(_Session):
                 for n, c in enumerate(result.chunks, 1)
             ],
         )
-        return result.chunks
+        return result
 
     async def register(self, chunks):
         if not chunks:
             return
-        self.consume("receipt")
-        await self.execution.client.retrieval_sources(
-            self.execution.dispatch, self.execution.runner, [wire_reference(c) for c in chunks]
-        )
+        chunks = list(chunks)
+        # 한 번에 등록할 수 있는 인용 수를 넘으면 나눠 보낸다. 그 이하면 요청 한 번이다.
+        for start in range(0, len(chunks), RETRIEVAL_SOURCE_LIMIT):
+            self.consume("receipt")
+            await self.execution.client.retrieval_sources(
+                self.execution.dispatch,
+                self.execution.runner,
+                [wire_reference(c) for c in chunks[start : start + RETRIEVAL_SOURCE_LIMIT]],
+            )
 
     def source_tool_reserve(self, plan):
         # 원문 검색이 필요한 계획은 등록 조회가 도구 예산을 다 쓰지 않도록
         # 검색·이웃·영수증·재검증 몫(라운드당 3 + 마무리 2)을 미리 남긴다.
         if plan.source_need == "NONE":
             return 0
+        if self.hcfg.agent:
+            # 원문 탐색은 씨앗·탐색 한 단계·마무리 몫을 남긴다.
+            return self.agent_min_tools() + (1 if plan.ordering != "NONE" else 0)
         # 3라운드는 선택적이라 처음 두 라운드 몫만 예약한다.
         rounds = min(self.hcfg.max_rounds, 2)
         return 3 * rounds + 2 + (1 if plan.ordering != "NONE" else 0)
@@ -509,17 +555,47 @@ class _HybridSession(_Session):
                     answer_shape=plan.answer_shape,
                 )
             )
+            verify = False
             if not self.can_supplement_registered(plan, registered):
-                return registered
+                verify = self.agent_can_verify_registered(plan, registered)
+                if not verify:
+                    return registered
             if not self.models_available() or not self.tools_available(4):
                 return registered
             self.chosen = list(self.selected_rows)
-            plan = HybridPlan.model_validate(
-                {**plan.model_dump(), "source_need": "SCENE", "source_fallback": False}
-            )
-            self.plan = plan
-            self.trace("registered_fallback", reasons=sorted(self.lookup_gaps))
-            return await self.run_source(plan, collect=False)
+            converted = {**plan.model_dump(), "source_need": "SCENE", "source_fallback": False}
+            if verify and not plan.requested_parts:
+                # 계획이 원문 보완을 표시하지 않아 요구 항목이 비어 있으면 질문 자체를 하나의 요구로 둔다.
+                converted["requested_parts"] = [
+                    {"ref": "P1", "description": (ctx.question or "").strip()[:160]}
+                ]
+                converted["requested_facets"] = []
+            if not verify:
+                plan = HybridPlan.model_validate(converted)
+                self.plan = plan
+                self.trace("registered_fallback", reasons=sorted(self.lookup_gaps))
+                return await self.run_source(plan, collect=False)
+            # agent_verify_registered: 이미 나온 등록 이력 답을 원문 탐색으로 보완한다. 보완은 선택
+            # 단계라서 원문 답이 나오지 않거나 보완 자체가 실패하면 등록 답을 그대로 쓴다.
+            self.trace("registered_verify", rows=len(self.chosen))
+            try:
+                plan = HybridPlan.model_validate(converted)
+                self.plan = plan
+                result = await self.run_source(plan, collect=False)
+            except (ModelTimeBudgetExceeded, ProviderFailure, ValidationError, SQLAlchemyError):
+                # 시간·모델 오류, 계획 변환 실패, 검색 저장소의 일시 오류는 등록 답으로 돌아간다.
+                result = None
+            except ChatTransportError as exc:
+                # 보완 탐색이 실행 한도에 걸린 경우만 등록 답으로 돌아간다. 계정 잔액 부족, 원문 변경,
+                # 저장소 오류는 그대로 올린다. 작품·회원 범위를 확인하지 못한 경우
+                # (SearchScopeUnavailable)와 등록값 변경도 등록 답으로 덮지 않는다.
+                if exc.code != "EXECUTION_LIMIT_EXCEEDED":
+                    raise
+                result = None
+            if result is None or result.result is None or result.result.outcome != "ANSWER":
+                self.trace("registered_verify_kept_registered")
+                return registered
+            return result
         return await self.run_source(plan)
 
     def can_supplement_registered(self, plan, registered):
@@ -605,7 +681,12 @@ class _HybridSession(_Session):
                 self.codes + ["CONTEXT_LIMIT"],
             )
         if self.logical_items:
+            if self.hcfg.agent and self.hcfg.agent_items:
+                return await self.run_agent(plan)
             return await self.run_items(plan)
+        if self.hcfg.agent:
+            # 고정 라운드 대신 모델이 검색어·읽을 회차를 고르는 원문 탐색(hybrid_agent.py).
+            return await self.run_agent(plan)
         # A direct lookup also needs a final recheck. Keep room for a minimal
         # search -> receipt -> final revalidation -> final receipt path.
         await self.evidence(
@@ -752,6 +833,10 @@ class _HybridSession(_Session):
                 self.codes.append("PARTIAL_ANSWER")
             # Finalization still revalidates the restored sources and registers their quotes.
             return await self.finish_answer(draft)
+        return await self.unanswered_source_result(plan)
+
+    async def unanswered_source_result(self, plan):
+        """원문으로 답하지 못했을 때의 마감 안내. 고정 라운드와 탐색 루프가 같이 쓴다."""
         if self.has_collection_condition and (
             self.uncertain_condition_rows() or not self.confirmed_condition_rows()
         ):
@@ -1553,12 +1638,30 @@ class _HybridSession(_Session):
     def evidence_passages(self, evidences):
         """Build the same original citation spans for model input and snapshot remapping."""
         chunks = [e.chunk for e in evidences if e.chunk]
-        bundle = compose_evidence(
-            chunks,
-            max_items=self.hcfg.max_evidence,
-            max_tokens=self.hcfg.evidence_tokens,
-            per_episode=self.hcfg.max_evidence,
-        )
+        if self.agent_active:
+            # 원문 탐색은 읽은 묶음에 넣을 때 이미 토큰 예산을 적용했다. 여기서는 읽은 조각을 빠짐없이
+            # 이어 붙이고(통째로 읽은 회차는 한 덩어리가 된다) 회차·본문 순서로 보여 준다.
+            bundle = compose_evidence(
+                chunks,
+                max_items=max(1, len(chunks)),
+                max_tokens=10**9,
+                per_episode=max(1, len(chunks)),
+                count_tokens=self.agent_count_tokens,
+                episode_round_robin=False,
+            )
+            bundle = replace(
+                bundle,
+                passages=tuple(
+                    sorted(bundle.passages, key=lambda p: (p.chunks[0].episode_no, p.start_offset))
+                ),
+            )
+        else:
+            bundle = compose_evidence(
+                chunks,
+                max_items=self.hcfg.max_evidence,
+                max_tokens=self.hcfg.evidence_tokens,
+                per_episode=self.hcfg.max_evidence,
+            )
         by_id = {e.chunk.chunk_id: e.ref for e in evidences if e.chunk}
         passages = [
             {
@@ -1669,6 +1772,7 @@ class _HybridSession(_Session):
             else [i.model_dump(by_alias=True) for i in self.item_draft.item_answers if i.answers],
             "passages": self.evidence_passages(self.evidences),
             **({"searchOrdering": self.ordered_coverage} if self.ordered_coverage else {}),
+            **self.agent_scope_payload(),
             "limitations": notices(self.codes, include_conversation_limit=True),
         }
 
@@ -1712,7 +1816,7 @@ class _HybridSession(_Session):
             ]
             supported = bool(conflicts or any(i.answers for i in results))
             complete = all(not i.missing_facets for i in results) and not conflicts
-            return GroundedAnswer(
+            return type(answer)(
                 coverage="COMPLETE" if complete else "PARTIAL" if supported else "NONE",
                 claims=[],
                 conflicts=conflicts,
@@ -1737,7 +1841,7 @@ class _HybridSession(_Session):
             and not blocked
             and not answer.unanswered_row_refs
         )
-        return GroundedAnswer(
+        return type(answer)(
             coverage="COMPLETE" if complete else "PARTIAL" if supported else "NONE",
             claims=claims,
             conflicts=conflicts,
@@ -1764,7 +1868,8 @@ class _HybridSession(_Session):
     async def answer(self, plan):
         self.answer_validation_failed = False
         self.recovery_evidence = ()
-        schema = response_schema(GroundedAnswer)
+        answer_model, prompt, version = self.answer_contract
+        schema = response_schema(answer_model)
         protected = {self.source_identity(e) for e in self.supported_evidence}
         if not protected <= {self.source_identity(e) for e in self.evidences}:
             # A new complete answer must not silently replace a supported snapshot
@@ -1772,8 +1877,8 @@ class _HybridSession(_Session):
             self.codes.append("EVIDENCE_CONTEXT_LIMIT")
             self.trace("supported_context_unavailable", round=self.rounds)
             return self.empty_source_answer(plan)
-        self.trim_conversation_to_fit(ANSWER_PROMPT, lambda: self.answer_payload(plan), schema)
-        while self.evidences and not self.fits(ANSWER_PROMPT, self.answer_payload(plan), schema):
+        self.trim_conversation_to_fit(prompt, lambda: self.answer_payload(plan), schema)
+        while self.evidences and not self.fits(prompt, self.answer_payload(plan), schema):
             removable = next(
                 (
                     index
@@ -1816,7 +1921,9 @@ class _HybridSession(_Session):
                 refs = list(
                     dict.fromkeys(ref for support in resolved for ref in support.evidence_refs)
                 )
-                if len(refs) > (3 if isinstance(statement, EvidenceConflict) else 6):
+                # 두 단계 답변만 문장 하나가 검증된 사실을 12개까지 인용한다. 그 밖에는 기존 6개다.
+                claim_refs = 12 if self.agent_two_stage() else 6
+                if len(refs) > (3 if isinstance(statement, EvidenceConflict) else claim_refs):
                     raise ValueError("Unknown evidence or setting reference")
                 supports = [
                     EvidenceSupport.model_validate(
@@ -1948,15 +2055,26 @@ class _HybridSession(_Session):
             if attempts < 1:
                 self.codes.append("SEARCH_LIMIT")
                 raise ResponseValidationFailure()
-            answer = await self.model(
-                GroundedAnswer,
-                ANSWER_PROMPT,
-                payload,
-                "CHAT_ANSWER",
-                ANSWER_VERSION,
-                valid,
-                max_attempts=attempts,
-            )
+            answer = None
+            if self.agent_two_stage():
+                # 읽은 원문에서 사실을 뽑아 검증한 뒤 그 사실만으로 답을 쓴다. 호출 몫이나 입력 한도
+                # 때문에 두 단계를 쓸 수 없으면 None이 오고, 아래의 한 단계 답변이 같은 원문을 읽는다.
+                answer = await self.agent_extract_answer(plan, payload, valid, attempts)
+                if answer is None:
+                    attempts = min(attempts, self.agent_call_room())
+                    if attempts < 1:
+                        self.codes.append("SEARCH_LIMIT")
+                        raise ResponseValidationFailure()
+            if answer is None:
+                answer = await self.model(
+                    answer_model,
+                    prompt,
+                    payload,
+                    "CHAT_ANSWER",
+                    version,
+                    valid,
+                    max_attempts=attempts,
+                )
         except (ModelTimeBudgetExceeded, ProviderOutputTruncated) as exc:
             # A failed expansion must not erase an earlier validated answer.
             if not self.supported_evidence:
@@ -2004,8 +2122,17 @@ class _HybridSession(_Session):
                 "답변 근거를 검증할 수 없습니다.",
                 self.codes + ["INVALID_QUOTE"],
             )
-        await self.revalidate_settings()
         chunks = [e.chunk for e in evidence if e.chunk]
+        if len(chunks) > RETRIEVAL_SOURCE_LIMIT:
+            # 결과 계약이 받는 인용 수를 넘는 답은 일부 근거만 남겨 게시하지 않는다. 기본 고정 라운드는
+            # 근거가 12개 이하라 여기에 닿지 않는다.
+            self.trace("citation_limit", cited=len(chunks))
+            return message(
+                "INSUFFICIENT_EVIDENCE",
+                "검증된 답변과 근거를 답변 길이 한도 안에 담을 수 없습니다. 질문 범위를 좁혀 주세요.",
+                self.codes + ["ANSWER_LIMIT"],
+            )
+        await self.revalidate_settings()
         if chunks:
             self.consume("revalidate")
             live = await self.handler.search.revalidate(self.scope, chunks)

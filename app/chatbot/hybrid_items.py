@@ -188,7 +188,7 @@ def apply_event_scope(answer, scope, facets, *, event_context=None):
         and not missing
         and all(not i.missing_facets for i in items)
     )
-    return GroundedAnswer(
+    return type(answer)(
         coverage="COMPLETE" if complete else "PARTIAL" if supported else "NONE",
         claims=claims,
         conflicts=conflicts,

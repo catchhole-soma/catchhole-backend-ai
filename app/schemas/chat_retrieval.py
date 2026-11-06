@@ -27,4 +27,4 @@ class RetrievalReference(ContractModel):
 
 class RetrievalReceipt(ContractModel):
     schema_version: Literal[1]
-    sources: list[RetrievalReference] = Field(max_length=12)
+    sources: list[RetrievalReference] = Field(max_length=60)
