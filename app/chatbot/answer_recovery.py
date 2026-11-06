@@ -1,7 +1,5 @@
 """Conservative recovery of independently grounded request-part claims."""
 
-from app.schemas.chat_hybrid import GroundedAnswer
-
 
 def recover_claims(answer, requested, ground, *, evidence_refs, row_refs):
     """Keep verified statements; never repair words or treat uncertainty as coverage.
@@ -63,7 +61,7 @@ def recover_claims(answer, requested, ground, *, evidence_refs, row_refs):
     kept = normalized
     covered = {f for c in kept for f in c.answered_facets}
     remaining = [f for f in requested if f not in covered]
-    return GroundedAnswer.model_validate(
+    return type(answer).model_validate(
         {
             **answer.model_dump(),
             "claims": kept,

@@ -63,6 +63,56 @@ class RetrievalSearchService:
             lambda: self._read(scope, "neighbors", seeds, radius=radius, limit=limit)
         )
 
+    async def keyword_explore(self, scope, query, *, limit=20, order="RELEVANCE"):
+        """원문 탐색용 키워드 조회 한 번: 조각(관련도 또는 회차 순서)과 회차별 일치 분포.
+
+        RELEVANCE는 기존 keyword와 같은 순위다. EARLIEST/LATEST는 앞의 세 단어를 필수, 그다음 네 단어를
+        선택 표현으로 하는 기존 keyword_ordered를 쓴다. 분포(episode_hits)는 검색어의 모든 단어가 함께 든
+        조각 수를 본문 없이 (회차, 개수)로 돌려준다. 세 조회는 같은 범위·유효성 조건을 쓴다.
+        """
+        validate_query(query)
+        validate_limit(limit)
+        if order not in {"RELEVANCE", "EARLIEST", "LATEST"}:
+            raise ValueError("Unknown exploration search order")
+        words = list(dict.fromkeys(query.strip().split()))
+
+        def read():
+            with self.sessions() as session:
+                repository = self.repository_factory(session, scope, self.spec)
+                readiness = repository.readiness()
+                if order == "RELEVANCE":
+                    chunks = tuple(repository.keyword(query, limit=limit))
+                else:
+                    chunks = tuple(
+                        repository.keyword_ordered(words[:3], words[3:7], order=order, limit=limit)
+                    )
+                return SearchResult(
+                    chunks,
+                    readiness,
+                    limited=len(chunks) >= limit,
+                    episode_hits=tuple(repository.keyword_episodes(query)),
+                )
+
+        return await self.blocking_runner(read)
+
+    async def episodes(self, scope, episode_nos, limit=100):
+        """회차 통째 읽기. 권한·유효성·회차 범위는 저장소의 공통 조건이 적용한다."""
+        validate_limit(limit)
+        return await self.blocking_runner(
+            lambda: self._read(scope, "episodes", list(episode_nos), limit=limit)
+        )
+
+    async def episode_span(self, scope):
+        """현재 범위에서 읽을 수 있는 출처 회차의 (최소, 최대, 개수)."""
+
+        def read():
+            with self.sessions() as session:
+                repository = self.repository_factory(session, scope, self.spec)
+                repository.readiness()  # revoked work/member is not silently an empty range
+                return repository.episode_span()
+
+        return await self.blocking_runner(read)
+
     async def readiness(self, scope):
         def read():
             with self.sessions() as session:

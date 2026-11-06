@@ -84,7 +84,9 @@ def create_app(*, runtime: ChatRuntime | None = None, api_key: str | None = None
             handler = unconfigured_handler
             registry = CollectorRegistry()
             if qa.enabled:
-                provider_http = httpx.AsyncClient(timeout=httpx.Timeout(90, connect=10))
+                provider_http = httpx.AsyncClient(
+                    timeout=httpx.Timeout(qa.provider_timeout_seconds, connect=10)
+                )
                 delegate = OpenAIResponsesClient(
                     api_key=provider_key,
                     model=qa.model,

@@ -229,8 +229,14 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
         validate: Callable | None = None,
         *,
         max_attempts=None,
+        output_tokens=None,
+        time_limit=None,
     ):
+        # output_tokens: 목적별 기본 출력 상한 대신 쓸 값(복구 시도는 그 두 배와 복구 상한 중 작은 값).
+        # time_limit: 재시도를 포함해 이 호출 전체에 쓸 수 있는 시간(초). 서버 마감보다 늘리지는 못한다.
+        # 둘 다 지정하지 않으면 기존 동작과 같다.
         schema = response_schema(cls)
+        limit_started = time.monotonic()
         if not self.fits(prompt, payload, schema):
             raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
         client = ChatTextClient(
@@ -257,7 +263,9 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
                 if truncated_retry:
                     raise ProviderOutputTruncated()
                 raise ChatTransportError(429, "EXECUTION_LIMIT_EXCEEDED")
-            if not self.has_model_time():
+            if not self.has_model_time() or (
+                time_limit is not None and time.monotonic() - limit_started >= time_limit
+            ):
                 raise ModelTimeBudgetExceeded()
             self.before_model_call(purpose)
             # A schema/quote repair can also be longer than the original output.
@@ -265,10 +273,24 @@ class _Session(FocusedLookup, WorkLookup, RegisteredSynthesis):
             output_cap = self.cfg.output_tokens_for(
                 purpose, truncated_retry=truncated_retry or attempt > 0
             )
+            if output_tokens is not None:
+                output_cap = (
+                    max(
+                        output_tokens,
+                        min(output_tokens * 2, self.cfg.truncation_retry_max_output_tokens),
+                    )
+                    if truncated_retry or attempt > 0
+                    else output_tokens
+                )
             validation_failed = False
             started = time.monotonic()
             try:
-                async with asyncio.timeout(max(0, self.model_time_left())):
+                call_seconds = self.model_time_left()
+                if time_limit is not None:
+                    call_seconds = min(
+                        call_seconds, time_limit - (time.monotonic() - limit_started)
+                    )
+                async with asyncio.timeout(max(0, call_seconds)):
                     response = await client.create_text_response(
                         retry_prompt,
                         encode(payload),

@@ -126,6 +126,11 @@ class Outbox:
                         discard = True
                     except ChatTransportError as exc:
                         discard = exc.terminal
+                        if exc.status == 413 and action == "finish":
+                            # 완료 보고 본문이 Spring의 본문 상한을 넘었다. 같은 본문은 받지 않으므로
+                            # 버리고, 실행이 마감까지 기다리지 않게 작은 실패 보고로 바꿔 다음 차례에
+                            # 보낸다. 답은 게시되지 않는다.
+                            discard = not self._replace_oversized_finish(key, payload)
             if discard:
                 with self.db:
                     self.db.execute("DELETE FROM reports WHERE id=?", (key,))
@@ -135,6 +140,19 @@ class Outbox:
             slots = asyncio.Semaphore(concurrency)
             jobs.extend(deliver(row, slots) for row in batch)
         await asyncio.gather(*jobs)
+
+    def _replace_oversized_finish(self, key: str, payload: str) -> bool:
+        """본문 상한에 걸린 완료 보고를 실행 한도 실패 보고로 바꾼다. 이미 실패 보고였으면 False다."""
+        if json.loads(payload).get("result") is None:
+            return False
+        failure = json.dumps(
+            {"result": None, "failure": "EXECUTION_LIMIT_EXCEEDED"},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        with self.db:
+            self.db.execute("UPDATE reports SET payload=? WHERE id=?", (failure, key))
+        return True
 
     def close(self):
         self.db.close()

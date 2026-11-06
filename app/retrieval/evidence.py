@@ -57,7 +57,7 @@ def _valid(chunk):
         and sha256(chunk.text.encode()).hexdigest() == chunk.chunk_hash
         and math.isfinite(chunk.score)
         and chunk.methods
-        and all(m in {"DIRECT", "KEYWORD", "VECTOR", "NEIGHBOR"} for m in chunk.methods)
+        and all(m in {"DIRECT", "KEYWORD", "VECTOR", "NEIGHBOR", "EPISODE"} for m in chunk.methods)
     )
 
 
@@ -87,7 +87,8 @@ def compose_evidence(
     Each omitted candidate has one first-blocking reason; max_tokens covers passage text
     (caller budgets prompt overhead). Counts contain neither source IDs nor source text.
     """
-    if not 1 <= max_items <= 100 or not 1 <= per_episode <= 100 or max_tokens < 1:
+    # 원문 탐색이 읽은 묶음(조각 100개 이상)을 한 번에 합칠 수 있게 개수 상한을 1000으로 둔다.
+    if not 1 <= max_items <= 1000 or not 1 <= per_episode <= 1000 or max_tokens < 1:
         raise ValueError("Invalid evidence limits")
     if count_tokens is None:
         encoding = tiktoken.get_encoding("cl100k_base")

@@ -141,7 +141,7 @@ Python outbox는 SQLite 파일과 전용 볼륨을 사용한다. provider 호출
 | CHAT_OPERATIONS_ENABLED | false | 새 운영 백필 접수 활성화. 공개 채팅과 독립 |
 | CHAT_PYTHON_URL | 없음 | 별도 FastAPI 사설 주소. CHAT_ENABLED=true일 때만 필수 |
 | CHAT_CAPABILITY_SECRET | 없음 | 내부 API key와 다른 32자 이상·공백이 아닌 secret. 어느 게이트든 true이면 기동 시 필수 검증 |
-| CHAT_MAX_BODY_BYTES (Spring) | 131072 | 본문 상한, 512–131072바이트 |
+| CHAT_MAX_BODY_BYTES (Spring) | 131072 | 본문 상한, 512–1048576바이트(2026-11-06 전 최대 131072). 공개 질문·대화 경로와 내부 실행 경로에 같은 값을 적용 |
 | CHAT_DISPATCH_THREADS / CHAT_DISPATCH_QUEUE_CAPACITY | 2 / 32 | 즉시 HTTP 전송 동시성·대기열 |
 | CHAT_MAX_QUESTION_CHARACTERS | 4000 | 질문 상한 (최대 4000) |
 | CHAT_MAX_ACTIVE_PER_MEMBER | 3 | 사용자별 대기/실행/정산 대기 합계 |
@@ -156,7 +156,28 @@ Python outbox는 SQLite 파일과 전용 볼륨을 사용한다. provider 호출
 | CHAT_OUTBOX_PATH | /tmp/catchhole-chat/outbox.sqlite3 | 개발 기본 경로; 운영은 전용 볼륨 필수 |
 | CHAT_SHUTDOWN_GRACE | 15 | Python 정상 종료 대기 초 |
 
-Spring HTTP 전송 기본값은 2 thread + 32 queue이며 DB에 접수된 실행이 재전달 가능하다. Python은 로컬 대기열 없이 포화 시 429를 반환한다. DB 접수량은 사용자별 3개 제한이며 전역 사용자 접수 rate limiter는 추가하지 않았다. HTTP 본문은 Spring 채팅 경로 128KiB, Python dispatch 4KiB다. 결과 본문 16000자, 인용 참조 50개, 한계 설명 20개다.
+Spring HTTP 전송 기본값은 2 thread + 32 queue이며 DB에 접수된 실행이 재전달 가능하다. Python은 로컬 대기열 없이 포화 시 429를 반환한다. DB 접수량은 사용자별 3개 제한이며 전역 사용자 접수 rate limiter는 추가하지 않았다. HTTP 본문은 Spring 채팅 경로 기본 128KiB(설정으로 최대 1MiB), Python dispatch 4KiB다. 결과 본문 16000자, 인용 참조 50개, 검색 인용 60개, 한계 설명 20개다.
+
+### 탐색형 원문 답변을 켤 때 함께 올리는 설정 (#319, 2026-11-06)
+
+모델이 원문을 직접 찾아 읽고 사실을 추출해 답하는 탐색형 방식(AI 저장소, 기능 스위치 기본 꺼짐)은 기존 방식보다 모델·도구를 더 많이 부르고 근거 조각을 더 많이 인용한다. 코드에 고정돼 있던 두 상한만 넓혔고 **아래 다섯 설정의 기본값은 바꾸지 않았다.** 기존 방식만 쓰는 배포는 그대로 동작한다. 새 방식을 켤 때 운영자가 API 서버의 `api.env`에 다섯 값을 함께 넣고 API 컨테이너를 다시 만든다. `application.yml`과 `deploy/compose.api.prod.yml`은 다섯 값을 모두 전달한다.
+
+| 환경변수 | 기본값(유지) | 권장값 | 로컬 측정에서 본 최댓값 |
+|---|---:|---:|---|
+| CHAT_MAX_CALLS | 8 | 24 | 실행당 provider 호출 17회(질문 임베딩 포함) |
+| CHAT_MAX_TOOL_CALLS | 20 | 60 | 실행당 도구 호출 21회 |
+| CHAT_ATTEMPT_TOKEN_BUDGET | 240000 | 600000 | 실행당 누적 예약 약 43만 토큰 |
+| CHAT_EXECUTION_TIMEOUT | 120s | 300s | 응답까지 최대 112초 |
+| CHAT_MAX_BODY_BYTES | 131072 | 1048576 | 측정값 없음. 인용 60개 본문 크기 계산([결합 조회 계약](chat-hybrid-retrieval-v1.md))에 따른 허용 최댓값 |
+
+권장값은 로컬 실험 실행의 측정을 기준으로 여유를 둔 값이며 운영 부하·모델 지연에서 잰 값이 아니다. **운영 적용 전에 다시 확인한다.** 답변 품질 수치는 이 문서에 기록하지 않는다.
+
+- 고정 상한: 검색 인용은 등록 요청 한 번과 완료 결과 모두 60개(이전 12개), `CHAT_MAX_BODY_BYTES`의 허용 범위는 512–1,048,576바이트(이전 최대 131,072)다. 호출·도구·예약 토큰·실행 시간에는 설정 검증의 상한이 없어 권장값을 그대로 받는다.
+- `CHAT_ATTEMPT_TOKEN_BUDGET`은 실행의 누적 예약 상한이며 사용자 차감량이 아니다. 다만 각 호출의 예약은 호출 전에 회원 잔액에서 잡히므로, 호출당 예약이 커지면 시작에 필요한 잔액도 커진다.
+- `CHAT_EXECUTION_TIMEOUT`을 늘리면 멈춘 실행이 `TIMED_OUT`으로 바뀌는 시점(deadline)과 남은 예약이 회수되는 시점(deadline + `CHAT_USAGE_GRACE`)도 그만큼 늦어진다. deadline까지 그 실행은 회원별 동시 실행 자리(`CHAT_MAX_ACTIVE_PER_MEMBER`)를 차지하고 같은 대화의 다음 질문을 막는다.
+- `CHAT_MAX_BODY_BYTES`는 공개 질문·대화 경로에도 같은 값이 적용된다. 질문 4,000자 검증은 그대로다.
+- Python의 자체 상한(`CHAT_QA_MAX_TOOL_CALLS` 등)과 Spring 한도 중 작은 값이 적용된다. AI 저장소의 운영 문서에 있는 값과 함께 올린다.
+- 위 "식별자와 인증"의 잠금 원칙과 달리, 검색 인용의 등록·완료 재검증은 Work 잠금을 잡은 트랜잭션 안에서 원문 저장소를 읽는다(#240부터의 동작). 인용한 회차 수만큼 읽기가 늘어나므로 [결합 조회 계약](chat-hybrid-retrieval-v1.md)의 "현재 저장소 검증의 제한"을 함께 확인한다.
 
 ## 배포·롤백
 

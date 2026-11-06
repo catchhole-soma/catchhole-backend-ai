@@ -15,7 +15,9 @@ class ChatTransportError(RuntimeError):
 
     @property
     def terminal(self) -> bool:
-        return self.status in {400, 403, 404, 409, 410, 422}
+        # 413: 본문이 Spring 채팅 경로의 본문 상한(CHAT_MAX_BODY_BYTES)을 넘었다. 같은 본문은 다시
+        # 보내도 받지 않으므로 재전송하지 않는다.
+        return self.status in {400, 403, 404, 409, 410, 413, 422}
 
 
 class ChatExecutionClient:
@@ -56,6 +58,9 @@ class ChatExecutionClient:
                     }.get(raw_code)
             except ValueError:
                 pass
+            if response.status_code == 413:
+                # 본문 상한 초과는 응답 본문의 형태와 무관하게 실행 한도 초과로 분류한다.
+                code = "EXECUTION_LIMIT_EXCEEDED"
             raise ChatTransportError(response.status_code, code)
         try:
             envelope = response.json()
