@@ -1271,9 +1271,16 @@ class _HybridSession(AgentRetrieval, _Session):
         # This includes every original chunk covering a cross-boundary support.
         self.supported_evidence = tuple(e for e in evidences if e.ref in used)
 
-    def merge_partial_snapshot(self, previous, latest, plan):
-        """Combine independent requested facets with a fresh, unambiguous E map."""
+    def merge_partial_snapshot(self, previous, latest, plan, *, max_evidence=None, max_claims=8):
+        """Combine independent requested facets with a fresh, unambiguous E map.
+
+        max_evidence/max_claims는 합친 답이 지켜야 할 근거·문장 수다. 기본값은 고정 라운드의 근거
+        상한과 기존 응답 모델의 문장 수이고, 원문 탐색은 결과 계약의 인용 상한과 탐색 응답 모델의 문장
+        수를 넘긴다. 합친 답은 뒤 초안과 같은 응답 모델로 만든다.
+        """
         old_answer, old_evidence = previous
+        if max_evidence is None:
+            max_evidence = self.hcfg.max_evidence
 
         def row_facets(claims):
             result = {}
@@ -1348,6 +1355,7 @@ class _HybridSession(AgentRetrieval, _Session):
         ]
         evidence, claims = [], []
         by_identity = {}
+        passages_of = {}  # 스냅샷마다 한 번만 조합한다(같은 스냅샷의 문장이 여러 개다).
         for claim, snapshot in statements:
             refs = []
             remapped = {}
@@ -1376,7 +1384,11 @@ class _HybridSession(AgentRetrieval, _Session):
             # A validated support may have anchored an adjacent chunk in the
             # original merged passage. Resolve that quote again in its original
             # snapshot before choosing an anchor in the new citation map.
-            original_passages = self.evidence_passages(snapshot) if claim.supports else []
+            original_passages = []
+            if claim.supports:
+                if id(snapshot) not in passages_of:
+                    passages_of[id(snapshot)] = self.evidence_passages(snapshot)
+                original_passages = passages_of[id(snapshot)]
             supports = [
                 support.model_copy(
                     update={
@@ -1388,7 +1400,7 @@ class _HybridSession(AgentRetrieval, _Session):
                 for support in claim.supports
             ]
             claims.append(claim.model_copy(update={"evidence_refs": refs, "supports": supports}))
-        if len(evidence) > self.hcfg.max_evidence or len(claims) > 8:
+        if len(evidence) > max_evidence or len(claims) > max_claims:
             self.codes.append("EVIDENCE_CONTEXT_LIMIT")
             if old_facets <= new_facets:
                 return (
@@ -1401,7 +1413,7 @@ class _HybridSession(AgentRetrieval, _Session):
         answered = {f for c in claims for f in c.answered_facets}
         missing = [f for f in requested_facets(plan) if f not in answered]
         unanswered = unanswered_rows(claims)
-        combined = GroundedAnswer(
+        combined = type(latest)(
             coverage="PARTIAL"
             if missing or unanswered or self.uncertain_condition_rows()
             else "COMPLETE",

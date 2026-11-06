@@ -47,6 +47,7 @@ from app.chatbot.providers import ChatEmbeddingClient
 from app.chatbot.qa import ModelTimeBudgetExceeded, response_schema
 from app.chatbot.runtime import ProviderFailure
 from app.schemas.chat_hybrid import (
+    AGENT_CLAIM_LIMIT,
     RETRIEVAL_SOURCE_LIMIT,
     AgentGroundedAnswer,
     AgentGroundedClaim,
@@ -817,16 +818,41 @@ class AgentRetrieval:
             self.agent_registered.update(c.chunk_id for c in new)
             self.agent_trace("agent_register", chunks=len(new), tools=self.tool_count)
 
-    @staticmethod
-    def agent_better(previous, latest):
-        """더 많은 요구를 답한 초안을 고른다. 같으면 더 많은 원문을 본 나중 초안이다."""
-        if previous is None:
+    def agent_merge_partial(self, best, draft, plan):
+        """검증된 부분 답을 누적한다. (답, 그 답의 근거 스냅샷)을 돌려준다.
+
+        앞 시도와 이번 시도가 서로 다른 요구를 답했으면 고정 라운드와 같은 merge_partial_snapshot으로
+        양립하는 문장과 근거를 합치고 남은 요구를 다시 계산한다. 앞 시도가 답한 요구를 뒤 초안으로
+        통째로 바꿔 잃지 않기 위함이다. 근거·문장 수는 결과 계약(인용 60개)과 탐색 응답 모델의 상한을
+        쓴다.
+        """
+        latest = (draft, tuple(self.evidences))
+        if best is None:
             return latest
+        merged = self.merge_partial_snapshot(
+            best,
+            draft,
+            plan,
+            max_evidence=RETRIEVAL_SOURCE_LIMIT,
+            max_claims=AGENT_CLAIM_LIMIT,
+        )
+        if merged is not best:
+            return merged
+        # 병합이 앞 답을 그대로 둔 경우(새로 답한 요구가 없음). 뒤 초안이 앞 답의 요구를 모두 답했고
+        # 문장이 줄지 않았으면 더 많은 원문을 본 뒤 초안을 쓴다. 답한 요구가 줄거나 앞 답에 등록값과의
+        # 충돌 표시가 있으면 앞 답을 유지한다.
+        old = best[0]
 
-        def score(answer):
-            return len({f for c in answer.claims for f in c.answered_facets}), len(answer.claims)
+        def answered(answer):
+            return {f for claim in answer.claims for f in claim.answered_facets}
 
-        return latest if score(latest) >= score(previous) else previous
+        if (
+            not old.conflicts
+            and answered(draft) >= answered(old)
+            and len(draft.claims) >= len(old.claims)
+        ):
+            return latest
+        return best
 
     def agent_relaxes_range(self):
         """계획이 좁힌 회차 범위를 서버 허용 범위로 넓혀 읽을 실행인지(agent_relax_plan_range)."""
@@ -921,7 +947,8 @@ class AgentRetrieval:
             tools=self.tool_count,
         )
         await self.agent_seed(plan)
-        best = None
+        # 검증된 부분 답과 그 근거 스냅샷. 항목별 답은 item_draft가 누적 병합본이라 스냅샷이 없다.
+        best, best_evidence = None, None
         gaps = None
         retry_same = False
         while True:
@@ -963,11 +990,27 @@ class AgentRetrieval:
             ready = draft.coverage == "COMPLETE" if items else self.source_answer_ready(plan, draft)
             if ready:
                 return await self.finish_answer(draft)
-            if draft.coverage == "PARTIAL":
-                best = draft if items else self.agent_better(best, draft)
-                self.preserve_supported_evidence(
-                    best, self.evidence_registry.values() if items else self.evidences
+            if draft.coverage == "PARTIAL" and items:
+                best = draft
+                self.preserve_supported_evidence(best, self.evidence_registry.values())
+            elif draft.coverage == "PARTIAL":
+                merging = best is not None
+                best, best_evidence = self.agent_merge_partial(
+                    None if best is None else (best, best_evidence), draft, plan
                 )
+                self.preserve_supported_evidence(best, best_evidence)
+                if merging:
+                    self.agent_trace(
+                        "agent_merge",
+                        coverage=best.coverage,
+                        claims=len(best.claims),
+                        missing=list(best.missing_facets),
+                    )
+                    if self.source_answer_ready(plan, best):
+                        # 두 시도가 나눠 답한 요구를 합치니 모두 답했다. 더 찾지 않고 게시한다.
+                        self.evidences = list(best_evidence)
+                        return await self.finish_answer(best)
+            if draft.coverage == "PARTIAL":
                 self.fallback_direct_checks = len(
                     {e.direct_ref for e in self.evidences if e.direct_ref}
                 )
@@ -1003,10 +1046,16 @@ class AgentRetrieval:
                 continue
             if not self.agent_can_step():
                 break
-            gaps = self.agent_gaps(plan, draft)
+            # 빠진 요구는 지금까지 검증된 답 전체를 기준으로 알린다(이번 초안만 보면 앞서 답한 요구가
+            # 다시 빠진 것처럼 보인다).
+            gaps = self.agent_gaps(plan, draft if items or best is None else best)
         if best is not None:
             if best.coverage != "COMPLETE":
                 self.codes.append("PARTIAL_ANSWER")
+            if best_evidence is not None:
+                # 합친 답의 참조는 그 답의 근거 스냅샷 번호다. 마무리의 현재값·원문 재검증과 인용 등록은
+                # 이 스냅샷으로 한다.
+                self.evidences = list(best_evidence)
             return await self.finish_answer(best)
         return await self.unanswered_source_result(plan)
 

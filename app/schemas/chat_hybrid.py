@@ -321,8 +321,12 @@ class AgentGroundedClaim(GroundedClaim):
     supports: list[EvidenceSupport] = Field(default_factory=list, max_length=12)
 
 
+# 탐색 답변 하나의 문장 수 상한. 검증된 부분 답을 합칠 때도 같은 값을 쓴다.
+AGENT_CLAIM_LIMIT = 12
+
+
 class AgentGroundedAnswer(GroundedAnswer):
-    claims: list[AgentGroundedClaim] = Field(max_length=12)
+    claims: list[AgentGroundedClaim] = Field(max_length=AGENT_CLAIM_LIMIT)
 
 
 class ExplorationStep(ContractModel):

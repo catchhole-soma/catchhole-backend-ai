@@ -24,6 +24,7 @@ from app.schemas.chat_hybrid import (
     AgentGroundedAnswer,
     AgentGroundedClaim,
     ComposedAnswer,
+    EvidenceConflict,
     ExtractedFact,
     FactExtraction,
     GroundedAnswer,
@@ -495,3 +496,123 @@ def test_fact_list_is_capped_in_episode_order_and_the_cut_is_recorded():
     assert len(facts) == FACT_LIMIT
     assert facts[0].quote == sentences[0].strip() and facts[-1].ref == f"F{FACT_LIMIT}"
     assert "EVIDENCE_CONTEXT_LIMIT" in session.codes
+
+
+# ---- 검증된 부분 답의 병합(PR #137 리뷰) ----
+
+
+def numbered_chunks(count):
+    base = story_chunk(1, 0)
+    return [
+        replace(
+            base,
+            chunk_id=UUID(int=770000 + n),
+            chunk_index=n,
+            start_offset=n * 1000,
+            end_offset=n * 1000 + len(base.text),
+        )
+        for n in range(count)
+    ]
+
+
+def partial_answer(claims, missing, conflicts=()):
+    return AgentGroundedAnswer(
+        coverage="PARTIAL",
+        claims=[
+            AgentGroundedClaim(text=text, evidence_refs=refs, answered_facets=answered)
+            for text, refs, answered in claims
+        ],
+        conflicts=list(conflicts),
+        missing_facets=missing,
+    )
+
+
+def merge_session(count=4):
+    session = agent_session()
+    session.agent_pool_add(numbered_chunks(count))
+    return session, HybridPlan.model_validate(plan_output())
+
+
+def test_partial_answers_covering_different_parts_are_combined_with_their_evidence():
+    session, plan = merge_session()
+    first = partial_answer([("첫 시도가 답한 문장", ["E2"], ["P1"])], ["P2"])
+    best = session.agent_merge_partial(None, first, plan)
+    assert best[0] is first and [e.ref for e in best[1]] == ["E1", "E2", "E3", "E4"]
+    second = partial_answer([("둘째 시도가 답한 문장", ["E4", "E2"], ["P2"])], ["P1"])
+    merged, evidence = session.agent_merge_partial(best, second, plan)
+    # 앞 시도가 답한 요구를 뒤 초안으로 바꿔 잃지 않는다. 탐색 응답 모델 그대로 합친다.
+    assert type(merged) is AgentGroundedAnswer and merged.coverage == "COMPLETE"
+    assert [c.text for c in merged.claims] == ["첫 시도가 답한 문장", "둘째 시도가 답한 문장"]
+    assert merged.missing_facets == []
+    # 근거는 인용한 조각만 새 번호로 묶고, 같은 조각은 한 번만 넣는다.
+    chunks = numbered_chunks(4)
+    assert [(e.ref, e.chunk.chunk_id) for e in evidence] == [
+        ("E1", chunks[1].chunk_id),
+        ("E2", chunks[3].chunk_id),
+    ]
+    assert [c.evidence_refs for c in merged.claims] == [["E1"], ["E2", "E1"]]
+    # 남은 요구는 합친 답 기준으로 다시 계산한다.
+    third_part = HybridPlan.model_validate(
+        plan_output(
+            requestedParts=[
+                {"ref": ref, "description": f"요구 {ref}"} for ref in ("P1", "P2", "P3")
+            ]
+        )
+    )
+    still_partial, _ = session.agent_merge_partial(
+        (partial_answer([("첫 문장", ["E1"], ["P1"])], ["P2", "P3"]), tuple(session.evidences)),
+        partial_answer([("둘째 문장", ["E2"], ["P2"])], ["P1", "P3"]),
+        third_part,
+    )
+    assert still_partial.coverage == "PARTIAL" and still_partial.missing_facets == ["P3"]
+
+
+def test_merged_answer_uses_the_result_contract_limits_not_the_fixed_round_ones():
+    session, plan = merge_session(count=14)
+    first = partial_answer([("앞 문장", [f"E{n}" for n in range(1, 8)], ["P1"])], ["P2"])
+    second = partial_answer([("뒤 문장", [f"E{n}" for n in range(8, 15)], ["P2"])], ["P1"])
+    previous = (first, tuple(session.evidences))
+    # 고정 라운드의 기본 한도(근거 12개)로는 합치지 못하고 앞 답을 유지한다.
+    assert session.merge_partial_snapshot(previous, second, plan) is previous
+    # 탐색은 결과 계약의 인용 상한(60개)까지 합친다.
+    merged, evidence = session.agent_merge_partial(previous, second, plan)
+    assert merged.coverage == "COMPLETE" and len(evidence) == 14
+    # 문장 수가 탐색 응답 모델의 상한(12개)을 넘으면 합치지 않고 앞 답을 유지한다.
+    many_first = partial_answer([(f"앞 문장 {n}", ["E1"], ["P1"]) for n in range(7)], ["P2"])
+    many_second = partial_answer([(f"뒤 문장 {n}", ["E2"], ["P2"]) for n in range(7)], ["P1"])
+    kept = (many_first, tuple(session.evidences))
+    session.codes.clear()
+    assert session.agent_merge_partial(kept, many_second, plan) is kept
+    assert "EVIDENCE_CONTEXT_LIMIT" in session.codes
+
+
+def test_an_attempt_that_adds_no_newly_answered_part_never_loses_answered_parts():
+    session, plan = merge_session()
+    first = partial_answer([("앞 문장", ["E1"], ["P1"])], ["P2"])
+    best = (first, tuple(session.evidences))
+    # 같은 요구를 다시 답했고 문장이 줄지 않았으면 더 많은 원문을 본 뒤 초안을 쓴다.
+    same = partial_answer([("뒤 문장", ["E2"], ["P1"]), ("보충 문장", ["E3"], ["P1"])], ["P2"])
+    assert session.agent_merge_partial(best, same, plan)[0] is same
+    # 답한 요구가 없는 관련 맥락뿐이거나 문장이 줄었으면 앞 답을 유지한다.
+    fewer = AgentGroundedAnswer(
+        coverage="PARTIAL",
+        claims=[AgentGroundedClaim(text="맥락", evidence_refs=["E2"], related_facets=["P2"])],
+        conflicts=[],
+        missing_facets=["P1", "P2"],
+    )
+    assert session.agent_merge_partial(best, fewer, plan) is best
+    two = (partial_answer([("가", ["E1"], ["P1"]), ("나", ["E2"], ["P1"])], ["P2"]), best[1])
+    one = partial_answer([("다", ["E3"], ["P1"])], ["P2"])
+    assert session.agent_merge_partial(two, one, plan) is two
+    # 앞 답에 등록값과의 충돌 표시가 있으면 조용히 바꾸거나 합치지 않는다.
+    conflicted = (
+        partial_answer(
+            [("앞 문장", ["E1"], ["P1"])],
+            ["P2"],
+            conflicts=[EvidenceConflict(row_refs=["R1"], evidence_refs=["E1"])],
+        ),
+        best[1],
+    )
+    assert session.agent_merge_partial(conflicted, same, plan) is conflicted
+    other = partial_answer([("뒤 문장", ["E2"], ["P2"])], ["P1"])
+    assert session.agent_merge_partial(conflicted, other, plan) is conflicted

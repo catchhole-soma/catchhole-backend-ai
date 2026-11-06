@@ -393,7 +393,11 @@ async def agent_replay(
         try:
             runtime.submit(dispatch)
             await asyncio.gather(*list(runtime.tasks.values()))
-            await runtime.deliver()
+            # outbox는 한 번에 종류별 8건씩 보낸다. 호출이 많은 실행은 여러 번에 걸쳐 비운다.
+            for _ in range(8):
+                await runtime.deliver()
+                if box.count() == 0:
+                    break
             assert len(spring.finishes) == 1
             assert box.count() == 0
             assert box._reserved_slots == 0
@@ -1141,3 +1145,107 @@ def test_an_answer_that_keeps_citing_unknown_facts_is_never_published(tmp_path):
     assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
     assert "금화" not in finished["text"] and "retrievalSources" not in finished
     assert_ledger_balanced(result)
+
+
+THREE_PARTS = [
+    {"ref": "P1", "description": "가온이 나침반을 얻은 경위"},
+    {"ref": "P2", "description": "열쇠를 찾은 곳"},
+    {"ref": "P3", "description": "섬에 도착한 날"},
+]
+
+
+def two_attempt_outputs(parts=None):
+    """첫 시도는 P1만, 3화를 더 읽은 둘째 시도는 P2만 답하는 출력."""
+    plan = plan_output() if parts is None else plan_output(requestedParts=parts)
+    refs = [part["ref"] for part in plan["requestedParts"]]
+    return {
+        PLAN_VERSION: [plan],
+        EXPLORE_VERSION: [step(enough=True), step(read=[3]), step(enough=True)],
+        EXTRACT_VERSION: [facts_from([COMPASS, KEY])],
+        COMPOSE_VERSION: [
+            compose_by_quote(
+                {COMPASS: ANSWER_CLAIMS[COMPASS]}, missing=[r for r in refs if r != "P1"]
+            ),
+            compose_by_quote({KEY: ANSWER_CLAIMS[KEY]}, missing=[r for r in refs if r != "P2"]),
+        ],
+    }
+
+
+def test_partial_answers_from_two_attempts_are_merged_instead_of_replaced(tmp_path):
+    result = asyncio.run(agent_replay(tmp_path, two_attempt_outputs(), search_setup=seed_compass))
+    raw, finished = result["raw"], result["finish"]["result"]
+    # 둘째 탐색에는 지금까지 검증된 답 기준으로 빠진 요구(P2)만 알린다.
+    again = raw.of(EXPLORE_VERSION)[1]["input"]["previousAnswer"]
+    assert again["answered"] == ["P1"] and [m["ref"] for m in again["missing"]] == ["P2"]
+    assert len(raw.of(COMPOSE_VERSION)) == 2
+    # 첫 시도가 답한 P1을 둘째 초안(P2만 답함)으로 바꿔 잃지 않는다. 합치면 모두 답했으므로 게시한다.
+    assert finished["outcome"] == "ANSWER"
+    assert "은화 세 닢" in finished["text"] and "강바닥" in finished["text"]
+    assert "확정하기 어려워요" not in finished["text"]
+    assert sorted(s["sourceEpisodeNo"] for s in finished["retrievalSources"]) == [1, 3]
+    # 합친 답도 기존 마무리를 지난다: 인용한 조각의 현재 원문 재검증과 마지막 인용 등록.
+    assert result["search"].calls[-1] == "revalidate"
+    assert [s["sourceEpisodeNo"] for s in result["spring"].receipts[-1]["sources"]] == [1, 3]
+    assert [s["quote"] for s in result["spring"].receipts[-1]["sources"]] == [
+        s["quote"] for s in finished["retrievalSources"]
+    ]
+    assert_ledger_balanced(result)
+
+
+def test_merged_partial_answer_reports_only_the_parts_no_attempt_answered(tmp_path):
+    result = asyncio.run(
+        agent_replay(
+            tmp_path,
+            two_attempt_outputs(THREE_PARTS),
+            search_setup=seed_compass,
+            hybrid={"agent_max_answers": 2},
+        )
+    )
+    finished = result["finish"]["result"]
+    assert finished["outcome"] == "ANSWER"
+    # 답변 시도가 여기서 끝나도 두 시도가 검증한 P1·P2는 모두 남고, 못 답한 것은 P3뿐이다.
+    assert "은화 세 닢" in finished["text"] and "강바닥" in finished["text"]
+    gap = next(line for line in finished["text"].splitlines() if "확정하기 어려워요" in line)
+    assert "섬에 도착한 날" in gap
+    assert "나침반을 얻은 경위" not in gap and "열쇠를 찾은 곳" not in gap
+    assert sorted(s["sourceEpisodeNo"] for s in finished["retrievalSources"]) == [1, 3]
+
+
+def test_single_stage_partial_answers_are_merged_the_same_way(tmp_path):
+    def answer_with(quote, text, part, missing):
+        def build(body):
+            passage = next(p for p in body["passages"] if quote in p["text"])
+            ref = passage["references"][0]["evidenceRef"]
+            return {
+                "coverage": "PARTIAL",
+                "claims": [
+                    {
+                        "text": text,
+                        "evidenceRefs": [ref],
+                        "answeredFacets": [part],
+                        "supports": [{"evidenceRef": ref, "quote": quote}],
+                    }
+                ],
+                "conflicts": [],
+                "missingFacets": [missing],
+            }
+
+        return build
+
+    outputs = {
+        PLAN_VERSION: [plan_output()],
+        EXPLORE_VERSION: [step(enough=True), step(read=[3]), step(enough=True)],
+        AGENT_ANSWER_VERSION: [
+            answer_with(COMPASS, ANSWER_CLAIMS[COMPASS][0], "P1", "P2"),
+            answer_with(KEY, ANSWER_CLAIMS[KEY][0], "P2", "P1"),
+        ],
+    }
+    result = asyncio.run(
+        agent_replay(tmp_path, outputs, search_setup=seed_compass, hybrid={"agent_extract": False})
+    )
+    finished = result["finish"]["result"]
+    assert finished["outcome"] == "ANSWER"
+    assert "은화 세 닢" in finished["text"] and "강바닥" in finished["text"]
+    assert "확정하기 어려워요" not in finished["text"]
+    # 합친 답의 인용문은 각자 읽었던 원문 조각에 그대로 이어진다.
+    assert [s["quote"] for s in finished["retrievalSources"]] == [STORY[1][0], STORY[3][0]]
