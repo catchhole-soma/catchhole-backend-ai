@@ -1,11 +1,14 @@
 """Extractive output: only server values and verified quotes become answer text."""
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 
 from app.schemas.chat_execution import ChatResult, Finish
 from app.schemas.setting_tools import SettingToolItem, SourceReference
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -17,6 +20,8 @@ class AnswerRow:
     evidence_requested: bool = False
 
 
+# 안내 코드와 문장이다. 답변 모델의 입력(hybrid answer payload의 limitations)과 결과의
+# limitations에 쓴다. 결과가 프로세스를 떠날 때 publish()가 붙은 코드를 이름으로 기록한다.
 NOTICES = {
     "REGISTERED_CURRENT_UNCONFIRMED": "요청하신 현재 등록 설정은 확인하지 못했어요. 등록된 대상의 이름이나 조회 항목을 확인해 주세요.",
     "CURRENT_CHANGED": "조회 중 설정이 바뀌어 이전 값으로 답변하지 않았습니다.",
@@ -73,6 +78,14 @@ NOTICES = {
     "UNSUPPORTED_REQUEST": "현재는 작품 정보를 조회하는 질문에 답할 수 있습니다.",
 }
 
+# NOTICES에 없는 문장을 담아 온 결과의 기록용 이름이다. 문장 자체는 기록하지 않는다.
+UNREGISTERED_NOTICE = "UNREGISTERED_NOTICE"
+
+_CODE_BY_NOTICE = {sentence: code for code, sentence in NOTICES.items()}
+if len(_CODE_BY_NOTICE) != len(NOTICES):
+    # 문장이 겹치면 결과에서 발생 코드를 되찾을 수 없다.
+    raise RuntimeError("Notice sentences must be unique")
+
 
 def safe_text(value: str) -> str:
     # The chat UI renders plain text, not Markdown or HTML. Keep data inline without
@@ -91,6 +104,29 @@ def notices(codes: list[str], *, include_conversation_limit: bool = False) -> li
             if c in NOTICES and (include_conversation_limit or c != "CONVERSATION_LIMIT")
         )
     )[:20]
+
+
+def publish(finish: Finish, attempt_id=None) -> Finish:
+    """실행 경계에서 한 번 호출한다. 결과에 붙은 안내 코드를 이름으로 기록한다."""
+    result = finish.result
+    if result is None:
+        return finish
+    codes = list(
+        dict.fromkeys(_CODE_BY_NOTICE.get(note, UNREGISTERED_NOTICE) for note in result.limitations)
+    )
+    # 코드 이름만 남긴다. 질문·원문·답변·회원/작품 ID와 표에 없는 문장은 넣지 않는다.
+    logger.info(
+        "chat_answer_notices attempt=%s outcome=%s codes=%s",
+        attempt_id,
+        result.outcome,
+        codes,
+        extra={
+            "notice_attempt": None if attempt_id is None else str(attempt_id),
+            "notice_outcome": result.outcome,
+            "notice_codes": codes,
+        },
+    )
+    return finish
 
 
 def message(outcome: str, text: str, codes: list[str]) -> Finish:

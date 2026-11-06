@@ -19,7 +19,14 @@ from app.chatbot.hybrid import HybridQaHandler
 from app.chatbot.hybrid_config import HybridSettings
 from app.chatbot.hybrid_metrics import HybridMetrics
 from app.chatbot.outbox import Outbox
-from app.chatbot.replay import ReplaySpring, ScriptedTextClient, load_fixture, offline_settings
+from app.chatbot.replay import (
+    NoticeCodes,
+    ReplaySpring,
+    ScriptedTextClient,
+    load_fixture,
+    offline_settings,
+    recorded_notice_codes,
+)
 from app.chatbot.runtime import ChatRuntime
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.retrieval.chunking import POLICY
@@ -259,8 +266,9 @@ async def replay(
             ),
         )
         try:
-            runtime.submit(dispatch)
-            await asyncio.gather(*list(runtime.tasks.values()))
+            with recorded_notice_codes() as notice_codes:
+                runtime.submit(dispatch)
+                await asyncio.gather(*list(runtime.tasks.values()))
             await runtime.deliver()
             assert len(spring.finishes) == 1, "Exactly one finish must pass through the real outbox"
             assert box.count() == 0
@@ -268,6 +276,8 @@ async def replay(
             box.close()
     return {
         "finish": spring.finishes[0],
+        # 이 결과에 붙은 안내 코드 이름 전체다. 화면 문구가 아니라 진단 기록에서 읽는다.
+        "noticeCodes": notice_codes[-1] if notice_codes else NoticeCodes(),
         "spring": spring,
         "search": search,
         "embedding": embedding,
