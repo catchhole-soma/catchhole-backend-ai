@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from app.chatbot.qa import encode, response_schema
-from app.chatbot.qa_render import NOTICES
 from app.chatbot.replay import check_expected, load_fixture, offline_settings, replay_case
 from app.schemas.chat_qa import AnswerSelection, QuestionPlan
 
@@ -163,7 +162,7 @@ async def test_partial_subject_page_cannot_be_assumed_unique():
     result = await run("ambiguous_subject", config={"page_size": 1, "max_pages": 1})
     assert result["finish"]["result"]["outcome"] == "CLARIFICATION"
     assert len(result["queries"]) == 1
-    assert NOTICES["PARTIAL_RESULTS"] in result["finish"]["result"]["limitations"]
+    assert "PARTIAL_RESULTS" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -188,8 +187,8 @@ async def test_server_partial_subject_search_requires_clarification(name, empty)
     answer = result["finish"]["result"]
     assert answer["outcome"] == "CLARIFICATION"
     assert len(result["queries"]) == len(result["modelRequests"]) == 1
-    assert NOTICES["PARTIAL_RESULTS"] in answer["limitations"]
-    assert NOTICES["NO_RELATED_SETTING"] not in answer["limitations"]
+    assert "PARTIAL_RESULTS" in result["noticeCodes"]
+    assert "NO_RELATED_SETTING" not in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -204,7 +203,7 @@ async def test_selection_ambiguity_is_distinct_from_missing_setting(name, outcom
     result = await run(name)
     answer = result["finish"]["result"]
     assert answer["outcome"] == outcome
-    assert (NOTICES["NO_RELATED_SETTING"] in answer["limitations"]) is missing
+    assert ("NO_RELATED_SETTING" in result["noticeCodes"]) is missing
 
 
 @pytest.mark.anyio
@@ -231,7 +230,7 @@ async def test_spring_truncated_evidence_keeps_existing_partial_notice():
     answer = result["finish"]["result"]
     assert answer["outcome"] == "ANSWER"
     assert len(answer["sources"]) == 1
-    assert NOTICES["PARTIAL_RESULTS"] in answer["limitations"]
+    assert "PARTIAL_RESULTS" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -257,7 +256,7 @@ async def test_stored_multiline_text_cannot_create_answer_blocks(field):
 async def test_partial_setting_page_is_visible_not_claimed_complete():
     result = await run(config={"page_size": 1, "max_pages": 1})
     assert result["finish"]["result"]["outcome"] == "ANSWER"
-    assert NOTICES["PARTIAL_RESULTS"] in result["finish"]["result"]["limitations"]
+    assert "PARTIAL_RESULTS" in result["noticeCodes"]
     assert result["modelRequests"][1]["input"]["partial"] is True
 
 
@@ -287,7 +286,7 @@ async def test_context_limit_omits_whole_rows_and_preserves_notice():
     result = await replay_case(case, catalog, config={"max_context_characters": budget})
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert len(result["modelRequests"][1]["input"]["rows"]) == 1
-    assert NOTICES["CONTEXT_LIMIT"] in result["finish"]["result"]["limitations"]
+    assert "CONTEXT_LIMIT" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -295,7 +294,7 @@ async def test_evidence_budget_preserves_setting_and_marks_missing_quotes():
     result = await run(config={"max_evidence_calls": 0})
     answer = result["finish"]["result"]
     assert "화염구" in answer["text"] and answer["sources"] == []
-    assert NOTICES["EVIDENCE_LIMIT"] in answer["limitations"]
+    assert "EVIDENCE_LIMIT" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -318,7 +317,7 @@ async def test_unavailable_quotes_are_never_rendered_even_if_payload_retains_tex
     result = await replay_case(case, catalog)
     answer = result["finish"]["result"]
     assert not answer["sources"] and "아리아는 화염구를 사용할 수 있다." not in answer["text"]
-    assert NOTICES[status] in answer["limitations"]
+    assert status in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -337,7 +336,7 @@ async def test_old_or_different_path_evidence_is_not_current_proof(mutation):
     catalog[0]["evidence"][0].update(mutation)
     result = await replay_case(case, catalog)
     assert result["finish"]["result"]["sources"] == []
-    assert NOTICES["STALE_CURRENT_SOURCE"] in result["finish"]["result"]["limitations"]
+    assert "STALE_CURRENT_SOURCE" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -346,7 +345,7 @@ async def test_source_range_only_reaches_history_or_evidence_queries():
     assert all(q["episodeFrom"] is None and q["episodeTo"] is None for q in result["queries"][:2])
     assert result["queries"][2]["episodeFrom"] == 3
     assert result["queries"][2]["episodeTo"] == 5
-    assert NOTICES["OUT_OF_RANGE"] in result["finish"]["result"]["limitations"]
+    assert "OUT_OF_RANGE" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -448,7 +447,7 @@ async def test_sources_follow_displayed_rows_and_quotes_use_separate_panel(
     answer = result["finish"]["result"]
     assert len(answer["text"]) <= 1000
     assert len(answer["sources"]) == source_count
-    assert (NOTICES["ANSWER_LIMIT"] in answer["limitations"]) is (source_count == 0)
+    assert ("ANSWER_LIMIT" in result["noticeCodes"]) is (source_count == 0)
 
 
 @pytest.mark.anyio
@@ -465,7 +464,7 @@ async def test_no_evidence_is_invented_for_empty_available_quote_list():
     catalog[0]["evidence"][0]["evidence"]["quotes"] = []
     result = await replay_case(case, catalog)
     assert result["finish"]["result"]["sources"] == []
-    assert NOTICES["INVALID_QUOTE"] in result["finish"]["result"]["limitations"]
+    assert "INVALID_QUOTE" in result["noticeCodes"]
 
 
 @pytest.mark.anyio

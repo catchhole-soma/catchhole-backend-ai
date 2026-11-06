@@ -252,7 +252,7 @@ def test_truncated_history_is_disclosed_to_model_without_unrelated_success_notic
             c, FIXTURE["catalogs"][c["catalog"]], spring_setup=lambda s: history(s, truncated=True)
         )
     )
-    assert not any("대화 일부만" in x for x in result["finish"]["result"]["limitations"])
+    assert "CONVERSATION_LIMIT" not in result["noticeCodes"]
     assert result["modelRequests"][1]["input"]["conversationTruncated"] is True
 
 

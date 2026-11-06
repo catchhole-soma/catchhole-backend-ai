@@ -12,7 +12,7 @@ import pytest
 
 from app.chatbot.hybrid import _Evidence
 from app.chatbot.hybrid_metrics import HybridMetrics
-from app.chatbot.qa_render import AnswerRow, notices
+from app.chatbot.qa_render import AnswerRow
 from app.schemas.setting_tools import DirectEvidence, EvidenceQuote, SourceReference
 from tests.test_chat_evidence_budget import answer_context, korean_chunks
 from tests.test_chat_hybrid import replay, scenario
@@ -225,10 +225,10 @@ def test_success_omits_blanket_disclaimer_but_preserves_gaps_and_index_warning(t
     assert "관련 자료를 모두 검토한 결과는 아니에요" not in output["text"]
     assert ("질문의 일부만 답할 수 있었어요" in output["text"]) == (coverage == "PARTIAL")
     assert "근거 1" in output["text"] and len(output["retrievalSources"]) == 1
-    assert notices(["INDEX_PARTIAL"])[0] in output["limitations"]
+    assert "INDEX_PARTIAL" in result["noticeCodes"]
     assert omission_counts(result["metrics"])[("search", "ITEM_LIMIT")] == 2
-    assert not set(notices(["SEARCH_LIMIT", "EVIDENCE_CONTEXT_LIMIT", "PARTIAL_ANSWER"])) & set(
-        output["limitations"]
+    assert not {"SEARCH_LIMIT", "EVIDENCE_CONTEXT_LIMIT", "PARTIAL_ANSWER"} & set(
+        result["noticeCodes"]
     )
     assert all(code not in output["text"] for code in ["SEARCH_LIMIT", "PARTIAL_ANSWER", "E1"])
 
@@ -248,6 +248,6 @@ def test_source_change_is_not_hidden_by_search_scope_presentation(tmp_path):
 
     output = result["finish"]["result"]
     assert output["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert notices(["SOURCE_CHANGED"])[0] in output["limitations"]
+    assert "SOURCE_CHANGED" in result["noticeCodes"]
     assert not output.get("retrievalSources")
     assert "강물" not in output["text"]

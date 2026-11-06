@@ -501,7 +501,7 @@ def test_tool_budget_stops_before_receipt_and_answer_generation(tmp_path):
     result = asyncio.run(replay(tmp_path, case))
     assert result["finish"]["failure"] is None
     assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert any("검색" in note for note in result["finish"]["result"]["limitations"])
+    assert "SEARCH_LIMIT" in result["noticeCodes"]
     assert len(result["raw"].requests) == 1
     assert result["search"].calls == []
     assert not result["spring"].receipts
@@ -513,7 +513,7 @@ def test_partial_text_readiness_can_answer_with_available_keyword_source(tmp_pat
     result = asyncio.run(replay(tmp_path, case))
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert not result["embedding"].inputs
-    assert result["finish"]["result"]["limitations"]
+    assert result["noticeCodes"] == ["TEXT_INDEX_PARTIAL", "VECTOR_INDEX_PARTIAL", "INDEX_PARTIAL"]
 
 
 def test_partial_answer_stays_explicit_when_search_round_budget_ends(tmp_path):

@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, call
 import pytest
 
 from app.chatbot.qa_lookup import FocusedLookup
-from app.chatbot.qa_render import NOTICES
 from app.chatbot.replay import replay_case
 from app.schemas.chat_qa import QuestionSubject
 from tests.test_chat_focused_lookup import answer, case, plan, tool_queries, uid
@@ -54,7 +53,7 @@ async def test_complete_missing_name_retries_once_with_same_explicit_category(ca
     assert [q["query"] for q in queries] == [full_name, "서리꽃"]
     assert {q["worldCategory"] for q in queries} == {category}
     assert {q["targetId"] for q in tool_queries(result, "WORLD_CURRENT")} == {uid(1)}
-    assert NOTICES["NO_RELATED_SETTING"] not in answer(result)["limitations"]
+    assert "NO_RELATED_SETTING" not in result["noticeCodes"]
 
 
 @pytest.mark.anyio

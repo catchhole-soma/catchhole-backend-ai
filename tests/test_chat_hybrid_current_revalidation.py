@@ -13,7 +13,6 @@ import socket
 import httpx
 import pytest
 
-from app.chatbot.qa_render import NOTICES
 from tests.test_chat_focused_lookup import catalog_subject, item
 from tests.test_chat_hybrid import replay, scenario, source_chunk
 
@@ -121,7 +120,7 @@ def assert_changed(result):
     assert finish["failure"] is None, finish
     response = finish["result"]
     assert response["outcome"] == "INSUFFICIENT_EVIDENCE", response
-    assert NOTICES["CURRENT_CHANGED"] in response["limitations"]
+    assert "CURRENT_CHANGED" in result["noticeCodes"]
     assert "7" not in response["text"]
     assert not response["sources"] and not response.get("retrievalSources")
     assert "설정" in response["text"] and "변경" in response["text"]
@@ -155,7 +154,7 @@ def test_named_current_is_rechecked_after_narrative_generation(
         assert result["finish"]["failure"] is None, result["finish"]
         assert result["finish"]["result"]["outcome"] == "ANSWER"
         assert "7" in result["finish"]["result"]["text"]
-        assert NOTICES["CURRENT_CHANGED"] not in result["finish"]["result"]["limitations"]
+        assert "CURRENT_CHANGED" not in result["noticeCodes"]
 
 
 @pytest.mark.parametrize("domain", ["CHARACTER", "WORLD"])

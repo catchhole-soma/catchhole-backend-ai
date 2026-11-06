@@ -48,7 +48,7 @@ def test_missing_rdb_coverage_remains_visible_after_source_answer(tmp_path, miss
     assert finish["result"]["outcome"] == "ANSWER"
     assert "강물" in finish["result"]["text"]
     assert "keyword" in result["search"].calls
-    assert notices(["NO_RELATED_SETTING"])[0] in finish["result"]["limitations"]
+    assert "NO_RELATED_SETTING" in result["noticeCodes"]
     final_payload = result["raw"].requests[-1]["input"]
     assert notices(["NO_RELATED_SETTING"])[0] in final_payload["limitations"]
 
@@ -65,7 +65,7 @@ def test_all_selected_rdb_subjects_do_not_get_missing_coverage_notice(tmp_path):
     assert finish["failure"] is None
     assert finish["result"]["outcome"] == "ANSWER"
     assert "아리아" in finish["result"]["text"] and "루나" in finish["result"]["text"]
-    assert notices(["NO_RELATED_SETTING"])[0] not in finish["result"]["limitations"]
+    assert "NO_RELATED_SETTING" not in result["noticeCodes"]
     current = [q for q in result["spring"].queries if q["tool"] == "CHARACTER_CURRENT"]
     assert len(current) == 4
     assert [q["targetId"] for q in current[:2]] == [q["targetId"] for q in current[2:]]
@@ -75,7 +75,7 @@ def test_all_selected_rdb_subjects_do_not_get_missing_coverage_notice(tmp_path):
 def test_source_only_question_does_not_require_rdb_coverage(tmp_path):
     result = asyncio.run(replay(tmp_path, scenario("lexical_scene")))
     assert result["finish"]["result"]["outcome"] == "ANSWER"
-    assert notices(["NO_RELATED_SETTING"])[0] not in result["finish"]["result"]["limitations"]
+    assert "NO_RELATED_SETTING" not in result["noticeCodes"]
 
 
 def test_rdb_selection_clarification_still_stops_source_search(tmp_path):

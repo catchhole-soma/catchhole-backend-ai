@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from app.chatbot.hybrid import _HybridSession
 from app.chatbot.qa import response_schema
-from app.chatbot.qa_render import NOTICES, notices
+from app.chatbot.qa_render import notices
 from app.schemas.chat_execution import ConversationTurn
 from app.schemas.chat_hybrid import HybridPlan
 from tests.test_chat_focused_lookup import catalog_subject, item
@@ -275,7 +275,7 @@ def test_repeated_focus_failure_drops_the_attribute_without_changing_scope_or_le
         result = run(tmp_path, case, correction_catalog)
     assert result["finish"]["failure"] is None
     assert result["finish"]["result"]["outcome"] == "ANSWER"
-    assert NOTICES["FOCUS_ATTRIBUTE_DROPPED"] in result["finish"]["result"]["limitations"]
+    assert "FOCUS_ATTRIBUTE_DROPPED" in result["noticeCodes"]
     assert [q["tool"] for q in result["spring"].queries][:1] == ["FIND_CHARACTERS"]
     assert all(q.get("factType") in (None, "PROFILE") for q in result["spring"].queries)
     assert not result["search"].calls
@@ -337,8 +337,7 @@ def test_two_subject_comparison_reads_current_only_and_says_history_was_skipped(
     assert "여자" in text and "남자" in text
     tools = [q["tool"] for q in result["spring"].queries]
     assert "CHARACTER_HISTORY" not in tools and tools.count("CHARACTER_CURRENT") == 2
-    limitations = result["finish"]["result"]["limitations"]
-    assert limitations.count(NOTICES["HISTORY_SKIPPED_FOR_COMPARISON"]) == 1
+    assert result["noticeCodes"].count("HISTORY_SKIPPED_FOR_COMPARISON") == 1
 
 
 def test_mixed_plan_continues_with_source_when_field_catalog_cannot_be_read_in_budget(tmp_path):
@@ -363,7 +362,7 @@ def test_mixed_plan_continues_with_source_when_field_catalog_cannot_be_read_in_b
     text = result_text(result)
     assert result["finish"]["result"]["outcome"] != "CLARIFICATION"
     assert SOURCE in text and "현재 등록 설정은 확인하지 못" in text
-    assert NOTICES["REGISTERED_LOOKUP_INCOMPLETE"] in result["finish"]["result"]["limitations"]
+    assert "REGISTERED_LOOKUP_INCOMPLETE" in result["noticeCodes"]
     assert result["search"].calls
 
 
@@ -410,7 +409,7 @@ def test_each_mixed_subject_with_unreadable_field_catalog_continues_to_source(tm
     finished = result["finish"]["result"]
     assert finished["outcome"] != "CLARIFICATION", finished
     assert SOURCE in text
-    assert finished["limitations"].count(NOTICES["REGISTERED_LOOKUP_INCOMPLETE"]) == 1
+    assert result["noticeCodes"].count("REGISTERED_LOOKUP_INCOMPLETE") == 1
     assert [q["tool"] for q in result["spring"].queries].count("CHARACTER_FIELDS") >= 2
     assert result["search"].calls
 
@@ -447,7 +446,7 @@ def test_mixed_plan_trims_registered_rows_to_keep_room_for_the_source_answer(tmp
     finished = result["finish"]["result"]
     assert result["finish"]["failure"] is None, result["finish"]
     assert finished["outcome"] != "CLARIFICATION", finished
-    assert NOTICES["REGISTERED_ROWS_TRIMMED"] in finished["limitations"]
+    assert "REGISTERED_ROWS_TRIMMED" in result["noticeCodes"]
     kept = result["raw"].requests[-1]["input"]["rows"]
     assert 0 < len(kept) < 10
     assert SOURCE in finished["text"]
@@ -484,7 +483,7 @@ def test_required_registered_current_is_not_trimmed_and_still_asks(tmp_path):
     finished = result["finish"]["result"]
     assert result["finish"]["failure"] is None, result["finish"]
     assert finished["outcome"] == "CLARIFICATION", finished
-    assert NOTICES["REGISTERED_ROWS_TRIMMED"] not in finished["limitations"]
+    assert "REGISTERED_ROWS_TRIMMED" not in result["noticeCodes"]
 
 
 class _TrimSession:
@@ -569,7 +568,7 @@ def test_mixed_plan_answers_from_source_when_world_name_is_registered_in_two_cat
     assert result["finish"]["failure"] is None, result["finish"]
     assert finished["outcome"] != "CLARIFICATION", finished
     assert MAZE in finished["text"]
-    assert NOTICES["REGISTERED_LOOKUP_AMBIGUOUS"] in finished["limitations"]
+    assert "REGISTERED_LOOKUP_AMBIGUOUS" in result["noticeCodes"]
     assert result["search"].calls
 
 
@@ -615,4 +614,4 @@ def test_mixed_plan_answers_from_source_when_the_registered_field_is_ambiguous(t
     assert result["finish"]["failure"] is None, result["finish"]
     assert finished["outcome"] != "CLARIFICATION", finished
     assert MAZE in finished["text"]
-    assert NOTICES["REGISTERED_LOOKUP_AMBIGUOUS"] in finished["limitations"]
+    assert "REGISTERED_LOOKUP_AMBIGUOUS" in result["noticeCodes"]

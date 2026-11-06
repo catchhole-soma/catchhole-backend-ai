@@ -11,7 +11,6 @@ import pytest
 
 from app.chatbot.hybrid import _HybridSession
 from app.chatbot.qa import _Session
-from app.chatbot.qa_render import NOTICES
 from app.chatbot.replay import ScriptedTextClient
 from tests.test_chat_hybrid import replay, scenario
 from tests.test_chat_hybrid_items import passage
@@ -220,7 +219,7 @@ def test_unrecovered_first_answer_truncation_ends_insufficient_instead_of_failin
     assert result["finish"].get("failure") is None, result["finish"]
     finished = result["finish"]["result"]
     assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert NOTICES["ANSWER_LIMIT"] in finished["limitations"]
+    assert "ANSWER_LIMIT" in result["noticeCodes"]
 
 
 def test_answer_timeout_without_validated_answer_keeps_the_failure_boundary(tmp_path, monkeypatch):

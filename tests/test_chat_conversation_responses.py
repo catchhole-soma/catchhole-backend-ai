@@ -98,6 +98,7 @@ def test_conversational_plan_returns_fixed_answer_with_one_metered_call(
         "sources": [],
         "limitations": [],
     }
+    assert result["noticeCodes"] == []
     assert queries == []
     assert len(requests) == len(reservations) == len(reports) == 1
     assert requests[0]["input"]["conversationTruncated"] is True
@@ -155,7 +156,7 @@ def test_conversation_words_do_not_intercept_a_fact_plan(question):
     assert answer["outcome"] == "ANSWER"
     assert "화염구" in answer["text"]
     assert [q["tool"] for q in result["queries"]] == case["expected"]["tools"]
-    assert NOTICES["CONVERSATION_LIMIT"] not in answer["limitations"]
+    assert "CONVERSATION_LIMIT" not in result["noticeCodes"]
     assert all(r["input"]["conversationTruncated"] for r in result["modelRequests"])
 
 
@@ -166,8 +167,8 @@ def test_no_registered_rows_does_not_report_unrelated_conversation_limit():
     answer = result["finish"]["result"]
     assert result["finish"]["failure"] is None
     assert answer["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert NOTICES["CONVERSATION_LIMIT"] not in answer["limitations"]
-    assert NOTICES["NO_RELATED_SETTING"] in answer["limitations"]
+    assert "CONVERSATION_LIMIT" not in result["noticeCodes"]
+    assert "NO_RELATED_SETTING" in result["noticeCodes"]
     assert result["modelRequests"][0]["input"]["conversationTruncated"] is True
 
 
@@ -178,7 +179,7 @@ def test_ambiguous_followup_keeps_conversation_limit_in_clarification():
     answer = result["finish"]["result"]
     assert result["finish"]["failure"] is None
     assert answer["outcome"] == "CLARIFICATION"
-    assert NOTICES["CONVERSATION_LIMIT"] in answer["limitations"]
+    assert "CONVERSATION_LIMIT" in result["noticeCodes"]
     assert result["queries"] == []
 
 
