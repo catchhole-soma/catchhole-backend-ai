@@ -135,6 +135,13 @@ SUSPECTED_CONFLICT에는 항상 그 receipt가 있다. query를 만들 수 없�
 다시 받은 판정이 그 receipt를 인용하지 않으면 Worker가 receipt와 알려진 근거(없으면 `T1`)를 덧붙인다(`CHANGE_SEARCH_RECEIPT_FILLED`).
 모든 판정은 대상 원고 T1 문맥을 받으므로, `completion.comparison_context.evidence_refs`에 `T1`이 빠지면 Worker가 앞에 덧붙인다(`COMPARISON_CONTEXT_TARGET_FILLED`). 판정·사유·등급은 바꾸지 않는다.
 
+### 질문 속성의 판정 범위 (2026-11-06, v0046)
+
+JUDGE는 `question.property_or_rule`·`check_intent`가 묻는 속성·규칙만 판정한다. 대상 문장 전체나 주변 문맥의 다른 오류를 다시 보고하지 않는다.
+검색·근거 인용·제목·사유도 그 질문 범위에 맞춘다. 같은 문장에 서로 다른 실제 오류가 둘이면 각 질문에서 유지하며, 문장·대상 이름만으로 합치지 않는다.
+합성 원고의 실제 모델 검증은 `VALIDATION_SCOPE_LIVE=1 .venv/bin/pytest -q tests/test_validation_question_scope_live.py`로 별도 실행한다(유료 opt-in).
+제한된 실제 사례 비교와 운영 미검증 범위는 [v0046 상세](ai-logic-versions/details/v0046.md)에 기록한다.
+
 ### 판정 규칙·검색 보완 (2026-11-03)
 
 31화 로컬 실행의 오탐은 모두 "이전 기록에 없다·못 찾았다"를 충돌로 올린 경우였다(새로 나온 규칙, 회상한 앞 장면, 처음 하는 희귀도 비교, 앞 회차의 약속).
