@@ -222,6 +222,18 @@ def test_keyword_wildcards_are_literal_bound_values(corpus):
     assert corpus.read("keyword", "' OR 1=1 --") == []
 
 
+def test_keyword_ignores_case_only_where_terms_have_case(corpus):
+    # 한글 단어는 LIKE, 영문 단어는 ILIKE로 비교해도 기존처럼 영문 대소문자를 무시한다.
+    upper, lower, korean = corpus.chunks(
+        corpus.episode(1), ["HP 물약을 마셨다", "hp가 바닥났다", "체력 물약"]
+    )
+    assert [c.chunk_id for c in corpus.read("keyword", "hp")] == [upper, lower]
+    assert [c.chunk_id for c in corpus.read("keyword", "물약")] == [upper, korean]
+    assert [c.chunk_id for c in corpus.read("keyword", "Hp 물약")] == [upper, lower, korean]
+    ordered = corpus.read("keyword_ordered", ["hP"], ["물약"], order="EARLIEST")
+    assert [c.chunk_id for c in ordered] == [upper]
+
+
 def test_keyword_ordered_reads_anchor_mentions_in_episode_order_with_rank_scores(corpus):
     first, third, ninth = corpus.episode(1), corpus.episode(3), corpus.episode(9)
     corpus.chunks(first, ["filler without the item", "비요른만 등장하는 장면"])
