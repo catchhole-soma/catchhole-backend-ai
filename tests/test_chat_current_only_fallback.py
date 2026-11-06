@@ -7,7 +7,6 @@ import socket
 import pytest
 
 from app.chatbot.hybrid import _HybridSession
-from app.chatbot.qa_render import NOTICES
 from tests.test_chat_current_authority import current_case, current_catalog, missing_catalog
 from tests.test_chat_hybrid import CATALOG, replay
 from tests.test_chat_requested_parts import answer
@@ -40,7 +39,7 @@ def assert_current_changed(result):
     assert result["finish"]["failure"] is None
     response = result["finish"]["result"]
     assert response["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert NOTICES["CURRENT_CHANGED"] in response["limitations"]
+    assert "CURRENT_CHANGED" in result["noticeCodes"]
     assert "여자" not in response["text"]
     assert not response["sources"] and not response.get("retrievalSources")
 
@@ -202,6 +201,6 @@ def test_time_gate_does_not_promote_unknown_current_conditions(tmp_path, monkeyp
     else:
         response = result["finish"]["result"]
         assert response["outcome"] == "INSUFFICIENT_EVIDENCE"
-        assert NOTICES["CONDITION_UNCERTAIN"] in response["limitations"]
+        assert "CONDITION_UNCERTAIN" in result["noticeCodes"]
         assert "여자" not in response["text"] and "세린" not in response["text"]
         assert not response["sources"] and not response.get("retrievalSources")

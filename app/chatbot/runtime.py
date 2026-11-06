@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 from app.chatbot.client import ChatExecutionClient, ChatTransportError
 from app.chatbot.outbox import Outbox
+from app.chatbot.qa_render import publish
 from app.schemas.chat_execution import Dispatch, Finish, Usage
 from app.clients.setting_tools_client import SettingToolContext, SettingToolsClient
 
@@ -174,6 +175,8 @@ class ChatRuntime:
                         )
                     ).model_dump()
                 )
+                # The one boundary where a result's notices leave this process.
+                finish = publish(finish, dispatch.attempt_id)
         except TimeoutError:
             self.completed.labels("timeout").inc()
         except asyncio.CancelledError:

@@ -15,7 +15,6 @@ import pytest
 
 from app.chatbot.hybrid_prompts import PLAN_PROMPT
 from app.chatbot.qa import response_schema
-from app.chatbot.qa_render import NOTICES
 from app.schemas.chat_hybrid import GroundedAnswer, HybridPlan
 from app.schemas.chat_qa import FieldSelection
 from tests.test_chat_focused_lookup import catalog_subject, item, uid
@@ -163,7 +162,7 @@ def test_each_skill_is_retained_when_sources_only_prove_use_not_acquisition(tmp_
     assert "R1" not in actual["text"] and "E1" not in actual["text"]
     assert not actual.get("retrievalSources")
     assert USAGE_TEXT not in actual["text"]
-    assert NOTICES["NO_SEARCH_EVIDENCE"] in actual["limitations"]
+    assert "NO_SEARCH_EVIDENCE" in result["noticeCodes"]
     assert len(result["raw"].requests) == 2  # Planner + grounded answer; no lossy row selector.
     assert [r["rowRef"] for r in result["raw"].requests[1]["input"]["rows"]] == ["R1", "R2", "R3"]
     current = [q for q in result["spring"].queries if q["tool"] == "CHARACTER_CURRENT"]
@@ -276,7 +275,7 @@ def test_oversized_per_item_request_clarifies_before_search_or_answer_generation
     actual = finished(result)
     assert actual["outcome"] == "CLARIFICATION"
     assert "항목이나 유형을 좁혀" in actual["text"]
-    assert NOTICES["CONTEXT_LIMIT"] in actual["limitations"]
+    assert "CONTEXT_LIMIT" in result["noticeCodes"]
     assert result["search"].calls == [] and result["embedding"].inputs == []
     assert len(result["raw"].requests) == 1
     assert not result["spring"].receipts
@@ -328,8 +327,8 @@ def test_focused_pagination_leaves_budget_to_revalidate_partial_answer(tmp_path,
         assert actual["outcome"] == "ANSWER"
         assert "합성기술006" in actual["text"]
         assert "합성기술007" not in actual["text"] and "합성기술008" not in actual["text"]
-        assert NOTICES["PARTIAL_RESULTS"] in actual["limitations"]
-        assert NOTICES["PARTIAL_ANSWER"] not in actual["limitations"]
+        assert "PARTIAL_RESULTS" in result["noticeCodes"]
+        assert "PARTIAL_ANSWER" not in result["noticeCodes"]
         assert "관련 자료를 모두 검토한 결과는 아니에요" not in actual["text"]
         assert "확인하지 못" in actual["text"]
         assert len(result["spring"].receipts) == 2
@@ -413,7 +412,7 @@ def test_direct_partial_survives_search_budget_stop_and_rechecks_its_original_so
         assert actual["outcome"] == "ANSWER"
         assert actual["sources"] == [{"tool": "CHARACTER_EVIDENCE", "targetId": uid(801)}]
         assert not actual.get("retrievalSources", [])
-        assert NOTICES["PARTIAL_ANSWER"] not in actual["limitations"]
+        assert "PARTIAL_ANSWER" not in result["noticeCodes"]
         assert "관련 자료를 모두 검토한 결과는 아니에요" not in actual["text"]
         assert "확인하지 못" in actual["text"]
 

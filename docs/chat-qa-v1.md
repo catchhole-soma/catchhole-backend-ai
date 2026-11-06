@@ -4,12 +4,41 @@
 선행 계약: [조회 도구](setting-tools-v1.md), [실행·인증·계량](chat-execution-v1.md).
 이 문서는 Java/Python 저장소에 같은 내용으로 보관한다.
 
+## 답변 아래 안내 문구 — 2026-11-06 (#319)
+
+챗봇 결과의 `limitations`에는 작가가 읽고 행동할 수 있는 문구만 싣는다. 평가 85문항에서 절반가량의 답에 "회차 범위는 이력·근거의 출처 필터입니다"처럼 조회 과정을 설명하는 안내가 붙었지만 작가가 할 수 있는 일이 없었고, 안내가 붙은 답과 붙지 않은 답의 정답률도 비슷했다. 결과 형태(`limitations` 최대 20개·각 200자 이하)와 답변 본문, 안내 코드가 생기는 조건, 답변 모델 입력은 바꾸지 않았다.
+
+| 내부 코드 | 화면 문구 | 붙는 결과 |
+| --- | --- | --- |
+| `PARTIAL_ANSWER` | 질문의 일부에만 답했어요. | `ANSWER` |
+| `SETTING_SOURCE_CONFLICT` | 등록된 설정과 원고 내용이 서로 달라요. 둘 다 보여 드렸으니 확인해 주세요. | `ANSWER` |
+| `TEXT_INDEX_PARTIAL`, `VECTOR_INDEX_PARTIAL` | 아직 검색 준비가 끝나지 않은 회차가 있어서, 작품 전체를 찾아본 결과가 아니에요. | 모든 결과 |
+| `SEARCH_UNAVAILABLE`, `STORAGE_UNAVAILABLE` | 원고를 불러오는 데 문제가 있어 일부를 확인하지 못했어요. 잠시 후 다시 질문해 주세요. | 모든 결과 |
+
+- 같은 문구로 묶인 코드가 함께 떠도 문구는 한 번만, 처음 나온 순서로 보낸다.
+- 그 밖의 코드는 공개하지 않는다. 되묻기에만 붙던 `CONVERSATION_LIMIT`도 숨긴다. 본문이 이미 대상을 다시 알려 달라고 말한다. 표에 없는 문장을 담아 온 결과의 문장도 내보내지 않는다.
+- `PARTIAL_ANSWER`·`SETTING_SOURCE_CONFLICT`는 답을 내보낸 결과에만 붙인다. 원문 변경이나 길이 한도로 답변을 보류한 결과에 남아 있던 코드로 "일부에만 답했어요"라고 말하지 않기 위함이다. 원문 결합 답변은 부분 답변의 미확인 항목을 본문에서 설명하고 이 코드를 결과에 붙이지 않으므로(기존 동작), 현재 `PARTIAL_ANSWER` 문구가 실제로 붙는 경로는 없다.
+- `INDEX_PARTIAL`은 위 두 세부 코드 또는 `NO_SUPPORTED_SOURCES`와 항상 함께 뜨는 파생 코드다. 허용 범위에 보관되지 않은 회차가 하나도 없을 때(`NO_SUPPORTED_SOURCES`)에도 뜨므로 둘은 숨기고 세부 코드에만 문구를 연결한다. `VECTOR_INDEX_PARTIAL`만 뜬 답변은 키워드 검색이 범위 전체를 읽었고 의미 검색만 일부 회차를 빼고 한 경우다.
+- Spring 조회 도구가 모든 응답에 붙이는 `SETTING_BOOK_UNSUPPORTED`는 이전부터 챗봇 결과로 옮기지 않는다.
+
+내부 안내 코드와 문장(`qa_render.NOTICES`)은 그대로 둔다. 원문 결합의 답변 모델 입력과 원문 전환 같은 실행 내부 판단이 이 값을 쓰기 때문이다. 공개 문구로의 변환은 결과가 Python 프로세스를 떠나는 실행 경계(`ChatRuntime` → `qa_render.publish`) 한 곳에서 한다. Java는 받은 `limitations`를 그대로 저장·전달하고, Front는 [기존 표시 규칙](chat-sessions-v1.md)대로 한 문장이면 바로, 여러 문장이면 접어서 보여 준다.
+
+**진단 기록.** 숨긴 코드는 결과마다 한 줄로 남는다.
+
+```text
+chat_answer_notices attempt=<시도 ID> outcome=<결과 종류> codes=[...] shown=[...]
+```
+
+logger는 `app.chatbot.qa_render`(INFO)이고, QA를 켠 챗봇 프로세스가 기존 검색 추적 로그와 같은 방식으로 출력한다. `codes`는 최종 결과에 붙은 안내 코드 전체(이전에 화면에 보이던 것), `shown`은 그중 문구가 된 코드다. 코드 이름만 기록하며 질문·원문·답변·회원/작품 ID·표에 없는 문장은 넣지 않는다. `failure`로 끝난 실행은 결과가 없어 기록하지 않는다. 원문 결합의 성공 답변처럼 본문 설명으로 대신해 결과에 붙이지 않은 코드(`SEARCH_LIMIT`, `CONTEXT_LIMIT`, `EVIDENCE_CONTEXT_LIMIT`, `PARTIAL_ANSWER` 등)는 그 실행의 기록에 나오지 않고, 이전처럼 `chat_retrieval_limitations_total{reason}`와 검색 추적 로그에만 남는다. 합성 재현(`python -m app.chatbot.replay`)은 이 기록을 결과의 `noticeCodes`로 보여 준다.
+
+검증: 모델 호출 없는 합성 재현으로 네 문구만 공개되는지, 묶인 코드의 중복 제거, 숨긴 코드가 결과에 없고 기록에 있는지, 답변 모델 입력의 내부 문장이 그대로인지 확인했다. Python 전체 5,553 passed / 170 skipped / 기존 경고 1개. 실제 모델 호출과 화면 확인은 하지 않았다. AI 로직 기록은 v0047이다.
+
 ## OPT-31 후속 대화·조회 계약
 
 [#247 OPT-31](https://github.com/catchhole-soma/catchhole-backend-java/issues/247) 진단 뒤 추가한 보완이다. 현재 QA 계획은 `chat-qa-plan-v7`, 결합 계획/원문 답변은 v8/v9이며 FIELD select v1·구형 행 select v3·등록 설명/현재 조건/이력 조건 v2는 유지한다. 후속 실제 모델 검증은 [최종 코드·결과별 기록](chat-query-quality-v1.md#opt-31-후속-구현-검증--2026-10-15)에 구분한다. 아래 이전 검증 수치를 이번 변경의 결과로 재사용하지 않는다.
 
 - `GREETING`·`THANKS`·`HELP`는 작품 사실 질문이 없는 인사·감사·이 챗봇의 사용법을 planner가 구분한 경우다. 조회 필드를 비운 계획만 허용하고 고정 존댓말을 기존 `ANSWER`/빈 sources로 반환한다. 해석 호출은 계량하고 추가 조회나 답변 모델을 호출하지 않는다. 인사 문자열을 코드로 선별하지 않으며 사실 질문이 섞이면 일반 조회를 계획한다.
-- 대화 생략 정보는 내부 모델에 유지한다. 공개 `CONVERSATION_LIMIT`는 `CLARIFICATION`에서만 보여 주고 정상 답변·등록 정보 부족 결과에 무관한 경고로 붙이지 않는다. 실제 부분 조회·원문/저장소 오류와 값 절단 안내는 유지한다.
+- 대화 생략 정보는 내부 모델에 유지한다. `CONVERSATION_LIMIT`는 `CLARIFICATION` 결과에만 안내 코드로 붙이고 정상 답변·등록 정보 부족 결과에 무관한 경고로 붙이지 않는다. 실제 부분 조회·원문/저장소 오류와 값 절단 안내 코드는 유지한다. 2026-11-06부터 이 코드들 가운데 화면 문구가 되는 것은 [답변 아래 안내 문구](#답변-아래-안내-문구--2026-11-06-319)의 네 가지뿐이고 나머지는 진단 기록에 남는다.
 - 세계관은 전체 이름과 지정 분류의 완전한 빈 조회에 한해서만 공백으로 분리된 분류 표시어를 이름 끝에서 한 번 제거해 같은 분류로 재조회한다. 기존 전체 이름 후보, 모호성·불완전한 페이지·오류를 우회하거나 임의 별칭을 생성하지 않는다.
 - 등록 대상·관련 FIELD·관련 값/행의 부족은 조회 지점에서 typed gap으로 남긴다. RDB 전용 handler는 확인하지 못한 범위를 답하며 작품 전체 부재를 단정하지 않는다. hybrid가 활성화되면 `sourceFallback=true`와 정상 `INSUFFICIENT_EVIDENCE`, 명시한 대상, 완전한 조회 및 남은 실행 예산을 함께 확인해 기존 원문 흐름을 재사용할 수 있다. 정상 현재값/명시적 부정 답변, collection/characterFilter·COUNT/DISTINCT, 명확화·부분/절단·자료 변경/원문 오류·실행 실패는 자동 보완 대상이 아니다. 상세 조건과 원문 인용 재검증은 [결합 조회](chat-hybrid-retrieval-v1.md#opt-31-후속-대화원문-보완)를 따른다.
 - 검증 재시도는 schema 필드 경로와 고정 규칙으로 요청 부분·정보 필요·사건 문맥을 교정하도록 안내한다. 형식·계약·JSON 오류와 provider 출력 절단을 구분하고 실제 질문·모델 출력·거절값·임의 예외 본문을 피드백이나 로그에 복사하지 않는다. 최초 포함 두 번과 기존 예약·정산 경계를 유지하며 검증 완화나 무한 재시도를 하지 않는다.
@@ -174,7 +203,7 @@ AI가 고급 마법 행을 선택하면 그 행의 source만 WORLD_EVIDENCE로 �
 - 인용은 선택된 행의 source 참조로 조회한 AVAILABLE 근거만 사용한다. `matchesCurrentSource=true`, 인용 존재, 대상/출처 범위를 검사한다.
 - 현재값에는 같은 category/scope/key이고 `contributesToCurrent=true`, `historyOnly!=true`인 근거만 붙인다. 역사적 근거가 존재한다는 사실만으로 현재값을 입증하지 않는다.
 - 존재·참조 검사와 **질문에 해당하는 행을 올바르게 선택했는지/원문이 의미상 답을 입증하는지**는 다르다. 후자는 모델·자료 품질 검증 대상이다.
-- 원문 상태는 기존 9종을 보존하며 표시 가능한 고정 설명으로 바꾼다. 파기/변경/검증 실패한 인용은 재노출하지 않는다.
+- 원문 상태는 기존 9종을 보존하며 고정 안내 코드로 바꾼다. 파기/변경/검증 실패한 인용은 재노출하지 않는다. 화면에는 본문의 원문 미확인 표시가 남고, 안내 문구는 저장소 장애(`STORAGE_UNAVAILABLE`)만 보인다.
 - `ChatResult`의 ANSWER/CLARIFICATION/INSUFFICIENT_EVIDENCE, text/sources/limitations는 그대로다. intent와 내부 행 참조는 공개 DTO에 추가하지 않는다.
 - 도구 HTTP/계약 오류는 NETWORK_FAILURE, 도구·실행 횟수 제한은 EXECUTION_LIMIT_EXCEEDED, 계정 잔액 부족은 QUOTA_EXHAUSTED다. provider/구조 검증 실패는 PROVIDER_FAILURE다. 어느 것도 ‘설정 없음’으로 바꾸지 않는다.
 - schema·알 수 없는 참조 재시도는 각각 `Execution.call()`을 다시 통과한다. 자동 HTTP 재시도는 추가하지 않는다. 이미 성공한 호출의 사용량도 기존 outbox가 보고한다.
@@ -204,7 +233,7 @@ Python 환경변수는 `.env`를 자동으로 읽지 않는다. 챗봇 전용 Co
 | CHAT_QA_MAX_EVIDENCE_CALLS | 8 | 고유 직접 근거 조회 상한 |
 | CHAT_QA_MAX_ANSWER_CHARACTERS | 12000 | 최종 본문 길이 상한 |
 
-페이지·문맥·답변·근거 한도에 도달하면 해당 누락을 알린다. RDB 응답은 limitations를 유지하고, 원문 결합 성공 답변은 검색 범위와 미확인 항목을 본문에 설명한다. 페이지를 다 보지 않았는데 대상을 하나로 확정하지 않는다.
+페이지·문맥·답변·근거 한도에 도달하면 해당 누락을 안내 코드로 남긴다. 원문 결합 성공 답변은 검색 범위와 미확인 항목을 본문에 설명한다. 2026-11-06부터 한도 안내는 화면 문구로 보내지 않고 진단 기록으로 확인한다. 페이지를 다 보지 않았는데 대상을 하나로 확정하지 않는다.
 새 focus 경로는 남은 도구 예산을 확인하여 일부 결과를 안내한다. 원문 결합은 최종 재검증에 필요한 예산을 남긴다. 최종 본문에서 행 자체가 생략되면 해당 행의 source도 반환하지 않는다. 원문 전문은 근거 창에서 확인한다.
 LLM 요청은 기존 `OpenAIResponsesClient`의 Responses API structured output과 `store=false`를 사용한다.
 [공식 structured output schema 제약](https://developers.openai.com/api/docs/guides/structured-outputs#supported-schemas)에 맞춰 모든 모델 출력 필드를 required, 객체를 additionalProperties=false로 제공하고 로컬에서 재검증한다.

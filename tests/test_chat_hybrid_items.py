@@ -210,7 +210,7 @@ def test_later_partial_adds_missing_facet_and_revalidates_both_rounds(tmp_path, 
         assert "스승에게" in final["text"] and "축제 다음 날" in final["text"]
         assert final["text"].count("세린 · 잔광") == 1
         assert [r["sourceEpisodeNo"] for r in final["retrievalSources"]] == [23, 24]
-        assert "일부만 답변" not in " ".join(final["limitations"])
+        assert "PARTIAL_ANSWER" not in result["noticeCodes"]
     assert result["search"].calls[-1] == "revalidate"
 
 
@@ -285,7 +285,7 @@ def test_general_source_partial_merges_independent_requested_facets(tmp_path):
     final = result["finish"]["result"]
     assert "떠나기 전날" in final["text"] and "추적을 피하려고" in final["text"]
     assert len(final["retrievalSources"]) == 2
-    assert "일부만 답변" not in " ".join(final["limitations"])
+    assert "PARTIAL_ANSWER" not in result["noticeCodes"]
 
 
 @pytest.mark.parametrize("changed", [False, True])
@@ -717,7 +717,8 @@ def test_false_complete_plan_is_downgraded_and_plan_evidence_is_revalidated(tmp_
         assert "실제로 이루어진" in final["text"] and "근거 1" in final["text"]
         assert "경위·방법 정보는" in final["text"]
         assert final["text"].count("(근거 1)") == 1
-        assert not final["limitations"]  # The precise unanswered facets are in the answer text.
+        # The precise unanswered facets are in the answer text.
+        assert not result["noticeCodes"]
     assert result["search"].calls[-1] == "revalidate"
 
 

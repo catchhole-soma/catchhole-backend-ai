@@ -19,7 +19,15 @@ from app.chatbot.hybrid import HybridQaHandler
 from app.chatbot.hybrid_config import HybridSettings
 from app.chatbot.hybrid_metrics import HybridMetrics
 from app.chatbot.outbox import Outbox
-from app.chatbot.replay import ReplaySpring, ScriptedTextClient, load_fixture, offline_settings
+from app.chatbot.qa_render import PUBLIC_NOTICES
+from app.chatbot.replay import (
+    NoticeCodes,
+    ReplaySpring,
+    ScriptedTextClient,
+    load_fixture,
+    offline_settings,
+    recorded_notice_codes,
+)
 from app.chatbot.runtime import ChatRuntime
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.retrieval.chunking import POLICY
@@ -259,8 +267,9 @@ async def replay(
             ),
         )
         try:
-            runtime.submit(dispatch)
-            await asyncio.gather(*list(runtime.tasks.values()))
+            with recorded_notice_codes() as notice_codes:
+                runtime.submit(dispatch)
+                await asyncio.gather(*list(runtime.tasks.values()))
             await runtime.deliver()
             assert len(spring.finishes) == 1, "Exactly one finish must pass through the real outbox"
             assert box.count() == 0
@@ -268,6 +277,8 @@ async def replay(
             box.close()
     return {
         "finish": spring.finishes[0],
+        # 이 결과에 붙은 안내 코드 이름 전체다. 화면 문구가 아니라 진단 기록에서 읽는다.
+        "noticeCodes": notice_codes[-1] if notice_codes else NoticeCodes(),
         "spring": spring,
         "search": search,
         "embedding": embedding,
@@ -282,6 +293,8 @@ def test_authored_offline_replays_through_http_execution_and_sqlite_outbox(tmp_p
     expected, finish = case["expected"], result["finish"]
     assert finish["failure"] is None, (case["id"], finish)
     assert finish["result"]["outcome"] == expected["outcome"]
+    # 어떤 사례에서도 작가에게 보이는 문구는 공개 표의 문장뿐이다.
+    assert set(finish["result"]["limitations"]) <= set(PUBLIC_NOTICES.values())
     assert len(result["embedding"].inputs) == expected["embeddings"]
     assert result["search"].calls == expected["searches"]
     for value in expected["contains"]:
@@ -491,7 +504,8 @@ def test_tool_budget_stops_before_receipt_and_answer_generation(tmp_path):
     result = asyncio.run(replay(tmp_path, case))
     assert result["finish"]["failure"] is None
     assert result["finish"]["result"]["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert any("검색" in note for note in result["finish"]["result"]["limitations"])
+    assert "SEARCH_LIMIT" in result["noticeCodes"]
+    assert result["finish"]["result"]["limitations"] == []
     assert len(result["raw"].requests) == 1
     assert result["search"].calls == []
     assert not result["spring"].receipts
@@ -503,7 +517,9 @@ def test_partial_text_readiness_can_answer_with_available_keyword_source(tmp_pat
     result = asyncio.run(replay(tmp_path, case))
     assert result["finish"]["result"]["outcome"] == "ANSWER"
     assert not result["embedding"].inputs
-    assert result["finish"]["result"]["limitations"]
+    assert result["noticeCodes"] == ["TEXT_INDEX_PARTIAL", "VECTOR_INDEX_PARTIAL", "INDEX_PARTIAL"]
+    # 묶인 코드가 여러 개 떠도 작가에게는 한 문장만 보인다.
+    assert result["finish"]["result"]["limitations"] == [PUBLIC_NOTICES["TEXT_INDEX_PARTIAL"]]
 
 
 def test_partial_answer_stays_explicit_when_search_round_budget_ends(tmp_path):

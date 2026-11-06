@@ -1,11 +1,14 @@
 """Extractive output: only server values and verified quotes become answer text."""
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 
 from app.schemas.chat_execution import ChatResult, Finish
 from app.schemas.setting_tools import SettingToolItem, SourceReference
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -17,6 +20,9 @@ class AnswerRow:
     evidence_requested: bool = False
 
 
+# 내부 안내 문장이다. 답변 모델의 입력(hybrid answer payload의 limitations)과 실행 안에서
+# 오가는 결과에만 쓰고 화면에 그대로 내보내지 않는다. 화면에 보일 문구는 아래
+# PUBLIC_NOTICES가 정하며, 결과가 프로세스를 떠날 때 publish()가 한 번 바꾼다.
 NOTICES = {
     "REGISTERED_CURRENT_UNCONFIRMED": "요청하신 현재 등록 설정은 확인하지 못했어요. 등록된 대상의 이름이나 조회 항목을 확인해 주세요.",
     "CURRENT_CHANGED": "조회 중 설정이 바뀌어 이전 값으로 답변하지 않았습니다.",
@@ -73,6 +79,36 @@ NOTICES = {
     "UNSUPPORTED_REQUEST": "현재는 작품 정보를 조회하는 질문에 답할 수 있습니다.",
 }
 
+_SEARCH_NOT_READY = (
+    "아직 검색 준비가 끝나지 않은 회차가 있어서, 작품 전체를 찾아본 결과가 아니에요."
+)
+_SOURCE_UNAVAILABLE = (
+    "원고를 불러오는 데 문제가 있어 일부를 확인하지 못했어요. 잠시 후 다시 질문해 주세요."
+)
+# 작가에게 보이는 문구는 이 표가 전부다. 여기 없는 코드는 공개 결과에 넣지 않고 진단 기록에만
+# 남긴다. INDEX_PARTIAL은 아래 두 세부 코드나 NO_SUPPORTED_SOURCES와 항상 함께 뜨는 파생
+# 코드이고, 허용 범위에 회차가 하나도 없을 때(NO_SUPPORTED_SOURCES)에도 뜨므로 문구를 세부
+# 코드에만 연결한다.
+PUBLIC_NOTICES = {
+    "PARTIAL_ANSWER": "질문의 일부에만 답했어요.",
+    "SETTING_SOURCE_CONFLICT": (
+        "등록된 설정과 원고 내용이 서로 달라요. 둘 다 보여 드렸으니 확인해 주세요."
+    ),
+    "TEXT_INDEX_PARTIAL": _SEARCH_NOT_READY,
+    "VECTOR_INDEX_PARTIAL": _SEARCH_NOT_READY,
+    "SEARCH_UNAVAILABLE": _SOURCE_UNAVAILABLE,
+    "STORAGE_UNAVAILABLE": _SOURCE_UNAVAILABLE,
+}
+# 답을 실제로 내보낸 결과에서만 맞는 문구다. 답변을 보류하거나 되물은 결과에는 붙이지 않는다.
+ANSWER_ONLY_NOTICES = frozenset({"PARTIAL_ANSWER", "SETTING_SOURCE_CONFLICT"})
+# NOTICES에 없는 문장을 담아 온 결과의 기록용 이름이다. 문장 자체는 기록하지 않는다.
+UNREGISTERED_NOTICE = "UNREGISTERED_NOTICE"
+
+_CODE_BY_NOTICE = {sentence: code for code, sentence in NOTICES.items()}
+if len(_CODE_BY_NOTICE) != len(NOTICES) or set(PUBLIC_NOTICES) - set(NOTICES):
+    # 문장이 겹치면 결과에서 발생 코드를 되찾을 수 없다.
+    raise RuntimeError("Notice sentences must be unique and public codes must be registered")
+
 
 def safe_text(value: str) -> str:
     # The chat UI renders plain text, not Markdown or HTML. Keep data inline without
@@ -82,8 +118,9 @@ def safe_text(value: str) -> str:
 
 
 def notices(codes: list[str], *, include_conversation_limit: bool = False) -> list[str]:
+    # Internal sentences for the answer model and in-process results; see publish().
     # Trimming old turns is a planner constraint, not a failure of current evidence.
-    # Only a clarification needs to explain why the user may have to name a target again.
+    # Only a clarification carries it, where the target may have to be named again.
     return list(
         dict.fromkeys(
             NOTICES[c]
@@ -91,6 +128,38 @@ def notices(codes: list[str], *, include_conversation_limit: bool = False) -> li
             if c in NOTICES and (include_conversation_limit or c != "CONVERSATION_LIMIT")
         )
     )[:20]
+
+
+def publish(finish: Finish, attempt_id=None) -> Finish:
+    """실행 경계에서 한 번 호출한다. 발생한 코드를 기록하고 화면에 보일 문구만 남긴다."""
+    result = finish.result
+    if result is None:
+        return finish
+    codes = list(
+        dict.fromkeys(_CODE_BY_NOTICE.get(note, UNREGISTERED_NOTICE) for note in result.limitations)
+    )
+    shown = [
+        code
+        for code in codes
+        if code in PUBLIC_NOTICES
+        and (result.outcome == "ANSWER" or code not in ANSWER_ONLY_NOTICES)
+    ]
+    # 숨긴 코드의 유일한 흔적이다. 코드 이름만 남기고 질문·원문·답변·회원/작품 ID는 넣지 않는다.
+    logger.info(
+        "chat_answer_notices attempt=%s outcome=%s codes=%s shown=%s",
+        attempt_id,
+        result.outcome,
+        codes,
+        shown,
+        extra={
+            "notice_attempt": None if attempt_id is None else str(attempt_id),
+            "notice_outcome": result.outcome,
+            "notice_codes": codes,
+            "notice_shown": shown,
+        },
+    )
+    public = list(dict.fromkeys(PUBLIC_NOTICES[code] for code in shown))
+    return finish.model_copy(update={"result": result.model_copy(update={"limitations": public})})
 
 
 def message(outcome: str, text: str, codes: list[str]) -> Finish:

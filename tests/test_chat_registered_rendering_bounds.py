@@ -43,7 +43,7 @@ async def registered_summary(claims, *, include_evidence=True):
     assert all(entry["kind"] == "SETTLE" for entry in result["usageReports"])
     # Formatting fallback still passes through the current-value revalidation.
     assert sum(query["tool"] == "CHARACTER_CURRENT" for query in result["queries"]) == 2
-    return result["finish"]["result"]
+    return {**result["finish"]["result"], "noticeCodes": result["noticeCodes"]}
 
 
 @pytest.mark.anyio
@@ -54,7 +54,7 @@ async def test_first_claim_overflow_returns_bounded_guidance_without_orphaned_so
     assert "답변 한도" in result["text"]
     assert "가" * 50 not in result["text"] and "근거 1" not in result["text"]
     assert result["sources"] == []
-    assert NOTICES["ANSWER_LIMIT"] in result["limitations"]
+    assert "ANSWER_LIMIT" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -68,7 +68,7 @@ async def test_exactly_fitting_claim_and_citation_are_not_dropped(include_eviden
     assert result["outcome"] == "ANSWER"
     assert result["text"] == text + suffix
     assert len(result["sources"]) == int(include_evidence)
-    assert NOTICES["ANSWER_LIMIT"] not in result["limitations"]
+    assert "ANSWER_LIMIT" not in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -80,7 +80,7 @@ async def test_later_claim_overflow_preserves_the_rendered_claim_and_its_source(
     assert result["outcome"] == "ANSWER"
     assert result["text"] == text + " 근거 1"
     assert len(result["sources"]) == 1
-    assert NOTICES["ANSWER_LIMIT"] in result["limitations"]
+    assert "ANSWER_LIMIT" in result["noticeCodes"]
 
 
 def answer_row(origin, *, kind="CURRENT", value="7", number=1):

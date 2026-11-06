@@ -12,7 +12,6 @@ from dataclasses import replace
 import pytest
 
 from app.chatbot.hybrid import _HybridSession
-from app.chatbot.qa_render import notices
 from tests.test_chat_hybrid import answer as legacy_answer
 from tests.test_chat_hybrid import replay, scenario, source_chunk
 from tests.test_chat_hybrid_items import passage
@@ -270,7 +269,7 @@ def test_unfittable_protected_context_restores_valid_partial_and_revalidates_sou
     if source_changed:
         assert response["outcome"] == "INSUFFICIENT_EVIDENCE"
         assert EMOTION not in response["text"]
-        assert notices(["SOURCE_CHANGED"])[0] in response["limitations"]
+        assert "SOURCE_CHANGED" in result["noticeCodes"]
     else:
         assert response["outcome"] == "ANSWER"
         assert EMOTION in response["text"]

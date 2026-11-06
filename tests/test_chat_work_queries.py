@@ -292,7 +292,7 @@ async def test_distinct_without_scalar_is_not_zero_types_or_false_truncation():
     data = answer(result)
     assert data["outcome"] == "INSUFFICIENT_EVIDENCE"
     assert "0종류" not in data["text"]
-    assert not any("잘려" in note for note in data["limitations"])
+    assert "VALUE_LIMIT" not in result["noticeCodes"]
     assert len(result["queries"]) == 2  # Final consistency check even without a predicate.
 
 
@@ -314,7 +314,7 @@ async def test_requested_evidence_without_sources_is_explicit():
         case("사망한 인물과 근거", decision, verdict),
         [catalog_subject(1, "린", current=[item(1, "린", category="STATUS")])],
     )
-    assert any("연결된 원문 근거가 없습니다" in note for note in answer(result)["limitations"])
+    assert "NO_SOURCE" in result["noticeCodes"]
 
 
 @pytest.mark.anyio
@@ -520,7 +520,7 @@ async def test_distinct_evidence_budget_still_reserves_collection_revalidation()
     result = await replay_case(case("종류와 근거", decision), catalog, config={"max_tool_calls": 2})
     assert "1종류" in answer(result)["text"]
     assert answer(result)["sources"] == []
-    assert any("근거 조회 한도" in note for note in answer(result)["limitations"])
+    assert "EVIDENCE_LIMIT" in result["noticeCodes"]
     assert len(result["queries"]) == 2 and result["queries"][-1]["readToken"]
 
 
@@ -675,4 +675,4 @@ async def test_named_summary_reserves_final_current_check_before_page_exhaustion
     assert answer(result)["outcome"] == "ANSWER"
     assert result["queries"][-1]["size"] == 1
     assert len(result["queries"]) == 3
-    assert any("일부" in note for note in answer(result)["limitations"])
+    assert "PARTIAL_RESULTS" in result["noticeCodes"]
