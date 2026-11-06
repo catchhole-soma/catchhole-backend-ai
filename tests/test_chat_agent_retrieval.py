@@ -938,3 +938,77 @@ def test_registered_history_answer_is_kept_unless_the_source_supplement_answers(
     assert seen == {}
     assert run(supplement, agent=False)["result"]["text"] == "등록 이력 답"
     assert seen == {}
+
+
+# ---- PR #137 리뷰 반영 ----
+
+# 조각 일곱 개를 인용하는 한 문장. 다섯째 구절은 3화의 두 조각에 걸쳐 있어 인용문은 여섯 개(기존
+# 응답 모델도 받는 개수)지만 인용 조각은 일곱 개다.
+SEVEN_CHUNK_QUOTES = [
+    COMPASS,
+    "잃어버린 것을 가리킨다고 말했다",
+    "가온은 거절했다",
+    "처음으로 강 쪽을 가리켰다",
+    "건져 올렸다. 나루는 그 열쇠가",
+    "오래된 지도를 찾았다",
+]
+SEVEN_CHUNK_CLAIM = "가온이 나침반을 사고 열쇠와 지도를 찾기까지의 합성 요약입니다."
+
+
+def seven_chunk_answer(body):
+    supports = []
+    for quote in SEVEN_CHUNK_QUOTES:
+        passage = next(p for p in body["passages"] if quote in p["text"])
+        supports.append({"evidenceRef": passage["references"][0]["evidenceRef"], "quote": quote})
+    return {
+        "coverage": "COMPLETE",
+        "claims": [
+            {
+                "text": SEVEN_CHUNK_CLAIM,
+                "evidenceRefs": list(dict.fromkeys(s["evidenceRef"] for s in supports)),
+                "answeredFacets": ["P1", "P2"],
+                "supports": supports,
+            }
+        ],
+        "conflicts": [],
+    }
+
+
+def test_single_stage_exploration_answer_may_cite_what_its_own_contract_allows(tmp_path):
+    outputs = {
+        PLAN_VERSION: [plan_output()],
+        EXPLORE_VERSION: [step(enough=True)],
+        AGENT_ANSWER_VERSION: [seven_chunk_answer],
+    }
+    result = asyncio.run(
+        agent_replay(
+            tmp_path, outputs, episode_from=1, episode_to=4, hybrid={"agent_extract": False}
+        )
+    )
+    finished = result["finish"]["result"]
+    assert finished["outcome"] == "ANSWER" and SEVEN_CHUNK_CLAIM in finished["text"]
+    assert len(finished["retrievalSources"]) == 7
+    answers = result["raw"].of(AGENT_ANSWER_VERSION)
+    # provider에 준 응답 모델이 문장당 12개를 받으므로 7개 인용은 수정 재시도 없이 통과한다.
+    assert len(answers) == 1
+    claim = answers[0]["response_schema"].schema["$defs"]["AgentGroundedClaim"]["properties"]
+    assert claim["evidenceRefs"]["maxItems"] == 12
+    assert_ledger_balanced(result)
+
+
+def test_fixed_round_answer_keeps_the_six_chunk_limit_per_claim(tmp_path):
+    def read_four_episodes(search):
+        search.keyword_chunks = [c for c in story_chunks() if c.episode_no <= 4]
+
+    outputs = {PLAN_VERSION: [plan_output()], ANSWER_VERSION: [seven_chunk_answer]}
+    result = asyncio.run(
+        agent_replay(tmp_path, outputs, hybrid={"agent": False}, search_setup=read_four_episodes)
+    )
+    answers = result["raw"].of(ANSWER_VERSION)
+    # 같은 출력이 schema(인용문 6개)는 지나지만 인용 조각이 7개라 꺼진 실행에서는 두 번 모두 거절된다.
+    assert len(answers) == 2
+    assert answers[0]["response_schema"] == response_schema(GroundedAnswer)
+    assert len(answers[0]["input"]["passages"]) == 4
+    finished = result["finish"]["result"]
+    assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert SEVEN_CHUNK_CLAIM not in finished["text"] and "retrievalSources" not in finished

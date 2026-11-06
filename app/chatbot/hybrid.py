@@ -65,6 +65,7 @@ from app.schemas.chat_execution import ChatResult, Finish
 from app.schemas.chat_hybrid import (
     RETRIEVAL_SOURCE_LIMIT,
     AgentGroundedAnswer,
+    AgentGroundedClaim,
     EvidenceConflict,
     EvidenceSupport,
     GroundedAnswer,
@@ -1921,9 +1922,16 @@ class _HybridSession(AgentRetrieval, _Session):
                 refs = list(
                     dict.fromkeys(ref for support in resolved for ref in support.evidence_refs)
                 )
-                # 두 단계 답변만 문장 하나가 검증된 사실을 12개까지 인용한다. 그 밖에는 기존 6개다.
-                claim_refs = 12 if self.agent_two_stage() else 6
-                if len(refs) > (3 if isinstance(statement, EvidenceConflict) else claim_refs):
+                # 인용 수 상한은 문장이 속한 응답 모델의 것을 쓴다. 탐색 답변의 문장
+                # (AgentGroundedClaim)은 한 단계·두 단계 모두 12개, 기존 문장과 항목별 답은 6개다.
+                limit = (
+                    3
+                    if isinstance(statement, EvidenceConflict)
+                    else 12
+                    if isinstance(statement, AgentGroundedClaim)
+                    else 6
+                )
+                if len(refs) > limit:
                     raise ValueError("Unknown evidence or setting reference")
                 supports = [
                     EvidenceSupport.model_validate(
