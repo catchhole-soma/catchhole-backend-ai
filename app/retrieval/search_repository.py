@@ -40,6 +40,17 @@ FIELDS = """c.id,c.episode_id,e.episode_no,c.chunk_index,c.chunk_text,c.start_of
 c.chunk_hash,s.source_key,s.source_version,s.source_hash,s.chunk_policy"""
 
 
+def _contains(param, term):
+    """청크 본문에 검색어가 글자 그대로 들어 있는지 보는 조건이다.
+
+    UTF-8 DB의 ILIKE는 비교할 때마다 청크 본문 전체를 소문자로 바꾼다. 한글·숫자처럼 대소문자가 없는
+    단어는 LIKE로도 결과가 같으므로 LIKE로 비교하고, 영문처럼 대소문자가 있는 단어만 ILIKE로 대소문자를
+    무시한다.
+    """
+    operator = "LIKE" if term.lower() == term == term.upper() else "ILIKE"
+    return f"c.chunk_text {operator} :{param} ESCAPE '\\'"
+
+
 class RetrievalSearchRepository:
     from_clause = CURRENT_FROM
     # 키워드 순위를 단어 희귀도(완만한 BM25 IDF)로 가중한다. 하위 저장소가 별도 평가 전까지 기존
@@ -108,7 +119,7 @@ class RetrievalSearchRepository:
             + "%"
             for n, term in enumerate(terms)
         }
-        matches = [f"c.chunk_text ILIKE :pattern_{n} ESCAPE '\\'" for n in range(len(terms))]
+        matches = [_contains(f"pattern_{n}", term) for n, term in enumerate(terms)]
         if self.rarity_weighted_keyword:
             return self._rarity_weighted_keyword(
                 terms, matches, params, limit, preferred_episode_ids
@@ -155,12 +166,14 @@ class RetrievalSearchRepository:
         total = " + ".join(f"w.w_{n}" for n in count)
         order = "score DESC,preferred DESC,episode_no,chunk_index,id"
         # 범위 안 모든 청크의 본문을 중간 결과에 쌓지 않도록 일치 표시만 계산하고, 상위 후보만 본문을 읽는다.
+        # 가중치는 한 행이라 MATERIALIZED로 한 번만 계산한다. 펼쳐 두면 PostgreSQL이 후보 행마다 전체 청크
+        # 집계를 다시 실행할 수 있어 비용이 후보 수 × 청크 수로 커진다.
         return self._rows(
             f"WITH hits AS (SELECT c.id,c.episode_id AS hit_episode_id,e.episode_no AS hit_episode_no,"
             f"c.chunk_index AS hit_chunk_index,{hits} {self.from_clause}),"
             f"stats AS (SELECT CAST(count(*) AS double precision) AS total,{frequencies} FROM hits),"
             f"raw_weights AS (SELECT {raw} FROM stats),"
-            f"weights AS (SELECT {weights} FROM raw_weights),"
+            f"weights AS MATERIALIZED (SELECT {weights} FROM raw_weights),"
             f"ranked AS (SELECT h.id,({matched})/({total}) AS score,"
             "(h.hit_episode_id=ANY(CAST(:preferred AS uuid[]))) AS preferred,"
             "h.hit_episode_no AS episode_no,h.hit_chunk_index AS chunk_index "
@@ -195,11 +208,11 @@ class RetrievalSearchRepository:
 
         params = {f"required_{n}": pattern(t) for n, t in enumerate(required)}
         params.update({f"optional_{n}": pattern(t) for n, t in enumerate(optional)})
-        conditions = [f"c.chunk_text ILIKE :required_{n} ESCAPE '\\'" for n in range(len(required))]
+        conditions = [_contains(f"required_{n}", t) for n, t in enumerate(required)]
         if optional:
             matched = " + ".join(
-                f"CASE WHEN c.chunk_text ILIKE :optional_{n} ESCAPE '\\' THEN 1 ELSE 0 END"
-                for n in range(len(optional))
+                f"CASE WHEN {_contains(f'optional_{n}', t)} THEN 1 ELSE 0 END"
+                for n, t in enumerate(optional)
             )
             conditions.append(f"({matched}) >= {max(1, (len(optional) + 1) // 2)}")
         direction = "ASC" if order == "EARLIEST" else "DESC"
