@@ -35,8 +35,8 @@ from app.chatbot.hybrid_prompts import (
 )
 from app.chatbot.outbox import Outbox
 from app.chatbot.qa import ModelTimeBudgetExceeded, response_schema
-from app.chatbot.qa_render import notices
-from app.chatbot.replay import offline_settings
+from app.chatbot.qa_render import PUBLIC_NOTICES, UNREGISTERED_NOTICE
+from app.chatbot.replay import NoticeCodes, offline_settings, recorded_notice_codes
 from app.chatbot.runtime import ChatRuntime, ProviderFailure
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.responses import LlmTextResponse
@@ -391,8 +391,9 @@ async def agent_replay(
             ),
         )
         try:
-            runtime.submit(dispatch)
-            await asyncio.gather(*list(runtime.tasks.values()))
+            with recorded_notice_codes() as notice_codes:
+                runtime.submit(dispatch)
+                await asyncio.gather(*list(runtime.tasks.values()))
             # outbox는 한 번에 종류별 8건씩 보낸다. 호출이 많은 실행은 여러 번에 걸쳐 비운다.
             for _ in range(8):
                 await runtime.deliver()
@@ -404,8 +405,16 @@ async def agent_replay(
             assert raw.unexpected == []
         finally:
             box.close()
+    codes = notice_codes[-1] if notice_codes else NoticeCodes()
+    published = spring.finishes[0]["result"]
+    if published is not None:
+        # 탐색 경로가 붙이는 안내 코드는 모두 등록된 내부 코드이고, 작가에게는 공개 표의 문장만 보인다.
+        assert UNREGISTERED_NOTICE not in codes
+        assert set(published["limitations"]) <= set(PUBLIC_NOTICES.values())
     return {
         "finish": spring.finishes[0],
+        # 이 결과에 붙은 안내 코드 이름 전체다. 화면 문구가 아니라 진단 기록에서 읽는다.
+        "noticeCodes": codes,
         "spring": spring,
         "search": search,
         "embedding": embedding,
@@ -866,7 +875,7 @@ def test_without_searchable_chunks_linked_quotes_still_answer_through_the_existi
     # 조각이 없으면 탐색에 들어가지 않고, 등록 설정에 연결된 인용으로 기존 경로가 답한다.
     assert on["finish"]["result"]["outcome"] == "ANSWER"
     assert "화염구" in on["finish"]["result"]["text"]
-    assert on["finish"] == off["finish"]
+    assert on["finish"] == off["finish"] and on["noticeCodes"] == off["noticeCodes"]
     assert on["search"].calls == ["episode_span"] and off["search"].calls == []
     keys = [request["prompt_cache_key"] for request in on["raw"].requests]
     assert keys == [request["prompt_cache_key"] for request in off["raw"].requests]
@@ -909,8 +918,8 @@ def test_without_searchable_chunks_or_linked_quotes_the_existing_path_reports_th
     on, off = run("on", agent=True), run("off", agent=False)
     finished = on["finish"]["result"]
     assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
-    # 범위 확인 한 번 뒤에는 꺼진 실행과 같은 조회·같은 안내다. 탐색 전용 조회와 상태가 남지 않는다.
-    assert on["finish"] == off["finish"]
+    # 범위 확인 한 번 뒤에는 꺼진 실행과 같은 조회·같은 안내 코드다. 탐색 전용 조회와 상태가 남지 않는다.
+    assert on["finish"] == off["finish"] and on["noticeCodes"] == off["noticeCodes"]
     assert on["search"].calls == ["episode_span", *off["search"].calls]
     assert off["search"].calls == ["keyword", "vector"]
     assert [r["prompt_cache_key"] for r in on["raw"].requests] == [PLAN_VERSION]
@@ -922,7 +931,8 @@ def test_without_searchable_chunks_or_linked_quotes_the_existing_path_reports_th
             (3, 3),
             (3, 3),
         ]
-        assert notices(["SOURCE_RANGE"])[0] in finished["limitations"]
+        # 탐색이었다면 지웠을 '회차 범위' 안내 코드가 그대로 남는다. 화면에는 보이지 않는 코드다.
+        assert "SOURCE_RANGE" in on["noticeCodes"] and finished["limitations"] == []
 
 
 def test_trace_logs_keep_counts_and_numbers_but_no_text(tmp_path, caplog):

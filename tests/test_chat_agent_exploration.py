@@ -21,6 +21,8 @@ from app.chatbot.hybrid import _Evidence, _HybridSession
 from app.chatbot.hybrid_agent import EPISODE_READ_LIMIT, POOL_CHUNK_LIMIT
 from app.chatbot.hybrid_metrics import HybridMetrics
 from app.chatbot.qa import ModelTimeBudgetExceeded
+from app.chatbot.qa_render import UNREGISTERED_NOTICE, publish
+from app.chatbot.replay import recorded_notice_codes
 from app.chatbot.runtime import ProviderResult
 from app.llm.responses import LlmTextResponse
 from app.schemas.chat_execution import Usage
@@ -517,7 +519,11 @@ def test_answers_citing_more_chunks_than_the_result_contract_are_not_published()
     result = asyncio.run(session.finish_answer(answer(RETRIEVAL_SOURCE_LIMIT + 1)))
     assert result.result.outcome == "INSUFFICIENT_EVIDENCE"
     assert session.tool_count == 0  # 재검증·등록을 시작하기 전에 멈춘다
-    assert any("답변 길이 한도" in text for text in result.result.limitations)
+    # 사유는 화면 문구가 아니라 실행 경계의 발생 코드 기록으로 남는다.
+    with recorded_notice_codes() as records:
+        published = publish(result)
+    assert "ANSWER_LIMIT" in records[-1] and UNREGISTERED_NOTICE not in records[-1]
+    assert published.result.limitations == []
 
 
 class OneShotExecution:
