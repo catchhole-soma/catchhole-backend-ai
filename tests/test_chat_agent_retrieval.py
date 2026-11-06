@@ -35,12 +35,18 @@ from app.chatbot.hybrid_prompts import (
 )
 from app.chatbot.outbox import Outbox
 from app.chatbot.qa import ModelTimeBudgetExceeded, response_schema
+from app.chatbot.qa_render import notices
 from app.chatbot.replay import offline_settings
 from app.chatbot.runtime import ChatRuntime, ProviderFailure
 from app.embeddings.responses import EmbeddingBatchResponse
 from app.llm.responses import LlmTextResponse
 from app.retrieval.chunking import POLICY
-from app.retrieval.search_contracts import ChunkEvidence, SearchResult, SearchScopeUnavailable
+from app.retrieval.search_contracts import (
+    ChunkEvidence,
+    SearchReadiness,
+    SearchResult,
+    SearchScopeUnavailable,
+)
 from app.schemas.chat_execution import Dispatch, ExecutionContext, Finish
 from app.schemas.chat_hybrid import AgentGroundedAnswer, GroundedAnswer
 from tests.test_chat_hybrid import (
@@ -824,12 +830,95 @@ def test_invalid_exploration_output_ends_exploration_and_answers_from_what_was_r
     assert_ledger_balanced(result)
 
 
-def test_nothing_readable_ends_with_the_existing_insufficient_evidence_message(tmp_path):
-    result = asyncio.run(agent_replay(tmp_path, {PLAN_VERSION: [plan_output()]}, corpus=[]))
-    finished = result["finish"]["result"]
+def no_indexed_chunks(search):
+    """검색 색인이 아직 없는 작품: 읽을 회차가 없고 벡터도 없다."""
+    search.readiness = SearchReadiness(0, 0, 0, 0, 0, ("NO_SUPPORTED_SOURCES",))
+    if not hasattr(search, "episode_span"):
+
+        async def episode_span(scope):
+            search.record("episode_span", scope)
+            return None, None, 0
+
+        search.episode_span = episode_span
+
+
+def test_without_searchable_chunks_linked_quotes_still_answer_through_the_existing_path(tmp_path):
+    def run(name, **hybrid):
+        case = scenario("direct_quote_sufficient")
+        case["maxToolCalls"] = 60
+        return asyncio.run(
+            replay(
+                tmp_path / name,
+                case,
+                hybrid=hybrid,
+                config={"max_tool_calls": 60},
+                search_setup=no_indexed_chunks,
+            )
+        )
+
+    (tmp_path / "on").mkdir()
+    (tmp_path / "off").mkdir()
+    on, off = run("on", agent=True), run("off", agent=False)
+    # 조각이 없으면 탐색에 들어가지 않고, 등록 설정에 연결된 인용으로 기존 경로가 답한다.
+    assert on["finish"]["result"]["outcome"] == "ANSWER"
+    assert "화염구" in on["finish"]["result"]["text"]
+    assert on["finish"] == off["finish"]
+    assert on["search"].calls == ["episode_span"] and off["search"].calls == []
+    keys = [request["prompt_cache_key"] for request in on["raw"].requests]
+    assert keys == [request["prompt_cache_key"] for request in off["raw"].requests]
+    assert keys[-1] == ANSWER_VERSION and EXPLORE_VERSION not in keys
+    # 기존 답변 계약(프롬프트·응답 모델·입력)을 그대로 쓴다.
+    answer = on["raw"].requests[-1]
+    assert answer["system"] == ANSWER_PROMPT
+    assert answer["response_schema"] == response_schema(GroundedAnswer)
+    assert "exploration" not in answer["input"]
+    assert answer["input"] == off["raw"].requests[-1]["input"]
+
+
+@pytest.mark.parametrize(
+    "question,plan",
+    [
+        (QUESTION, {}),
+        # 계획이 회차를 좁힌 질문: 탐색이었다면 범위를 넓히고 '회차 범위' 안내를 지웠을 실행이다.
+        (
+            "3화에서 가온은 열쇠를 어디서 찾았어? 나침반은 어떻게 얻었어?",
+            {"episodeFrom": 3, "episodeTo": 3, "searchTerms": ["열쇠"]},
+        ),
+    ],
+)
+def test_without_searchable_chunks_or_linked_quotes_the_existing_path_reports_the_gap(
+    tmp_path, question, plan
+):
+    def run(name, **hybrid):
+        (tmp_path / name).mkdir()
+        return asyncio.run(
+            agent_replay(
+                tmp_path / name,
+                {PLAN_VERSION: [plan_output(**plan)]},
+                question=question,
+                corpus=[],
+                hybrid=hybrid,
+                search_setup=no_indexed_chunks,
+            )
+        )
+
+    on, off = run("on", agent=True), run("off", agent=False)
+    finished = on["finish"]["result"]
     assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
-    assert result["search"].calls == ["episode_span"]
-    assert [r["prompt_cache_key"] for r in result["raw"].requests] == [PLAN_VERSION]
+    # 범위 확인 한 번 뒤에는 꺼진 실행과 같은 조회·같은 안내다. 탐색 전용 조회와 상태가 남지 않는다.
+    assert on["finish"] == off["finish"]
+    assert on["search"].calls == ["episode_span", *off["search"].calls]
+    assert off["search"].calls == ["keyword", "vector"]
+    assert [r["prompt_cache_key"] for r in on["raw"].requests] == [PLAN_VERSION]
+    assert on["embedding"].inputs == []
+    if plan:
+        # 범위 확인만 서버 허용 범위로 하고, 그 뒤 기존 경로는 계획이 좁힌 범위를 그대로 쓴다.
+        assert [(s.episode_from, s.episode_to) for s in on["search"].scopes] == [
+            (1, 2147483647),
+            (3, 3),
+            (3, 3),
+        ]
+        assert notices(["SOURCE_RANGE"])[0] in finished["limitations"]
 
 
 def test_trace_logs_keep_counts_and_numbers_but_no_text(tmp_path, caplog):

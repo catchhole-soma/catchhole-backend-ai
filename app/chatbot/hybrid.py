@@ -681,13 +681,16 @@ class _HybridSession(AgentRetrieval, _Session):
                 "요청한 설정 항목이 많아 각각의 근거를 함께 확인하기 어렵습니다. 조회할 항목이나 유형을 좁혀 주세요.",
                 self.codes + ["CONTEXT_LIMIT"],
             )
-        if self.logical_items:
-            if self.hcfg.agent and self.hcfg.agent_items:
-                return await self.run_agent(plan)
-            return await self.run_items(plan)
-        if self.hcfg.agent:
+        if self.hcfg.agent and (self.hcfg.agent_items or not self.logical_items):
             # 고정 라운드 대신 모델이 검색어·읽을 회차를 고르는 원문 탐색(hybrid_agent.py).
-            return await self.run_agent(plan)
+            # 읽을 검색 조각이 하나도 없으면(색인 전 작품 등) 탐색에 들어가지 않는다. 아래 기존 경로가
+            # 등록 설정에 연결된 인용으로 먼저 답을 시도하고, 기존 답변 계약과 부족 안내를 그대로 쓴다.
+            span = await self.agent_source_span()
+            if span is None or span[2]:
+                return await self.run_agent(plan, span)
+            self.trace("agent_skipped", reason="NO_SOURCE_CHUNKS")
+        if self.logical_items:
+            return await self.run_items(plan)
         # A direct lookup also needs a final recheck. Keep room for a minimal
         # search -> receipt -> final revalidation -> final receipt path.
         await self.evidence(

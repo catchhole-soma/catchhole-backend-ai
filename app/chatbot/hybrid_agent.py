@@ -7,6 +7,9 @@
   → [탐색 호출 → 검색/회차 통째 읽기 → 읽은 묶음에 추가] × N → 답변
   → (PARTIAL/NONE이고 단계·시간이 남으면) 빠진 요구를 겨냥한 재탐색 → 답변
 
+읽을 검색 조각이 하나도 없는 실행은 탐색에 들어오지 않는다(agent_source_span). 호출자가 기존 고정
+라운드 경로로 넘겨 등록 설정에 연결된 인용으로 먼저 답하게 한다.
+
 답변은 읽은 묶음을 회차 순 묶음으로 나눠 병렬로 사실과 인용문을 뽑고, 서버가 인용문을 원문과
 대조한 뒤 검증된 사실만으로 답을 쓴다(agent_extract). 항목별(perItem) 답변과 두 단계 답변이 빈 답으로
 끝난 재시도는 읽은 묶음을 한 번의 답변 호출에 넣는다.
@@ -800,10 +803,37 @@ class AgentRetrieval:
 
         return latest if score(latest) >= score(previous) else previous
 
-    async def run_agent(self, plan):
-        """run_source의 고정 라운드 자리를 대신한다. 답변·인용 검증·마무리는 기존 메서드다."""
+    def agent_relaxes_range(self):
+        """계획이 좁힌 회차 범위를 서버 허용 범위로 넓혀 읽을 실행인지(agent_relax_plan_range)."""
+        ctx = self.execution.context
+        return bool(
+            self.hcfg.agent_relax_plan_range
+            and (self.source_from, self.source_to) != (ctx.episode_from, ctx.episode_to)
+        )
+
+    async def agent_source_span(self):
+        """탐색이 읽을 범위의 (최소 회차, 최대 회차, 회차 수). 확인할 도구 몫이 없으면 None이다.
+
+        탐색에 들어가기 전에 부른다. 탐색 상태(agent_active, 넓힌 범위, 안내 코드)는 바꾸지 않으므로,
+        읽을 조각이 없어 호출자가 기존 고정 라운드 경로로 넘겨도 그 경로의 범위·답변 계약이 그대로다.
+        """
+        if not self.tools_available(1 + self.agent_tail_tools()):
+            return None
+        self.consume("episode_span")
+        wide, self.agent_wide_range = self.agent_wide_range, self.agent_relaxes_range()
         try:
-            return await self.agent_run(plan)
+            return await self.handler.search.episode_span(self.scope)
+        finally:
+            self.agent_wide_range = wide
+
+    async def run_agent(self, plan, span):
+        """run_source의 고정 라운드 자리를 대신한다. 답변·인용 검증·마무리는 기존 메서드다.
+
+        span은 agent_source_span()의 결과다. 읽을 조각이 없는 실행(회차 수 0)은 호출자가 이 메서드
+        대신 기존 경로로 보낸다.
+        """
+        try:
+            return await self.agent_run(plan, span)
         except Exception as exc:
             # 예외 종류와 코드 위치만 남긴다(메시지·값·본문은 남기지 않는다). 처리는 기존대로다.
             where, frame = None, exc.__traceback__
@@ -823,28 +853,22 @@ class AgentRetrieval:
             )
             raise
 
-    async def agent_run(self, plan):
+    async def agent_run(self, plan, span):
         ctx = self.execution.context
         self.agent_started = time.monotonic()
         self.agent_active = True
-        if self.hcfg.agent_relax_plan_range and (self.source_from, self.source_to) != (
-            ctx.episode_from,
-            ctx.episode_to,
-        ):
+        if self.agent_relaxes_range():
             self.agent_wide_range = True
             if ctx.episode_from is None and ctx.episode_to is None and plan.rdb_mode == "NONE":
                 # 원문만 읽는 질문에서 계획이 좁힌 범위 밖도 읽으므로 '회차 범위로 걸렀다'는 안내는
                 # 붙이지 않는다. 등록 이력을 함께 읽는 질문은 그 조회가 여전히 좁힌 범위를 쓰므로 남긴다.
                 self.codes = [c for c in self.codes if c != "SOURCE_RANGE"]
-        if not self.tools_available(1 + self.agent_tail_tools()):
-            # 등록 조회가 도구 예산을 다 썼으면 실행 실패 대신 기존 부족 안내로 마감한다.
+        if span is None:
+            # 등록 조회가 도구 예산을 다 써서 읽을 범위를 확인하지 못했다. 실행 실패 대신 기존 부족
+            # 안내로 마감한다.
             self.codes.append("SEARCH_LIMIT")
             return await self.unanswered_source_result(plan)
-        self.consume("episode_span")
-        self.agent_span = await self.handler.search.episode_span(self.scope)
-        if not self.agent_span[2]:
-            self.codes.append("SEARCH_LIMIT")
-            return await self.unanswered_source_result(plan)
+        self.agent_span = span
         if self.agent_wide_range:
             lo, hi, _ = self.agent_span
             focus = (max(lo, self.source_from or lo), min(hi, self.source_to or hi))

@@ -226,6 +226,60 @@ def test_no_tool_budget_means_no_episode_read():
     assert calls == [] and session.agent_read == {} and "SEARCH_LIMIT" in session.codes
 
 
+def span_session(span, **kwargs):
+    session = agent_session(**kwargs)
+    session.agent_active = False  # 탐색에 들어가기 전 상태
+    session.agent_span = None
+    session.execution.context.member_id = 42
+    session.execution.context.work_id = UUID(int=9103)
+    scopes = []
+
+    async def episode_span(scope):
+        scopes.append((scope.episode_from, scope.episode_to))
+        return span
+
+    session.handler.search = SimpleNamespace(episode_span=episode_span)
+    return session, scopes
+
+
+def test_source_span_check_reads_the_exploration_range_without_touching_its_state():
+    session, scopes = span_session((None, None, 0))
+    # 계획이 3화로 좁혔고 서버는 범위를 정하지 않은 실행: 탐색은 넓힌 범위를 읽는다.
+    session.source_from = session.source_to = 3
+    session.codes = ["NARRATIVE_SOURCE_RANGE", "SOURCE_RANGE"]
+    assert asyncio.run(session.agent_source_span()) == (None, None, 0)
+    assert scopes == [(1, 2147483647)] and session.tool_count == 1
+    # 확인만 했을 뿐 탐색 상태는 그대로다. 기존 경로는 계획이 좁힌 범위와 안내를 그대로 쓴다.
+    assert session.agent_active is False and session.agent_wide_range is False
+    assert session.agent_span is None and session.agent_focus is None
+    assert session.codes == ["NARRATIVE_SOURCE_RANGE", "SOURCE_RANGE"]
+    assert (session.scope.episode_from, session.scope.episode_to) == (3, 3)
+    # 범위 넓히기를 끄면 확인도 계획 범위에서 한다.
+    session, scopes = span_session((3, 3, 1), hybrid={"agent_relax_plan_range": False})
+    session.source_from = session.source_to = 3
+    assert asyncio.run(session.agent_source_span()) == (3, 3, 1)
+    assert scopes == [(3, 3)]
+
+
+def test_source_span_check_without_tool_budget_keeps_the_existing_limit_ending():
+    session, scopes = span_session((1, 8, 8), max_tool_calls=3)
+    session.tool_count = 3
+    # 확인할 도구 몫이 없으면 조회하지 않고 None을 돌려준다.
+    assert asyncio.run(session.agent_source_span()) is None
+    assert scopes == [] and session.tool_count == 3
+    ended = []
+
+    async def unanswered(plan):
+        ended.append(list(session.codes))
+        return "unanswered"
+
+    session.unanswered_source_result = unanswered
+    plan = SimpleNamespace(rdb_mode="NONE")
+    # 그 경우 탐색은 기존대로 조회 없이 부족 안내로 마감한다.
+    assert asyncio.run(session.run_agent(plan, None)) == "unanswered"
+    assert ended == [["SEARCH_LIMIT"]] and scopes == [] and session.agent_active is True
+
+
 def test_tool_reserve_covers_registration_batches_and_final_checks():
     session = agent_session()
     assert session.agent_tail_tools() == 3
