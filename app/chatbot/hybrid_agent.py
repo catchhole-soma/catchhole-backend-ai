@@ -1048,18 +1048,19 @@ class AgentRetrieval:
         return result.facts, "ok"
 
     @staticmethod
-    def agent_locate_fact(fact, group, passages):
-        """사실의 인용문을 기존 검증기로 원문에서 찾는다.
+    def agent_locate_fact(fact, group):
+        """사실의 인용문을 기존 검증기로 그 추출 호출에 준 묶음(group) 안에서 찾는다.
 
         ((조각 참조, 원문 그대로의 구절), None) 또는 (None, 사유)를 돌려준다. 인용문은 지정한 원문 덩어리
         안에 글자 그대로, 한 번만 있어야 한다(답변 인용과 같은 기준). 참조 번호만 틀린 경우에 한해 같은
-        묶음의 다른 덩어리 중 정확히 한 곳에 있으면 그곳으로 바로잡는다.
+        묶음의 다른 덩어리 중 정확히 한 곳에 있으면 그곳으로 바로잡는다. 그 호출에 보여 주지 않은 다른
+        묶음의 참조는 같은 문장이 거기에 있어도 받지 않는다. 읽지 않은 원문에 사실을 귀속하지 않기 위함이다.
         """
         quote = fact.quote.strip()
         if not quote:
             return None, "EMPTY"
         try:
-            found = resolve_support_quotes([_Quote(fact.evidence_ref, quote)], passages)[0]
+            found = resolve_support_quotes([_Quote(fact.evidence_ref, quote)], group)[0]
             return (found.evidence_refs[0], found.quote), None
         except ValueError as exc:
             reason = str(exc)
@@ -1069,7 +1070,7 @@ class AgentRetrieval:
         for passage in group:
             anchor = passage["references"][0]["evidenceRef"]
             try:
-                hits.append(resolve_support_quotes([_Quote(anchor, quote)], passages)[0])
+                hits.append(resolve_support_quotes([_Quote(anchor, quote)], group)[0])
             except ValueError:
                 continue
         if len(hits) == 1:
@@ -1108,7 +1109,7 @@ class AgentRetrieval:
         for group, (raw, status) in zip(groups, results, strict=True):
             kept = 0
             for fact in raw:
-                located, reason = self.agent_locate_fact(fact, group, passages)
+                located, reason = self.agent_locate_fact(fact, group)
                 if located is None:
                     dropped[reason] = dropped.get(reason, 0) + 1
                     continue

@@ -77,10 +77,10 @@ def test_fact_quotes_must_be_exact_text_inside_the_cited_passage():
     session, passages = read_session()
     first, second, third = passages
     ref = first["references"][0]["evidenceRef"]
-    located, reason = session.agent_locate_fact(fact(ref, COMPASS), passages, passages)
+    located, reason = session.agent_locate_fact(fact(ref, COMPASS), passages)
     assert reason is None and located == (ref, COMPASS)
     # 앞뒤 공백은 떼고 찾되, 돌려주는 구절은 원문 그대로다.
-    assert session.agent_locate_fact(fact(ref, f"  {COMPASS} "), passages, passages)[0] == (
+    assert session.agent_locate_fact(fact(ref, f"  {COMPASS} "), passages)[0] == (
         ref,
         COMPASS,
     )
@@ -89,12 +89,12 @@ def test_fact_quotes_must_be_exact_text_inside_the_cited_passage():
         "가온은 나침반을 샀다",  # 줄여 씀
         "낡은 나침반을  은화 세 닢에 샀다",  # 띄어쓰기가 다름
     ):
-        located, reason = session.agent_locate_fact(fact(ref, bad), passages, passages)
+        located, reason = session.agent_locate_fact(fact(ref, bad), passages)
         assert located is None and reason == "GROUNDING_QUOTE_NOT_FOUND"
     # 덩어리 안에 두 번 나오는 구절은 위치를 정할 수 없어 버린다.
-    located, reason = session.agent_locate_fact(fact(ref, "나침반"), passages, passages)
+    located, reason = session.agent_locate_fact(fact(ref, "나침반"), passages)
     assert located is None and reason == "GROUNDING_AMBIGUOUS_QUOTE"
-    assert session.agent_locate_fact(fact(ref, "   "), passages, passages) == (None, "EMPTY")
+    assert session.agent_locate_fact(fact(ref, "   "), passages) == (None, "EMPTY")
     assert third["sourceEpisodeNo"] == 3 and second["sourceEpisodeNo"] == 2
 
 
@@ -103,15 +103,60 @@ def test_a_wrong_reference_is_corrected_only_inside_the_same_group_and_when_uniq
     first, second, third = passages
     wrong, right = first["references"][0]["evidenceRef"], third["references"][0]["evidenceRef"]
     # 참조 번호만 틀리고 구절이 같은 묶음의 다른 덩어리 한 곳에만 있으면 그곳으로 바로잡는다.
-    located, reason = session.agent_locate_fact(fact(wrong, KEY), passages, passages)
+    located, reason = session.agent_locate_fact(fact(wrong, KEY), passages)
     assert reason is None and located == (right, KEY)
-    assert session.agent_locate_fact(fact("E99", KEY), passages, passages)[0] == (right, KEY)
+    assert session.agent_locate_fact(fact("E99", KEY), passages)[0] == (right, KEY)
     # 다른 묶음의 원문으로는 옮기지 않는다.
-    located, reason = session.agent_locate_fact(fact(wrong, KEY), [first, second], passages)
+    located, reason = session.agent_locate_fact(fact(wrong, KEY), [first, second])
     assert located is None and reason == "GROUNDING_QUOTE_NOT_FOUND"
     # 같은 묶음의 두 덩어리에 모두 있는 구절은 어느 쪽인지 알 수 없어 버린다.
-    located, reason = session.agent_locate_fact(fact("E99", "가온"), passages, passages)
+    located, reason = session.agent_locate_fact(fact("E99", "가온"), passages)
     assert located is None and reason == "GROUNDING_UNKNOWN_REFERENCE"
+
+
+def test_a_reference_from_another_group_is_rejected_even_when_the_quote_exists_there():
+    session, passages = read_session()
+    first, second, third = passages
+    other = third["references"][0]["evidenceRef"]
+    # 이 추출 호출에는 1·2화만 줬다. 모델이 보지 않은 3화 조각을 참조로 적으면, 그 문장이 실제로
+    # 3화에 있어도 받지 않는다(읽지 않은 원문과 회차에 사실을 귀속하지 않는다).
+    assert session.agent_locate_fact(fact(other, KEY), [third])[0] == (other, KEY)
+    located, reason = session.agent_locate_fact(fact(other, KEY), [first, second])
+    assert located is None and reason == "GROUNDING_UNKNOWN_REFERENCE"
+    # 같은 문장이 준 묶음 안의 한 곳에도 있으면, 다른 묶음의 참조가 아니라 준 묶음의 그 위치로 바로잡는다.
+    shared = "가온에게 나침반을 빌려 달라고 했지만"
+    own = second["references"][0]["evidenceRef"]
+    copied = {
+        "text": "나루는 " + shared + " 소용없었다. ",
+        "sourceEpisodeNo": 9,
+        "references": [{"evidenceRef": "E90", "start": 0, "end": 30, "methods": ["KEYWORD"]}],
+    }
+    located, reason = session.agent_locate_fact(fact("E90", shared), [first, second])
+    assert reason is None and located == (own, shared)
+    assert session.agent_locate_fact(fact("E90", shared), [copied])[0] == ("E90", shared)
+
+
+def test_extraction_only_keeps_facts_located_inside_the_group_they_were_read_from():
+    session, passages = read_session()
+    first, second, third = passages
+    other = third["references"][0]["evidenceRef"]
+    own = first["references"][0]["evidenceRef"]
+    pending = [
+        # 1·2화 묶음의 호출이 3화 조각 참조를 적은 사실과 제 묶음의 사실을 함께 돌려준다.
+        (
+            [fact(other, KEY, "3화 참조를 적은 사실"), fact(own, COMPASS, "1화: 나침반을 샀다.")],
+            "ok",
+        ),
+        ([], "ok"),
+    ]
+
+    async def extract_group(plan, group):
+        return pending.pop(0)
+
+    session.agent_extract_group = extract_group
+    session.agent_extract_groups = lambda passages, limit: [[first, second], [third]]
+    facts = asyncio.run(session.agent_extract_facts(SimpleNamespace(), {"passages": passages}))
+    assert [(f.episode, f.quote) for f in facts] == [(1, COMPASS)]
 
 
 def test_extraction_groups_follow_reading_order_and_respect_the_group_limit():
@@ -274,7 +319,7 @@ def test_wide_exploration_answers_keep_their_model_through_the_existing_checks()
 
 
 def test_cited_chunks_stay_inside_the_result_contract():
-    session, passages = read_session()
+    session, _ = read_session()
     plan = HybridPlan.model_validate(plan_output())
     # 조각마다 사실 하나씩, 결과 상한보다 많은 조각을 인용하려는 답.
     facts = [_Fact(f"F{n}", "합성 사실", f"E{n}", f"구절 {n}", 1) for n in range(1, 81)]
