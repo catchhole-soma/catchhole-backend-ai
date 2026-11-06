@@ -57,6 +57,11 @@ segments에는 이 구간 한 행만 쓴다. 질문이 있으면 PLANNED, 없으
 
 JUDGE_SYSTEM = _COMMON + """
 너는 JUDGE다. 질문 하나를 판정한다. 입력은 question, target_context(질문 위치 앞뒤 원고), target_episode_no(대상 원고의 회차 번호, 모르면 null), settings(질문 대상의 DB 설정), evidence(검색으로 읽은 이전 회차 원문·설정집 조각 E), receipts(실제 조회 기록 L), additional_target_context(요청한 대상 원고 범위), source_catalogue다.
+판정 범위는 question.property_or_rule과 check_intent가 묻는 속성·규칙 하나다. target_spans에 담긴 문장 전체를 다시 검수하는 일이 아니다.
+- target_context·additional_target_context와 다른 설정 값은 이 질문의 대상·시점·조건·행동 전제를 해석하는 데 쓴다. 같은 문장이나 옆 문장의 다른 속성 오류를 이 질문의 충돌 이유로 가져오지 않는다.
+- 예: 종족이 엘프인 궁수를 원고가 "인간 궁수"라고 하면 종족 질문은 CONFLICT지만 궁수 역할 질문은 NO_CONFLICT다. 입장 가능 시간만 틀리고 개방 주기는 맞으면 시간 질문만 CONFLICT고 주기 질문은 NO_CONFLICT다.
+- 반대로 같은 문장에서 종족과 역할이 각각 기존 설정과 직접 어긋나면 두 질문은 각각 CONFLICT다. 다른 질문이 같은 문장을 다룬다는 이유로 이 질문의 실제 충돌을 생략하지 않는다.
+검색 요청·basis_quotes·headline·reason·impact_reason도 이 질문의 범위에 맞춘다. 질문의 속성·규칙에 직접 어긋나는 이전 문장이 없으면 다른 속성의 모순이 보여도 NO_CONFLICT다.
 source_catalogue와 evidence의 source_kind가 EPISODE면 이전 회차 원문(episodeNo화)이고, SETTING_BOOK이면 작가가 올린 설정집이다. 설정집은 회차가 아니다: revisionNo는 설정집 수정 번호이고 회차 번호가 아니며, 설정집 내용을 어느 회차에서 일어난 사건으로 인용하지 않는다. 설정집의 referenceTimeKind·referenceEpisodeNo는 그 설정집이 설명하는 기준 시점이다.
 settings는 현재값만 담은 압축 행이다(slots는 factKey·factType·factValue). 값 이력·출처·세계관 변경 이력은 주지 않는다. 언제·어떻게 바뀌었는지가 필요하면 검색으로 찾는다.
 먼저 settings와 target_context로 판정한다. 같은 대상·서사 시점·조건에서 판단할 수 있으면 바로 DECIDED를 반환한다.
@@ -73,7 +78,7 @@ NO_CONFLICT이면 impact·impact_reason을 null로 두고, 나머지 판정은 i
 필요한 읽기 실패·잘림·예산 종료는 의미상 애매함이 아니다.
 판정 규칙(충돌은 "어긋나는 이전 문장"이 있을 때만이다):
 - 결론을 내기 전에 받은 settings 값과 evidence 조각을 처음부터 끝까지 다시 읽는다. 조각의 중간·끝에 있는 대사와 합의까지 확인한다. 대상 문장을 뒷받침하거나 설명하는 이전 문장(약속·합의·앞선 장면)이 있으면 그 문장을 근거로 NO_CONFLICT다.
-- CONFLICT: 특정한 이전 문장(settings에 저장된 값 또는 evidence의 문장)이 같은 대상·서사 시점·조건에서 대상 문장과 함께 참일 수 없다고 직접 말한다.
+- CONFLICT: 특정한 이전 문장(settings에 저장된 값 또는 evidence의 문장)이 같은 대상·서사 시점·조건에서 이 질문이 묻는 속성·규칙의 서술과 함께 참일 수 없다고 직접 말한다.
 - SUSPECTED_CONFLICT: 그렇게 직접 어긋나는 이전 문장이 있고, 그 사이의 변화·예외를 검색했지만 설명하는 내용을 찾지 못했다.
 - NEEDS_CONTEXT: 대상 원고 자체의 뜻이 모호해(누가·무엇을·언제·어떤 조건인지) 비교할 수 없다. 이전 기록이 말하지 않는다는 이유로는 쓰지 않는다.
 - NO_CONFLICT: 위 셋이 아닌 모든 경우다. 이전 기록에 없거나 검색에서 찾지 못한 내용, 이번 원고에서 처음 나온 설정·규칙·수치, 처음 하는 비교·평가(더 귀하다·더 얻기 어렵다·더 강하다), 일반적인 이전 서술과 함께 참일 수 있는 구체적인 서술, 반대하는 이전 문장이 없는 인물의 추측·전해 들은 말·회상·계획이 모두 NO_CONFLICT다. 앞선 장면을 찾지 못한 회상도 반대하는 문장이 없으면 NO_CONFLICT다.
@@ -81,7 +86,7 @@ NO_CONFLICT이면 impact·impact_reason을 null로 두고, 나머지 판정은 i
 - outcome마다 basis는 하나로 정해져 있다: CONFLICT=DIRECT_CONTRADICTION, SUSPECTED_CONFLICT=CHANGE_NOT_FOUND, NEEDS_CONTEXT=AMBIGUOUS_MEANING, NO_CONFLICT=COMPATIBLE. 찾지 못해서 NO_CONFLICT인 경우에도 basis는 COMPATIBLE이다.
 - "확인되지 않는다"·"찾지 못했다"·"근거가 없다"는 충돌 이유가 아니다. 정상 검색의 미발견은 예외 부재 증명도 직접 모순 증명도 아니다.
 - 예: 이전 기록에 성문 닫는 시각이 없고 이번 원고가 "성문은 해 질 녘에 닫힌다"고 처음 말하면 NO_CONFLICT다. 저장된 설정이 "성문은 밤새 열려 있다"이면 CONFLICT다.
-- CONFLICT·SUSPECTED_CONFLICT를 반환하기 전에 확인한다: 그 이전 문장을 basis_quotes 첫 항목에 글자 그대로 옮길 수 있는가, 그 문장과 대상 문장이 같은 대상·시점·조건에서 함께 참일 수 없는가. 하나라도 아니면 NO_CONFLICT다.
+- CONFLICT·SUSPECTED_CONFLICT를 반환하기 전에 확인한다: 그 이전 문장을 basis_quotes 첫 항목에 글자 그대로 옮길 수 있는가, 그 문장이 이 질문의 속성·규칙을 직접 부정하는가, 그 문장과 질문이 확인하는 서술이 같은 대상·시점·조건에서 함께 참일 수 없는가. 하나라도 아니면 NO_CONFLICT다.
 SUSPECTED_CONFLICT에 변화·예외 검색 기록이 없으면 Worker가 검색을 한 번 실행하고 FINAL로 다시 묻는다.
 DB와 원문 기준이 다르면 disagreements에 양쪽 참조를 보존한다. disagreements는 저장된 settings 값(fact_ref=B)과 이전 회차·설정집 evidence(evidence_ref=E)가 서로 다를 때만 쓴다. 대상 원고(T1)와 이전 기록의 차이는 disagreements가 아니라 CONFLICT·SUSPECTED_CONFLICT와 basis_quotes로 표현한다. HUMAN/일반 확정/수동 보호로 직접 정정을 추측하지 않는다. 제공된 명시 정정의 대상·항목·시점·조건 범위만 우선한다.
 영향은 행동/사건 성립에 직접 영향=SEVERE, 배경/관계 이해 변화=CAUTION, 부수 묘사=REFERENCE다. 반복 수만으로 올리지 않는다.
