@@ -1202,10 +1202,14 @@ class AgentRetrieval:
         cited = set()
 
         def supports(refs, limit):
+            # 입력에 없는 사실 참조가 하나라도 있으면 그 참조만 빼고 문장을 살리지 않는다. 그 참조에만
+            # 기대던 주장이 다른 사실의 인용을 달고 게시될 수 있으므로 답 전체를 거절해 다시 쓰게 한다.
+            if any(ref not in by_ref for ref in refs):
+                raise ValueError("Unknown evidence or setting reference")
             chosen, seen = [], set()
             for ref in refs:
-                fact = by_ref.get(ref)
-                if fact is None or (fact.evidence_ref, fact.quote) in seen:
+                fact = by_ref[ref]
+                if (fact.evidence_ref, fact.quote) in seen:
                     continue
                 # 문장의 첫 인용은 결과 상한까지, 그 뒤 인용은 여유 한도까지만 새 조각을 쓴다.
                 room = CITED_CHUNK_SOFT_LIMIT if chosen else RETRIEVAL_SOURCE_LIMIT

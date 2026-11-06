@@ -1101,3 +1101,43 @@ def test_fixed_round_answer_keeps_the_six_chunk_limit_per_claim(tmp_path):
     finished = result["finish"]["result"]
     assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
     assert SEVEN_CHUNK_CLAIM not in finished["text"] and "retrievalSources" not in finished
+
+
+def unknown_fact_claim(body):
+    return composed(
+        [
+            {
+                "text": "가온은 나침반을 사면서 금화 열 닢을 더 냈습니다.",
+                "factRefs": [body["facts"][0]["factRef"], "F999"],
+                "answeredFacets": ["P1"],
+            }
+        ],
+        missing=["P2"],
+    )
+
+
+def test_a_claim_mixing_known_and_unknown_facts_goes_back_for_a_rewrite(tmp_path):
+    outputs = full_outputs()
+    outputs[COMPOSE_VERSION] = [unknown_fact_claim, compose_by_quote(ANSWER_CLAIMS)]
+    result = asyncio.run(agent_replay(tmp_path, outputs, search_setup=seed_compass))
+    first, second = result["raw"].of(COMPOSE_VERSION)
+    assert [f["factRef"] for f in first["input"]["facts"]] == ["F1", "F2"]  # F999는 입력에 없다
+    assert "이전 출력이 계약 검증에 실패했습니다" in second["system"]
+    finished = result["finish"]["result"]
+    # 모르는 참조만 빼고 F1의 인용을 단 채 게시하지 않는다. 고쳐 쓴 답만 게시한다.
+    assert finished["outcome"] == "ANSWER" and "금화" not in finished["text"]
+    assert "은화 세 닢" in finished["text"]
+    assert_ledger_balanced(result)
+
+
+def test_an_answer_that_keeps_citing_unknown_facts_is_never_published(tmp_path):
+    outputs = full_outputs()
+    outputs[COMPOSE_VERSION] = [unknown_fact_claim]
+    result = asyncio.run(
+        agent_replay(tmp_path, outputs, search_setup=seed_compass, hybrid={"agent_max_answers": 1})
+    )
+    assert len(result["raw"].of(COMPOSE_VERSION)) == 2
+    finished = result["finish"]["result"]
+    assert finished["outcome"] == "INSUFFICIENT_EVIDENCE"
+    assert "금화" not in finished["text"] and "retrievalSources" not in finished
+    assert_ledger_balanced(result)

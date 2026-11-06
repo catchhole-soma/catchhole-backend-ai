@@ -189,7 +189,7 @@ def test_answer_is_built_only_from_verified_facts_and_their_exact_quotes():
             [
                 {
                     "text": "가온은 나침반을 은화 세 닢에 샀습니다.",
-                    "factRefs": ["F1", "F9", "F1"],
+                    "factRefs": ["F1", "F1"],
                     "answeredFacets": ["P1"],
                     "rowRefs": ["R7"],
                 },
@@ -206,7 +206,7 @@ def test_answer_is_built_only_from_verified_facts_and_their_exact_quotes():
     answer = session.agent_grounded_from(output, facts, plan)
     assert isinstance(answer, AgentGroundedAnswer)
     first, second = answer.claims
-    # 모르는 사실(F9)·중복·모르는 등록 행은 빠지고, 인용문은 서버가 확인한 사실의 구절이다.
+    # 중복 참조·모르는 등록 행은 빠지고, 인용문은 서버가 확인한 사실의 구절이다.
     assert [(s.evidence_ref, s.quote) for s in first.supports] == [(facts[0].evidence_ref, COMPASS)]
     assert first.evidence_refs == [facts[0].evidence_ref] and first.row_refs == []
     # 요구 표시 없는 문장은 관련 맥락으로만 두고 답한 것으로 세지 않는다.
@@ -216,12 +216,41 @@ def test_answer_is_built_only_from_verified_facts_and_their_exact_quotes():
     assert [(e.facet, e.text) for e in answer.missing_explanations] == [("P2", "열쇠 설명")]
     assert answer.coverage == "PARTIAL"
 
-    # 검증된 사실을 하나도 인용하지 못한 문장은 답 전체를 거절해 다시 쓰게 한다.
-    unknown = ComposedAnswer.model_validate(
-        composed([{"text": "근거 없는 문장", "factRefs": ["F8"], "answeredFacets": ["P1"]}])
+
+def test_any_unknown_fact_reference_rejects_the_whole_answer_for_a_rewrite():
+    session, passages = read_session()
+    session.chosen = [SimpleNamespace(ref="R1")]
+    plan = HybridPlan.model_validate(plan_output())
+    facts = facts_for(passages)
+    valid = {"text": "가온은 나침반을 샀습니다.", "factRefs": ["F1"], "answeredFacets": ["P1"]}
+
+    def rejected(output):
+        with pytest.raises(ValueError, match="Unknown evidence or setting reference"):
+            session.agent_grounded_from(ComposedAnswer.model_validate(output), facts, plan)
+
+    # 입력에 없는 사실만 인용한 문장.
+    rejected(composed([{"text": "근거 없는 문장", "factRefs": ["F8"], "answeredFacets": ["P1"]}]))
+    # 아는 사실과 모르는 사실을 섞은 문장. 모르는 참조만 빼면 F999에만 기대던 주장이 F1의 인용을
+    # 달고 남으므로, 문장을 살리지 않고 답 전체를 거절한다. 다른 문장이 멀쩡해도 같다.
+    mixed = {
+        "text": "가온은 나침반을 샀고 금화 열 닢을 더 냈습니다.",
+        "factRefs": ["F1", "F999"],
+        "answeredFacets": ["P1"],
+    }
+    rejected(composed([mixed]))
+    rejected(composed([valid, mixed]))
+    rejected(composed([{**mixed, "factRefs": ["F999", "F1"]}]))
+    # 등록값과의 충돌 표시도 같은 기준이다.
+    conflict = {"rowRefs": ["R1"], "factRefs": ["F2", "F999"], "eventMatch": None}
+    rejected({**composed([valid]), "conflicts": [conflict]})
+    accepted = session.agent_grounded_from(
+        ComposedAnswer.model_validate(
+            {**composed([valid]), "conflicts": [{**conflict, "factRefs": ["F2"]}]}
+        ),
+        facts,
+        plan,
     )
-    with pytest.raises(ValueError, match="Unknown evidence or setting reference"):
-        session.agent_grounded_from(unknown, facts, plan)
+    assert [c.evidence_refs for c in accepted.conflicts] == [[facts[1].evidence_ref]]
 
 
 def test_composed_answer_schema_rejects_fact_free_or_oversized_claims():
