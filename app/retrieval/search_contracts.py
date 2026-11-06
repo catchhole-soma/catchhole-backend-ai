@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from typing import Literal
 from uuid import UUID
 
-SearchMethod = Literal["DIRECT", "KEYWORD", "VECTOR", "NEIGHBOR"]
+# EPISODE: 회차 통째 읽기(그 회차의 유효 조각 전부를 본문 순서대로 읽음).
+SearchMethod = Literal["DIRECT", "KEYWORD", "VECTOR", "NEIGHBOR", "EPISODE"]
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,8 @@ class SearchResult:
     chunks: tuple[ChunkEvidence, ...]
     readiness: SearchReadiness
     limited: bool = False
+    # 탐색 검색(keyword_explore)만 채운다: 검색어의 모든 단어가 든 조각 수를 (회차 번호, 개수)로. 본문은 없다.
+    episode_hits: tuple[tuple[int, int], ...] = ()
 
 
 class SearchScopeUnavailable(RuntimeError):

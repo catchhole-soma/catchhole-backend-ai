@@ -301,7 +301,10 @@ def test_existing_positional_bundle_constructor_remains_compatible():
     assert bundle.input_count == bundle.duplicate_count == bundle.candidate_count == 0
 
 
-@pytest.mark.parametrize("settings", [dict(max_items=0), dict(max_tokens=0), dict(per_episode=101)])
+@pytest.mark.parametrize(
+    "settings",
+    [dict(max_items=0), dict(max_tokens=0), dict(per_episode=1001), dict(max_items=1001)],
+)
 def test_invalid_budgets_are_rejected(settings):
     with pytest.raises(ValueError):
         compose_evidence([], **settings)

@@ -268,6 +268,71 @@ class RetrievalSearchRepository:
             "NEIGHBOR",
         )
 
+    def episodes(self, episode_nos, *, limit=100):
+        """지정한 출처 회차의 현재 유효한 조각을 회차·본문 순서대로 읽는다(회차 통째 읽기).
+
+        다른 조회와 같은 CURRENT_FROM 조건(작품·회원 권한, 보관·파기, 원문 일치, 허용 회차 범위)을
+        순서·개수 제한 전에 적용한다. 범위 밖이거나 없는 회차 번호는 결과가 비어 있을 뿐 오류가 아니다.
+        limit에서 잘리면 뒤쪽 회차가 빠지므로 호출자는 반환 개수로 잘림 여부를 확인한다.
+        """
+        validate_limit(limit)
+        numbers = list(dict.fromkeys(episode_nos))
+        if (
+            not numbers
+            or len(numbers) > 10
+            or any(
+                isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= 2147483647
+                for n in numbers
+            )
+        ):
+            raise ValueError("Episode read needs 1 to 10 positive episode numbers")
+        return self._rows(
+            f"SELECT {FIELDS},1.0 AS score {self.from_clause} "
+            "AND e.episode_no=ANY(CAST(:episodes AS integer[])) "
+            "ORDER BY e.episode_no,c.chunk_index,c.id LIMIT :limit",
+            dict(episodes=numbers, limit=limit),
+            "EPISODE",
+        )
+
+    def keyword_episodes(self, query):
+        """검색어의 모든 단어가 함께 든 유효 조각 수를 출처 회차별로 센다. 본문은 읽지 않는다.
+
+        keyword와 같은 단어 분리·최대 12단어·리터럴 이스케이프를 쓰고 같은 CURRENT_FROM 조건을 적용한다.
+        결과는 회차 번호 오름차순이며 행 수는 허용 범위의 회차 수를 넘지 않는다.
+        """
+        validate_query(query)
+        terms = list(dict.fromkeys(query.strip().split()))[:12]
+        params = {
+            f"pattern_{n}": "%"
+            + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            + "%"
+            for n, term in enumerate(terms)
+        }
+        matches = [f"c.chunk_text ILIKE :pattern_{n} ESCAPE '\\'" for n in range(len(terms))]
+        rows = self.session.execute(
+            text(
+                f"SELECT e.episode_no AS episode_no,count(*) AS matched {self.from_clause} "
+                f"AND {' AND '.join(matches)} GROUP BY e.episode_no ORDER BY e.episode_no"
+            ),
+            {**self.params, **params},
+        ).mappings()
+        return [(row["episode_no"], row["matched"]) for row in rows]
+
+    def episode_span(self):
+        """현재 범위에서 읽을 수 있는 출처 회차의 (최소, 최대, 개수). 본문은 읽지 않는다."""
+        row = (
+            self.session.execute(
+                text(
+                    "SELECT min(e.episode_no) AS lo,max(e.episode_no) AS hi,"
+                    f"count(DISTINCT e.id) AS total {self.from_clause}"
+                ),
+                self.params,
+            )
+            .mappings()
+            .one()
+        )
+        return row["lo"], row["hi"], row["total"]
+
     def revalidate(self, chunks):
         validate_ids([chunk.chunk_id for chunk in chunks])
         if not chunks:

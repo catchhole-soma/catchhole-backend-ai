@@ -513,3 +513,126 @@ def test_matching_item_and_context_outrank_a_generic_linked_episode(corpus):
     corpus.chunks(linked, ["스승을 기다리는 장면"], ready=True)
     found = corpus.read("keyword", "잔광 스승", preferred_episode_ids=[linked], limit=1)
     assert [chunk.chunk_id for chunk in found] == [relevant_id]
+
+
+# ---- 원문 탐색용 조회(#319): 회차 통째 읽기, 검색어별 회차 분포, 읽을 수 있는 회차 범위 ----
+
+
+def test_whole_episode_read_returns_valid_chunks_in_episode_then_text_order(corpus):
+    first, second, third = corpus.episode(1), corpus.episode(2), corpus.episode(3)
+    second_ids = corpus.chunks(second, ["둘째 회차 첫 조각", "둘째 회차 둘째 조각"])
+    first_ids = corpus.chunks(first, ["첫 회차 조각"])
+    third_ids = corpus.chunks(third, ["셋째 회차 조각"])
+    # 요청 순서와 무관하게 회차·본문 순서이며, 없는 회차 번호는 오류가 아니라 빈 결과다.
+    read = corpus.read("episodes", [2, 1, 9, 2])
+    assert [c.chunk_id for c in read] == [*first_ids, *second_ids]
+    assert all(c.methods == ("EPISODE",) and c.score == 1.0 for c in read)
+    assert [c.episode_no for c in read] == [1, 2, 2]
+    # 개수 제한은 정렬 뒤에 걸려 뒤쪽 회차가 빠진다.
+    assert [c.chunk_id for c in corpus.read("episodes", [1, 2, 3], limit=2)] == [
+        first_ids[0],
+        second_ids[0],
+    ]
+    # 서버가 정한 회차 범위와 회원·작품 밖은 번호를 요청해도 읽지 못한다.
+    scope = replace(corpus.scope, episode_from=2, episode_to=3)
+    assert [c.chunk_id for c in corpus.read("episodes", [1, 2, 3], scope=scope)] == [
+        *second_ids,
+        *third_ids,
+    ]
+    for scope in [
+        replace(corpus.scope, member_id=corpus.member + 1),
+        replace(corpus.scope, work_id=uuid4()),
+    ]:
+        assert corpus.read("episodes", [1, 2, 3], scope=scope) == []
+    # 유효하지 않은 조각은 통째 읽기에서도 빠진다.
+    corpus.mutate(
+        "UPDATE retrieval_chunks SET chunk_hash=repeat('b',64) WHERE id=:id", id=second_ids[0]
+    )
+    assert [c.chunk_id for c in corpus.read("episodes", [2])] == [second_ids[1]]
+
+
+def test_episode_distribution_counts_chunks_containing_every_word(corpus):
+    first, third = corpus.episode(1), corpus.episode(3)
+    corpus.chunks(first, ["등대 문 앞에 섰다", "등대만 보이는 조각", "문만 보이는 조각"])
+    corpus.chunks(third, ["등대의 문이 열렸다", "등대 문은 100%_확실히 닫혔다"])
+    assert corpus.read("keyword_episodes", "등대 문") == [(1, 1), (3, 2)]
+    assert corpus.read("keyword_episodes", "등대") == [(1, 2), (3, 2)]
+    assert corpus.read("keyword_episodes", "없는단어") == []
+    # %, _ 는 와일드카드가 아니라 글자다.
+    assert corpus.read("keyword_episodes", "100%_확실") == [(3, 1)]
+    assert corpus.read("keyword_episodes", "100_%확실") == []
+    assert corpus.read("keyword_episodes", "등_") == []
+    assert corpus.read("episode_span") == (1, 3, 2)
+    scope = replace(corpus.scope, episode_to=2)
+    assert corpus.read("keyword_episodes", "등대", scope=scope) == [(1, 2)]
+    assert corpus.read("episode_span", scope=scope) == (1, 1, 1)
+    for scope in [
+        replace(corpus.scope, member_id=corpus.member + 1),
+        replace(corpus.scope, work_id=uuid4()),
+    ]:
+        assert corpus.read("keyword_episodes", "등대", scope=scope) == []
+        assert corpus.read("episode_span", scope=scope) == (None, None, 0)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "UPDATE episodes SET content_s3_key='other' WHERE id=:episode",
+        "UPDATE episodes SET content_hash=repeat('b',64) WHERE id=:episode",
+        "UPDATE episodes SET content_s3_version='other' WHERE id=:episode",
+        "UPDATE episodes SET status='ARCHIVED' WHERE id=:episode",
+        "UPDATE works SET lifecycle_status='PURGING' WHERE id=:work",
+        "UPDATE members SET status='PURGING' WHERE id=:member",
+        "UPDATE retrieval_sources SET chunk_policy='other' WHERE episode_id=:episode",
+        "UPDATE retrieval_chunks SET embedding_model='other' WHERE episode_id=:episode",
+        "UPDATE retrieval_chunks SET embedding_version='other' WHERE episode_id=:episode",
+    ],
+)
+def test_exploration_reads_apply_the_same_lifecycle_filters(corpus, mutation):
+    episode = corpus.episode(1)
+    corpus.chunks(episode, ["needle alpha", "needle beta"], ready=True)
+    assert len(corpus.read("episodes", [1])) == 2
+    assert corpus.read("keyword_episodes", "needle") == [(1, 2)]
+    assert corpus.read("episode_span") == (1, 1, 1)
+    corpus.mutate(mutation, episode=episode)
+    assert corpus.read("episodes", [1]) == []
+    assert corpus.read("keyword_episodes", "needle") == []
+    assert corpus.read("episode_span") == (None, None, 0)
+
+
+def test_exploration_reads_exclude_purge_pending_episodes(corpus):
+    kept, purged = corpus.episode(1), corpus.episode(2)
+    kept_ids = corpus.chunks(kept, ["needle kept"])
+    corpus.chunks(purged, ["needle purged"])
+    corpus.mutate(
+        """INSERT INTO episode_source_purge_requests
+        (id,episode_id,work_id,previous_episode_no,previous_content_key,retained_content_key,status,
+         requested_at,attempt_count,created_at,updated_at)
+        VALUES (:id,:episode,:work,2,'old','retained','REQUESTED',localtimestamp,0,localtimestamp,localtimestamp)""",
+        episode=purged,
+        id=uuid4(),
+    )
+    assert [c.chunk_id for c in corpus.read("episodes", [1, 2])] == kept_ids
+    assert corpus.read("keyword_episodes", "needle") == [(1, 1)]
+    assert corpus.read("episode_span") == (1, 1, 1)
+
+
+def test_exploration_search_through_the_service_returns_chunks_and_distribution(corpus):
+    early, late = corpus.episode(2), corpus.episode(7)
+    early_ids = corpus.chunks(early, ["등대 문 앞", "등대 이야기"])
+    late_ids = corpus.chunks(late, ["등대 문 뒤"])
+    service = RetrievalSearchService(corpus.sessions, corpus.spec)
+    relevant = asyncio.run(service.keyword_explore(corpus.scope, "등대 문", limit=10))
+    # 관련도 순위는 기존 keyword와 같고(모든 단어 일치가 먼저), 분포는 모든 단어가 든 조각만 센다.
+    assert [c.chunk_id for c in relevant.chunks][:2] == [early_ids[0], late_ids[0]]
+    assert relevant.episode_hits == ((2, 1), (7, 1)) and relevant.limited is False
+    latest = asyncio.run(service.keyword_explore(corpus.scope, "등대 문", limit=1, order="LATEST"))
+    assert [c.chunk_id for c in latest.chunks] == late_ids and latest.limited is True
+    assert latest.episode_hits == ((2, 1), (7, 1))
+    whole = asyncio.run(service.episodes(corpus.scope, [7, 2]))
+    assert [c.chunk_id for c in whole.chunks] == [*early_ids, *late_ids]
+    assert asyncio.run(service.episode_span(corpus.scope)) == (2, 7, 2)
+    with pytest.raises(SearchScopeUnavailable):
+        asyncio.run(service.episode_span(replace(corpus.scope, member_id=corpus.member + 1)))
+    with pytest.raises(SearchScopeUnavailable):
+        asyncio.run(service.episodes(replace(corpus.scope, work_id=uuid4()), [2]))
