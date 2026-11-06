@@ -209,12 +209,26 @@ class AgentRetrieval:
             "full": sorted(n for n, state in self.agent_read.items() if state == "FULL"),
         }
 
+    def agent_unregistered(self):
+        return sum(1 for c in self.agent_pool if c.chunk_id not in self.agent_registered)
+
     def agent_tail_tools(self):
-        # 답변 전 묶음 등록(60개씩) + 마지막 재검증 1 + 마지막 영수증 1. 이번 단계에 더 읽을 조각을
-        # 감안해 등록 묶음 하나를 여유로 둔다.
-        unregistered = sum(1 for c in self.agent_pool if c.chunk_id not in self.agent_registered)
-        batches = math.ceil((unregistered + RETRIEVAL_SOURCE_LIMIT) / RETRIEVAL_SOURCE_LIMIT)
+        # 답변 전 묶음 등록(60개씩) + 마지막 재검증 1 + 마지막 영수증 1. 조회 하나가 더 가져올 조각을
+        # 감안해 등록 묶음 하나(60개)를 여유로 둔다. 조회가 그보다 많이 가져와도(회차 통째 읽기는
+        # 100개까지) agent_pool_add가 agent_register_room만큼만 넣으므로 마무리 몫은 남는다.
+        batches = math.ceil(
+            (self.agent_unregistered() + RETRIEVAL_SOURCE_LIMIT) / RETRIEVAL_SOURCE_LIMIT
+        )
         return max(1, batches) + 2
+
+    def agent_register_room(self):
+        """마무리 호출 2회(마지막 재검증과 그 영수증)를 남기고 묶음에 더 넣을 수 있는 조각 수.
+
+        읽은 조각은 답변 전에 60개씩 등록하므로 조각이 늘면 등록에 쓸 도구 호출도 는다. 남은 도구
+        호출에서 마무리 2회를 뺀 만큼만 등록 묶음으로 쓸 수 있다.
+        """
+        batches = self.tools_left() - 2
+        return max(0, batches * RETRIEVAL_SOURCE_LIMIT - self.agent_unregistered())
 
     def agent_min_tools(self):
         # 등록 설정 조회가 남겨 둘 몫: 씨앗(키워드·벡터·이웃) + 한 단계(검색 2쌍·이웃·통째 읽기) + 마무리.
@@ -267,10 +281,18 @@ class AgentRetrieval:
         )
 
     def agent_pool_add(self, chunks, *, allowance=None):
-        """새 조각을 읽은 묶음과 답변 근거(E*)에 더한다. 예산을 넘는 조각은 건너뛰고 개수만 센다."""
-        added = omitted = spent = 0
+        """새 조각을 읽은 묶음과 답변 근거(E*)에 더한다. 예산을 넘는 조각은 건너뛰고 개수만 센다.
+
+        토큰 예산과 별도로, 등록에 쓸 도구 호출이 남는 만큼만 넣는다(agent_register_room). 조회 한 번이
+        60개 넘는 조각을 가져와도 답변 전 등록 뒤에 마지막 재검증·영수증 2회가 항상 남게 하기 위함이다.
+        """
+        added = omitted = spent = unregistrable = 0
+        room = self.agent_register_room()
         for chunk in chunks:
             if chunk.chunk_id in self.agent_pool_ids:
+                continue
+            if added >= room:
+                unregistrable += 1
                 continue
             tokens = self.agent_count_tokens(chunk.text)
             if (
@@ -290,7 +312,10 @@ class AgentRetrieval:
         if omitted:
             self.metrics.evidence_omissions.labels("agent", "TOKEN_LIMIT").inc(omitted)
             self.codes.append("EVIDENCE_CONTEXT_LIMIT")
-        return added, omitted, spent
+        if unregistrable:
+            self.metrics.evidence_omissions.labels("agent", "TOOL_LIMIT").inc(unregistrable)
+            self.codes.append("SEARCH_LIMIT")
+        return added, omitted + unregistrable, spent
 
     @staticmethod
     def agent_interleave(lists):

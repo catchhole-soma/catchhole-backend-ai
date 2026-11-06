@@ -466,15 +466,21 @@ class _HybridSession(AgentRetrieval, _Session):
         self.trace("focus", round=self.rounds, seeds=len(seeds), found=len(found))
         return found
 
-    def tools_available(self, cost, *, direct_checks=True):
+    def tools_left(self, *, direct_checks=True):
+        """지금 더 쓸 수 있는 도구 호출 수. 마지막 직접 근거·모집단·현재값 재확인 몫은 뺀 값이다."""
         reserved = max(
             self.fallback_direct_checks,
             (len({e.direct_ref for e in self.evidences if e.direct_ref}) if direct_checks else 0),
         )
         reserved += len(self.collection_checks) + self.current_check_count()
-        return self.tool_count + cost + reserved <= min(
-            self.cfg.max_tool_calls, self.execution.context.max_tool_calls
+        return (
+            min(self.cfg.max_tool_calls, self.execution.context.max_tool_calls)
+            - self.tool_count
+            - reserved
         )
+
+    def tools_available(self, cost, *, direct_checks=True):
+        return cost <= self.tools_left(direct_checks=direct_checks)
 
     def current_check_count(self):
         # Collection read tokens already protect all selected subjects together.

@@ -280,6 +280,119 @@ def test_source_span_check_without_tool_budget_keeps_the_existing_limit_ending()
     assert ended == [["SEARCH_LIMIT"]] and scopes == [] and session.agent_active is True
 
 
+def distinct_chunks(count, *, episodes=((3, 60), (4, 40))):
+    """서로 다른 조각 count개. episodes는 (회차, 그 회차의 조각 수)다."""
+    base, chunks = story_chunk(3, 0), []
+    for episode, size in episodes:
+        for index in range(size):
+            if len(chunks) == count:
+                return chunks
+            chunks.append(
+                replace(
+                    base,
+                    chunk_id=replace_id(episode * 1000 + index),
+                    episode_no=episode,
+                    chunk_index=index,
+                )
+            )
+    return chunks
+
+
+def budget_session(tools_left, **kwargs):
+    """도구 호출이 tools_left번 남은 세션. 조회·등록 대역은 실제 경로처럼 도구 수를 센다."""
+    session = agent_session(max_tool_calls=20, **kwargs)
+    session.tool_count = 20 - tools_left
+    session.execution.context.member_id = 42
+    session.execution.context.work_id = UUID(int=9103)
+    session.execution.dispatch = session.execution.runner = None
+    batches = []
+
+    async def retrieval_sources(dispatch, runner, sources):
+        batches.append(len(sources))
+        return sources
+
+    async def revalidate(scope, chunks):
+        return tuple(chunks)
+
+    session.execution.client = SimpleNamespace(retrieval_sources=retrieval_sources)
+    session.handler.search = SimpleNamespace(revalidate=revalidate)
+    return session, batches
+
+
+def counted_read(session, chunks):
+    async def search(method, numbers, limit):
+        session.consume(method)
+        return [replace(c, methods=("EPISODE",)) for c in chunks]
+
+    session.search = search
+
+
+def test_whole_episode_read_keeps_the_two_final_tool_calls_when_it_returns_100_chunks():
+    session, batches = budget_session(tools_left=4)
+    cited = story_chunk(1, 0)
+    session.agent_pool_add([cited])
+    session.agent_registered.add(cited.chunk_id)
+    counted_read(session, distinct_chunks(100))
+    # 묶음이 모두 등록된 상태에서 도구 호출이 4번 남았다: 읽기 1 + 등록 1 + 마무리 2.
+    asyncio.run(session.agent_read_episodes([3, 4]))
+    # 통째 읽기가 100개를 돌려줘도 등록 한 묶음(60개)으로 보낼 수 있는 만큼만 넣는다.
+    assert len(session.agent_pool) == 61 and session.agent_unregistered() == 60
+    assert session.agent_read == {3: "FULL", 4: "PARTIAL"}
+    assert "SEARCH_LIMIT" in session.codes
+    asyncio.run(session.agent_register())
+    assert batches == [60] and session.tools_left() == 2
+    # 마지막 재검증과 그 영수증 몫이 남아, 조각 하나만 인용한 답은 실행 한도 오류 없이 게시된다.
+    answer = GroundedAnswer(
+        coverage="COMPLETE",
+        claims=[GroundedClaim(text="합성 문장", evidence_refs=["E1"])],
+        conflicts=[],
+    )
+    finished = asyncio.run(session.finish_answer(answer))
+    assert finished.result.outcome == "ANSWER" and len(finished.result.retrieval_sources) == 1
+    assert batches == [60, 1] and session.tools_left() == 0
+
+
+def test_search_results_stop_at_the_registration_room_too():
+    session, _ = budget_session(tools_left=3)
+    session.agent_pool_add(distinct_chunks(10, episodes=((7, 10),)))
+    # 등록할 수 있는 조각은 (남은 3 - 마무리 2) × 60 = 60개이고 10개가 이미 등록을 기다린다.
+    assert session.agent_register_room() == 50
+    added, omitted, _ = session.agent_pool_add(distinct_chunks(80, episodes=((8, 80),)))
+    assert (added, omitted) == (50, 30) and "SEARCH_LIMIT" in session.codes
+    assert session.agent_register_room() == 0
+    # 마무리 몫만 남았으면 더 넣지 않는다.
+    assert session.agent_pool_add(distinct_chunks(5, episodes=((9, 5),))) == (0, 5, 0)
+    session, _ = budget_session(tools_left=2)
+    assert session.agent_register_room() == 0
+    assert session.agent_pool_add(distinct_chunks(5, episodes=((9, 5),)))[0] == 0
+
+
+@pytest.mark.parametrize("tools_left", range(3, 9))
+@pytest.mark.parametrize("unregistered", [0, 1, 59, 60, 61, 119, 130])
+def test_any_allowed_read_or_search_leaves_registration_and_the_final_two_calls(
+    tools_left, unregistered
+):
+    session, batches = budget_session(tools_left=tools_left)
+    session.agent_pool = distinct_chunks(unregistered, episodes=((6, 200),))
+    session.agent_pool_ids = {c.chunk_id for c in session.agent_pool}
+    for chunk in session.agent_pool:
+        session.evidences.append(session.new_evidence(f"E{len(session.evidences) + 1}", chunk))
+    session.agent_ref_no = len(session.evidences)
+    operations = 0
+    # 허용되는 동안 조각을 최대(100개)로 돌려주는 조회를 잇달아 실행한다.
+    while session.tools_available(1 + session.agent_tail_tools()) and operations < 4:
+        session.consume("episodes")
+        session.agent_pool_add(distinct_chunks(100, episodes=((10 + operations, 100),)))
+        operations += 1
+    asyncio.run(session.agent_register())
+    assert all(size <= 60 for size in batches)
+    assert sum(batches) == len(session.agent_pool)
+    if operations:
+        # 조회를 한 번이라도 허용했다면 등록을 마친 뒤 마지막 재검증·영수증 2회가 남는다.
+        assert session.tools_left() >= 2
+        assert len(session.agent_pool) > unregistered  # 허용된 조회는 적어도 일부를 읽는다
+
+
 def test_tool_reserve_covers_registration_batches_and_final_checks():
     session = agent_session()
     assert session.agent_tail_tools() == 3
