@@ -30,8 +30,9 @@ CASES = [
     ("role_in_wish", "레온은 말했다. '의사로서 병원을 세우고 싶다.'", "레온의 직업", "그 시점에 의사인지 확인", "직업", "레온의 현재 직업은 목수이며 의사는 아니다.", "CONFLICT"),
     ("count_premise", "지난번 여덟 명이서 다녀와서 허전한 걸까? 동료들이 그립다.", "지난 원정 인원", "지난 원정 인원이 여덟 명인지 확인", "지난 원정", "지난 원정에는 정확히 네 명만 참가했다.", "CONFLICT"),
     ("role_in_recall", "나는 그때 의사였던 레온과 술을 마셨던 일을 떠올렸다.", "회상 시점 직업", "그 술자리 때 의사였는지 확인", "술자리 시점", "그 술자리 당시 레온은 목수였으며 의사가 아니었다.", "CONFLICT"),
-    ("role_without_explicit_negation", "레온이 그날 했던 말이 떠올랐다. '의사로서 병원을 세우는 게 꿈이오.'", "그날 레온의 직업", "그날 말한 직업이 의사인지 확인", "그날 직업", "레온은 전문 목수다. 그는 평소에도 목수라는 직업에 진심이었다.", "CONFLICT"),
-    ("known_role_value", "레온은 말했다. '사제로서 신전을 세우는 것이 내 꿈이다.'", "레온의 직업", "레온의 직업이 사제인지 확인", "직업", "레온은 전문 길잡이다.", "CONFLICT"),
+    ("role_without_explicit_negation", "레온이 그날 했던 말이 떠올랐다. '의사로서 병원을 세우는 게 꿈이오.'", "그날 레온의 직업", "그날 말한 직업이 의사인지 확인", "그날 직업", "레온은 전문 목수다. 그는 평소에도 목수라는 직업에 진심이었다.", ("CONFLICT", "SUSPECTED_CONFLICT")),
+    ("known_role_value", "레온은 말했다. '사제로서 신전을 세우는 것이 내 꿈이다.'", "레온의 직업", "레온의 직업이 사제인지 확인", "직업", "레온은 전문 길잡이다.", ("CONFLICT", "SUSPECTED_CONFLICT")),
+    ("value_worded_property", "레온은 말했다. '사제로서 신전을 세우는 것이 내 꿈이다.'", "레온의 사제 신분", "레온이 사제 신분인지 확인", "직업", "레온은 전문 길잡이다.", ("CONFLICT", "SUSPECTED_CONFLICT")),
     ("known_origin_value", "레온이 말했다. '태어난 곳인 서쪽 항구가 그립군.'", "레온의 출생지", "태어난 곳이 서쪽 항구인지 확인", "출생지", "레온의 출생지는 동쪽 산골 마을이다.", "CONFLICT"),
     ("unrecorded_role", "레온은 말했다. '사제로서 신전을 세우고 싶다.'", "레온의 직업", "레온의 직업이 사제인지 확인", "외모", "레온은 갈색 눈을 가졌다.", "NO_CONFLICT"),
     ("supported_dual_role", "레온은 말했다. '의사로서 병원을 세우고 싶다.'", "레온의 직업", "의사 신분이 기존 직업과 양립하는지 확인", "직업", "레온은 목수이자 의사로 두 일을 겸한다.", "NO_CONFLICT"),
@@ -76,8 +77,16 @@ def test_factual_premises_and_normal_modal_sentences():
             payload = scope_payload(text, prop, intent, "elf", "FINAL")
             payload["question"]["subject_mentions"] = ["레온"]
             payload["question"]["time_context"] = "대상 문장에 명시된 시점"
+            if key == "role_in_wish":
+                # This case tests a current factual premise, not a change between unspecified narrative times.
+                payload["question"]["time_context"] = "기존 설정이 명시한 현재와 같은 시점"
             payload["settings"][0].update(name="레온", state={"name": "레온", "slots": {
                 fact_key: {"factType": "PROFILE", "factKey": fact_key, "factValue": fact}}})
+            if not isinstance(expected, str):
+                # Synthetic successful empty change search: these fixtures do not fix the same narrative time.
+                # A finding is required; certainty may depend on the model's reading of the time context.
+                payload["receipts"].append({"ref": "L3", "status": "SUCCEEDED", "evidence_refs": [],
+                                            "intent": {"kind": "CHANGES_EXCEPTIONS", "operation": "VECTOR"}})
             async with gate:
                 answer = await call_role(client, "JUDGE", payload, JudgeFinalAnswer, limits(), runtime=role,
                                          schema=judge_schema(entry_refs=(), final=True, search_available=False),
@@ -86,7 +95,7 @@ def test_factual_premises_and_normal_modal_sentences():
         try:
             rows = await asyncio.gather(*(one(case) for case in CASES))
             save("judge-controls.json", {"model": model, "effort": effort, "rows": rows})
-            errors = [{k: row[k] for k in ("case", "expected", "actual")} for row in rows if row["expected"] != row["actual"]]
+            errors = [{k: row[k] for k in ("case", "expected", "actual")} for row in rows if row["actual"] not in ((row["expected"],) if isinstance(row["expected"], str) else row["expected"])]
             assert not errors, json.dumps(errors, ensure_ascii=False)
         finally:
             await client.http_client.aclose()
