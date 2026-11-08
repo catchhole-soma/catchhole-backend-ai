@@ -187,7 +187,8 @@ sudo journalctl CONTAINER_NAME=catchhole-worker-ai-worker-1 -n 1 -o json-pretty
 - `AWS_SESSION_TOKEN`: STS 등 임시 자격 증명을 사용할 때 access key, secret key와 함께 전달하는 선택 세션 토큰입니다.
 - `AWS_SQS_QUEUE_URL`: 분석 잡 큐를 붙일 경우 사용할 SQS URL
 - `LLM_API_KEY`: 설정 추출/검증에 사용할 LLM API 키
-- `LLM_EXTRACTION_MODEL`: 회차 원문에서 캐릭터 Fact·세계관 설정 후보를 추출하는 모델명. 2026-09-09 확인한 운영값과 다단계 평가 기본값은 `gpt-5.6-sol`입니다.
+- `LLM_EXTRACTION_MODEL`: 세계관 설정 후보 추출 및 인물 전용 모델이 없을 때 사용하는 공통 추출 모델명. 명시적인 다단계 평가 모델은 그대로 우선합니다.
+- `LLM_CHARACTER_EXTRACTION_MODEL`: 인물 Fact 추출 전용 모델명. 2026-11-08부터 운영 Compose 기본값은 `gpt-6.1-terra`이고 추론 강도는 기존 `LLM_REASONING_EFFORT=medium`입니다. 비어 있으면 공통 추출 모델로 fallback하며, `--extraction-model-name` 또는 `--model-name`을 명시하면 CLI 값이 우선합니다. 세계관·관계·비교·검수 모델에는 적용되지 않습니다.
 - `LLM_SUBJECT_RESOLUTION_MODEL`: 캐릭터 Fact와 세계관 후보의 주체를 기존 캐릭터·세계관 대상에 연결하는 모델명. 운영값과 다단계 평가 기본값은 `gpt-5.6-terra`입니다.
 - `LLM_COMPARISON_MODEL`: 캐릭터 Fact·세계관 후보와 현재 확정 데이터를 비교해 반영 방식을 제안하는 모델명. 운영값과 다단계 평가 기본값은 `gpt-5.6-sol`입니다.
 - `LLM_MODEL`: 단계별 모델 변수가 없을 때 사용하는 하위 호환 모델명. 기본값은 `gpt-5.6-terra`입니다.
