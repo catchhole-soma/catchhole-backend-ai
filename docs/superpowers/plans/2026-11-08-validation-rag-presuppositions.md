@@ -27,19 +27,19 @@
 **Files:** app/validation/contracts.py, models.py, judging.py; tests/test_validation_judging.py, test_validation_model_shapes.py, tests/support/validation_synthetic.py.
 **Interfaces:** model-only db_evidence_sufficient; JudgeFlow uses validated B quotes and successful VECTOR receipts. Published ValidationDecision remains unchanged.
 
-- [ ] Write regression asserting a DB gap causes VECTOR and a second FINAL call; observe failure on current main.
-- [ ] Add strict sufficiency field, v4 schema cache name, and one bounded retrieval guard.
-- [ ] Verify unavailable/failed/empty scope, valid direct quote, context-only follow-up, invalid quote, and already searched cases.
-- [ ] Run focused validation suite, inspect every failure, commit code with a body.
+- [x] Write regression asserting a DB gap causes VECTOR and a second FINAL call; observe failure on current main.
+- [x] Add strict sufficiency field, v4 schema cache name, and one bounded retrieval guard.
+- [x] Verify unavailable/failed/empty scope, valid direct quote, context-only follow-up, invalid quote, and already searched cases.
+- [x] Run focused validation suite, inspect every failure, commit code with a body.
 
 ### Task 2: Atomic planning and modality
 
 **Files:** app/validation/models.py; tests/test_validation_presuppositions_live.py.
 **Interfaces:** existing QuestionDraft property_or_rule/check_intent; no new wire fields.
 
-- [ ] Add opt-in real-model cases for independent role/wish questions, factual party-count premise, pure wish, uncertain belief, explicit mistake, compatible recall and role changes.
-- [ ] Replace blanket speculative/retrospective exemptions with scope-aware factual-premise rules.
-- [ ] Run paid semantic checks with explicit models/medium; preserve aggregate and private raw evidence.
+- [x] Add opt-in real-model cases for independent role/wish questions, factual party-count premise, pure wish, uncertain belief, explicit mistake, compatible recall and role changes.
+- [x] Replace blanket speculative/retrospective exemptions with scope-aware factual-premise rules.
+- [x] Run paid semantic checks with explicit models/medium; preserve aggregate and private raw evidence.
 - [ ] Reinspect the private 101-v2 manuscript with the actual pipeline; score 14 planted errors and normal controls separately.
 
 ### Task 3: Document, review, merge, deployment verification
@@ -48,6 +48,6 @@
 **Interfaces:** same existing execution and publication contracts.
 
 - [ ] Record code SHA, data hashes, actual conditions, remaining misses/false positives/failures and reproducible commands.
-- [ ] Run full pytest and changed-file lint; obtain fresh whole-branch review and resolve material findings.
+- [x] Run full pytest and changed-file lint; obtain fresh whole-branch review and resolve material findings.
 - [ ] Publish ready PR linked to #139, verify CI and merge current tested head into main.
 - [ ] Verify publish/deploy outcome; preserve execution evidence and report limitations accurately.
