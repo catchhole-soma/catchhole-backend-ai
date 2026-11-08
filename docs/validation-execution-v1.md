@@ -333,8 +333,8 @@ schema 이름(`validation_judge_open_v3`·`validation_judge_final_v3`)은 그대
   CONFLICT `"{대상}의 {항목}이 기존 설정과 달라요"`(어긋나는 이전 문장이 이전 회차면 `…N화와 달라요`, 설정집이면 `…설정집과 달라요`),
   SUSPECTED_CONFLICT `…다를 수 있어요`, NEEDS_CONTEXT는 무엇이 분명하지 않은지(`‘그’가 누구인지 확인이 필요해요`). {대상}은 저장 값·이전 문장이 실제로
   어긋나는 대상(서술자·이름만 나온 인물이 아님), 여럿이면 `A와 B`. FOLLOW_UP·NO_CONFLICT는 null.
-- `reason`: CONFLICT·SUSPECTED_CONFLICT는 원인 → 결과 두 문장(120자 안팎) `기존 설정은(또는 N화에서는/설정집은) {대상}의 {항목}을 {기준 값}(이)라고 해요.
-  그런데 {대상 회차}에서는 {이번 값}(이)라고 해요.`(값은 짧게 바꿔 씀). NEEDS_CONTEXT·NO_CONFLICT는 80자 안팎 한 문장 그대로.
+- `reason`: CONFLICT는 원인 → 결과 두 문장(120자 안팎) `기존 설정은(또는 N화에서는/설정집은) {대상}의 {항목}을 {기준 값}(이)라고 해요.
+  그런데 {대상 회차}에서는 {이번 값}(이)라고 해요.`(값은 짧게 바꿔 씀). SUSPECTED_CONFLICT는 같은 두 문장 뒤에 `그 사이에 바뀐 기록은 찾지 못했어요.`를 붙인다(150자 안팎, 2026-11-09 v0052). NEEDS_CONTEXT·NO_CONFLICT는 80자 안팎 한 문장 그대로.
 - 판정 입력: 모델 payload에 `target_episode_no`(INPUT `target.episodeNo`, 없으면 null)를 더한다. evidence bundle(키·`input_digest`)은 그대로다.
 - Worker(`author_text.sanitize_decision`): FOLLOW_UP의 값은 무시(`FOLLOW_UP_DECISION_FIELDS_IGNORED`), NO_CONFLICT는 null(`NO_CONFLICT_HEADLINE_CLEARED`),
   앞뒤 공백 제거, 공백뿐이면 null, `reason`과 같은 작가용 정제(`AUTHOR_TEXT_SANITIZED`) 뒤 남은 것이 없거나 80 code point를 넘으면 null(`HEADLINE_DROPPED`).
