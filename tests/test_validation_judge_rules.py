@@ -257,23 +257,6 @@ def test_the_worker_target_search_spends_the_lookup_budget_like_any_search():
 
 # --- prompt -------------------------------------------------------------------------------------------------
 
-def test_judge_prompt_states_the_contradiction_rule_and_drops_the_not_found_definition():
-    for phrase in ("충돌은 \"어긋나는 이전 문장\"이 있을 때만이다",
-                   "settings 값과 evidence 조각을 처음부터 끝까지 다시 읽는다",
-                   "조각의 중간·끝에 있는 대사와 합의까지 확인한다",
-                   "CONFLICT: 특정한 이전 문장(settings에 저장된 값 또는 evidence의 문장)이 같은 대상·서사 시점·조건에서",
-                   "SUSPECTED_CONFLICT: 그렇게 직접 어긋나는 이전 문장이 있고",
-                   "NEEDS_CONTEXT: 대상 원고 자체의 뜻이 모호해(누가·무엇을·언제·어떤 조건인지)",
-                   "이전 기록이 말하지 않는다는 이유로는 쓰지 않는다",
-                   "\"확인되지 않는다\"·\"찾지 못했다\"·\"근거가 없다\"는 충돌 이유가 아니다",
-                   "basis_quotes 첫 항목은 대상 문장과 직접 어긋나는 그 이전 문장이어야 한다",
-                   "Worker가 NO_CONFLICT로 바꾼다",
-                   "Worker가 질문의 대상 문장과 그 앞뒤 원고로 만든 검색 하나를 함께 실행한다"):
-        assert phrase in JUDGE_SYSTEM, phrase
-    assert "변화/예외 미발견=SUSPECTED_CONFLICT" not in JUDGE_SYSTEM
-    assert "판정 규칙" not in PLANNER_SYSTEM  # the planner prompt is unchanged
-
-
 def test_the_java_http_driver_rebuilds_the_worker_target_query_from_the_judge_payload():
     """Java's HTTP fixtures cap QUERY_EMBEDDING at 1: their synthetic judge must ask exactly the Worker's sentence."""
     from tests.support.validation_execution_http_client import SyntheticProvider

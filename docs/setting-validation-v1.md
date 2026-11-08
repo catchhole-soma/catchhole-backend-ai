@@ -147,11 +147,9 @@ JUDGE는 `question.property_or_rule`·`check_intent`가 묻는 속성·규칙만
 31화 로컬 실행의 오탐은 모두 "이전 기록에 없다·못 찾았다"를 충돌로 올린 경우였다(새로 나온 규칙, 회상한 앞 장면, 처음 하는 희귀도 비교, 앞 회차의 약속).
 판정 규칙과 Worker 검사를 다음처럼 바꾼다(schema·wire는 그대로 v3).
 
-- 판정 지시(`JUDGE_SYSTEM` "판정 규칙"): CONFLICT는 특정한 이전 문장(저장된 값 또는 evidence 문장)이 같은 대상·서사 시점·조건에서 대상 문장과 함께 참일 수
-  없다고 직접 말할 때, SUSPECTED_CONFLICT는 그런 문장이 있고 변화·예외 검색에서 설명을 찾지 못했을 때만이다. 기록 없음·검색 미발견·처음 나온 설정/규칙/수치·
-  처음 하는 비교·평가·일반 서술과 양립하는 구체 서술·반대 문장 없는 추측/전해 들은 말/회상/계획은 NO_CONFLICT다. NEEDS_CONTEXT는 대상 원고 자체의 뜻이
-  모호할 때만이다. 결론 전에 받은 settings·evidence를 처음부터 끝까지(조각 끝의 대사·합의까지) 다시 읽고, 대상 문장을 뒷받침하는 이전 문장이 있으면 NO_CONFLICT다.
-  CONFLICT·SUSPECTED_CONFLICT의 `basis_quotes` 첫 항목은 그 어긋나는 이전 문장이다.
+- 판정 지시(`JUDGE_SYSTEM`, 2026-11-08 #142 정정): 같은 대상·속성·서사 시점·조건에서 확인된 기존 값과 이번 값의 불일치를 비교한다. 기존 값 A가 확인되면 이번 값 B를 명시적으로 부정한 별도 문장을 요구하지 않는다. 적용 시점·조건까지 확인된 불일치는 CONFLICT, 값은 다르지만 그 사이 변화나 적용 맥락이 미확인이고 검색해도 설명을 찾지 못하면 SUSPECTED_CONFLICT다. 검색 미발견은 기존 값의 불일치를 해소하지 않는다.
+  필요한 검색 뒤에도 그 속성의 기존 값 자체가 없으면 새 정보라는 이유만으로 오류를 만들지 않으며, 기준 미발견이라고 설명한다. 일치하거나 실제 문맥이 변화·추가 정보·다른 속성/시점/조건을 설명하면 NO_CONFLICT다. 대상 원고 자체의 뜻이 모호하면 NEEDS_CONTEXT다. 직업만의 예외 문구 대신 이 속성값 비교를 최상위 정의와 최종 확인에 함께 사용한다.
+  CONFLICT·SUSPECTED_CONFLICT의 `basis_quotes` 첫 항목은 기존 값을 확인해 주는 이전 문장이다. 원문에 없는 부정문이나 예외를 만들어 내지 않는다.
 - 규칙 검사(`judging.clear_unquoted_finding`): Worker가 받아들이는 DECIDED(변화 검색 뒤의 FINAL 포함) 중 CONFLICT·SUSPECTED_CONFLICT인데 확인된
   `basis_quotes`(`normalize_basis_quotes`를 통과한 E·B 인용)가 하나도 없고 `disagreements`도 없으면 NO_CONFLICT/COMPATIBLE, impact·impact_reason null,
   사유 고정 문장으로 바꾼다. 원래 결과별로 `CONFLICT_QUOTE_MISSING_CLEARED`/`SUSPECTED_CONFLICT_QUOTE_MISSING_CLEARED`를 세고 trace에 `cleared`·`cleared_impact`·`cleared_reason`(판정 원래 결과·등급·사유, 메모리 진단이며 실험 harness만 파일로 쓴다. 로그·게시 없음)을 남긴다.
@@ -200,8 +198,8 @@ DB↔원문 불일치는 두 참조를 유지하고 명시 정정의 정확한 �
 
 ## 모델·예산·오탈자 공통 계약
 
-모델과 추론 강도는 코드에 고정하지 않고 Job configuration v2의 역할별 설정이 정한다(`claim_roles`). 운영값은 31화 Terra/Luna 비교 실험으로 정했다:
-PLANNER `gpt-6.1-terra` medium, JUDGE `gpt-6-luna` high, TYPO `gpt-6.1-terra` low. 출력 상한도 역할별이다(계획 5만, 판정 2만, 오탈자 1.2만).
+모델과 추론 강도는 코드에 고정하지 않고 Job configuration v2의 역할별 설정이 정한다(`claim_roles`). 계획·판정은 31화 Terra/Luna 비교 실험 값을 유지하며, 오탈자는 2026-11-08 사용자 결정(Java #404)으로 medium으로 정정했다:
+PLANNER `gpt-6.1-terra` medium, JUDGE `gpt-6-luna` high, TYPO `gpt-6.1-terra` medium. 출력 상한도 역할별이다(계획 5만, 판정 2만, 오탈자 1.2만).
 frozen `LlmCallOptions`를 count/생성 양쪽에 동일하게 전달하고 공유 client 기본 속성을 바꾸지 않는다. 기존 추출/챗봇의 모델·추론 기본값은 유지한다.
 
 `InvocationBudget`의 model_calls/lookups/seconds/input_tokens/segment_chars/context_chars/search_limit는 모두 호출자가 정한다(claim 시도 단위).

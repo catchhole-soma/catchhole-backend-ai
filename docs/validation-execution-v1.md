@@ -466,13 +466,13 @@ roles의 PLANNER·JUDGE·TYPO(`max-calls`, `max-reserved-tokens`, `output-tokens
  "roles":{
   "PLANNER":{"max-calls":10,"max-reserved-tokens":800000,"output-tokens":50000,"model":"gpt-6.1-terra","reasoning-effort":"medium"},
   "JUDGE":{"max-calls":200,"max-reserved-tokens":10000000,"output-tokens":20000,"model":"gpt-6-luna","reasoning-effort":"high"},
-  "TYPO":{"max-calls":20,"max-reserved-tokens":640000,"output-tokens":12000,"model":"gpt-6.1-terra","reasoning-effort":"low"},
+  "TYPO":{"max-calls":20,"max-reserved-tokens":640000,"output-tokens":12000,"model":"gpt-6.1-terra","reasoning-effort":"medium"},
   "QUERY_EMBEDDING":{"max-calls":250,"max-reserved-tokens":400000},
   "INDEX_EMBEDDING":{"max-calls":400,"max-reserved-tokens":40000000}},
  "query-embedding-model":"text-embedding-3-small"}}}
 ```
 
-모델은 31화 Terra/Luna 비교 실험 결과로 정했다(계획 Terra medium, 판정 Luna high, 오탈자 Terra low). 판정 동시 4개는 Worker 쪽 값이다.
+계획·판정은 31화 Terra/Luna 비교 실험 값을 유지하고, 오탈자는 2026-11-08 사용자 결정(Java #404)으로 medium으로 정정했다(계획 Terra medium, 판정 Luna high, 오탈자 Terra medium). 판정 동시 4개는 Worker 쪽 값이다.
 Luna 호출의 사용자 차감은 기존 `AiTokenChargePolicy`(Luna 1/20)를 그대로 따르고 Terra 1/2 차감은 후속 범위다.
 
 Job configuration v2는 `processor.ValidationExecutionConfiguration` 한 곳에서만 만든다(접수 `queuePrepared`와 legacy 전환). 공통 fixture `configurationV2`와
