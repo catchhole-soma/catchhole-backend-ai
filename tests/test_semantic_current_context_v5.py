@@ -184,12 +184,12 @@ def test_explicit_inactive_status_is_preserved_without_inferring_current_policy(
                          "fact_value": "종료", "value_json": status}
 
 
-def test_all_age_level_slots_count_toward_4096_limit():
+def test_all_age_level_slots_count_toward_8192_limit():
     data = carrier_data(); data["worldSubjects"] = []
     data["characters"] = data["characters"][:1]
     data["characters"][0]["currentSlots"] = [
         {"factType": "PROFILE", "factKey": f"profile.축{i}", "factValue": "값", "valueJson": None}
-        for i in range(4095)
+        for i in range(8191)
     ] + [
         {"factType": "AGE", "factKey": "age", "factValue": "1", "valueJson": 1},
         {"factType": "LEVEL", "factKey": "level", "factValue": "1", "valueJson": 1},
@@ -197,29 +197,29 @@ def test_all_age_level_slots_count_toward_4096_limit():
     with pytest.raises((ValidationError, OrderedInputContextError)): prepare(data, known=identities()[:1])
 
 
-def test_total_4096_includes_character_age_level_and_world_property_at_inclusive_boundary():
+def test_total_8192_includes_character_age_level_and_world_property_at_inclusive_boundary():
     data = carrier_data(); data["characters"] = data["characters"][:1]
     data["characters"][0]["currentSlots"] = [
         {"factType": "PROFILE", "factKey": f"profile.축{i}", "factValue": "값", "valueJson": None}
-        for i in range(4093)
+        for i in range(8189)
     ] + [
         {"factType": "AGE", "factKey": "age", "factValue": "1", "valueJson": 1},
         {"factType": "LEVEL", "factKey": "level", "factValue": "1", "valueJson": 1},
     ]
     valid = SemanticCurrentContext.model_validate(data)
-    assert len(valid.characters[0].current_slots) + len(valid.world_subjects[0].properties) == 4096
+    assert len(valid.characters[0].current_slots) + len(valid.world_subjects[0].properties) == 8192
     data["worldSubjects"][0]["properties"].append({"scopeName": None, "settingName": "독립 항목", "value": "값"})
     with pytest.raises(ValidationError, match="item limit"):
         SemanticCurrentContext.model_validate(data)
 
 
-def test_entire_serialized_carrier_1mib_is_inclusive_and_next_byte_fails():
+def test_entire_serialized_carrier_2mib_is_inclusive_and_next_byte_fails():
     data = carrier_data(); data["worldSubjects"][0]["properties"][0]["value"] = ""
     encoded = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-    data["worldSubjects"][0]["properties"][0]["value"] = "x" * (1_048_576 - len(encoded))
+    data["worldSubjects"][0]["properties"][0]["value"] = "x" * (2_097_152 - len(encoded))
     valid = SemanticCurrentContext.model_validate(data)
     assert len(json.dumps(valid.model_dump(mode="json", by_alias=True), ensure_ascii=False,
-                          sort_keys=True, separators=(",", ":")).encode()) == 1_048_576
+                          sort_keys=True, separators=(",", ":")).encode()) == 2_097_152
     data["worldSubjects"][0]["properties"][0]["value"] += "x"
     with pytest.raises(ValidationError, match="byte limit"):
         SemanticCurrentContext.model_validate(data)
@@ -235,7 +235,7 @@ def test_normalized_duplicate_world_path_is_rejected(field, value):
 
 
 def test_entire_utf8_carrier_is_bounded_including_world_owner_name():
-    data = carrier_data(); data["worldSubjects"][0]["properties"][0]["value"] = "한" * 350000
+    data = carrier_data(); data["worldSubjects"][0]["properties"][0]["value"] = "한" * 700_000
     with pytest.raises((ValidationError, OrderedInputContextError)): prepare(data)
 
 

@@ -24,8 +24,8 @@ from app.analysis.evidence_projection import located_evidence_quotes
 from app.analysis.exceptions import OrderedInputContextError
 from app.domain.enums import WorldSettingCategory
 
-SEMANTIC_CURRENT_MAX_BYTES = 1_048_576
-SEMANTIC_CURRENT_MAX_ITEMS = 4096
+SEMANTIC_CURRENT_MAX_BYTES = 2_097_152
+SEMANTIC_CURRENT_MAX_ITEMS = 8_192
 
 
 def _nonblank(value):
