@@ -1,7 +1,7 @@
 """Opt-in semantic regression using invented text; raw answers stay outside the repository.
 
 VALIDATION_PREMISE_LIVE=1 pytest -q tests/test_validation_presuppositions_live.py
-Requires LLM_API_KEY. JUDGE defaults to gpt-5.6-sol/medium, PLANNER to gpt-6.1-terra/medium.
+Requires LLM_API_KEY. JUDGE defaults to gpt-6-luna/high, PLANNER to gpt-6.1-terra/medium.
 """
 
 import asyncio
@@ -31,6 +31,9 @@ CASES = [
     ("count_premise", "지난번 여덟 명이서 다녀와서 허전한 걸까? 동료들이 그립다.", "지난 원정 인원", "지난 원정 인원이 여덟 명인지 확인", "지난 원정", "지난 원정에는 정확히 네 명만 참가했다.", "CONFLICT"),
     ("role_in_recall", "나는 그때 의사였던 레온과 술을 마셨던 일을 떠올렸다.", "회상 시점 직업", "그 술자리 때 의사였는지 확인", "술자리 시점", "그 술자리 당시 레온은 목수였으며 의사가 아니었다.", "CONFLICT"),
     ("role_without_explicit_negation", "레온이 그날 했던 말이 떠올랐다. '의사로서 병원을 세우는 게 꿈이오.'", "그날 레온의 직업", "그날 말한 직업이 의사인지 확인", "그날 직업", "레온은 전문 목수다. 그는 평소에도 목수라는 직업에 진심이었다.", "CONFLICT"),
+    ("known_role_value", "레온은 말했다. '사제로서 신전을 세우는 것이 내 꿈이다.'", "레온의 직업", "레온의 직업이 사제인지 확인", "직업", "레온은 전문 길잡이다.", "CONFLICT"),
+    ("known_origin_value", "레온이 말했다. '태어난 곳인 서쪽 항구가 그립군.'", "레온의 출생지", "태어난 곳이 서쪽 항구인지 확인", "출생지", "레온의 출생지는 동쪽 산골 마을이다.", "CONFLICT"),
+    ("unrecorded_role", "레온은 말했다. '사제로서 신전을 세우고 싶다.'", "레온의 직업", "레온의 직업이 사제인지 확인", "외모", "레온은 갈색 눈을 가졌다.", "NO_CONFLICT"),
     ("supported_dual_role", "레온은 말했다. '의사로서 병원을 세우고 싶다.'", "레온의 직업", "의사 신분이 기존 직업과 양립하는지 확인", "직업", "레온은 목수이자 의사로 두 일을 겸한다.", "NO_CONFLICT"),
     ("compatible_role_axes", "모험가 레온이 길을 안내했다.", "레온의 모험가 역할", "모험가라는 설명이 기존 역할과 충돌하는지 확인", "역할", "레온은 모험가 일행에서 길 안내를 맡는 전문 정찰병이다.", "NO_CONFLICT"),
     ("newly_disclosed_qualification", "목수 레온은 숨겨 온 사실을 밝혔다. '사실 나 의사 자격도 있어. 두 일을 함께 해 왔어.'", "레온의 의사 자격", "처음 밝힌 의사 자격이 기존 직업과 충돌하는지 확인", "직업", "레온은 목수다.", "NO_CONFLICT"),
@@ -63,8 +66,9 @@ def save(name, value):
 def test_factual_premises_and_normal_modal_sentences():
     async def run():
         client = OpenAIResponsesClient.from_settings()
-        model = os.environ.get("VALIDATION_PREMISE_JUDGE", "gpt-5.6-sol")
-        role = RoleRuntime.of(model, "medium", 20000)
+        model = os.environ.get("VALIDATION_PREMISE_JUDGE", "gpt-6-luna")
+        effort = os.environ.get("VALIDATION_PREMISE_EFFORT", "high")
+        role = RoleRuntime.of(model, effort, 20000)
         gate = asyncio.Semaphore(4)
 
         async def one(case):
@@ -81,7 +85,7 @@ def test_factual_premises_and_normal_modal_sentences():
             return {"case": key, "expected": expected, "actual": answer.outcome, "answer": answer.model_dump()}
         try:
             rows = await asyncio.gather(*(one(case) for case in CASES))
-            save("judge-controls.json", {"model": model, "effort": "medium", "rows": rows})
+            save("judge-controls.json", {"model": model, "effort": effort, "rows": rows})
             errors = [{k: row[k] for k in ("case", "expected", "actual")} for row in rows if row["expected"] != row["actual"]]
             assert not errors, json.dumps(errors, ensure_ascii=False)
         finally:
