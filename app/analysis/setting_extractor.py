@@ -130,7 +130,7 @@ class CharacterSettingExtractor:
         # 실제 실행에서는 OpenAI client를 쓰고, 테스트에서는 fake client를 주입
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
-        self.model = model or settings.effective_llm_extraction_model
+        self.model = model or settings.effective_llm_character_extraction_model
         self.max_attempts = (
             settings.llm_extraction_max_attempts if max_attempts is None else max_attempts
         )

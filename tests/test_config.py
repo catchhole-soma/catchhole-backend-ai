@@ -55,6 +55,7 @@ def test_stage_models_fall_back_to_legacy_model() -> None:
     )
 
     assert settings.effective_llm_extraction_model == "legacy-model"
+    assert settings.effective_llm_character_extraction_model == "legacy-model"
     assert settings.effective_llm_subject_resolution_model == "legacy-model"
     assert settings.effective_llm_comparison_model == "legacy-model"
 
@@ -69,12 +70,14 @@ def test_stage_models_can_be_configured_independently() -> None:
     )
 
     assert settings.effective_llm_extraction_model == "extraction-model"
+    assert settings.effective_llm_character_extraction_model == "extraction-model"
     assert settings.effective_llm_subject_resolution_model == "subject-resolution-model"
     assert settings.effective_llm_comparison_model == "comparison-model"
 
 
 def test_stage_models_are_loaded_from_independent_environment_variables(monkeypatch) -> None:
     monkeypatch.setenv("LLM_EXTRACTION_MODEL", "env-extraction-model")
+    monkeypatch.setenv("LLM_CHARACTER_EXTRACTION_MODEL", "env-character-extraction-model")
     monkeypatch.setenv(
         "LLM_SUBJECT_RESOLUTION_MODEL",
         "env-subject-resolution-model",
@@ -84,6 +87,7 @@ def test_stage_models_are_loaded_from_independent_environment_variables(monkeypa
     settings = Settings(_env_file=None)
 
     assert settings.effective_llm_extraction_model == "env-extraction-model"
+    assert settings.effective_llm_character_extraction_model == "env-character-extraction-model"
     assert settings.effective_llm_subject_resolution_model == "env-subject-resolution-model"
     assert settings.effective_llm_comparison_model == "env-comparison-model"
 

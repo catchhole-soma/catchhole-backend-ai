@@ -250,6 +250,7 @@ def create_worker_tracing(
         return WorkerTracingRuntime(provider, allowed_models={
             model for model in (
                 settings.llm_model, settings.effective_llm_extraction_model,
+                settings.effective_llm_character_extraction_model,
                 settings.effective_llm_subject_resolution_model,
                 settings.effective_llm_comparison_model, *model_names,
             ) if isinstance(model, str) and model
