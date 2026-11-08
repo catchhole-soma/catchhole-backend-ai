@@ -65,7 +65,7 @@ from scripts.validation_experiment.local_ledger import CallRecorder, LocalLedger
 
 RESPONSES_URL = "https://api.openai.com/v1/responses"
 EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
-LOGIC_VERSION = "v0046"
+LOGIC_VERSION = "v0049"
 SETTING = {"model_calls": 200, "lookups": 300, "seconds": 3600.0, "input_tokens": 80000, "segment_chars": 10000,
            "context_chars": 1000, "search_limit": 10}
 TYPO = {"model_calls": 20, "lookups": 20, "seconds": 900.0, "input_tokens": 20000, "segment_chars": 2000,

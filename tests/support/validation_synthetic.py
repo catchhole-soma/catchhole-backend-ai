@@ -13,7 +13,12 @@ from app.retrieval.search_contracts import ChunkEvidence, SearchReadiness, Searc
 from app.validation.contracts import IncompleteInspection, InvocationBudget
 from app.validation.data import FrozenInput, SourceDocument, SourceRead, ValidationContext
 from app.validation.models import RoleRuntime
-from app.validation.projection import current_settings, model_settings, subject_catalogue
+from app.validation.projection import (
+    current_settings,
+    model_settings,
+    setting_value_leaves,
+    subject_catalogue,
+)
 
 TARGET = "민수는 양손으로 검을 쥐었다.\n그는 성문 앞에서 기다렸다.\n"
 PRIOR = {"R1": "민수는 왼손을 잃었다.", "R2": "민수는 의수를 얻었고 그 의수로 검을 쥘 수 있었다."}
@@ -120,6 +125,11 @@ def decided(payload, outcome="NO_CONFLICT", basis=None, evidence_refs=None, *, f
     }
     if (form or payload["form"]) == "OPEN":
         answer.update(search_queries=[], context_requests=[])
+    # Most scripted tests exercise a supported DB decision; gap tests override this or supply no rows.
+    values = [(row["entry_ref"], leaf) for row in payload["settings"] for leaf in setting_value_leaves(row)]
+    answer["db_evidence_sufficient"] = bool(values)
+    if outcome == "NO_CONFLICT" and values:
+        answer["basis_quotes"] = [{"ref": values[0][0], "quote": values[0][1][:200]}]
     answer.update(changes)
     return answer
 

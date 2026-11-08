@@ -3186,9 +3186,9 @@
     },
     "judgeFlow": {
       "schemas": {
-        "PLANNER": "validation_planner_v3",
-        "JUDGE_OPEN": "validation_judge_open_v3",
-        "JUDGE_FINAL": "validation_judge_final_v3"
+        "PLANNER": "validation_planner_v4",
+        "JUDGE_OPEN": "validation_judge_open_v4",
+        "JUDGE_FINAL": "validation_judge_final_v4"
       },
       "maxCallsPerQuestion": 3,
       "concurrency": 4,

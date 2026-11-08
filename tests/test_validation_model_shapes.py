@@ -169,6 +169,8 @@ class RecordedTerra:
             # required_reads cites only the last receipt (BASELINE/TARGET_CONTEXT omitted).
             "completion": {"comparison_context": assessment, "changes_exceptions": assessment,
                            "no_pending_clues": assessment, "required_reads": {**assessment, "receipt_refs": receipts[-1:]}},
+            # v4 adds model-only sufficiency; preserve the historical shape faults under test.
+            "db_evidence_sufficient": True, "basis_quotes": [{"ref": "B1", "quote": "새벽 네 시"}],
             "disagreements": []}
         if payload["form"] == "OPEN":
             # S4: FOLLOW_UP that still fills outcome/impact/completion; it asks for wider target context.

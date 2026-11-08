@@ -85,7 +85,8 @@ def _decided(payload, outcome="NO_CONFLICT", quotes=()):
               "evidence_refs": (facts or refs) if finding else refs,
               "completion": {key: dict(assessment) for key in ("comparison_context", "changes_exceptions",
                                                                "no_pending_clues", "required_reads")},
-              "disagreements": [], "basis_quotes": list(quotes)}
+              "disagreements": [], "db_evidence_sufficient": True,
+              "basis_quotes": list(quotes) if finding else _first_quote(payload)}
     if payload["form"] == "OPEN":
         result.update(search_queries=[], context_requests=[])
     return result

@@ -130,6 +130,8 @@ class BasisQuoteDraft(Contract):
 
 
 class JudgeOpenAnswer(Contract):
+    # Model-only assessment; missing legacy answers must not bypass required retrieval.
+    db_evidence_sufficient: bool = Field(default=False, strict=True)
     action: Literal["FOLLOW_UP", "DECIDED"]
     outcome: _OUTCOME | None
     basis: _BASIS | None
@@ -150,6 +152,7 @@ class JudgeOpenAnswer(Contract):
 
 
 class JudgeFinalAnswer(Contract):
+    db_evidence_sufficient: bool = Field(default=False, strict=True)
     action: Literal["DECIDED"]
     outcome: _OUTCOME
     basis: _BASIS
