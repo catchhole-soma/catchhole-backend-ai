@@ -89,7 +89,8 @@ def test_conflict_without_a_quote_is_published_as_no_conflict_and_counted():
     assert (decision.outcome, decision.basis, decision.impact, decision.impact_reason) == (
         "NO_CONFLICT", "COMPATIBLE", None, None)
     assert decision.reason == UNQUOTED_FINDING_REASON and decision.basis_quotes == []
-    assert result.normalizations["CONFLICT_QUOTE_MISSING_CLEARED"] == 1
+    assert result.normalizations["CONFLICT_QUOTE_MISSING_CLEARED"] == 2
+    assert result.normalizations["DB_GAP_SEARCH_INSERTED"] == 1
     trace = result.traces["Q1"][-1]
     assert (trace["cleared"], trace["cleared_impact"], trace["cleared_reason"], trace["decided"]) == (
         "CONFLICT", "CAUTION", "합성 판정", "NO_CONFLICT")
@@ -99,8 +100,10 @@ def test_a_quote_that_is_not_in_the_stored_value_does_not_keep_a_finding():
     result = inspect(one(lambda payload, n: decided(payload, "CONFLICT", evidence_refs=["B1"],
                                                     basis_quotes=[{"ref": "B1", "quote": "오른손 상실"}])))
     assert result.decisions["Q1"].outcome == "NO_CONFLICT"
-    assert result.normalizations["BASIS_QUOTES_DROPPED"] == 1
-    assert result.normalizations["CONFLICT_QUOTE_MISSING_CLEARED"] == 1
+    assert result.normalizations["BASIS_QUOTES_DROPPED"] == 2
+    assert result.normalizations["DB_GAP_SEARCH_INSERTED"] == 1
+    assert result.normalizations["CONFLICT_QUOTE_MISSING_CLEARED"] == 2
+    assert result.normalizations["DB_GAP_SEARCH_INSERTED"] == 1
 
 
 def test_a_conflict_with_the_contradicting_stored_value_is_kept():
@@ -262,8 +265,6 @@ def test_judge_prompt_states_the_contradiction_rule_and_drops_the_not_found_defi
                    "SUSPECTED_CONFLICT: 그렇게 직접 어긋나는 이전 문장이 있고",
                    "NEEDS_CONTEXT: 대상 원고 자체의 뜻이 모호해(누가·무엇을·언제·어떤 조건인지)",
                    "이전 기록이 말하지 않는다는 이유로는 쓰지 않는다",
-                   "이번 원고에서 처음 나온 설정·규칙·수치, 처음 하는 비교·평가",
-                   "인물의 추측·전해 들은 말·회상·계획",
                    "\"확인되지 않는다\"·\"찾지 못했다\"·\"근거가 없다\"는 충돌 이유가 아니다",
                    "basis_quotes 첫 항목은 대상 문장과 직접 어긋나는 그 이전 문장이어야 한다",
                    "Worker가 NO_CONFLICT로 바꾼다",
@@ -302,8 +303,8 @@ def test_a_finding_with_the_wrong_basis_still_fails():
     assert result.question_failures["Q1"]["cause"] == "INVALID_DECISION_BASIS_MISMATCH"
 
 
-def test_judge_prompt_treats_hedged_character_guesses_as_no_conflict_and_fixes_basis_per_outcome():
-    assert "인물의 착각·오판이므로 NO_CONFLICT" in JUDGE_SYSTEM
+def test_judge_prompt_keeps_basis_per_outcome_without_blanket_guess_exemption():
+    assert "인물의 착각·오판이므로 NO_CONFLICT" not in JUDGE_SYSTEM
     assert "찾지 못해서 NO_CONFLICT인 경우에도 basis는 COMPATIBLE" in JUDGE_SYSTEM
 
 

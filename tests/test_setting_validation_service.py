@@ -131,7 +131,7 @@ def test_planner_reads_core_with_read_only_context_and_subject_names_only():
         {"subject_ref": "S1", "domain": "characters", "name": "민수", "aliases": []},
         {"subject_ref": "S2", "domain": "worldSettings", "name": "성문", "aliases": []}]
     assert first_kwargs["system_prompt"] == PLANNER_SYSTEM and '"나"·"너"·"그"' in PLANNER_SYSTEM
-    assert first_kwargs["response_schema"].name == "validation_planner_v3"
+    assert first_kwargs["response_schema"].name == "validation_planner_v4"
     draft_schema = first_kwargs["response_schema"].schema["$defs"]["QuestionDraft"]["properties"]
     assert "lookup_intents" not in draft_schema and draft_schema["subject_refs"]["items"]["pattern"] == "^(S[1-9][0-9]*)$"
     assert first_kwargs["call_options"].reasoning_effort == "medium" and first_kwargs["max_output_tokens"] == 2000
@@ -181,10 +181,10 @@ def test_fake_receipts_and_target_only_contradictions_are_rejected():
     target_only = inspect(model=ScriptedModel({"TSEG1": [draft()]}, lambda payload, n: decided(
         payload, "CONFLICT", evidence_refs=["T1"], basis_quotes=[{"ref": "B1", "quote": "왼손 상실"}])))
     assert target_only.question_failures["Q1"]["cause"] == "INVALID_DECISION_EXTERNAL_EVIDENCE_MISSING"
-    # Without any contradicting quote the same answer is no finding at all: cleared, not a question failure.
+    # Without a contradicting quote it cannot be a finding, but now also needs a source search.
     unquoted = inspect(model=ScriptedModel({"TSEG1": [draft()]}, lambda payload, n: decided(
         payload, "CONFLICT", evidence_refs=["T1"])))
-    assert unquoted.status == "COMPLETED" and unquoted.decisions["Q1"].outcome == "NO_CONFLICT"
+    assert unquoted.status == "INCOMPLETE" and unquoted.question_failures["Q1"]["code"] == "VECTOR_NOT_READY"
     assert unquoted.normalizations["CONFLICT_QUOTE_MISSING_CLEARED"] == 1
 
 

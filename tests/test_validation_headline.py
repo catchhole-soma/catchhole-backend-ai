@@ -175,7 +175,7 @@ def test_no_conflict_and_follow_up_headlines_are_never_published():
 def test_the_rule_guard_clears_the_headline_with_the_finding():
     result = inspect(one(lambda payload, n: decided(payload, "CONFLICT", evidence_refs=["B1"], headline=TITLE)))
     assert result.decisions["Q1"].outcome == "NO_CONFLICT" and result.decisions["Q1"].headline is None
-    assert result.normalizations["CONFLICT_QUOTE_MISSING_CLEARED"] == 1
+    assert result.normalizations["CONFLICT_QUOTE_MISSING_CLEARED"] == 2
 
 
 def test_older_published_decisions_without_headline_still_load():

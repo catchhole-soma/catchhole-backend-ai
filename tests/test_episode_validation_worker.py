@@ -580,7 +580,7 @@ class GridBackend(httpx.AsyncBaseTransport):
         self.target = self.responses["dataReadTarget"]["text"]
         # "😀가😀가": two current rows of S1 and a history row the judge must never receive.
         self.settings = [{"entry_ref": "B1", "subject_ref": "S1", "domain": "characters", "name": "가", "aliases": [],
-                          "state": {"name": "가"}, "author_correction": None},
+                          "state": {"name": "가", "slots": {"속성": {"factType": "PROFILE", "factKey": "속성", "factValue": "합성"}}}, "author_correction": None},
                          {"entry_ref": "B3", "subject_ref": "S1", "domain": "characters", "name": "가", "aliases": [],
                           "state": {"name": "가", "aliases": ["가가"]}, "author_correction": None}]
         self.responses["dataInput"]["entryCount"] = 3
@@ -665,6 +665,7 @@ class GridBackend(httpx.AsyncBaseTransport):
             assessment = {"reason": "합성 확인", "evidence_refs": refs,
                           "receipt_refs": [row["ref"] for row in payload["receipts"]]}
             result = {"action": "DECIDED", "outcome": "NO_CONFLICT", "basis": "COMPATIBLE", "reason": "합성",
+                      "db_evidence_sufficient": True, "basis_quotes": [{"ref": "B1", "quote": "합성"}],
                       "impact": None, "impact_reason": None, "target_spans": payload["question"]["target_spans"],
                       "evidence_refs": refs, "completion": {key: assessment for key in (
                           "comparison_context", "changes_exceptions", "no_pending_clues", "required_reads")},

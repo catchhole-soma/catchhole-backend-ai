@@ -8,9 +8,11 @@ Per question, at most MAX_JUDGE_CALLS calls:
 2. After a FOLLOW_UP the Worker runs those reads and asks again in FINAL form (DECIDED only). A FOLLOW_UP with at
    least one search also gets one Worker VECTOR search built from the question's own target text
    (`target_search_query`), on top of the judge's queries, so earlier scenes phrased like the target are found.
-3. A DECIDED SUSPECTED_CONFLICT from a non-final-limit call without a change search gets one Worker VECTOR
-   change search (`change_search_query`: check_intent + target sentence), then the next call is FINAL. A third
-   call is only reachable that way, so a final SUSPECTED_CONFLICT always carries that receipt.
+3. An answer without sufficient DB evidence and a validated B quote must have a successful VECTOR receipt;
+   otherwise the Worker searches once and asks FINAL. This also applies after context-only FOLLOW_UP and
+   clearing an unquoted finding. Search failures remain incomplete; an empty scope uses NOT_APPLICABLE.
+4. A DECIDED SUSPECTED_CONFLICT from a non-final-limit call without a change search gets one Worker VECTOR
+   change search (`change_search_query`: check_intent + target sentence), then the next call is FINAL. The shared three-call limit still applies, so accepting SUSPECTED_CONFLICT requires that receipt.
 
 Judge rule guard (2026-11-03): a CONFLICT/SUSPECTED_CONFLICT is a finding only when a specific earlier statement
 contradicts the target, and that statement is what the judge copies into `basis_quotes`. An accepted decision with
@@ -61,6 +63,7 @@ JUDGE_CONTEXT_PURPOSE = "판정이 요청한 대상 원고 문맥"
 # GH341: marks the single change search the Worker itself issues before accepting SUSPECTED_CONFLICT.
 WORKER_CHANGE_SEARCH_PURPOSE = "Worker가 충돌 의심 판정 전에 요구하는 변화·예외 검색"
 # 2026-11-03: marks the one search the Worker adds to every FOLLOW_UP that asks for searches.
+WORKER_DB_GAP_SEARCH_PURPOSE = "Worker가 DB 비교 근거 부족 시 요구하는 이전 원문 검색"
 WORKER_TARGET_SEARCH_PURPOSE = "Worker가 대상 문장과 앞뒤 원고로 만든 이전 장면 의미 검색"
 # Code points of target text taken before and after each span for that search (cut back to whole lines).
 TARGET_QUERY_CONTEXT_CHARS = 100
@@ -338,11 +341,31 @@ class SettingJudge:
             # question failure (e.g. a CONFLICT that cites no external evidence at all).
             original = answer
             answer, cleared = clear_unquoted_finding(answer, quotes, self.stats)
+            decision = validate_decision(decision_from_answer(answer), question, rows, evidence, own, self.target,
+                                         self.stats)
+            # A broad/absent DB statement cannot close a question without reading earlier sources.
+            # The model assesses semantic sufficiency; the Worker also requires a real, checked DB quote.
+            # Context-only FOLLOW_UP and a cleared unquoted finding must pass the same gate.
+            searched = any(receipt.status == "SUCCEEDED" and receipt.intent.operation == "VECTOR"
+                           for receipt in own)
+            db_supported = answer.db_evidence_sufficient and any(_ENTRY_REF.fullmatch(q.ref) for q in quotes)
+            if not searched and not db_supported:
+                if calls >= MAX_JUDGE_CALLS:
+                    raise _invalid("INVALID_DECISION_REQUIRED_SEARCH_MISSING")
+                query = change_search_query(draft)
+                if not query:
+                    raise _invalid("INVALID_DECISION_REQUIRED_SEARCH_QUERY_MISSING")
+                before = self.stats["RAG_CACHE_HITS"]
+                own.append(await corpus.vector(LookupIntent(
+                    ref=f"{qref}-DB_GAP_VECTOR", kind="COMPARISON_CONTEXT", operation="VECTOR",
+                    purpose=WORKER_DB_GAP_SEARCH_PURPOSE, query=query)))
+                self.stats["DB_GAP_SEARCH_INSERTED"] += 1
+                row.update(db_gap_search=True, cache_hits=self.stats["RAG_CACHE_HITS"] - before)
+                form = "FINAL"
+                continue
             if cleared is not None:
                 # In-memory diagnostics for reviewing the guard (the experiment writes them; never logged/published).
                 row.update(cleared=cleared, cleared_impact=original.impact, cleared_reason=original.reason)
-            decision = validate_decision(decision_from_answer(answer), question, rows, evidence, own, self.target,
-                                         self.stats)
             decision = decision.model_copy(update={"basis_quotes": quotes})
             labels = author_labels(evidence=evidence, source_catalogue=self.source_catalogue, settings=rows,
                                    subjects=self.subjects)

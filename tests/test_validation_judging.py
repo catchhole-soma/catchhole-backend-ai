@@ -52,7 +52,7 @@ def test_db_first_open_call_decides_without_any_search():
     (payload,) = model.judge_calls()
     assert payload["form"] == "OPEN" and embedding.queries == []
     _, _, kwargs = next(call for call in model.calls if call[0] == "JUDGE")
-    assert kwargs["response_schema"].name == "validation_judge_open_v3"
+    assert kwargs["response_schema"].name == "validation_judge_open_v4"
     assert "search_queries" in kwargs["response_schema"].schema["properties"]
     assert kwargs["model"] == "gpt-6.1-terra" and kwargs["max_output_tokens"] == 2000
     # Current rows only: the character's history and the worldHistory row never reach the judge.
@@ -81,7 +81,7 @@ def test_follow_up_runs_searches_and_context_then_asks_in_final_form():
     first, second = model.judge_calls("Q1")
     assert (first["form"], second["form"]) == ("OPEN", "FINAL")
     final_schema = [kwargs["response_schema"] for role, _, kwargs in model.calls if role == "JUDGE"][1]
-    assert final_schema.name == "validation_judge_final_v3"
+    assert final_schema.name == "validation_judge_final_v4"
     assert final_schema.schema["properties"]["action"]["enum"] == ["DECIDED"]
     assert "search_queries" not in final_schema.schema["properties"]
     assert second["additional_target_context"] == [{"source_ref": "T1", "start": far, "end": far + 2, "text": "성문"}]
@@ -215,7 +215,7 @@ def test_identical_queries_reuse_one_search_and_one_embedding_even_in_flight():
 
 
 def test_settings_are_read_in_batches_of_100_subjects_once_per_run():
-    entries = [character(f"B{n}", f"character:{n}", f"인물{n}") for n in range(1, 131)]
+    entries = [character(f"B{n}", f"character:{n}", f"인물{n}", {"위치": {"factType": "STATUS", "factKey": "위치", "factValue": "성문"}}) for n in range(1, 131)]
     data = SyntheticData(entries=entries)
     subjects = [f"S{n}" for n in range(1, 131)]
     plans = {"TSEG1": [draft("a", subject_refs=subjects[:70], mentions=("인물",)),
@@ -370,3 +370,79 @@ def test_missing_t1_in_comparison_context_is_filled_and_counted():
     assert result.status == "COMPLETED" and result.decisions["Q1"].outcome == "NO_CONFLICT"
     assert result.decisions["Q1"].completion.comparison_context.evidence_refs == ["T1", "B1"]
     assert result.normalizations["COMPARISON_CONTEXT_TARGET_FILLED"] == 1
+
+
+def test_missing_db_basis_requires_vector_before_accepting_no_conflict():
+    data = SyntheticData(entries=[])
+    model = ScriptedModel(one_question(subject_refs=()))
+    embedding = FakeEmbedding()
+    result = inspect(data, model, search=FakeSearch(data), embedding=embedding, experiment=True)
+    assert result.status == "COMPLETED"
+    assert [p["form"] for p in model.judge_calls()] == ["OPEN", "FINAL"]
+    assert len(embedding.queries) == 1
+    assert any(r.intent.operation == "VECTOR" and r.status == "SUCCEEDED" for r in result.receipts)
+
+
+def test_missing_db_basis_without_ready_rag_is_incomplete_not_no_conflict():
+    model = ScriptedModel(one_question(subject_refs=()))
+    result = inspect(SyntheticData(entries=[]), model)
+    assert failed_question(result) == ("VECTOR_NOT_READY", None)
+    assert "Q1" not in result.decisions
+
+
+@pytest.mark.parametrize("sufficient,quote", [(False, "왼손 상실"), (True, "존재하지 않는 근거")])
+def test_a_broad_or_invalid_db_quote_cannot_skip_the_required_search(sufficient, quote):
+    def judge(payload, n):
+        return decided(payload, db_evidence_sufficient=sufficient,
+                       basis_quotes=[{"ref": "B1", "quote": quote}])
+    data, embedding = SyntheticData(), FakeEmbedding()
+    model = ScriptedModel(one_question(), judge)
+    result = inspect(data, model, search=FakeSearch(data), embedding=embedding)
+    assert result.status == "COMPLETED"
+    assert len(model.judge_calls()) == 2 and len(embedding.queries) == 1
+    assert result.normalizations["DB_GAP_SEARCH_INSERTED"] == 1
+    assert "db_evidence_sufficient" not in result.decisions["Q1"].model_dump()
+
+
+def test_context_only_follow_up_does_not_satisfy_required_source_search():
+    def judge(payload, n):
+        if n == 1:
+            return follow_up(payload, contexts=[(0, len(TARGET))])
+        return decided(payload, db_evidence_sufficient=False)
+    data, embedding = SyntheticData(), FakeEmbedding()
+    model = ScriptedModel(one_question(), judge)
+    result = inspect(data, model, search=FakeSearch(data), embedding=embedding)
+    assert result.status == "COMPLETED"
+    assert [p["form"] for p in model.judge_calls()] == ["OPEN", "FINAL", "FINAL"]
+    assert len(embedding.queries) == 1
+
+
+def test_db_gap_with_empty_scope_records_not_applicable_without_embedding():
+    data, embedding = SyntheticData(entries=[], prior={}), FakeEmbedding()
+    model = ScriptedModel(one_question(subject_refs=()))
+    result = inspect(data, model, search=FakeSearch(data), embedding=embedding)
+    assert result.status == "COMPLETED" and not embedding.queries
+    vectors = [r for r in result.receipts if r.intent.operation == "VECTOR"]
+    assert len(vectors) == 1 and vectors[0].readiness["vector_status"] == "NOT_APPLICABLE"
+    assert len(model.judge_calls()) == 2
+
+
+def test_required_db_gap_search_failure_remains_incomplete():
+    data = SyntheticData(entries=[])
+    result = inspect(data, ScriptedModel(one_question(subject_refs=())),
+                     search=FakeSearch(data, fail="SEARCH_FAILED"), embedding=FakeEmbedding())
+    assert failed_question(result) == ("SEARCH_FAILED", None)
+    assert not result.decisions
+
+
+def test_sufficiency_is_required_in_provider_schema_and_strictly_boolean():
+    from pydantic import ValidationError
+
+    from app.validation.contracts import JudgeFinalAnswer, JudgeOpenAnswer
+    from app.validation.schemas import judge_schema
+    for final, model in [(False, JudgeOpenAnswer), (True, JudgeFinalAnswer)]:
+        schema = judge_schema(entry_refs=(), final=final, search_available=True)
+        assert "db_evidence_sufficient" in schema["required"]
+        assert schema["properties"]["db_evidence_sufficient"]["type"] == "boolean"
+        with pytest.raises(ValidationError):
+            model.model_validate({"db_evidence_sufficient": "true"})
