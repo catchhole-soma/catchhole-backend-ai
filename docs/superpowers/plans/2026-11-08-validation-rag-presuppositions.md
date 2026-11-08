@@ -40,14 +40,14 @@
 - [x] Add opt-in real-model cases for independent role/wish questions, factual party-count premise, pure wish, uncertain belief, explicit mistake, compatible recall and role changes.
 - [x] Replace blanket speculative/retrospective exemptions with scope-aware factual-premise rules.
 - [x] Run paid semantic checks with explicit models/medium; preserve aggregate and private raw evidence.
-- [ ] Reinspect the private 101-v2 manuscript with the actual pipeline; score 14 planted errors and normal controls separately.
+- [x] Reinspect the private 101-v2 manuscript with the actual pipeline; score 14 planted errors and normal controls separately.
 
 ### Task 3: Document, review, merge, deployment verification
 
 **Files:** AGENTS.md, docs/setting-validation-v1.md, docs/ai-logic-versions/{README,vNNNN,details/vNNNN}.md.
 **Interfaces:** same existing execution and publication contracts.
 
-- [ ] Record code SHA, data hashes, actual conditions, remaining misses/false positives/failures and reproducible commands.
+- [x] Record code SHA, data hashes, actual conditions, remaining misses/false positives/failures and reproducible commands.
 - [x] Run full pytest and changed-file lint; obtain fresh whole-branch review and resolve material findings.
 - [ ] Publish ready PR linked to #139, verify CI and merge current tested head into main.
 - [ ] Verify publish/deploy outcome; preserve execution evidence and report limitations accurately.
