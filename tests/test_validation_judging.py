@@ -444,5 +444,51 @@ def test_sufficiency_is_required_in_provider_schema_and_strictly_boolean():
         schema = judge_schema(entry_refs=(), final=final, search_available=True)
         assert "db_evidence_sufficient" in schema["required"]
         assert schema["properties"]["db_evidence_sufficient"]["type"] == "boolean"
-        with pytest.raises(ValidationError):
-            model.model_validate({"db_evidence_sufficient": "true"})
+        scripted = ScriptedModel(one_question())
+        inspect(model=scripted)
+        value = decided(scripted.judge_calls()[0], form="FINAL" if final else "OPEN")
+        assert model.model_validate(value).db_evidence_sufficient is True
+        for invalid in ("true", 1, None):
+            with pytest.raises(ValidationError) as error:
+                model.model_validate({**value, "db_evidence_sufficient": invalid})
+            assert [e["loc"] for e in error.value.errors()] == [("db_evidence_sufficient",)]
+
+
+def test_context_then_gap_then_suspected_never_exceeds_three_calls():
+    def judge(payload, n):
+        if n == 1:
+            return follow_up(payload, contexts=[(0, len(TARGET))])
+        if n == 2:
+            return decided(payload, db_evidence_sufficient=False)
+        return decided(payload, "SUSPECTED_CONFLICT", evidence_refs=["B1"], basis_quotes=CONTRADICTION)
+    data, embedding = SyntheticData(), FakeEmbedding()
+    model = ScriptedModel(one_question(), judge)
+    result = inspect(data, model, search=FakeSearch(data), embedding=embedding)
+    assert failed_question(result) == ("INVALID_DECISION", "INVALID_DECISION_CHANGE_SEARCH_MISSING")
+    assert len(model.judge_calls()) == 3 and len(embedding.queries) == 1
+
+
+def test_gap_then_suspected_reuses_query_for_change_search():
+    def judge(payload, n):
+        if n == 1:
+            return decided(payload, db_evidence_sufficient=False)
+        return decided(payload, "SUSPECTED_CONFLICT", evidence_refs=["B1"], basis_quotes=CONTRADICTION)
+    data, embedding = SyntheticData(), FakeEmbedding()
+    model = ScriptedModel(one_question(), judge)
+    result = inspect(data, model, search=FakeSearch(data), embedding=embedding)
+    assert result.status == "COMPLETED" and result.decisions["Q1"].outcome == "SUSPECTED_CONFLICT"
+    assert len(model.judge_calls()) == 3 and len(embedding.queries) == 1
+    change = next(r for r in result.receipts if r.intent.kind == "CHANGES_EXCEPTIONS")
+    assert change.status == "SUCCEEDED" and change.reused_from is not None
+
+
+def test_index_becoming_partial_during_required_gap_search_is_incomplete():
+    class BecomesPartial(FakeSearch):
+        async def search(self, *args, **kwargs):
+            self.partial = True
+            return await super().search(*args, **kwargs)
+    data = SyntheticData(entries=[])
+    result = inspect(data, ScriptedModel(one_question(subject_refs=())),
+                     search=BecomesPartial(data), embedding=FakeEmbedding())
+    assert failed_question(result) == ("VECTOR_INDEX_PARTIAL", None)
+    assert not result.decisions

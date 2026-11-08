@@ -69,7 +69,7 @@ WORKER_TARGET_SEARCH_PURPOSE = "Worker가 대상 문장과 앞뒤 원고로 만�
 TARGET_QUERY_CONTEXT_CHARS = 100
 FINDING_OUTCOMES = frozenset({"CONFLICT", "SUSPECTED_CONFLICT"})
 # Author sentence of a finding the guard cleared (polite style of author_text.REASON_FALLBACKS).
-UNQUOTED_FINDING_REASON = "이전 기록에 이번 원고와 직접 어긋나는 문장이 없어 새로 나온 내용으로 봐요."
+UNQUOTED_FINDING_REASON = "이전 기록에서 이번 원고와 직접 어긋나는 근거를 찾지 못했어요."
 _SEARCH_QUERY_LIMIT = SEARCH_QUERY_LIMIT
 _DECISION_FIELDS = ("outcome", "basis", "headline", "impact", "impact_reason", "completion")
 
