@@ -187,6 +187,8 @@
 
 ## LLM Runtime
 
+- 인물 추출은 `LLM_CHARACTER_EXTRACTION_MODEL`을 우선 사용하고, 비어 있으면 `LLM_EXTRACTION_MODEL` → `LLM_MODEL`로 fallback한다. 운영 Compose 기본값은 `gpt-6.1-terra`이며 추론 강도는 기존 `LLM_REASONING_EFFORT=medium`을 유지한다. 인물만 바꿀 때 세계관과 공유하는 `LLM_EXTRACTION_MODEL`을 바꾸지 않는다. 명시적인 extractor model/Worker 추출 CLI override는 환경변수보다 우선하고, 실제 호출·사용량 예약·claim 대표 모델·metrics/tracing 허용 모델을 일치시킨다.
+
 - #309 독립 오탈자 검사는 `app.validation.typo.check_typos`와 `app/validation/README.md`를 따른다. 공통 frozen reader·Unicode 위치·구간·예산을 재사용하고, claim configuration v2의 TYPO `RoleRuntime`(운영 권장 `gpt-6.1-terra`/`low`, 출력 상한 포함)을 count와 생성에 동일하게 전달한다. 주입은 raw OpenAIResponsesClient 또는 그 raw를 직접 감싼 MeteredTextGenerationClient(max_retries=0) 한 층만 허용해 숨은 재시도로 생성 예산을 우회하지 않는다. 공유 client/추출·챗봇 기본값을 변경하지 않는다.
 - #309의 category는 공통 schema를 수정하지 않은 local subtype이다. 구간별 응답 전체를 검증한 성공만 보존하며 실패/누락을 정상 0건으로 만들지 않는다. 최종 frozen 재검증 실패 시 이전 제안 전체를 무효화한다. 원문·사전·작가 판단·추출 쓰기와 Worker/lease 연결은 후속 범위다.
 - #309 로직은 `v0027` 요약/상세에 기록한다. #306의 `v0026`은 AI PR #99로 main에 머지됐으며 공통 계약은 main을 기준으로 소비한다. PR/merge 시 최신 main과 번호 충돌·구현 복원 SHA를 재확인한다.

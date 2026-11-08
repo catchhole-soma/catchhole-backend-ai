@@ -288,6 +288,7 @@ def create_worker_metrics(
             allowed_models={
                 settings.llm_model,
                 settings.effective_llm_extraction_model,
+                settings.effective_llm_character_extraction_model,
                 settings.effective_llm_subject_resolution_model,
                 settings.effective_llm_comparison_model,
                 *(model for model in model_names if model),

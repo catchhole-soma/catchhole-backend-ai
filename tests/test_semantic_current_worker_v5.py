@@ -21,7 +21,7 @@ def test_new_ordered_worker_advertises_context_without_changing_legacy_default()
 
     worker = object.__new__(AnalysisJobWorker)
     worker.spring_client = Spring()
-    worker.extraction_model_name = "existing-model"
+    worker.character_extraction_model_name = "existing-model"
     asyncio.run(worker.claim_next())
     assert requests[0]["supports_semantic_current_context"] is True
     assert requests[0]["supported_source_kinds"] == ["EPISODE", "SETTING_BOOK"]

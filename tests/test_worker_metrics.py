@@ -489,12 +489,14 @@ def test_startup_model_allowlist_contains_configuration_and_cli_overrides():
         _env_file=None,
         ai_worker_metrics_enabled=True,
         llm_extraction_model="configured-extraction",
+        llm_character_extraction_model="configured-character-extraction",
         llm_subject_resolution_model="configured-subject",
         llm_comparison_model="configured-comparison",
     )
     metrics = create_worker_metrics(settings, "character-comparison", ["cli-model"])
     for model in (
         "configured-extraction",
+        "configured-character-extraction",
         "configured-subject",
         "configured-comparison",
         "cli-model",

@@ -203,6 +203,39 @@ def test_worker_routes_each_llm_stage_to_its_configured_model() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("explicit_model", [None, "cli-extraction-model"])
+def test_character_extraction_override_preserves_world_model(monkeypatch, explicit_model) -> None:
+    from app.core.config import Settings
+
+    settings = Settings(
+        _env_file=None,
+        llm_extraction_model="gpt-6.1-sol",
+        llm_character_extraction_model="gpt-6.1-terra",
+    )
+    monkeypatch.setattr("app.worker.analysis_job_worker.get_settings", lambda: settings)
+
+    async def scenario() -> None:
+        spring = FakeSpringWorkerClient(payload=None)
+        worker = AnalysisJobWorker(
+            spring_client=spring,
+            extraction_model_name=explicit_model,
+            llm_provider_client=object(),
+        )
+        try:
+            character = worker._get_setting_extractor(ANALYSIS_JOB_ID, LEASE_TOKEN)
+            world = worker._get_world_setting_extractor(ANALYSIS_JOB_ID, LEASE_TOKEN)
+            assert character.model == (explicit_model or "gpt-6.1-terra")
+            assert character.llm_client.default_model == character.model
+            assert world.model == (explicit_model or "gpt-6.1-sol")
+            assert world.llm_client.default_model == world.model
+            await worker.claim_next()
+            assert spring.claim_model_name == character.model
+        finally:
+            await worker.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_worker_reports_fail_to_spring_when_analysis_fails() -> None:
     spring_client = FakeSpringWorkerClient(payload=_payload())
     worker = FailingAnalysisJobWorker(spring_client=spring_client)

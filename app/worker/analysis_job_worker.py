@@ -282,6 +282,9 @@ class AnalysisJobWorker:
         self.extraction_model_name = (
             extraction_model_name or settings.effective_llm_extraction_model
         )
+        self.character_extraction_model_name = (
+            extraction_model_name or settings.effective_llm_character_extraction_model
+        )
         self.subject_resolution_model_name = (
             subject_resolution_model_name or settings.effective_llm_subject_resolution_model
         )
@@ -339,7 +342,7 @@ class AnalysisJobWorker:
 
         return await self.spring_client.claim(
             allowed_job_types=[AnalysisJobType.SETTING_EXTRACTION],
-            model_name=self.extraction_model_name,
+            model_name=self.character_extraction_model_name,
             supported_analysis_modes=["CONFIRMED_ONLY", "ORDERED_PROVISIONAL"],
             supported_source_kinds=[AnalysisSourceKind.EPISODE, AnalysisSourceKind.SETTING_BOOK],
             supports_setting_book_reference_time=True,
@@ -1224,7 +1227,7 @@ class AnalysisJobWorker:
         if self._setting_extractor is not None:
             return self._setting_extractor
 
-        model_name = self.extraction_model_name
+        model_name = self.character_extraction_model_name
         metered_client = MeteredTextGenerationClient(
             delegate=self._get_llm_provider_client(),
             ledger=self.spring_client,

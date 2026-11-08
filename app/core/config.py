@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gpt-5.6-terra"
     llm_extraction_model: str | None = None
+    llm_character_extraction_model: str | None = None
     llm_subject_resolution_model: str | None = None
     llm_comparison_model: str | None = None
     # 환경변수가 없으면 medium을 사용하고 명시한 값은 그대로 전달한다.
@@ -79,6 +80,10 @@ class Settings(BaseSettings):
     @property
     def effective_llm_extraction_model(self) -> str:
         return self.llm_extraction_model or self.llm_model
+
+    @property
+    def effective_llm_character_extraction_model(self) -> str:
+        return self.llm_character_extraction_model or self.effective_llm_extraction_model
 
     @property
     def effective_llm_subject_resolution_model(self) -> str:
