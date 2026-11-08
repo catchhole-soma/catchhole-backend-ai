@@ -150,6 +150,10 @@ JUDGE는 `question.property_or_rule`·`check_intent`가 묻는 속성·규칙만
 - 판정 지시(`JUDGE_SYSTEM`, 2026-11-08 #142 정정): 같은 대상·속성·서사 시점·조건에서 확인된 기존 값과 이번 값의 불일치를 비교한다. 기존 값 A가 확인되면 이번 값 B를 명시적으로 부정한 별도 문장을 요구하지 않는다. 적용 시점·조건까지 확인된 불일치는 CONFLICT, 값은 다르지만 그 사이 변화나 적용 맥락이 미확인이고 검색해도 설명을 찾지 못하면 SUSPECTED_CONFLICT다. 검색 미발견은 기존 값의 불일치를 해소하지 않는다.
   필요한 검색 뒤에도 그 속성의 기존 값 자체가 없으면 새 정보라는 이유만으로 오류를 만들지 않으며, 기준 미발견이라고 설명한다. 일치하거나 실제 문맥이 변화·추가 정보·다른 속성/시점/조건을 설명하면 NO_CONFLICT다. 대상 원고 자체의 뜻이 모호하면 NEEDS_CONTEXT다. 직업만의 예외 문구 대신 이 속성값 비교를 최상위 정의와 최종 확인에 함께 사용한다.
   CONFLICT·SUSPECTED_CONFLICT의 `basis_quotes` 첫 항목은 기존 값을 확인해 주는 이전 문장이다. 원문에 없는 부정문이나 예외를 만들어 내지 않는다.
+- 판정 절차와 출력 규칙(`JUDGE_SYSTEM`, 2026-11-09 #144, v0052): 지시문은 `_COMMON`을 잇지 않는 판정 전용 문자열이다. schema v4·Worker 흐름·wire는 그대로다.
+  확정/의심 기준은 판정 절차 4단계 한 곳에서 정한다. 저장된 현재값은 지금의 값이므로 대상 문장이 지금 상태나 이미 확정된 과거 사실을 말하면 같은 시점이고 값이 다르면 CONFLICT다. 대상 문장이 `그때는 …였다`처럼 지금과 다른 과거 시점의 상태를 말하거나 기존 값이 이전 회차 원문·설정집에만 있으면 변화·예외를 확인하고, 그 차이를 설명하는 근거를 못 찾으면 SUSPECTED_CONFLICT다. 종족·출생지·이미 일어난 사건의 사실관계·규칙의 수치처럼 시간이 지나도 바뀌지 않는 속성은 확인 없이 같은 시점으로 본다.
+  `disagreements`는 저장된 settings 값(`fact_ref`=B)과 이전 회차·설정집 evidence(`evidence_ref`=E)가 같은 시점·조건에서 양립할 수 없고 그 때문에 이 질문의 기준을 정할 수 없을 때만 쓴다. 이야기 진행에 따른 값의 변화와 T1·이전 기록의 차이는 포함하지 않는다. 지시문은 명시 정정이 적용되지 않는 `disagreements`가 작가 확인 필요로 게시된다는 결과를 모델에 알린다.
+  DECIDED 출력 규칙은 지시문의 `출력 필드(DECIDED)` 블록 한 곳에 둔다. `target_spans`는 질문 span 그대로(`source_ref`=T1), `evidence_refs`는 판단에 실제로 쓴 참조 전부(충돌·의심은 B 또는 E 하나 이상), `basis_quotes`는 0~3개의 비교 쪽 문장이다. `completion` 네 항목은 `evidence_refs`(T1·B·E)와 `receipt_refs`(L)를 각각 하나 이상 쓰고 `comparison_context`에 T1을 포함하며 `required_reads.receipt_refs`는 receipts 전체다. 검색을 하지 않아도 저장 설정 조회와 대상 문맥 조회 receipt가 있어 인용할 수 있다. `search_queries`·`context_requests`는 빈 배열이다.
 - 규칙 검사(`judging.clear_unquoted_finding`): Worker가 받아들이는 DECIDED(변화 검색 뒤의 FINAL 포함) 중 CONFLICT·SUSPECTED_CONFLICT인데 확인된
   `basis_quotes`(`normalize_basis_quotes`를 통과한 E·B 인용)가 하나도 없고 `disagreements`도 없으면 NO_CONFLICT/COMPATIBLE, impact·impact_reason null,
   사유 고정 문장으로 바꾼다. 원래 결과별로 `CONFLICT_QUOTE_MISSING_CLEARED`/`SUSPECTED_CONFLICT_QUOTE_MISSING_CLEARED`를 세고 trace에 `cleared`·`cleared_impact`·`cleared_reason`(판정 원래 결과·등급·사유, 메모리 진단이며 실험 harness만 파일로 쓴다. 로그·게시 없음)을 남긴다.
@@ -169,7 +173,7 @@ JUDGE는 `question.property_or_rule`·`check_intent`가 묻는 속성·규칙만
 오류 리포트 제목과 설명은 판정이 쓴다(schema·이름 v3 그대로). DECIDED 판정은 필수(nullable) `headline`에 제목 한 줄을 쓴다: CONFLICT
 `{대상}의 {항목}이 기존 설정과 달라요`(이전 회차면 `…N화와 달라요`, 설정집이면 `…설정집과 달라요`), SUSPECTED_CONFLICT `…다를 수 있어요`,
 NEEDS_CONTEXT는 무엇이 분명하지 않은지. {대상}은 저장 값·이전 문장이 실제로 어긋나는 대상이며 서술자나 이름만 나온 인물이 아니다. FOLLOW_UP·NO_CONFLICT는 null.
-CONFLICT·SUSPECTED의 `reason`은 원인→결과 두 문장(`기존 설정은 … (이)라고 해요. 그런데 31화에서는 … (이)라고 해요.`)이고 판정 입력에 `target_episode_no`가 있다.
+CONFLICT·SUSPECTED의 `reason`은 원인→결과 두 문장(`기존 설정은 … (이)라고 해요. 그런데 31화에서는 … (이)라고 해요.`)이고 판정 입력에 `target_episode_no`가 있다. SUSPECTED는 그 두 문장 뒤에 `그 사이에 바뀐 기록은 찾지 못했어요.`를 붙인다(2026-11-09, v0052).
 Worker는 headline을 `reason`과 같은 작가용 정제로 다루되 고정 대체 문장 없이 None으로 둘 수 있다(80 code point 초과·빈 값·NO_CONFLICT). 상세는
 `docs/validation-execution-v1.md` "판정 작성 제목(headline)과 원인→결과 사유", 공통 fixture `judgeFlow.headline`.
 
@@ -274,6 +278,8 @@ Worker는 DECIDED의 인용과 기존 결정 계약을 검증한 뒤, 성공한 
 검색 미준비·실패·부분 색인은 기존 질문별 INCOMPLETE로 남긴다. 예산 종료나 자료 변경은 기존 실행 중단 경계를 유지한다. 최대 3회 판정과 SUSPECTED_CONFLICT 변화 검색 조건을 늘리지 않는다. 문맥 조회→필수 검색 후 3번째 답이 추가 변화 검색을 요구하면 상한을 넘기는 대신 미완료다. 원문/DB 직접 모순 인용이 없는 사실을 오류로 단정하지 않는 원칙은 유지하되, 미발견을 일치 확인이나 새 설정 확인이라고 설명하지 않는다.
 
 PLANNER는 직업과 희망, 과거 인원과 감정 원인처럼 사실 전제와 추측/희망 대상을 별도 질문으로 만든다. JUDGE는 추측 표현의 범위를 문맥으로 확인한다. 순수 희망·불확실한 인물의 믿음을 세계의 확정 사실로 바꾸지 않고, 회상 속 직업·관계·과거 사건은 비교한다. 대상 원고의 회상은 이전 회차에서 확인한 근거가 아니다. 착각·거짓말·기억 오류·전직·겸직을 설명하려면 실제 문맥/변화 근거가 필요하며 가능성만으로 면제하지 않는다.
+
+2026-11-09(#144, v0052): JUDGE의 판정 절차는 이 규칙을 순서로 둔다. 2단계에서 이번 값(대상 문장이 서술하거나 전제하는 값)을 확인하면서 추측·희망의 내용과 전제한 사실을 가르고, 3단계에서 settings를 먼저 보고 없으면 evidence에서 기존 값을 찾는다. 4단계의 시점 판단은 위 "판정 규칙·검색 보완"의 확정/의심 기준을 따른다. `db_evidence_sufficient`는 3·4단계가 settings만으로 끝날 때 true이고 변화·예외 확인이 필요하면 false다. 기존 값이 settings에 있고 변화 여부만 남은 OPEN은 FOLLOW_UP 대신 SUSPECTED_CONFLICT를 바로 낼 수 있으며, Worker가 변화 검색 뒤 FINAL로 다시 묻는다.
 
 검증은 검색 강제/실패/재사용/상한의 합성 회귀와 유료 opt-in `tests/test_validation_presuppositions_live.py`로 구분한다. 현재 운영 모델 설정은 변경하지 않는다. 실제 평가 조건과 남은 한계는 [v0049](ai-logic-versions/v0049.md)에 기록한다.
 

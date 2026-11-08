@@ -11,6 +11,7 @@
 ## AI Logic Version Records
 
 - AI #139 (v0049): PLANNER/JUDGE 모델 전용 schema는 v4다. `db_evidence_sufficient`는 같은 질문의 정확한 속성·시점·조건을 DB가 직접 뒷받침할 때만 true이고, Worker는 검증된 B 인용도 요구한다. 부족하고 성공한 VECTOR 영수증이 없으면 질문 의도+대상 문장으로 최소 1회 검색 후 FINAL로 재판정한다(`DB_GAP_SEARCH_INSERTED`). 문맥 조회만 한 FOLLOW_UP·근거 없는 충돌 해제도 검색을 우회하지 않는다. 검색 불가/실패는 INCOMPLETE, 빈 범위는 기존 NOT_APPLICABLE이며 3회 상한과 변화 검색 조건을 유지한다. 충분성 값은 Java 저장 wire에 넣지 않는다. 추측/희망/회상은 해당 내용과 사실 전제를 나눠 질문·판정하고, 근거 없는 착각·겸직·기억 오류를 만들어 면제하지 않는다. 같은 맥락의 직업 값 대조에는 명시적인 부정문을 요구하지 않되 다른 축의 역할·명시 겸직·직업 변화를 구분하고, 대부분/보통을 절대 규칙으로 강화하지 않는다.
+- AI #144 (v0052): `JUDGE_SYSTEM`은 `_COMMON`을 잇지 않는 독립 문자열이고 `_COMMON`은 PLANNER만 쓴다. 확정/의심 경계는 판정 절차 4단계의 같은 시점 기준 한 곳에 둔다: 저장된 현재값과 지금 서술·확정된 과거 사실·불변 속성은 같은 시점이라 값이 다르면 CONFLICT, 과거 시점 서술이나 원문·설정집에만 있는 기존 값은 변화·예외를 확인하고 못 찾으면 SUSPECTED_CONFLICT다. Worker가 거절하는 출력 규칙은 `출력 필드(DECIDED)` 블록에 두고, `disagreements`는 B·E가 같은 시점·조건에서 양립할 수 없어 기준을 못 정할 때만 쓴다. 문구를 바꾸면 고정 문구 테스트와 유료 opt-in `tests/test_validation_presuppositions_live.py`로 확인한다.
 
 - GH306/309 `app/validation`의 호출형 API는 유지하며 GH310 전용 Worker가 실제 Java ValidationJob/lease·의미 저장·사용량을 연결한다. 추출 release는 GH312 범위다. `ValidationDataClient`의 expected baseline/target/source fingerprint와 전체/부분 원문의 정확한 Unicode 범위를 유지하며 live setting tool로 대체하지 않는다. 검수 모델·추론 강도·출력 상한은 claim configuration v2의 역할별 `RoleRuntime`(PLANNER·JUDGE·TYPO)이고 호출별 frozen `LlmCallOptions`로 count와 생성에 같은 옵션/schema를 전달한다. 일반 추출/챗봇 기본 설정을 바꾸거나 검수에 가짜 AnalysisJob/lease를 만들지 않는다. 연결·예산·출처/완료 검증과 실제/합성 평가의 구분은 `docs/setting-validation-v1.md`를 따른다.
 
