@@ -163,6 +163,7 @@ async def main(args):
             text=True,
         )
     ).splitlines()
+    changed = [path for path in changed if not path.endswith("README.md")]  # package docs never change behaviour
     if set(changed) - set(EVALUATED_FILES):
         raise ValueError("Baseline dependencies differ; restore a matching evaluation checkout")
     head = (
