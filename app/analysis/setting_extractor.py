@@ -8,6 +8,10 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
+from app.analysis.book_character_context import (
+    BOOK_CHARACTER_CONTEXT_INSTRUCTIONS,
+    book_character_prompt_json,
+)
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
 from app.analysis.json_response import parse_json_object
@@ -174,6 +178,9 @@ class CharacterSettingExtractor:
 
         system_prompt = self._load_system_prompt()
         schema_summary_json = _serialize_schema_hints(schema_hints)
+        book_context = (book_character_prompt_json(chunk_text, ordered_context, semantic_current_context)
+                        if setting_book is not None and ordered_context is not None
+                        and semantic_current_context is not None else None)
         user_prompt = self._build_user_prompt(
             chunk_text=chunk_text,
             episode_no=episode_no,
@@ -182,6 +189,7 @@ class CharacterSettingExtractor:
             known_characters=known_characters,
             episode_ordered_context=ordered_context if setting_book is None else None,
             episode_projection=setting_book is None,
+            book_character_context=book_context,
         )
         prompt_cache_key = _build_schema_cache_key(schema_summary_json)
         if setting_book is not None:
@@ -194,7 +202,18 @@ class CharacterSettingExtractor:
             user_prompt = (user_prompt[:start].replace("다음 회차 청크", "다음 설정집 청크")
                            + f"metadata:\n{metadata}\n\nchunk_text:\n{chunk_text}")
             prompt_cache_key += ":setting-book-grounded-function-v2"
-        if ordered_context is not None and setting_book is not None:
+        if book_context is not None:
+            system_prompt = system_prompt.replace("known_character_names", "book_character_context.catalog")
+            system_prompt = system_prompt.replace(
+                "active_character_statuses",
+                "book_character_context.characters의 current_slots(active_status 포함)와 active_statuses")
+            system_prompt += "\n\n" + ordered_state_instructions(AnalysisSourceKind.SETTING_BOOK)
+            system_prompt += "\n\n" + SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS.replace(
+                "semantic_current_state", "book_character_context")
+            system_prompt += "\n\n" + CURRENT_STATUS_FORECAST_INSTRUCTIONS
+            system_prompt += "\n\n" + BOOK_CHARACTER_CONTEXT_INSTRUCTIONS
+            prompt_cache_key += ":book-character-context-v1" + STATUS_FORECAST_CACHE_SUFFIX
+        if ordered_context is not None and setting_book is not None and book_context is None:
             system_prompt += "\n\n" + ordered_state_instructions(
                 AnalysisSourceKind.SETTING_BOOK if setting_book is not None else None
             )
@@ -205,7 +224,7 @@ class CharacterSettingExtractor:
             )
             prompt_cache_key += ":ordered-provisional-v1"
 
-        if semantic_current_context is not None and setting_book is not None:
+        if semantic_current_context is not None and setting_book is not None and book_context is None:
             system_prompt += "\n\n" + SEMANTIC_CURRENT_EXTRACTION_INSTRUCTIONS
             system_prompt += "\n\n" + CURRENT_STATUS_FORECAST_INSTRUCTIONS
             user_prompt += "\n\nsemantic_current_state:\n" + semantic_current_context.character_prompt_json()
@@ -344,6 +363,7 @@ class CharacterSettingExtractor:
         known_characters: tuple[KnownCharacter, ...],
         episode_ordered_context: OrderedExtractionContext | None = None,
         episode_projection: bool = False,
+        book_character_context: str | None = None,
     ) -> str:
         metadata = {
             "episode_no": episode_no,
@@ -353,6 +373,10 @@ class CharacterSettingExtractor:
         statuses = _serialize_active_character_statuses(known_characters)
         if episode_projection:
             names, statuses = _serialize_episode_character_context(known_characters, episode_ordered_context)
+        character_context = (f"book_character_context:\n{book_character_context}\n\n"
+                             if book_character_context is not None else
+                             f"known_character_names:\n{names}\n\n"
+                             f"active_character_statuses:\n{statuses}\n\n")
         # 고정 규칙과 canonical schema를 앞에 두고 회차별 metadata·원문은 뒤에 둔다.
         return (
             "다음 회차 청크에서 캐릭터 설정 후보를 추출하세요.\n\n"
@@ -367,10 +391,7 @@ class CharacterSettingExtractor:
             "않는 설정은 가까운 schema로 추측하지 말고 후보에서 제외하세요.\n\n"
             "character_setting_schemas:\n"
             f"{schema_summary_json}\n\n"
-            "known_character_names:\n"
-            f"{names}\n\n"
-            "active_character_statuses:\n"
-            f"{statuses}\n\n"
+            f"{character_context}"
             f"metadata:\n{json.dumps(metadata, ensure_ascii=False, sort_keys=True)}\n\n"
             f"chunk_text:\n{chunk_text}"
         )
