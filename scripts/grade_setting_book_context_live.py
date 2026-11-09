@@ -60,6 +60,17 @@ def total_usage(calls):
             "within_guard": all((c.get("guard_tokens") or 0) <= GUARD_LIMIT for c in calls)}
 
 
+def value_retained(gold_value, text):
+    """Every whitespace-separated token of the gold value appears in the candidate's value text.
+
+    Gold values like `스타테일러 최고전력` may be rendered with other explicit qualifiers in between
+    (`스타테일러 국장 직속 12성, 최고전력`); the quote only grounds, the value fields must carry it.
+    """
+    tokens = [norm(t) for t in str(gold_value).split()]
+    tokens = [t for t in tokens if t]
+    return bool(tokens) and all(t in text for t in tokens)
+
+
 def value_text(candidate):
     parts = [candidate.get("attribute_value") or ""]
     if candidate.get("value_json") is not None:
@@ -156,7 +167,8 @@ def grade_synthetic(case, record):
     known = {norm(k["name"]) for k in case["known"]} | {norm(a) for k in case["known"] for a in k["aliases"]}
     body = norm(case["body"])
     foreign_subjects = [i for i, c in enumerate(candidates)
-                        if norm(c.get("entity_name")) and norm(c.get("entity_name")) not in known
+                        if norm(c.get("entity_name")) and norm(c.get("entity_name")) != norm(WILDCARD_SUBJECT)
+                        and norm(c.get("entity_name")) not in known
                         and norm(c.get("entity_name")) not in body
                         and not any(norm(n) in norm(c.get("entity_name")) for n in case.get("gold_subject_hints", []))]
     result = {"gold_total": len(atoms), "gold_matched": sum(a["matched"] for a in atoms),
@@ -191,10 +203,11 @@ def grade_real(case, record, gold_case):
             if c.get("candidate_kind") != "SETTING" or not subject_matches(c, [fact["subject"]]):
                 continue
             text = value_text(c)
-            if norm(fact["value"]) and norm(fact["value"]) in text:
+            if value_retained(fact["value"], text):
                 qualifier = fact.get("qualifier") or {}
-                hits.append({"candidate_index": i,
-                             "qualifier_retained": all(norm(v) in text for v in qualifier.values() if isinstance(v, str))})
+                hits.append({"candidate_index": i, "exact_substring": norm(fact["value"]) in text,
+                             "qualifier_retained": all(value_retained(v, text) for k, v in qualifier.items()
+                                                       if isinstance(v, str) and k != "scope")})
         (matched if hits else review).append({"id": fact["id"], "tier": fact["rubric_tier"], "hits": hits})
     by_tier = defaultdict(lambda: {"total": 0, "auto_matched": 0, "qualifier_retained": 0})
     for row in matched + review:
