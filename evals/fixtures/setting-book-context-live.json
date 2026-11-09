@@ -1,0 +1,1130 @@
+{
+  "schema_hints": [
+    {
+      "aliases": [
+        "나이"
+      ],
+      "attribute_pattern": null,
+      "display_name": "나이",
+      "schema_key": "age",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [],
+      "attribute_pattern": "item.*",
+      "display_name": "소지품",
+      "schema_key": "items.item",
+      "value_type": "JSON"
+    },
+    {
+      "aliases": [
+        "레벨"
+      ],
+      "attribute_pattern": null,
+      "display_name": "레벨",
+      "schema_key": "level",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [],
+      "attribute_pattern": null,
+      "display_name": "프로필",
+      "schema_key": "profile",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "소속",
+        "affiliation"
+      ],
+      "attribute_pattern": null,
+      "display_name": "소속",
+      "schema_key": "profile.affiliation",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "별명",
+        "별칭",
+        "애칭",
+        "alias",
+        "nickname"
+      ],
+      "attribute_pattern": null,
+      "display_name": "별명",
+      "schema_key": "profile.alias",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "출신 학교",
+        "출신학교",
+        "모교",
+        "alma_mater"
+      ],
+      "attribute_pattern": null,
+      "display_name": "출신 학교",
+      "schema_key": "profile.alma_mater",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "외형",
+        "외모",
+        "appearance"
+      ],
+      "attribute_pattern": null,
+      "display_name": "외형",
+      "schema_key": "profile.appearance",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "가명",
+        "위장 이름",
+        "위장이름",
+        "assumed_name"
+      ],
+      "attribute_pattern": null,
+      "display_name": "가명",
+      "schema_key": "profile.assumed_name",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [],
+      "attribute_pattern": "profile.*",
+      "display_name": "프로필",
+      "schema_key": "profile.attribute",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "생일",
+        "birthday"
+      ],
+      "attribute_pattern": null,
+      "display_name": "생일",
+      "schema_key": "profile.birthday",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "출생 순서",
+        "출생순서",
+        "형제 순서",
+        "birth_order"
+      ],
+      "attribute_pattern": null,
+      "display_name": "출생 순서",
+      "schema_key": "profile.birth_order",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "출생지",
+        "태어난 곳",
+        "birthplace"
+      ],
+      "attribute_pattern": null,
+      "display_name": "출생지",
+      "schema_key": "profile.birthplace",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "체격",
+        "체형",
+        "body_build"
+      ],
+      "attribute_pattern": null,
+      "display_name": "체격",
+      "schema_key": "profile.body_build",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "경력",
+        "직업 경력",
+        "career_background"
+      ],
+      "attribute_pattern": null,
+      "display_name": "경력",
+      "schema_key": "profile.career_background",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "자녀",
+        "children"
+      ],
+      "attribute_pattern": null,
+      "display_name": "자녀",
+      "schema_key": "profile.children",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "평소 복장",
+        "복장 취향",
+        "옷차림 취향",
+        "clothing_style"
+      ],
+      "attribute_pattern": null,
+      "display_name": "평소 복장",
+      "schema_key": "profile.clothing_style",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "설명",
+        "description"
+      ],
+      "attribute_pattern": null,
+      "display_name": "설명",
+      "schema_key": "profile.description",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "식별 특징",
+        "식별특징",
+        "신체 식별 특징",
+        "distinguishing_marks"
+      ],
+      "attribute_pattern": null,
+      "display_name": "식별 특징",
+      "schema_key": "profile.distinguishing_marks",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "주로 쓰는 손",
+        "주손",
+        "잡이손",
+        "dominant_hand"
+      ],
+      "attribute_pattern": null,
+      "display_name": "주로 쓰는 손",
+      "schema_key": "profile.dominant_hand",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "학력",
+        "education_level"
+      ],
+      "attribute_pattern": null,
+      "display_name": "학력",
+      "schema_key": "profile.education_level",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "민족",
+        "ethnicity"
+      ],
+      "attribute_pattern": null,
+      "display_name": "민족",
+      "schema_key": "profile.ethnicity",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "눈 색깔",
+        "눈색깔",
+        "eye_color"
+      ],
+      "attribute_pattern": null,
+      "display_name": "눈 색깔",
+      "schema_key": "profile.eye_color",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "얼굴 특징",
+        "얼굴특징",
+        "생김새",
+        "facial_features"
+      ],
+      "attribute_pattern": null,
+      "display_name": "얼굴 특징",
+      "schema_key": "profile.facial_features",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "가문",
+        "집안",
+        "family_lineage"
+      ],
+      "attribute_pattern": null,
+      "display_name": "가문",
+      "schema_key": "profile.family_lineage",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "가족 관계",
+        "가족관계",
+        "family_relationship"
+      ],
+      "attribute_pattern": null,
+      "display_name": "가족 관계",
+      "schema_key": "profile.family_relationship",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "아버지",
+        "부친",
+        "father"
+      ],
+      "attribute_pattern": null,
+      "display_name": "아버지",
+      "schema_key": "profile.father",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "전공",
+        "field_of_study"
+      ],
+      "attribute_pattern": null,
+      "display_name": "전공",
+      "schema_key": "profile.field_of_study",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "경제적 형편",
+        "경제적형편",
+        "재산 형편",
+        "financial_status"
+      ],
+      "attribute_pattern": null,
+      "display_name": "경제적 형편",
+      "schema_key": "profile.financial_status",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "성별",
+        "gender"
+      ],
+      "attribute_pattern": null,
+      "display_name": "성별",
+      "schema_key": "profile.gender",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "보호자",
+        "후견인",
+        "guardian"
+      ],
+      "attribute_pattern": null,
+      "display_name": "보호자",
+      "schema_key": "profile.guardian",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "습관",
+        "버릇",
+        "habits"
+      ],
+      "attribute_pattern": null,
+      "display_name": "습관",
+      "schema_key": "profile.habits",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "머리 색깔",
+        "머리색",
+        "머리카락 색",
+        "머리카락색",
+        "hair_color"
+      ],
+      "attribute_pattern": null,
+      "display_name": "머리 색깔",
+      "schema_key": "profile.hair_color",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "머리 모양",
+        "머리모양",
+        "머리 스타일",
+        "헤어스타일",
+        "hairstyle"
+      ],
+      "attribute_pattern": null,
+      "display_name": "머리 모양",
+      "schema_key": "profile.hairstyle",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "키",
+        "신장",
+        "height"
+      ],
+      "attribute_pattern": null,
+      "display_name": "키",
+      "schema_key": "profile.height",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "취미",
+        "hobbies"
+      ],
+      "attribute_pattern": null,
+      "display_name": "취미",
+      "schema_key": "profile.hobbies",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "출신지",
+        "고향",
+        "hometown"
+      ],
+      "attribute_pattern": null,
+      "display_name": "출신지",
+      "schema_key": "profile.hometown",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "구사 언어",
+        "구사언어",
+        "사용 언어",
+        "languages"
+      ],
+      "attribute_pattern": null,
+      "display_name": "구사 언어",
+      "schema_key": "profile.languages",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "동거 구성",
+        "동거구성",
+        "동거인",
+        "living_arrangement"
+      ],
+      "attribute_pattern": null,
+      "display_name": "동거 구성",
+      "schema_key": "profile.living_arrangement",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "장기 목표",
+        "장기목표",
+        "인생 목표",
+        "long_term_goal"
+      ],
+      "attribute_pattern": null,
+      "display_name": "장기 목표",
+      "schema_key": "profile.long_term_goal",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "혼인 상태",
+        "혼인상태",
+        "결혼 여부",
+        "marital_status"
+      ],
+      "attribute_pattern": null,
+      "display_name": "혼인 상태",
+      "schema_key": "profile.marital_status",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "어머니",
+        "모친",
+        "mother"
+      ],
+      "attribute_pattern": null,
+      "display_name": "어머니",
+      "schema_key": "profile.mother",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "국적",
+        "nationality"
+      ],
+      "attribute_pattern": null,
+      "display_name": "국적",
+      "schema_key": "profile.nationality",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "모국어",
+        "native_language"
+      ],
+      "attribute_pattern": null,
+      "display_name": "모국어",
+      "schema_key": "profile.native_language",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "직업",
+        "occupation",
+        "job"
+      ],
+      "attribute_pattern": null,
+      "display_name": "직업",
+      "schema_key": "profile.occupation",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "성격",
+        "성향",
+        "personality"
+      ],
+      "attribute_pattern": null,
+      "display_name": "성격",
+      "schema_key": "profile.personality",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "직책",
+        "position"
+      ],
+      "attribute_pattern": null,
+      "display_name": "직책",
+      "schema_key": "profile.position",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "기호",
+        "취향",
+        "preferences"
+      ],
+      "attribute_pattern": null,
+      "display_name": "기호",
+      "schema_key": "profile.preferences",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "행동 원칙",
+        "행동원칙",
+        "신조",
+        "principles"
+      ],
+      "attribute_pattern": null,
+      "display_name": "행동 원칙",
+      "schema_key": "profile.principles",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "자격",
+        "자격증",
+        "면허",
+        "qualifications"
+      ],
+      "attribute_pattern": null,
+      "display_name": "자격",
+      "schema_key": "profile.qualifications",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "조직 내 서열",
+        "조직내서열",
+        "조직 내 계급",
+        "조직내계급",
+        "rank"
+      ],
+      "attribute_pattern": null,
+      "display_name": "조직 내 서열",
+      "schema_key": "profile.rank",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "본명",
+        "실명",
+        "real_name"
+      ],
+      "attribute_pattern": null,
+      "display_name": "본명",
+      "schema_key": "profile.real_name",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "종교",
+        "신앙",
+        "religion"
+      ],
+      "attribute_pattern": null,
+      "display_name": "종교",
+      "schema_key": "profile.religion",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "평판",
+        "명성",
+        "reputation"
+      ],
+      "attribute_pattern": null,
+      "display_name": "평판",
+      "schema_key": "profile.reputation",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "거주지",
+        "residence"
+      ],
+      "attribute_pattern": null,
+      "display_name": "거주지",
+      "schema_key": "profile.residence",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "형제자매",
+        "형제 자매",
+        "siblings"
+      ],
+      "attribute_pattern": null,
+      "display_name": "형제자매",
+      "schema_key": "profile.siblings",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "피부색",
+        "피부 색",
+        "skin_tone"
+      ],
+      "attribute_pattern": null,
+      "display_name": "피부색",
+      "schema_key": "profile.skin_tone",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "신분",
+        "사회적 신분",
+        "사회적신분",
+        "social_status"
+      ],
+      "attribute_pattern": null,
+      "display_name": "신분",
+      "schema_key": "profile.social_status",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "종족",
+        "species",
+        "race"
+      ],
+      "attribute_pattern": null,
+      "display_name": "종족",
+      "schema_key": "profile.species",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "말투",
+        "말버릇",
+        "speech_style"
+      ],
+      "attribute_pattern": null,
+      "display_name": "말투",
+      "schema_key": "profile.speech_style",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "배우자",
+        "남편",
+        "아내",
+        "spouse"
+      ],
+      "attribute_pattern": null,
+      "display_name": "배우자",
+      "schema_key": "profile.spouse",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "칭호",
+        "title"
+      ],
+      "attribute_pattern": null,
+      "display_name": "칭호",
+      "schema_key": "profile.title",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "가치관",
+        "values"
+      ],
+      "attribute_pattern": null,
+      "display_name": "가치관",
+      "schema_key": "profile.values",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "목소리",
+        "음색",
+        "voice"
+      ],
+      "attribute_pattern": null,
+      "display_name": "목소리",
+      "schema_key": "profile.voice",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [
+        "몸무게",
+        "체중",
+        "weight"
+      ],
+      "attribute_pattern": null,
+      "display_name": "몸무게",
+      "schema_key": "profile.weight",
+      "value_type": "STRING"
+    },
+    {
+      "aliases": [],
+      "attribute_pattern": "skill.*",
+      "display_name": "스킬",
+      "schema_key": "skills.skill",
+      "value_type": "JSON"
+    },
+    {
+      "aliases": [
+        "민첩",
+        "민첩성",
+        "agility",
+        "dexterity",
+        "dex"
+      ],
+      "attribute_pattern": null,
+      "display_name": "민첩성",
+      "schema_key": "stats.agility",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [],
+      "attribute_pattern": "stats.*",
+      "display_name": "스탯",
+      "schema_key": "stats.attribute",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "골강도",
+        "bone_strength"
+      ],
+      "attribute_pattern": null,
+      "display_name": "골강도",
+      "schema_key": "stats.bone_strength",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "전투지수",
+        "전투력",
+        "combat_power"
+      ],
+      "attribute_pattern": null,
+      "display_name": "전투지수",
+      "schema_key": "stats.combat_power",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "지구력",
+        "endurance",
+        "stamina"
+      ],
+      "attribute_pattern": null,
+      "display_name": "지구력",
+      "schema_key": "stats.endurance",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "기력",
+        "energy"
+      ],
+      "attribute_pattern": null,
+      "display_name": "기력",
+      "schema_key": "stats.energy",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "아이템 레벨",
+        "아이템레벨",
+        "item_level"
+      ],
+      "attribute_pattern": null,
+      "display_name": "아이템 레벨",
+      "schema_key": "stats.item_level",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "항마력",
+        "마법저항",
+        "마법 저항",
+        "magic_resistance"
+      ],
+      "attribute_pattern": null,
+      "display_name": "항마력",
+      "schema_key": "stats.magic_resistance",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "마나",
+        "mana",
+        "mp"
+      ],
+      "attribute_pattern": null,
+      "display_name": "마나",
+      "schema_key": "stats.mana",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "정신",
+        "mental"
+      ],
+      "attribute_pattern": null,
+      "display_name": "정신",
+      "schema_key": "stats.mental",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "정신력",
+        "mental_power"
+      ],
+      "attribute_pattern": null,
+      "display_name": "정신력",
+      "schema_key": "stats.mental_power",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "자연재생력",
+        "자연재생",
+        "자연 재생",
+        "natural_regeneration"
+      ],
+      "attribute_pattern": null,
+      "display_name": "자연재생력",
+      "schema_key": "stats.natural_regeneration",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "인지력",
+        "perception"
+      ],
+      "attribute_pattern": null,
+      "display_name": "인지력",
+      "schema_key": "stats.perception",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "물리내성",
+        "물리저항",
+        "물리 저항",
+        "physical_resistance"
+      ],
+      "attribute_pattern": null,
+      "display_name": "물리내성",
+      "schema_key": "stats.physical_resistance",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "육체",
+        "physical",
+        "physique"
+      ],
+      "attribute_pattern": null,
+      "display_name": "육체",
+      "schema_key": "stats.physique",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "영혼력",
+        "soul_power"
+      ],
+      "attribute_pattern": null,
+      "display_name": "영혼력",
+      "schema_key": "stats.soul_power",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "근력",
+        "힘",
+        "str",
+        "strength"
+      ],
+      "attribute_pattern": null,
+      "display_name": "근력",
+      "schema_key": "stats.strength",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [
+        "이능",
+        "supernatural"
+      ],
+      "attribute_pattern": null,
+      "display_name": "이능",
+      "schema_key": "stats.supernatural",
+      "value_type": "NUMBER"
+    },
+    {
+      "aliases": [],
+      "attribute_pattern": "status.*",
+      "display_name": "상태",
+      "schema_key": "statuses.condition",
+      "value_type": "JSON"
+    }
+  ],
+  "cases": [
+    {
+      "case": "S1",
+      "label": "named",
+      "body": "아린: 레벨은 12이고 나이는 25세다.",
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "아린 벨"
+          ],
+          "key": "level",
+          "value": 12
+        },
+        {
+          "names": [
+            "아린",
+            "아린 벨"
+          ],
+          "key": "age",
+          "value": 25
+        }
+      ]
+    },
+    {
+      "case": "S2",
+      "label": "alias",
+      "body": "청람: 레벨은 18이다.",
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "아린 벨",
+            "청람"
+          ],
+          "key": "level",
+          "value": 18
+        }
+      ]
+    },
+    {
+      "case": "S3",
+      "label": "ambiguous_short_name",
+      "body": "아린: 레벨은 12이다.",
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "미상"
+          ],
+          "key": "level",
+          "value": 12
+        }
+      ]
+    },
+    {
+      "case": "S4",
+      "label": "status_end",
+      "body": "아린: 부상이 완전히 회복되어 더 이상 부상 상태가 아니다.",
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "아린 벨"
+          ],
+          "key": "status.부상",
+          "active": false
+        }
+      ]
+    },
+    {
+      "case": "S5",
+      "label": "mixed_global",
+      "body": "아린: 레벨은 12이다.\n이 세계의 성년 기준은 20세다.",
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "아린 벨"
+          ],
+          "key": "level",
+          "value": 12
+        }
+      ]
+    },
+    {
+      "case": "S6",
+      "label": "new_person",
+      "body": "하린: 레벨은 7이다.",
+      "gold": [
+        {
+          "names": [
+            "하린"
+          ],
+          "key": "level",
+          "value": 7
+        },
+        {
+          "names": [
+            "하린"
+          ],
+          "key": null,
+          "kind": "CHARACTER_DISCOVERY"
+        }
+      ]
+    },
+    {
+      "case": "S7",
+      "label": "forecast",
+      "body": "아린: 부상은 아직 회복 중이며 내일 완전히 나을 예정이다.",
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "아린 벨"
+          ],
+          "key": "status.부상",
+          "forecast": false
+        },
+        {
+          "names": [
+            "아린",
+            "아린 벨"
+          ],
+          "key": "status.부상",
+          "forecast": true
+        }
+      ]
+    },
+    {
+      "case": "S8",
+      "label": "numeric_era",
+      "body": "3아린 2000년은 이 세계의 현재 배경 시대다. 성년은 20세부터다.",
+      "gold": []
+    },
+    {
+      "case": "S9",
+      "label": "indirect_status_owner",
+      "body": "아린: 어머니는 치료 후 마비되었던 다리를 자유롭게 움직이며 걸을 수 있게 되었다.",
+      "gold": [
+        {
+          "names": [
+            "보라",
+            "보라 남",
+            "미상"
+          ],
+          "key": "status.하반신_마비",
+          "active": false
+        }
+      ]
+    },
+    {
+      "case": "S10",
+      "label": "structured_named",
+      "body": "아린: level=12, age=25",
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "아린 벨"
+          ],
+          "key": "level",
+          "value": 12
+        },
+        {
+          "names": [
+            "아린",
+            "아린 벨"
+          ],
+          "key": "age",
+          "value": 25
+        }
+      ]
+    },
+    {
+      "case": "S11",
+      "label": "structured_alias",
+      "body": "청람: level=18",
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "아린 벨",
+            "청람"
+          ],
+          "key": "level",
+          "value": 18
+        }
+      ]
+    },
+    {
+      "case": "S12",
+      "label": "structured_ambiguous_short_name",
+      "body": "아린: level=12",
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "미상"
+          ],
+          "key": "level",
+          "value": 12
+        }
+      ]
+    }
+  ],
+  "grading_policy": {
+    "primary": "Semantic SETTING atoms from source. CHARACTER_DISCOVERY is separate.",
+    "S9": "Observe mother recovery, accepting relative title or unresolved subject; exact prior status key is a separate stricter continuity diagnostic.",
+    "S7": "Require distinct current-recovering and unrealized-future-recovery settings."
+  }
+}

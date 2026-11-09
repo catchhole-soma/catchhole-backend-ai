@@ -45,9 +45,9 @@ def fixture(kind, count):
         names[1] = names[0]
     values = inputs(tuple(names), aliases={0: ['청람']})
     bodies = {
-        'one': '합성인물000: 직업=검사', 'alias': '청람: 직업=검사',
-        'same_name': '합성인물000: 직업=검사',
-        'twelve': '\n'.join(f'합성인물{i:03}: 검사' for i in range(12)),
+        'one': '합성인물000: level=12', 'alias': '청람: level=12',
+        'same_name': '합성인물000: level=12',
+        'twelve': '\n'.join(f'합성인물{i:03}: level=12' for i in range(12)),
         'global': '모든 인물의 성년은 20세다.',
         'numeric_era': '3합성인물000 2000년은 배경 시대다.',
     }
