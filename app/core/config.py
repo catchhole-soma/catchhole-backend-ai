@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-5.6-terra"
     llm_extraction_model: str | None = None
     llm_character_extraction_model: str | None = None
+    # 설정집 인물 선택(1단계) 모델. 비우면 인물 추출 모델을 그대로 쓴다.
+    llm_book_character_selection_model: str | None = None
     llm_subject_resolution_model: str | None = None
     llm_comparison_model: str | None = None
     # 환경변수가 없으면 medium을 사용하고 명시한 값은 그대로 전달한다.
@@ -45,6 +47,9 @@ class Settings(BaseSettings):
     llm_world_setting_extraction_max_output_tokens: int = 32000
     llm_world_setting_extraction_retry_max_output_tokens: int = 64000
     llm_subject_resolution_max_output_tokens: int = 2000
+    # 설정집 인물 선택 응답(ref 목록)의 출력 상한. truncation 시 한 번 확장한다.
+    llm_book_character_selection_max_output_tokens: int = 4000
+    llm_book_character_selection_retry_max_output_tokens: int = 8000
     llm_world_setting_batch_subject_resolution_max_output_tokens: int = 32000
     llm_world_setting_batch_subject_resolution_max_input_tokens: int = 64000
     llm_comparison_max_output_tokens: int = 3000
@@ -84,6 +89,10 @@ class Settings(BaseSettings):
     @property
     def effective_llm_character_extraction_model(self) -> str:
         return self.llm_character_extraction_model or self.effective_llm_extraction_model
+
+    @property
+    def effective_llm_book_character_selection_model(self) -> str:
+        return self.llm_book_character_selection_model or self.effective_llm_character_extraction_model
 
     @property
     def effective_llm_subject_resolution_model(self) -> str:
