@@ -3,7 +3,7 @@
 > Execute inline with test-driven-development and a fresh whole-change review.
 
 **Goal:** Reduce the seven reconstructed setting-book requests below the unchanged 64,000 guard while retaining selected current-state semantics.
-**Architecture:** Pure BOOK-only provider projection over the fully validated frozen ordered+semantic inputs. Full identity catalogue; explicit named-row detail selection with whole-context fallback; lossless duplicate consolidation.
+**Architecture:** Pure BOOK-only provider projection over the fully validated frozen ordered+semantic inputs. Full identity catalogue; explicit named numeric-row detail selection with whole-context fallback; lossless duplicate consolidation.
 **Tech Stack:** Python 3.12, Pydantic, pytest, tiktoken o200k_base.
 **Spec:** ../specs/2026-11-09-setting-book-context-design.md
 
@@ -55,3 +55,17 @@ Actual model quality and historical reconstruction authenticity were outside the
 reported separately as unmeasured / fingerprint-backed reconstruction, respectively.
 
 Final verification: 5,748 passed, 186 skipped, one unchanged Starlette deprecation warning. Real reconstructed inputs: 7/7 guard passes, 54,063–55,347 guarded tokens. Code f127f06; benchmark 0efb7ac. No deployment or real model run.
+
+## User-authorized live extension (2026-11-09)
+
+- [x] Freeze 7 reconstructed inputs and create counterfactual model controls without production state/ledger writes.
+- [x] Keep the new guard enabled; disable only the old application guard in the isolated evaluation subclass.
+- [x] Freeze source-derived gold before viewing outputs; blind variant labels for independent review.
+- [x] Restrict selection to numeric cells after indirect prose/freeform-attribute regressions.
+- [x] Preserve repeated CURRENT facts and explicit roster qualifiers after real-model omissions.
+- [x] Re-run 12 synthetic cases 3 times and all 7 real inputs on final prompts.
+- [x] Run full suite: 5760 passed, 186 skipped, 1 existing warning.
+- [ ] Publish detailed final evidence and open the requested PR (no deployment).
+
+The earlier Progress paragraph records the initial offline stage. Final live results supersede its
+unmeasured-quality and initial-token-count status; see the v0053 summary/details.
