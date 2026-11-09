@@ -69,3 +69,7 @@ Final verification: 5,748 passed, 186 skipped, one unchanged Starlette deprecati
 
 The earlier Progress paragraph records the initial offline stage. Final live results supersede its
 unmeasured-quality and initial-token-count status; see the v0053 summary/details.
+
+## User-authorized integration
+
+The user requested merging PR #148 and tracking the remaining two institution qualifiers in follow-up [#149](https://github.com/catchhole-soma/catchhole-backend-ai/issues/149). The quality limitation remains explicit; the current change does not claim lossless extraction for all source forms.
