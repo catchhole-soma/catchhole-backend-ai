@@ -87,7 +87,7 @@ def projected(req):
 
 
 def test_book_selects_details_but_keeps_full_identity_catalogue_and_source():
-    req = request('아린: 직업=검사')[0]
+    req = request('아린: level=12')[0]
     data = projected(req)
     assert [row['name'] for row in data['catalog']] == ['아린 벨', '보라 남']
     assert [row['ref'] for row in data['characters']] == ['K1']
@@ -98,15 +98,15 @@ def test_book_selects_details_but_keeps_full_identity_catalogue_and_source():
     assert 'semantic_current_state:' not in req['user_prompt']
     assert 'known_character_names:' not in req['user_prompt']
     assert 'active_character_statuses:' not in req['user_prompt']
-    assert 'chunk_text:\n아린: 직업=검사' in req['user_prompt']
+    assert 'chunk_text:\n아린: level=12' in req['user_prompt']
     assert 'WORK_START' in req['user_prompt']
     assert req['response_schema'] == SETTING_EXTRACTION_RESPONSE_SCHEMA
-    assert 'book-character-context-v1' in req['prompt_cache_key']
+    assert 'book-character-context-v2' in req['prompt_cache_key']
 
 
 @pytest.mark.parametrize('body,want', [
-    ('아린: 직업=검사', ['K1']),
-    ('청람: 직업=검사', ['K1']),
+    ('아린: level=12', ['K1']),
+    ('청람: level=12', ['K1']),
     ('벨 가문의 전원은 기사다.', ['K1', 'K2', 'K3']),
     ('아린과 나머지 인물들은 모두 성인이다.', ['K1', 'K2', 'K3']),
     ('3아린 2000년은 배경 시대다.', ['K1', 'K2', 'K3']),
@@ -121,13 +121,13 @@ def test_conservative_name_boundaries_aliases_ambiguity_and_global_fallback(body
 
 def test_same_name_owners_remain_separate():
     values = inputs(('아린', '아린', '보라'))
-    data = projected(request('아린: 직업=검사', values=values)[0])
+    data = projected(request('아린: level=12', values=values)[0])
     assert [r['ref'] for r in data['characters']] == ['K1', 'K2']
     assert [r['current_slots'][0]['fact_value'] for r in data['characters']] == ['직업-0', '직업-1']
 
 
 def test_exact_status_consolidation_preserves_protection_time_and_structured_value():
-    data = projected(request('아린: 직업=검사')[0])
+    data = projected(request('아린: level=12')[0])
     row = data['characters'][0]
     status = row['current_slots'][1]
     assert status['fact_value'] == '회복 중'
@@ -138,7 +138,7 @@ def test_exact_status_consolidation_preserves_protection_time_and_structured_val
 
 
 def test_differing_status_values_are_not_dropped():
-    row = projected(request('아린: 직업=검사', values=inputs(status_value='다른 상태'))[0])['characters'][0]
+    row = projected(request('아린: level=12', values=inputs(status_value='다른 상태'))[0])['characters'][0]
     assert row['active_statuses'][0]['fact_value'] == '다른 상태'
     assert row['current_slots'][1]['fact_value'] == '회복 중'
     assert 'active_status' not in row['current_slots'][1]
@@ -147,7 +147,7 @@ def test_differing_status_values_are_not_dropped():
 def test_frozen_inputs_unchanged_and_retry_uses_same_selected_context():
     values = inputs()
     before = deepcopy((values[0].prompt_data(), values[1].character_prompt_json()))
-    requests = request('아린: 직업=검사', values=values, retry=True)
+    requests = request('아린: level=12', values=values, retry=True)
     assert len(requests) == 2
     assert projected(requests[0]) == projected(requests[1])
     assert 'previous_response_correction' in requests[1]['user_prompt']
@@ -158,14 +158,14 @@ def test_frozen_inputs_unchanged_and_retry_uses_same_selected_context():
 
 
 def test_shared_multichar_name_part_keeps_all_possible_owners():
-    data = projected(request('벨론: 직업=검사', values=inputs(('아린 벨론', '누리 벨론', '보라 남')))[0])
+    data = projected(request('벨론: level=12', values=inputs(('아린 벨론', '누리 벨론', '보라 남')))[0])
     assert [r['ref'] for r in data['characters']] == ['K1', 'K2']
 
 
 def test_large_named_request_fits_but_unscoped_request_still_obeys_guard():
     from app.analysis.exceptions import OrderedPromptBudgetExceeded
     values = inputs(tuple(f'합성인물{i:03}' for i in range(400)))
-    req = request('합성인물000: 직업=검사', values=values)[0]
+    req = request('합성인물000: level=12', values=values)[0]
     assert len(projected(req)['characters']) == 1
     assert ensure_ordered_prompt_fits(req['system_prompt'], req['user_prompt'],
                                      response_schema=req['response_schema']) < 25_000
@@ -185,7 +185,7 @@ def test_unresolved_references_keep_order_and_never_become_catalogue_owners():
         sourceEpisodeNo=i, reason='UNRESOLVED_IDENTITY', value=f'보류값-{i}') for i in (2, 1)]
     ctx = ordered.analysis_context.model_copy(update={'unresolved_references': refs})
     ordered = OrderedExtractionContext(ctx, ordered.known_characters, ())
-    data = projected(request('아린: 직업=검사', values=(ordered, semantic, book))[0])
+    data = projected(request('아린: level=12', values=(ordered, semantic, book))[0])
     assert data['unresolved_references'] == [ref.prompt_data() for ref in refs]
     assert len(data['catalog']) == 2
     assert [r['ref'] for r in data['characters']] == ['K1']
@@ -199,7 +199,7 @@ def test_mismatched_semantic_local_refs_fail_before_provider():
     data['characters'][0]['ref'] = 'K2'
     bad = SemanticCurrentInput(json.dumps(data), semantic.world_prompt_json())
     with pytest.raises(OrderedInputContextError, match='identity_mismatch'):
-        request('아린: 직업=검사', values=(ordered, bad, book))
+        request('아린: level=12', values=(ordered, bad, book))
 
 
 def test_provisional_identity_evidence_kept_once_and_not_promoted():
@@ -217,7 +217,7 @@ def test_provisional_identity_evidence_kept_once_and_not_promoted():
     data['characters'].append({'ref':'K3','name':'청아','aliases':['새별'],
                               'identity_evidence':['청아의 근거'], 'current_slots':[]})
     semantic = SemanticCurrentInput(json.dumps(data), semantic.world_prompt_json())
-    result = projected(request('새별: 직업=검사', values=(ordered,semantic,book))[0])
+    result = projected(request('새별: level=12', values=(ordered,semantic,book))[0])
     assert result['catalog'][2] == {'ref':'K3','name':'청아','aliases':['새별'],
                                     'confirmation_status':'PROVISIONAL'}
     assert [r['ref'] for r in result['characters']] == ['K3']
@@ -231,7 +231,7 @@ def test_inactive_current_slot_does_not_absorb_active_status_provenance():
     data = json.loads(semantic.character_prompt_json())
     data['characters'][0]['current_slots'][1]['value_json']['active'] = False
     semantic = SemanticCurrentInput(json.dumps(data),semantic.world_prompt_json())
-    result = projected(request('아린: 직업=검사', values=(ordered,semantic,book))[0])['characters'][0]
+    result = projected(request('아린: level=12', values=(ordered,semantic,book))[0])['characters'][0]
     assert result['active_statuses'][0]['fact_value'] == '회복 중'
     assert result['current_slots'][1]['value_json']['active'] is False
     assert 'active_status' not in result['current_slots'][1]
@@ -240,8 +240,8 @@ def test_inactive_current_slot_does_not_absorb_active_status_provenance():
 @pytest.mark.parametrize('body', [
     '아린은 검사다. 왕국 시민은 20세부터 성인이다.',
     '아린은 검사다. 그녀의 스승은 왼쪽 눈이 보이지 않는다.',
-    '아린: 직업=검사\n왕국 시민은 20세부터 성인이다.',
-    '아린: 직업=검사\n보라에게만 회복 능력이 있다.',
+    '아린: level=12\n왕국 시민은 20세부터 성인이다.',
+    '아린: level=12\n보라에게만 회복 능력이 있다.',
     '아린은 검사다. 벨은 기사다.',
 ])
 def test_mixed_named_and_unbounded_scope_keeps_all_details(body):
@@ -250,19 +250,19 @@ def test_mixed_named_and_unbounded_scope_keeps_all_details(body):
 
 
 def test_explicit_short_heading_keeps_ambiguous_owners_even_with_another_match():
-    data = projected(request('아린: 직업=검사\n벨: 직업=기사',
+    data = projected(request('아린: level=12\n벨: level=13',
                              values=inputs(('아린', '누리 벨', '보라 벨', '청아')))[0])
     assert [r['ref'] for r in data['characters']] == ['K1', 'K2', 'K3']
 
 
-def test_named_row_keeps_other_referenced_owner_with_compound_particle():
-    data = projected(request('아린: 보라에게만 회복 능력이 있다고 기록했다.',
+def test_freeform_attribute_row_keeps_all_details():
+    data = projected(request('아린: 비고=보라에게만 회복 능력이 있다',
                              values=inputs(('아린', '보라', '누리')))[0])
-    assert [r['ref'] for r in data['characters']] == ['K1', 'K2']
+    assert [r['ref'] for r in data['characters']] == ['K1', 'K2', 'K3']
 
 
 def test_book_rules_reference_the_context_fields_actually_sent():
-    req = request('아린: 직업=검사')[0]
+    req = request('아린: level=12')[0]
     assert 'known_character_names' not in req['system_prompt']
     assert 'active_character_statuses' not in req['system_prompt']
     assert 'book_character_context.catalog' in req['system_prompt']
@@ -287,3 +287,24 @@ def test_unscoped_projection_preserves_every_current_slot_and_status_origin():
         for key, value in original_ordered[index].items():
             if key not in ('name','aliases','confirmation_status','active_statuses'):
                 assert row[key] == value
+
+
+@pytest.mark.parametrize('body', [
+    '아린: 어머니는 치료 후 마비되었던 다리를 움직일 수 있다.',
+    '아린: 그의 스승은 왼쪽 눈이 보이지 않는다.',
+    '아린: 동료의 부상은 완전히 나았다.',
+    'Arin: her mother can walk again.',
+    '아린: 모친은 치료 후 마비되었던 다리를 움직일 수 있다.',
+    '아린: 어머님은 치료 후 마비되었던 다리를 움직일 수 있다.',
+    '아린: 대리인은 치료 후 마비되었던 다리를 움직일 수 있다.',
+    '아린: 비고=대리인은 치료 후 마비되었던 다리를 움직일 수 있다.',
+])
+def test_indirect_subject_inside_named_row_keeps_all_current_details(body):
+    data = projected(request(body, values=inputs(('아린', '보라', 'Arin')))[0])
+    assert [r['ref'] for r in data['characters']] == ['K1', 'K2', 'K3']
+
+
+def test_book_projection_does_not_instruct_dropping_repeated_current_facts():
+    req = request('아린: 부상은 회복 중이며 내일 나을 예정이다.')[0]
+    assert 'CURRENT와 같은 사실도 이번 원문에 명시되면' in req['system_prompt']
+    assert '현재 사실과 미실현 전망을 각각' in req['system_prompt']

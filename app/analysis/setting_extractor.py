@@ -212,7 +212,7 @@ class CharacterSettingExtractor:
                 "semantic_current_state", "book_character_context")
             system_prompt += "\n\n" + CURRENT_STATUS_FORECAST_INSTRUCTIONS
             system_prompt += "\n\n" + BOOK_CHARACTER_CONTEXT_INSTRUCTIONS
-            prompt_cache_key += ":book-character-context-v1" + STATUS_FORECAST_CACHE_SUFFIX
+            prompt_cache_key += ":book-character-context-v2" + STATUS_FORECAST_CACHE_SUFFIX
         if ordered_context is not None and setting_book is not None and book_context is None:
             system_prompt += "\n\n" + ordered_state_instructions(
                 AnalysisSourceKind.SETTING_BOOK if setting_book is not None else None

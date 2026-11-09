@@ -15,6 +15,9 @@ characters에는 이번 원문에 관련될 수 있는 대상의 CURRENT 상세�
 current_slots의 active_status는 그 슬롯에 대응하는 기존 활성 STATUS의 출처·보호·시점 정보입니다.
 active_statuses에는 같은 현재 슬롯으로 합칠 수 없는 STATUS가 남아 있으며 둘 다 읽으세요.
 임시 인물도 식별 문맥으로 사용하되 catalog나 CURRENT를 원문 근거로 인용하지 마세요.
+이 구조는 입력 문맥의 중복만 제거한 것입니다. CURRENT와 같은 사실도 이번 원문에 명시되면
+SETTING 후보로 추출하세요. 현재 사실과 미실현 전망을 각각 별도 후보로 남기고,
+기존 CURRENT에 있다는 이유로 현재 사실을 생략하거나 전망만 반환하지 마세요.
 """.strip()
 
 # A name mention cannot scope a rule explicitly applying to a whole group.
@@ -23,8 +26,11 @@ _GENERAL_SCOPE = re.compile(
     r"각자|각각|모두|일행|가문|가족|종족|구성원|\b(?:all|everyone|everybody|each)\b",
     re.IGNORECASE,
 )
+_NUMERIC_CELL = re.compile(r"(?:age|level|나이|레벨|stats\.\w+)\s*=\s*[+-]?\d+(?:\.\d+)?")
+
+
 def select_book_character_refs(chunk_text, catalog):
-    """Narrow only explicit `name: contents` rows; unscoped text keeps all details.
+    """Narrow explicit `name: numeric_key=number` rows; narrative keeps all details.
 
     A matching name somewhere in prose does not prove that other statements
     concern that owner. This intentionally gives up selection for narrative,
@@ -48,15 +54,15 @@ def select_book_character_refs(chunk_text, catalog):
         if match is None:
             return all_refs
         heading, contents = normalize_character_name(match[1]), match[2]
+        # A heading does not identify every subject inside a sentence. Restrict
+        # narrowing to numeric cells instead of enumerating every relation word.
+        # Freeform values (even `note=prose`) can refer to somebody else.
+        if not all(_NUMERIC_CELL.fullmatch(cell.strip()) for cell in re.split('[,;]', contents)):
+            return all_refs
         owners = {ref for ref, names in spellings.items() if heading in names}
         if not owners:
             return all_refs
         selected.update(owners)
-        # Explicitly referenced people in a named row also keep their details.
-        # Broad right matching includes compound particles; false positives
-        # merely keep extra owners. Era prefixes still cannot match a name.
-        selected.update(ref for ref, names in spellings.items()
-                        if any(re.search(r'(?<!\w)' + re.escape(name), contents) for name in names if name))
     return selected or all_refs
 
 
