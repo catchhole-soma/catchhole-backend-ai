@@ -10,6 +10,8 @@
 
 ## AI Logic Version Records
 
+- AI #147(v0053): BOOK 캐릭터 1차의 `book_character_context`는 전체 이름/별칭/확정 여부 catalog와 보수적으로 선택한 상세를 K ref로 연결한다. 모든 비어 있지 않은 행이 `이름: level=12`처럼 age/level/stats의 수치 표 형태일 때만 상세를 좁힌다. 이름 제목 뒤 자연어 문장·관계/대명사 지칭은 전체 상세를 유지한다. 입력 중복 제거를 출력 중복 제거로 해석하지 않고 원문에 다시 명시된 현재 사실도 전망과 별도로 추출한다. 일반 서술·이름 없는 행·전역/집단 표현이 섞이면 전체 상세를 유지한다. 동명·공유 이름을 하나로 해소하지 않으며 catalog만 있는 인물의 CURRENT를 빈 값으로 해석하지 않는다. 동일 STATUS key/표시값만 출처·보호·시점 메타데이터와 합치고 다른 값·명시 종료는 보존한다. frozen carrier/hash/lease·후속 해소/비교·EPISODE·world와 64,000 guard는 유지한다. 재현 수치는 `docs/ai-logic-versions/details/v0053.md`에 남기고 모델 품질과 구분한다.
+
 - AI #139 (v0049): PLANNER/JUDGE 모델 전용 schema는 v4다. `db_evidence_sufficient`는 같은 질문의 정확한 속성·시점·조건을 DB가 직접 뒷받침할 때만 true이고, Worker는 검증된 B 인용도 요구한다. 부족하고 성공한 VECTOR 영수증이 없으면 질문 의도+대상 문장으로 최소 1회 검색 후 FINAL로 재판정한다(`DB_GAP_SEARCH_INSERTED`). 문맥 조회만 한 FOLLOW_UP·근거 없는 충돌 해제도 검색을 우회하지 않는다. 검색 불가/실패는 INCOMPLETE, 빈 범위는 기존 NOT_APPLICABLE이며 3회 상한과 변화 검색 조건을 유지한다. 충분성 값은 Java 저장 wire에 넣지 않는다. 추측/희망/회상은 해당 내용과 사실 전제를 나눠 질문·판정하고, 근거 없는 착각·겸직·기억 오류를 만들어 면제하지 않는다. 같은 맥락의 직업 값 대조에는 명시적인 부정문을 요구하지 않되 다른 축의 역할·명시 겸직·직업 변화를 구분하고, 대부분/보통을 절대 규칙으로 강화하지 않는다.
 - AI #144 (v0052): `JUDGE_SYSTEM`은 `_COMMON`을 잇지 않는 독립 문자열이고 `_COMMON`은 PLANNER만 쓴다. 확정/의심 경계는 판정 절차 4단계의 같은 시점 기준 한 곳에 둔다: 저장된 현재값과 지금 서술·확정된 과거 사실·불변 속성은 같은 시점이라 값이 다르면 CONFLICT, 과거 시점 서술이나 원문·설정집에만 있는 기존 값은 변화·예외를 확인하고 못 찾으면 SUSPECTED_CONFLICT다. Worker가 거절하는 출력 규칙은 `출력 필드(DECIDED)` 블록에 두고, `disagreements`는 B·E가 같은 시점·조건에서 양립할 수 없어 기준을 못 정할 때만 쓴다. 문구를 바꾸면 고정 문구 테스트와 유료 opt-in `tests/test_validation_presuppositions_live.py`로 확인한다.
 
@@ -407,7 +409,7 @@
 ### GH287 회차 입력 투영
 
 - `analysisContext`와 frozen hash/equality/source/lease 검증은 전체 입력을 유지한다. `pending_reference_projection`은 EPISODE의 모델 입력만 같은 도메인·관련 주체로 골라 직렬화·토큰 계산·재시도·분할·복구에 공통 적용한다. 비교의 알려진 실제/임시 ID 불일치는 동명보다 우선하며 관련 주체의 다른 Fact 유형·키·세계관 scope/root 경로를 자르지 않는다. 보류 참고를 현재값·연결 대상·변경/의존 참조·과거 후보 자동 승인으로 승격하지 않는다.
-- EPISODE 캐릭터 1차는 원문·metadata·schema·기존 이름/활성 STATUS와 별도의 미확정 이름/STATUS 힌트만 전달한다. 종료 false·활성 불명 null을 유지하고 원문 근거·보류 이유·일반 설정·identity evidence·전체 semantic CURRENT는 넣지 않는다. 세계관 1차는 원문·metadata·정적 규칙만 사용한다. 검증된 시간 문맥·정적 전망 분리 규칙과 BOOK의 기존 입력은 유지한다.
+- EPISODE 캐릭터 1차는 원문·metadata·schema·기존 이름/활성 STATUS와 별도의 미확정 이름/STATUS 힌트만 전달한다. 종료 false·활성 불명 null을 유지하고 원문 근거·보류 이유·일반 설정·identity evidence·전체 semantic CURRENT는 넣지 않는다. 세계관 1차는 원문·metadata·정적 규칙만 사용한다. 검증된 시간 문맥·정적 전망 분리 규칙은 유지한다. 이 변경은 BOOK 입력을 유지했으며 후속 AI #147의 BOOK 전용 투영은 위 v0053 규칙을 따른다.
 - 새 Worker는 모든 내부 요청에 `X-Analysis-Reference-Selection: true`를 보낸다. `selection`과 advisory의 `selectionNames`는 고정 선택 메타데이터이며 prompt에 노출하지 않는다. 구 Backend/구 frozen 입력에는 메타데이터가 없을 수 있으므로 제공된 이름·별칭·schema만 보수적으로 사용하고 live 재조회로 보완하지 않는다.
 
 ### 챗봇 실행 실패 복구 — 2026-10-26
