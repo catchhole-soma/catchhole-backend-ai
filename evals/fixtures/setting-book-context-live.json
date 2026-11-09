@@ -1120,11 +1120,216 @@
           "value": 12
         }
       ]
+    },
+    {
+      "case": "S13",
+      "label": "title_indirect",
+      "body": "재판장은 왼손잡이다.",
+      "profile": {
+        "0": {
+          "profile.position": "재판장"
+        }
+      },
+      "expected_selection": [
+        "아린 벨"
+      ],
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "아린 벨",
+            "재판장"
+          ],
+          "key": "profile.dominant_hand",
+          "value_contains": "왼"
+        }
+      ]
+    },
+    {
+      "case": "S14",
+      "label": "kinship_pronoun",
+      "body": "아린 벨의 어머니는 상단을 이끈다. 그녀의 고향은 북부다.",
+      "profile": {
+        "0": {
+          "profile.mother": "보라 남"
+        },
+        "1": {
+          "profile.children": "아린 벨"
+        }
+      },
+      "expected_selection": [
+        "아린 벨",
+        "보라 남"
+      ],
+      "gold": [
+        {
+          "names": [
+            "보라",
+            "보라 남",
+            "아린 벨의 어머니",
+            "미상"
+          ],
+          "key": "profile.occupation",
+          "value_contains": "상단"
+        },
+        {
+          "names": [
+            "보라",
+            "보라 남",
+            "아린 벨의 어머니",
+            "미상"
+          ],
+          "key": "profile.hometown",
+          "value_contains": "북부"
+        }
+      ]
+    },
+    {
+      "case": "S15",
+      "label": "alias_prose",
+      "body": "청람이라 불리는 소녀는 올해 열다섯 살이 되었다.",
+      "expected_selection": [
+        "아린 벨"
+      ],
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "아린 벨",
+            "청람"
+          ],
+          "key": "age",
+          "value": 15
+        }
+      ]
+    },
+    {
+      "case": "S16",
+      "label": "same_name_prose_ambiguous",
+      "body": "아린은 왕국 기사단 소속이다.",
+      "names": [
+        "아린 벨",
+        "아린 남",
+        "보라 남"
+      ],
+      "expected_selection": [
+        "아린 벨",
+        "아린 남"
+      ],
+      "gold": [
+        {
+          "names": [
+            "아린",
+            "미상"
+          ],
+          "key": "profile.affiliation",
+          "value_contains": "기사단"
+        }
+      ]
+    },
+    {
+      "case": "S17",
+      "label": "new_person_prose",
+      "body": "하린은 아린 벨의 동생이며 레벨은 7이다.",
+      "expected_selection": [
+        "아린 벨"
+      ],
+      "expected_unmatched": [
+        "하린"
+      ],
+      "gold": [
+        {
+          "names": [
+            "하린"
+          ],
+          "key": "level",
+          "value": 7
+        },
+        {
+          "names": [
+            "하린"
+          ],
+          "key": null,
+          "kind": "CHARACTER_DISCOVERY"
+        }
+      ]
+    },
+    {
+      "case": "S18",
+      "label": "global_rule_with_named",
+      "body": "이 세계의 성년은 20세다. 보라 남의 레벨은 30이다.",
+      "expected_selection": [
+        "보라 남"
+      ],
+      "gold": [
+        {
+          "names": [
+            "보라",
+            "보라 남"
+          ],
+          "key": "level",
+          "value": 30
+        }
+      ]
+    },
+    {
+      "case": "S19",
+      "label": "title_only_roster",
+      "body": "새벽 기사단 단장\n레벨은 40이다.",
+      "profile": {
+        "5": {
+          "profile.position": "새벽 기사단 단장"
+        }
+      },
+      "expected_selection": [
+        "합성인물003"
+      ],
+      "gold": [
+        {
+          "names": [
+            "합성인물003",
+            "새벽 기사단 단장",
+            "미상"
+          ],
+          "key": "level",
+          "value": 40
+        }
+      ]
+    },
+    {
+      "case": "S20",
+      "label": "spouse_indirect",
+      "body": "보라 남의 남편은 전직 용병이다.",
+      "profile": {
+        "7": {
+          "profile.spouse": "보라 남"
+        },
+        "1": {
+          "profile.spouse": "합성인물005"
+        }
+      },
+      "expected_selection": [
+        "보라 남",
+        "합성인물005"
+      ],
+      "gold": [
+        {
+          "names": [
+            "합성인물005",
+            "보라 남의 남편",
+            "미상"
+          ],
+          "key": "profile.occupation",
+          "value_contains": "용병"
+        }
+      ]
     }
   ],
   "grading_policy": {
     "primary": "Semantic SETTING atoms from source. CHARACTER_DISCOVERY is separate.",
     "S9": "Observe mother recovery, accepting relative title or unresolved subject; exact prior status key is a separate stricter continuity diagnostic.",
-    "S7": "Require distinct current-recovering and unrealized-future-recovery settings."
+    "S7": "Require distinct current-recovering and unrealized-future-recovery settings.",
+    "selection": "expected_selection lists catalogue names whose CURRENT the stage-1 selection must send; a superset is acceptable (recall first), a missing expected name is a selection miss. expected_unmatched lists new-person mentions that must not be linked to any catalogue ref.",
+    "indirect": "S13/S14/S19/S20 subjects are referenced by title, kinship or pronoun only; the candidate may name the catalogue character, the relational expression, or an unresolved subject."
   }
 }

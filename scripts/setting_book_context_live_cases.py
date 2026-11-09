@@ -15,12 +15,17 @@ def synthetic_cases():
         ).read_text()
     )
     schemas = fixture["schema_hints"]
-    specs = [(c["case"], c["label"], c["body"], c["gold"]) for c in fixture["cases"]]
     cases = []
-    for cid, label, body, gold in specs:
-        names = ("아린 벨", "아린 남", "보라 남") if cid in ("S3", "S12") else ("아린 벨", "보라 남")
+    for spec in fixture["cases"]:
+        cid, label, body, gold = spec["case"], spec["label"], spec["body"], spec["gold"]
+        if "names" in spec:
+            names = tuple(spec["names"])
+        else:
+            names = ("아린 벨", "아린 남", "보라 남") if cid in ("S3", "S12") else ("아린 벨", "보라 남")
         names += tuple(f"합성인물{i:03d}" for i in range(30))
-        ordered, semantic, book = inputs(names, aliases={0: ["청람"]})
+        # Identity hints (title/kinship/spouse) live in PROFILE slots like production CURRENT.
+        profile = {int(index): slots for index, slots in spec.get("profile", {}).items()}
+        ordered, semantic, book = inputs(names, aliases={0: ["청람"]}, profile=profile)
         sem = json.loads(semantic.character_prompt_json())
         known = [k.model_dump(mode="json", by_alias=True) for k in ordered.known_characters]
         if cid == "S9":
@@ -57,6 +62,7 @@ def synthetic_cases():
                 "source_chunk_id": str(UUID(int=8)),
                 "schema_hints": schemas,
                 "gold": gold,
+                **{key: spec[key] for key in ("expected_selection", "expected_unmatched") if key in spec},
             }
         )
     return cases
