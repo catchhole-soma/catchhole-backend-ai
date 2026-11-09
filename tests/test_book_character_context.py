@@ -101,7 +101,7 @@ def test_book_selects_details_but_keeps_full_identity_catalogue_and_source():
     assert 'chunk_text:\n아린: level=12' in req['user_prompt']
     assert 'WORK_START' in req['user_prompt']
     assert req['response_schema'] == SETTING_EXTRACTION_RESPONSE_SCHEMA
-    assert 'book-character-context-v2' in req['prompt_cache_key']
+    assert 'book-character-context-v3' in req['prompt_cache_key']
 
 
 @pytest.mark.parametrize('body,want', [
@@ -308,3 +308,9 @@ def test_book_projection_does_not_instruct_dropping_repeated_current_facts():
     req = request('아린: 부상은 회복 중이며 내일 나을 예정이다.')[0]
     assert 'CURRENT와 같은 사실도 이번 원문에 명시되면' in req['system_prompt']
     assert '현재 사실과 미실현 전망을 각각' in req['system_prompt']
+
+
+def test_book_projection_preserves_explicit_roster_qualifiers_in_values():
+    req = request('새벽 기사단\n아린: 정예 근위대장')[0]
+    assert '소속·직속 관계·직책/등급의 수식어' in req['system_prompt']
+    assert '값에도 보존' in req['system_prompt']
