@@ -65,7 +65,7 @@ Final verification: 5,748 passed, 186 skipped, one unchanged Starlette deprecati
 - [x] Preserve repeated CURRENT facts and explicit roster qualifiers after real-model omissions.
 - [x] Re-run 12 synthetic cases 3 times and all 7 real inputs on final prompts.
 - [x] Run full suite: 5760 passed, 186 skipped, 1 existing warning.
-- [ ] Publish detailed final evidence and open the requested PR (no deployment).
+- [x] Publish detailed final evidence and open Draft PR [#148](https://github.com/catchhole-soma/catchhole-backend-ai/pull/148) (no deployment;2specific-institution qualifiers still missing).
 
 The earlier Progress paragraph records the initial offline stage. Final live results supersede its
 unmeasured-quality and initial-token-count status; see the v0053 summary/details.
