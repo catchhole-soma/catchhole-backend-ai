@@ -22,7 +22,11 @@ def test_counterfactual_only_changes_application_guard_flag():
 
 
 def test_call_stage_and_selection_parsing_are_count_only():
-    from scripts.evaluate_setting_book_context_live import EVALUATED_FILES, call_stage, parse_selection
+    from scripts.evaluate_setting_book_context_live import (
+        EVALUATED_FILES,
+        call_stage,
+        parse_selection,
+    )
     assert call_stage('book-character-selection:v1') == 'selection'
     assert call_stage('setting-extraction:v12:abc') == 'extraction'
     parsed = parse_selection('{"selected":[{"ref":"K2","mention":"그녀","basis":"PRONOUN"}],'
