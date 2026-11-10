@@ -38,6 +38,10 @@ Spring 기준으로는 외부 AI provider adapter에 가깝습니다.
   - 캐릭터·세계관 분석기와 token metering wrapper가 공유하는 최소 텍스트 생성 계약을 둡니다.
 - `prompts/character_setting_extraction.md`
   - 캐릭터 중심 설정 후보 추출 prompt입니다.
+- `prompts/book_character_selection.md`
+  - 설정집 인물 1차 추출의 선행 단계입니다. 청크 원문과 가벼운 인물 목록(ref·이름·별칭·확정 여부·직책/소속/가족관계 힌트)으로
+    이번 청크가 관련된 인물의 ref만 고릅니다. 별칭·직책·대명사·가족관계 같은 간접 지칭도 모델이 판단하며, 선택된 인물의
+    CURRENT 상세만 `character_setting_extraction.md` 요청에 들어갑니다. 전체 인물 폴백은 없습니다.
 - `prompts/character_subject_resolution.md`
   - 구체적이지 않은 `entity_name` 후보의 주체만 해소하는 fallback prompt입니다.
 - `prompts/world_setting_extraction.md`

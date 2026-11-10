@@ -11,6 +11,13 @@ from pydantic import ValidationError
 from app.analysis.book_character_context import (
     BOOK_CHARACTER_CONTEXT_INSTRUCTIONS,
     book_character_prompt_json,
+    book_character_rows,
+    select_numeric_row_refs,
+)
+from app.analysis.book_character_selection import (
+    DEFAULT_SELECTION_PROMPT_PATH,
+    select_book_characters,
+    selection_summary,
 )
 from app.analysis.character_name_resolver import KnownCharacter
 from app.analysis.exceptions import LlmExtractionError
@@ -129,8 +136,31 @@ class CharacterSettingExtractor:
         max_attempts: int | None = None,
         max_output_tokens: int | None = None,
         truncation_retry_max_output_tokens: int | None = None,
+        max_input_tokens: int | None = None,
+        selection_model: str | None = None,
+        selection_prompt_path: Path = DEFAULT_SELECTION_PROMPT_PATH,
+        selection_max_output_tokens: int | None = None,
+        selection_truncation_retry_max_output_tokens: int | None = None,
     ) -> None:
         settings = get_settings()
+        # 선택·추출 두 호출에 같은 입력 guard를 적용한다. 운영 기본 128,000(v0054, 이전 64,000).
+        self.max_input_tokens = (
+            settings.llm_setting_extraction_max_input_tokens if max_input_tokens is None else max_input_tokens
+        )
+        if self.max_input_tokens < 1:
+            raise ValueError("max_input_tokens must be at least 1.")
+        # 설정집 1단계(관련 인물 선택)는 같은 client로 호출해 같은 job 장부에 정산된다.
+        self.selection_model = selection_model or settings.effective_llm_book_character_selection_model
+        self.selection_prompt_path = selection_prompt_path
+        self.selection_max_output_tokens = (
+            settings.llm_book_character_selection_max_output_tokens
+            if selection_max_output_tokens is None else selection_max_output_tokens
+        )
+        self.selection_truncation_retry_max_output_tokens = (
+            settings.llm_book_character_selection_retry_max_output_tokens
+            if selection_truncation_retry_max_output_tokens is None
+            else selection_truncation_retry_max_output_tokens
+        )
         # 실제 실행에서는 OpenAI client를 쓰고, 테스트에서는 fake client를 주입
         self.llm_client = llm_client or OpenAIResponsesClient.from_settings()
         self.prompt_path = prompt_path
@@ -156,6 +186,12 @@ class CharacterSettingExtractor:
             raise ValueError(
                 "truncation_retry_max_output_tokens must be at least max_output_tokens."
             )
+        if self.selection_max_output_tokens < 1:
+            raise ValueError("selection_max_output_tokens must be at least 1.")
+        if self.selection_truncation_retry_max_output_tokens < self.selection_max_output_tokens:
+            raise ValueError(
+                "selection_truncation_retry_max_output_tokens must be at least selection_max_output_tokens."
+            )
 
     async def extract_from_chunk(
         self,
@@ -178,9 +214,11 @@ class CharacterSettingExtractor:
 
         system_prompt = self._load_system_prompt()
         schema_summary_json = _serialize_schema_hints(schema_hints)
-        book_context = (book_character_prompt_json(chunk_text, ordered_context, semantic_current_context)
-                        if setting_book is not None and ordered_context is not None
-                        and semantic_current_context is not None else None)
+        book_context = None
+        if setting_book is not None and ordered_context is not None and semantic_current_context is not None:
+            book_context = await self._select_book_character_context(
+                chunk_text, ordered_context, semantic_current_context, analysis_job_id, source_chunk_id,
+            )
         user_prompt = self._build_user_prompt(
             chunk_text=chunk_text,
             episode_no=episode_no,
@@ -212,7 +250,7 @@ class CharacterSettingExtractor:
                 "semantic_current_state", "book_character_context")
             system_prompt += "\n\n" + CURRENT_STATUS_FORECAST_INSTRUCTIONS
             system_prompt += "\n\n" + BOOK_CHARACTER_CONTEXT_INSTRUCTIONS
-            prompt_cache_key += ":book-character-context-v3" + STATUS_FORECAST_CACHE_SUFFIX
+            prompt_cache_key += ":book-character-context-v4" + STATUS_FORECAST_CACHE_SUFFIX
         if ordered_context is not None and setting_book is not None and book_context is None:
             system_prompt += "\n\n" + ordered_state_instructions(
                 AnalysisSourceKind.SETTING_BOOK if setting_book is not None else None
@@ -318,6 +356,39 @@ class CharacterSettingExtractor:
             f"fieldLocs={','.join(final_feedback.field_locs)}"
         ) from None
 
+    async def _select_book_character_context(
+        self,
+        chunk_text: str,
+        ordered_context: OrderedExtractionContext,
+        semantic_current_context: SemanticCurrentInput,
+        analysis_job_id: UUID | None,
+        source_chunk_id: UUID,
+    ) -> str:
+        """Stage 1 of BOOK extraction: choose the characters whose CURRENT this chunk needs.
+
+        Pure numeric rows are resolved deterministically without a provider call. Every other
+        chunk asks the model with a light catalogue; whole-name matches are unioned in. There is
+        no full-catalogue fallback, and a failed selection fails this chunk through the same
+        response-validation path as the extraction call.
+        """
+        catalog, details, unresolved = book_character_rows(ordered_context, semantic_current_context)
+        selection = await select_book_characters(
+            chunk_text, catalog, details, unresolved,
+            client=BoundedOrderedClient(self.llm_client, self.max_input_tokens),
+            model=self.selection_model,
+            max_attempts=self.max_attempts,
+            max_output_tokens=self.selection_max_output_tokens,
+            truncation_retry_max_output_tokens=self.selection_truncation_retry_max_output_tokens,
+            prompt_path=self.selection_prompt_path,
+            numeric_refs=select_numeric_row_refs(chunk_text, catalog),
+        )
+        logger.info(
+            "Book character selection finished. analysis_job_id=%s source_chunk_id=%s %s",
+            analysis_job_id, source_chunk_id,
+            " ".join(f"{key}={value}" for key, value in selection_summary(selection, len(catalog)).items()),
+        )
+        return book_character_prompt_json(catalog, details, unresolved, selection)
+
     async def _extract_once(
         self,
         system_prompt: str,
@@ -328,7 +399,8 @@ class CharacterSettingExtractor:
         requires_ordered_bound: bool = False,
     ) -> CharacterSettingExtractionResult:
         # 시스템 프롬프트 + 사용자 프롬프트를 조합하여 LLM에 요청
-        client = BoundedOrderedClient(self.llm_client) if requires_ordered_bound else self.llm_client
+        client = (BoundedOrderedClient(self.llm_client, self.max_input_tokens)
+                  if requires_ordered_bound else self.llm_client)
         response = await client.create_text_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,

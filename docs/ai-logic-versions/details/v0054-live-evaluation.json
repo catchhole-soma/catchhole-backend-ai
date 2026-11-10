@@ -1,0 +1,4278 @@
+{
+  "format_version": 1,
+  "date": "2026-11-10",
+  "scope": "BOOK character first-stage extraction with stage-1 relevant-character selection; source-derived fact retention and selection accuracy, not FIXED pipeline F1",
+  "baseline_commit": "b4bbce1217e4ad22546e0c0fefa6eb9413b3e21b",
+  "model": "gpt-6.1-terra",
+  "reasoning_effort": "medium",
+  "initial_output_limit": 32000,
+  "truncation_retry_output_limit": 64000,
+  "selection_output_limit": 4000,
+  "selection_truncation_retry_output_limit": 8000,
+  "schema_attempts": 3,
+  "concurrency_per_process": 2,
+  "seed": null,
+  "baseline_guard_bypass": false,
+  "prices_usd_per_million": {
+    "input": "1.0",
+    "cached_input": "0.05",
+    "output": "5.0"
+  },
+  "frozen_input_sha256": "032d27abc7b2ebb0c07d5703a387c0c8d9984263e367976c72e6c598615205d2",
+  "gold_sha256": "eb37696fe3d8dac2f17d5bcecd44e68e0ee6fec70fa429764455a1669487eee6",
+  "synthetic_inputs_sha256": "2d58015c38cb11ff47379577c19c5a6ef8c5a4f083ac89a126a02db5a4095c67",
+  "results_sha256": {
+    "real": "a76549c542937bfe753109820459185e57e0e2787770e66d11504a441ffb9023",
+    "synthetic": "58683e70993fd5bfd7da27f7f451fd9d58823cfbbd62e801aac32c5fc0a77157"
+  },
+  "grading": "Automatic subject + value-token matching against the v0053 private gold; residue reviewed manually and recorded in the details document. Synthetic gold atoms matched by subject/key family/value.",
+  "real": [
+    {
+      "case": "R1",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 134,
+      "selected": 0,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 8651,
+        "cached_input_tokens": 0,
+        "output_tokens": 94,
+        "guard_tokens_max": 10178,
+        "seconds": 1.959
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 19434,
+        "cached_input_tokens": 9608,
+        "output_tokens": 135,
+        "guard_tokens_max": 22911,
+        "seconds": 3.786
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 28085,
+        "cached_input_tokens": 9608,
+        "output_tokens": 229,
+        "within_guard": true
+      },
+      "seconds": 5.759,
+      "cost_usd": 0.020102,
+      "quality": null
+    },
+    {
+      "case": "R1",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 134,
+      "selected": 134,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 49095,
+        "cached_input_tokens": 9550,
+        "output_tokens": 134,
+        "guard_tokens_max": 55538,
+        "seconds": 4.019
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 49095,
+        "cached_input_tokens": 9550,
+        "output_tokens": 134,
+        "within_guard": true
+      },
+      "seconds": 4.219,
+      "cost_usd": 0.040692,
+      "quality": null
+    },
+    {
+      "case": "R2",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 134,
+      "selected": 0,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 8657,
+        "cached_input_tokens": 1499,
+        "output_tokens": 22,
+        "guard_tokens_max": 10185,
+        "seconds": 1.306
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 18264,
+        "cached_input_tokens": 9608,
+        "output_tokens": 224,
+        "guard_tokens_max": 21624,
+        "seconds": 4.383
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 26921,
+        "cached_input_tokens": 11107,
+        "output_tokens": 246,
+        "within_guard": true
+      },
+      "seconds": 5.708,
+      "cost_usd": 0.017599,
+      "quality": null
+    },
+    {
+      "case": "R2",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 134,
+      "selected": 134,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 47980,
+        "cached_input_tokens": 9550,
+        "output_tokens": 153,
+        "guard_tokens_max": 54312,
+        "seconds": 3.711
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 47980,
+        "cached_input_tokens": 9550,
+        "output_tokens": 153,
+        "within_guard": true
+      },
+      "seconds": 3.721,
+      "cost_usd": 0.039672,
+      "quality": null
+    },
+    {
+      "case": "R3",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 14,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 9097,
+        "cached_input_tokens": 0,
+        "output_tokens": 1402,
+        "guard_tokens_max": 10667,
+        "seconds": 15.626
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 21868,
+        "cached_input_tokens": 9608,
+        "output_tokens": 7941,
+        "guard_tokens_max": 25588,
+        "seconds": 89.606
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 30965,
+        "cached_input_tokens": 9608,
+        "output_tokens": 9343,
+        "within_guard": true
+      },
+      "seconds": 105.255,
+      "cost_usd": 0.068552,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 85,
+        "manual_review_ids": [],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 33
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 52,
+            "qualifier_retained": 52
+          }
+        },
+        "setting_candidates": 33,
+        "discovery_candidates": 21,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R3",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 133,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 48235,
+        "cached_input_tokens": 9550,
+        "output_tokens": 10326,
+        "guard_tokens_max": 54592,
+        "seconds": 116.091
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 48235,
+        "cached_input_tokens": 9550,
+        "output_tokens": 10326,
+        "within_guard": true
+      },
+      "seconds": 116.113,
+      "cost_usd": 0.090792,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 85,
+        "manual_review_ids": [],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 33
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 52,
+            "qualifier_retained": 52
+          }
+        },
+        "setting_candidates": 33,
+        "discovery_candidates": 21,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R4",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 13,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 9099,
+        "cached_input_tokens": 1493,
+        "output_tokens": 799,
+        "guard_tokens_max": 10669,
+        "seconds": 8.334
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 21777,
+        "cached_input_tokens": 9608,
+        "output_tokens": 9823,
+        "guard_tokens_max": 25488,
+        "seconds": 110.663
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 30876,
+        "cached_input_tokens": 11101,
+        "output_tokens": 10622,
+        "within_guard": true
+      },
+      "seconds": 119.011,
+      "cost_usd": 0.07344,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 85,
+        "manual_review_ids": [],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 33
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 52,
+            "qualifier_retained": 52
+          }
+        },
+        "setting_candidates": 33,
+        "discovery_candidates": 20,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R4",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 133,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 48237,
+        "cached_input_tokens": 9550,
+        "output_tokens": 9898,
+        "guard_tokens_max": 54594,
+        "seconds": 110.976
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 48237,
+        "cached_input_tokens": 9550,
+        "output_tokens": 9898,
+        "within_guard": true
+      },
+      "seconds": 110.989,
+      "cost_usd": 0.088654,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 84,
+        "manual_review_ids": [
+          "R4-F064"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 32
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 51,
+            "qualifier_retained": 51
+          }
+        },
+        "setting_candidates": 33,
+        "discovery_candidates": 21,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R5",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 13,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 9033,
+        "cached_input_tokens": 1493,
+        "output_tokens": 630,
+        "guard_tokens_max": 10596,
+        "seconds": 6.486
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 21705,
+        "cached_input_tokens": 9608,
+        "output_tokens": 9697,
+        "guard_tokens_max": 25409,
+        "seconds": 109.363
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 30738,
+        "cached_input_tokens": 11101,
+        "output_tokens": 10327,
+        "within_guard": true
+      },
+      "seconds": 115.864,
+      "cost_usd": 0.071827,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 75,
+        "manual_review_ids": [
+          "R5-F045",
+          "R5-F046",
+          "R5-F047",
+          "R5-F048",
+          "R5-F049",
+          "R5-F050",
+          "R5-F051",
+          "R5-F054",
+          "R5-F055",
+          "R5-F064"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 23
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 42,
+            "qualifier_retained": 42
+          }
+        },
+        "setting_candidates": 33,
+        "discovery_candidates": 20,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R5",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 133,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 48165,
+        "cached_input_tokens": 48162,
+        "output_tokens": 7587,
+        "guard_tokens_max": 54515,
+        "seconds": 85.764
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 48165,
+        "cached_input_tokens": 48162,
+        "output_tokens": 7587,
+        "within_guard": true
+      },
+      "seconds": 85.779,
+      "cost_usd": 0.040346,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 76,
+        "manual_review_ids": [
+          "R5-F045",
+          "R5-F046",
+          "R5-F047",
+          "R5-F048",
+          "R5-F049",
+          "R5-F050",
+          "R5-F051",
+          "R5-F054",
+          "R5-F055"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 24
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 43,
+            "qualifier_retained": 43
+          }
+        },
+        "setting_candidates": 34,
+        "discovery_candidates": 21,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R6",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 65,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 9900,
+        "cached_input_tokens": 1493,
+        "output_tokens": 2697,
+        "guard_tokens_max": 11550,
+        "seconds": 22.271
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 33656,
+        "cached_input_tokens": 9608,
+        "output_tokens": 23687,
+        "guard_tokens_max": 38555,
+        "seconds": 263.163
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 43556,
+        "cached_input_tokens": 11101,
+        "output_tokens": 26384,
+        "within_guard": true
+      },
+      "seconds": 285.461,
+      "cost_usd": 0.16493,
+      "quality": {
+        "facts_total": 130,
+        "auto_matched": 120,
+        "manual_review_ids": [
+          "R6-F012",
+          "R6-F013",
+          "R6-F014",
+          "R6-F015",
+          "R6-F026",
+          "R6-F027",
+          "R6-F028",
+          "R6-F029",
+          "R6-F030",
+          "R6-F031"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 124,
+            "auto_matched": 114,
+            "qualifier_retained": 113
+          },
+          "ancillary": {
+            "total": 6,
+            "auto_matched": 6,
+            "qualifier_retained": 6
+          }
+        },
+        "setting_candidates": 130,
+        "discovery_candidates": 60,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R6",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 133,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 49053,
+        "cached_input_tokens": 9550,
+        "output_tokens": 24688,
+        "guard_tokens_max": 55492,
+        "seconds": 274.841
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 49053,
+        "cached_input_tokens": 9550,
+        "output_tokens": 24688,
+        "within_guard": true
+      },
+      "seconds": 274.861,
+      "cost_usd": 0.16342,
+      "quality": {
+        "facts_total": 130,
+        "auto_matched": 120,
+        "manual_review_ids": [
+          "R6-F012",
+          "R6-F013",
+          "R6-F014",
+          "R6-F015",
+          "R6-F026",
+          "R6-F027",
+          "R6-F028",
+          "R6-F029",
+          "R6-F030",
+          "R6-F031"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 124,
+            "auto_matched": 114,
+            "qualifier_retained": 113
+          },
+          "ancillary": {
+            "total": 6,
+            "auto_matched": 6,
+            "qualifier_retained": 6
+          }
+        },
+        "setting_candidates": 130,
+        "discovery_candidates": 61,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R7",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 0,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 8772,
+        "cached_input_tokens": 1493,
+        "output_tokens": 22,
+        "guard_tokens_max": 10309,
+        "seconds": 1.753
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 18401,
+        "cached_input_tokens": 9608,
+        "output_tokens": 37,
+        "guard_tokens_max": 21775,
+        "seconds": 2.792
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 27173,
+        "cached_input_tokens": 11101,
+        "output_tokens": 59,
+        "within_guard": true
+      },
+      "seconds": 4.566,
+      "cost_usd": 0.016922,
+      "quality": null
+    },
+    {
+      "case": "R7",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 133,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 47928,
+        "cached_input_tokens": 9550,
+        "output_tokens": 46,
+        "guard_tokens_max": 54254,
+        "seconds": 3.228
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 47928,
+        "cached_input_tokens": 9550,
+        "output_tokens": 46,
+        "within_guard": true
+      },
+      "seconds": 3.246,
+      "cost_usd": 0.039086,
+      "quality": null
+    }
+  ],
+  "real_summary": {
+    "after": {
+      "runs": 7,
+      "input_tokens": 218314,
+      "cached_input_tokens": 74727,
+      "output_tokens": 57210,
+      "seconds": 641.624,
+      "cost_usd": 0.433372,
+      "within_guard": true,
+      "selection_input_tokens": 63209,
+      "selection_output_tokens": 5666
+    },
+    "before": {
+      "runs": 7,
+      "input_tokens": 338693,
+      "cached_input_tokens": 105462,
+      "output_tokens": 52832,
+      "seconds": 598.928,
+      "cost_usd": 0.502662,
+      "within_guard": true,
+      "selection_input_tokens": 0,
+      "selection_output_tokens": 0
+    }
+  },
+  "synthetic": [
+    {
+      "case": "S1",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2335,
+        "cached_input_tokens": 0,
+        "output_tokens": 37,
+        "guard_tokens_max": 3006,
+        "seconds": 1.601
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16010,
+        "cached_input_tokens": 9608,
+        "output_tokens": 556,
+        "guard_tokens_max": 19145,
+        "seconds": 8.697
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18345,
+        "cached_input_tokens": 9608,
+        "output_tokens": 593,
+        "within_guard": true
+      },
+      "seconds": 10.308,
+      "cost_usd": 0.012182,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S1",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2335,
+        "cached_input_tokens": 2332,
+        "output_tokens": 37,
+        "guard_tokens_max": 3006,
+        "seconds": 1.282
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16010,
+        "cached_input_tokens": 16007,
+        "output_tokens": 620,
+        "guard_tokens_max": 19145,
+        "seconds": 9.306
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18345,
+        "cached_input_tokens": 18339,
+        "output_tokens": 657,
+        "within_guard": true
+      },
+      "seconds": 10.594,
+      "cost_usd": 0.004208,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S1",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22052,
+        "cached_input_tokens": 9550,
+        "output_tokens": 443,
+        "guard_tokens_max": 25791,
+        "seconds": 6.906
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22052,
+        "cached_input_tokens": 9550,
+        "output_tokens": 443,
+        "within_guard": true
+      },
+      "seconds": 7.085,
+      "cost_usd": 0.015194,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S1",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22052,
+        "cached_input_tokens": 22049,
+        "output_tokens": 593,
+        "guard_tokens_max": 25791,
+        "seconds": 8.647
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22052,
+        "cached_input_tokens": 22049,
+        "output_tokens": 593,
+        "within_guard": true
+      },
+      "seconds": 8.655,
+      "cost_usd": 0.00407,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S10",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16004,
+        "cached_input_tokens": 9608,
+        "output_tokens": 511,
+        "guard_tokens_max": 19138,
+        "seconds": 7.751
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 16004,
+        "cached_input_tokens": 9608,
+        "output_tokens": 511,
+        "within_guard": true
+      },
+      "seconds": 7.756,
+      "cost_usd": 0.009431,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S10",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16004,
+        "cached_input_tokens": 16001,
+        "output_tokens": 685,
+        "guard_tokens_max": 19138,
+        "seconds": 10.618
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 16004,
+        "cached_input_tokens": 16001,
+        "output_tokens": 685,
+        "within_guard": true
+      },
+      "seconds": 10.627,
+      "cost_usd": 0.004228,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S10",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 15941,
+        "cached_input_tokens": 9550,
+        "output_tokens": 437,
+        "guard_tokens_max": 19069,
+        "seconds": 7.663
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 15941,
+        "cached_input_tokens": 9550,
+        "output_tokens": 437,
+        "within_guard": true
+      },
+      "seconds": 7.667,
+      "cost_usd": 0.009054,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S10",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 15941,
+        "cached_input_tokens": 15938,
+        "output_tokens": 535,
+        "guard_tokens_max": 19069,
+        "seconds": 8.061
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 15941,
+        "cached_input_tokens": 15938,
+        "output_tokens": 535,
+        "within_guard": true
+      },
+      "seconds": 8.067,
+      "cost_usd": 0.003475,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S11",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16000,
+        "cached_input_tokens": 9608,
+        "output_tokens": 219,
+        "guard_tokens_max": 19134,
+        "seconds": 4.271
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 16000,
+        "cached_input_tokens": 9608,
+        "output_tokens": 219,
+        "within_guard": true
+      },
+      "seconds": 4.277,
+      "cost_usd": 0.007967,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S11",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16000,
+        "cached_input_tokens": 15997,
+        "output_tokens": 221,
+        "guard_tokens_max": 19134,
+        "seconds": 4.468
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 16000,
+        "cached_input_tokens": 15997,
+        "output_tokens": 221,
+        "within_guard": true
+      },
+      "seconds": 4.475,
+      "cost_usd": 0.001908,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S11",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 15937,
+        "cached_input_tokens": 9550,
+        "output_tokens": 241,
+        "guard_tokens_max": 19064,
+        "seconds": 4.399
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 15937,
+        "cached_input_tokens": 9550,
+        "output_tokens": 241,
+        "within_guard": true
+      },
+      "seconds": 4.403,
+      "cost_usd": 0.00807,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S11",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 15937,
+        "cached_input_tokens": 15934,
+        "output_tokens": 185,
+        "guard_tokens_max": 19064,
+        "seconds": 4.312
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 15937,
+        "cached_input_tokens": 15934,
+        "output_tokens": 185,
+        "within_guard": true
+      },
+      "seconds": 4.32,
+      "cost_usd": 0.001725,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S12",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 2,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16216,
+        "cached_input_tokens": 9608,
+        "output_tokens": 259,
+        "guard_tokens_max": 19371,
+        "seconds": 5.329
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 16216,
+        "cached_input_tokens": 9608,
+        "output_tokens": 259,
+        "within_guard": true
+      },
+      "seconds": 5.335,
+      "cost_usd": 0.008383,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S12",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 2,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16216,
+        "cached_input_tokens": 16213,
+        "output_tokens": 182,
+        "guard_tokens_max": 19371,
+        "seconds": 4.101
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 16216,
+        "cached_input_tokens": 16213,
+        "output_tokens": 182,
+        "within_guard": true
+      },
+      "seconds": 4.108,
+      "cost_usd": 0.001724,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S12",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 33,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16153,
+        "cached_input_tokens": 9550,
+        "output_tokens": 208,
+        "guard_tokens_max": 19302,
+        "seconds": 4.734
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 16153,
+        "cached_input_tokens": 9550,
+        "output_tokens": 208,
+        "within_guard": true
+      },
+      "seconds": 4.738,
+      "cost_usd": 0.00812,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S12",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 33,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16153,
+        "cached_input_tokens": 16150,
+        "output_tokens": 426,
+        "guard_tokens_max": 19302,
+        "seconds": 7.718
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 16153,
+        "cached_input_tokens": 16150,
+        "output_tokens": 426,
+        "within_guard": true
+      },
+      "seconds": 7.727,
+      "cost_usd": 0.00294,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S13",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2336,
+        "cached_input_tokens": 2333,
+        "output_tokens": 38,
+        "guard_tokens_max": 3008,
+        "seconds": 1.725
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16031,
+        "cached_input_tokens": 16028,
+        "output_tokens": 250,
+        "guard_tokens_max": 19168,
+        "seconds": 4.708
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18367,
+        "cached_input_tokens": 18361,
+        "output_tokens": 288,
+        "within_guard": true
+      },
+      "seconds": 6.441,
+      "cost_usd": 0.002364,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 1,
+          "selected": 1,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S13",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2336,
+        "cached_input_tokens": 2333,
+        "output_tokens": 38,
+        "guard_tokens_max": 3008,
+        "seconds": 1.405
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16031,
+        "cached_input_tokens": 16028,
+        "output_tokens": 200,
+        "guard_tokens_max": 19168,
+        "seconds": 3.991
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18367,
+        "cached_input_tokens": 18361,
+        "output_tokens": 238,
+        "within_guard": true
+      },
+      "seconds": 5.406,
+      "cost_usd": 0.002114,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 1,
+          "selected": 1,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S13",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22073,
+        "cached_input_tokens": 22070,
+        "output_tokens": 210,
+        "guard_tokens_max": 25814,
+        "seconds": 4.409
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22073,
+        "cached_input_tokens": 22070,
+        "output_tokens": 210,
+        "within_guard": true
+      },
+      "seconds": 4.417,
+      "cost_usd": 0.002156,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S13",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22073,
+        "cached_input_tokens": 22070,
+        "output_tokens": 170,
+        "guard_tokens_max": 25814,
+        "seconds": 3.513
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22073,
+        "cached_input_tokens": 22070,
+        "output_tokens": 170,
+        "within_guard": true
+      },
+      "seconds": 3.52,
+      "cost_usd": 0.001956,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S14",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 2,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2361,
+        "cached_input_tokens": 0,
+        "output_tokens": 59,
+        "guard_tokens_max": 3035,
+        "seconds": 1.402
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16273,
+        "cached_input_tokens": 9608,
+        "output_tokens": 595,
+        "guard_tokens_max": 19434,
+        "seconds": 8.497
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18634,
+        "cached_input_tokens": 9608,
+        "output_tokens": 654,
+        "within_guard": true
+      },
+      "seconds": 9.91,
+      "cost_usd": 0.012776,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 1,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 2,
+          "selected": 2,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S14",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 2,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2361,
+        "cached_input_tokens": 2358,
+        "output_tokens": 59,
+        "guard_tokens_max": 3035,
+        "seconds": 1.571
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16273,
+        "cached_input_tokens": 16270,
+        "output_tokens": 900,
+        "guard_tokens_max": 19434,
+        "seconds": 12.639
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18634,
+        "cached_input_tokens": 18628,
+        "output_tokens": 959,
+        "within_guard": true
+      },
+      "seconds": 14.221,
+      "cost_usd": 0.005732,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 1,
+        "setting_candidates": 4,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 2,
+          "selected": 2,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S14",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22120,
+        "cached_input_tokens": 9550,
+        "output_tokens": 423,
+        "guard_tokens_max": 25866,
+        "seconds": 6.288
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22120,
+        "cached_input_tokens": 9550,
+        "output_tokens": 423,
+        "within_guard": true
+      },
+      "seconds": 6.295,
+      "cost_usd": 0.015162,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 1,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S14",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22120,
+        "cached_input_tokens": 22117,
+        "output_tokens": 536,
+        "guard_tokens_max": 25866,
+        "seconds": 10.457
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22120,
+        "cached_input_tokens": 22117,
+        "output_tokens": 536,
+        "within_guard": true
+      },
+      "seconds": 10.466,
+      "cost_usd": 0.003789,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 1,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S15",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2337,
+        "cached_input_tokens": 0,
+        "output_tokens": 38,
+        "guard_tokens_max": 3009,
+        "seconds": 1.142
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16012,
+        "cached_input_tokens": 9608,
+        "output_tokens": 618,
+        "guard_tokens_max": 19147,
+        "seconds": 8.279
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18349,
+        "cached_input_tokens": 9608,
+        "output_tokens": 656,
+        "within_guard": true
+      },
+      "seconds": 9.432,
+      "cost_usd": 0.012501,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 1,
+          "selected": 1,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S15",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2337,
+        "cached_input_tokens": 2334,
+        "output_tokens": 38,
+        "guard_tokens_max": 3009,
+        "seconds": 1.327
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16012,
+        "cached_input_tokens": 16009,
+        "output_tokens": 854,
+        "guard_tokens_max": 19147,
+        "seconds": 11.1
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18349,
+        "cached_input_tokens": 18343,
+        "output_tokens": 892,
+        "within_guard": true
+      },
+      "seconds": 12.438,
+      "cost_usd": 0.005383,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 1,
+          "selected": 1,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S15",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 9550,
+        "output_tokens": 473,
+        "guard_tokens_max": 25793,
+        "seconds": 7.31
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 9550,
+        "output_tokens": 473,
+        "within_guard": true
+      },
+      "seconds": 7.317,
+      "cost_usd": 0.015346,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S15",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 22051,
+        "output_tokens": 648,
+        "guard_tokens_max": 25793,
+        "seconds": 12.014
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 22051,
+        "output_tokens": 648,
+        "within_guard": true
+      },
+      "seconds": 12.022,
+      "cost_usd": 0.004346,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S16",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 2,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2378,
+        "cached_input_tokens": 0,
+        "output_tokens": 38,
+        "guard_tokens_max": 3056,
+        "seconds": 1.37
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16221,
+        "cached_input_tokens": 9608,
+        "output_tokens": 231,
+        "guard_tokens_max": 19377,
+        "seconds": 4.841
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18599,
+        "cached_input_tokens": 9608,
+        "output_tokens": 269,
+        "within_guard": true
+      },
+      "seconds": 6.222,
+      "cost_usd": 0.010816,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 2,
+          "selected": 2,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S16",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 2,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2378,
+        "cached_input_tokens": 2375,
+        "output_tokens": 38,
+        "guard_tokens_max": 3056,
+        "seconds": 1.313
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16221,
+        "cached_input_tokens": 16218,
+        "output_tokens": 198,
+        "guard_tokens_max": 19377,
+        "seconds": 3.888
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18599,
+        "cached_input_tokens": 18593,
+        "output_tokens": 236,
+        "within_guard": true
+      },
+      "seconds": 5.21,
+      "cost_usd": 0.002116,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 2,
+          "selected": 2,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S16",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 33,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22263,
+        "cached_input_tokens": 9550,
+        "output_tokens": 430,
+        "guard_tokens_max": 26023,
+        "seconds": 7.831
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22263,
+        "cached_input_tokens": 9550,
+        "output_tokens": 430,
+        "within_guard": true
+      },
+      "seconds": 7.837,
+      "cost_usd": 0.01534,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S16",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 33,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22263,
+        "cached_input_tokens": 22260,
+        "output_tokens": 345,
+        "guard_tokens_max": 26023,
+        "seconds": 6.843
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22263,
+        "cached_input_tokens": 22260,
+        "output_tokens": 345,
+        "within_guard": true
+      },
+      "seconds": 6.85,
+      "cost_usd": 0.002841,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S17",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2337,
+        "cached_input_tokens": 2334,
+        "output_tokens": 42,
+        "guard_tokens_max": 3009,
+        "seconds": 1.652
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16015,
+        "cached_input_tokens": 16012,
+        "output_tokens": 764,
+        "guard_tokens_max": 19150,
+        "seconds": 10.138
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18352,
+        "cached_input_tokens": 18346,
+        "output_tokens": 806,
+        "within_guard": true
+      },
+      "seconds": 11.8,
+      "cost_usd": 0.004953,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 3,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 1,
+          "selected": 1,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 1
+        }
+      }
+    },
+    {
+      "case": "S17",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2337,
+        "cached_input_tokens": 2334,
+        "output_tokens": 42,
+        "guard_tokens_max": 3009,
+        "seconds": 1.203
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16015,
+        "cached_input_tokens": 16012,
+        "output_tokens": 600,
+        "guard_tokens_max": 19150,
+        "seconds": 7.925
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18352,
+        "cached_input_tokens": 18346,
+        "output_tokens": 642,
+        "within_guard": true
+      },
+      "seconds": 9.138,
+      "cost_usd": 0.004133,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 3,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 1,
+          "selected": 1,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 1
+        }
+      }
+    },
+    {
+      "case": "S17",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 22051,
+        "output_tokens": 549,
+        "guard_tokens_max": 25793,
+        "seconds": 7.835
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 22051,
+        "output_tokens": 549,
+        "within_guard": true
+      },
+      "seconds": 7.842,
+      "cost_usd": 0.003851,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 3,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S17",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 22051,
+        "output_tokens": 516,
+        "guard_tokens_max": 25793,
+        "seconds": 7.369
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 22051,
+        "output_tokens": 516,
+        "within_guard": true
+      },
+      "seconds": 7.391,
+      "cost_usd": 0.003686,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 3,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S18",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2341,
+        "cached_input_tokens": 0,
+        "output_tokens": 38,
+        "guard_tokens_max": 3013,
+        "seconds": 1.675
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16015,
+        "cached_input_tokens": 9608,
+        "output_tokens": 159,
+        "guard_tokens_max": 19150,
+        "seconds": 3.523
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18356,
+        "cached_input_tokens": 9608,
+        "output_tokens": 197,
+        "within_guard": true
+      },
+      "seconds": 5.209,
+      "cost_usd": 0.010213,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 1,
+          "selected": 1,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S18",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2341,
+        "cached_input_tokens": 2338,
+        "output_tokens": 38,
+        "guard_tokens_max": 3013,
+        "seconds": 1.443
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16015,
+        "cached_input_tokens": 16012,
+        "output_tokens": 146,
+        "guard_tokens_max": 19150,
+        "seconds": 3.26
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18356,
+        "cached_input_tokens": 18350,
+        "output_tokens": 184,
+        "within_guard": true
+      },
+      "seconds": 4.713,
+      "cost_usd": 0.001844,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 1,
+          "selected": 1,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S18",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22714,
+        "cached_input_tokens": 0,
+        "output_tokens": 152,
+        "guard_tokens_max": 25797,
+        "seconds": 3.131
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22714,
+        "cached_input_tokens": 0,
+        "output_tokens": 152,
+        "within_guard": true
+      },
+      "seconds": 3.139,
+      "cost_usd": 0.023474,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S18",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22058,
+        "cached_input_tokens": 9550,
+        "output_tokens": 146,
+        "guard_tokens_max": 25797,
+        "seconds": 3.18
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22058,
+        "cached_input_tokens": 9550,
+        "output_tokens": 146,
+        "within_guard": true
+      },
+      "seconds": 3.189,
+      "cost_usd": 0.013716,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S19",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2344,
+        "cached_input_tokens": 0,
+        "output_tokens": 41,
+        "guard_tokens_max": 3016,
+        "seconds": 1.926
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16043,
+        "cached_input_tokens": 9608,
+        "output_tokens": 499,
+        "guard_tokens_max": 19181,
+        "seconds": 6.767
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18387,
+        "cached_input_tokens": 9608,
+        "output_tokens": 540,
+        "within_guard": true
+      },
+      "seconds": 8.702,
+      "cost_usd": 0.011959,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 3,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 1,
+          "selected": 1,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S19",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2344,
+        "cached_input_tokens": 2341,
+        "output_tokens": 41,
+        "guard_tokens_max": 3016,
+        "seconds": 1.474
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16043,
+        "cached_input_tokens": 16040,
+        "output_tokens": 336,
+        "guard_tokens_max": 19181,
+        "seconds": 5.474
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18387,
+        "cached_input_tokens": 18381,
+        "output_tokens": 377,
+        "within_guard": true
+      },
+      "seconds": 6.957,
+      "cost_usd": 0.00281,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 1,
+          "selected": 1,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S19",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22084,
+        "cached_input_tokens": 9550,
+        "output_tokens": 375,
+        "guard_tokens_max": 25826,
+        "seconds": 6.237
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22084,
+        "cached_input_tokens": 9550,
+        "output_tokens": 375,
+        "within_guard": true
+      },
+      "seconds": 6.244,
+      "cost_usd": 0.014886,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S19",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22084,
+        "cached_input_tokens": 22081,
+        "output_tokens": 205,
+        "guard_tokens_max": 25826,
+        "seconds": 4.164
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22084,
+        "cached_input_tokens": 22081,
+        "output_tokens": 205,
+        "within_guard": true
+      },
+      "seconds": 4.174,
+      "cost_usd": 0.002132,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S2",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2329,
+        "cached_input_tokens": 0,
+        "output_tokens": 38,
+        "guard_tokens_max": 3000,
+        "seconds": 1.425
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16004,
+        "cached_input_tokens": 9608,
+        "output_tokens": 236,
+        "guard_tokens_max": 19138,
+        "seconds": 4.261
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18333,
+        "cached_input_tokens": 9608,
+        "output_tokens": 274,
+        "within_guard": true
+      },
+      "seconds": 5.698,
+      "cost_usd": 0.010575,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S2",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2329,
+        "cached_input_tokens": 2326,
+        "output_tokens": 38,
+        "guard_tokens_max": 3000,
+        "seconds": 2.009
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16004,
+        "cached_input_tokens": 16001,
+        "output_tokens": 229,
+        "guard_tokens_max": 19138,
+        "seconds": 5.547
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18333,
+        "cached_input_tokens": 18327,
+        "output_tokens": 267,
+        "within_guard": true
+      },
+      "seconds": 7.566,
+      "cost_usd": 0.002257,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S2",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22046,
+        "cached_input_tokens": 9550,
+        "output_tokens": 197,
+        "guard_tokens_max": 25784,
+        "seconds": 4.914
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22046,
+        "cached_input_tokens": 9550,
+        "output_tokens": 197,
+        "within_guard": true
+      },
+      "seconds": 4.919,
+      "cost_usd": 0.013958,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S2",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22046,
+        "cached_input_tokens": 22043,
+        "output_tokens": 223,
+        "guard_tokens_max": 25784,
+        "seconds": 4.834
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22046,
+        "cached_input_tokens": 22043,
+        "output_tokens": 223,
+        "within_guard": true
+      },
+      "seconds": 4.843,
+      "cost_usd": 0.00222,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S20",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 2,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2352,
+        "cached_input_tokens": 0,
+        "output_tokens": 57,
+        "guard_tokens_max": 3025,
+        "seconds": 1.595
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16265,
+        "cached_input_tokens": 9608,
+        "output_tokens": 773,
+        "guard_tokens_max": 19425,
+        "seconds": 10.307
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18617,
+        "cached_input_tokens": 9608,
+        "output_tokens": 830,
+        "within_guard": true
+      },
+      "seconds": 11.913,
+      "cost_usd": 0.013639,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 0,
+        "setting_candidates": 3,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 2,
+          "selected": 2,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S20",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 2,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2352,
+        "cached_input_tokens": 2349,
+        "output_tokens": 57,
+        "guard_tokens_max": 3025,
+        "seconds": 1.279
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16265,
+        "cached_input_tokens": 16262,
+        "output_tokens": 638,
+        "guard_tokens_max": 19425,
+        "seconds": 8.962
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18617,
+        "cached_input_tokens": 18611,
+        "output_tokens": 695,
+        "within_guard": true
+      },
+      "seconds": 10.252,
+      "cost_usd": 0.004412,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 3,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": {
+          "expected": 2,
+          "selected": 2,
+          "missing": 0,
+          "extra": 0,
+          "expected_unmatched_found": 0
+        }
+      }
+    },
+    {
+      "case": "S20",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22111,
+        "cached_input_tokens": 9550,
+        "output_tokens": 548,
+        "guard_tokens_max": 25856,
+        "seconds": 8.01
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22111,
+        "cached_input_tokens": 9550,
+        "output_tokens": 548,
+        "within_guard": true
+      },
+      "seconds": 8.019,
+      "cost_usd": 0.015778,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 0,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S20",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22111,
+        "cached_input_tokens": 22108,
+        "output_tokens": 1047,
+        "guard_tokens_max": 25856,
+        "seconds": 13.326
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22111,
+        "cached_input_tokens": 22108,
+        "output_tokens": 1047,
+        "within_guard": true
+      },
+      "seconds": 13.335,
+      "cost_usd": 0.006343,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 3,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S3",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 2,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2377,
+        "cached_input_tokens": 0,
+        "output_tokens": 74,
+        "guard_tokens_max": 3055,
+        "seconds": 1.832
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16220,
+        "cached_input_tokens": 9608,
+        "output_tokens": 188,
+        "guard_tokens_max": 19376,
+        "seconds": 4.07
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18597,
+        "cached_input_tokens": 9608,
+        "output_tokens": 262,
+        "within_guard": true
+      },
+      "seconds": 5.942,
+      "cost_usd": 0.010779,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S3",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 2,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2377,
+        "cached_input_tokens": 2374,
+        "output_tokens": 38,
+        "guard_tokens_max": 3055,
+        "seconds": 1.288
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16220,
+        "cached_input_tokens": 16217,
+        "output_tokens": 205,
+        "guard_tokens_max": 19376,
+        "seconds": 3.737
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18597,
+        "cached_input_tokens": 18591,
+        "output_tokens": 243,
+        "within_guard": true
+      },
+      "seconds": 5.036,
+      "cost_usd": 0.002151,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S3",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 33,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22262,
+        "cached_input_tokens": 9550,
+        "output_tokens": 553,
+        "guard_tokens_max": 26022,
+        "seconds": 8.667
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22262,
+        "cached_input_tokens": 9550,
+        "output_tokens": 553,
+        "within_guard": true
+      },
+      "seconds": 8.672,
+      "cost_usd": 0.015954,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S3",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 33,
+      "selected": 33,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22262,
+        "cached_input_tokens": 22259,
+        "output_tokens": 658,
+        "guard_tokens_max": 26022,
+        "seconds": 9.298
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22262,
+        "cached_input_tokens": 22259,
+        "output_tokens": 658,
+        "within_guard": true
+      },
+      "seconds": 9.306,
+      "cost_usd": 0.004406,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S4",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2337,
+        "cached_input_tokens": 0,
+        "output_tokens": 37,
+        "guard_tokens_max": 3009,
+        "seconds": 1.432
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16012,
+        "cached_input_tokens": 9608,
+        "output_tokens": 683,
+        "guard_tokens_max": 19147,
+        "seconds": 10.572
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18349,
+        "cached_input_tokens": 9608,
+        "output_tokens": 720,
+        "within_guard": true
+      },
+      "seconds": 12.016,
+      "cost_usd": 0.012821,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S4",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2337,
+        "cached_input_tokens": 2334,
+        "output_tokens": 37,
+        "guard_tokens_max": 3009,
+        "seconds": 1.091
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16012,
+        "cached_input_tokens": 16009,
+        "output_tokens": 350,
+        "guard_tokens_max": 19147,
+        "seconds": 7.004
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18349,
+        "cached_input_tokens": 18343,
+        "output_tokens": 387,
+        "within_guard": true
+      },
+      "seconds": 8.106,
+      "cost_usd": 0.002858,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S4",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 9550,
+        "output_tokens": 543,
+        "guard_tokens_max": 25793,
+        "seconds": 8.647
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 9550,
+        "output_tokens": 543,
+        "within_guard": true
+      },
+      "seconds": 8.659,
+      "cost_usd": 0.015696,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S4",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 22051,
+        "output_tokens": 482,
+        "guard_tokens_max": 25793,
+        "seconds": 8.242
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22054,
+        "cached_input_tokens": 22051,
+        "output_tokens": 482,
+        "within_guard": true
+      },
+      "seconds": 8.25,
+      "cost_usd": 0.003516,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S5",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2342,
+        "cached_input_tokens": 0,
+        "output_tokens": 37,
+        "guard_tokens_max": 3014,
+        "seconds": 1.123
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16016,
+        "cached_input_tokens": 9608,
+        "output_tokens": 496,
+        "guard_tokens_max": 19151,
+        "seconds": 7.64
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18358,
+        "cached_input_tokens": 9608,
+        "output_tokens": 533,
+        "within_guard": true
+      },
+      "seconds": 8.776,
+      "cost_usd": 0.011895,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S5",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2342,
+        "cached_input_tokens": 2339,
+        "output_tokens": 37,
+        "guard_tokens_max": 3014,
+        "seconds": 1.153
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16016,
+        "cached_input_tokens": 16013,
+        "output_tokens": 496,
+        "guard_tokens_max": 19151,
+        "seconds": 8.128
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18358,
+        "cached_input_tokens": 18352,
+        "output_tokens": 533,
+        "within_guard": true
+      },
+      "seconds": 9.292,
+      "cost_usd": 0.003589,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S5",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22058,
+        "cached_input_tokens": 9550,
+        "output_tokens": 391,
+        "guard_tokens_max": 25797,
+        "seconds": 7.057
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22058,
+        "cached_input_tokens": 9550,
+        "output_tokens": 391,
+        "within_guard": true
+      },
+      "seconds": 7.07,
+      "cost_usd": 0.01494,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S5",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22058,
+        "cached_input_tokens": 22055,
+        "output_tokens": 404,
+        "guard_tokens_max": 25797,
+        "seconds": 5.846
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22058,
+        "cached_input_tokens": 22055,
+        "output_tokens": 404,
+        "within_guard": true
+      },
+      "seconds": 5.855,
+      "cost_usd": 0.003126,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 1,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S6",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 0,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2329,
+        "cached_input_tokens": 0,
+        "output_tokens": 25,
+        "guard_tokens_max": 3000,
+        "seconds": 1.196
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 15810,
+        "cached_input_tokens": 9608,
+        "output_tokens": 242,
+        "guard_tokens_max": 18925,
+        "seconds": 4.407
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18139,
+        "cached_input_tokens": 9608,
+        "output_tokens": 267,
+        "within_guard": true
+      },
+      "seconds": 5.616,
+      "cost_usd": 0.010346,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S6",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 0,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2329,
+        "cached_input_tokens": 2326,
+        "output_tokens": 25,
+        "guard_tokens_max": 3000,
+        "seconds": 1.073
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 15810,
+        "cached_input_tokens": 15807,
+        "output_tokens": 231,
+        "guard_tokens_max": 18925,
+        "seconds": 4.641
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18139,
+        "cached_input_tokens": 18133,
+        "output_tokens": 256,
+        "within_guard": true
+      },
+      "seconds": 5.723,
+      "cost_usd": 0.002193,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S6",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22046,
+        "cached_input_tokens": 9550,
+        "output_tokens": 233,
+        "guard_tokens_max": 25784,
+        "seconds": 4.144
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22046,
+        "cached_input_tokens": 9550,
+        "output_tokens": 233,
+        "within_guard": true
+      },
+      "seconds": 4.156,
+      "cost_usd": 0.014138,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S6",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22046,
+        "cached_input_tokens": 22043,
+        "output_tokens": 230,
+        "guard_tokens_max": 25784,
+        "seconds": 4.754
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22046,
+        "cached_input_tokens": 22043,
+        "output_tokens": 230,
+        "within_guard": true
+      },
+      "seconds": 4.762,
+      "cost_usd": 0.002255,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S7",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2338,
+        "cached_input_tokens": 0,
+        "output_tokens": 37,
+        "guard_tokens_max": 3010,
+        "seconds": 1.139
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16013,
+        "cached_input_tokens": 9608,
+        "output_tokens": 991,
+        "guard_tokens_max": 19148,
+        "seconds": 12.834
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18351,
+        "cached_input_tokens": 9608,
+        "output_tokens": 1028,
+        "within_guard": true
+      },
+      "seconds": 13.99,
+      "cost_usd": 0.014363,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S7",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2338,
+        "cached_input_tokens": 2335,
+        "output_tokens": 65,
+        "guard_tokens_max": 3010,
+        "seconds": 1.563
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16013,
+        "cached_input_tokens": 16010,
+        "output_tokens": 568,
+        "guard_tokens_max": 19148,
+        "seconds": 9.153
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18351,
+        "cached_input_tokens": 18345,
+        "output_tokens": 633,
+        "within_guard": true
+      },
+      "seconds": 10.727,
+      "cost_usd": 0.004088,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S7",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22055,
+        "cached_input_tokens": 9550,
+        "output_tokens": 1050,
+        "guard_tokens_max": 25794,
+        "seconds": 13.808
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22055,
+        "cached_input_tokens": 9550,
+        "output_tokens": 1050,
+        "within_guard": true
+      },
+      "seconds": 13.82,
+      "cost_usd": 0.018232,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S7",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22055,
+        "cached_input_tokens": 22052,
+        "output_tokens": 913,
+        "guard_tokens_max": 25794,
+        "seconds": 12.434
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22055,
+        "cached_input_tokens": 22052,
+        "output_tokens": 913,
+        "within_guard": true
+      },
+      "seconds": 12.442,
+      "cost_usd": 0.005671,
+      "quality": {
+        "gold_total": 2,
+        "gold_matched": 2,
+        "gold_exact_key": 2,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S8",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2345,
+        "cached_input_tokens": 0,
+        "output_tokens": 37,
+        "guard_tokens_max": 3017,
+        "seconds": 1.141
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16020,
+        "cached_input_tokens": 9608,
+        "output_tokens": 192,
+        "guard_tokens_max": 19156,
+        "seconds": 3.484
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18365,
+        "cached_input_tokens": 9608,
+        "output_tokens": 229,
+        "within_guard": true
+      },
+      "seconds": 4.638,
+      "cost_usd": 0.010382,
+      "quality": {
+        "gold_total": 0,
+        "gold_matched": 0,
+        "gold_exact_key": 0,
+        "setting_candidates": 0,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S8",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 1,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2345,
+        "cached_input_tokens": 2342,
+        "output_tokens": 37,
+        "guard_tokens_max": 3017,
+        "seconds": 1.323
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16020,
+        "cached_input_tokens": 16017,
+        "output_tokens": 264,
+        "guard_tokens_max": 19156,
+        "seconds": 4.603
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18365,
+        "cached_input_tokens": 18359,
+        "output_tokens": 301,
+        "within_guard": true
+      },
+      "seconds": 5.937,
+      "cost_usd": 0.002429,
+      "quality": {
+        "gold_total": 0,
+        "gold_matched": 0,
+        "gold_exact_key": 0,
+        "setting_candidates": 0,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S8",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22062,
+        "cached_input_tokens": 9550,
+        "output_tokens": 167,
+        "guard_tokens_max": 25802,
+        "seconds": 4.02
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22062,
+        "cached_input_tokens": 9550,
+        "output_tokens": 167,
+        "within_guard": true
+      },
+      "seconds": 4.031,
+      "cost_usd": 0.013824,
+      "quality": {
+        "gold_total": 0,
+        "gold_matched": 0,
+        "gold_exact_key": 0,
+        "setting_candidates": 0,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S8",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22062,
+        "cached_input_tokens": 22059,
+        "output_tokens": 184,
+        "guard_tokens_max": 25802,
+        "seconds": 3.647
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22062,
+        "cached_input_tokens": 22059,
+        "output_tokens": 184,
+        "within_guard": true
+      },
+      "seconds": 3.654,
+      "cost_usd": 0.002026,
+      "quality": {
+        "gold_total": 0,
+        "gold_matched": 0,
+        "gold_exact_key": 0,
+        "setting_candidates": 0,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S9",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 2,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2352,
+        "cached_input_tokens": 0,
+        "output_tokens": 52,
+        "guard_tokens_max": 3025,
+        "seconds": 1.634
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16262,
+        "cached_input_tokens": 9608,
+        "output_tokens": 1186,
+        "guard_tokens_max": 19422,
+        "seconds": 18.414
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18614,
+        "cached_input_tokens": 9608,
+        "output_tokens": 1238,
+        "within_guard": true
+      },
+      "seconds": 20.057,
+      "cost_usd": 0.015676,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 0,
+        "setting_candidates": 2,
+        "discovery_candidates": 0,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 2,
+        "selection": null
+      }
+    },
+    {
+      "case": "S9",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 2,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 2352,
+        "cached_input_tokens": 2349,
+        "output_tokens": 52,
+        "guard_tokens_max": 3025,
+        "seconds": 1.751
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 16262,
+        "cached_input_tokens": 16259,
+        "output_tokens": 1400,
+        "guard_tokens_max": 19422,
+        "seconds": 21.029
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 18614,
+        "cached_input_tokens": 18608,
+        "output_tokens": 1452,
+        "within_guard": true
+      },
+      "seconds": 22.787,
+      "cost_usd": 0.008196,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 0,
+        "gold_exact_key": 0,
+        "setting_candidates": 1,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 1,
+        "selection": null
+      }
+    },
+    {
+      "case": "S9",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22109,
+        "cached_input_tokens": 9550,
+        "output_tokens": 1556,
+        "guard_tokens_max": 25854,
+        "seconds": 20.14
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22109,
+        "cached_input_tokens": 9550,
+        "output_tokens": 1556,
+        "within_guard": true
+      },
+      "seconds": 20.151,
+      "cost_usd": 0.020816,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 0,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    },
+    {
+      "case": "S9",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 32,
+      "selected": 32,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 22109,
+        "cached_input_tokens": 22106,
+        "output_tokens": 1206,
+        "guard_tokens_max": 25854,
+        "seconds": 15.658
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 22109,
+        "cached_input_tokens": 22106,
+        "output_tokens": 1206,
+        "within_guard": true
+      },
+      "seconds": 15.666,
+      "cost_usd": 0.007138,
+      "quality": {
+        "gold_total": 1,
+        "gold_matched": 1,
+        "gold_exact_key": 0,
+        "setting_candidates": 2,
+        "discovery_candidates": 1,
+        "ungrounded_quote_candidates": 0,
+        "relational_subject_candidates": 0,
+        "selection": null
+      }
+    }
+  ],
+  "synthetic_summary": {
+    "after": {
+      "runs": 40,
+      "input_tokens": 722664,
+      "cached_input_tokens": 570872,
+      "output_tokens": 20413,
+      "seconds": 347.351,
+      "cost_usd": 0.282394,
+      "within_guard": true,
+      "selection_input_tokens": 79740,
+      "selection_output_tokens": 1442
+    },
+    "before": {
+      "runs": 40,
+      "input_tokens": 847840,
+      "cached_input_tokens": 617498,
+      "output_tokens": 18831,
+      "seconds": 300.975,
+      "cost_usd": 0.355366,
+      "within_guard": true,
+      "selection_input_tokens": 0,
+      "selection_output_tokens": 0
+    }
+  },
+  "r5_repeats": [
+    {
+      "case": "R5",
+      "variant": "after",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 13,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 9033,
+        "cached_input_tokens": 1493,
+        "output_tokens": 630,
+        "guard_tokens_max": 10596,
+        "seconds": 6.486
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 21705,
+        "cached_input_tokens": 9608,
+        "output_tokens": 9697,
+        "guard_tokens_max": 25409,
+        "seconds": 109.363
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 30738,
+        "cached_input_tokens": 11101,
+        "output_tokens": 10327,
+        "within_guard": true
+      },
+      "seconds": 115.864,
+      "cost_usd": 0.071827,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 75,
+        "manual_review_ids": [
+          "R5-F045",
+          "R5-F046",
+          "R5-F047",
+          "R5-F048",
+          "R5-F049",
+          "R5-F050",
+          "R5-F051",
+          "R5-F054",
+          "R5-F055",
+          "R5-F064"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 23
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 42,
+            "qualifier_retained": 42
+          }
+        },
+        "setting_candidates": 33,
+        "discovery_candidates": 20,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R5",
+      "variant": "after",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 13,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 9033,
+        "cached_input_tokens": 9030,
+        "output_tokens": 874,
+        "guard_tokens_max": 10596,
+        "seconds": 9.626
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 21705,
+        "cached_input_tokens": 21702,
+        "output_tokens": 9250,
+        "guard_tokens_max": 25409,
+        "seconds": 103.749
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 30738,
+        "cached_input_tokens": 30732,
+        "output_tokens": 10124,
+        "within_guard": true
+      },
+      "seconds": 113.394,
+      "cost_usd": 0.052163,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 78,
+        "manual_review_ids": [
+          "R5-F045",
+          "R5-F046",
+          "R5-F047",
+          "R5-F048",
+          "R5-F049",
+          "R5-F050",
+          "R5-F051"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 26
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 45,
+            "qualifier_retained": 45
+          }
+        },
+        "setting_candidates": 33,
+        "discovery_candidates": 20,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R5",
+      "variant": "after",
+      "repeat": 3,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 13,
+      "selection": {
+        "calls": 1,
+        "input_tokens": 9033,
+        "cached_input_tokens": 9030,
+        "output_tokens": 799,
+        "guard_tokens_max": 10596,
+        "seconds": 10.073
+      },
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 21705,
+        "cached_input_tokens": 21702,
+        "output_tokens": 7510,
+        "guard_tokens_max": 25409,
+        "seconds": 84.542
+      },
+      "total": {
+        "calls": 2,
+        "input_tokens": 30738,
+        "cached_input_tokens": 30732,
+        "output_tokens": 8309,
+        "within_guard": true
+      },
+      "seconds": 94.641,
+      "cost_usd": 0.043088,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 76,
+        "manual_review_ids": [
+          "R5-F045",
+          "R5-F046",
+          "R5-F047",
+          "R5-F048",
+          "R5-F049",
+          "R5-F050",
+          "R5-F051",
+          "R5-F054",
+          "R5-F055"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 24
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 43,
+            "qualifier_retained": 43
+          }
+        },
+        "setting_candidates": 33,
+        "discovery_candidates": 20,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R5",
+      "variant": "before",
+      "repeat": 1,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 133,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 48165,
+        "cached_input_tokens": 48162,
+        "output_tokens": 7587,
+        "guard_tokens_max": 54515,
+        "seconds": 85.764
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 48165,
+        "cached_input_tokens": 48162,
+        "output_tokens": 7587,
+        "within_guard": true
+      },
+      "seconds": 85.779,
+      "cost_usd": 0.040346,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 76,
+        "manual_review_ids": [
+          "R5-F045",
+          "R5-F046",
+          "R5-F047",
+          "R5-F048",
+          "R5-F049",
+          "R5-F050",
+          "R5-F051",
+          "R5-F054",
+          "R5-F055"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 24
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 43,
+            "qualifier_retained": 43
+          }
+        },
+        "setting_candidates": 34,
+        "discovery_candidates": 21,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R5",
+      "variant": "before",
+      "repeat": 2,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 133,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 48165,
+        "cached_input_tokens": 48162,
+        "output_tokens": 8524,
+        "guard_tokens_max": 54515,
+        "seconds": 97.091
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 48165,
+        "cached_input_tokens": 48162,
+        "output_tokens": 8524,
+        "within_guard": true
+      },
+      "seconds": 97.316,
+      "cost_usd": 0.045031,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 76,
+        "manual_review_ids": [
+          "R5-F045",
+          "R5-F046",
+          "R5-F047",
+          "R5-F048",
+          "R5-F049",
+          "R5-F050",
+          "R5-F051",
+          "R5-F054",
+          "R5-F055"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 24
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 43,
+            "qualifier_retained": 43
+          }
+        },
+        "setting_candidates": 33,
+        "discovery_candidates": 21,
+        "ungrounded_quote_candidates": 0
+      }
+    },
+    {
+      "case": "R5",
+      "variant": "before",
+      "repeat": 3,
+      "status": "SUCCEEDED",
+      "catalogue": 133,
+      "selected": 133,
+      "selection": null,
+      "extraction": {
+        "calls": 1,
+        "input_tokens": 48165,
+        "cached_input_tokens": 48162,
+        "output_tokens": 9389,
+        "guard_tokens_max": 54515,
+        "seconds": 105.701
+      },
+      "total": {
+        "calls": 1,
+        "input_tokens": 48165,
+        "cached_input_tokens": 48162,
+        "output_tokens": 9389,
+        "within_guard": true
+      },
+      "seconds": 105.714,
+      "cost_usd": 0.049356,
+      "quality": {
+        "facts_total": 85,
+        "auto_matched": 75,
+        "manual_review_ids": [
+          "R5-F045",
+          "R5-F046",
+          "R5-F047",
+          "R5-F048",
+          "R5-F049",
+          "R5-F050",
+          "R5-F051",
+          "R5-F054",
+          "R5-F055",
+          "R5-F064"
+        ],
+        "by_tier": {
+          "core": {
+            "total": 33,
+            "auto_matched": 33,
+            "qualifier_retained": 23
+          },
+          "ancillary": {
+            "total": 52,
+            "auto_matched": 42,
+            "qualifier_retained": 42
+          }
+        },
+        "setting_candidates": 33,
+        "discovery_candidates": 20,
+        "ungrounded_quote_candidates": 0
+      }
+    }
+  ]
+}

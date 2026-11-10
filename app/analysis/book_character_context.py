@@ -9,9 +9,11 @@ from app.analysis.exceptions import OrderedInputContextError
 
 BOOK_CHARACTER_CONTEXT_INSTRUCTIONS = """
 book_character_context.catalog는 전체 인물의 이름·별칭과 확정 여부를 ref로 구분한 식별 힌트입니다.
-characters에는 이번 원문에 관련될 수 있는 대상의 CURRENT 상세만 있습니다. catalog에만 있는
+characters에는 이번 원문에 관련된다고 먼저 선택된 인물의 CURRENT 상세만 있습니다. catalog에만 있는
 인물의 현재값은 생략된 것이며 빈 상태·신규 인물·설정 부재를 뜻하지 않습니다.
 같은 이름이나 이름 일부에 여러 ref가 걸려도 같은 인물로 합치지 말고 원문으로 구분하세요.
+unmatched_mentions는 선택 단계에서 catalog의 어떤 인물과도 연결하지 못한 원문 표현입니다. 신규 인물 발견이나
+모호한 지칭의 단서일 뿐 확정이 아니므로 원문 근거로 독립적으로 판단하세요.
 current_slots의 active_status는 그 슬롯에 대응하는 기존 활성 STATUS의 출처·보호·시점 정보입니다.
 active_statuses에는 같은 현재 슬롯으로 합칠 수 없는 STATUS가 남아 있으며 둘 다 읽으세요.
 임시 인물도 식별 문맥으로 사용하되 catalog나 CURRENT를 원문 근거로 인용하지 마세요.
@@ -32,16 +34,15 @@ _GENERAL_SCOPE = re.compile(
 _NUMERIC_CELL = re.compile(r"(?:age|level|나이|레벨|stats\.\w+)\s*=\s*[+-]?\d+(?:\.\d+)?")
 
 
-def select_book_character_refs(chunk_text, catalog):
-    """Narrow explicit `name: numeric_key=number` rows; narrative keeps all details.
+def select_numeric_row_refs(chunk_text, catalog):
+    """Deterministic owners for pure `name: numeric_key=number` rows, else None.
 
-    A matching name somewhere in prose does not prove that other statements
-    concern that owner. This intentionally gives up selection for narrative,
-    group/unnamed headings and mixed documents rather than guessing their scope.
+    None means the chunk is narrative, mixed or unscoped and the model selection
+    must decide. A literal name in prose never proves that other statements
+    concern that owner, so this never guesses for such text.
     """
-    all_refs = {row['ref'] for row in catalog}
     if _GENERAL_SCOPE.search(chunk_text):
-        return all_refs
+        return None
     spellings = {}
     for row in catalog:
         names = {normalize_character_name(value) for value in (row['name'], *row['aliases']) if value}
@@ -55,18 +56,18 @@ def select_book_character_refs(chunk_text, catalog):
             continue
         match = re.fullmatch(r'(?:[-*]\s+)?([^:：]+)[:：]\s*(.+)', line)
         if match is None:
-            return all_refs
+            return None
         heading, contents = normalize_character_name(match[1]), match[2]
         # A heading does not identify every subject inside a sentence. Restrict
         # narrowing to numeric cells instead of enumerating every relation word.
         # Freeform values (even `note=prose`) can refer to somebody else.
         if not all(_NUMERIC_CELL.fullmatch(cell.strip()) for cell in re.split('[,;]', contents)):
-            return all_refs
+            return None
         owners = {ref for ref, names in spellings.items() if heading in names}
         if not owners:
-            return all_refs
+            return None
         selected.update(owners)
-    return selected or all_refs
+    return selected or None
 
 
 def _merge_current(row, current):
@@ -93,7 +94,8 @@ def _merge_current(row, current):
     return row
 
 
-def book_character_prompt_data(chunk_text, ordered_context, semantic_current_context):
+def book_character_rows(ordered_context, semantic_current_context):
+    """Deduplicated (catalog, details, unresolved_references) for every known character."""
     ordered = ordered_context.prompt_data()
     current = json.loads(semantic_current_context.character_prompt_json())['characters']
     by_ref = {row['ref']: row for row in current}
@@ -110,11 +112,17 @@ def book_character_prompt_data(chunk_text, ordered_context, semantic_current_con
         catalog.append({'ref': ref, **{key: merged.pop(key) for key in
                                      ('name', 'aliases', 'confirmation_status')}})
         details.append({'ref': ref, **merged})
-    selected = select_book_character_refs(chunk_text, catalog)
-    return {'catalog': catalog, 'characters': [row for row in details if row['ref'] in selected],
-            'unresolved_references': ordered['unresolved_references']}
+    return catalog, details, ordered['unresolved_references']
 
 
-def book_character_prompt_json(chunk_text, ordered_context, semantic_current_context):
-    return json.dumps(book_character_prompt_data(chunk_text, ordered_context, semantic_current_context),
+def book_character_prompt_data(catalog, details, unresolved_references, selection):
+    """Project the full catalogue plus only the selected characters' details."""
+    return {'catalog': catalog,
+            'characters': [row for row in details if row['ref'] in selection.refs],
+            'unresolved_references': unresolved_references,
+            'unmatched_mentions': list(selection.unmatched_mentions)}
+
+
+def book_character_prompt_json(catalog, details, unresolved_references, selection):
+    return json.dumps(book_character_prompt_data(catalog, details, unresolved_references, selection),
                       ensure_ascii=False, sort_keys=True, separators=(',', ':'))

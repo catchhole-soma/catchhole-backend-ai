@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-5.6-terra"
     llm_extraction_model: str | None = None
     llm_character_extraction_model: str | None = None
+    # 설정집 인물 선택(1단계) 모델. 비우면 인물 추출 모델을 그대로 쓴다.
+    llm_book_character_selection_model: str | None = None
     llm_subject_resolution_model: str | None = None
     llm_comparison_model: str | None = None
     # 환경변수가 없으면 medium을 사용하고 명시한 값은 그대로 전달한다.
@@ -41,10 +43,16 @@ class Settings(BaseSettings):
     llm_extraction_max_attempts: int = 3
     # purpose별 Responses API 출력 상한. 캐릭터·세계관 추출은 truncation 시 한 번 확장한다.
     llm_setting_extraction_max_output_tokens: int = 32000
+    # 인물 설정 추출(설정집 1단계 선택·2단계 추출, 회차 ordered 경로)의 provider 입력 guard.
+    # provider 한도가 아니라 앱 안전장치이며 인물 사실 비교의 256,000보다 작게 둔다.
+    llm_setting_extraction_max_input_tokens: int = 128000
     llm_setting_extraction_retry_max_output_tokens: int = 64000
     llm_world_setting_extraction_max_output_tokens: int = 32000
     llm_world_setting_extraction_retry_max_output_tokens: int = 64000
     llm_subject_resolution_max_output_tokens: int = 2000
+    # 설정집 인물 선택 응답(ref 목록)의 출력 상한. truncation 시 한 번 확장한다.
+    llm_book_character_selection_max_output_tokens: int = 4000
+    llm_book_character_selection_retry_max_output_tokens: int = 8000
     llm_world_setting_batch_subject_resolution_max_output_tokens: int = 32000
     llm_world_setting_batch_subject_resolution_max_input_tokens: int = 64000
     llm_comparison_max_output_tokens: int = 3000
@@ -84,6 +92,10 @@ class Settings(BaseSettings):
     @property
     def effective_llm_character_extraction_model(self) -> str:
         return self.llm_character_extraction_model or self.effective_llm_extraction_model
+
+    @property
+    def effective_llm_book_character_selection_model(self) -> str:
+        return self.llm_book_character_selection_model or self.effective_llm_character_extraction_model
 
     @property
     def effective_llm_subject_resolution_model(self) -> str:
@@ -131,6 +143,7 @@ class Settings(BaseSettings):
         "ai_worker_concurrency",
         "ai_worker_blocking_max_workers",
         "database_pool_size",
+        "llm_setting_extraction_max_input_tokens",
     )
     @classmethod
     def validate_positive_integer(cls, value: int) -> int:

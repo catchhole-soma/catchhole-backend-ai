@@ -114,7 +114,9 @@ def test_book_run_shares_stages_and_restarts_with_stable_chunks(book_database, r
 
     result = asyncio.run(scenario())
     assert result.episode_count == 0
-    assert len(provider.requests) == 2
+    # BOOK character extraction is two provider calls (stage-1 selection, then extraction) plus world.
+    assert len(provider.requests) == 3
+    assert provider.requests[0]["prompt_cache_key"].startswith("book-character-selection:")
     assert storage_requests == [(write.content_s3_key, "v1"), (write.content_s3_key, "v1")]
     assert spring.completed[0]["episodeCount"] == 0
     assert spring.completed[0]["settingBookCount"] == 1
@@ -122,6 +124,8 @@ def test_book_run_shares_stages_and_restarts_with_stable_chunks(book_database, r
     assert character.contexts == [write.context, write.context]
     assert world.contexts == [write.context, write.context]
     for call in provider.requests:
+        if call["prompt_cache_key"].startswith("book-character-selection:"):
+            continue  # stage-1 selection carries the chunk and the light catalogue only
         prompt = call["user_prompt"]
         metadata = (json.loads(prompt)["metadata"] if prompt.startswith("{") else
                     json.JSONDecoder().raw_decode(prompt.split("metadata:\n", 1)[1])[0])

@@ -64,7 +64,10 @@ class SyntheticBookProvider:
         if self.quota_at and key.startswith(self.quota_at):
             self.quota_at = None
             raise AiTokenQuotaExhaustedError()
-        if key.startswith("setting-extraction:"):
+        if key.startswith("book-character-selection:"):
+            from tests.book_selection_fakes import fake_book_selection
+            result = fake_book_selection(request)
+        elif key.startswith("setting-extraction:"):
             discovery = _valid_discovery_payload(provider_payload=True)
             discovery.update(entity_name="아린", raw_entity_mention="아린",
                              evidence_spans=[{"quote": "아린", "start_offset": None, "end_offset": None}])

@@ -41,12 +41,19 @@ from tests.test_setting_extractor import (
 
 
 class RecordingClient:
+    """Scripted provider. BOOK stage-1 selection requests are answered from the request itself
+    (every catalogue ref whose name/alias is in the chunk) and never consume a scripted response."""
+
     def __init__(self, *responses):
         self.responses = list(responses)
         self.requests = []
 
     async def create_text_response(self, **kwargs):
         self.requests.append(kwargs)
+        from tests.book_selection_fakes import fake_book_selection
+        selection = fake_book_selection(kwargs)
+        if selection is not None:
+            return LlmTextResponse(text=json.dumps(selection, ensure_ascii=False))
         return LlmTextResponse(text=json.dumps(self.responses.pop(0), ensure_ascii=False))
 
 

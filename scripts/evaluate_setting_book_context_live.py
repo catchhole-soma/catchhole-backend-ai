@@ -14,6 +14,7 @@ from uuid import UUID
 
 WT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WT))
+from app.analysis.book_character_selection import BOOK_CHARACTER_SELECTION_CACHE_KEY
 from app.analysis.character_name_resolver import ActiveCharacterStatus, KnownCharacter
 from app.analysis.ordered_context import OrderedExtractionContext, ensure_ordered_prompt_fits
 from app.analysis.semantic_current_context import SemanticCurrentInput
@@ -21,7 +22,32 @@ from app.analysis.setting_extractor import CharacterSettingExtractor, CharacterS
 from app.llm.openai_client import OpenAIResponsesClient
 from app.schemas.analysis_context import WorkerAnalysisContext
 from app.schemas.worker import WorkerAnalysisKnownCharacterPayload, WorkerAnalysisSettingBookPayload
-from scripts.measure_setting_book_context import baseline_class
+from scripts.measure_setting_book_context import BASELINE_MODULES, baseline_class
+
+# Files this evaluation is allowed to differ in from the baseline; anything else means the
+# baseline extractor would silently import changed dependencies.
+EVALUATED_FILES = (
+    *BASELINE_MODULES,
+    "app/analysis/book_character_selection.py",
+    "app/llm/prompts/book_character_selection.md",
+    "app/core/config.py",
+)
+
+
+def call_stage(prompt_cache_key):
+    return "selection" if prompt_cache_key.startswith(BOOK_CHARACTER_SELECTION_CACHE_KEY) else "extraction"
+
+
+def parse_selection(raw_text):
+    """Counts and refs of a stage-1 response; mentions stay in the private record only."""
+    try:
+        data = json.loads(raw_text)
+    except (TypeError, ValueError):
+        return None
+    refs = {item["ref"] for item in data.get("selected", [])}
+    ambiguous = {ref for item in data.get("ambiguous", []) for ref in item.get("candidate_refs", [])}
+    return {"selected_refs": sorted(refs), "ambiguous_refs": sorted(ambiguous - refs),
+            "unmatched_mentions": list(data.get("unmatched_mentions", []))}
 
 
 def counterfactual_class(base):
@@ -42,7 +68,14 @@ class Recorder:
 
     async def create_text_response(self, **kwargs):
         start = time.monotonic()
+        marker = "book_character_context:\n"
+        selected_characters = None
+        if marker in kwargs["user_prompt"]:
+            context = json.JSONDecoder().raw_decode(kwargs["user_prompt"].split(marker, 1)[1])[0]
+            selected_characters = len(context["characters"])
         record = {
+            "stage": call_stage(kwargs.get("prompt_cache_key") or ""),
+            "selected_characters": selected_characters,
             "model": kwargs["model"],
             "max_output_tokens": kwargs["max_output_tokens"],
             "prompt_sha256": hashlib.sha256(
@@ -120,7 +153,9 @@ async def main(args):
     logging.disable(logging.CRITICAL)
     cases = json.loads(args.inputs.read_text())
     baseline_sha, base = await asyncio.to_thread(baseline_class, args.baseline_ref)
-    before = counterfactual_class(base)
+    # The baseline keeps its own application guard unless the caller explicitly asks for the
+    # counterfactual used when the baseline failed before any model call (pre-#148 history).
+    before = counterfactual_class(base) if args.bypass_baseline_guard else base
     changed = (
         await asyncio.to_thread(
             subprocess.check_output,
@@ -128,10 +163,8 @@ async def main(args):
             text=True,
         )
     ).splitlines()
-    if set(changed) - {
-        "app/analysis/setting_extractor.py",
-        "app/analysis/book_character_context.py",
-    }:
+    changed = [path for path in changed if not path.endswith("README.md")]  # package docs never change behaviour
+    if set(changed) - set(EVALUATED_FILES):
         raise ValueError("Baseline dependencies differ; restore a matching evaluation checkout")
     head = (
         await asyncio.to_thread(subprocess.check_output, ["git", "rev-parse", "HEAD"], text=True)
@@ -139,11 +172,7 @@ async def main(args):
     code_sha = hashlib.sha256(
         b"".join(
             (WT / p).read_bytes()
-            for p in (
-                "app/analysis/setting_extractor.py",
-                "app/analysis/book_character_context.py",
-                "app/llm/prompts/character_setting_extraction.md",
-            )
+            for p in (*EVALUATED_FILES, "app/llm/prompts/character_setting_extraction.md")
         )
     ).hexdigest()
     args.output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -194,7 +223,7 @@ async def main(args):
                 "repeat": repeat,
                 "model": args.model,
                 "reasoning_effort": "medium",
-                "baseline_guard_bypassed_for_semantic_comparison": variant == "before",
+                "baseline_guard_bypassed_for_semantic_comparison": variant == "before" and args.bypass_baseline_guard,
                 "baseline_sha": baseline_sha,
                 "head_sha": head,
                 "code_sha256": code_sha,
@@ -211,7 +240,11 @@ async def main(args):
             except Exception as e:  # noqa: BLE001 -- preserve a sanitized failure, then exit nonzero
                 record.update(status="FAILED", error_type=type(e).__name__)
             finally:
-                record.update(seconds=round(time.monotonic() - started, 3), calls=recorder.calls)
+                selection_calls = [c for c in recorder.calls if c["stage"] == "selection"]
+                record.update(seconds=round(time.monotonic() - started, 3), calls=recorder.calls,
+                              catalogue_size=len(case["known"]),
+                              selection=parse_selection(selection_calls[-1]["raw_text"])
+                              if selection_calls and selection_calls[-1].get("status") == "SUCCEEDED" else None)
                 write(path, record)
                 results.append(record)
                 print(
@@ -237,7 +270,23 @@ async def main(args):
             "candidates": len(r.get("result", {}).get("candidates", [])),
             "calls": len(r["calls"]),
             "input_tokens": usage_total(r["calls"], "input_tokens"),
+            "cached_input_tokens": usage_total(r["calls"], "cached_input_tokens"),
             "output_tokens": usage_total(r["calls"], "output_tokens"),
+            "catalogue_size": r.get("catalogue_size"),
+            "selected_characters": (len(r["selection"]["selected_refs"]) + len(r["selection"]["ambiguous_refs"]))
+            if r.get("selection") else None,
+            "stages": {
+                stage: {
+                    "calls": len(calls),
+                    "input_tokens": usage_total(calls, "input_tokens"),
+                    "cached_input_tokens": usage_total(calls, "cached_input_tokens"),
+                    "output_tokens": usage_total(calls, "output_tokens"),
+                    "guard_tokens_max": max((c["guard_tokens"] for c in calls), default=0),
+                    "seconds": round(sum(c.get("seconds", 0) for c in calls), 3),
+                }
+                for stage in ("selection", "extraction")
+                if (calls := [c for c in r["calls"] if c["stage"] == stage])
+            },
         }
         for r in results
     ]
@@ -263,6 +312,10 @@ if __name__ == "__main__":
     p.add_argument("--repeats", type=int, default=1)
     p.add_argument(
         "--variants", nargs="+", choices=("before", "after"), default=["before", "after"]
+    )
+    p.add_argument(
+        "--bypass-baseline-guard", action="store_true",
+        help="Only for baselines that failed the input guard before any model call (pre-#148)",
     )
     args = p.parse_args()
     if not args.confirm_paid:
