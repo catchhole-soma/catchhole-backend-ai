@@ -23,6 +23,7 @@ from app.analysis.setting_extractor import (
     SETTING_EXTRACTION_RESPONSE_SCHEMA,
     CharacterSettingExtractor,
 )
+from app.core.config import get_settings
 from app.llm.responses import LlmTextResponse
 from tests.book_selection_fakes import fake_book_selection
 from tests.test_book_character_context import DEFAULT_SCHEMA_HINTS, inputs
@@ -99,10 +100,12 @@ async def measure(base, body, values):
         context = json.JSONDecoder().raw_decode(user.split('book_character_context:\n', 1)[1])[0]
         selected = len(context['characters'])
     selection_guard = sum(_guard(*prompt) for prompt in provider.selection_prompts)
+    limit = get_settings().llm_setting_extraction_max_input_tokens
     return {'raw_tokens': raw, 'guard_tokens': guarded, 'selected_characters': selected,
             'selection_calls': len(provider.selection_prompts), 'selection_guard_tokens': selection_guard,
             'total_guard_tokens': guarded + selection_guard,
-            'within_limit': guarded <= 64000 and all(_guard(*p) <= 64000 for p in provider.selection_prompts),
+            'within_previous_limit_64000': guarded <= 64000 and all(_guard(*p) <= 64000 for p in provider.selection_prompts),
+            'within_limit': guarded <= limit and all(_guard(*p) <= limit for p in provider.selection_prompts),
             'prompt_sha256': hashlib.sha256((system+user).encode()).hexdigest()}
 
 
@@ -137,7 +140,7 @@ async def main(sha, baseline):
         rows.append({'case':kind, 'characters':count, 'before':before, 'after':after,
                      'guard_saved':before['guard_tokens']-after['guard_tokens'],
                      'total_guard_saved':before['total_guard_tokens']-after['total_guard_tokens']})
-    return {'format_version':2, 'measurement':'offline synthetic provider prompts with a deterministic selection stand-in, not model quality',
+    return {'format_version':3, 'input_limit': get_settings().llm_setting_extraction_max_input_tokens, 'measurement':'offline synthetic provider prompts with a deterministic selection stand-in, not model quality',
             'baseline_sha':sha, 'tokenizer':f'tiktoken {tiktoken.__version__} o200k_base',
             'code_sha256':{name:hashlib.sha256(Path(name).read_bytes()).hexdigest() for name in
                            (*BASELINE_MODULES, 'app/analysis/book_character_selection.py')},

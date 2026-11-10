@@ -427,6 +427,33 @@ def test_selection_call_obeys_the_input_guard_before_the_provider():
     assert client.selection_requests == [] and client.requests == []
 
 
+def test_input_guard_default_is_128k_and_applies_to_both_calls():
+    from app.analysis.exceptions import OrderedPromptBudgetExceeded
+    from app.core.config import get_settings
+    assert get_settings().llm_setting_extraction_max_input_tokens == 128_000
+    # 1,600 synthetic characters: the selection request alone is over the old 64,000 guard but under 128,000.
+    values = inputs(tuple(f'합성인물{i:03}' for i in range(1600)))
+    client = run('모든 인물의 성년은 20세다.', values=values)
+    selection = client.selection_requests[0]
+    guard = ensure_ordered_prompt_fits(selection['system_prompt'], selection['user_prompt'], 10**12,
+                                       response_schema=selection['response_schema'])
+    assert 64_000 < guard < 128_000
+    assert len(client.requests) == 1
+    # An explicit smaller limit still rejects before any provider call, for both stages.
+    client = Client()
+    with pytest.raises(OrderedPromptBudgetExceeded):
+        asyncio.run(CharacterSettingExtractor(llm_client=client, max_attempts=2, max_input_tokens=64_000)
+                    .extract_from_chunk(UUID(int=8), '모든 인물의 성년은 20세다.', schema_hints=DEFAULT_SCHEMA_HINTS,
+                                        ordered_context=values[0], semantic_current_context=values[1], setting_book=values[2]))
+    assert client.selection_requests == [] and client.requests == []
+    client = Client(selection=[])
+    with pytest.raises(OrderedPromptBudgetExceeded):
+        asyncio.run(CharacterSettingExtractor(llm_client=client, max_attempts=2, max_input_tokens=20_000)
+                    .extract_from_chunk(UUID(int=8), '합성인물000: level=12', schema_hints=DEFAULT_SCHEMA_HINTS,
+                                        ordered_context=values[0], semantic_current_context=values[1], setting_book=values[2]))
+    assert client.requests == [], 'extraction guard rejects before the provider'
+
+
 def test_empty_catalogue_skips_selection():
     values = inputs(())
     client = run('하린은 레벨 7이다.', values=values)

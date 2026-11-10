@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     llm_extraction_max_attempts: int = 3
     # purpose별 Responses API 출력 상한. 캐릭터·세계관 추출은 truncation 시 한 번 확장한다.
     llm_setting_extraction_max_output_tokens: int = 32000
+    # 인물 설정 추출(설정집 1단계 선택·2단계 추출, 회차 ordered 경로)의 provider 입력 guard.
+    # provider 한도가 아니라 앱 안전장치이며 인물 사실 비교의 256,000보다 작게 둔다.
+    llm_setting_extraction_max_input_tokens: int = 128000
     llm_setting_extraction_retry_max_output_tokens: int = 64000
     llm_world_setting_extraction_max_output_tokens: int = 32000
     llm_world_setting_extraction_retry_max_output_tokens: int = 64000
@@ -140,6 +143,7 @@ class Settings(BaseSettings):
         "ai_worker_concurrency",
         "ai_worker_blocking_max_workers",
         "database_pool_size",
+        "llm_setting_extraction_max_input_tokens",
     )
     @classmethod
     def validate_positive_integer(cls, value: int) -> int:

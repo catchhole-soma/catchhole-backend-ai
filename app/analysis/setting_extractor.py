@@ -136,12 +136,19 @@ class CharacterSettingExtractor:
         max_attempts: int | None = None,
         max_output_tokens: int | None = None,
         truncation_retry_max_output_tokens: int | None = None,
+        max_input_tokens: int | None = None,
         selection_model: str | None = None,
         selection_prompt_path: Path = DEFAULT_SELECTION_PROMPT_PATH,
         selection_max_output_tokens: int | None = None,
         selection_truncation_retry_max_output_tokens: int | None = None,
     ) -> None:
         settings = get_settings()
+        # 선택·추출 두 호출에 같은 입력 guard를 적용한다. 운영 기본 128,000(v0054, 이전 64,000).
+        self.max_input_tokens = (
+            settings.llm_setting_extraction_max_input_tokens if max_input_tokens is None else max_input_tokens
+        )
+        if self.max_input_tokens < 1:
+            raise ValueError("max_input_tokens must be at least 1.")
         # 설정집 1단계(관련 인물 선택)는 같은 client로 호출해 같은 job 장부에 정산된다.
         self.selection_model = selection_model or settings.effective_llm_book_character_selection_model
         self.selection_prompt_path = selection_prompt_path
@@ -367,7 +374,7 @@ class CharacterSettingExtractor:
         catalog, details, unresolved = book_character_rows(ordered_context, semantic_current_context)
         selection = await select_book_characters(
             chunk_text, catalog, details, unresolved,
-            client=BoundedOrderedClient(self.llm_client),
+            client=BoundedOrderedClient(self.llm_client, self.max_input_tokens),
             model=self.selection_model,
             max_attempts=self.max_attempts,
             max_output_tokens=self.selection_max_output_tokens,
@@ -392,7 +399,8 @@ class CharacterSettingExtractor:
         requires_ordered_bound: bool = False,
     ) -> CharacterSettingExtractionResult:
         # 시스템 프롬프트 + 사용자 프롬프트를 조합하여 LLM에 요청
-        client = BoundedOrderedClient(self.llm_client) if requires_ordered_bound else self.llm_client
+        client = (BoundedOrderedClient(self.llm_client, self.max_input_tokens)
+                  if requires_ordered_bound else self.llm_client)
         response = await client.create_text_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,

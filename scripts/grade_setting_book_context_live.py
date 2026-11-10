@@ -14,7 +14,7 @@ from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
 
-GUARD_LIMIT = 64_000
+GUARD_LIMIT = 128_000  # v0054 default; the v0053 guard was 64,000
 WILDCARD_SUBJECT = "미상"
 
 
