@@ -116,6 +116,24 @@ def test_typo_retries_transient_provider_failure_with_metering(path, delays):
     assert len(ledger.unknown) == int(path == '/responses')
 
 
+@pytest.mark.parametrize('status,code', [(400, 'invalid_request_error'), (401, 'invalid_api_key'),
+                                      (403, None), (429, 'insufficient_quota')])
+@pytest.mark.parametrize('path', ['/responses', '/responses/input_tokens'])
+def test_typo_permanent_rejection_preserves_segment_stop_code(status, code, path, delays):
+    def provider(request):
+        if request.url.path == path:
+            return httpx.Response(status, json={'error': {'code': code}})
+        return success(request)
+
+    ledger, limits = Ledger(), budget()
+    with pytest.raises(IncompleteInspection) as exc:
+        run_provider(provider, ledger, limits, role='TYPO')
+    assert exc.value.code == 'LLM_PROVIDER_REJECTED'
+    assert exc.value.cause == f'MODEL_CALL_HTTP_{status}'
+    assert limits.model_calls == 1 and delays == []
+    assert len(ledger.reserved) == int(path == '/responses')
+
+
 def test_exact_count_retry_does_not_generate_before_count_succeeds(delays):
     paths = []
 

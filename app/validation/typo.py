@@ -150,7 +150,9 @@ async def _inspect(llm, state, prompt, role):
     except TimeoutError:
         raise IncompleteInspection("BUDGET_EXHAUSTED") from None
     except ProviderFailure as exc:
-        raise IncompleteInspection("LLM_PROVIDER_ERROR", exc.cause) from None
+        rejected = exc.status is not None and 400 <= exc.status < 500 and not exc.retryable
+        code = "LLM_PROVIDER_REJECTED" if rejected else "LLM_PROVIDER_ERROR"
+        raise IncompleteInspection(code, exc.cause) from None
     except LlmInputTokenCountError:
         raise IncompleteInspection("INPUT_TOKEN_COUNT_FAILED") from None
     except LlmOutputTruncatedError:
