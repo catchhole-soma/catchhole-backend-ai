@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from app.llm.exceptions import LlmOutputTruncatedError
 from app.llm.protocols import LlmCallOptions, LlmResponseSchema
 from app.validation.contracts import IncompleteInspection
+from app.validation.provider_retry import ProviderFailure, invoke_with_retry
 
 GENERATION_ROLES = ("PLANNER", "JUDGE", "TYPO")
 
@@ -125,7 +126,6 @@ SCHEMA_VERSION = "v4"  # Grid v4: planner without lookup intents, judge OPEN/FIN
 
 async def call_role(client, role, payload, response_type, budget, *, runtime, schema=None, schema_name=None):
     """One counted, preflighted generation call of a trusted role with that role's frozen runtime."""
-    budget.consume("model")
     # Trusted invocation role, never inferred from prompt output.
     if hasattr(client, "for_validation_role"):
         client = client.for_validation_role(role)
@@ -140,7 +140,7 @@ async def call_role(client, role, payload, response_type, budget, *, runtime, sc
         "response_schema": schema,
         "call_options": runtime.call_options,
     }
-    try:
+    async def attempt():
         count = await asyncio.wait_for(client.count_input_tokens(**kwargs), budget.remaining())
         if type(count) is not int or count < 0:
             raise IncompleteInspection("INPUT_COUNT_FAILED")
@@ -150,7 +150,12 @@ async def call_role(client, role, payload, response_type, budget, *, runtime, sc
             client.create_text_response(**kwargs, max_output_tokens=runtime.max_output_tokens),
             budget.remaining(),
         )
+        return response
+    try:
+        response = await invoke_with_retry(attempt, budget, role)
         return response_type.model_validate_json(response.text)
+    except ProviderFailure as exc:
+        raise IncompleteInspection("MODEL_CALL_FAILED", exc.cause) from None
     except IncompleteInspection:
         raise
     except LlmOutputTruncatedError:

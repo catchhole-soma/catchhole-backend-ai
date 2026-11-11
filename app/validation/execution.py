@@ -6,6 +6,7 @@ from hashlib import sha256
 from app.usage.metering import MeteredEmbeddingClient, MeteredTextGenerationClient
 from app.validation.contracts import IncompleteInspection, InvocationBudget
 from app.validation.models import GENERATION_ROLES, RoleRuntime
+from app.validation.provider_retry import ObservedProvider
 
 CONFIGURATION_VERSION = 2  # Job configuration v2: per-role model/effort/outputTokens, no catalogue page size
 _BUDGET_FIELDS = {
@@ -131,6 +132,7 @@ class ValidationRoleClients:
 
     def __init__(self, raw, ledger, claim, runtimes, *, request_semaphore=None):
         # request_semaphore is the runner's one process-wide provider cap; None keeps calls uncapped.
+        raw = ObservedProvider(raw, getattr(ledger, "gate", None))
         self.runtimes = dict(runtimes)
         self.clients = {role: MeteredTextGenerationClient(
             raw, ledger, claim.job_id, "VALIDATION_" + role, runtime.model, claim.lease_token,
