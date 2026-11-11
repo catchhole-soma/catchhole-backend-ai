@@ -50,7 +50,7 @@ def delays(monkeypatch):
     return values
 
 
-def run_provider(provider, ledger=None, limits=None):
+def run_provider(provider, ledger=None, limits=None, role='JUDGE'):
     ledger = ledger or Ledger()
     limits = limits or budget()
 
@@ -60,8 +60,12 @@ def run_provider(provider, ledger=None, limits=None):
                                         'https://private.invalid/responses', http_client=http)
             runtime = RoleRuntime.of('gpt-6-luna', 'medium', 100)
             claim = SimpleNamespace(job_id=uuid4(), lease_token=uuid4())
-            roles = ValidationRoleClients(raw, ledger, claim, {'JUDGE': runtime},
+            roles = ValidationRoleClients(raw, ledger, claim, {role: runtime},
                                           request_semaphore=asyncio.Semaphore(1))
+            if role == 'TYPO':
+                from app.validation.typo import _inspect
+                return await _inspect(roles.for_validation_role(role), limits,
+                                      'PRIVATE_MANUSCRIPT', runtime)
             result = await call_role(roles, 'JUDGE', {'source': 'PRIVATE_MANUSCRIPT'},
                                      Answer, limits, runtime=runtime)
             return result
@@ -93,6 +97,23 @@ def test_generation_retry_preserves_failed_usage_and_new_reservation(delays, cap
     assert delays == [3.25]
     assert 'status=503' in caplog.text and 'request_id=req_test123' in caplog.text
     assert all(x not in caplog.text for x in ['PRIVATE_MANUSCRIPT', 'SECRET_KEY', 'private.invalid'])
+
+
+@pytest.mark.parametrize('path', ['/responses', '/responses/input_tokens'])
+def test_typo_retries_transient_provider_failure_with_metering(path, delays):
+    failed = False
+
+    def provider(request):
+        nonlocal failed
+        if request.url.path == path and not failed:
+            failed = True
+            return httpx.Response(503, json={})
+        return success(request)
+
+    result, ledger, limits = run_provider(provider, role='TYPO')
+    assert result.text == '{"value": 1}' and limits.model_calls == 2
+    assert len(ledger.settled) == 1 and delays == [2.25]
+    assert len(ledger.unknown) == int(path == '/responses')
 
 
 def test_exact_count_retry_does_not_generate_before_count_succeeds(delays):
