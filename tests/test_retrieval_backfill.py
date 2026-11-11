@@ -17,6 +17,7 @@ from app.retrieval.backfill import (
     CampaignProvider,
     CampaignRunner,
     CampaignState,
+    entrypoint,
     exclusive_campaign,
     main,
     operations_ready,
@@ -158,6 +159,7 @@ class Corpus:
         self.snapshot_calls = 0
         self.locked = []
         self.books = BookCorpus()
+        self.missing = set()  # episode IDs whose stored S3 object cannot be read
 
     def add(self, work, number, value=SHORT, *, episode_id=None):
         memory = MemoryStore()
@@ -245,12 +247,14 @@ class Corpus:
 
         return invoke
 
+    def read(self, *args, **kwargs):
+        episode = self.current_source.episode_id
+        if episode in self.missing:
+            raise LookupError("synthetic missing object")  # like S3 NoSuchKey
+        return self.texts[episode]
+
     def service(self):
-        return RetrievalIndexService(
-            self,
-            SimpleNamespace(get_text=lambda *a, **kw: self.texts[self.current_source.episode_id]),
-            IndexSpec(),
-        )
+        return RetrievalIndexService(self, SimpleNamespace(get_text=self.read), IndexSpec())
 
 
 def config(tmp_path, **changes):
@@ -459,9 +463,11 @@ def test_source_changes_during_provider_do_not_advance_cursor_or_restore_vectors
     assert first["state"] == "PROGRESS" and first["reason"] == "SOURCE_CHANGED"
     assert first["checkedSources"] == 0
     assert all(c.status != "READY" for c in item.chunks)
-    for _ in range(2):
-        report = invoke(cfg, corpus)
-    assert report["state"] == "BLOCKED" and report["providerAttempts"] == 0
+    second, third = invoke(cfg, corpus), invoke(cfg, corpus)
+    assert second["state"] == "PROGRESS" and second["reason"] == "SOURCE_CHANGED"
+    # Owner decision 2026-11-11: the strike that used to block excludes the source for this sweep.
+    assert third["state"] == "PARTIAL" and third["excludedOrUnavailableSources"] == 1
+    assert third["providerAttempts"] == 0 and all(c.status != "READY" for c in item.chunks)
 
 
 def test_unavailable_sources_produce_partial_not_ready(tmp_path):
@@ -893,7 +899,9 @@ def test_completed_empty_sweep_resets_old_failure_count_before_new_source(tmp_pa
     new.source = replace(new.source, content_hash="c" * 64)
     assert invoke(cfg, corpus)["state"] == "PROGRESS"
     assert invoke(cfg, corpus)["state"] == "PROGRESS"
-    assert invoke(cfg, corpus)["state"] == "BLOCKED"
+    # The third strike on the new source excludes it (2026-11-11); without the reset it would come sooner.
+    third = invoke(cfg, corpus)
+    assert third["state"] == "PARTIAL" and third["excludedOrUnavailableSources"] == 1
 
 
 def test_successful_vectors_with_unknown_usage_block_following_paid_calls(tmp_path):
@@ -939,3 +947,148 @@ def test_status_reads_pending_outbox_without_delivery_or_mutation(tmp_path, monk
     assert report["sweep"] == 1 and report["checkedSources"] == report["readySources"] == 0
     assert not report["sweepInProgress"] and not report["uncertainAttempt"]
     assert before == (tmp_path / "outbox.sqlite").read_bytes()
+
+
+# Owner decision 2026-11-11 (#152): one episode whose manuscript cannot be read, or whose source stays changed,
+# is excluded like a setting book instead of stopping every work's indexing until an operator resumes.
+
+
+def ready(memory):
+    return bool(memory.chunks) and all(chunk.status == "READY" for chunk in memory.chunks)
+
+
+def test_unreadable_episode_is_excluded_and_later_episodes_and_works_are_still_indexed(tmp_path):
+    corpus, work, other = Corpus(), UUID(int=1), UUID(int=2)
+    first, missing, later = (corpus.add(work, number) for number in (1, 2, 3))
+    corpus.missing.add(missing.source.episode_id)
+    book = corpus.books.add(work)
+    next_work = corpus.add(other, 1)
+    report = invoke(config(tmp_path), corpus)
+    assert report["state"] == "PARTIAL" and report["reason"] is None
+    assert ready(first) and ready(later) and ready(book) and ready(next_work)
+    assert not missing.chunks and not report["uncertainAttempt"]
+    assert report["checkedSources"] == 5 and report["readySources"] == 4
+    assert report["excludedOrUnavailableSources"] == 1 and report["providerAttempts"] == 4
+    # The excluded episode is not counted as a setting book.
+    assert report["checkedSettingBooks"] == report["readySettingBooks"] == 1
+    assert report["excludedOrUnavailableSettingBooks"] == 0
+
+
+def test_excluded_episode_is_retried_each_sweep_and_indexed_once_readable(tmp_path):
+    corpus, work = Corpus(), uuid4()
+    missing, later = corpus.add(work, 1), corpus.add(work, 2)
+    corpus.missing.add(missing.source.episode_id)
+    cfg = config(tmp_path)
+    first = invoke(cfg, corpus)
+    assert first["state"] == "PARTIAL" and first["sweep"] == 1 and ready(later)
+    # Still missing: the next sweep starts from the beginning and tries it again without an operator.
+    again = invoke(cfg, corpus)
+    assert again["state"] == "PARTIAL" and again["sweep"] == 2 and again["providerAttempts"] == 0
+    assert again["excludedOrUnavailableSources"] == 1 and again["readySources"] == 1
+    corpus.missing.clear()  # the object is restored under the same key/version/hash
+    restored = invoke(cfg, corpus)
+    assert restored["state"] == "READY" and restored["sweep"] == 3 and ready(missing)
+    assert restored["providerAttempts"] == 1 and restored["excludedOrUnavailableSources"] == 0
+    assert corpus.snapshot_calls == 3
+
+
+def test_persistent_source_change_keeps_two_retry_runs_then_is_excluded_for_the_sweep(tmp_path):
+    corpus, work, other = Corpus(), UUID(int=1), UUID(int=2)
+    changed = corpus.add(work, 1)
+    changed.source = replace(changed.source, content_hash="b" * 64)  # stored object does not match
+    later, next_work = corpus.add(work, 2), corpus.add(other, 1)
+    cfg = config(tmp_path)
+    for _ in range(2):  # unchanged: the run ends and the next timer retries
+        strike = invoke(cfg, corpus)
+        assert strike["state"] == "PROGRESS" and strike["reason"] == "SOURCE_CHANGED"
+        assert strike["checkedSources"] == 0 and strike["providerAttempts"] == 0
+        assert not later.chunks and not next_work.chunks
+    third = invoke(cfg, corpus)  # previously BLOCKED / SOURCE_CHANGED
+    assert third["state"] == "PARTIAL" and third["reason"] is None and third["sweep"] == 1
+    assert third["excludedOrUnavailableSources"] == 1 and third["readySources"] == 2
+    assert ready(later) and ready(next_work) and not changed.chunks
+    # The next sweep starts it over with fresh strikes and indexes it once consistent.
+    retry = invoke(cfg, corpus)
+    assert retry["state"] == "PROGRESS" and retry["reason"] == "SOURCE_CHANGED"
+    assert retry["sweep"] == 2
+    changed.source = replace(changed.source, content_hash=sha256(SHORT.encode()).hexdigest())
+    fixed = invoke(cfg, corpus)
+    assert fixed["state"] == "READY" and fixed["providerAttempts"] == 1 and ready(changed)
+
+
+def test_post_save_source_change_uses_the_same_strikes_then_exclusion(tmp_path):
+    corpus, work = Corpus(), uuid4()
+    stuck, later = corpus.add(work, 1), corpus.add(work, 2)
+    inspect = corpus.inspect
+
+    def never_ready(source, spec):
+        # The final current-source inspection after saving keeps failing for this episode.
+        if source.episode_id == stuck.source.episode_id:
+            return {"state": "SOURCE_CHANGED"}
+        return inspect(source, spec)
+
+    corpus.inspect = never_ready
+    cfg = config(tmp_path)
+    first, second = invoke(cfg, corpus), invoke(cfg, corpus)
+    assert first["state"] == second["state"] == "PROGRESS"
+    assert first["reason"] == second["reason"] == "SOURCE_CHANGED"
+    assert first["providerAttempts"] == 1 and second["providerAttempts"] == 0
+    assert first["checkedSources"] == second["checkedSources"] == 0 and not later.chunks
+    third = invoke(cfg, corpus)
+    assert third["state"] == "PARTIAL" and third["excludedOrUnavailableSources"] == 1
+    assert ready(later)
+
+
+def unknown_usage(provider):
+    provider.unknown_usage += 1
+    raise IndexProviderFailure("PROVIDER_CONTRACT", False)
+
+
+def retryable_failure(_):
+    raise IndexProviderFailure("PROVIDER_RETRYABLE", True)
+
+
+@pytest.mark.parametrize(
+    "action,reason",
+    [(unknown_usage, "UNKNOWN_USAGE"), (retryable_failure, "PROVIDER_RETRIES_EXHAUSTED")],
+)
+def test_exclusion_does_not_soften_unknown_usage_or_provider_failure(tmp_path, action, reason):
+    corpus, work = Corpus(), uuid4()
+    missing, failing = corpus.add(work, 1), corpus.add(work, 2)
+    corpus.missing.add(missing.source.episode_id)
+    cfg = config(tmp_path, max_retries=0)
+    report = invoke(cfg, corpus, Provider(action))
+    assert report["state"] == "BLOCKED" and report["reason"] == reason
+    assert report["excludedOrUnavailableSources"] == 1 and report["providerAttempts"] == 1
+    assert not ready(failing)
+    later = invoke(cfg, corpus)
+    assert later["state"] == "BLOCKED" and later["providerAttempts"] == 0
+
+
+def test_campaign_blocked_by_the_previous_rule_still_needs_an_explicit_resume(tmp_path):
+    corpus, work = Corpus(), uuid4()
+    missing, later = corpus.add(work, 1), corpus.add(work, 2)
+    corpus.missing.add(missing.source.episode_id)
+    cfg = config(tmp_path)
+    state = CampaignState(cfg, IndexSpec())
+    state.start_sweep(corpus.backfill_snapshot(()))
+    state.outcome("BLOCKED", "SOURCE_UNREADABLE")  # what the episode rule left before 2026-11-11
+    state.close()
+    for _ in range(2):  # a deploy and later timer runs do not unblock it
+        blocked = invoke(cfg, corpus)
+        assert blocked["state"] == "BLOCKED" and blocked["reason"] == "SOURCE_UNREADABLE"
+        assert blocked["providerAttempts"] == 0 and not later.chunks
+    resumed = invoke(cfg, corpus, resume=True)
+    assert resumed["state"] == "PARTIAL" and resumed["sweep"] == 1
+    assert resumed["excludedOrUnavailableSources"] == 1 and ready(later)
+
+
+@pytest.mark.parametrize("state,code", [("PARTIAL", 0), ("READY", 0), ("BLOCKED", 2)])
+def test_partial_sweep_exits_zero(monkeypatch, capsys, state, code):
+    async def result(mode):
+        return {"state": state}
+
+    monkeypatch.setattr("app.retrieval.backfill.main", result)
+    monkeypatch.setattr("sys.argv", ["backfill", "run"])
+    assert entrypoint() == code
+    assert json.loads(capsys.readouterr().out) == {"state": state}

@@ -136,7 +136,7 @@ def test_archived_books_are_skipped_and_archiving_during_the_call_writes_nothing
 
 
 def test_oversized_setting_book_is_excluded_and_the_sweep_continues(tmp_path):
-    # Owner decision 2026-11-03: unlike an episode, one oversized book must not stop the whole campaign.
+    # Owner decision 2026-11-03 (episodes followed on 2026-11-11): one oversized book must not stop the campaign.
     corpus, work, other = Corpus(), uuid4(), uuid4()
     corpus.add(work, 1)
     big = corpus.books.add(work, "😀" * (MAX_SOURCE_BYTES // 4) + "a")
@@ -151,11 +151,17 @@ def test_oversized_setting_book_is_excluded_and_the_sweep_continues(tmp_path):
     assert not report["uncertainAttempt"]
 
 
-def test_oversized_episode_still_blocks_the_campaign(tmp_path):
+def test_oversized_episode_is_excluded_like_a_setting_book(tmp_path):
+    # Owner decision 2026-11-11: an episode over the cap no longer blocks the campaign either.
     corpus, work = Corpus(), uuid4()
-    corpus.add(work, 1, "😀" * (MAX_SOURCE_BYTES // 4) + "a")
+    big = corpus.add(work, 1, "😀" * (MAX_SOURCE_BYTES // 4) + "a")
+    book = corpus.books.add(work)
     report = invoke(config(tmp_path), corpus)
-    assert report["state"] == "BLOCKED" and report["reason"] == "SOURCE_UNREADABLE"
+    assert report["state"] == "PARTIAL" and report["reason"] is None
+    assert not big.chunks and ready(book)
+    assert report["excludedOrUnavailableSources"] == 1 and report["readySources"] == 1
+    assert report["checkedSettingBooks"] == report["readySettingBooks"] == 1
+    assert report["excludedOrUnavailableSettingBooks"] == 0
 
 
 def test_unidentified_book_is_excluded_and_the_sweep_is_partial(tmp_path):

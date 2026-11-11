@@ -119,11 +119,13 @@ def test_large_legacy_backfill_resumes_missing_chunks_and_skips_saved_vectors(tm
     assert invoke(cfg, corpus)["providerAttempts"] == 0
 
 
-def test_over_byte_limit_backfill_blocks_without_retrying_it_as_a_source_change(tmp_path):
+def test_over_byte_limit_backfill_is_excluded_without_retrying_it_as_a_source_change(tmp_path):
+    # Owner decision 2026-11-11: excluded at once (no SOURCE_CHANGED strikes) instead of BLOCKED.
     corpus = Corpus()
     corpus.add(uuid4(), 1, "😀" * (MAX_SOURCE_BYTES // 4) + "a")
     cfg = config(tmp_path)
     report = invoke(cfg, corpus)
-    assert report["state"] == "BLOCKED" and report["reason"] == "SOURCE_UNREADABLE"
+    assert report["state"] == "PARTIAL" and report["reason"] is None
     assert report["providerAttempts"] == report["admittedInputTokenUpperBound"] == 0
-    assert report["checkedSources"] == 0 and not report["uncertainAttempt"]
+    assert report["checkedSources"] == report["excludedOrUnavailableSources"] == 1
+    assert not report["uncertainAttempt"]
