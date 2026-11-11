@@ -36,10 +36,14 @@ from app.storage.s3 import S3TextObjectStorage
 from app.usage.metering import _estimate_embedding_token_upper_bound
 
 ZERO_UUID = UUID(int=0)
+# Consecutive no-progress runs (no source advanced, no chunk saved) before the campaign is BLOCKED.
+NO_PROGRESS_LIMIT = 3
 NORMAL_STATES = {
     "DISABLED",
     "READY",
     "EMPTY",
+    # A finished sweep with excluded sources; the next sweep retries them without an operator.
+    "PARTIAL",
     "PROGRESS",
     "TIME_LIMIT",
     "CHUNK_LIMIT",
@@ -256,7 +260,13 @@ class CampaignState:
                 "UPDATE campaigns SET no_progress=no_progress+1 WHERE id=?",
                 (self.config.campaign_id,),
             )
-        self.outcome("BLOCKED" if self.row()["no_progress"] >= 3 else "PROGRESS", reason)
+        self.outcome(
+            "BLOCKED" if self.row()["no_progress"] >= NO_PROGRESS_LIMIT else "PROGRESS", reason
+        )
+
+    def last_strike(self):
+        """True when the next `no_progress` would turn the campaign BLOCKED."""
+        return self.row()["no_progress"] + 1 >= NO_PROGRESS_LIMIT
 
     def resume(self):
         with self.db:
@@ -538,17 +548,15 @@ class CampaignRunner:
         if report["sourceFailures"] or report["changedChunks"]:
             codes = {r["code"] for r in report["sourceFailures"]}
             if codes <= {"SOURCE_CHANGED"}:
-                state.no_progress("SOURCE_CHANGED")
-            elif (advance == state.advance_book and codes == {"SOURCE_UNREADABLE"}
-                  and not report["changedChunks"]):
-                # A setting book over the 2,000,000-byte cap (uploads allow 10 MiB) or otherwise unreadable is
-                # excluded, so one book does not stop every work's episodes and books (owner decision 2026-11-03).
-                # The sweep ends PARTIAL; it is never marked READY.
+                return self._source_changed(advance, source)
+            if codes == {"SOURCE_UNREADABLE"} and not report["changedChunks"]:
+                # An episode or setting book over the 2,000,000-byte cap, missing from S3 or otherwise unreadable is
+                # excluded, so one source does not stop every work's indexing (owner decisions 2026-11-03 for setting
+                # books, 2026-11-11 for episodes). The sweep ends PARTIAL, never READY; the next sweep retries it.
                 advance(source, ready=False)
                 self.checked += 1
                 return None
-            else:
-                state.outcome("BLOCKED", "SOURCE_UNREADABLE")
+            state.outcome("BLOCKED", "SOURCE_UNREADABLE")
             return self._status()
         if report["failedChunks"] or report["state"] not in {"COMPLETED", "PARTIAL"}:
             state.outcome(
@@ -558,11 +566,24 @@ class CampaignRunner:
             return self._status()
         current = await asyncio.to_thread(service.store.inspect, source, service.spec)
         if current["state"] != "READY":
-            state.no_progress("SOURCE_CHANGED")
-            return self._status()
+            return self._source_changed(advance, source)
         advance(source, ready=True)
         self.checked += 1
         return None
+
+    def _source_changed(self, advance, source):
+        """A changed source ends the run and is retried next timer; the strike that would block excludes it.
+
+        Every run re-reads the source from a fresh page and a re-upload commits a new key/version/hash, so a change
+        that outlives NO_PROGRESS_LIMIT consecutive runs is not an upload in progress. Like an unreadable source it
+        is excluded for this sweep only (PARTIAL) and the next sweep retries it (owner decision 2026-11-11).
+        """
+        if self.state.last_strike():
+            advance(source, ready=False)
+            self.checked += 1
+            return None
+        self.state.no_progress("SOURCE_CHANGED")
+        return self._status()
 
 
 async def operations_ready(client):

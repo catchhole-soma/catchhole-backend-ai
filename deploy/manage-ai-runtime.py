@@ -427,6 +427,9 @@ def main():
             "DISABLED",
             "READY",
             "EMPTY",
+            # A finished sweep with excluded sources: the next timer retries them, so the unit
+            # is not failed. The first public release still requires READY/EMPTY.
+            "PARTIAL",
             "PROGRESS",
             "TIME_LIMIT",
             "CHUNK_LIMIT",

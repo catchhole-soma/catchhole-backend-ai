@@ -111,7 +111,7 @@ Docker나 종료 처리가 지연되면 실행 중인 같은 one-shot의 다음 
 확인한 때만 불확실 표식을 해제하고 다음 timer에서 다시 시도한다. 연속 세 번 실패하면 중단한다.
 인증·권한 등 영구 거절은 즉시 중단하고, 어느 경우도 이미 예약한 누적 입력 상한은 환급하지 않는다.
 임베딩 호출 후 오류·취소·저장 실패의 불확실 보호는 유지한다. 정상 순회 완료는 EMPTY도 무진행 횟수를 초기화한다.
-회차·설정집의 현재 청크가 모두 READY인 경우만 전진하며, 시간/청크 제한 뒤 같은 위치에서 계속한다.
+회차·설정집은 현재 청크가 모두 READY이거나 아래처럼 제외로 센 경우만 전진하며, 시간/청크 제한 뒤 같은 위치에서 계속한다.
 다음 순회는 새 원고·수정분을 찾고 완료 청크는 재호출하지 않는다.
 
 입력 상한은 provider 호출 전에 SQLite에 기록하고 실패/재시작으로 환급하지 않는다.
@@ -134,9 +134,16 @@ sudo journalctl -u catchhole-retrieval-backfill.service -n 30 --no-pager
 `READY`는 해당 순회에서 확인한 현재 원문 범위의 준비이며 이후 변경/검색 품질까지 보증하지 않는다.
 `checkedSources`·`readySources`·`excludedOrUnavailableSources`는 회차와 설정집의 합계이고 그중 설정집 몫은
 `checkedSettingBooks`·`readySettingBooks`·`excludedOrUnavailableSettingBooks`다. `supportedSourceTypes`는 `CURRENT_EPISODE`·`SETTING_BOOK`(현재 판),
-`unsupportedSourceTypes`는 `PAST_EPISODE_VERSION`이다. 2,000,000 byte를 넘거나 읽을 수 없는 설정집은 회차와 달리 campaign을 멈추지 않고 그 설정집만 제외로 세며
-(순회 결과 `PARTIAL`, READY로 표시하지 않음) 다른 작품의 회차·설정집은 계속 채운다(소유자 결정 2026-11-03, 업로드는 10MiB까지 허용).
-회차의 2,000,000 byte 초과는 그대로 `BLOCKED / SOURCE_UNREADABLE`이다. 자동 첫 공개 판정도 이 합계를 쓰므로 설정집의 제외도 첫 공개를 보류한다.
+`unsupportedSourceTypes`는 `PAST_EPISODE_VERSION`이다. 2,000,000 byte를 넘거나 S3 원고가 없는 등 읽을 수 없는 회차·설정집(`SOURCE_UNREADABLE`)은
+campaign을 멈추지 않고 그 출처만 제외로 세며(순회 결과 `PARTIAL`, READY로 표시하지 않음) 같은 작품의 다음 회차·설정집과 다른 작품은 계속 채운다.
+설정집은 소유자 결정 2026-11-03(업로드는 10MiB까지 허용), 회차는 소유자 결정 2026-11-11이다. 원고 객체가 없는 회차 하나가 `BLOCKED / SOURCE_UNREADABLE`로
+멈춘 뒤 `resume`해도 같은 회차에서 다시 멈춰, 모든 작품의 색인이 닷새 동안 멈췄기 때문이다(분석 회차 2,428개 중 38작품 1,294개 미색인).
+`SOURCE_CHANGED`는 무진행 1·2회째에는 기존처럼 그 실행을 끝내고 다음 timer에 다시 시도한다. 무진행 횟수는 campaign 단위이며 출처 전진·청크 저장·순회 완료·`resume`이
+0으로 되돌린다. campaign이 `BLOCKED`가 될 3회째에는 그 출처만 제외하고 계속한다. 재업로드는 새 key/version/hash로 커밋되고 실행마다 새 페이지를 읽으므로,
+세 실행 동안 이어진 변경은 업로드 중인 원고가 아니다. 제외는 그 순회에만 적용되며 다음 순회가 처음부터 다시 읽으므로 복구된 원고는 운영자 조치 없이 채워진다.
+끝난 순회의 `PARTIAL`은 정상 결과라 컨테이너와 `manage-ai-runtime.py run` 모두 종료 코드 0이고 timer unit도 실패로 표시되지 않는다.
+따라서 제외된 출처는 `status`·journald의 `excludedOrUnavailableSources`로 확인하고 S3 원고와 DB hash를 따로 대조한다.
+자동 첫 공개 판정도 이 합계를 쓰므로 회차·설정집의 제외는 첫 공개를 보류한다.
 `TIME_LIMIT`/`CHUNK_LIMIT`은 다음 주기에 이어지고, `INDEX_BUSY`는 동시 실행 중이다.
 `PARTIAL`, `REPORTS_PENDING`, `BLOCKED`, `BUDGET_EXHAUSTED`는 자동 첫 공개 조건을 충족하지 않는다.
 대상이 실제로 없는 완료 순회만 EMPTY로 인정한다.
@@ -157,14 +164,17 @@ sudo systemctl start --no-block catchhole-retrieval-backfill.service
 ### 기존 대용량 원고로 중단된 최초 백필
 
 이전 색인기는 UTF-8 2,000,000 byte 안에 있는 원고도 250,000 code point를 넘으면
-`SOURCE_CHANGED`로 보고했다. 반복되면 캠페인이 `BLOCKED`가 되므로 이 코드만으로 실제 원문 수정이라고 단정하지 않는다.
+`SOURCE_CHANGED`로 보고했다. 당시에는 반복되면 캠페인이 `BLOCKED`가 됐다(2026-11-11부터는 그 회차만 제외). 이 코드만으로 실제 원문 수정이라고 단정하지 않는다.
 원문 본문·key·hash를 로그에 남기지 않고 현재 출처 일치 여부, UTF-8 byte 수와 hash 일치 여부로 원인을 확인한다.
 
 검색 읽기 상한을 2,000,000 bytes로 맞춘 Java 인용 검증을 먼저 배포하고, 같은 상한의 AI 이미지를 배포한다.
 새 AI 이미지가 실제 적용된 뒤 미전송 보고 0·불확실 호출 없음과 기존 예산을 확인해 위 `resume`으로 같은 캠페인을 재개한다.
 코드 배포 자체는 `BLOCKED`를 해제하지 않는다. 첫 공개 단계가 먼저 실패했으면 백필 준비 완료 뒤 최신 AI 배포를 재실행한다.
-이미 완료된 청크·진행 위치·누적 예산은 보존하며, 막힌 회차를 건너뛰거나 원문을 자르지 않는다.
-새 상한도 초과한 원문은 `SOURCE_UNREADABLE`로 중단하며 자동 제외나 공개 우회는 하지 않는다.
+이미 완료된 청크·진행 위치·누적 예산은 보존하며 원문을 자르지 않는다.
+새 상한도 초과한 원문은 `SOURCE_UNREADABLE`이며, 소유자 결정 2026-11-11부터는 campaign을 멈추지 않고 그 회차만 그 순회에서 제외한다(위 상태 설명).
+순회는 `PARTIAL`로 끝나 첫 공개를 계속 보류하므로 공개 우회는 아니다.
+2026-11-11 이전 규칙으로 이미 `BLOCKED / SOURCE_UNREADABLE`인 campaign은 새 이미지 배포만으로 풀리지 않는다.
+미전송 보고 0·불확실 호출 없음을 확인한 뒤 위 `resume`을 실행하면 같은 순회가 그 회차를 제외하고 이어간다.
 
 새 유료 백필 중단은 `retrieval.env`의 `RETRIEVAL_BACKFILL_ENABLED=false`와 API의
 `CHAT_OPERATIONS_ENABLED=false`로 제어한다. timer를 유지하면 disabled 상태에서도 outbox 복구가 계속된다.

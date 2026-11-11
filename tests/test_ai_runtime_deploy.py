@@ -575,6 +575,19 @@ def test_blocked_runner_status_is_preserved_without_credentials(runtime, monkeyp
     }
 
 
+@pytest.mark.parametrize(
+    "state,code", [("PARTIAL", 0), ("TIME_LIMIT", 0), ("BLOCKED", 2), ("REPORTS_PENDING", 2)]
+)
+def test_timer_run_treats_a_partial_sweep_as_normal(runtime, monkeypatch, capsys, state, code):
+    # 2026-11-11: an excluded episode leaves each finished sweep PARTIAL; the 5-minute unit must not fail.
+    obj, _ = runtime
+    monkeypatch.setattr(deploy, "Runtime", lambda *args: obj)
+    monkeypatch.setattr("sys.argv", ["manage-ai-runtime.py", "run"])
+    monkeypatch.setattr(obj, "compose", lambda *a, **k: json.dumps({"state": state}))
+    assert deploy.main() == code
+    assert json.loads(capsys.readouterr().out)["state"] == state
+
+
 def test_deploy_probe_connection_has_reserved_headroom(runtime):
     obj, configs = runtime
     configs["retrieval"]["retrieval-index"]["environment"]["AI_RUNTIME_DB_CONNECTION_BUDGET"] = "31"
