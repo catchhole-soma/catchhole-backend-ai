@@ -35,6 +35,7 @@ from app.validation.contracts import (
 )
 from app.validation.data import ValidationDataClient
 from app.validation.models import RoleRuntime
+from app.validation.provider_retry import ObservedProvider, ProviderFailure, invoke_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ async def _call(state, operation, *args, kind=None, **kwargs):
             return await operation(*args, **kwargs)
     except TimeoutError:
         raise IncompleteInspection("BUDGET_EXHAUSTED") from None
-    except (IncompleteInspection, LlmResponseValidationError, LlmInputTokenCountError,
+    except (IncompleteInspection, ProviderFailure, LlmResponseValidationError, LlmInputTokenCountError,
             httpx.HTTPError):
         raise
     except Exception:  # noqa: BLE001 - external I/O failures must not expose arbitrary details
@@ -136,14 +137,22 @@ async def _inspect(llm, state, prompt, role):
                "response_schema": _SCHEMA, "call_options": role.call_options}
     if state.model_calls >= state.limits.model_calls:
         raise IncompleteInspection("BUDGET_EXHAUSTED")
-    try:
+    async def attempt():
         count = await _call(state, llm.count_input_tokens, **request)
         if type(count) is not int or count < 0:
             raise IncompleteInspection("INPUT_TOKEN_COUNT_FAILED")
         if count > state.limits.input_tokens:
             raise IncompleteInspection("INPUT_BUDGET_EXCEEDED")
-        return await _call(state, llm.create_text_response, **request, kind="model",
+        return await _call(state, llm.create_text_response, **request,
                            max_output_tokens=role.max_output_tokens)
+    try:
+        return await invoke_with_retry(attempt, state, "TYPO")
+    except TimeoutError:
+        raise IncompleteInspection("BUDGET_EXHAUSTED") from None
+    except ProviderFailure as exc:
+        rejected = exc.status is not None and 400 <= exc.status < 500 and not exc.retryable
+        code = "LLM_PROVIDER_REJECTED" if rejected else "LLM_PROVIDER_ERROR"
+        raise IncompleteInspection(code, exc.cause) from None
     except LlmInputTokenCountError:
         raise IncompleteInspection("INPUT_TOKEN_COUNT_FAILED") from None
     except LlmOutputTruncatedError:
@@ -172,7 +181,9 @@ async def check_typos(
         # Closed injection boundary: unknown/nested wrappers may hide retries or double metering.
         if not (type(llm) is OpenAIResponsesClient or (
             type(llm) is MeteredTextGenerationClient and llm.max_retries == 0
-            and type(llm.delegate) is OpenAIResponsesClient
+            and (type(llm.delegate) is OpenAIResponsesClient
+                 or (type(llm.delegate) is ObservedProvider
+                     and type(llm.delegate.raw) is OpenAIResponsesClient))
         )):
             raise IncompleteInspection("LLM_CLIENT_CONFIGURATION_INVALID")
         frozen = await _call(state, data.read_input, kind="lookup")
