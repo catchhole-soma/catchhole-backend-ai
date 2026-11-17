@@ -1,0 +1,4009 @@
+{
+  "schemaVersion": 1,
+  "synthetic": true,
+  "status": "PROPOSED_EXPERIMENT",
+  "oracle": "HANDWRITTEN_NOT_ENGINE_GENERATED",
+  "outputSemantics": "EXACT_SETS",
+  "rules": [
+    {
+      "ruleId": "R_PARENT_INVERSE",
+      "premiseCount": 1,
+      "outputKind": "CHILD_OF",
+      "derivationType": "SEMANTIC_INVERSE"
+    },
+    {
+      "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+      "premiseCount": 2,
+      "outputKind": "GRANDPARENT_OF",
+      "derivationType": "NEW_RELATION"
+    }
+  ],
+  "cases": [
+    {
+      "caseId": "01_episode_one",
+      "title": "1화: 직접 친부모와 의미상 역관계",
+      "purpose": "직접 확인한 부모 사실과 같은 사실의 역방향 표기를 구분한다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 1,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "MISSING_PREMISE"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 1
+    },
+    {
+      "caseId": "02_episode_two_uncertain",
+      "title": "2화: 소문은 확정 사실이 아니다",
+      "purpose": "서연과 하린의 불확실한 관계로 조부모를 만들지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 2,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "s2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n서연이 하린의 친어머니라는 소문이 돌았다.",
+          "quote": "서연이 하린의 친어머니라는 소문이 돌았다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a2",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "UNCERTAIN",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s2"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "a2",
+            "reason": "UNCERTAIN_ASSERTION"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "UNCERTAIN_PREMISE"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 2
+    },
+    {
+      "caseId": "03_episode_three_confirmed",
+      "title": "3화: 친부모 두 단계에서 조부모",
+      "purpose": "도윤→서연, 서연→하린을 근거로 도윤→하린만 새로 도출한다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "s2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n서연이 하린의 친어머니라는 소문이 돌았다.",
+          "quote": "서연이 하린의 친어머니라는 소문이 돌았다."
+        },
+        {
+          "sourceId": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니임이 확인되었다.",
+          "quote": "서연은 하린의 친어머니임이 확인되었다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a2",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "UNCERTAIN",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s2"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a3",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s3"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a3"
+            ],
+            "sourceIds": [
+              "s3"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "harin",
+            "objectId": "seoyeon",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a3"
+                ],
+                "sourceIds": [
+                  "s3"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "a1",
+                  "a3"
+                ],
+                "sourceIds": [
+                  "s1",
+                  "s3"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "a2",
+            "reason": "UNCERTAIN_ASSERTION"
+          }
+        ],
+        "forbiddenRelations": []
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "04_trust_not_transitive",
+      "title": "신뢰는 전이되지 않는다",
+      "purpose": "도윤→서연→하린의 신뢰가 도윤→하린의 신뢰를 뜻하지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "t1s",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연을 신뢰한다.",
+          "quote": "도윤은 서연을 신뢰한다."
+        },
+        {
+          "sourceId": "t2s",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n서연은 하린을 신뢰한다.",
+          "quote": "서연은 하린을 신뢰한다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "t1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "TRUST",
+          "subtype": "NONE",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "EPISODE_RELATIONSHIP",
+            "scope": "PRESENT"
+          },
+          "sourceIds": [
+            "t1s"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "t2",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "TRUST",
+          "subtype": "NONE",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "EPISODE_RELATIONSHIP",
+            "scope": "PRESENT"
+          },
+          "sourceIds": [
+            "t2s"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "TRUST",
+            "subtype": "NONE",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "t1"
+            ],
+            "sourceIds": [
+              "t1s"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "TRUST",
+            "subtype": "NONE",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "t2"
+            ],
+            "sourceIds": [
+              "t2s"
+            ]
+          }
+        ],
+        "derivedRelations": [],
+        "withheldAssertions": [],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "TRUST",
+            "subtype": "NONE",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "reason": "NON_TRANSITIVE_KIND"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "05_trust_not_symmetric",
+      "title": "신뢰는 자동으로 상호 관계가 되지 않는다",
+      "purpose": "도윤의 신뢰만으로 서연의 신뢰를 만들지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "t1s",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연을 신뢰한다.",
+          "quote": "도윤은 서연을 신뢰한다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "t1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "TRUST",
+          "subtype": "NONE",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "EPISODE_RELATIONSHIP",
+            "scope": "PRESENT"
+          },
+          "sourceIds": [
+            "t1s"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "TRUST",
+            "subtype": "NONE",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "t1"
+            ],
+            "sourceIds": [
+              "t1s"
+            ]
+          }
+        ],
+        "derivedRelations": [],
+        "withheldAssertions": [],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "TRUST",
+            "subtype": "NONE",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "reason": "NON_SYMMETRIC_KIND"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "06_negated",
+      "title": "부정문은 긍정 관계가 아니다",
+      "purpose": "서연은 하린의 친어머니가 아니라는 문장을 부모 전제로 쓰지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "sn",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n서연은 하린의 친어머니가 아니다.",
+          "quote": "서연은 하린의 친어머니가 아니다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "an",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "NEGATED",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "sn"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "an",
+            "reason": "NEGATED_ASSERTION"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "reason": "NEGATED_PREMISE"
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "NEGATED_PREMISE"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "07_hypothetical",
+      "title": "가정문은 실제 가족 사실이 아니다",
+      "purpose": "서연이 하린의 어머니라면이라는 가정으로 부모나 조부모를 만들지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "sh",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n만약 서연이 하린의 친어머니라면 도윤은 하린의 외할아버지일 것이다.",
+          "quote": "만약 서연이 하린의 친어머니라면 도윤은 하린의 외할아버지일 것이다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "ah",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "HYPOTHETICAL",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "sh"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "ah",
+            "reason": "HYPOTHETICAL_ASSERTION"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "reason": "HYPOTHETICAL_PREMISE"
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "HYPOTHETICAL_PREMISE"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "08_future_evidence",
+      "title": "2화 조회에 3화 확정 근거를 섞지 않는다",
+      "purpose": "회차 지식 경계와 현재 데이터 revision을 분리한다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 2,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니임이 확인되었다.",
+          "quote": "서연은 하린의 친어머니임이 확인되었다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a3",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s3"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "a3",
+            "reason": "FUTURE_EVIDENCE"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "FUTURE_PREMISE"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "09_same_name_distinct_ids",
+      "title": "동명이인 서연 두 명",
+      "purpose": "같은 이름을 중간 인물의 동일성으로 사용하지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon-other",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "sh2",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n다른 마을의 서연은 하린의 친어머니다.",
+          "quote": "다른 마을의 서연은 하린의 친어머니다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "ah2",
+          "workId": "work-a",
+          "subjectId": "seoyeon-other",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "sh2"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon-other",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ah2"
+            ],
+            "sourceIds": [
+              "sh2"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "harin",
+            "objectId": "seoyeon-other",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ah2"
+                ],
+                "sourceIds": [
+                  "sh2"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "IDENTITY_MISMATCH"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "10_unresolved_identity",
+      "title": "어머니의 지칭 대상 미해소",
+      "purpose": "미해소 mention을 서연으로 채우지 않는다. fixture mention ID는 등록 인물이 아니다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "unresolved-woman",
+          "name": "그 여자",
+          "workId": "work-a",
+          "identityStatus": "UNRESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "su",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n그 여자는 하린의 친어머니다.",
+          "quote": "그 여자는 하린의 친어머니다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "au",
+          "workId": "work-a",
+          "subjectId": "unresolved-woman",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "su"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "au",
+            "reason": "UNRESOLVED_IDENTITY"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "UNRESOLVED_PREMISE"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "11_cross_work",
+      "title": "작품 경계를 넘은 입력",
+      "purpose": "작품 A의 서연과 작품 B의 하린을 연결한 잘못된 입력은 거절한다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-b",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "sx",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니다.",
+          "quote": "서연은 하린의 친어머니다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "ax",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "sx"
+          ],
+          "validationIssues": [
+            "CROSS_WORK"
+          ]
+        }
+      ],
+      "expected": {
+        "outcome": "REJECTED",
+        "outcomeReason": "CROSS_WORK",
+        "directRelations": [],
+        "derivedRelations": [],
+        "withheldAssertions": [
+          {
+            "assertionId": "ax",
+            "reason": "CROSS_WORK"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "reason": "CROSS_WORK"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "12_biological_adoptive_boundary",
+      "title": "친부모와 양부모를 섞지 않는다",
+      "purpose": "양부모 역관계는 유지하되 혈연 조부모로 확대하지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "sa",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린을 입양한 양어머니다.",
+          "quote": "서연은 하린을 입양한 양어머니다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "aa",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "ADOPTIVE",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "sa"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "ADOPTIVE",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "aa"
+            ],
+            "sourceIds": [
+              "sa"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "harin",
+            "objectId": "seoyeon",
+            "kind": "CHILD_OF",
+            "subtype": "ADOPTIVE",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "aa"
+                ],
+                "sourceIds": [
+                  "sa"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "SUBTYPE_MISMATCH"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "13_different_story_contexts",
+      "title": "서로 다른 서사 시점",
+      "purpose": "시간여행 전후의 관계를 같은 현재 맥락으로 합치지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "sp",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n변경 전 시간선에서 서연은 하린의 친어머니였다.",
+          "quote": "변경 전 시간선에서 서연은 하린의 친어머니였다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "ap",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "timeline-before",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "HISTORICAL"
+          },
+          "sourceIds": [
+            "sp"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "ap",
+            "reason": "DIFFERENT_CONTEXT"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "CONTEXT_MISMATCH"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "14_unknown_time",
+      "title": "언제의 관계인지 불명확",
+      "purpose": "원문 등장 회차가 관계의 실제 시점을 대신하지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "sut",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n기록에는 서연이 하린의 친어머니라고만 적혀 있고 어느 시간선인지는 없다.",
+          "quote": "기록에는 서연이 하린의 친어머니라고만 적혀 있고 어느 시간선인지는 없다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "aut",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "unknown",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "UNKNOWN"
+          },
+          "sourceIds": [
+            "sut"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "aut",
+            "reason": "UNKNOWN_TIME"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "UNKNOWN_TIME"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "15_independent_proof_alternatives",
+      "title": "동일 결론의 독립 근거 두 개",
+      "purpose": "직접 부모 관계는 하나로 표시하고 조부모의 대체 proof는 둘 다 보존한다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "s1b",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가족 기록에도 도윤은 서연의 친아버지라고 명시되어 있다.",
+          "quote": "가족 기록에도 도윤은 서연의 친아버지라고 명시되어 있다."
+        },
+        {
+          "sourceId": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니임이 확인되었다.",
+          "quote": "서연은 하린의 친어머니임이 확인되었다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a1b",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1b"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a3",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s3"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1",
+              "a1b"
+            ],
+            "sourceIds": [
+              "s1",
+              "s1b"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a3"
+            ],
+            "sourceIds": [
+              "s3"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              },
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1b"
+                ],
+                "sourceIds": [
+                  "s1b"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "harin",
+            "objectId": "seoyeon",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a3"
+                ],
+                "sourceIds": [
+                  "s3"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "a1",
+                  "a3"
+                ],
+                "sourceIds": [
+                  "s1",
+                  "s3"
+                ]
+              },
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "a1b",
+                  "a3"
+                ],
+                "sourceIds": [
+                  "s1b",
+                  "s3"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "forbiddenRelations": []
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "16_last_support_withdrawn",
+      "title": "마지막 사실 근거 철회",
+      "purpose": "근거가 모두 철회된 부모 사실은 조부모의 전제가 될 수 없다.",
+      "snapshotRevision": 2,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "WITHDRAWN",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니임이 확인되었다.",
+          "quote": "서연은 하린의 친어머니임이 확인되었다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "WITHDRAWN",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a3",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s3"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a3"
+            ],
+            "sourceIds": [
+              "s3"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "harin",
+            "objectId": "seoyeon",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a3"
+                ],
+                "sourceIds": [
+                  "s3"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "a1",
+            "reason": "WITHDRAWN_FACT"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "reason": "WITHDRAWN_PREMISE"
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "WITHDRAWN_PREMISE"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "17_alternative_support_survives",
+      "title": "다른 독립 근거가 남은 경우",
+      "purpose": "한 출처의 철회로 살아 있는 대체 proof까지 삭제하지 않는다.",
+      "snapshotRevision": 2,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "WITHDRAWN",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "s1b",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가족 기록에도 도윤은 서연의 친아버지라고 명시되어 있다.",
+          "quote": "가족 기록에도 도윤은 서연의 친아버지라고 명시되어 있다."
+        },
+        {
+          "sourceId": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니임이 확인되었다.",
+          "quote": "서연은 하린의 친어머니임이 확인되었다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "WITHDRAWN",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a1b",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1b"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a3",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s3"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1b"
+            ],
+            "sourceIds": [
+              "s1b"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a3"
+            ],
+            "sourceIds": [
+              "s3"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1b"
+                ],
+                "sourceIds": [
+                  "s1b"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "harin",
+            "objectId": "seoyeon",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a3"
+                ],
+                "sourceIds": [
+                  "s3"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "a1b",
+                  "a3"
+                ],
+                "sourceIds": [
+                  "s1b",
+                  "s3"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "a1",
+            "reason": "WITHDRAWN_FACT"
+          }
+        ],
+        "forbiddenRelations": []
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "18_quote_purged_fact_valid",
+      "title": "원문 파기와 사실 철회를 구분",
+      "purpose": "원문 인용은 없지만 유지된 현재 사실은 유효하며 proof의 출처 ID는 남는다.",
+      "snapshotRevision": 2,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "CURRENT_PROFILE"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "PURGED",
+          "text": null,
+          "quote": null
+        },
+        {
+          "sourceId": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니임이 확인되었다.",
+          "quote": "서연은 하린의 친어머니임이 확인되었다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a3",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s3"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a3"
+            ],
+            "sourceIds": [
+              "s3"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "harin",
+            "objectId": "seoyeon",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a3"
+                ],
+                "sourceIds": [
+                  "s3"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "a1",
+                  "a3"
+                ],
+                "sourceIds": [
+                  "s1",
+                  "s3"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "forbiddenRelations": []
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "19_self_relation",
+      "title": "자기 자신을 부모로 연결",
+      "purpose": "사전 검증이 SELF_RELATION으로 표시한 입력은 거절한다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "ss",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n잘못된 후보: 도윤은 도윤의 친아버지다.",
+          "quote": "잘못된 후보: 도윤은 도윤의 친아버지다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "as",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "doyun",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "ss"
+          ],
+          "validationIssues": [
+            "SELF_RELATION"
+          ]
+        }
+      ],
+      "expected": {
+        "outcome": "REJECTED",
+        "outcomeReason": "SELF_RELATION",
+        "directRelations": [],
+        "derivedRelations": [],
+        "withheldAssertions": [
+          {
+            "assertionId": "as",
+            "reason": "SELF_RELATION"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "doyun",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "reason": "SELF_RELATION"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "20_parent_cycle",
+      "title": "친부모 순환",
+      "purpose": "사전 검증이 PARENT_CYCLE로 표시한 두 후보를 추론 근거로 쓰지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "sc",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n잘못된 후보: 서연은 도윤의 친아버지다.",
+          "quote": "잘못된 후보: 서연은 도윤의 친아버지다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": [
+            "PARENT_CYCLE"
+          ]
+        },
+        {
+          "assertionId": "ac",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "doyun",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "sc"
+          ],
+          "validationIssues": [
+            "PARENT_CYCLE"
+          ]
+        }
+      ],
+      "expected": {
+        "outcome": "REJECTED",
+        "outcomeReason": "PARENT_CYCLE",
+        "directRelations": [],
+        "derivedRelations": [],
+        "withheldAssertions": [
+          {
+            "assertionId": "a1",
+            "reason": "PARENT_CYCLE"
+          },
+          {
+            "assertionId": "ac",
+            "reason": "PARENT_CYCLE"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "doyun",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "PARENT_CYCLE"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "21_generation_conflict",
+      "title": "명시된 세대 수 모순",
+      "purpose": "두 친부모 단계와 명시된 3세대 조상 관계의 충돌이 미리 검출된 snapshot이다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니임이 확인되었다.",
+          "quote": "서연은 하린의 친어머니임이 확인되었다."
+        },
+        {
+          "sourceId": "sg",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n도윤은 하린보다 정확히 세 세대 위의 혈연 조상이다.",
+          "quote": "도윤은 하린보다 정확히 세 세대 위의 혈연 조상이다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": [
+            "GENERATION_CONFLICT"
+          ]
+        },
+        {
+          "assertionId": "a3",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s3"
+          ],
+          "validationIssues": [
+            "GENERATION_CONFLICT"
+          ]
+        },
+        {
+          "assertionId": "ag",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "harin",
+          "kind": "ANCESTOR_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": 3,
+          "assertionState": "ASSERTED",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "sg"
+          ],
+          "validationIssues": [
+            "GENERATION_CONFLICT"
+          ]
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [],
+        "derivedRelations": [],
+        "withheldAssertions": [
+          {
+            "assertionId": "a1",
+            "reason": "GENERATION_CONFLICT"
+          },
+          {
+            "assertionId": "a3",
+            "reason": "GENERATION_CONFLICT"
+          },
+          {
+            "assertionId": "ag",
+            "reason": "GENERATION_CONFLICT"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "GENERATION_CONFLICT"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "22_conflicting_claims",
+      "title": "긍정과 부정 근거가 충돌",
+      "purpose": "상충하는 문장에서 긍정만 골라 확정하지 않는다. 충돌 판정은 fixture에 미리 주어진다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니임이 확인되었다.",
+          "quote": "서연은 하린의 친어머니임이 확인되었다."
+        },
+        {
+          "sourceId": "sneg",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n다른 기록은 서연이 하린의 친어머니가 아니라고 단정했다.",
+          "quote": "다른 기록은 서연이 하린의 친어머니가 아니라고 단정했다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a3",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "CONFLICTING",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s3"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "aneg",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "CONFLICTING",
+          "factValidity": "REVIEW_REQUIRED",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "sneg"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "a3",
+            "reason": "CONFLICTING_ASSERTION"
+          },
+          {
+            "assertionId": "aneg",
+            "reason": "CONFLICTING_ASSERTION"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "CONFLICTING_PREMISE"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "23_current_profile_history_unsupported",
+      "title": "현재 가족 프로필로 과거 회차를 복원할 수 없음",
+      "purpose": "최신 PROFILE만 있는 입력의 1화 조회는 빈 결과로 성공시키지 않는다.",
+      "snapshotRevision": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 1,
+        "temporalContextId": "story-present",
+        "inputMode": "CURRENT_PROFILE"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니임이 확인되었다.",
+          "quote": "서연은 하린의 친어머니임이 확인되었다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a3",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s3"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "UNSUPPORTED",
+        "outcomeReason": "UNSUPPORTED_HISTORY",
+        "directRelations": [],
+        "derivedRelations": [],
+        "withheldAssertions": [
+          {
+            "assertionId": "a1",
+            "reason": "UNSUPPORTED_HISTORY"
+          },
+          {
+            "assertionId": "a3",
+            "reason": "UNSUPPORTED_HISTORY"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "UNSUPPORTED_HISTORY"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    },
+    {
+      "caseId": "24_corrected_relation_new_identity",
+      "title": "정정은 기존 사실 철회와 새 사실로 표현",
+      "purpose": "친어머니가 서연에서 민서로 정정되면 새 출처를 과거 서연 관계에 재사용하지 않는다.",
+      "snapshotRevision": 2,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "story-present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "doyun",
+          "name": "도윤",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "seoyeon",
+          "name": "서연",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "harin",
+          "name": "하린",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "minseo",
+          "name": "민서",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n도윤은 서연의 친아버지다.",
+          "quote": "도윤은 서연의 친아버지다."
+        },
+        {
+          "sourceId": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "WITHDRAWN",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n서연은 하린의 친어머니임이 확인되었다.",
+          "quote": "서연은 하린의 친어머니임이 확인되었다."
+        },
+        {
+          "sourceId": "sm",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n정정: 하린의 친어머니는 서연이 아니라 민서다.",
+          "quote": "정정: 하린의 친어머니는 서연이 아니라 민서다."
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "a1",
+          "workId": "work-a",
+          "subjectId": "doyun",
+          "objectId": "seoyeon",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s1"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "a3",
+          "workId": "work-a",
+          "subjectId": "seoyeon",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "WITHDRAWN",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s3"
+          ],
+          "validationIssues": []
+        },
+        {
+          "assertionId": "am",
+          "workId": "work-a",
+          "subjectId": "minseo",
+          "objectId": "harin",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "story-present",
+          "generationGap": null,
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "sm"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "seoyeon",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "a1"
+            ],
+            "sourceIds": [
+              "s1"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "minseo",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "am"
+            ],
+            "sourceIds": [
+              "sm"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "doyun",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "a1"
+                ],
+                "sourceIds": [
+                  "s1"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "harin",
+            "objectId": "minseo",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "am"
+                ],
+                "sourceIds": [
+                  "sm"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "a3",
+            "reason": "WITHDRAWN_FACT"
+          }
+        ],
+        "forbiddenRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "seoyeon",
+            "objectId": "harin",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": null,
+            "reason": "WITHDRAWN_PREMISE"
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "doyun",
+            "objectId": "harin",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "story-present",
+            "generationGap": 2,
+            "reason": "MISSING_PREMISE"
+          }
+        ]
+      },
+      "snapshotThroughEpisode": 3
+    }
+  ]
+}
