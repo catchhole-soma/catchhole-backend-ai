@@ -1,0 +1,1468 @@
+{
+  "schemaVersion": 1,
+  "synthetic": true,
+  "status": "PROPOSED_CONSUMER_EXAMPLES",
+  "oracle": "HANDWRITTEN_NOT_ENGINE_GENERATED",
+  "outputSemantics": "EXACT_FACT_REF_SETS",
+  "productIntegration": false,
+  "cases": [
+    {
+      "caseId": "01_asymmetric_attitudes",
+      "title": "서로 다른 감정과 신뢰 방향",
+      "productQuestionId": "P1",
+      "purpose": "상대방의 감정은 별도 slot이며 방향을 바꾸거나 상호 관계로 합치지 않는다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 1,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "도윤은 서연을 신뢰한다.",
+          "quote": "도윤은 서연을 신뢰한다."
+        },
+        {
+          "sourceRef": "s2",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "서연은 도윤을 불신한다.",
+          "quote": "서연은 도윤을 불신한다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c1",
+          "sourceRef": "s1",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        },
+        {
+          "claimRef": "c2",
+          "sourceRef": "s2",
+          "subjectCandidateRefs": [
+            "seoyeon"
+          ],
+          "objectCandidateRefs": [
+            "doyun"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        }
+      ],
+      "facts": [
+        {
+          "factRef": "f1",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "ATTITUDE",
+            "kind": "TRUST",
+            "direction": "DIRECTED"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 1,
+          "supportClaimRefs": [
+            "c1"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        },
+        {
+          "factRef": "f2",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "seoyeon",
+            "targetNodeRef": "doyun",
+            "axis": "ATTITUDE",
+            "kind": "DISTRUST",
+            "direction": "DIRECTED"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 1,
+          "supportClaimRefs": [
+            "c2"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        }
+      ],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q1",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f1",
+              "f2"
+            ],
+            "excludedFacts": [],
+            "heldClaimRefs": [],
+            "forbiddenSlots": [
+              {
+                "slot": {
+                  "workId": "work-a",
+                  "sourceNodeRef": "seoyeon",
+                  "targetNodeRef": "doyun",
+                  "axis": "ATTITUDE",
+                  "kind": "TRUST",
+                  "direction": "DIRECTED"
+                },
+                "reason": "DIRECTION_NOT_SUPPORTED"
+              },
+              {
+                "slot": {
+                  "workId": "work-a",
+                  "sourceNodeRef": "doyun",
+                  "targetNodeRef": "seoyeon",
+                  "axis": "ATTITUDE",
+                  "kind": "TRUST",
+                  "direction": "MUTUAL"
+                },
+                "reason": "MUTUALITY_NOT_SUPPORTED"
+              }
+            ],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "두 사람의 감정 선을 어떻게 그릴까?",
+                "expectedText": "도윤→서연 신뢰와 서연→도윤 불신을 별도 방향으로 표시한다.",
+                "factRefs": [
+                  "f1",
+                  "f2"
+                ]
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "두 사람은 서로 신뢰하는가?",
+                "expectedText": "도윤은 서연을 신뢰하지만 서연은 도윤을 불신한다.",
+                "factRefs": [
+                  "f1",
+                  "f2"
+                ]
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "두 사람은 서로 신뢰한다는 문장을 검토하면?",
+                "expectedText": "동일한 두 근거를 대조할 대상으로 제시한다. 상호 신뢰로 합치지 않는다.",
+                "factRefs": [
+                  "f1",
+                  "f2"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "caseId": "02_cooperation_is_not_friendship",
+      "title": "같은 COOPERATION도 axis와 direction을 보존",
+      "productQuestionId": "P2",
+      "purpose": "행동상 도움과 사회적 협력자 slot을 각각 보존하며 친구 관계를 추가하지 않는다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 1,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "도윤은 서연의 임무 완수를 도왔다.",
+          "quote": "도윤은 서연의 임무 완수를 도왔다."
+        },
+        {
+          "sourceRef": "s2",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "도윤과 서연은 서로의 공식 협력자다.",
+          "quote": "도윤과 서연은 서로의 공식 협력자다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c1",
+          "sourceRef": "s1",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        },
+        {
+          "claimRef": "c2",
+          "sourceRef": "s2",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        }
+      ],
+      "facts": [
+        {
+          "factRef": "f1",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "INTERACTION",
+            "kind": "COOPERATION",
+            "direction": "DIRECTED"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 1,
+          "supportClaimRefs": [
+            "c1"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        },
+        {
+          "factRef": "f2",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "SOCIAL",
+            "kind": "COOPERATION",
+            "direction": "MUTUAL"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 1,
+          "supportClaimRefs": [
+            "c2"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        }
+      ],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q1",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f1",
+              "f2"
+            ],
+            "excludedFacts": [],
+            "heldClaimRefs": [],
+            "forbiddenSlots": [
+              {
+                "slot": {
+                  "workId": "work-a",
+                  "sourceNodeRef": "doyun",
+                  "targetNodeRef": "seoyeon",
+                  "axis": "SOCIAL",
+                  "kind": "FRIENDSHIP",
+                  "direction": "MUTUAL"
+                },
+                "reason": "FRIENDSHIP_NOT_ESTABLISHED"
+              }
+            ],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "두 협력 정보를 한 slot으로 합칠까?",
+                "expectedText": "INTERACTION/DIRECTED 도움과 SOCIAL/MUTUAL 협력자를 별도 slot으로 표시한다.",
+                "factRefs": [
+                  "f1",
+                  "f2"
+                ]
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "두 사람은 친구인가?",
+                "expectedText": "도움과 공식 협력자 관계는 확인되지만 친구라는 사실은 이 입력으로 확정할 수 없다.",
+                "factRefs": [
+                  "f1",
+                  "f2"
+                ]
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "같이 협력했으므로 친구라는 설명을 검토하면?",
+                "expectedText": "두 확정 사실을 제시하되 FRIENDSHIP으로 의미를 확대하지 않는다.",
+                "factRefs": [
+                  "f1",
+                  "f2"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "caseId": "03_companions_and_distrust",
+      "title": "동료와 불신은 함께 성립할 수 있다",
+      "productQuestionId": "P1",
+      "purpose": "사회적 관계와 태도를 하나의 긍정/부정 값으로 덮어쓰지 않는다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 1,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "도윤과 서연은 같은 원정대의 동료다.",
+          "quote": "도윤과 서연은 같은 원정대의 동료다."
+        },
+        {
+          "sourceRef": "s2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "text": "도윤은 동료 서연의 판단을 불신한다.",
+          "quote": "도윤은 동료 서연의 판단을 불신한다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c1",
+          "sourceRef": "s1",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        },
+        {
+          "claimRef": "c2",
+          "sourceRef": "s2",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        }
+      ],
+      "facts": [
+        {
+          "factRef": "f1",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "SOCIAL",
+            "kind": "COMPANIONSHIP",
+            "direction": "MUTUAL"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 1,
+          "supportClaimRefs": [
+            "c1"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        },
+        {
+          "factRef": "f2",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "ATTITUDE",
+            "kind": "DISTRUST",
+            "direction": "DIRECTED"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 2,
+          "lastChangedEpisodeNo": 2,
+          "supportClaimRefs": [
+            "c2"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        }
+      ],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q1",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f1",
+              "f2"
+            ],
+            "excludedFacts": [],
+            "heldClaimRefs": [],
+            "forbiddenSlots": [],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "동료 선과 불신 선을 동시에 보여도 될까?",
+                "expectedText": "SOCIAL 동료와 ATTITUDE 불신을 모두 유지한다.",
+                "factRefs": [
+                  "f1",
+                  "f2"
+                ]
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "도윤은 동료 서연을 신뢰하는가?",
+                "expectedText": "둘은 동료이며 도윤은 서연을 불신한다.",
+                "factRefs": [
+                  "f1",
+                  "f2"
+                ]
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "동료인데 불신한다는 이유만으로 설정 충돌인가?",
+                "expectedText": "두 축이 다르므로 그 사실만으로 충돌로 단정하지 않는 예시다.",
+                "factRefs": [
+                  "f1",
+                  "f2"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "caseId": "04_late_revelation",
+      "title": "과거부터 이어진 관계를 3화에서 처음 확인",
+      "productQuestionId": "P3",
+      "purpose": "작중 시작 문맥은 과거이지만 확정 관계가 독자에게 알려진 회차는 3화다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 1,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "text": "도윤은 \"서연과 나는 첫 원정 때부터 지금까지 동료였다\"라고 말했다.",
+          "quote": "도윤은 \"서연과 나는 첫 원정 때부터 지금까지 동료였다\"라고 말했다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c3",
+          "sourceRef": "s3",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "since-first-expedition"
+        }
+      ],
+      "facts": [
+        {
+          "factRef": "f3",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "SOCIAL",
+            "kind": "COMPANIONSHIP",
+            "direction": "MUTUAL"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 3,
+          "lastChangedEpisodeNo": 3,
+          "supportClaimRefs": [
+            "c3"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        }
+      ],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q1",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 1,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [],
+            "excludedFacts": [
+              {
+                "factRef": "f3",
+                "reason": "FUTURE_KNOWLEDGE"
+              }
+            ],
+            "heldClaimRefs": [],
+            "forbiddenSlots": [],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "1화 관계도에 두 사람을 동료로 표시할까?",
+                "expectedText": "3화에 처음 알려진 관계를 1화에 표시하지 않는다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "1화까지 두 사람이 동료라고 알 수 있는가?",
+                "expectedText": "이 입력의 1화 지식으로는 확정할 수 없다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "1화 기준 검수에서 3화 설명을 근거로 쓸까?",
+                "expectedText": "미래에 확인된 사실은 1화 기준 근거로 사용하지 않는다.",
+                "factRefs": []
+              }
+            ]
+          }
+        },
+        {
+          "queryRef": "q3",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f3"
+            ],
+            "excludedFacts": [],
+            "heldClaimRefs": [],
+            "forbiddenSlots": [],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "3화 관계도에는 무엇을 표시할까?",
+                "expectedText": "3화에 확인된 동료 관계를 표시한다.",
+                "factRefs": [
+                  "f3"
+                ]
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "3화까지 알려진 관계는 무엇인가?",
+                "expectedText": "첫 원정 때부터 현재까지 동료였다는 사실이 3화에서 확인되었다.",
+                "factRefs": [
+                  "f3"
+                ]
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "3화 기준 검수에서 동료라는 사실을 참고할까?",
+                "expectedText": "같은 f3 근거를 참고하되 작중 시작시점과 독자 지식 회차를 구분한다.",
+                "factRefs": [
+                  "f3"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "caseId": "05_story_time_unsupported",
+      "title": "임의의 작중 시점 복원은 미지원",
+      "productQuestionId": "P3",
+      "purpose": "독자 지식 snapshot을 사건 시간선의 모든 상태를 복원하는 자료로 오해하지 않는다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 1,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "text": "도윤은 \"서연과 나는 첫 원정 때부터 지금까지 동료였다\"라고 말했다.",
+          "quote": "도윤은 \"서연과 나는 첫 원정 때부터 지금까지 동료였다\"라고 말했다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c3",
+          "sourceRef": "s3",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "since-first-expedition"
+        }
+      ],
+      "facts": [
+        {
+          "factRef": "f3",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "SOCIAL",
+            "kind": "COMPANIONSHIP",
+            "direction": "MUTUAL"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 3,
+          "lastChangedEpisodeNo": 3,
+          "supportClaimRefs": [
+            "c3"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        }
+      ],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q_story",
+          "mode": "STORY_TIME",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": "first-expedition-day",
+          "expected": {
+            "status": "UNSUPPORTED",
+            "reason": "STORY_TIME_RECONSTRUCTION_NOT_SUPPORTED",
+            "factRefs": [],
+            "excludedFacts": [
+              {
+                "factRef": "f3",
+                "reason": "UNSUPPORTED_QUERY"
+              }
+            ],
+            "heldClaimRefs": [],
+            "forbiddenSlots": [],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "첫 원정 당일의 전체 관계도를 복원할까?",
+                "expectedText": "UNSUPPORTED: 이 fixture에는 작중 시간선 복원용 이력이 없다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "첫 원정 당일의 전체 인물 관계 상태를 빠짐없이 복원해 달라.",
+                "expectedText": "전체 상태를 복원할 이력이 없어 지원하지 않는다. 원문에 명시된 개별 진술을 검색하는 요청과는 구분한다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "첫 원정 당일 기준으로 모든 관계를 검수할까?",
+                "expectedText": "시점 복원 입력이 없으므로 확정 판정하지 않는다.",
+                "factRefs": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "caseId": "06_speculation_and_hypothesis",
+      "title": "추측과 가정은 확정 slot이 아니다",
+      "productQuestionId": "P4",
+      "purpose": "의심과 가정 원문은 보류한 채 관계도·검색·검수의 확정 사실로 승격하지 않는다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 1,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "도윤은 서연이 하린을 신뢰하는 것 같다고 추측했다.",
+          "quote": "도윤은 서연이 하린을 신뢰하는 것 같다고 추측했다."
+        },
+        {
+          "sourceRef": "s2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "text": "만약 서연이 하린을 신뢰한다면 계획을 맡길 수 있을 것이다.",
+          "quote": "만약 서연이 하린을 신뢰한다면 계획을 맡길 수 있을 것이다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c1",
+          "sourceRef": "s1",
+          "subjectCandidateRefs": [
+            "seoyeon"
+          ],
+          "objectCandidateRefs": [
+            "harin"
+          ],
+          "statementMode": "UNCERTAIN",
+          "curationStatus": "HOLD",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        },
+        {
+          "claimRef": "c2",
+          "sourceRef": "s2",
+          "subjectCandidateRefs": [
+            "seoyeon"
+          ],
+          "objectCandidateRefs": [
+            "harin"
+          ],
+          "statementMode": "HYPOTHETICAL",
+          "curationStatus": "HOLD",
+          "temporalScope": "HYPOTHETICAL",
+          "narrativeContextId": "story-present"
+        }
+      ],
+      "facts": [],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q1",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [],
+            "excludedFacts": [],
+            "heldClaimRefs": [
+              "c1",
+              "c2"
+            ],
+            "forbiddenSlots": [
+              {
+                "slot": {
+                  "workId": "work-a",
+                  "sourceNodeRef": "seoyeon",
+                  "targetNodeRef": "harin",
+                  "axis": "ATTITUDE",
+                  "kind": "TRUST",
+                  "direction": "DIRECTED"
+                },
+                "reason": "UNCONFIRMED_CLAIMS"
+              }
+            ],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "서연→하린 신뢰 선을 확정해 그릴까?",
+                "expectedText": "추측·가정뿐이므로 확정 선을 그리지 않는다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "서연은 하린을 신뢰하는가?",
+                "expectedText": "이 자료로 확정할 수 없다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "서연의 신뢰를 확정 전제로 설정 충돌을 판정할까?",
+                "expectedText": "보류된 주장을 확정 전제로 사용하지 않는다.",
+                "factRefs": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "caseId": "07_explicit_end",
+      "title": "서사의 관계 종료는 ENDED로 남는다",
+      "productQuestionId": "P5",
+      "purpose": "명시 END는 그 관계가 과거에 있었다는 사실을 지우지 않는다. 현재 snapshot만 조회한다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 1,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "도윤과 서연은 같은 원정대의 동료다.",
+          "quote": "도윤과 서연은 같은 원정대의 동료다."
+        },
+        {
+          "sourceRef": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "text": "도윤과 서연은 동료 관계를 끝내고 각자의 길을 가기로 했다.",
+          "quote": "도윤과 서연은 동료 관계를 끝내고 각자의 길을 가기로 했다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c1",
+          "sourceRef": "s1",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        },
+        {
+          "claimRef": "c3",
+          "sourceRef": "s3",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        }
+      ],
+      "facts": [
+        {
+          "factRef": "f1",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "SOCIAL",
+            "kind": "COMPANIONSHIP",
+            "direction": "MUTUAL"
+          },
+          "status": "ENDED",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 3,
+          "supportClaimRefs": [
+            "c1"
+          ],
+          "endClaimRefs": [
+            "c3"
+          ],
+          "correctionSourceRefs": []
+        }
+      ],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q3",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f1"
+            ],
+            "excludedFacts": [],
+            "heldClaimRefs": [],
+            "forbiddenSlots": [],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "종료된 관계를 어떻게 표시할까?",
+                "expectedText": "f1을 ENDED로 유지하고 종료 표시 대상으로 삼는다.",
+                "factRefs": [
+                  "f1"
+                ]
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "두 사람은 현재도 동료인가?",
+                "expectedText": "동료였지만 3화에 관계를 끝냈다.",
+                "factRefs": [
+                  "f1"
+                ]
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "3화 이후에도 동료라고 단정한 문장을 검토하면?",
+                "expectedText": "같은 f1과 명시 종료 근거를 참고할 대상으로 제시한다.",
+                "factRefs": [
+                  "f1"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "caseId": "08_correction_is_not_end",
+      "title": "잘못된 근거의 정정은 서사의 END가 아니다",
+      "productQuestionId": "P5",
+      "purpose": "오류 정정으로 철회된 사실을 두 인물이 관계를 끝낸 사건으로 바꾸지 않는다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 2,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "잘못된 초기 기록: 도윤과 서연은 동료다.",
+          "quote": "잘못된 초기 기록: 도윤과 서연은 동료다."
+        },
+        {
+          "sourceRef": "s3",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "text": "정정: 이전 기록에서 도윤과 서연이 동료라는 기술은 오류였다.",
+          "quote": "정정: 이전 기록에서 도윤과 서연이 동료라는 기술은 오류였다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c1",
+          "sourceRef": "s1",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "RETRACTED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        }
+      ],
+      "facts": [
+        {
+          "factRef": "f1",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "SOCIAL",
+            "kind": "COMPANIONSHIP",
+            "direction": "MUTUAL"
+          },
+          "status": "ACTIVE",
+          "factValidity": "RETRACTED",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 3,
+          "supportClaimRefs": [
+            "c1"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": [
+            "s3"
+          ]
+        }
+      ],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q3",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [],
+            "excludedFacts": [
+              {
+                "factRef": "f1",
+                "reason": "RETRACTED_FACT"
+              }
+            ],
+            "heldClaimRefs": [],
+            "forbiddenSlots": [],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "정정된 관계를 ENDED 선으로 남길까?",
+                "expectedText": "철회된 f1은 관계 출력에서 제외하며 서사 종료로 표시하지 않는다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "두 사람이 동료 관계를 끝냈는가?",
+                "expectedText": "이 정정 자료는 기존 기술이 오류라는 뜻이며 종료 사건을 입증하지 않는다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "관계가 끝났다고 서술한 원고에 정정 기록을 근거로 쓸까?",
+                "expectedText": "정정과 서사 종료를 구분하며 END 근거로 사용하지 않는다.",
+                "factRefs": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "caseId": "09_user_suppression",
+      "title": "사용자 삭제는 대체 근거로 되살리지 않는다",
+      "productQuestionId": "P5",
+      "purpose": "canonical slot 억제를 사실별 근거 철회와 분리한다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 2,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "도윤은 서연을 신뢰한다.",
+          "quote": "도윤은 서연을 신뢰한다."
+        },
+        {
+          "sourceRef": "s2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "text": "다른 기록에도 도윤이 서연을 신뢰한다고 적혀 있다.",
+          "quote": "다른 기록에도 도윤이 서연을 신뢰한다고 적혀 있다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c1",
+          "sourceRef": "s1",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        },
+        {
+          "claimRef": "c2",
+          "sourceRef": "s2",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        }
+      ],
+      "facts": [
+        {
+          "factRef": "f1",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "ATTITUDE",
+            "kind": "TRUST",
+            "direction": "DIRECTED"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 2,
+          "supportClaimRefs": [
+            "c1",
+            "c2"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        }
+      ],
+      "suppressions": [
+        {
+          "suppressionRef": "sup1",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "ATTITUDE",
+            "kind": "TRUST",
+            "direction": "DIRECTED"
+          },
+          "reason": "USER_DELETE",
+          "appliesTo": "ALL_EPISODES",
+          "recordedRevision": 2
+        }
+      ],
+      "queries": [
+        {
+          "queryRef": "q3",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [],
+            "excludedFacts": [
+              {
+                "factRef": "f1",
+                "reason": "USER_SUPPRESSED"
+              }
+            ],
+            "heldClaimRefs": [],
+            "forbiddenSlots": [],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "삭제된 신뢰 선을 다른 근거로 복원할까?",
+                "expectedText": "사용자가 삭제한 slot은 대체 근거가 있어도 다시 표시하지 않는다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "삭제된 연결을 근거 재검색으로 확정 답변에 넣을까?",
+                "expectedText": "이 소비 예시에서는 억제된 관계를 확정 fact 목록에 포함하지 않는다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "자동 검수가 삭제된 연결을 사실로 다시 채택할까?",
+                "expectedText": "억제 상태를 지켜 같은 연결을 부활시키지 않는다.",
+                "factRefs": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "caseId": "10_same_name_ambiguity",
+      "title": "동명이인은 이름만으로 합치지 않는다",
+      "productQuestionId": "P4",
+      "purpose": "서연 후보가 둘이면 어느 인물인지 확정되지 않은 주장만으로 slot을 만들지 않는다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 1,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon-other",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "서연은 하린을 신뢰한다.",
+          "quote": "서연은 하린을 신뢰한다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c1",
+          "sourceRef": "s1",
+          "subjectCandidateRefs": [
+            "seoyeon",
+            "seoyeon-other"
+          ],
+          "objectCandidateRefs": [
+            "harin"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "HOLD",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        }
+      ],
+      "facts": [],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q1",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [],
+            "excludedFacts": [],
+            "heldClaimRefs": [
+              "c1"
+            ],
+            "forbiddenSlots": [
+              {
+                "slot": {
+                  "workId": "work-a",
+                  "sourceNodeRef": "seoyeon",
+                  "targetNodeRef": "harin",
+                  "axis": "ATTITUDE",
+                  "kind": "TRUST",
+                  "direction": "DIRECTED"
+                },
+                "reason": "AMBIGUOUS_IDENTITY"
+              },
+              {
+                "slot": {
+                  "workId": "work-a",
+                  "sourceNodeRef": "seoyeon-other",
+                  "targetNodeRef": "harin",
+                  "axis": "ATTITUDE",
+                  "kind": "TRUST",
+                  "direction": "DIRECTED"
+                },
+                "reason": "AMBIGUOUS_IDENTITY"
+              }
+            ],
+            "consumerExamples": [
+              {
+                "consumer": "RELATIONSHIP_GRAPH",
+                "question": "어느 서연의 신뢰 선을 그릴까?",
+                "expectedText": "인물 후보가 둘이므로 확정 선을 그리지 않는다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "SEARCH",
+                "question": "서연은 하린을 신뢰하는가?",
+                "expectedText": "어느 서연인지 해소되지 않아 확정할 수 없다.",
+                "factRefs": []
+              },
+              {
+                "consumer": "REVIEW",
+                "question": "한 서연의 설정과 이 문장을 비교할까?",
+                "expectedText": "지칭 대상이 해소되기 전에는 특정 인물의 확정 근거로 사용하지 않는다.",
+                "factRefs": []
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

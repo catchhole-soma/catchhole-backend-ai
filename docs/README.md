@@ -16,8 +16,10 @@ Python AI Worker의 문서 위치와 작성 기준을 정리합니다.
 | [Setting Extraction Evaluation](setting-extraction-evaluation.md) | 설정 추출 정답 데이터, 예측 결과, 규칙·LLM 채점과 평가 지표를 연결하는 로컬 평가 흐름 |
 | [Multi-stage Setting Evaluation](multi-stage-setting-evaluation.md) | 캐릭터·세계관 1차 후보, 2차 반영 결정, 누적 상태를 분리해서 평가하는 `setting-eval/v3` 계약과 운영 흐름 |
 | [Ordered Provisional Evaluation](ordered-provisional-evaluation.md) | #180 A/B/C/D 비교 조건, Java sealed journal 재현, 기존 평가 회귀, FINAL 준비와 비용 승인 후 실행안 |
-| [Relationship Ontology Plan](relationship-ontology-plan.md) | Java #438 후속 Python 온톨로지 실험의 범위·기존 규칙 조사·질문·단계별 완료 기준 |
-| [Relationship Ontology Fixtures](relationship-ontology-fixtures.md) | 가상 원고·수작업 정답 계약·금지 추론 사례와 모델 없는 자료 무결성 검사 |
+| [Relationship Ontology Plan](relationship-ontology-plan.md) | Java #438 제품 질문·공통 의미 모델·현재 계약/일반 코드/RDF 비교와 채택 기준 |
+| [Relationship Ontology Fixtures](relationship-ontology-fixtures.md) | 가족 중심 24개 규칙 회귀 자료·수작업 정답·추론 전 자료 무결성 검사 |
+| [Relationship Semantics Fixtures](relationship-semantics-fixtures.md) | 일반 관계의 방향·축·시점·종료/정정/삭제와 세 소비자 공통 입력 예제 |
+| [Relationship Ontology Next Step](relationship-ontology-next-step.md) | 3단계 B/C 비교의 입력·파일 책임·순서·완료 조건과 도입 보류 기준 |
 | [Notion Gold Dataset Operation](setting-extraction-notion-operation.md) | Notion 정답 원본, 내용 기반 snapshot, private 원고와 수동 GitHub 평가 실행·권한 설정 |
 | [FastAPI Role Review](fastapi-role-review.md) | FastAPI를 health check 수준으로 유지할지, Worker-only 구조로 제거할지 검토하는 기준 |
 
