@@ -1,0 +1,8 @@
+PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT DISTINCT ?claimRef WHERE {
+    ?case ex:claims/rdf:rest*/rdf:first ?claim .
+    ?claim ex:claimRef ?claimRef ; ex:curationStatus ?curation ; ex:source ?source .
+    ?source ex:episodeNo ?episode .
+    FILTER (?curation = "HOLD" && ?episode <= ?cutoff)
+}

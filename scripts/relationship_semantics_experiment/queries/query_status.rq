@@ -1,0 +1,25 @@
+PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+# History is required only for otherwise visible candidates. Retraction or
+# current user suppression must not make an unrelated past query unsupported.
+SELECT ?reason WHERE {
+    ?case ex:snapshotThroughEpisodeNo ?snapshot .
+    BIND(EXISTS {
+        ?case ex:facts/rdf:rest*/rdf:first ?fact .
+    ?fact ex:slot ?slot ; ex:knownFromEpisodeNo ?known ; ex:lastChangedEpisodeNo ?changed ; ex:factValidity ?validity .
+    ?slot ex:workId ?work ; ex:axis ?axis ; ex:kind ?kind ; ex:direction ?direction ;
+          ex:sourceNodeRef ?source ; ex:targetNodeRef ?target .
+        FILTER (?known <= ?cutoff && ?cutoff < ?changed && ?validity = "VALID")
+        FILTER NOT EXISTS { ?case ex:suppressions/rdf:rest*/rdf:first ?suppression .
+        ?suppression ex:slot ?suppressedSlot .
+        ?suppressedSlot ex:workId ?work ; ex:axis ?axis ; ex:kind ?kind ; ex:direction ?direction ;
+                        ex:sourceNodeRef ?suppressedSource ; ex:targetNodeRef ?suppressedTarget .
+        FILTER ((?source = ?suppressedSource && ?target = ?suppressedTarget) ||
+                (?direction != "DIRECTED" && ?source = ?suppressedTarget && ?target = ?suppressedSource)) }
+    } AS ?needsHistory)
+    BIND(IF(?mode = "STORY_TIME", "STORY_TIME_RECONSTRUCTION_NOT_SUPPORTED",
+         IF(?cutoff > ?snapshot, "QUERY_BEYOND_SNAPSHOT",
+         IF(?hasFilter, "QUERY_FILTER_NOT_SUPPORTED",
+         IF(?needsHistory, "HISTORY_NOT_AVAILABLE", "")))) AS ?reason)
+    FILTER (?reason != "")
+}

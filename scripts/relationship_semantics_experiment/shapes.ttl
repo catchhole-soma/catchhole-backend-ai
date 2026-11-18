@@ -1,0 +1,347 @@
+@prefix ex: <urn:catchhole:relationship:> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Standalone SHACL Core + SHACL-SPARQL; no OWL inference or SHACL rules.
+# RDF Collections preserve array order and duplicate references for validation.
+ex:ListShape a sh:NodeShape ;
+    sh:nodeKind sh:BlankNodeOrIRI ;
+    sh:closed true ;
+    sh:property [ sh:path rdf:first ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path rdf:rest ; sh:maxCount 1 ; sh:nodeKind sh:BlankNodeOrIRI ] ;
+sh:sparql [ sh:message "RDF lists must terminate at rdf:nil." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { FILTER NOT EXISTS { $this rdf:rest* rdf:nil } }""" ] ;
+sh:sparql [ sh:message "RDF list cells require exactly one first and rest." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this rdf:rest* ?cell . FILTER (?cell != rdf:nil)
+      FILTER (NOT EXISTS { ?cell rdf:first ?first } || NOT EXISTS { ?cell rdf:rest ?rest } ||
+              EXISTS { ?cell rdf:first ?a, ?b . FILTER (?a != ?b) } ||
+              EXISTS { ?cell rdf:rest ?a, ?b . FILTER (?a != ?b) }) }""" ] ;
+sh:sparql [ sh:message "RDF list cycles are invalid." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this rdf:rest* ?cell . ?cell rdf:rest+ ?cell . }""" ] ;
+sh:sparql [ sh:message "Repeated list members are invalid." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this rdf:rest* ?a, ?b . ?a rdf:first ?value . ?b rdf:first ?value . FILTER (?a != ?b) }""" ] .
+
+ex:GraphShape a sh:NodeShape ; sh:targetNode ex:Graph ; sh:sparql [ sh:message "Exactly one case is required." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { { FILTER NOT EXISTS { ?case a ex:Case } } UNION { ?a a ex:Case . ?b a ex:Case . FILTER (?a != ?b) } }""" ] .
+
+ex:CaseShape a sh:NodeShape ;
+    sh:targetClass ex:Case ;
+    sh:class ex:Case ;
+    sh:property [ sh:path rdf:type ; sh:hasValue ex:Case ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:targetSubjectsOf ex:caseId ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:path ex:caseId ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:workId ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:title ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:purpose ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:productQuestionId ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:snapshotThroughEpisodeNo ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ] ;
+    sh:property [ sh:path ex:snapshotRevision ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ] ;
+    sh:property [ sh:path ex:nodes ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:nodes [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Node ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path ex:sources ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:sources [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Source ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path ex:claims ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:claims [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Claim ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path ex:facts ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:facts [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Fact ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path ex:suppressions ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:suppressions [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Suppression ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path ex:queries ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:queries [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Query ; sh:nodeKind sh:IRI ; sh:minCount 1 ] .
+
+ex:CaseShape sh:sparql [ sh:message "Listed resources must belong to this case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:nodes/rdf:rest*/rdf:first ?member . FILTER NOT EXISTS { ?member ex:case $this } }""" ] .
+
+ex:NodeShape sh:sparql [ sh:message "Resources must occur in their declared case list." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case . FILTER NOT EXISTS { ?case ex:nodes/rdf:rest*/rdf:first $this } }""" ] .
+
+ex:CaseShape sh:sparql [ sh:message "Listed resources must belong to this case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:sources/rdf:rest*/rdf:first ?member . FILTER NOT EXISTS { ?member ex:case $this } }""" ] .
+
+ex:SourceShape sh:sparql [ sh:message "Resources must occur in their declared case list." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case . FILTER NOT EXISTS { ?case ex:sources/rdf:rest*/rdf:first $this } }""" ] .
+
+ex:CaseShape sh:sparql [ sh:message "Listed resources must belong to this case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:claims/rdf:rest*/rdf:first ?member . FILTER NOT EXISTS { ?member ex:case $this } }""" ] .
+
+ex:ClaimShape sh:sparql [ sh:message "Resources must occur in their declared case list." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case . FILTER NOT EXISTS { ?case ex:claims/rdf:rest*/rdf:first $this } }""" ] .
+
+ex:CaseShape sh:sparql [ sh:message "Listed resources must belong to this case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:facts/rdf:rest*/rdf:first ?member . FILTER NOT EXISTS { ?member ex:case $this } }""" ] .
+
+ex:FactShape sh:sparql [ sh:message "Resources must occur in their declared case list." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case . FILTER NOT EXISTS { ?case ex:facts/rdf:rest*/rdf:first $this } }""" ] .
+
+ex:CaseShape sh:sparql [ sh:message "Listed resources must belong to this case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:suppressions/rdf:rest*/rdf:first ?member . FILTER NOT EXISTS { ?member ex:case $this } }""" ] .
+
+ex:SuppressionShape sh:sparql [ sh:message "Resources must occur in their declared case list." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case . FILTER NOT EXISTS { ?case ex:suppressions/rdf:rest*/rdf:first $this } }""" ] .
+
+ex:CaseShape sh:sparql [ sh:message "Listed resources must belong to this case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:queries/rdf:rest*/rdf:first ?member . FILTER NOT EXISTS { ?member ex:case $this } }""" ] .
+
+ex:QueryShape sh:sparql [ sh:message "Resources must occur in their declared case list." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case . FILTER NOT EXISTS { ?case ex:queries/rdf:rest*/rdf:first $this } }""" ] .
+
+ex:NodeShape a sh:NodeShape ;
+    sh:targetClass ex:Node ;
+    sh:class ex:Node ;
+    sh:property [ sh:path rdf:type ; sh:hasValue ex:Node ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:path ex:case ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Case ] ;
+    sh:property [ sh:path ex:nodeRef ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:name ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:workId ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:sparql [ sh:message "Node work must equal case work." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:workId ?work ; ex:case/ex:workId ?caseWork . FILTER (?work != ?caseWork) }""" ] .
+
+ex:NodeShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case ; ex:nodeRef ?id . ?other a ex:Node ; ex:case ?case ; ex:nodeRef ?id . FILTER ($this != ?other) }""" ] .
+
+ex:SourceShape a sh:NodeShape ;
+    sh:targetClass ex:Source ;
+    sh:class ex:Source ;
+    sh:property [ sh:path rdf:type ; sh:hasValue ex:Source ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:path ex:case ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Case ] ;
+    sh:property [ sh:path ex:sourceRef ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:workId ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:episodeNo ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ] ;
+    sh:property [ sh:path ex:text ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:quote ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:sparql [ sh:message "Source work and episode must be within its case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:workId ?work ; ex:episodeNo ?episode ; ex:case ?case . ?case ex:workId ?caseWork ; ex:snapshotThroughEpisodeNo ?snapshot . FILTER (?work != ?caseWork || ?episode > ?snapshot) }""" ] ;
+    sh:sparql [ sh:message "Quote must occur literally in source text." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:text ?text ; ex:quote ?quote . FILTER (!CONTAINS(?text, ?quote)) }""" ] .
+
+ex:SourceShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case ; ex:sourceRef ?id . ?other a ex:Source ; ex:case ?case ; ex:sourceRef ?id . FILTER ($this != ?other) }""" ] .
+
+ex:ClaimShape a sh:NodeShape ;
+    sh:targetClass ex:Claim ;
+    sh:class ex:Claim ;
+    sh:property [ sh:path rdf:type ; sh:hasValue ex:Claim ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:targetSubjectsOf ex:claimRef ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:path ex:case ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Case ] ;
+    sh:property [ sh:path ex:claimRef ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:source ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Source ] ;
+    sh:property [ sh:path ex:statementMode ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "ASSERTED" "ASSERTED"^^xsd:string "UNCERTAIN" "UNCERTAIN"^^xsd:string "HYPOTHETICAL" "HYPOTHETICAL"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:curationStatus ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "CONFIRMED" "CONFIRMED"^^xsd:string "HOLD" "HOLD"^^xsd:string "RETRACTED" "RETRACTED"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:temporalScope ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "PRESENT" "PRESENT"^^xsd:string "PAST" "PAST"^^xsd:string "HYPOTHETICAL" "HYPOTHETICAL"^^xsd:string "UNKNOWN" "UNKNOWN"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:narrativeContextId ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:subjectCandidateRefs ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:subjectCandidateRefs [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Node ; sh:nodeKind sh:IRI ; sh:minCount 1 ] ;
+    sh:property [ sh:path ex:objectCandidateRefs ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:objectCandidateRefs [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Node ; sh:nodeKind sh:IRI ; sh:minCount 1 ] ;
+    sh:sparql [ sh:message "Claim references must remain within its case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case . { $this ex:source ?ref } UNION { $this ex:subjectCandidateRefs/rdf:rest*/rdf:first ?ref } UNION { $this ex:objectCandidateRefs/rdf:rest*/rdf:first ?ref } FILTER NOT EXISTS { ?ref ex:case ?case } }""" ] .
+
+ex:ClaimShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case ; ex:claimRef ?id . ?other a ex:Claim ; ex:case ?case ; ex:claimRef ?id . FILTER ($this != ?other) }""" ] .
+
+ex:SlotShape a sh:NodeShape ;
+    sh:targetClass ex:Slot ;
+    sh:class ex:Slot ;
+    sh:property [ sh:path rdf:type ; sh:hasValue ex:Slot ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:path ex:case ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Case ] ;
+    sh:property [ sh:path ex:workId ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:sourceNodeRef ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Node ] ;
+    sh:property [ sh:path ex:targetNodeRef ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Node ] ;
+    sh:property [ sh:path ex:axis ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "SOCIAL" "SOCIAL"^^xsd:string "ATTITUDE" "ATTITUDE"^^xsd:string "INTERACTION" "INTERACTION"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:kind ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "FRIENDSHIP" "FRIENDSHIP"^^xsd:string "COMPANIONSHIP" "COMPANIONSHIP"^^xsd:string "COOPERATION" "COOPERATION"^^xsd:string "MENTORSHIP" "MENTORSHIP"^^xsd:string "ROMANCE" "ROMANCE"^^xsd:string "HOSTILITY" "HOSTILITY"^^xsd:string "TRUST" "TRUST"^^xsd:string "DISTRUST" "DISTRUST"^^xsd:string "ACQUAINTANCE" "ACQUAINTANCE"^^xsd:string "OTHER" "OTHER"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:direction ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "DIRECTED" "DIRECTED"^^xsd:string "MUTUAL" "MUTUAL"^^xsd:string "UNDIRECTED" "UNDIRECTED"^^xsd:string ) ] ;
+    sh:sparql [ sh:message "Slot endpoints must be distinct and share case/work." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case ; ex:workId ?work ; ex:sourceNodeRef ?source ; ex:targetNodeRef ?target . ?case ex:workId ?caseWork . FILTER (?source = ?target || ?work != ?caseWork || NOT EXISTS { ?source ex:case ?case ; ex:workId ?work } || NOT EXISTS { ?target ex:case ?case ; ex:workId ?work }) }""" ] ;
+    sh:sparql [ sh:message "Slots must be owned by a fact or suppression in the same case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case . FILTER NOT EXISTS { ?owner ex:slot $this ; ex:case ?case . { ?owner a ex:Fact } UNION { ?owner a ex:Suppression } } }""" ] .
+
+ex:FactShape a sh:NodeShape ;
+    sh:targetClass ex:Fact ;
+    sh:class ex:Fact ;
+    sh:property [ sh:path rdf:type ; sh:hasValue ex:Fact ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:targetSubjectsOf ex:factRef ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:path ex:case ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Case ] ;
+    sh:property [ sh:path ex:factRef ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:slot ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Slot ] ;
+    sh:property [ sh:path ex:status ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "ACTIVE" "ACTIVE"^^xsd:string "ENDED" "ENDED"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:factValidity ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "VALID" "VALID"^^xsd:string "RETRACTED" "RETRACTED"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:knownFromEpisodeNo ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ] ;
+    sh:property [ sh:path ex:lastChangedEpisodeNo ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ] ;
+    sh:property [ sh:path ex:supportClaimRefs ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:supportClaimRefs [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Claim ; sh:nodeKind sh:IRI ; sh:minCount 1 ] ;
+    sh:property [ sh:path ex:endClaimRefs ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:endClaimRefs [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Claim ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path ex:correctionSourceRefs ; sh:minCount 1 ; sh:maxCount 1 ; sh:node ex:ListShape ] ;
+    sh:property [ sh:path ( ex:correctionSourceRefs [ sh:zeroOrMorePath rdf:rest ] rdf:first ) ; sh:class ex:Source ; sh:nodeKind sh:IRI ] ;
+    sh:sparql [ sh:message "Fact references must remain within its case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case . { $this ex:slot ?ref } UNION { $this ex:supportClaimRefs/rdf:rest*/rdf:first ?ref } UNION { $this ex:endClaimRefs/rdf:rest*/rdf:first ?ref } UNION { $this ex:correctionSourceRefs/rdf:rest*/rdf:first ?ref } FILTER NOT EXISTS { ?ref ex:case ?case } }""" ] ;
+    sh:sparql [ sh:message "Fact times must satisfy knownFrom <= changed <= snapshot." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:knownFromEpisodeNo ?known ; ex:lastChangedEpisodeNo ?changed ; ex:case/ex:snapshotThroughEpisodeNo ?snapshot . FILTER (?known > ?changed || ?changed > ?snapshot) }""" ] ;
+    sh:sparql [ sh:message "Support and end evidence must be disjoint." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:supportClaimRefs/rdf:rest*/rdf:first ?claim ; ex:endClaimRefs/rdf:rest*/rdf:first ?claim . }""" ] ;
+    sh:sparql [ sh:message "ENDED requires end evidence; ACTIVE forbids it." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:status ?status . FILTER ((?status = "ENDED" && NOT EXISTS { $this ex:endClaimRefs/rdf:rest*/rdf:first ?claim }) || (?status = "ACTIVE" && EXISTS { $this ex:endClaimRefs/rdf:rest*/rdf:first ?claim })) }""" ] ;
+    sh:sparql [ sh:message "Evidence cannot be newer than the fact snapshot." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:lastChangedEpisodeNo ?changed . { $this ex:supportClaimRefs/rdf:rest*/rdf:first/ex:source/ex:episodeNo ?episode } UNION { $this ex:endClaimRefs/rdf:rest*/rdf:first/ex:source/ex:episodeNo ?episode } UNION { $this ex:correctionSourceRefs/rdf:rest*/rdf:first/ex:episodeNo ?episode } FILTER (?episode > ?changed) }""" ] ;
+    sh:sparql [ sh:message "At least one support source must exist by knownFrom." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:knownFromEpisodeNo ?known . FILTER NOT EXISTS { $this ex:supportClaimRefs/rdf:rest*/rdf:first/ex:source/ex:episodeNo ?episode . FILTER (?episode <= ?known) } }""" ] ;
+    sh:sparql [ sh:message "VALID evidence must be confirmed asserted present, with no correction." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:factValidity ?validity . FILTER (?validity = "VALID") { $this ex:correctionSourceRefs/rdf:rest*/rdf:first ?correction } UNION { { $this ex:supportClaimRefs/rdf:rest*/rdf:first ?claim } UNION { $this ex:endClaimRefs/rdf:rest*/rdf:first ?claim } ?claim ex:curationStatus ?curation ; ex:statementMode ?mode ; ex:temporalScope ?temporal . FILTER (?curation != "CONFIRMED" || ?mode != "ASSERTED" || ?temporal != "PRESENT") } }""" ] ;
+    sh:sparql [ sh:message "RETRACTED is corrected extraction, not narrative END." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:factValidity ?validity ; ex:status ?status . FILTER (?validity = "RETRACTED") FILTER (?status != "ACTIVE" || EXISTS { $this ex:endClaimRefs/rdf:rest*/rdf:first ?end } || NOT EXISTS { $this ex:correctionSourceRefs/rdf:rest*/rdf:first ?correction } || EXISTS { $this ex:supportClaimRefs/rdf:rest*/rdf:first ?claim . ?claim ex:curationStatus ?curation . FILTER (?curation != "RETRACTED") }) }""" ] ;
+    sh:sparql [ sh:message "Fact evidence must have unique matching semantic endpoints." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:slot ?slot . ?slot ex:sourceNodeRef ?source ; ex:targetNodeRef ?target ; ex:direction ?direction .
+      { $this ex:supportClaimRefs/rdf:rest*/rdf:first ?claim } UNION { $this ex:endClaimRefs/rdf:rest*/rdf:first ?claim }
+      ?claim ex:subjectCandidateRefs/rdf:rest*/rdf:first ?subject ; ex:objectCandidateRefs/rdf:rest*/rdf:first ?object .
+      FILTER (EXISTS { ?claim ex:subjectCandidateRefs/rdf:rest*/rdf:first ?otherSubject . FILTER (?otherSubject != ?subject) } ||
+              EXISTS { ?claim ex:objectCandidateRefs/rdf:rest*/rdf:first ?otherObject . FILTER (?otherObject != ?object) } ||
+              !((?subject = ?source && ?object = ?target) || (?direction != "DIRECTED" && ?subject = ?target && ?object = ?source))) }""" ] ;
+    sh:sparql [ sh:message "A canonical fact slot may occur only once." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case ; ex:slot ?slot . ?other a ex:Fact ; ex:case ?case ; ex:slot ?otherSlot . FILTER ($this != ?other)
+      ?slot ex:workId ?work ; ex:axis ?axis ; ex:kind ?kind ; ex:direction ?direction ; ex:sourceNodeRef ?source ; ex:targetNodeRef ?target .
+      ?otherSlot ex:workId ?work ; ex:axis ?axis ; ex:kind ?kind ; ex:direction ?direction ; ex:sourceNodeRef ?otherSource ; ex:targetNodeRef ?otherTarget .
+      FILTER ((?source = ?otherSource && ?target = ?otherTarget) || (?direction != "DIRECTED" && ?source = ?otherTarget && ?target = ?otherSource)) }""" ] .
+
+ex:FactShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case ; ex:factRef ?id . ?other a ex:Fact ; ex:case ?case ; ex:factRef ?id . FILTER ($this != ?other) }""" ] .
+
+ex:SuppressionShape a sh:NodeShape ;
+    sh:targetClass ex:Suppression ;
+    sh:class ex:Suppression ;
+    sh:property [ sh:path rdf:type ; sh:hasValue ex:Suppression ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:targetSubjectsOf ex:suppressionRef ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:path ex:case ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Case ] ;
+    sh:property [ sh:path ex:suppressionRef ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:slot ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Slot ] ;
+    sh:property [ sh:path ex:reason ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "USER_DELETE" "USER_DELETE"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:appliesTo ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "ALL_EPISODES" "ALL_EPISODES"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:recordedRevision ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ] ;
+    sh:sparql [ sh:message "Suppression revision cannot exceed the case revision." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:recordedRevision ?revision ; ex:case/ex:snapshotRevision ?snapshot . FILTER (?revision > ?snapshot) }""" ] ;
+    sh:sparql [ sh:message "Suppression slot must belong to the same case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case ; ex:slot ?slot . FILTER NOT EXISTS { ?slot ex:case ?case } }""" ] .
+
+ex:SuppressionShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case ; ex:suppressionRef ?id . ?other a ex:Suppression ; ex:case ?case ; ex:suppressionRef ?id . FILTER ($this != ?other) }""" ] .
+
+ex:QueryShape a sh:NodeShape ;
+    sh:targetClass ex:Query ;
+    sh:class ex:Query ;
+    sh:property [ sh:path rdf:type ; sh:hasValue ex:Query ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:targetSubjectsOf ex:queryRef ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:path ex:case ; sh:maxCount 1 ; sh:minCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Case ] ;
+    sh:property [ sh:path ex:queryRef ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:mode ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "READER_KNOWLEDGE" "READER_KNOWLEDGE"^^xsd:string "STORY_TIME" "STORY_TIME"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:cutoffEpisodeNo ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ] ;
+    sh:property [ sh:path ex:storyContextId ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ] ;
+    sh:property [ sh:path ex:axis ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "SOCIAL" "SOCIAL"^^xsd:string "ATTITUDE" "ATTITUDE"^^xsd:string "INTERACTION" "INTERACTION"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:perspective ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "INCOMING" "INCOMING"^^xsd:string "OUTGOING" "OUTGOING"^^xsd:string ) ] ;
+    sh:property [ sh:path ex:node ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:class ex:Node ] ;
+    sh:sparql [ sh:message "Query node/perspective must appear together and reference this case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case . FILTER ((EXISTS {$this ex:node ?node} != EXISTS {$this ex:perspective ?perspective}) || EXISTS {$this ex:node ?node . FILTER NOT EXISTS {?node ex:case ?case}}) }""" ] ;
+    sh:sparql [ sh:message "Story queries need context; reader queries have no story context." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:mode ?mode . FILTER ((?mode = "STORY_TIME" && NOT EXISTS { $this ex:storyContextId ?context }) || (?mode = "READER_KNOWLEDGE" && EXISTS { $this ex:storyContextId ?context })) }""" ] .
+
+ex:QueryShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE { $this ex:case ?case ; ex:queryRef ?id . ?other a ex:Query ; ex:case ?case ; ex:queryRef ?id . FILTER ($this != ?other) }""" ] .
+
+# No unmodeled classes or metadata attached to the shared empty-list terminator.
+ex:GraphShape sh:sparql [ sh:message "Unsupported RDF type or malformed rdf:nil." ; sh:select """
+PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT $this WHERE {
+  { ?resource rdf:type ?type . FILTER (?type NOT IN (ex:Case, ex:Node, ex:Source, ex:Claim, ex:Fact, ex:Slot, ex:Suppression, ex:Query)) }
+  UNION { rdf:nil ?property ?value }
+}
+""" ] .
+
+# Every nested cell is checked, not only each collection's head. No annotation
+# fields are supported in the experiment's data graph; ontology is separate.
+ex:ListCellShape a sh:NodeShape ;
+    sh:targetSubjectsOf rdf:first, rdf:rest ;
+    sh:nodeKind sh:BlankNodeOrIRI ;
+    sh:closed true ;
+    sh:property [ sh:path rdf:first ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path rdf:rest ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:BlankNodeOrIRI ] .
+
+ex:GraphShape sh:sparql [
+    sh:message "Every subject must be a supported typed resource or a reachable collection cell." ;
+    sh:select """
+PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT DISTINCT $this WHERE {
+    ?resource ?property ?value .
+    FILTER NOT EXISTS {
+        ?resource rdf:type ?type .
+        FILTER (?type IN (ex:Case, ex:Node, ex:Source, ex:Claim, ex:Fact, ex:Slot, ex:Suppression, ex:Query))
+    }
+    FILTER NOT EXISTS {
+        ?owner ?listProperty ?head .
+        FILTER (?listProperty IN (ex:nodes, ex:sources, ex:claims, ex:facts, ex:suppressions, ex:queries,
+                                 ex:subjectCandidateRefs, ex:objectCandidateRefs,
+                                 ex:supportClaimRefs, ex:endClaimRefs, ex:correctionSourceRefs))
+        ?head rdf:rest* ?resource .
+        FILTER (?resource != rdf:nil)
+    }
+}
+""" ] .
