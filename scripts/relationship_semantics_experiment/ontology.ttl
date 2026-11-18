@@ -1,0 +1,74 @@
+@prefix ex: <urn:catchhole:relationship:> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Standalone SHACL Core + SHACL-SPARQL; no OWL inference or SHACL rules.
+# RDF Collections preserve array order and duplicate references for validation.
+
+# No OWL rules, sameAs, global kind-to-axis map, or implicit status inference.
+ex:Case a rdfs:Class ; rdfs:comment "One isolated synthetic snapshot and its queries." .
+ex:Node a rdfs:Class ; rdfs:comment "A character identity, never merged by name." .
+ex:Source a rdfs:Class ; rdfs:comment "Literal source text, quote, work and reader-knowledge episode." .
+ex:Claim a rdfs:Class ; rdfs:comment "Manually curated statement with potentially ambiguous endpoint candidates." .
+ex:Fact a rdfs:Class ; rdfs:comment "A confirmed or retracted relationship snapshot with separate evidence roles." .
+ex:Slot a rdfs:Class ; rdfs:comment "Original ordered endpoints plus independent axis, kind, direction and work." .
+ex:Suppression a rdfs:Class ; rdfs:comment "Current user-delete policy over one canonical slot across episodes." .
+ex:Query a rdfs:Class ; rdfs:comment "Reader cutoff or explicitly unsupported story-time query." .
+ex:case a rdf:Property .
+ex:caseId a rdf:Property .
+ex:title a rdf:Property .
+ex:productQuestionId a rdf:Property .
+ex:purpose a rdf:Property .
+ex:workId a rdf:Property .
+ex:snapshotThroughEpisodeNo a rdf:Property .
+ex:snapshotRevision a rdf:Property .
+ex:nodes a rdf:Property .
+ex:sources a rdf:Property .
+ex:claims a rdf:Property .
+ex:facts a rdf:Property .
+ex:suppressions a rdf:Property .
+ex:queries a rdf:Property .
+ex:nodeRef a rdf:Property .
+ex:name a rdf:Property .
+ex:sourceRef a rdf:Property .
+ex:episodeNo a rdf:Property .
+ex:text a rdf:Property .
+ex:quote a rdf:Property .
+ex:claimRef a rdf:Property .
+ex:subjectCandidateRefs a rdf:Property .
+ex:objectCandidateRefs a rdf:Property .
+ex:statementMode a rdf:Property .
+ex:curationStatus a rdf:Property .
+ex:temporalScope a rdf:Property .
+ex:narrativeContextId a rdf:Property .
+ex:factRef a rdf:Property .
+ex:slot a rdf:Property .
+ex:status a rdf:Property .
+ex:factValidity a rdf:Property .
+ex:knownFromEpisodeNo a rdf:Property .
+ex:lastChangedEpisodeNo a rdf:Property .
+ex:supportClaimRefs a rdf:Property .
+ex:endClaimRefs a rdf:Property .
+ex:correctionSourceRefs a rdf:Property .
+ex:sourceNodeRef a rdf:Property .
+ex:targetNodeRef a rdf:Property .
+ex:axis a rdf:Property .
+ex:kind a rdf:Property .
+ex:direction a rdf:Property .
+ex:suppressionRef a rdf:Property .
+ex:reason a rdf:Property .
+ex:appliesTo a rdf:Property .
+ex:recordedRevision a rdf:Property .
+ex:queryRef a rdf:Property .
+ex:mode a rdf:Property .
+ex:cutoffEpisodeNo a rdf:Property .
+ex:storyContextId a rdf:Property .
+
+# Object links are distinct from the source/node identifier literals.
+ex:source a rdf:Property ; rdfs:comment "Claim to its Source resource (JSON sourceRef)." .
+ex:node a rdf:Property ; rdfs:comment "Query to its Node resource (JSON nodeRef)." .
+
+# Extension adds a vocabulary value, not a rule deriving a new relationship.
+ex:kind rdfs:comment "AFFECTION is optionally enabled by the extended SHACL vocabulary; axis and direction remain independent input fields." .
+ex:perspective rdfs:comment "OUTGOING/INCOMING selects directed source/target respectively. Symmetric slots match either endpoint and remain one fact." .

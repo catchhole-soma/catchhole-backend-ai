@@ -182,6 +182,14 @@
 - 평가 fixture의 기본값 필드 제외는 Pydantic `exclude_if`를 사용하므로 `pydantic>=2.12.0`을 직접 의존성으로 유지한다. 기본 `stage2Policy`가 직렬화되어 기존 fixture hash가 바뀌지 않아야 한다.
 - setuptools package discovery는 `app*`로 제한해 루트의 `samples`, `docs`, `scripts`를 배포 패키지에서 제외한다. `pyproject.toml`이나 루트 디렉터리를 변경하면 `python -m pip install -e ".[dev]"`로 editable install을 검증한다.
 
+## 관계 의미 비교 실험 (GH442)
+
+- `scripts/relationship_semantics_experiment`는 합성 입력을 B(Python 객체)와 C(RDF·SHACL·SPARQL)로 독립 실행하는 로컬 실험이다. `app/`에서 import하거나 제품 DB/LLM/운영 데이터를 연결하지 않는다. 추론기·실제 서비스 adapter는 별도 범위다.
+- RDFLib·pySHACL은 `ontology` extra로만 설치한다. CI는 `.[dev,ontology]`를 설치하여 두 경로를 실제 검증하며 운영 기본 의존성에는 추가하지 않는다. 패키징 변경 시 기본 `.[dev]` 설치도 검증한다.
+- 입력 로더/실행기는 `expected`·소비자 예문을 읽지 않는다. 실제 결과를 먼저 저장한 뒤 평가기만 정답을 읽는다. 참조 ID만 아니라 전체 관계 tuple·상태·시점·출처를 비교하고 RDF 왕복·손상 그래프의 SHACL 거절을 검사한다.
+- 사례별 ID 범위를 분리한다. 없는 과거 이력/작중 시간 복원은 미지원으로 반환하고, 종료·기록 철회·사용자 삭제를 구분한다. 합성 수명 replay는 공유 시험 입력 생성기이며 Java 저장 동작이나 RDF 독립 추론의 검증이 아니다.
+- 시간은 입력 파싱·모델 구성·검증·첫 질의·반복 질의를 분리하고 같은 입력/환경에서 측정한다. B는 기존 Java baseline이 아니며 작은 합성 자료의 결과를 운영 성능·자연어 품질로 보고하지 않는다.
+
 ## Runtime Timezone
 
 - SQLAlchemy가 PostgreSQL 연결을 만들 때마다 `TZ`를 session `timezone` 연결 옵션으로 전달한다. Amazon RDS 기본값이 UTC여도 공유 로컬 시간을 유지해야 한다.

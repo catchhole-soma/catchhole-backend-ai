@@ -1,0 +1,31 @@
+PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+# Domain decisions are made here, not by Python's typed model.
+SELECT ?fact ?decision WHERE {
+    ?case ex:facts/rdf:rest*/rdf:first ?fact .
+    ?fact ex:slot ?slot ; ex:knownFromEpisodeNo ?known ; ex:lastChangedEpisodeNo ?changed ; ex:factValidity ?validity .
+    ?slot ex:workId ?work ; ex:axis ?axis ; ex:kind ?kind ; ex:direction ?direction ;
+          ex:sourceNodeRef ?source ; ex:targetNodeRef ?target .
+    BIND(EXISTS { ?case ex:suppressions/rdf:rest*/rdf:first ?suppression .
+        ?suppression ex:slot ?suppressedSlot .
+        ?suppressedSlot ex:workId ?suppressedWork ; ex:axis ?suppressedAxis ;
+                        ex:kind ?suppressedKind ; ex:direction ?suppressedDirection ;
+                        ex:sourceNodeRef ?suppressedSource ; ex:targetNodeRef ?suppressedTarget .
+        # Compare string values, not RDFLib plain/explicit-xsd:string terms.
+        FILTER (?work = ?suppressedWork && ?axis = ?suppressedAxis &&
+                ?kind = ?suppressedKind && ?direction = ?suppressedDirection)
+        FILTER ((?source = ?suppressedSource && ?target = ?suppressedTarget) ||
+                (?direction != "DIRECTED" && ?source = ?suppressedTarget && ?target = ?suppressedSource)) } AS ?suppressed)
+    # A symmetric edge is returned once, from either endpoint/perspective.
+    BIND((! ?hasAxisFilter || ?axis = ?filterAxis) &&
+         (! ?hasNodeFilter ||
+          (?direction = "DIRECTED" &&
+           ((?perspective = "OUTGOING" && ?source = ?filterNode) ||
+            (?perspective = "INCOMING" && ?target = ?filterNode))) ||
+          (?direction != "DIRECTED" && (?source = ?filterNode || ?target = ?filterNode)))
+         AS ?matchesFilter)
+    BIND(IF(?known > ?cutoff, "FUTURE_KNOWLEDGE",
+         IF(?suppressed, "USER_SUPPRESSED",
+         IF(?validity = "RETRACTED", "RETRACTED_FACT",
+         IF(?filtersEnabled && ! ?matchesFilter, "QUERY_FILTER", "INCLUDED")))) AS ?decision)
+}

@@ -1,0 +1,8 @@
+PREFIX ex: <urn:catchhole:relationship:>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT DISTINCT ?sourceRef WHERE {
+    ?fact ?role ?head .
+    ?head rdf:rest*/rdf:first ?claim .
+    ?claim ex:source ?source .
+    ?source ex:sourceRef ?sourceRef .
+}

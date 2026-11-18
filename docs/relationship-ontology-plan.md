@@ -1,6 +1,6 @@
 # 관계 의미 모델과 온톨로지 도입 검토: 1·2단계
 
-상태: **제품 질문·공통 의미 계약·합성 정답을 준비한 설계 단계**. 실제 소비자 연동, RDF 모델, 추론 엔진, 도입 효과는 아직 구현·측정하지 않았다.
+상태: **1·2단계 설계·자료 준비 완료**. 이 문서는 당시의 설계 근거를 보존한다. 후속 [Java #442](https://github.com/catchhole-soma/catchhole-backend-java/issues/442)에서 B/C 조회·검증 실험을 구현했으며 실제 실행과 측정은 [3단계 안내](relationship-semantics-experiment.md)와 [비교 보고서](evaluations/relationship-semantics-comparison.md)를 따른다. 실제 소비자 연동과 새 관계 추론은 아직 구현하지 않았다.
 
 - 추적: [Java #438](https://github.com/catchhole-soma/catchhole-backend-java/issues/438), [AI PR #156](https://github.com/catchhole-soma/catchhole-backend-ai/pull/156)
 - 조사 기준(2026-11-17 재확인): AI `2224096347a5a4981fa369313afaa3c516ae95ee`, Java `3896bafa26ed6d5c1d75a28b7cbdc8caef882adb`의 main. 기존 작업 브랜치의 미완료 변경은 포함하지 않았다.

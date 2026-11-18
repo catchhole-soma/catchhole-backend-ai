@@ -1,0 +1,338 @@
+{
+  "scope": "OFFLINE_CURATED_SNAPSHOTS_NOT_PRODUCTION_OR_LLM_EVALUATION",
+  "baseline": {
+    "summary": {
+      "metadata": {
+        "gitSha": "79d49ab7d61665c1fec4694f147a17fd78e549a8",
+        "dirty": false,
+        "sourceTreeSha256": "713aba3394b2f37cad42959fe54099571afbb4297c5b44be01a7266f5d0455a8",
+        "inputSha256": "a427641781b6358881929d194d130daa22e17d09da130b31836c821f4668ac8a",
+        "python": "3.12.13",
+        "platform": "macOS-26.6.2-arm64-arm-64bit",
+        "extended": false,
+        "dependencies": {
+          "pydantic": "2.14.3",
+          "rdflib": "7.6.0",
+          "pyshacl": "0.40.2"
+        },
+        "scope": "OFFLINE_CURATED_SNAPSHOTS_NOT_PRODUCTION_OR_LLM_EVALUATION"
+      },
+      "caseCount": 10,
+      "queryCount": 11,
+      "oracleEvaluated": true,
+      "oracleSha256": "29ee46e1dd3f7a4ee2448c52287dd153d8baf6793808c42b4a1a0b9c7db6cd45",
+      "valid": true,
+      "roundtripPassed": true,
+      "resultsEqual": true,
+      "oraclePassed": true
+    },
+    "benchmarkMedians": {
+      "B": {
+        "modelImportMs": 0.118833,
+        "commonParseMs": 0.95075,
+        "modelLoadMs": 0.005833,
+        "validationMs": 0.105,
+        "firstQueryBatchMs": 0.047625,
+        "repeatedQueryBatchMedianMs": 0.021167,
+        "processPeakRssBytes": 34439168,
+        "serializedInputBytes": 17417,
+        "gzipInputBytes": 7854,
+        "outputBytes": 4568
+      },
+      "C": {
+        "modelImportMs": 57.010583,
+        "commonParseMs": 0.601625,
+        "modelLoadMs": 5.892292,
+        "validationMs": 3504.467084,
+        "firstQueryBatchMs": 46.434125,
+        "repeatedQueryBatchMedianMs": 9.100208,
+        "processPeakRssBytes": 61145088,
+        "serializedInputBytes": 60884,
+        "gzipInputBytes": 11419,
+        "outputBytes": 4568
+      }
+    },
+    "benchmarkMetadata": {
+      "gitSha": "79d49ab7d61665c1fec4694f147a17fd78e549a8",
+      "dirty": false,
+      "sourceTreeSha256": "713aba3394b2f37cad42959fe54099571afbb4297c5b44be01a7266f5d0455a8",
+      "python": "3.12.13",
+      "platform": "macOS-26.6.2-arm64-arm-64bit",
+      "processesPerModel": 3,
+      "repeatedQueryBatchesPerProcess": 5,
+      "extended": false,
+      "inputSha256": "a427641781b6358881929d194d130daa22e17d09da130b31836c821f4668ac8a"
+    }
+  },
+  "final": {
+    "general": {
+      "metadata": {
+        "gitSha": "fb31dfb26015dd58e62f4231537d3a99eec526a2",
+        "dirty": false,
+        "sourceTreeSha256": "489d8947d6478be7fca718e409c813ab0e850ee45f898236926f424cc794e094",
+        "inputSha256": "a427641781b6358881929d194d130daa22e17d09da130b31836c821f4668ac8a",
+        "python": "3.12.13",
+        "platform": "macOS-26.6.2-arm64-arm-64bit",
+        "extended": true,
+        "dependencies": {
+          "pydantic": "2.14.3",
+          "rdflib": "7.6.0",
+          "pyshacl": "0.40.2"
+        },
+        "scope": "OFFLINE_CURATED_SNAPSHOTS_NOT_PRODUCTION_OR_LLM_EVALUATION"
+      },
+      "caseCount": 10,
+      "queryCount": 11,
+      "oracleEvaluated": true,
+      "oracleSha256": "29ee46e1dd3f7a4ee2448c52287dd153d8baf6793808c42b4a1a0b9c7db6cd45",
+      "valid": true,
+      "roundtripPassed": true,
+      "resultsEqual": true,
+      "oraclePassed": true
+    },
+    "extension": {
+      "metadata": {
+        "gitSha": "fb31dfb26015dd58e62f4231537d3a99eec526a2",
+        "dirty": false,
+        "sourceTreeSha256": "489d8947d6478be7fca718e409c813ab0e850ee45f898236926f424cc794e094",
+        "inputSha256": "d32fb6de66ccb5fb3c68b081976f0de42e3c00ed0e58556f63772159caf43af6",
+        "python": "3.12.13",
+        "platform": "macOS-26.6.2-arm64-arm-64bit",
+        "extended": true,
+        "dependencies": {
+          "pydantic": "2.14.3",
+          "rdflib": "7.6.0",
+          "pyshacl": "0.40.2"
+        },
+        "scope": "OFFLINE_CURATED_SNAPSHOTS_NOT_PRODUCTION_OR_LLM_EVALUATION"
+      },
+      "caseCount": 2,
+      "queryCount": 7,
+      "oracleEvaluated": true,
+      "oracleSha256": "d35509c1fa54a1609aa13600d497b5640cb7e59359c654d70c8c2702fd28aed9",
+      "valid": true,
+      "roundtripPassed": true,
+      "resultsEqual": true,
+      "oraclePassed": true
+    },
+    "benchmark": {
+      "metadata": {
+        "gitSha": "fb31dfb26015dd58e62f4231537d3a99eec526a2",
+        "dirty": false,
+        "sourceTreeSha256": "489d8947d6478be7fca718e409c813ab0e850ee45f898236926f424cc794e094",
+        "python": "3.12.13",
+        "platform": "macOS-26.6.2-arm64-arm-64bit",
+        "processesPerModel": 3,
+        "repeatedQueryBatchesPerProcess": 5,
+        "extended": true,
+        "inputSha256": "a427641781b6358881929d194d130daa22e17d09da130b31836c821f4668ac8a"
+      },
+      "scope": {
+        "timeUnit": "milliseconds per entire dataset batch, not per query",
+        "freshProcess": "fresh interpreter; OS file caches are not flushed",
+        "query": "after explicit validation; includes result assembly and integrity guard",
+        "memory": "whole-process peak RSS including library imports; not incremental heap",
+        "size": "per-case compact JSON(B) or Turtle(C); ontology/shapes/query files excluded",
+        "excludes": "HTTP, database, LLM, network, production workload and concurrent load"
+      },
+      "medians": {
+        "B": {
+          "modelImportMs": 0.1,
+          "commonParseMs": 0.854917,
+          "modelLoadMs": 0.007291,
+          "validationMs": 0.102917,
+          "firstQueryBatchMs": 0.046,
+          "repeatedQueryBatchMedianMs": 0.020417,
+          "processPeakRssBytes": 34570240,
+          "serializedInputBytes": 17417,
+          "gzipInputBytes": 7854,
+          "outputBytes": 4568
+        },
+        "C": {
+          "modelImportMs": 51.647583,
+          "commonParseMs": 0.571708,
+          "modelLoadMs": 5.40175,
+          "validationMs": 3386.877334,
+          "firstQueryBatchMs": 70.341875,
+          "repeatedQueryBatchMedianMs": 11.444083,
+          "processPeakRssBytes": 61177856,
+          "serializedInputBytes": 60884,
+          "gzipInputBytes": 11419,
+          "outputBytes": 4568
+        }
+      },
+      "runs": {
+        "B": [
+          {
+            "implementation": "B",
+            "caseCount": 10,
+            "queryCount": 11,
+            "modelImportMs": 0.172334,
+            "commonParseMs": 1.057292,
+            "modelLoadMs": 0.008709,
+            "validationMs": 0.113667,
+            "firstQueryBatchMs": 0.055667,
+            "repeatedQueryBatchMs": [
+              0.025083,
+              0.023208,
+              0.021667,
+              0.020833,
+              0.0205
+            ],
+            "repeatedQueryBatchMedianMs": 0.021667,
+            "processPeakRssBytes": 34570240,
+            "serializedInputBytes": 17417,
+            "gzipInputBytes": 7854,
+            "outputBytes": 4568,
+            "outputSha256": "7ae0b3531463094f161b1fa9de0ea597372e1be4971d99293312e44a9947bbf3",
+            "tripleCount": null
+          },
+          {
+            "implementation": "B",
+            "caseCount": 10,
+            "queryCount": 11,
+            "modelImportMs": 0.098333,
+            "commonParseMs": 0.814917,
+            "modelLoadMs": 0.007083,
+            "validationMs": 0.098375,
+            "firstQueryBatchMs": 0.044667,
+            "repeatedQueryBatchMs": [
+              0.022875,
+              0.022,
+              0.019709,
+              0.019167,
+              0.018959
+            ],
+            "repeatedQueryBatchMedianMs": 0.019709,
+            "processPeakRssBytes": 34439168,
+            "serializedInputBytes": 17417,
+            "gzipInputBytes": 7854,
+            "outputBytes": 4568,
+            "outputSha256": "7ae0b3531463094f161b1fa9de0ea597372e1be4971d99293312e44a9947bbf3",
+            "tripleCount": null
+          },
+          {
+            "implementation": "B",
+            "caseCount": 10,
+            "queryCount": 11,
+            "modelImportMs": 0.1,
+            "commonParseMs": 0.854917,
+            "modelLoadMs": 0.007291,
+            "validationMs": 0.102917,
+            "firstQueryBatchMs": 0.046,
+            "repeatedQueryBatchMs": [
+              0.023959,
+              0.021792,
+              0.020417,
+              0.019875,
+              0.019375
+            ],
+            "repeatedQueryBatchMedianMs": 0.020417,
+            "processPeakRssBytes": 34586624,
+            "serializedInputBytes": 17417,
+            "gzipInputBytes": 7854,
+            "outputBytes": 4568,
+            "outputSha256": "7ae0b3531463094f161b1fa9de0ea597372e1be4971d99293312e44a9947bbf3",
+            "tripleCount": null
+          }
+        ],
+        "C": [
+          {
+            "implementation": "C",
+            "caseCount": 10,
+            "queryCount": 11,
+            "modelImportMs": 51.647583,
+            "commonParseMs": 0.571708,
+            "modelLoadMs": 5.404083,
+            "validationMs": 3419.709042,
+            "firstQueryBatchMs": 70.333708,
+            "repeatedQueryBatchMs": [
+              10.996209,
+              11.221791,
+              11.444083,
+              11.509792,
+              11.494625
+            ],
+            "repeatedQueryBatchMedianMs": 11.444083,
+            "processPeakRssBytes": 61128704,
+            "serializedInputBytes": 60884,
+            "gzipInputBytes": 11419,
+            "outputBytes": 4568,
+            "outputSha256": "7ae0b3531463094f161b1fa9de0ea597372e1be4971d99293312e44a9947bbf3",
+            "tripleCount": 1122
+          },
+          {
+            "implementation": "C",
+            "caseCount": 10,
+            "queryCount": 11,
+            "modelImportMs": 50.217417,
+            "commonParseMs": 0.588833,
+            "modelLoadMs": 5.378833,
+            "validationMs": 3361.520167,
+            "firstQueryBatchMs": 70.341875,
+            "repeatedQueryBatchMs": [
+              11.02925,
+              11.145958,
+              11.155584,
+              11.177708,
+              10.899375
+            ],
+            "repeatedQueryBatchMedianMs": 11.145958,
+            "processPeakRssBytes": 61259776,
+            "serializedInputBytes": 60884,
+            "gzipInputBytes": 11419,
+            "outputBytes": 4568,
+            "outputSha256": "7ae0b3531463094f161b1fa9de0ea597372e1be4971d99293312e44a9947bbf3",
+            "tripleCount": 1122
+          },
+          {
+            "implementation": "C",
+            "caseCount": 10,
+            "queryCount": 11,
+            "modelImportMs": 52.799,
+            "commonParseMs": 0.561416,
+            "modelLoadMs": 5.40175,
+            "validationMs": 3386.877334,
+            "firstQueryBatchMs": 81.566042,
+            "repeatedQueryBatchMs": [
+              11.460458,
+              11.653417,
+              11.500584,
+              11.094084,
+              11.323083
+            ],
+            "repeatedQueryBatchMedianMs": 11.460458,
+            "processPeakRssBytes": 61177856,
+            "serializedInputBytes": 60884,
+            "gzipInputBytes": 11419,
+            "outputBytes": 4568,
+            "outputSha256": "7ae0b3531463094f161b1fa9de0ea597372e1be4971d99293312e44a9947bbf3",
+            "tripleCount": 1122
+          }
+        ]
+      }
+    }
+  },
+  "artifactSha256": {
+    "general": {
+      "actual-B.json": "0c95d0d6638f77cd7fe562b0bff460dfa5b7b8cdeaea7f06ebe7659028223ff1",
+      "actual-C.json": "61cdbcf2e7a856899b510c7364a81edafa8926fa40c23c46938939915ec8d2b3",
+      "evaluation.json": "ed99c926dcadffd58e19efa84014c1a143f19f9381eeb37f4e0e9ca9274267fe",
+      "inputs.json": "9dbd635cd0c8ebffcdd901fffd0f3c1a4dbe08b878555c2cf3f30862c5e66cc6",
+      "summary.json": "82c0b0455b368d7268beab632cd74ab72c868c2a5db019106d24301c06047925"
+    },
+    "extension": {
+      "actual-B.json": "36370dce933c5b4d8806c752e460b1c3154112cde01b7c650cb7d42b51dc870d",
+      "actual-C.json": "7969877a21aceb683ef75dc37342e513df277ce15f8a12143ee5a57b743fbe88",
+      "evaluation.json": "c4a1038f2b89871f5f6bd4d37cd095a310e8a66e096171d8e97e4d66724a92ec",
+      "inputs.json": "a4e00114b6525caa34683f90800b9b3aa42a9c130e126f5c8ed125af85ac7bdf",
+      "summary.json": "ce9d5ec6eaf5b27d866cd10f06583c7620b3aa32e85db34685cc3a88d7ac9d00"
+    }
+  },
+  "validation": {
+    "relatedPytest": "286 passed in 90.24s (0:01:30)",
+    "fullPytest": "6086 passed, 186 skipped, 1 warning in 127.32s (0:02:07)",
+    "ruff": "check and format passed on 14 changed Python files",
+    "packaging": "editable .[dev] and .[dev,ontology] installed; pip check passed"
+  }
+}
