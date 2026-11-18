@@ -20,6 +20,8 @@ Python AI Worker의 문서 위치와 작성 기준을 정리합니다.
 | [Relationship Ontology Fixtures](relationship-ontology-fixtures.md) | 가족 중심 24개 규칙 회귀 자료·수작업 정답·추론 전 자료 무결성 검사 |
 | [Relationship Semantics Fixtures](relationship-semantics-fixtures.md) | 일반 관계의 방향·축·시점·종료/정정/삭제와 세 소비자 공통 입력 예제 |
 | [Relationship Ontology Next Step](relationship-ontology-next-step.md) | 3단계 B/C 비교의 입력·파일 책임·순서·완료 조건과 도입 보류 기준 |
+| [Relationship Semantics Experiment](relationship-semantics-experiment.md) | Java #442 Python 객체와 RDF·SHACL·SPARQL의 실제 구현·실행·지원 범위 |
+| [Relationship Semantics Comparison](evaluations/relationship-semantics-comparison.md) | 같은 합성 입력의 정답 일치·확장 변경·비용 측정과 운영 도입 판단 |
 | [Notion Gold Dataset Operation](setting-extraction-notion-operation.md) | Notion 정답 원본, 내용 기반 snapshot, private 원고와 수동 GitHub 평가 실행·권한 설정 |
 | [FastAPI Role Review](fastapi-role-review.md) | FastAPI를 health check 수준으로 유지할지, Worker-only 구조로 제거할지 검토하는 기준 |
 

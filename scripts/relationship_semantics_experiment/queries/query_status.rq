@@ -10,16 +10,28 @@ SELECT ?reason WHERE {
     ?slot ex:workId ?work ; ex:axis ?axis ; ex:kind ?kind ; ex:direction ?direction ;
           ex:sourceNodeRef ?source ; ex:targetNodeRef ?target .
         FILTER (?known <= ?cutoff && ?cutoff < ?changed && ?validity = "VALID")
+        # Ask for history only after the same selection as fact_decisions.rq.
+        FILTER (! ?filtersEnabled ||
+                ((! ?hasAxisFilter || ?axis = ?filterAxis) &&
+                 (! ?hasNodeFilter ||
+                  (?direction = "DIRECTED" &&
+                   ((?perspective = "OUTGOING" && ?source = ?filterNode) ||
+                    (?perspective = "INCOMING" && ?target = ?filterNode))) ||
+                  (?direction != "DIRECTED" && (?source = ?filterNode || ?target = ?filterNode)))))
         FILTER NOT EXISTS { ?case ex:suppressions/rdf:rest*/rdf:first ?suppression .
         ?suppression ex:slot ?suppressedSlot .
-        ?suppressedSlot ex:workId ?work ; ex:axis ?axis ; ex:kind ?kind ; ex:direction ?direction ;
+        ?suppressedSlot ex:workId ?suppressedWork ; ex:axis ?suppressedAxis ;
+                        ex:kind ?suppressedKind ; ex:direction ?suppressedDirection ;
                         ex:sourceNodeRef ?suppressedSource ; ex:targetNodeRef ?suppressedTarget .
+        # Compare string values, not RDFLib plain/explicit-xsd:string terms.
+        FILTER (?work = ?suppressedWork && ?axis = ?suppressedAxis &&
+                ?kind = ?suppressedKind && ?direction = ?suppressedDirection)
         FILTER ((?source = ?suppressedSource && ?target = ?suppressedTarget) ||
                 (?direction != "DIRECTED" && ?source = ?suppressedTarget && ?target = ?suppressedSource)) }
     } AS ?needsHistory)
     BIND(IF(?mode = "STORY_TIME", "STORY_TIME_RECONSTRUCTION_NOT_SUPPORTED",
          IF(?cutoff > ?snapshot, "QUERY_BEYOND_SNAPSHOT",
-         IF(?hasFilter, "QUERY_FILTER_NOT_SUPPORTED",
+         IF(?hasFilter && ! ?filtersEnabled, "QUERY_FILTER_NOT_SUPPORTED",
          IF(?needsHistory, "HISTORY_NOT_AVAILABLE", "")))) AS ?reason)
     FILTER (?reason != "")
 }

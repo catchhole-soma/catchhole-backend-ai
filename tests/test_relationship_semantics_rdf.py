@@ -8,7 +8,7 @@ import pytest
 from rdflib import RDF, Graph, Literal, URIRef
 from rdflib.collection import Collection
 
-from scripts.relationship_semantics_experiment.input import load_document
+from scripts.relationship_semantics_experiment.input import Case, load_document
 from scripts.relationship_semantics_experiment.rdf_model import EX, RdfModel, validate_graph
 
 FIXTURE = Path(__file__).parent / "fixtures" / "relationship_semantics_cases.json"
@@ -214,3 +214,189 @@ def test_explicit_xsd_strings_have_same_validation_and_query_meaning(cases):
     damage(model, "unconfirmed-proof")
     # This last case is RETRACTED: a CONFIRMED/HOLD premise is also invalid.
     assert not validate_graph(model.graph)["conforms"]
+
+
+@pytest.mark.parametrize(
+    ("axis", "direction"),
+    [("ATTITUDE", "DIRECTED"), ("SOCIAL", "MUTUAL"), ("INTERACTION", "UNDIRECTED")],
+)
+def test_extended_affection_is_vocabulary_only_not_axis_or_direction_mapping(
+    cases, axis, direction
+):
+    data = cases[0].to_dict()
+    data["facts"][0]["slot"].update(kind="AFFECTION", axis=axis, direction=direction)
+    data["sources"][0]["text"] = data["sources"][0]["quote"] = "도윤은 서연에게 호감을 느낀다."
+    case = Case.model_validate(data)
+    model = RdfModel(case, extended=True)
+    assert not validate_graph(model.graph)["conforms"]
+    assert validate_graph(model.graph, extended=True)["conforms"]
+    actual = model.query(case.queries[0])["facts"][0]
+    assert actual["slot"] == case.facts[0].slot.to_dict()
+    assert model.to_case().to_dict() == case.to_dict()
+
+
+def test_extended_directed_filters_preserve_endpoint_orientation(cases):
+    case = cases[0]
+    model = RdfModel(case, extended=True)
+    for node, perspective, expected in [
+        ("doyun", "OUTGOING", "f1"),
+        ("doyun", "INCOMING", "f2"),
+        ("seoyeon", "OUTGOING", "f2"),
+        ("seoyeon", "INCOMING", "f1"),
+    ]:
+        query = case.queries[0].model_copy(
+            update={"axis": "ATTITUDE", "node_ref": node, "perspective": perspective}
+        )
+        result = model.query(query)
+        assert result["status"] == "READY"
+        assert [fact["factRef"] for fact in result["facts"]] == [expected]
+        original = next(fact for fact in case.facts if fact.fact_ref == expected)
+        assert result["facts"][0]["slot"] == original.slot.to_dict()
+        assert result["excludedFacts"][0]["reason"] == "QUERY_FILTER"
+    assert RdfModel(case).query(query)["reason"] == "QUERY_FILTER_NOT_SUPPORTED"
+
+
+@pytest.mark.parametrize("direction", ["MUTUAL", "UNDIRECTED"])
+def test_symmetric_filters_return_one_original_fact_from_either_endpoint(cases, direction):
+    data = cases[1].to_dict()
+    data["facts"][1]["slot"]["direction"] = direction
+    case = Case.model_validate(data)
+    model = RdfModel(case, extended=True)
+    for node in ("doyun", "seoyeon"):
+        for perspective in ("INCOMING", "OUTGOING"):
+            query = case.queries[0].model_copy(
+                update={"axis": "SOCIAL", "node_ref": node, "perspective": perspective}
+            )
+            result = model.query(query)
+            assert [fact["factRef"] for fact in result["facts"]] == ["f2"]
+            assert result["facts"][0]["slot"] == case.facts[1].slot.to_dict()
+
+
+def test_filtered_fact_does_not_require_its_unavailable_history(cases):
+    data = cases[0].to_dict()
+    data["facts"][0]["lastChangedEpisodeNo"] = 3
+    case = Case.model_validate(data)
+    model = RdfModel(case, extended=True)
+    query = case.queries[0].model_copy(
+        update={"cutoff_episode_no": 1, "node_ref": "doyun", "perspective": "INCOMING"}
+    )
+    result = model.query(query)
+    assert result["status"] == "READY"
+    assert [fact["factRef"] for fact in result["facts"]] == ["f2"]
+    assert result["excludedFacts"] == [{"factRef": "f1", "reason": "QUERY_FILTER"}]
+    assert model.query(query.model_copy(update={"perspective": "OUTGOING"}))["reason"] == (
+        "HISTORY_NOT_AVAILABLE"
+    )
+    axis_only = query.model_copy(update={"node_ref": None, "perspective": None, "axis": "SOCIAL"})
+    assert model.query(axis_only)["status"] == "READY"
+    assert model.query(axis_only)["facts"] == []
+
+
+def test_fact_filters_do_not_reclassify_or_hide_held_claims(cases):
+    case = cases[5]
+    query = case.queries[0].model_copy(
+        update={"axis": "ATTITUDE", "node_ref": "doyun", "perspective": "OUTGOING"}
+    )
+    result = RdfModel(case, extended=True).query(query)
+    assert result["facts"] == []
+    assert result["heldClaimRefs"] == ["c1", "c2"]
+
+
+def test_same_name_does_not_turn_another_node_into_the_filter_identity(cases):
+    data = cases[0].to_dict()
+    same_name = dict(data["nodes"][1], nodeRef="another-seoyeon")
+    data["nodes"].append(same_name)
+    case = Case.model_validate(data)
+    model = RdfModel(case, extended=True)
+    query = case.queries[0].model_copy(
+        update={"node_ref": "another-seoyeon", "perspective": "OUTGOING"}
+    )
+    assert model.query(query)["facts"] == []
+    original = query.model_copy(update={"node_ref": "seoyeon"})
+    assert [fact["factRef"] for fact in model.query(original)["facts"]] == ["f2"]
+
+
+@pytest.mark.parametrize(
+    ("case_index", "reason"),
+    [(3, "FUTURE_KNOWLEDGE"), (7, "RETRACTED_FACT"), (8, "USER_SUPPRESSED")],
+)
+def test_visibility_reasons_take_precedence_over_query_filter(cases, case_index, reason):
+    case = cases[case_index]
+    query = case.queries[0].model_copy(update={"axis": "INTERACTION"})
+    result = RdfModel(case, extended=True).query(query)
+    assert result["status"] == "READY"
+    assert result["excludedFacts"] == [{"factRef": case.facts[0].fact_ref, "reason": reason}]
+
+
+@pytest.mark.parametrize("extended", [False, True])
+@pytest.mark.parametrize("field", ["workId", "axis", "kind", "direction"])
+def test_mixed_string_notation_never_revives_a_suppressed_slot(cases, extended, field):
+    from rdflib.namespace import XSD
+
+    case = cases[8]
+    model = RdfModel(case, extended=extended)
+    suppression = resource(model, "suppressions")
+    slot = model.graph.value(suppression, EX.slot)
+    value = model.graph.value(slot, EX[field])
+    model.graph.set((slot, EX[field], Literal(str(value), datatype=XSD.string)))
+    assert model.validate()["conforms"]
+    # Both the final decision and history gating must use value equality.
+    for cutoff in (3, 1):
+        query = case.queries[0].model_copy(update={"cutoff_episode_no": cutoff})
+        result = model.query(query)
+        assert result["status"] == "READY"
+        assert result["facts"] == []
+        assert result["excludedFacts"] == [{"factRef": "f1", "reason": "USER_SUPPRESSED"}]
+
+
+@pytest.mark.parametrize(
+    ("group", "field"),
+    [
+        ("nodes", "nodeRef"),
+        ("sources", "sourceRef"),
+        ("claims", "claimRef"),
+        ("facts", "factRef"),
+        ("queries", "queryRef"),
+        ("suppressions", "suppressionRef"),
+    ],
+)
+def test_mixed_string_notation_cannot_hide_duplicate_identifiers(cases, group, field):
+    from rdflib.namespace import XSD
+
+    data = cases[8 if group == "suppressions" else 0].to_dict()
+    if len(data[group]) == 1:
+        data[group].append(dict(data[group][0], **{field: "another-id"}))
+    model = RdfModel(Case.model_validate(data))
+    assert model.validate()["conforms"]
+    first, second = model._list(model.case_uri, group)[:2]
+    identifier = str(model.graph.value(first, EX[field]))
+    model.graph.set((second, EX[field], Literal(identifier, datatype=XSD.string)))
+    result = validate_graph(model.graph)
+    assert not result["conforms"]
+    assert any("Identifiers must be unique" in issue["message"] for issue in result["violations"])
+
+
+def test_mixed_string_notation_cannot_hide_duplicate_canonical_slots(cases):
+    from rdflib.namespace import XSD
+
+    model = RdfModel(cases[1])
+    first = model.graph.value(resource(model, "facts", 0), EX.slot)
+    second = model.graph.value(resource(model, "facts", 1), EX.slot)
+    for field in ("axis", "kind", "direction"):
+        value = model.graph.value(second, EX[field])
+        model.graph.set((first, EX[field], Literal(str(value), datatype=XSD.string)))
+    result = validate_graph(model.graph)
+    assert not result["conforms"]
+    assert any("canonical fact slot" in issue["message"] for issue in result["violations"])
+
+
+def test_mixed_string_notation_for_node_work_does_not_change_membership(cases):
+    from rdflib.namespace import XSD
+
+    case = cases[0]
+    model = RdfModel(case)
+    expected = model.query(case.queries[0])
+    node = resource(model, "nodes")
+    model.graph.set((node, EX.workId, Literal(case.work_id, datatype=XSD.string)))
+    assert model.validate()["conforms"]
+    assert model.query(case.queries[0]) == expected

@@ -1,5 +1,7 @@
 PREFIX ex: <urn:catchhole:relationship:>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+# HOLD claims have no confirmed axis/slot. Keep case/cutoff scope even when
+# extended queries filter facts by axis or incoming/outgoing endpoint.
 SELECT DISTINCT ?claimRef WHERE {
     ?case ex:claims/rdf:rest*/rdf:first ?claim .
     ?claim ex:claimRef ?claimRef ; ex:curationStatus ?curation ; ex:source ?source .

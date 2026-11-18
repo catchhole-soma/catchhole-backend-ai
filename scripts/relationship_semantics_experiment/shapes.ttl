@@ -5,6 +5,13 @@
 
 # Standalone SHACL Core + SHACL-SPARQL; no OWL inference or SHACL rules.
 # RDF Collections preserve array order and duplicate references for validation.
+# String joins compare values explicitly: RDFLib distinguishes the terms
+# "value" and "value"^^xsd:string, which have the same RDF 1.1 string value.
+# Optional vocabulary delta, selected only by validate_graph(extended=True).
+# AFFECTION already exists in the product enum. No axis/direction mapping is
+# introduced by adding it to this experiment's allowed-kind collection.
+ex:ExtendedKindVocabulary ex:additionalKind "AFFECTION", "AFFECTION"^^xsd:string .
+
 ex:ListShape a sh:NodeShape ;
     sh:nodeKind sh:BlankNodeOrIRI ;
     sh:closed true ;
@@ -121,7 +128,7 @@ SELECT $this WHERE { $this ex:workId ?work ; ex:case/ex:workId ?caseWork . FILTE
 
 ex:NodeShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-SELECT $this WHERE { $this ex:case ?case ; ex:nodeRef ?id . ?other a ex:Node ; ex:case ?case ; ex:nodeRef ?id . FILTER ($this != ?other) }""" ] .
+SELECT $this WHERE { $this ex:case ?case ; ex:nodeRef ?id . ?other a ex:Node ; ex:case ?case ; ex:nodeRef ?otherId . FILTER ($this != ?other && STR(?id) = STR(?otherId)) }""" ] .
 
 ex:SourceShape a sh:NodeShape ;
     sh:targetClass ex:Source ;
@@ -144,7 +151,7 @@ SELECT $this WHERE { $this ex:text ?text ; ex:quote ?quote . FILTER (!CONTAINS(?
 
 ex:SourceShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-SELECT $this WHERE { $this ex:case ?case ; ex:sourceRef ?id . ?other a ex:Source ; ex:case ?case ; ex:sourceRef ?id . FILTER ($this != ?other) }""" ] .
+SELECT $this WHERE { $this ex:case ?case ; ex:sourceRef ?id . ?other a ex:Source ; ex:case ?case ; ex:sourceRef ?otherId . FILTER ($this != ?other && STR(?id) = STR(?otherId)) }""" ] .
 
 ex:ClaimShape a sh:NodeShape ;
     sh:targetClass ex:Claim ;
@@ -170,7 +177,7 @@ SELECT $this WHERE { $this ex:case ?case . { $this ex:source ?ref } UNION { $thi
 
 ex:ClaimShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-SELECT $this WHERE { $this ex:case ?case ; ex:claimRef ?id . ?other a ex:Claim ; ex:case ?case ; ex:claimRef ?id . FILTER ($this != ?other) }""" ] .
+SELECT $this WHERE { $this ex:case ?case ; ex:claimRef ?id . ?other a ex:Claim ; ex:case ?case ; ex:claimRef ?otherId . FILTER ($this != ?other && STR(?id) = STR(?otherId)) }""" ] .
 
 ex:SlotShape a sh:NodeShape ;
     sh:targetClass ex:Slot ;
@@ -187,7 +194,7 @@ ex:SlotShape a sh:NodeShape ;
     sh:property [ sh:path ex:direction ; sh:maxCount 1 ; sh:minCount 1 ; sh:datatype xsd:string ; sh:pattern "\\S" ; sh:in ( "DIRECTED" "DIRECTED"^^xsd:string "MUTUAL" "MUTUAL"^^xsd:string "UNDIRECTED" "UNDIRECTED"^^xsd:string ) ] ;
     sh:sparql [ sh:message "Slot endpoints must be distinct and share case/work." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-SELECT $this WHERE { $this ex:case ?case ; ex:workId ?work ; ex:sourceNodeRef ?source ; ex:targetNodeRef ?target . ?case ex:workId ?caseWork . FILTER (?source = ?target || ?work != ?caseWork || NOT EXISTS { ?source ex:case ?case ; ex:workId ?work } || NOT EXISTS { ?target ex:case ?case ; ex:workId ?work }) }""" ] ;
+SELECT $this WHERE { $this ex:case ?case ; ex:workId ?work ; ex:sourceNodeRef ?source ; ex:targetNodeRef ?target . ?case ex:workId ?caseWork . FILTER (?source = ?target || ?work != ?caseWork || NOT EXISTS { ?source ex:case ?case ; ex:workId ?sourceWork . FILTER (?sourceWork = ?work) } || NOT EXISTS { ?target ex:case ?case ; ex:workId ?targetWork . FILTER (?targetWork = ?work) }) }""" ] ;
     sh:sparql [ sh:message "Slots must be owned by a fact or suppression in the same case." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 SELECT $this WHERE { $this ex:case ?case . FILTER NOT EXISTS { ?owner ex:slot $this ; ex:case ?case . { ?owner a ex:Fact } UNION { ?owner a ex:Suppression } } }""" ] .
@@ -248,12 +255,13 @@ SELECT $this WHERE { $this ex:slot ?slot . ?slot ex:sourceNodeRef ?source ; ex:t
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 SELECT $this WHERE { $this ex:case ?case ; ex:slot ?slot . ?other a ex:Fact ; ex:case ?case ; ex:slot ?otherSlot . FILTER ($this != ?other)
       ?slot ex:workId ?work ; ex:axis ?axis ; ex:kind ?kind ; ex:direction ?direction ; ex:sourceNodeRef ?source ; ex:targetNodeRef ?target .
-      ?otherSlot ex:workId ?work ; ex:axis ?axis ; ex:kind ?kind ; ex:direction ?direction ; ex:sourceNodeRef ?otherSource ; ex:targetNodeRef ?otherTarget .
+      ?otherSlot ex:workId ?otherWork ; ex:axis ?otherAxis ; ex:kind ?otherKind ; ex:direction ?otherDirection ; ex:sourceNodeRef ?otherSource ; ex:targetNodeRef ?otherTarget .
+      FILTER (?work = ?otherWork && ?axis = ?otherAxis && ?kind = ?otherKind && ?direction = ?otherDirection)
       FILTER ((?source = ?otherSource && ?target = ?otherTarget) || (?direction != "DIRECTED" && ?source = ?otherTarget && ?target = ?otherSource)) }""" ] .
 
 ex:FactShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-SELECT $this WHERE { $this ex:case ?case ; ex:factRef ?id . ?other a ex:Fact ; ex:case ?case ; ex:factRef ?id . FILTER ($this != ?other) }""" ] .
+SELECT $this WHERE { $this ex:case ?case ; ex:factRef ?id . ?other a ex:Fact ; ex:case ?case ; ex:factRef ?otherId . FILTER ($this != ?other && STR(?id) = STR(?otherId)) }""" ] .
 
 ex:SuppressionShape a sh:NodeShape ;
     sh:targetClass ex:Suppression ;
@@ -277,7 +285,7 @@ SELECT $this WHERE { $this ex:case ?case ; ex:slot ?slot . FILTER NOT EXISTS { ?
 
 ex:SuppressionShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-SELECT $this WHERE { $this ex:case ?case ; ex:suppressionRef ?id . ?other a ex:Suppression ; ex:case ?case ; ex:suppressionRef ?id . FILTER ($this != ?other) }""" ] .
+SELECT $this WHERE { $this ex:case ?case ; ex:suppressionRef ?id . ?other a ex:Suppression ; ex:case ?case ; ex:suppressionRef ?otherId . FILTER ($this != ?other && STR(?id) = STR(?otherId)) }""" ] .
 
 ex:QueryShape a sh:NodeShape ;
     sh:targetClass ex:Query ;
@@ -303,7 +311,7 @@ SELECT $this WHERE { $this ex:mode ?mode . FILTER ((?mode = "STORY_TIME" && NOT 
 
 ex:QueryShape sh:sparql [ sh:message "Identifiers must be unique within one case and entity type." ; sh:select """PREFIX ex: <urn:catchhole:relationship:>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-SELECT $this WHERE { $this ex:case ?case ; ex:queryRef ?id . ?other a ex:Query ; ex:case ?case ; ex:queryRef ?id . FILTER ($this != ?other) }""" ] .
+SELECT $this WHERE { $this ex:case ?case ; ex:queryRef ?id . ?other a ex:Query ; ex:case ?case ; ex:queryRef ?otherId . FILTER ($this != ?other && STR(?id) = STR(?otherId)) }""" ] .
 
 # No unmodeled classes or metadata attached to the shared empty-list terminator.
 ex:GraphShape sh:sparql [ sh:message "Unsupported RDF type or malformed rdf:nil." ; sh:select """

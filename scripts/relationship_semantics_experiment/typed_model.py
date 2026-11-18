@@ -35,8 +35,8 @@ def slot_key(slot: Slot) -> tuple[str, ...]:
 
 class TypedModel:
     def __init__(self, case: Case, *, extended: bool = False):
-        if extended:
-            raise NotImplementedError("extension experiment has not been installed")
+        self.extended = extended
+        self.allowed_kinds = BASE_KINDS | ({"AFFECTION"} if extended else set())
         self.case = case
         self.nodes = {node.node_ref: node for node in case.nodes}
         self.sources = {source.source_ref: source for source in case.sources}
@@ -64,7 +64,7 @@ class TypedModel:
                 where,
             )
             check(value.source_node_ref != value.target_node_ref, "SELF_RELATION", where)
-            check(value.kind in BASE_KINDS, "UNSUPPORTED_KIND", where)
+            check(value.kind in self.allowed_kinds, "UNSUPPORTED_KIND", where)
 
         for objects, field in (
             (case.nodes, "node_ref"),
@@ -227,7 +227,7 @@ class TypedModel:
             return self._unsupported(query, "STORY_TIME_RECONSTRUCTION_NOT_SUPPORTED")
         if query.cutoff_episode_no > self.case.snapshot_through_episode_no:
             return self._unsupported(query, "QUERY_BEYOND_SNAPSHOT")
-        if query.axis is not None or query.node_ref is not None:
+        if not self.extended and (query.axis is not None or query.node_ref is not None):
             return self._unsupported(query, "QUERY_FILTER_NOT_SUPPORTED")
         suppressed = {slot_key(value.slot) for value in self.case.suppressions}
         included, excluded = [], []
@@ -239,6 +239,8 @@ class TypedModel:
                 reason = "USER_SUPPRESSED"
             elif fact.fact_validity == "RETRACTED":
                 reason = "RETRACTED_FACT"
+            elif not self._matches_filter(fact.slot, query):
+                reason = "QUERY_FILTER"
             if reason:
                 excluded.append({"factRef": fact.fact_ref, "reason": reason})
             else:
@@ -272,3 +274,14 @@ class TypedModel:
 
     def to_case(self) -> Case:
         return Case.model_validate(self.case.to_dict())
+
+    @staticmethod
+    def _matches_filter(slot: Slot, query: Query) -> bool:
+        if query.axis is not None and slot.axis != query.axis:
+            return False
+        if query.node_ref is None:
+            return True
+        if slot.direction != "DIRECTED":
+            return query.node_ref in (slot.source_node_ref, slot.target_node_ref)
+        endpoint = slot.source_node_ref if query.perspective == "OUTGOING" else slot.target_node_ref
+        return endpoint == query.node_ref

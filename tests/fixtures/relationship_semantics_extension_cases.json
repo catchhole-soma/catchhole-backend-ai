@@ -1,0 +1,466 @@
+{
+  "schemaVersion": 1,
+  "synthetic": true,
+  "status": "PROPOSED_CONSUMER_EXAMPLES",
+  "oracle": "HANDWRITTEN_NOT_ENGINE_GENERATED",
+  "outputSemantics": "EXACT_FACT_REF_SETS",
+  "productIntegration": false,
+  "cases": [
+    {
+      "caseId": "extension_affection",
+      "title": "실험 어휘에 AFFECTION 추가",
+      "productQuestionId": "P1",
+      "purpose": "기존 제품 종류를 실험 모델에 추가할 비용을 비교한다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 1,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "도윤은 서연에게 호감을 느낀다.",
+          "quote": "도윤은 서연에게 호감을 느낀다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c1",
+          "sourceRef": "s1",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        }
+      ],
+      "facts": [
+        {
+          "factRef": "f1",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "ATTITUDE",
+            "kind": "AFFECTION",
+            "direction": "DIRECTED"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 1,
+          "supportClaimRefs": [
+            "c1"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        }
+      ],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q_affection",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f1"
+            ],
+            "excludedFacts": [],
+            "heldClaimRefs": [],
+            "forbiddenSlots": []
+          }
+        }
+      ]
+    },
+    {
+      "caseId": "extension_directional_attitudes",
+      "title": "나의 태도와 나를 향한 태도 조회",
+      "productQuestionId": "P1",
+      "purpose": "방향·축 필터를 추가하고 상호 관계의 대칭성을 보존한다.",
+      "workId": "work-a",
+      "snapshotThroughEpisodeNo": 3,
+      "snapshotRevision": 1,
+      "nodes": [
+        {
+          "nodeRef": "doyun",
+          "name": "도윤",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "seoyeon",
+          "name": "서연",
+          "workId": "work-a"
+        },
+        {
+          "nodeRef": "harin",
+          "name": "하린",
+          "workId": "work-a"
+        }
+      ],
+      "sources": [
+        {
+          "sourceRef": "s1",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "도윤은 서연을 신뢰한다.",
+          "quote": "도윤은 서연을 신뢰한다."
+        },
+        {
+          "sourceRef": "s2",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "서연은 도윤을 불신한다.",
+          "quote": "서연은 도윤을 불신한다."
+        },
+        {
+          "sourceRef": "s3",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "text": "도윤과 하린은 서로를 신뢰한다.",
+          "quote": "도윤과 하린은 서로를 신뢰한다."
+        },
+        {
+          "sourceRef": "s4",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "text": "도윤과 서연은 공식 협력자다.",
+          "quote": "도윤과 서연은 공식 협력자다."
+        }
+      ],
+      "claims": [
+        {
+          "claimRef": "c1",
+          "sourceRef": "s1",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        },
+        {
+          "claimRef": "c2",
+          "sourceRef": "s2",
+          "subjectCandidateRefs": [
+            "seoyeon"
+          ],
+          "objectCandidateRefs": [
+            "doyun"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        },
+        {
+          "claimRef": "c3",
+          "sourceRef": "s3",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "harin"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        },
+        {
+          "claimRef": "c4",
+          "sourceRef": "s4",
+          "subjectCandidateRefs": [
+            "doyun"
+          ],
+          "objectCandidateRefs": [
+            "seoyeon"
+          ],
+          "statementMode": "ASSERTED",
+          "curationStatus": "CONFIRMED",
+          "temporalScope": "PRESENT",
+          "narrativeContextId": "story-present"
+        }
+      ],
+      "facts": [
+        {
+          "factRef": "f1",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "ATTITUDE",
+            "kind": "TRUST",
+            "direction": "DIRECTED"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 1,
+          "supportClaimRefs": [
+            "c1"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        },
+        {
+          "factRef": "f2",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "seoyeon",
+            "targetNodeRef": "doyun",
+            "axis": "ATTITUDE",
+            "kind": "DISTRUST",
+            "direction": "DIRECTED"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 1,
+          "supportClaimRefs": [
+            "c2"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        },
+        {
+          "factRef": "f3",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "harin",
+            "axis": "ATTITUDE",
+            "kind": "TRUST",
+            "direction": "MUTUAL"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 2,
+          "lastChangedEpisodeNo": 2,
+          "supportClaimRefs": [
+            "c3"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        },
+        {
+          "factRef": "f4",
+          "slot": {
+            "workId": "work-a",
+            "sourceNodeRef": "doyun",
+            "targetNodeRef": "seoyeon",
+            "axis": "SOCIAL",
+            "kind": "COOPERATION",
+            "direction": "MUTUAL"
+          },
+          "status": "ACTIVE",
+          "factValidity": "VALID",
+          "knownFromEpisodeNo": 1,
+          "lastChangedEpisodeNo": 1,
+          "supportClaimRefs": [
+            "c4"
+          ],
+          "endClaimRefs": [],
+          "correctionSourceRefs": []
+        }
+      ],
+      "suppressions": [],
+      "queries": [
+        {
+          "queryRef": "q_all",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f1",
+              "f2",
+              "f3",
+              "f4"
+            ],
+            "excludedFacts": [],
+            "heldClaimRefs": [],
+            "forbiddenSlots": []
+          }
+        },
+        {
+          "queryRef": "q_outgoing",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "axis": "ATTITUDE",
+          "nodeRef": "doyun",
+          "perspective": "OUTGOING",
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f1",
+              "f3"
+            ],
+            "excludedFacts": [
+              {
+                "factRef": "f2",
+                "reason": "QUERY_FILTER"
+              },
+              {
+                "factRef": "f4",
+                "reason": "QUERY_FILTER"
+              }
+            ],
+            "heldClaimRefs": [],
+            "forbiddenSlots": []
+          }
+        },
+        {
+          "queryRef": "q_incoming",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "axis": "ATTITUDE",
+          "nodeRef": "doyun",
+          "perspective": "INCOMING",
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f2",
+              "f3"
+            ],
+            "excludedFacts": [
+              {
+                "factRef": "f1",
+                "reason": "QUERY_FILTER"
+              },
+              {
+                "factRef": "f4",
+                "reason": "QUERY_FILTER"
+              }
+            ],
+            "heldClaimRefs": [],
+            "forbiddenSlots": []
+          }
+        },
+        {
+          "queryRef": "q_attitude",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "axis": "ATTITUDE",
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f1",
+              "f2",
+              "f3"
+            ],
+            "excludedFacts": [
+              {
+                "factRef": "f4",
+                "reason": "QUERY_FILTER"
+              }
+            ],
+            "heldClaimRefs": [],
+            "forbiddenSlots": []
+          }
+        },
+        {
+          "queryRef": "q_social",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 3,
+          "storyContextId": null,
+          "axis": "SOCIAL",
+          "nodeRef": "doyun",
+          "perspective": "OUTGOING",
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f4"
+            ],
+            "excludedFacts": [
+              {
+                "factRef": "f1",
+                "reason": "QUERY_FILTER"
+              },
+              {
+                "factRef": "f2",
+                "reason": "QUERY_FILTER"
+              },
+              {
+                "factRef": "f3",
+                "reason": "QUERY_FILTER"
+              }
+            ],
+            "heldClaimRefs": [],
+            "forbiddenSlots": []
+          }
+        },
+        {
+          "queryRef": "q_before_mutual",
+          "mode": "READER_KNOWLEDGE",
+          "cutoffEpisodeNo": 1,
+          "storyContextId": null,
+          "axis": "ATTITUDE",
+          "nodeRef": "doyun",
+          "perspective": "OUTGOING",
+          "expected": {
+            "status": "READY",
+            "reason": null,
+            "factRefs": [
+              "f1"
+            ],
+            "excludedFacts": [
+              {
+                "factRef": "f2",
+                "reason": "QUERY_FILTER"
+              },
+              {
+                "factRef": "f3",
+                "reason": "FUTURE_KNOWLEDGE"
+              },
+              {
+                "factRef": "f4",
+                "reason": "QUERY_FILTER"
+              }
+            ],
+            "heldClaimRefs": [],
+            "forbiddenSlots": []
+          }
+        }
+      ]
+    }
+  ]
+}

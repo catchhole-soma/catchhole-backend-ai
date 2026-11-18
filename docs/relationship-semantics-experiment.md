@@ -28,10 +28,21 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest --noconftest -q \
   tests/test_relationship_semantics_input.py \
   tests/test_relationship_semantics_experiment.py \
   tests/test_relationship_semantics_rdf.py \
-  tests/test_relationship_semantics_lifecycle.py
+  tests/test_relationship_semantics_lifecycle.py \
+  tests/test_relationship_semantics_benchmark.py \
+  tests/test_relationship_semantics_extensions.py
 ```
 
 출력 경로는 새 경로여야 한다. 재실행은 다른 경로를 지정한다. `--oracle`을 생략하면 실행 결과만 만들고 채점하지 않는다. `inputs.json`은 정답이 제거된 재실행 가능한 입력이다. `actual-B.json`, `actual-C.json`에 검증·실제 결과·왕복 결과를 먼저 저장하고 나서 `evaluation.json`을 만든다. `case-01.ttl` 등은 실제 C 입력 그래프다. `summary.json`은 입력 hash·코드 SHA·소스 트리 hash·환경과 통과 여부를 기록한다.
+
+기본 구현과 기능 추가를 구분하려면 기본값 `extended=False`를 사용한다. 확장 구현의 일반 10사례 회귀는 위 실행에 `--extended`를 더한다. 추가 2사례·7질의는 아래처럼 실행한다.
+
+```bash
+python -m scripts.relationship_semantics_experiment.run \
+  --input tests/fixtures/relationship_semantics_extension_cases.json \
+  --oracle tests/fixtures/relationship_semantics_extension_cases.json \
+  --extended --output /tmp/relationship-semantics-extension
+```
 
 ## Python 모델, RDF, SHACL, SPARQL의 역할
 
@@ -68,11 +79,19 @@ JSON → input.py의 구조 파싱 (정답 값 미접근)
 1. 입력 손상은 검증 실패다. 미지원 질의와 구분한다.
 2. STORY_TIME는 `STORY_TIME_RECONSTRUCTION_NOT_SUPPORTED`, snapshot 이후 회차는 `QUERY_BEYOND_SNAPSHOT`으로 질의 전체가 미지원이다.
 3. 지원 질의에서 각 fact를 미래 지식 → 현재 사용자 삭제 억제 → 기록 철회 → 질의 필터 순서로 제외한다. 삭제 억제와 기록 철회는 현재 snapshot revision의 정책이다.
-4. 남는 후보 중 `knownFrom <= cutoff < lastChanged`가 있으면 `HISTORY_NOT_AVAILABLE`로 질의 전체를 미지원 처리한다. 삭제/철회로 이미 제외된 관계 하나 때문에 무관한 과거 질의를 막지는 않는다.
+4. 남는 후보 중 `knownFrom <= cutoff < lastChanged`가 있으면 `HISTORY_NOT_AVAILABLE`로 질의 전체를 미지원 처리한다. 삭제/철회/질의 필터로 이미 제외된 관계 하나 때문에 무관한 과거 질의를 막지는 않는다.
 5. 미지원 질의는 facts·보류 목록이 비고 모든 fact를 `UNSUPPORTED_QUERY`로 분류한다. 지원 질의는 cutoff 이하 출처를 가진 HOLD 주장만 보류 목록에 포함한다.
 6. VALID+ENDED는 종료된 관계로 반환한다. RETRACTED를 ENDED로 바꾸거나 사용자 삭제를 근거 한 개의 철회로 바꾸지 않는다.
 
 이 중 조건 중첩과 과거 복원 불가의 우선순위는 기존 11질의에 없던 경계이므로 추가 회귀로 고정했다. 실제 제품의 전역 정책 변경을 선언하는 것은 아니다.
+
+## 같은 기능 추가의 비교
+
+`extended=True`는 허용 종류에 `AFFECTION`을 추가하고 조회의 선택 필드 `axis`, `nodeRef`, `perspective`를 지원한다. `nodeRef`와 `perspective`는 함께 지정한다. DIRECTED의 OUTGOING은 출발 인물, INCOMING은 도착 인물을 대조하고 MUTUAL/UNDIRECTED는 양 끝점을 검사하여 한 번 반환한다. AFFECTION이라는 종류만으로 축이나 방향을 고정하지 않는다.
+
+기본 모드에서는 AFFECTION 입력이 검증 실패이고 새 필터는 `QUERY_FILTER_NOT_SUPPORTED`다. 이 전후 경계를 테스트한다. 필터는 fact의 포함 여부에 적용하며 HOLD 목록은 여전히 사례·cutoff 범위다. Claim에는 axis가 없으므로 태도 조회의 보류 목록까지 해당 축으로 좁혔다고 해석하지 않는다.
+
+B는 허용 집합과 필터 함수를, C는 선언된 종류 목록과 기존 SPARQL 질의의 조건을 확장한다. 입력·출력 모델과 평가기를 새로 만들지 않았고 실제 서비스 소비자 변환도 구현하지 않았다. 운영 계약에는 AFFECTION이 이미 있으므로 이번 추가는 제품의 새 기능이 아니라 확장 비용 비교다.
 
 ## 수명 회귀의 범위
 

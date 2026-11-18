@@ -1,6 +1,6 @@
 # 3단계 착수 명세: 같은 관계 의미를 두 방식으로 읽고 비교하기
 
-상태: **3단계 착수 준비 완료**. 아래 프로그램·파일 경로·실행 결과는 아직 구현되지 않았다. 지금 완료한 것은 입력·정답·비교 조건의 준비다.
+상태: **3단계 구현·비교 실험으로 이어진 착수 명세**. 아래 본문은 1·2단계에서 합의한 계획을 보존한다. 후속 [Java #442](https://github.com/catchhole-soma/catchhole-backend-java/issues/442)의 실제 구현·명령은 [실행 안내](relationship-semantics-experiment.md), 검증 결과·비용·채택 판단은 [비교 보고서](evaluations/relationship-semantics-comparison.md)를 따른다. 본문의 ‘아직’, ‘다음’은 이 명세를 작성한 시점의 표현이다.
 
 - 추적: [Java #438](https://github.com/catchhole-soma/catchhole-backend-java/issues/438)
 - 목적/선택 기준: [관계 의미 모델 설계](relationship-ontology-plan.md)

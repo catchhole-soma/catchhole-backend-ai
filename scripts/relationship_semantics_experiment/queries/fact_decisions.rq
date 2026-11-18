@@ -8,11 +8,24 @@ SELECT ?fact ?decision WHERE {
           ex:sourceNodeRef ?source ; ex:targetNodeRef ?target .
     BIND(EXISTS { ?case ex:suppressions/rdf:rest*/rdf:first ?suppression .
         ?suppression ex:slot ?suppressedSlot .
-        ?suppressedSlot ex:workId ?work ; ex:axis ?axis ; ex:kind ?kind ; ex:direction ?direction ;
+        ?suppressedSlot ex:workId ?suppressedWork ; ex:axis ?suppressedAxis ;
+                        ex:kind ?suppressedKind ; ex:direction ?suppressedDirection ;
                         ex:sourceNodeRef ?suppressedSource ; ex:targetNodeRef ?suppressedTarget .
+        # Compare string values, not RDFLib plain/explicit-xsd:string terms.
+        FILTER (?work = ?suppressedWork && ?axis = ?suppressedAxis &&
+                ?kind = ?suppressedKind && ?direction = ?suppressedDirection)
         FILTER ((?source = ?suppressedSource && ?target = ?suppressedTarget) ||
                 (?direction != "DIRECTED" && ?source = ?suppressedTarget && ?target = ?suppressedSource)) } AS ?suppressed)
+    # A symmetric edge is returned once, from either endpoint/perspective.
+    BIND((! ?hasAxisFilter || ?axis = ?filterAxis) &&
+         (! ?hasNodeFilter ||
+          (?direction = "DIRECTED" &&
+           ((?perspective = "OUTGOING" && ?source = ?filterNode) ||
+            (?perspective = "INCOMING" && ?target = ?filterNode))) ||
+          (?direction != "DIRECTED" && (?source = ?filterNode || ?target = ?filterNode)))
+         AS ?matchesFilter)
     BIND(IF(?known > ?cutoff, "FUTURE_KNOWLEDGE",
          IF(?suppressed, "USER_SUPPRESSED",
-         IF(?validity = "RETRACTED", "RETRACTED_FACT", "INCLUDED"))) AS ?decision)
+         IF(?validity = "RETRACTED", "RETRACTED_FACT",
+         IF(?filtersEnabled && ! ?matchesFilter, "QUERY_FILTER", "INCLUDED")))) AS ?decision)
 }

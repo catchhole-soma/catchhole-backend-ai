@@ -82,9 +82,14 @@ def validate_graph(graph: Graph, extended: bool = False) -> dict:
     No inference, imports, JavaScript, remote graph store or remote queries run.
     Engine/shape failures are exceptions, not ordinary nonconformance results.
     """
-    if extended:
-        raise NotImplementedError("Extension experiment has not been applied")
     shapes = Graph().parse(data=(HERE / "shapes.ttl").read_text(), format="turtle")
+    if extended:
+        # The vocabulary extension is declared in the shapes document. The
+        # adapter selects it; SHACL still validates the actual RDF kind values.
+        kind_property = next(shapes.subjects(SH.path, EX.kind))
+        allowed = Collection(shapes, shapes.value(kind_property, SH["in"]))
+        for kind in shapes.objects(EX.ExtendedKindVocabulary, EX.additionalKind):
+            allowed.append(kind)
     conforms, report, _ = shacl_validate(
         graph,
         shacl_graph=shapes,
@@ -112,8 +117,6 @@ def validate_graph(graph: Graph, extended: bool = False) -> dict:
 
 class RdfModel:
     def __init__(self, case: Case, extended: bool = False):
-        if extended:
-            raise NotImplementedError("Extension experiment has not been applied")
         self.extended = extended
         self.graph = Graph()
         self.graph.bind("ex", EX)
@@ -229,10 +232,11 @@ class RdfModel:
         # Query nodes. These checks do not decide fact inclusion or eligibility.
         if (query.node_ref is None) != (query.perspective is None):
             raise ValueError("nodeRef and perspective must occur together")
-        node_ids = {
-            str(self.graph.value(node, EX.nodeRef)) for node in self._list(self.case_uri, "nodes")
+        nodes_by_id = {
+            str(self.graph.value(node, EX.nodeRef)): node
+            for node in self._list(self.case_uri, "nodes")
         }
-        if query.node_ref is not None and query.node_ref not in node_ids:
+        if query.node_ref is not None and query.node_ref not in nodes_by_id:
             raise ValueError("query nodeRef is unknown")
         if (
             query.cutoff_episode_no < 1
@@ -250,6 +254,12 @@ class RdfModel:
                     for field in ("axis", "nodeRef", "perspective")
                 )
             ),
+            "filtersEnabled": Literal(self.extended),
+            "hasAxisFilter": Literal(query.axis is not None),
+            "filterAxis": Literal(query.axis or ""),
+            "hasNodeFilter": Literal(query.node_ref is not None),
+            "filterNode": nodes_by_id.get(query.node_ref, EX.NoFilterNode),
+            "perspective": Literal(query.perspective or ""),
         }
         decisions = list(self._select("fact_decisions.rq", **bindings))
         reason_rows = list(self._select("query_status.rq", **bindings))
@@ -282,6 +292,8 @@ class RdfModel:
                 )
             output["facts"].append(fact)
         if not reason:
+            # HOLD claims have no confirmed axis/slot. They remain scoped to
+            # the case and reader cutoff even when confirmed facts are filtered.
             output["heldClaimRefs"] = sorted(
                 {str(row.claimRef) for row in self._select("held_claims.rq", **bindings)}
             )

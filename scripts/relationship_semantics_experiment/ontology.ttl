@@ -68,3 +68,7 @@ ex:storyContextId a rdf:Property .
 # Object links are distinct from the source/node identifier literals.
 ex:source a rdf:Property ; rdfs:comment "Claim to its Source resource (JSON sourceRef)." .
 ex:node a rdf:Property ; rdfs:comment "Query to its Node resource (JSON nodeRef)." .
+
+# Extension adds a vocabulary value, not a rule deriving a new relationship.
+ex:kind rdfs:comment "AFFECTION is optionally enabled by the extended SHACL vocabulary; axis and direction remain independent input fields." .
+ex:perspective rdfs:comment "OUTGOING/INCOMING selects directed source/target respectively. Symmetric slots match either endpoint and remain one fact." .
