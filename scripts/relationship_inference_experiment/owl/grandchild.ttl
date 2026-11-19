@@ -1,0 +1,6 @@
+@prefix rel: <urn:catchhole:relationship-inference:> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+# Opt-in inverse of the already derived biological grandparent conclusion.
+# No new ancestry chain, identity resolution or eligibility policy is added.
+rel:biologicalGrandparent owl:inverseOf rel:biologicalGrandchild .

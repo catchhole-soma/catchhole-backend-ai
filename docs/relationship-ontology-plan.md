@@ -1,5 +1,7 @@
 # 관계 의미 모델과 온톨로지 도입 검토: 1·2단계
 
+> 후속 상태(2026-11-19): 아래는 #438 당시의 설계 기록이다. #444에서 Python·OWL 규칙 추론과 근거·철회·확장 비교까지 실행했다. [후속 결과](evaluations/relationship-inference-comparison.md)를 함께 읽으며, 실제 소비자 연동과 운영 도입 판단은 여전히 구분한다.
+
 상태: **제품 질문·공통 의미 계약·합성 정답을 준비한 설계 단계**. 실제 소비자 연동, RDF 모델, 추론 엔진, 도입 효과는 아직 구현·측정하지 않았다.
 
 - 추적: [Java #438](https://github.com/catchhole-soma/catchhole-backend-java/issues/438), [AI PR #156](https://github.com/catchhole-soma/catchhole-backend-ai/pull/156)

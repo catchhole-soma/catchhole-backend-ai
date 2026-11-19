@@ -1,5 +1,11 @@
 # Repository Guidelines
 
+## Offline relationship inference (Java #444)
+
+- `scripts/relationship_inference_experiment/`는 합성·오프라인 실험이다. 원본 24개 가족 fixture를 변경하지 않고, B(Python)와 C(실제 OWL 2 RL)의 결론·모든 독립 proof·철회/삭제를 비교한다. `app/`, DB, LLM, 운영 계약과 AI 로직 버전은 변경하지 않는다.
+- 적격성/사용자 삭제 정책은 공통 계층이고 C의 proof 복원은 별도 구현이다. OWL 내장 기능·증분 철회·새 모순 탐지로 과장하지 않는다. 실제 결과 저장 후 정답을 열며 전체 tuple/proof exact 비교와 중복 검사를 유지한다.
+- 실험 의존성은 `ontology` extra에 둔다. 기본 프로필을 먼저 고정한 뒤 opt-in 규칙 확장을 별도 기록한다. 실행·측정·범위는 `docs/relationship-inference-experiment.md`를 따른다.
+
 ## Pull Requests
 
 - 챗봇 검토·사용 중 새로 확인한 조회/답변/비용 한계는 [Java #247](https://github.com/catchhole-soma/catchhole-backend-java/issues/247)에 재현 조건·현재/기대 동작·검증 상태·관련 PR을 누적한다. 미검증 우려와 확인된 문제를 구분하고, 개별 개선 PR로 누적 이슈 전체를 자동 종료하지 않는다.

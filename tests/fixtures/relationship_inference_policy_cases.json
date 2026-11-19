@@ -1,0 +1,6031 @@
+{
+  "schemaVersion": 2,
+  "synthetic": true,
+  "status": "PROPOSED_EXPERIMENT",
+  "oracle": "HANDWRITTEN_NOT_ENGINE_GENERATED",
+  "outputSemantics": "EXACT_SETS",
+  "rules": [
+    {
+      "ruleId": "R_PARENT_INVERSE",
+      "premiseCount": 1,
+      "outputKind": "CHILD_OF",
+      "derivationType": "SEMANTIC_INVERSE"
+    },
+    {
+      "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+      "premiseCount": 2,
+      "outputKind": "GRANDPARENT_OF",
+      "derivationType": "NEW_RELATION"
+    }
+  ],
+  "cases": [
+    {
+      "caseId": "p01_lifecycle_one_path",
+      "title": "수명 스냅샷 1/4: 한 경로",
+      "purpose": "독립 snapshot 입력으로 A→B→D 한 경로와 그 정확한 proof를 고정한다. 저장 event reducer를 검증하는 사례가 아니다.",
+      "snapshotRevision": 1,
+      "snapshotThroughEpisode": 1,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 1,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p02_lifecycle_two_paths",
+      "title": "수명 스냅샷 2/4: 중간 인물 두 명",
+      "purpose": "A→B→D와 A→C→D가 같은 결론을 지지하지만 두 독립 proof로 남는다.",
+      "snapshotRevision": 2,
+      "snapshotThroughEpisode": 2,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 2,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        },
+        {
+          "sourceId": "s_ac",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가람은(는) 채원의 친부모다.",
+          "quote": "가람은(는) 채원의 친부모다."
+        },
+        {
+          "sourceId": "s_cd",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n채원은(는) 다온의 친부모다.",
+          "quote": "채원은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "c",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ac",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ac"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "c",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "cd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_cd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "c",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ac"
+            ],
+            "sourceIds": [
+              "s_ac"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "c",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "cd"
+            ],
+            "sourceIds": [
+              "s_cd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "c",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ac"
+                ],
+                "sourceIds": [
+                  "s_ac"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "c",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "cd"
+                ],
+                "sourceIds": [
+                  "s_cd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd"
+                ]
+              },
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ac",
+                  "cd"
+                ],
+                "sourceIds": [
+                  "s_ac",
+                  "s_cd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p03_lifecycle_first_path_withdrawn",
+      "title": "수명 스냅샷 3/4: 첫 경로 철회",
+      "purpose": "AB만 철회하면 BD 자체는 남고 조부모의 C 경로 proof만 유지된다.",
+      "snapshotRevision": 3,
+      "snapshotThroughEpisode": 2,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 2,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        },
+        {
+          "sourceId": "s_ac",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가람은(는) 채원의 친부모다.",
+          "quote": "가람은(는) 채원의 친부모다."
+        },
+        {
+          "sourceId": "s_cd",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n채원은(는) 다온의 친부모다.",
+          "quote": "채원은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "WITHDRAWN",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "c",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ac",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ac"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "c",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "cd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_cd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "c",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ac"
+            ],
+            "sourceIds": [
+              "s_ac"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "c",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "cd"
+            ],
+            "sourceIds": [
+              "s_cd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "c",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ac"
+                ],
+                "sourceIds": [
+                  "s_ac"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "c",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "cd"
+                ],
+                "sourceIds": [
+                  "s_cd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ac",
+                  "cd"
+                ],
+                "sourceIds": [
+                  "s_ac",
+                  "s_cd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "ab",
+            "reason": "WITHDRAWN_FACT"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p04_lifecycle_last_path_withdrawn",
+      "title": "수명 스냅샷 4/4: 마지막 경로 철회",
+      "purpose": "AB와 AC를 모두 철회하면 BD·CD 직접 사실은 남지만 조부모 결론은 사라진다.",
+      "snapshotRevision": 4,
+      "snapshotThroughEpisode": 2,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 2,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        },
+        {
+          "sourceId": "s_ac",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가람은(는) 채원의 친부모다.",
+          "quote": "가람은(는) 채원의 친부모다."
+        },
+        {
+          "sourceId": "s_cd",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n채원은(는) 다온의 친부모다.",
+          "quote": "채원은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "WITHDRAWN",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "c",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ac",
+          "assertionState": "ASSERTED",
+          "factValidity": "WITHDRAWN",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ac"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "c",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "cd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_cd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "c",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "cd"
+            ],
+            "sourceIds": [
+              "s_cd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "c",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "cd"
+                ],
+                "sourceIds": [
+                  "s_cd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "ab",
+            "reason": "WITHDRAWN_FACT"
+          },
+          {
+            "assertionId": "ac",
+            "reason": "WITHDRAWN_FACT"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p05_two_by_two_four_proofs",
+      "title": "두 전제마다 독립 assertion 두 개",
+      "purpose": "2×2 조합의 네 proof를 모두 반환한다. assertion 대안과 source 대안을 혼동하지 않는다.",
+      "snapshotRevision": 1,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_ab2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        },
+        {
+          "sourceId": "s_bd2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab2",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab2"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd2",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd2"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab",
+              "ab2"
+            ],
+            "sourceIds": [
+              "s_ab",
+              "s_ab2"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd",
+              "bd2"
+            ],
+            "sourceIds": [
+              "s_bd",
+              "s_bd2"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              },
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab2"
+                ],
+                "sourceIds": [
+                  "s_ab2"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              },
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd2"
+                ],
+                "sourceIds": [
+                  "s_bd2"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd"
+                ]
+              },
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd2"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd2"
+                ]
+              },
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab2",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab2",
+                  "s_bd"
+                ]
+              },
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab2",
+                  "bd2"
+                ],
+                "sourceIds": [
+                  "s_ab2",
+                  "s_bd2"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p06_one_assertion_multiple_sources_or",
+      "title": "한 assertion의 두 출처는 OR",
+      "purpose": "살아 있는 source가 하나라도 있으면 assertion을 유지한다. 두 source를 두 assertion/proof로 늘리지 않는다.",
+      "snapshotRevision": 1,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_ab2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab",
+            "s_ab2"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab",
+              "s_ab2"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_ab2"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_ab2",
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p07_partial_source_withdrawal",
+      "title": "두 출처 중 하나 철회",
+      "purpose": "철회된 source를 모든 직접/파생 provenance에서 빼되 남은 source의 assertion과 proof는 유지한다.",
+      "snapshotRevision": 2,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "WITHDRAWN",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_ab2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab",
+            "s_ab2"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab2"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab2"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab2",
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p08_all_sources_withdrawn",
+      "title": "마지막 출처도 철회",
+      "purpose": "assertion factValidity가 VALID여도 ACTIVE source가 없으면 전제와 그 파생 결론을 제거한다.",
+      "snapshotRevision": 3,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "WITHDRAWN",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_ab2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "WITHDRAWN",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab",
+            "s_ab2"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "ab",
+            "reason": "WITHDRAWN_FACT"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p09_future_source_filtered",
+      "title": "현재·미래 출처가 함께 있는 assertion",
+      "purpose": "현재 source로 전제는 유지하지만 미래 source ID는 직접/파생 proof에 섞지 않는다.",
+      "snapshotRevision": 1,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 2,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_ab2",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab",
+            "s_ab2"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p10_future_alternative_path",
+      "title": "두 경로 중 한 경로의 마지막 전제가 미래",
+      "purpose": "현재 두 번째 경로의 앞쪽 AC는 남지만 미래 CD와 그 조부모 proof는 제외한다.",
+      "snapshotRevision": 1,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 2,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        },
+        {
+          "sourceId": "s_ac",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가람은(는) 채원의 친부모다.",
+          "quote": "가람은(는) 채원의 친부모다."
+        },
+        {
+          "sourceId": "s_cd",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n채원은(는) 다온의 친부모다.",
+          "quote": "채원은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "c",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ac",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ac"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "c",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "cd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_cd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "c",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ac"
+            ],
+            "sourceIds": [
+              "s_ac"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "c",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ac"
+                ],
+                "sourceIds": [
+                  "s_ac"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "cd",
+            "reason": "FUTURE_EVIDENCE"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p11_purged_quote_active_fact",
+      "title": "원문 파기와 근거 철회 분리",
+      "purpose": "PURGED의 text/quote는 null로 남고 source ID 및 유효한 사실과 proof는 유지된다.",
+      "snapshotRevision": 2,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "PURGED",
+          "text": null,
+          "quote": null
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p12_parent_whole_slot_suppressed",
+      "title": "부모 관계 전체 사용자 삭제",
+      "purpose": "부모 slot 억제는 해당 assertion을 막고 역표현·그 전제를 필요로 하는 조부모도 만들지 못하게 한다.",
+      "snapshotRevision": 2,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "suppressionId": "delete-parent",
+          "recordedRevision": 2,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "ab",
+            "reason": "USER_SUPPRESSED"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p13_parent_new_support_still_suppressed",
+      "title": "부모 삭제 후 새 assertion 등장",
+      "purpose": "같은 canonical 부모 slot의 새 지지 assertion이 생겨도 전체 관계 삭제를 우회하지 않는다.",
+      "snapshotRevision": 3,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_ab2",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab2",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab2"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "suppressionId": "delete-parent",
+          "recordedRevision": 2,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "ab",
+            "reason": "USER_SUPPRESSED"
+          },
+          {
+            "assertionId": "ab2",
+            "reason": "USER_SUPPRESSED"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p14_derived_slot_suppressed",
+      "title": "파생 조부모만 사용자 삭제",
+      "purpose": "부모 두 사실과 자녀 역표현은 남고 조부모만 제외 목록에 남는다. 제외 행에는 공개 proof를 담지 않는다.",
+      "snapshotRevision": 2,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "d",
+          "kind": "GRANDPARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": 2,
+          "suppressionId": "delete-grandparent",
+          "recordedRevision": 2,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "reason": "USER_SUPPRESSED",
+            "suppressionIds": [
+              "delete-grandparent"
+            ]
+          }
+        ],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p15_new_path_cannot_revive_suppressed_derived",
+      "title": "조부모 삭제 후 새 중간 경로 등장",
+      "purpose": "두 번째 중간 경로가 생겨도 조부모 slot의 삭제 정책은 그대로 적용되고 제외 행은 하나다.",
+      "snapshotRevision": 3,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        },
+        {
+          "sourceId": "s_ac",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n가람은(는) 채원의 친부모다.",
+          "quote": "가람은(는) 채원의 친부모다."
+        },
+        {
+          "sourceId": "s_cd",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n채원은(는) 다온의 친부모다.",
+          "quote": "채원은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "c",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ac",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ac"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "c",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "cd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_cd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "d",
+          "kind": "GRANDPARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": 2,
+          "suppressionId": "delete-grandparent",
+          "recordedRevision": 2,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "c",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ac"
+            ],
+            "sourceIds": [
+              "s_ac"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "c",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "cd"
+            ],
+            "sourceIds": [
+              "s_cd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "c",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ac"
+                ],
+                "sourceIds": [
+                  "s_ac"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "c",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "cd"
+                ],
+                "sourceIds": [
+                  "s_cd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "reason": "USER_SUPPRESSED",
+            "suppressionIds": [
+              "delete-grandparent"
+            ]
+          }
+        ],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p16_revision_before_suppression",
+      "title": "삭제 기록보다 이른 snapshot revision",
+      "purpose": "recordedRevision=2인 삭제는 snapshotRevision=1에서는 아직 적용하지 않는다. 회차와 revision은 별개다.",
+      "snapshotRevision": 1,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "d",
+          "kind": "GRANDPARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": 2,
+          "suppressionId": "delete-grandparent",
+          "recordedRevision": 2,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p17_revision_after_suppression",
+      "title": "삭제 기록이 적용된 snapshot revision",
+      "purpose": "동일 근거·동일 독자 회차에서도 revision이 삭제 시점에 도달하면 조부모가 제외된다.",
+      "snapshotRevision": 2,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "d",
+          "kind": "GRANDPARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": 2,
+          "suppressionId": "delete-grandparent",
+          "recordedRevision": 2,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "reason": "USER_SUPPRESSED",
+            "suppressionIds": [
+              "delete-grandparent"
+            ]
+          }
+        ],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p18_inactive_suppression_restores_visibility",
+      "title": "삭제 억제 비활성화 snapshot",
+      "purpose": "active=false인 현재 정책은 가리지 않는다. 이전 활성 상태를 재구성하는 이벤트 이력 테스트는 아니다.",
+      "snapshotRevision": 3,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "d",
+          "kind": "GRANDPARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": 2,
+          "suppressionId": "delete-grandparent",
+          "recordedRevision": 2,
+          "active": false
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p19_inverse_suppression_same_identity",
+      "title": "자녀 역표현으로 지정한 부모 삭제",
+      "purpose": "CHILD_OF(B,A)는 PARENT_OF(A,B)와 같은 삭제 identity이므로 부모와 역표현 및 의존 조부모를 함께 막는다.",
+      "snapshotRevision": 2,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "a",
+          "kind": "CHILD_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "suppressionId": "delete-via-child",
+          "recordedRevision": 2,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "ab",
+            "reason": "USER_SUPPRESSED"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p20_current_revision_past_reader",
+      "title": "현재 삭제 정책으로 과거 독자 회차 조회",
+      "purpose": "revision3의 삭제는 cutoffEpisode1에도 적용한다. 과거 독자 지식과 현재 사용자 삭제 상태를 혼동하지 않는다.",
+      "snapshotRevision": 3,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 1,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "suppressionId": "delete-current",
+          "recordedRevision": 3,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "ab",
+            "reason": "USER_SUPPRESSED"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p21_context_isolation",
+      "title": "중간 ID가 같아도 다른 시간선",
+      "purpose": "B가 같다는 이유만으로 서로 다른 temporalContext의 두 전제를 조합하지 않는다.",
+      "snapshotRevision": 1,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "alternate-timeline",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "bd",
+            "reason": "DIFFERENT_CONTEXT"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p22_cross_work_bridge_rejected",
+      "title": "다른 작품의 인물로 만든 연결은 거절",
+      "purpose": "validationIssues CROSS_WORK가 선언된 입력은 전체 거절한다. 좋은 전제를 포함한 모든 assertion을 거절 사유로 분류한다.",
+      "snapshotRevision": 1,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-b",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_cd",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n채원은(는) 다온의 친부모다.",
+          "quote": "채원은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "c",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "cd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_cd"
+          ],
+          "validationIssues": [
+            "CROSS_WORK"
+          ]
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "REJECTED",
+        "outcomeReason": "CROSS_WORK",
+        "directRelations": [],
+        "derivedRelations": [],
+        "withheldAssertions": [
+          {
+            "assertionId": "ab",
+            "reason": "CROSS_WORK"
+          },
+          {
+            "assertionId": "cd",
+            "reason": "CROSS_WORK"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p23_corrected_middle_identity",
+      "title": "부모를 B에서 C로 정정",
+      "purpose": "B→D 옛 assertion은 철회하고 C→D 새 assertion을 별도로 유지한다. A→C가 없으므로 예전 조부모를 유지하지 않는다.",
+      "snapshotRevision": 2,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        },
+        {
+          "sourceId": "s_cd",
+          "workId": "work-a",
+          "episodeNo": 2,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "2화\n채원은(는) 다온의 친부모다.",
+          "quote": "채원은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "WITHDRAWN",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "c",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "cd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_cd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "c",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "cd"
+            ],
+            "sourceIds": [
+              "s_cd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "c",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "cd"
+                ],
+                "sourceIds": [
+                  "s_cd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "bd",
+            "reason": "WITHDRAWN_FACT"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p24_withdrawn_and_future_sources",
+      "title": "철회된 현재 출처와 유효한 미래 출처",
+      "purpose": "ACTIVE가 남았지만 아직 독자 cutoff 밖인 경우 FUTURE_EVIDENCE로 보류한다. 원문을 파기하거나 모든 사실이 철회됐다고 바꾸지 않는다.",
+      "snapshotRevision": 1,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 2,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "WITHDRAWN",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_ab2",
+          "workId": "work-a",
+          "episodeNo": 3,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "3화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab",
+            "s_ab2"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [
+          {
+            "assertionId": "ab",
+            "reason": "FUTURE_EVIDENCE"
+          }
+        ],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p25_suppression_subtype_identity",
+      "title": "입양 부모 삭제는 혈연 부모와 다름",
+      "purpose": "subtype이 다른 canonical slot의 삭제로 혈연 관계와 그 proof를 숨기지 않는다.",
+      "snapshotRevision": 2,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "ADOPTIVE",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "suppressionId": "delete-adoptive",
+          "recordedRevision": 2,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p26_suppression_context_identity",
+      "title": "다른 시간선 삭제는 현재와 다름",
+      "purpose": "temporalContext가 다른 관계 삭제는 현재 조회 관계에 적용하지 않는다.",
+      "snapshotRevision": 2,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "alternate-timeline",
+          "generationGap": null,
+          "suppressionId": "delete-alternate",
+          "recordedRevision": 2,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "derivationType": "NEW_RELATION",
+            "proofs": [
+              {
+                "ruleId": "R_BIOLOGICAL_GRANDPARENT",
+                "premiseAssertionIds": [
+                  "ab",
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_ab",
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [],
+        "forbiddenRelations": []
+      }
+    },
+    {
+      "caseId": "p27_all_suppression_ids_retained",
+      "title": "동일 파생 slot의 여러 삭제 근거",
+      "purpose": "동일 조부모에 두 활성 삭제 기록이 적용되면 제외 행 하나에 정확한 두 suppressionIds를 보존한다.",
+      "snapshotRevision": 3,
+      "snapshotThroughEpisode": 3,
+      "query": {
+        "workId": "work-a",
+        "cutoffEpisode": 3,
+        "temporalContextId": "present",
+        "inputMode": "EPISODE_SNAPSHOT"
+      },
+      "entities": [
+        {
+          "entityId": "a",
+          "name": "가람",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "b",
+          "name": "보라",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "c",
+          "name": "채원",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        },
+        {
+          "entityId": "d",
+          "name": "다온",
+          "workId": "work-a",
+          "identityStatus": "RESOLVED"
+        }
+      ],
+      "sources": [
+        {
+          "sourceId": "s_ab",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n가람은(는) 보라의 친부모다.",
+          "quote": "가람은(는) 보라의 친부모다."
+        },
+        {
+          "sourceId": "s_bd",
+          "workId": "work-a",
+          "episodeNo": 1,
+          "supportStatus": "ACTIVE",
+          "quoteAvailability": "AVAILABLE",
+          "text": "1화\n보라은(는) 다온의 친부모다.",
+          "quote": "보라은(는) 다온의 친부모다."
+        }
+      ],
+      "assertions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "b",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "ab",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_ab"
+          ],
+          "validationIssues": []
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "b",
+          "objectId": "d",
+          "kind": "PARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": null,
+          "assertionId": "bd",
+          "assertionState": "ASSERTED",
+          "factValidity": "VALID",
+          "nativeTime": {
+            "domain": "FAMILY",
+            "scope": "CURRENT"
+          },
+          "sourceIds": [
+            "s_bd"
+          ],
+          "validationIssues": []
+        }
+      ],
+      "suppressions": [
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "d",
+          "kind": "GRANDPARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": 2,
+          "suppressionId": "delete-grandparent",
+          "recordedRevision": 2,
+          "active": true
+        },
+        {
+          "workId": "work-a",
+          "subjectId": "a",
+          "objectId": "d",
+          "kind": "GRANDPARENT_OF",
+          "subtype": "BIOLOGICAL",
+          "temporalContextId": "present",
+          "generationGap": 2,
+          "suppressionId": "delete-grandparent-again",
+          "recordedRevision": 3,
+          "active": true
+        }
+      ],
+      "expected": {
+        "outcome": "READY",
+        "outcomeReason": null,
+        "directRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "b",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "ab"
+            ],
+            "sourceIds": [
+              "s_ab"
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "d",
+            "kind": "PARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "supportAssertionIds": [
+              "bd"
+            ],
+            "sourceIds": [
+              "s_bd"
+            ]
+          }
+        ],
+        "derivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "b",
+            "objectId": "a",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "ab"
+                ],
+                "sourceIds": [
+                  "s_ab"
+                ]
+              }
+            ]
+          },
+          {
+            "workId": "work-a",
+            "subjectId": "d",
+            "objectId": "b",
+            "kind": "CHILD_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": null,
+            "derivationType": "SEMANTIC_INVERSE",
+            "proofs": [
+              {
+                "ruleId": "R_PARENT_INVERSE",
+                "premiseAssertionIds": [
+                  "bd"
+                ],
+                "sourceIds": [
+                  "s_bd"
+                ]
+              }
+            ]
+          }
+        ],
+        "withheldAssertions": [],
+        "excludedDerivedRelations": [
+          {
+            "workId": "work-a",
+            "subjectId": "a",
+            "objectId": "d",
+            "kind": "GRANDPARENT_OF",
+            "subtype": "BIOLOGICAL",
+            "temporalContextId": "present",
+            "generationGap": 2,
+            "reason": "USER_SUPPRESSED",
+            "suppressionIds": [
+              "delete-grandparent",
+              "delete-grandparent-again"
+            ]
+          }
+        ],
+        "forbiddenRelations": []
+      }
+    }
+  ]
+}
