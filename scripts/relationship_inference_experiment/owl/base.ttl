@@ -1,0 +1,16 @@
+@prefix rel: <urn:catchhole:relationship-inference:> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+# The caller supplies only eligible direct facts from one query scope.
+# These axioms neither decide eligibility nor attach proof/provenance records.
+rel:biologicalParent a owl:ObjectProperty ;
+    owl:inverseOf rel:biologicalChild .
+rel:adoptiveParent a owl:ObjectProperty ;
+    owl:inverseOf rel:adoptiveChild .
+
+# Exactly two biological parent edges; this is not transitive ancestry.
+rel:biologicalGrandparent a owl:ObjectProperty ;
+    owl:propertyChainAxiom ( rel:biologicalParent rel:biologicalParent ) .
+
+# Trust deliberately has no inverse, symmetric or transitive axiom.
+rel:trust a owl:ObjectProperty .
