@@ -3,6 +3,7 @@
 - 추적: [Java #444](https://github.com/catchhole-soma/catchhole-backend-java/issues/444)
 - 범위: 합성 입력의 오프라인 추론. `app/`, DB, LLM, 운영 API와 배포는 변경하지 않는다.
 - 선행: [가족 의미·정답 자료](relationship-ontology-fixtures.md), [전체 계획](relationship-ontology-plan.md).
+- 실행 결과: [기본·확장 비교 보고서](evaluations/relationship-inference-comparison.md).
 - 표현·검증·조회 실험 [AI #157](https://github.com/catchhole-soma/catchhole-backend-ai/pull/157)과 독립된 다음 단계다. 그 PR의 속도와 이번 추론 시간을 같은 측정으로 취급하지 않는다.
 
 ## 무엇을 비교하는가

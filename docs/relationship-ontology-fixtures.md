@@ -1,5 +1,7 @@
 # 관계 의미 모델 실험: 가족 중심 규칙 회귀 자료
 
+> 후속 상태(2026-11-19): 아래는 #438에서 자료를 준비한 당시의 범위다. 원본 24개 JSON은 변경하지 않고 #444에서 실제 Python·OWL 추론기를 실행했다. 추가 정책·손자녀 확장 및 근거/철회 검증은 [추론 비교 보고서](evaluations/relationship-inference-comparison.md)를 참고한다. 이 파일의 fixture 무결성 검사와 후속 엔진 정확성 검사를 구분한다.
+
 - 이슈: [Java #438](https://github.com/catchhole-soma/catchhole-backend-java/issues/438)
 - 상태: **제안된 실험의 2단계 산출물**. 운영 계약이나 구현된 추론 기능이 아니다.
 - 입력·정답: [`tests/fixtures/relationship_ontology_cases.json`](../tests/fixtures/relationship_ontology_cases.json)
