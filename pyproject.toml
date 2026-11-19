@@ -29,6 +29,10 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.6.0",
 ]
+world-owl = [
+    "owlready2==0.51",
+    "JPype1==1.6.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
