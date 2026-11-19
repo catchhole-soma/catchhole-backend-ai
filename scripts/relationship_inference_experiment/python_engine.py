@@ -13,7 +13,7 @@ from time import perf_counter
 
 from .output import base_result, finish, relation, relation_key
 from .policy import Prepared
-from .python_rules import BASE_RULES, Atom, Rule
+from .python_rules import Atom, Rule, rules_for
 
 
 @dataclass(frozen=True)
@@ -103,16 +103,27 @@ def _conclusions(index: Index, rules: tuple[Rule, ...]) -> list[Candidate]:
 def _proof(candidate: Candidate) -> dict:
     premise_ids = []
     source_ids = set()
+    inherited_rules, intermediate_relations = [], []
     for premise in candidate.premises:
-        if not isinstance(premise, Fact):
-            raise TypeError("base rules must have direct assertion premises")
-        premise_ids.append(premise.assertion_id)
-        source_ids.update(premise.row["sourceIds"])
-    return {
+        if isinstance(premise, Fact):
+            premise_ids.append(premise.assertion_id)
+            source_ids.update(premise.row["sourceIds"])
+        else:
+            previous = _proof(premise)
+            premise_ids.extend(previous["premiseAssertionIds"])
+            source_ids.update(previous["sourceIds"])
+            inherited_rules.extend(previous.get("rulePath", [previous["ruleId"]]))
+            intermediate_relations.extend(previous.get("intermediateRelations", []))
+            intermediate_relations.append(relation(premise.row))
+    proof = {
         "ruleId": candidate.rule.rule_id,
         "premiseAssertionIds": premise_ids,
         "sourceIds": sorted(source_ids),
     }
+    if inherited_rules:
+        proof["rulePath"] = [*inherited_rules, candidate.rule.rule_id]
+        proof["intermediateRelations"] = intermediate_relations
+    return proof
 
 
 def _with_proofs(candidates: list[Candidate]) -> list[dict]:
@@ -133,8 +144,6 @@ def _with_proofs(candidates: list[Candidate]) -> list[dict]:
 
 
 def run_measured(prepared: Prepared, *, extended: bool = False) -> tuple[dict, dict]:
-    if extended:
-        raise ValueError("grandchild extension is not part of the frozen base profile")
     start = perf_counter()
     index = Index()
     for assertion in prepared.eligible:
@@ -151,7 +160,7 @@ def run_measured(prepared: Prepared, *, extended: bool = False) -> tuple[dict, d
             "inputFacts": len(prepared.eligible),
             "candidateProofs": 0,
         }
-    candidates = _conclusions(index, BASE_RULES)
+    candidates = _conclusions(index, rules_for(extended=extended))
     inferred = perf_counter()
     derived = _with_proofs(candidates)
     explained = perf_counter()

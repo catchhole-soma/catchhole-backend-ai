@@ -25,6 +25,13 @@ RESULT_FIELDS = {
     "withheldAssertions",
     "excludedDerivedRelations",
 }
+GRANDCHILD_RULE = {
+    "ruleId": "R_GRANDPARENT_INVERSE",
+    "premiseCount": 1,
+    "outputKind": "GRANDCHILD_OF",
+    "derivationType": "SEMANTIC_INVERSE",
+}
+GRANDCHILD_PATH = ["R_BIOLOGICAL_GRANDPARENT", "R_GRANDPARENT_INVERSE"]
 
 
 def _keys(value, fields, where):
@@ -69,7 +76,33 @@ def _sort(rows):
     return sorted(rows, key=lambda row: json.dumps(row, ensure_ascii=False, sort_keys=True))
 
 
-def _relations(value, category):
+def _grandchild_trace(proof, relation):
+    if (
+        proof["ruleId"] != GRANDCHILD_RULE["ruleId"]
+        or proof["rulePath"] != GRANDCHILD_PATH
+        or len(proof["premiseAssertionIds"]) != 2
+        or relation["derivationType"] != "SEMANTIC_INVERSE"
+        or relation["subtype"] != "BIOLOGICAL"
+        or relation["generationGap"] != 2
+    ):
+        raise ValueError("grandchild proof has an invalid rule path or original premise roles")
+    intermediate = _array(proof["intermediateRelations"], "intermediateRelations")
+    if len(intermediate) != 1:
+        raise ValueError("grandchild proof requires exactly one intermediate grandparent")
+    _keys(intermediate[0], RELATION_FIELDS, "intermediate grandparent")
+    grandparent = _relation(intermediate[0], "intermediate grandparent")
+    wanted = {
+        **{field: relation[field] for field in RELATION_FIELDS},
+        "kind": "GRANDPARENT_OF",
+        "subjectId": relation["objectId"],
+        "objectId": relation["subjectId"],
+    }
+    if grandparent != wanted:
+        raise ValueError("intermediate grandparent does not explain this inverse conclusion")
+    return {"rulePath": list(GRANDCHILD_PATH), "intermediateRelations": [grandparent]}
+
+
+def _relations(value, category, *, extended=False):
     rows, seen = [], set()
     extras = {
         "directRelations": {"supportAssertionIds", "sourceIds"},
@@ -79,6 +112,9 @@ def _relations(value, category):
     for raw in _array(value, category):
         _keys(raw, set(RELATION_FIELDS) | extras, category)
         row = _relation(raw, category)
+        is_grandchild = row["kind"] == "GRANDCHILD_OF"
+        if is_grandchild and not extended:
+            raise ValueError("grandchild output requires an explicitly extended oracle")
         key = _relation_key(row)
         if key in seen:
             raise ValueError(f"{category}: duplicate relation tuple")
@@ -97,7 +133,10 @@ def _relations(value, category):
             row["derivationType"] = raw["derivationType"]
             proofs, seen_proofs = [], set()
             for proof in _array(raw["proofs"], "proofs"):
-                _keys(proof, {"ruleId", "premiseAssertionIds", "sourceIds"}, "proof")
+                proof_fields = {"ruleId", "premiseAssertionIds", "sourceIds"}
+                if is_grandchild:
+                    proof_fields |= {"rulePath", "intermediateRelations"}
+                _keys(proof, proof_fields, "proof")
                 normalized = {
                     "ruleId": _text(proof["ruleId"], "proof.ruleId"),
                     # [A->B, B->C] must not be sorted into an unordered set.
@@ -106,6 +145,8 @@ def _relations(value, category):
                     ),
                     "sourceIds": _references(proof["sourceIds"], "proof.sourceIds"),
                 }
+                if is_grandchild:
+                    normalized.update(_grandchild_trace(proof, row))
                 proof_key = (normalized["ruleId"], tuple(normalized["premiseAssertionIds"]))
                 if proof_key in seen_proofs:
                     raise ValueError("proofs: duplicate rule/premise roles")
@@ -118,7 +159,7 @@ def _relations(value, category):
     return _sort(rows)
 
 
-def normalize_result(result: dict) -> dict:
+def normalize_result(result: dict, *, extended: bool = False) -> dict:
     """Validate output shape, then canonicalize only unordered collections."""
     _keys(result, RESULT_FIELDS, "result")
     outcome = result["outcome"]
@@ -136,7 +177,7 @@ def normalize_result(result: dict) -> dict:
         "outcomeReason": reason,
     }
     for category in ("directRelations", "derivedRelations", "excludedDerivedRelations"):
-        normalized[category] = _relations(result[category], category)
+        normalized[category] = _relations(result[category], category, extended=extended)
     withheld, seen = [], set()
     for row in _array(result["withheldAssertions"], "withheldAssertions"):
         _keys(row, {"assertionId", "reason"}, "withheldAssertions")
@@ -165,7 +206,7 @@ def normalize_result(result: dict) -> dict:
     return normalized
 
 
-def _expected_result(case):
+def _expected_result(case, *, extended=False):
     expected = case["expected"]
     allowed = RESULT_FIELDS - {"caseId"} | {"forbiddenRelations"}
     if not isinstance(expected, dict) or set(expected) - allowed:
@@ -173,7 +214,25 @@ def _expected_result(case):
     # v1 handwritten cases predate explicit suppressed-derived output.
     result = {key: value for key, value in expected.items() if key != "forbiddenRelations"}
     result.setdefault("excludedDerivedRelations", [])
-    return normalize_result({"caseId": case["caseId"], **result})
+    return normalize_result({"caseId": case["caseId"], **result}, extended=extended)
+
+
+def _oracle_extended(document):
+    """An oracle declaration enables its trace schema, never runtime inference."""
+    declarations = []
+    for rule in _array(document.get("rules", []), "oracle rules"):
+        if not isinstance(rule, dict):
+            raise TypeError("oracle rule declaration must be an object")
+        if (
+            rule.get("ruleId") == GRANDCHILD_RULE["ruleId"]
+            or rule.get("outputKind") == "GRANDCHILD_OF"
+        ):
+            if rule != GRANDCHILD_RULE or type(rule.get("premiseCount")) is not int:
+                raise ValueError("malformed grandchild oracle rule declaration")
+            declarations.append(rule)
+    if len(declarations) > 1:
+        raise ValueError("duplicate grandchild oracle rule declaration")
+    return bool(declarations)
 
 
 def evaluate(actual_rows: list[dict], oracle_document: dict) -> dict:
@@ -193,13 +252,22 @@ def evaluate(actual_rows: list[dict], oracle_document: dict) -> dict:
             "passedCases": 0,
             "failures": [{"caseId": None, "reason": "INVALID_ORACLE"}],
         }
+    try:
+        extended = _oracle_extended(oracle_document)
+    except (TypeError, ValueError) as error:
+        return {
+            "passed": False,
+            "caseCount": len(cases),
+            "passedCases": 0,
+            "failures": [{"caseId": None, "reason": "INVALID_ORACLE", "detail": str(error)}],
+        }
     for case in cases:
         case_id = case.get("caseId") if isinstance(case, dict) else None
         try:
             _text(case_id, "caseId")
             if case_id in oracle:
                 raise ValueError("duplicate oracle caseId")
-            oracle[case_id] = _expected_result(case)
+            oracle[case_id] = _expected_result(case, extended=extended)
         except (KeyError, TypeError, ValueError) as error:
             failures.append({"caseId": case_id, "reason": "INVALID_ORACLE", "detail": str(error)})
     if failures:
@@ -218,7 +286,7 @@ def evaluate(actual_rows: list[dict], oracle_document: dict) -> dict:
     for row in actual_rows:
         case_id = row.get("caseId") if isinstance(row, dict) else None
         try:
-            normalized = normalize_result(row)
+            normalized = normalize_result(row, extended=extended)
             if counts[case_id] != 1:
                 raise ValueError("duplicate output caseId")
             actual[case_id] = normalized

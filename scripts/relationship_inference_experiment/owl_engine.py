@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 REL = Namespace("urn:catchhole:relationship-inference:")
 ONTOLOGY_PATH = Path(__file__).parent / "owl" / "base.ttl"
+EXTENSION_PATH = Path(__file__).parent / "owl" / "grandchild.ttl"
 PARENT_PREDICATES = {
     "BIOLOGICAL": REL.biologicalParent,
     "ADOPTIVE": REL.adoptiveParent,
@@ -40,6 +41,9 @@ DERIVED_PREDICATES = {
     REL.biologicalChild: ("CHILD_OF", "BIOLOGICAL", None, "SEMANTIC_INVERSE"),
     REL.adoptiveChild: ("CHILD_OF", "ADOPTIVE", None, "SEMANTIC_INVERSE"),
     REL.biologicalGrandparent: ("GRANDPARENT_OF", "BIOLOGICAL", 2, "NEW_RELATION"),
+}
+EXTENDED_DERIVED_PREDICATES = {
+    REL.biologicalGrandchild: ("GRANDCHILD_OF", "BIOLOGICAL", 2, "SEMANTIC_INVERSE"),
 }
 
 
@@ -63,6 +67,10 @@ def _ontology() -> Graph:
     return Graph().parse(data=ONTOLOGY_PATH.read_text(encoding="utf-8"), format="turtle")
 
 
+def _extension_ontology() -> Graph:
+    return Graph().parse(data=EXTENSION_PATH.read_text(encoding="utf-8"), format="turtle")
+
+
 def _input_predicate(assertion: dict) -> URIRef:
     kind = assertion["kind"]
     if kind == "PARENT_OF":
@@ -76,7 +84,9 @@ def _input_predicate(assertion: dict) -> URIRef:
     raise ValueError(f"unsupported direct assertion kind: {kind}")
 
 
-def _build_graph(prepared: Prepared) -> tuple[Graph, dict[URIRef, str], set[tuple]]:
+def _build_graph(
+    prepared: Prepared, *, extended: bool = False
+) -> tuple[Graph, dict[URIRef, str], set[tuple]]:
     case = prepared.case
     scope = [case["caseId"], case["snapshotRevision"], case["query"]]
     digest = sha256(json.dumps(scope, sort_keys=True).encode()).hexdigest()
@@ -85,6 +95,8 @@ def _build_graph(prepared: Prepared) -> tuple[Graph, dict[URIRef, str], set[tupl
         for entity in case["entities"]
     }
     graph = _ontology()
+    if extended:
+        graph += _extension_ontology()
     inputs = set()
     for assertion in prepared.eligible:
         if (
@@ -110,7 +122,7 @@ def _proof(rule: str, *premises: dict) -> dict:
     }
 
 
-def _witnesses(prepared: Prepared) -> dict[tuple, dict]:
+def _witnesses(prepared: Prepared, *, extended: bool = False) -> dict[tuple, dict]:
     """Enumerate original assertion combinations, independently of B and OWL."""
     witnesses = {}
 
@@ -141,22 +153,52 @@ def _witnesses(prepared: Prepared) -> dict[tuple, dict]:
                 "NEW_RELATION",
                 _proof("R_BIOLOGICAL_GRANDPARENT", first, second),
             )
+    if extended:
+        # One derived-premise step, retaining each independent original proof.
+        # Neither inferred child edges nor newly added grandchild witnesses are
+        # fed back into the parent property chain.
+        grandparents = [row for row in witnesses.values() if row["kind"] == "GRANDPARENT_OF"]
+        for grandparent in grandparents:
+            grandchild = relation(grandparent)
+            grandchild.update(
+                subjectId=grandparent["objectId"],
+                objectId=grandparent["subjectId"],
+                kind="GRANDCHILD_OF",
+            )
+            for proof in grandparent["proofs"]:
+                add(
+                    grandchild,
+                    "SEMANTIC_INVERSE",
+                    {
+                        "ruleId": "R_GRANDPARENT_INVERSE",
+                        "premiseAssertionIds": list(proof["premiseAssertionIds"]),
+                        "sourceIds": list(proof["sourceIds"]),
+                        "rulePath": ["R_BIOLOGICAL_GRANDPARENT", "R_GRANDPARENT_INVERSE"],
+                        "intermediateRelations": [relation(grandparent)],
+                    },
+                )
     return witnesses
 
 
 def _closure_relations(
-    prepared: Prepared, graph: Graph, entities: dict[URIRef, str], inputs: set[tuple]
+    prepared: Prepared,
+    graph: Graph,
+    entities: dict[URIRef, str],
+    inputs: set[tuple],
+    *,
+    extended: bool = False,
 ) -> dict[tuple, dict]:
     conclusions = {}
     observed_inputs = set()
     query = prepared.case["query"]
+    predicates = DERIVED_PREDICATES | (EXTENDED_DERIVED_PREDICATES if extended else {})
     for subject, predicate, obj in graph:
         if predicate == OWL.sameAs and subject != obj:
             # OWL's reflexive sameAs bookkeeping is not entity resolution.
             raise InferenceMismatchError("unexpected non-reflexive OWL identity inference")
         if not str(predicate).startswith(str(REL)):
             continue  # OWL/RDF vocabulary bookkeeping is not a product relation.
-        if predicate not in DERIVED_PREDICATES:
+        if predicate not in predicates:
             triple = (subject, predicate, obj)
             if triple not in inputs:
                 raise InferenceMismatchError(f"unexpected application edge: {predicate}")
@@ -164,7 +206,7 @@ def _closure_relations(
             continue
         if subject not in entities or obj not in entities:
             raise InferenceMismatchError("OWL conclusion introduced an unknown entity")
-        kind, subtype, gap, derivation_type = DERIVED_PREDICATES[predicate]
+        kind, subtype, gap, derivation_type = predicates[predicate]
         value = {
             "workId": query["workId"],
             "subjectId": entities[subject],
@@ -183,8 +225,6 @@ def _closure_relations(
 
 def run_measured(prepared: Prepared, *, extended: bool = False) -> tuple[dict, dict]:
     """Return result and local phase durations; shared policy time is external."""
-    if extended:
-        raise NotImplementedError("grandchild extension is not installed in the base experiment")
     metrics = {
         "constructionMs": 0.0,
         "inferenceMs": 0.0,
@@ -201,7 +241,7 @@ def run_measured(prepared: Prepared, *, extended: bool = False) -> tuple[dict, d
         return result, metrics
 
     started = perf_counter_ns()
-    graph, entities, inputs = _build_graph(prepared)
+    graph, entities, inputs = _build_graph(prepared, extended=extended)
     metrics["constructionMs"] = _elapsed(started)
     metrics["inputTripleCount"] = len(graph)
     metrics["inputFactTripleCount"] = len(inputs)
@@ -212,15 +252,20 @@ def run_measured(prepared: Prepared, *, extended: bool = False) -> tuple[dict, d
     metrics["closureTripleCount"] = len(graph)
 
     started = perf_counter_ns()
-    witnesses = _witnesses(prepared)
+    witnesses = _witnesses(prepared, extended=extended)
     metrics["proofMs"] = _elapsed(started)
 
     started = perf_counter_ns()
-    conclusions = _closure_relations(prepared, graph, entities, inputs)
+    conclusions = _closure_relations(prepared, graph, entities, inputs, extended=extended)
     if conclusions.keys() != witnesses.keys():
         missing = len(witnesses.keys() - conclusions.keys())
         extra = len(conclusions.keys() - witnesses.keys())
         raise InferenceMismatchError(f"OWL/proof mismatch: missing={missing}, extra={extra}")
+    if any(
+        value["derivationType"] != witnesses[key]["derivationType"]
+        for key, value in conclusions.items()
+    ):
+        raise InferenceMismatchError("OWL projection and witness derivation types differ")
     derived = [{**value, "proofs": witnesses[key]["proofs"]} for key, value in conclusions.items()]
     result = finish(prepared, derived)
     metrics["projectionMs"] = _elapsed(started)

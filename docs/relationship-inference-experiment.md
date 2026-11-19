@@ -47,6 +47,16 @@ RDF는 데이터를 그래프로 표현하는 방식, OWL은 관계 의미·공�
 
 각 조회/revision마다 적격 직접 사실에서 새 인덱스·그래프를 만든다. 이전 closure에 새 사실을 덧붙이는 방식이 아니다. 한 경로 철회 시 다른 경로만 유지하고, 마지막 경로가 사라지면 결론도 사라진다. 이 검증은 전체 재계산의 정확성이다. 증분 truth maintenance, DB 트랜잭션이나 운영 동시성을 구현한 것은 아니다.
 
+## 기본 동결 후 opt-in 확장
+
+기본 구현은 `e7ccb0b686f2f78fb790481989eb8e413754dd2d`, 실제 결과·벤치마크 기록은 후속 `5692308`에서 먼저 고정했다. 그 뒤 `--extended`로 **혈연 조부모→혈연 손자녀 역표현** 한 규칙을 추가했다. 기존 기본 실행과 24+27개 정답 자료는 그대로 유지한다.
+
+새 규칙은 직접 부모 assertion을 다시 찾아 조부모 계산을 흉내 내는 대신, 앞 단계가 만든 조부모 결론을 전제로 소비한다. B는 선언된 `origin="derived"` 원자를 같은 인덱스/조인 실행기로 처리하고 증명을 원래 assertion까지 펼친다. C는 별도 Turtle에 `owl:inverseOf` 한 공리를 추가한다. C의 제품 종류 매핑과 증명 복원, 양쪽 공통 평가 계약도 함께 확장해야 하므로 “OWL 한 줄이면 모든 앱 작업이 끝난다”고 표현하지 않는다.
+
+추가 proof의 `ruleId`는 마지막 `R_GRANDPARENT_INVERSE`, `rulePath`는 `R_BIOLOGICAL_GRANDPARENT → R_GRANDPARENT_INVERSE`이며 `intermediateRelations`에 조부모 전제를 남긴다. `premiseAssertionIds`와 `sourceIds`는 원래 직접 부모 증거까지 이어진다. 손자녀도 의미상 역표현이므로 새 독립 지식 수를 늘리지 않는다. 조부모나 동등한 손자녀 삭제는 두 표현을 함께 막는다. 입력의 `rules` 설명은 엔진의 확장 스위치가 아니며, 실행자는 명시적인 CLI 선택을 해야 한다.
+
+새 확장 정답 자료를 실행할 때는 위 `run` 명령의 입력/정답을 `relationship_inference_extension_cases.json`으로 바꾸고 `--extended`를 붙인다. 비용 비교는 기본과 동일한 51개 입력·동일한 100/1,000 사실 자료에 `benchmark --extended`를 적용한다.
+
 ## 실행과 기록
 
 ```bash

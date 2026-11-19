@@ -8,7 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from rdflib import OWL
+from rdflib import OWL, Graph
 
 from scripts.relationship_inference_experiment import owl_engine
 from scripts.relationship_inference_experiment.policy import prepare
@@ -129,7 +129,8 @@ def test_engine_cannot_drop_a_direct_input_edge(monkeypatch):
         owl_engine.run(prepared(CASES[2]))
 
 
-def test_collapsed_edges_keep_every_two_by_two_assertion_proof():
+@pytest.mark.parametrize("extended", [False, True])
+def test_collapsed_edges_keep_every_two_by_two_assertion_proof(extended):
     case = deepcopy(CASES[14])
     assertion = deepcopy(next(row for row in case["assertions"] if row["assertionId"] == "a3"))
     assertion.update(assertionId="a3b", sourceIds=["s3b"])
@@ -137,7 +138,7 @@ def test_collapsed_edges_keep_every_two_by_two_assertion_proof():
     source["sourceId"] = "s3b"
     case["assertions"].append(assertion)
     case["sources"].append(source)
-    result, metrics = owl_engine.run_measured(prepared(case))
+    result, metrics = owl_engine.run_measured(prepared(case), extended=extended)
     derived = next(row for row in result["derivedRelations"] if row["kind"] == "GRANDPARENT_OF")
     assert {tuple(proof["premiseAssertionIds"]) for proof in derived["proofs"]} == {
         ("a1", "a3"),
@@ -148,6 +149,14 @@ def test_collapsed_edges_keep_every_two_by_two_assertion_proof():
     assert len(derived["proofs"]) == 4
     assert metrics["inputFactTripleCount"] == 2
     assert len(result["directRelations"]) == 2
+    if extended:
+        grandchild = next(
+            row for row in result["derivedRelations"] if row["kind"] == "GRANDCHILD_OF"
+        )
+        assert len(grandchild["proofs"]) == 4
+        assert [p["premiseAssertionIds"] for p in grandchild["proofs"]] == [
+            p["premiseAssertionIds"] for p in derived["proofs"]
+        ]
 
 
 def test_multiple_sources_support_one_assertion_proof_not_extra_assertions():
@@ -165,12 +174,14 @@ def test_multiple_sources_support_one_assertion_proof_not_extra_assertions():
     ]
 
 
-def test_each_call_recomputes_after_retraction_without_retaining_a_closure():
-    first = owl_engine.run(prepared(CASES[2]))
-    withdrawn = owl_engine.run(prepared(CASES[15]))
-    restored = owl_engine.run(prepared(CASES[2]))
+@pytest.mark.parametrize("extended", [False, True])
+def test_each_call_recomputes_after_retraction_without_retaining_a_closure(extended):
+    first = owl_engine.run(prepared(CASES[2]), extended=extended)
+    withdrawn = owl_engine.run(prepared(CASES[15]), extended=extended)
+    restored = owl_engine.run(prepared(CASES[2]), extended=extended)
     assert any(row["kind"] == "GRANDPARENT_OF" for row in first["derivedRelations"])
     assert not any(row["kind"] == "GRANDPARENT_OF" for row in withdrawn["derivedRelations"])
+    assert not any(row["kind"] == "GRANDCHILD_OF" for row in withdrawn["derivedRelations"])
     assert restored == first
 
 
@@ -185,11 +196,12 @@ def test_declined_query_does_not_invoke_owl(monkeypatch):
         assert metrics["constructionMs"] == metrics["inferenceMs"] == metrics["proofMs"] == 0
 
 
-def test_runtime_neither_imports_b_nor_accesses_the_network(monkeypatch):
+@pytest.mark.parametrize("extended", [False, True])
+def test_runtime_neither_imports_b_nor_accesses_the_network(monkeypatch, extended):
     original_import = builtins.__import__
 
     def guarded_import(name, *args, **kwargs):
-        if name.endswith("python_engine"):
+        if name.endswith(("python_engine", "python_rules")):
             raise AssertionError("C must not import B")
         return original_import(name, *args, **kwargs)
 
@@ -201,9 +213,99 @@ def test_runtime_neither_imports_b_nor_accesses_the_network(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", no_network)
     monkeypatch.setattr(socket.socket, "connect_ex", no_network)
     importlib.reload(owl_engine)
-    assert owl_engine.run(prepared(CASES[2]))["outcome"] == "READY"
+    assert owl_engine.run(prepared(CASES[2]), extended=extended)["outcome"] == "READY"
 
 
-def test_extension_is_not_silently_enabled_before_the_base_is_frozen():
-    with pytest.raises(NotImplementedError, match="not installed"):
+def test_grandchild_is_opt_in_and_reports_original_leaf_proofs_and_intermediate():
+    baseline = owl_engine.run(prepared(CASES[2]))
+    extended = owl_engine.run(prepared(CASES[2]), extended=True)
+    assert not any(row["kind"] == "GRANDCHILD_OF" for row in baseline["derivedRelations"])
+    grandchild = next(row for row in extended["derivedRelations"] if row["kind"] == "GRANDCHILD_OF")
+    assert {key: value for key, value in grandchild.items() if key != "proofs"} == {
+        "workId": "work-a",
+        "subjectId": "harin",
+        "objectId": "doyun",
+        "kind": "GRANDCHILD_OF",
+        "subtype": "BIOLOGICAL",
+        "temporalContextId": "story-present",
+        "generationGap": 2,
+        "derivationType": "SEMANTIC_INVERSE",
+    }
+    assert grandchild["proofs"] == [
+        {
+            "ruleId": "R_GRANDPARENT_INVERSE",
+            "premiseAssertionIds": ["a1", "a3"],
+            "sourceIds": ["s1", "s3"],
+            "rulePath": ["R_BIOLOGICAL_GRANDPARENT", "R_GRANDPARENT_INVERSE"],
+            "intermediateRelations": [
+                {
+                    "workId": "work-a",
+                    "subjectId": "doyun",
+                    "objectId": "harin",
+                    "kind": "GRANDPARENT_OF",
+                    "subtype": "BIOLOGICAL",
+                    "temporalContextId": "story-present",
+                    "generationGap": 2,
+                }
+            ],
+        }
+    ]
+    extended["derivedRelations"].remove(grandchild)
+    assert extended == baseline
+
+
+def test_missing_extension_axiom_is_not_hidden_by_witness_reconstruction(monkeypatch):
+    monkeypatch.setattr(owl_engine, "_extension_ontology", Graph)
+    with pytest.raises(owl_engine.InferenceMismatchError, match="missing=1, extra=0"):
         owl_engine.run(prepared(CASES[2]), extended=True)
+
+
+@pytest.mark.parametrize("gap,derivation", [(3, "SEMANTIC_INVERSE"), (2, "NEW_RELATION")])
+def test_malformed_grandchild_projection_is_rejected(monkeypatch, gap, derivation):
+    monkeypatch.setitem(
+        owl_engine.EXTENDED_DERIVED_PREDICATES,
+        owl_engine.REL.biologicalGrandchild,
+        ("GRANDCHILD_OF", "BIOLOGICAL", gap, derivation),
+    )
+    with pytest.raises(owl_engine.InferenceMismatchError):
+        owl_engine.run(prepared(CASES[2]), extended=True)
+
+
+def test_base_profile_rejects_an_unrequested_grandchild_engine_edge(monkeypatch):
+    real = owl_engine._expand
+
+    def extra_grandchild(graph):
+        real(graph)
+        for subject, obj in list(graph.subject_objects(owl_engine.REL.biologicalGrandparent)):
+            graph.add((obj, owl_engine.REL.biologicalGrandchild, subject))
+
+    monkeypatch.setattr(owl_engine, "_expand", extra_grandchild)
+    with pytest.raises(owl_engine.InferenceMismatchError, match="unexpected application edge"):
+        owl_engine.run(prepared(CASES[2]))
+
+
+@pytest.mark.parametrize("inverse_suppression", [False, True])
+def test_grandparent_or_inverse_suppression_hides_both_equivalent_displays(inverse_suppression):
+    case = deepcopy(CASES[2])
+    suppression = {
+        "workId": "work-a",
+        "subjectId": "doyun",
+        "objectId": "harin",
+        "kind": "GRANDPARENT_OF",
+        "subtype": "BIOLOGICAL",
+        "temporalContextId": "story-present",
+        "generationGap": 2,
+        "suppressionId": "suppress-grandparent",
+        "recordedRevision": 1,
+        "active": True,
+    }
+    if inverse_suppression:
+        suppression.update(subjectId="harin", objectId="doyun", kind="GRANDCHILD_OF")
+    case["suppressions"] = [suppression]
+    result = owl_engine.run(prepared(case), extended=True)
+    assert {row["kind"] for row in result["derivedRelations"]} == {"CHILD_OF"}
+    assert {row["kind"] for row in result["excludedDerivedRelations"]} == {
+        "GRANDPARENT_OF",
+        "GRANDCHILD_OF",
+    }
+    assert len(result["directRelations"]) == 2

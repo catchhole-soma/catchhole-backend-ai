@@ -42,3 +42,17 @@ BASE_RULES = (
         2,
     ),
 )
+
+GRANDCHILD_RULE = Rule(
+    "R_GRANDPARENT_INVERSE",
+    (Atom("GRANDPARENT_OF", "x", "y", "BIOLOGICAL", "derived"),),
+    "GRANDCHILD_OF",
+    "y",
+    "x",
+    "SEMANTIC_INVERSE",
+    2,
+)
+
+
+def rules_for(*, extended: bool = False) -> tuple[Rule, ...]:
+    return BASE_RULES + (GRANDCHILD_RULE,) if extended else BASE_RULES
