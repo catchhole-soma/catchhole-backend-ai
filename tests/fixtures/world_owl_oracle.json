@@ -1,0 +1,845 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "caseId": "w01_class_hierarchy",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "d2",
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "d2"
+            ]
+          ]
+        },
+        {
+          "id": "q3",
+          "verdict": "UNKNOWN",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w02_alternative_definition_paths",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ],
+            [
+              "d2",
+              "d3",
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1"
+            ],
+            [
+              "d2",
+              "d3"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w03_equivalent_and_introduction",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1",
+              "f2"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "SATISFIABLE",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w04_equivalent_and_elimination",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q3",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w05_equivalent_or_introduction",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w06_equivalent_or_no_branch_choice",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q3",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w07_explicit_complement",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1",
+              "f2"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "REFUTED",
+          "supports": [
+            [
+              "f2"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w08_unknown_is_not_complement",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w09_disjoint_derives_negative",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "REFUTED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w10_disjoint_kb_inconsistent",
+      "outcome": "INCONSISTENT",
+      "conflictSets": [
+        [
+          "d1",
+          "f1",
+          "f2"
+        ]
+      ],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w11_unsatisfiable_class_consistent_kb",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNSATISFIABLE",
+          "supports": [
+            [
+              "d1",
+              "d2"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "REFUTED",
+          "supports": [
+            [
+              "d1",
+              "d2"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w12_unsatisfiable_class_instance",
+      "outcome": "INCONSISTENT",
+      "conflictSets": [
+        [
+          "d1",
+          "d2",
+          "f1"
+        ]
+      ],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w13_existential_with_named_witness",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1",
+              "f2"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "f1",
+              "f2"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w14_existential_is_not_named_individual",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q3",
+          "verdict": "UNKNOWN",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w15_negative_edge_not_universal_absence",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "REFUTED",
+          "supports": [
+            [
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w16_empty_logical_support",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNSATISFIABLE",
+          "supports": [
+            []
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "ENTAILED",
+          "supports": [
+            []
+          ]
+        },
+        {
+          "id": "q3",
+          "verdict": "UNKNOWN",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w17_definition_before_correction",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "d2",
+          "reason": "NOT_YET_RECORDED"
+        }
+      ]
+    },
+    {
+      "caseId": "w18_definition_after_correction",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "d1",
+          "reason": "WITHDRAWN"
+        }
+      ]
+    },
+    {
+      "caseId": "w19_definition_one_path_withdrawn",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d2",
+              "d3",
+              "f1"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "d1",
+          "reason": "WITHDRAWN"
+        }
+      ]
+    },
+    {
+      "caseId": "w20_definition_last_path_withdrawn",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "f1"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "d1",
+          "reason": "WITHDRAWN"
+        },
+        {
+          "id": "d2",
+          "reason": "WITHDRAWN"
+        }
+      ]
+    },
+    {
+      "caseId": "w21_independent_fact_proofs",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ],
+            [
+              "d1",
+              "f2"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w22_one_fact_withdrawn",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f2"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "f1",
+          "reason": "WITHDRAWN"
+        }
+      ]
+    },
+    {
+      "caseId": "w23_current_revision_past_reader",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "f1",
+          "reason": "WITHDRAWN"
+        },
+        {
+          "id": "f2",
+          "reason": "WITHDRAWN"
+        }
+      ]
+    },
+    {
+      "caseId": "w24_source_or_alternatives",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w25_source_withdrawal_and_text_purge",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "w26_last_source_withdrawn",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNKNOWN",
+          "supports": []
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "d1",
+          "reason": "NO_ELIGIBLE_SOURCE"
+        }
+      ]
+    },
+    {
+      "caseId": "w27_episode_storytime_revision_separation",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q3",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q4",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q5",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "f1"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "d1",
+          "reason": "NO_ELIGIBLE_SOURCE"
+        },
+        {
+          "id": "d2",
+          "reason": "OUTSIDE_STORY_TIME"
+        },
+        {
+          "id": "d3",
+          "reason": "NOT_YET_RECORDED"
+        },
+        {
+          "id": "d4",
+          "reason": "OUTSIDE_STORY_TIME"
+        }
+      ]
+    },
+    {
+      "caseId": "w28_work_isolation",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q3",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "f2"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "f1",
+          "reason": "OUT_OF_SCOPE"
+        }
+      ]
+    },
+    {
+      "caseId": "w29_context_and_source_isolation",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q3",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "f2"
+            ]
+          ]
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "f1",
+          "reason": "OUT_OF_SCOPE"
+        },
+        {
+          "id": "f3",
+          "reason": "NO_ELIGIBLE_SOURCE"
+        }
+      ]
+    },
+    {
+      "caseId": "w30_modalities_are_not_strict_axioms",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q3",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q4",
+          "verdict": "UNKNOWN",
+          "supports": []
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "d1",
+          "reason": "NON_STRICT"
+        },
+        {
+          "id": "d2",
+          "reason": "NON_STRICT"
+        },
+        {
+          "id": "d3",
+          "reason": "NON_STRICT"
+        },
+        {
+          "id": "f2",
+          "reason": "UNCONFIRMED"
+        }
+      ]
+    }
+  ]
+}
