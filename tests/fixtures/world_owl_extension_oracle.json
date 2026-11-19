@@ -1,0 +1,267 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "caseId": "e01_contraposition",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "REFUTED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q3",
+          "verdict": "REFUTED",
+          "supports": [
+            [
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q4",
+          "verdict": "SATISFIABLE",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "e02_disjunction_elimination",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1",
+              "f1",
+              "f2"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "REFUTED",
+          "supports": [
+            [
+              "f2"
+            ]
+          ]
+        },
+        {
+          "id": "q3",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q4",
+          "verdict": "UNKNOWN",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "e03_two_independent_conflicts",
+      "outcome": "INCONSISTENT",
+      "conflictSets": [
+        [
+          "d1",
+          "f1",
+          "f2"
+        ],
+        [
+          "f3",
+          "f4"
+        ]
+      ],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        },
+        {
+          "id": "q3",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        },
+        {
+          "id": "q4",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        },
+        {
+          "id": "q5",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    },
+    {
+      "caseId": "e04_one_conflict_withdrawn",
+      "outcome": "INCONSISTENT",
+      "conflictSets": [
+        [
+          "f3",
+          "f4"
+        ]
+      ],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        },
+        {
+          "id": "q3",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        },
+        {
+          "id": "q4",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        },
+        {
+          "id": "q5",
+          "verdict": "BLOCKED_INCONSISTENT",
+          "supports": []
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "f2",
+          "reason": "WITHDRAWN"
+        }
+      ]
+    },
+    {
+      "caseId": "e05_last_conflict_withdrawn",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q2",
+          "verdict": "REFUTED",
+          "supports": [
+            [
+              "d1",
+              "f1"
+            ]
+          ]
+        },
+        {
+          "id": "q3",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "f3"
+            ]
+          ]
+        },
+        {
+          "id": "q4",
+          "verdict": "REFUTED",
+          "supports": [
+            [
+              "d1",
+              "f3"
+            ]
+          ]
+        },
+        {
+          "id": "q5",
+          "verdict": "SATISFIABLE",
+          "supports": []
+        }
+      ],
+      "excludedStatements": [
+        {
+          "id": "f2",
+          "reason": "WITHDRAWN"
+        },
+        {
+          "id": "f4",
+          "reason": "WITHDRAWN"
+        }
+      ]
+    },
+    {
+      "caseId": "e06_class_cycle_without_membership",
+      "outcome": "CONSISTENT",
+      "conflictSets": [],
+      "queries": [
+        {
+          "id": "q1",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q2",
+          "verdict": "UNKNOWN",
+          "supports": []
+        },
+        {
+          "id": "q3",
+          "verdict": "ENTAILED",
+          "supports": [
+            [
+              "d1"
+            ]
+          ]
+        },
+        {
+          "id": "q4",
+          "verdict": "SATISFIABLE",
+          "supports": []
+        }
+      ],
+      "excludedStatements": []
+    }
+  ]
+}

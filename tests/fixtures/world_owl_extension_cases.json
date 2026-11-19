@@ -1,0 +1,996 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "caseId": "e01_contraposition",
+      "title": "대우: 마도사가 아니면 성기사도 아님",
+      "description": "성기사이면 마도사라는 엄격한 포함과 하린이 마도사가 아니라는 명시적 부정을 결합한다. 성기사라는 정보가 단순히 없어서 부정하는 것이 아니다.",
+      "scope": {
+        "workId": "work-a",
+        "contextId": "present",
+        "cutoffEpisode": 1,
+        "storyTime": 0,
+        "snapshotRevision": 1
+      },
+      "vocabulary": {
+        "classes": [
+          "Mage",
+          "Paladin"
+        ],
+        "individuals": [
+          "Harin"
+        ],
+        "properties": []
+      },
+      "sources": [
+        {
+          "id": "s_d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "모든 성기사는 마도사다.",
+          "sha256": "9eedcc1c42830720a4f491a653e8f3f5360a00ac6cdc80a9e2d30dece6f038ad"
+        },
+        {
+          "id": "s_f1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "하린은 마도사가 아니다.",
+          "sha256": "1ad297a85514120114a88c92e12ab951b7937ede0c609926b2168de74664e303"
+        }
+      ],
+      "statements": [
+        {
+          "id": "d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_d1"
+          ],
+          "axiom": {
+            "type": "subclass",
+            "sub": "Paladin",
+            "super": "Mage"
+          }
+        },
+        {
+          "id": "f1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_f1"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Harin",
+            "class": {
+              "op": "not",
+              "arg": "Mage"
+            }
+          }
+        }
+      ],
+      "queries": [
+        {
+          "id": "q1",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Paladin"
+        },
+        {
+          "id": "q2",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": {
+            "op": "not",
+            "arg": "Paladin"
+          }
+        },
+        {
+          "id": "q3",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Mage"
+        },
+        {
+          "id": "q4",
+          "type": "satisfiable",
+          "class": "Paladin"
+        }
+      ]
+    },
+    {
+      "caseId": "e02_disjunction_elimination",
+      "title": "합집합 소거: 마도사가 아닌 원정대원은 전사",
+      "description": "원정대원은 마도사 또는 전사다. 하린이 원정대원이고 마도사가 아님을 알면 남은 전사 소속을 논리적으로 얻는다. 역방향 포함은 주어지지 않았다.",
+      "scope": {
+        "workId": "work-a",
+        "contextId": "present",
+        "cutoffEpisode": 1,
+        "storyTime": 0,
+        "snapshotRevision": 1
+      },
+      "vocabulary": {
+        "classes": [
+          "Expedition",
+          "Mage",
+          "Warrior"
+        ],
+        "individuals": [
+          "Harin"
+        ],
+        "properties": []
+      },
+      "sources": [
+        {
+          "id": "s_d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "모든 원정대원은 마도사 또는 전사다.",
+          "sha256": "a5f194c0261bfa42bd0c767e36a10a13e1dc39e1673f7b930e829f4d171a9ba8"
+        },
+        {
+          "id": "s_f1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "하린은 원정대원이다.",
+          "sha256": "dee999e3537ac4da9bb255625643b7435dc9c04421a4fdf2e2484823b75218e7"
+        },
+        {
+          "id": "s_f2",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "하린은 마도사가 아니다.",
+          "sha256": "1ad297a85514120114a88c92e12ab951b7937ede0c609926b2168de74664e303"
+        }
+      ],
+      "statements": [
+        {
+          "id": "d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_d1"
+          ],
+          "axiom": {
+            "type": "subclass",
+            "sub": "Expedition",
+            "super": {
+              "op": "or",
+              "args": [
+                "Mage",
+                "Warrior"
+              ]
+            }
+          }
+        },
+        {
+          "id": "f1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_f1"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Harin",
+            "class": "Expedition"
+          }
+        },
+        {
+          "id": "f2",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_f2"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Harin",
+            "class": {
+              "op": "not",
+              "arg": "Mage"
+            }
+          }
+        }
+      ],
+      "queries": [
+        {
+          "id": "q1",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Warrior"
+        },
+        {
+          "id": "q2",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Mage"
+        },
+        {
+          "id": "q3",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Expedition"
+        },
+        {
+          "id": "q4",
+          "type": "subclass",
+          "sub": "Warrior",
+          "super": "Expedition"
+        }
+      ]
+    },
+    {
+      "caseId": "e03_two_independent_conflicts",
+      "title": "모순 두 개: 배타 위반과 직접 긍정·부정 충돌",
+      "description": "revision 1에는 하린의 배타 위반과 네이트의 Mage·not Mage가 독립적으로 모순이다. 두 부분집합 최소 충돌을 모두 반환하며 어느 질의도 폭발 원리로 참 처리하지 않는다.",
+      "scope": {
+        "workId": "work-a",
+        "contextId": "present",
+        "cutoffEpisode": 1,
+        "storyTime": 0,
+        "snapshotRevision": 1
+      },
+      "vocabulary": {
+        "classes": [
+          "Cursed",
+          "Mage"
+        ],
+        "individuals": [
+          "Harin",
+          "Nate"
+        ],
+        "properties": []
+      },
+      "sources": [
+        {
+          "id": "s_d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "마도사와 저주받은 존재는 서로 겹칠 수 없다.",
+          "sha256": "a3cc0d085b9e1534607dd5b8ce0fb58d7a02c48208e6c238f182fc726a075ad8"
+        },
+        {
+          "id": "s_f1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "하린은 마도사다.",
+          "sha256": "8d4973a70060cfa847675af872d03041aeabc6df03d122d75d49ad727884163b"
+        },
+        {
+          "id": "s_f2",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "하린은 저주받았다. 이 기록은 revision 2에서 철회된다.",
+          "sha256": "0cd26538b161de8b6e6a0f57014fd07a42c0771c22863aa1c0d8fe0684e2dd9a"
+        },
+        {
+          "id": "s_f3",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "네이트는 마도사다.",
+          "sha256": "0c1978bc4383efb304cc7ff3b580dd053a38b947cfe9039f29620d4578cdeae6"
+        },
+        {
+          "id": "s_f4",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "네이트는 마도사가 아니다. 이 기록은 revision 3에서 철회된다.",
+          "sha256": "d8d03466580b5800d64379301d94335378fa7d01e53b6d78f4fc2917a2a1b024"
+        }
+      ],
+      "statements": [
+        {
+          "id": "d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_d1"
+          ],
+          "axiom": {
+            "type": "disjoint",
+            "left": "Mage",
+            "right": "Cursed"
+          }
+        },
+        {
+          "id": "f1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_f1"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Harin",
+            "class": "Mage"
+          }
+        },
+        {
+          "id": "f2",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": 2,
+          "sourceIds": [
+            "s_f2"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Harin",
+            "class": "Cursed"
+          }
+        },
+        {
+          "id": "f3",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_f3"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Nate",
+            "class": "Mage"
+          }
+        },
+        {
+          "id": "f4",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": 3,
+          "sourceIds": [
+            "s_f4"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Nate",
+            "class": {
+              "op": "not",
+              "arg": "Mage"
+            }
+          }
+        }
+      ],
+      "queries": [
+        {
+          "id": "q1",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Mage"
+        },
+        {
+          "id": "q2",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Cursed"
+        },
+        {
+          "id": "q3",
+          "type": "classAssertion",
+          "individual": "Nate",
+          "class": "Mage"
+        },
+        {
+          "id": "q4",
+          "type": "classAssertion",
+          "individual": "Nate",
+          "class": "Cursed"
+        },
+        {
+          "id": "q5",
+          "type": "satisfiable",
+          "class": "Mage"
+        }
+      ]
+    },
+    {
+      "caseId": "e04_one_conflict_withdrawn",
+      "title": "첫 모순 해소: 다른 모순 때문에 계속 차단",
+      "description": "같은 자료의 revision 2다. 하린의 저주 사실 f2만 철회하여 하린의 모순은 사라진다. 네이트의 직접 긍정·부정 충돌이 남으므로 KB와 모든 일반 질의는 여전히 차단된다.",
+      "scope": {
+        "workId": "work-a",
+        "contextId": "present",
+        "cutoffEpisode": 1,
+        "storyTime": 0,
+        "snapshotRevision": 2
+      },
+      "vocabulary": {
+        "classes": [
+          "Cursed",
+          "Mage"
+        ],
+        "individuals": [
+          "Harin",
+          "Nate"
+        ],
+        "properties": []
+      },
+      "sources": [
+        {
+          "id": "s_d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "마도사와 저주받은 존재는 서로 겹칠 수 없다.",
+          "sha256": "a3cc0d085b9e1534607dd5b8ce0fb58d7a02c48208e6c238f182fc726a075ad8"
+        },
+        {
+          "id": "s_f1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "하린은 마도사다.",
+          "sha256": "8d4973a70060cfa847675af872d03041aeabc6df03d122d75d49ad727884163b"
+        },
+        {
+          "id": "s_f2",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "하린은 저주받았다. 이 기록은 revision 2에서 철회된다.",
+          "sha256": "0cd26538b161de8b6e6a0f57014fd07a42c0771c22863aa1c0d8fe0684e2dd9a"
+        },
+        {
+          "id": "s_f3",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "네이트는 마도사다.",
+          "sha256": "0c1978bc4383efb304cc7ff3b580dd053a38b947cfe9039f29620d4578cdeae6"
+        },
+        {
+          "id": "s_f4",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "네이트는 마도사가 아니다. 이 기록은 revision 3에서 철회된다.",
+          "sha256": "d8d03466580b5800d64379301d94335378fa7d01e53b6d78f4fc2917a2a1b024"
+        }
+      ],
+      "statements": [
+        {
+          "id": "d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_d1"
+          ],
+          "axiom": {
+            "type": "disjoint",
+            "left": "Mage",
+            "right": "Cursed"
+          }
+        },
+        {
+          "id": "f1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_f1"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Harin",
+            "class": "Mage"
+          }
+        },
+        {
+          "id": "f2",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": 2,
+          "sourceIds": [
+            "s_f2"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Harin",
+            "class": "Cursed"
+          }
+        },
+        {
+          "id": "f3",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_f3"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Nate",
+            "class": "Mage"
+          }
+        },
+        {
+          "id": "f4",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": 3,
+          "sourceIds": [
+            "s_f4"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Nate",
+            "class": {
+              "op": "not",
+              "arg": "Mage"
+            }
+          }
+        }
+      ],
+      "queries": [
+        {
+          "id": "q1",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Mage"
+        },
+        {
+          "id": "q2",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Cursed"
+        },
+        {
+          "id": "q3",
+          "type": "classAssertion",
+          "individual": "Nate",
+          "class": "Mage"
+        },
+        {
+          "id": "q4",
+          "type": "classAssertion",
+          "individual": "Nate",
+          "class": "Cursed"
+        },
+        {
+          "id": "q5",
+          "type": "satisfiable",
+          "class": "Mage"
+        }
+      ]
+    },
+    {
+      "caseId": "e05_last_conflict_withdrawn",
+      "title": "마지막 모순 해소: 정상 질의와 근거 복구",
+      "description": "같은 자료의 revision 3이다. f2에 이어 네이트의 부정 사실 f4도 철회하면 KB는 일관적이다. 남은 직접 마도사 사실과 배타성에 따른 저주 부정을 다시 답하고 오래된 모순 상태를 재사용하지 않는다.",
+      "scope": {
+        "workId": "work-a",
+        "contextId": "present",
+        "cutoffEpisode": 1,
+        "storyTime": 0,
+        "snapshotRevision": 3
+      },
+      "vocabulary": {
+        "classes": [
+          "Cursed",
+          "Mage"
+        ],
+        "individuals": [
+          "Harin",
+          "Nate"
+        ],
+        "properties": []
+      },
+      "sources": [
+        {
+          "id": "s_d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "마도사와 저주받은 존재는 서로 겹칠 수 없다.",
+          "sha256": "a3cc0d085b9e1534607dd5b8ce0fb58d7a02c48208e6c238f182fc726a075ad8"
+        },
+        {
+          "id": "s_f1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "하린은 마도사다.",
+          "sha256": "8d4973a70060cfa847675af872d03041aeabc6df03d122d75d49ad727884163b"
+        },
+        {
+          "id": "s_f2",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "하린은 저주받았다. 이 기록은 revision 2에서 철회된다.",
+          "sha256": "0cd26538b161de8b6e6a0f57014fd07a42c0771c22863aa1c0d8fe0684e2dd9a"
+        },
+        {
+          "id": "s_f3",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "네이트는 마도사다.",
+          "sha256": "0c1978bc4383efb304cc7ff3b580dd053a38b947cfe9039f29620d4578cdeae6"
+        },
+        {
+          "id": "s_f4",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "네이트는 마도사가 아니다. 이 기록은 revision 3에서 철회된다.",
+          "sha256": "d8d03466580b5800d64379301d94335378fa7d01e53b6d78f4fc2917a2a1b024"
+        }
+      ],
+      "statements": [
+        {
+          "id": "d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_d1"
+          ],
+          "axiom": {
+            "type": "disjoint",
+            "left": "Mage",
+            "right": "Cursed"
+          }
+        },
+        {
+          "id": "f1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_f1"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Harin",
+            "class": "Mage"
+          }
+        },
+        {
+          "id": "f2",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": 2,
+          "sourceIds": [
+            "s_f2"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Harin",
+            "class": "Cursed"
+          }
+        },
+        {
+          "id": "f3",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_f3"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Nate",
+            "class": "Mage"
+          }
+        },
+        {
+          "id": "f4",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": 3,
+          "sourceIds": [
+            "s_f4"
+          ],
+          "axiom": {
+            "type": "classAssertion",
+            "individual": "Nate",
+            "class": {
+              "op": "not",
+              "arg": "Mage"
+            }
+          }
+        }
+      ],
+      "queries": [
+        {
+          "id": "q1",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Mage"
+        },
+        {
+          "id": "q2",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Cursed"
+        },
+        {
+          "id": "q3",
+          "type": "classAssertion",
+          "individual": "Nate",
+          "class": "Mage"
+        },
+        {
+          "id": "q4",
+          "type": "classAssertion",
+          "individual": "Nate",
+          "class": "Cursed"
+        },
+        {
+          "id": "q5",
+          "type": "satisfiable",
+          "class": "Mage"
+        }
+      ]
+    },
+    {
+      "caseId": "e06_class_cycle_without_membership",
+      "title": "순환 정의: 인물 소속 사실을 발명하지 않음",
+      "description": "Mage와 Scholar의 양방향 포함은 두 개념의 범위를 같게 만들지만 하린을 그 범위에 넣지는 않는다. 클래스의 가능한 인스턴스와 선언된 개체의 확정 소속을 구분한다.",
+      "scope": {
+        "workId": "work-a",
+        "contextId": "present",
+        "cutoffEpisode": 1,
+        "storyTime": 0,
+        "snapshotRevision": 1
+      },
+      "vocabulary": {
+        "classes": [
+          "Mage",
+          "Scholar"
+        ],
+        "individuals": [
+          "Harin"
+        ],
+        "properties": []
+      },
+      "sources": [
+        {
+          "id": "s_d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "모든 마도사는 학자다.",
+          "sha256": "5b702f233c70ff8a1443e7945dbfd36f200ca266fe0369b3adf5410d8993b69f"
+        },
+        {
+          "id": "s_d2",
+          "workId": "work-a",
+          "contextId": "present",
+          "episodeNo": 1,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "text": "모든 학자는 마도사다.",
+          "sha256": "e30ff81bed1d5c581bfaf56fa02274c71e70a60ac09d12235ab41892a80879f8"
+        }
+      ],
+      "statements": [
+        {
+          "id": "d1",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_d1"
+          ],
+          "axiom": {
+            "type": "subclass",
+            "sub": "Mage",
+            "super": "Scholar"
+          }
+        },
+        {
+          "id": "d2",
+          "workId": "work-a",
+          "contextId": "present",
+          "modality": "STRICT",
+          "confirmed": true,
+          "validFrom": 0,
+          "validTo": null,
+          "recordedRevision": 1,
+          "withdrawnRevision": null,
+          "sourceIds": [
+            "s_d2"
+          ],
+          "axiom": {
+            "type": "subclass",
+            "sub": "Scholar",
+            "super": "Mage"
+          }
+        }
+      ],
+      "queries": [
+        {
+          "id": "q1",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Mage"
+        },
+        {
+          "id": "q2",
+          "type": "classAssertion",
+          "individual": "Harin",
+          "class": "Scholar"
+        },
+        {
+          "id": "q3",
+          "type": "subclass",
+          "sub": "Mage",
+          "super": "Scholar"
+        },
+        {
+          "id": "q4",
+          "type": "satisfiable",
+          "class": "Mage"
+        }
+      ]
+    }
+  ]
+}
